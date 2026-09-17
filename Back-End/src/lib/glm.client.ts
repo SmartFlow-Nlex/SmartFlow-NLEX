@@ -93,7 +93,14 @@ export async function chat(opts: ChatOptions): Promise<string> {
   // So the reasoning allowance is added ON TOP of what the caller asked for,
   // rather than taken out of it. Unused headroom is not billed; only tokens
   // actually generated are.
-  const REASONING_HEADROOM = 3000;
+  // Sized from measurement, not guesswork. The same prompt costs wildly
+  // different amounts of reasoning depending on which provider OpenRouter
+  // routes to: Wafer returns in ~250 completion tokens having barely reasoned,
+  // while Together spends 1,500-4,050 tokens thinking first. A 3,000 allowance
+  // put the expensive case at 97% of budget, so roughly a third of briefings
+  // were truncated — arriving as empty content, or as prose cut off before the
+  // opening brace. Neither error mentions the token limit that caused it.
+  const REASONING_HEADROOM = 12_000;
   const answerTokens = opts.maxTokens ?? 1200;
 
   const body: Record<string, unknown> = {
@@ -142,7 +149,7 @@ export async function chat(opts: ChatOptions): Promise<string> {
    * One attempt. Separated so the 1210 path can drop `thinking` and re-send
    * without rebuilding the request or re-running provider detection.
    */
-  async function send(): Promise<string> {
+  async function send(attempt = 0): Promise<string> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), env.GLM_TIMEOUT_MS);
 
@@ -213,7 +220,7 @@ export async function chat(opts: ChatOptions): Promise<string> {
       // every call and does not require anyone to know to flip GLM_THINKING.
     if (code === "1210" && body.thinking !== undefined) {
       delete body.thinking;
-      return send();
+      return send(attempt);
     }
 
     // Z.ai's own codes. 1113 (no credit) and 1305 (overloaded) are the two an
@@ -234,8 +241,26 @@ export async function chat(opts: ChatOptions): Promise<string> {
   }
 
   const content = payload?.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || content.trim().length === 0) {
-    throw new GlmError("Model returned an empty response.", "bad_model_output");
+
+  // Providers differ in quality as well as in appetite for reasoning: one
+  // returned finish_reason "error" with a half-written reply. Because
+  // allow_fallbacks routes each attempt independently, a retry is usually
+  // served by a different provider rather than repeating the same failure.
+  // Once only — a model that cannot answer will not answer on the third ask,
+  // and every attempt costs both tokens and the caller's patience.
+  const unusable =
+    typeof content !== "string" ||
+    content.trim().length === 0 ||
+    (opts.json === true && !content.includes("{"));
+
+  if (unusable) {
+    if (attempt === 0) return send(1);
+    throw new GlmError(
+      typeof content !== "string" || content.trim().length === 0
+        ? "Model returned an empty response."
+        : "Model did not return JSON.",
+      "bad_model_output",
+    );
   }
   return content;
   }
