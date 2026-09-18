@@ -17,6 +17,7 @@ export type MobileFeature = 'dashboard' | 'map' | 'community' | 'assistant' | 'a
 export type AdvisoryTone = 'info' | 'warning' | 'critical';
 
 export interface MobileAdvisory {
+	id: string;
 	active: boolean;
 	tone: AdvisoryTone;
 	message: string;
@@ -43,7 +44,8 @@ export interface MobileSections {
 export interface MobileConfig {
 	features: Record<MobileFeature, boolean>;
 	sections: MobileSections;
-	advisory: MobileAdvisory;
+	/** Every published advisory, in the order an operator arranged them. */
+	advisories: MobileAdvisory[];
 }
 
 /**
@@ -70,7 +72,7 @@ export const DEFAULT_MOBILE_CONFIG: MobileConfig = {
 		assistant: { quickQuestions: true, capabilities: true },
 		alerts: { traffic: true, maintenance: true },
 	},
-	advisory: { active: false, tone: 'info', message: '' },
+	advisories: [],
 };
 
 const FEATURE_KEYS: MobileFeature[] = ['dashboard', 'map', 'community', 'assistant', 'alerts'];
@@ -120,21 +122,34 @@ function parseConfig(raw: unknown): MobileConfig {
 		}
 	}
 
-	let advisory = { ...DEFAULT_MOBILE_CONFIG.advisory };
-	const rawAdvisory = obj.advisory;
-	if (rawAdvisory !== null && typeof rawAdvisory === 'object') {
-		const a = rawAdvisory as Record<string, unknown>;
+	// An advisory with no text is never shown even if its flag says active, so a
+	// half-saved row cannot push a blank card to every phone.
+	const readAdvisory = (raw: unknown, fallbackId: string): MobileAdvisory | null => {
+		if (raw === null || typeof raw !== 'object') return null;
+		const a = raw as Record<string, unknown>;
 		const message = typeof a.message === 'string' ? a.message.trim() : '';
-		advisory = {
-			// An advisory with no text is not shown even if the flag says active,
-			// so a half-saved row cannot push an empty card to every phone.
-			active: a.active === true && message.length > 0,
+		if (message.length === 0) return null;
+		return {
+			id: typeof a.id === 'string' && a.id.length > 0 ? a.id : fallbackId,
+			active: a.active === true,
 			tone: TONES.includes(a.tone as AdvisoryTone) ? (a.tone as AdvisoryTone) : 'info',
 			message,
 		};
+	};
+
+	const advisories: MobileAdvisory[] = [];
+	if (Array.isArray(obj.advisories)) {
+		obj.advisories.forEach((raw, i) => {
+			const parsed = readAdvisory(raw, `advisory-${i}`);
+			if (parsed !== null) advisories.push(parsed);
+		});
+	} else {
+		// A server older than the list sends a single `advisory` instead.
+		const legacy = readAdvisory(obj.advisory, 'legacy');
+		if (legacy !== null) advisories.push(legacy);
 	}
 
-	return { features, sections, advisory };
+	return { features, sections, advisories };
 }
 
 export async function fetchMobileConfig(signal?: AbortSignal): Promise<MobileConfig> {

@@ -153,32 +153,50 @@ export const AlertsProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const { config } = useMobileConfig();
   const [readAdvisories, setReadAdvisories] = useState<string[]>([]);
 
-  const advisory = useMemo<AlertItem | null>(() => {
-    const a = config.advisory;
-    if (!a.active || a.message.trim().length === 0) return null;
-    const id = advisoryId(a.tone, a.message);
-    return {
-      id,
-      title: a.tone === 'critical' ? 'Critical advisory' : a.tone === 'warning' ? 'Traffic advisory' : 'Notice',
-      message: a.message,
-      timeAgo: 'Now',
-      priority: a.tone === 'critical' ? 'high priority' : 'medium priority',
-      icon: ADVISORY_ICON[a.tone],
-      tone: a.tone,
-      unread: !readAdvisories.includes(id),
-      // Grouped with traffic rather than maintenance: an advisory is something
-      // happening now, which is exactly what the traffic list is for. `pinned`
-      // keeps it visible even when that category is switched off.
-      category: 'traffic',
-      pinned: true,
-    };
-  }, [config.advisory, readAdvisories]);
+  // Every advisory an operator has published, in the order they arranged them.
+  // Withdrawn ones are absent rather than dimmed: a notice nobody is meant to
+  // act on any more should not be occupying the top of the screen.
+  const advisories = useMemo<AlertItem[]>(
+    () =>
+      config.advisories
+        .filter((a) => a.active && a.message.trim().length > 0)
+        .map((a) => {
+          // Keyed on what it says, not on its id, so editing the text of a live
+          // advisory brings it back unread while a re-save of the same words
+          // does not.
+          const id = advisoryId(a.tone, a.message);
+          return {
+            id,
+            title:
+              a.tone === 'critical'
+                ? 'Critical advisory'
+                : a.tone === 'warning'
+                  ? 'Traffic advisory'
+                  : 'Notice',
+            message: a.message,
+            timeAgo: 'Now',
+            priority: a.tone === 'critical' ? 'high priority' : 'medium priority',
+            icon: ADVISORY_ICON[a.tone],
+            tone: a.tone,
+            unread: !readAdvisories.includes(id),
+            // Grouped with traffic rather than maintenance: an advisory is
+            // something happening now, which is what the traffic list is for.
+            // `pinned` keeps it visible even when that category is off.
+            category: 'traffic',
+            pinned: true,
+          } satisfies AlertItem;
+        })
+        // Critical first: with several pinned at once the order they were
+        // arranged in matters less than which one needs acting on.
+        .sort((x, y) => Number(y.tone === 'critical') - Number(x.tone === 'critical')),
+    [config.advisories, readAdvisories]
+  );
 
-  // The advisory leads, because an operator posted it deliberately and it is
-  // the newest thing in the list by definition.
+  // Advisories lead: an operator posted them deliberately and they are the
+  // newest things in the list by definition.
   const allAlerts = useMemo(
-    () => (advisory === null ? alerts : [advisory, ...alerts]),
-    [advisory, alerts]
+    () => (advisories.length === 0 ? alerts : [...advisories, ...alerts]),
+    [advisories, alerts]
   );
 
   const markAsRead = useCallback((id: string): void => {
@@ -193,10 +211,11 @@ export const AlertsProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const markAllAsRead = useCallback((): void => {
     setAlerts((current) => current.map((item) => ({ ...item, unread: false })));
-    setReadAdvisories((current) =>
-      advisory === null || current.includes(advisory.id) ? current : [...current, advisory.id]
-    );
-  }, [advisory]);
+    setReadAdvisories((current) => {
+      const next = advisories.map((a) => a.id).filter((id) => !current.includes(id));
+      return next.length === 0 ? current : [...current, ...next];
+    });
+  }, [advisories]);
 
   const unreadCount = useMemo(
     () => allAlerts.filter((item) => item.unread).length,
