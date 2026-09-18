@@ -36,7 +36,7 @@ export interface MobileSections {
 	};
 	map: { liveStatus: boolean; forecastView: boolean };
 	community: { shareUpdate: boolean; reportIncident: boolean; filters: boolean };
-	assistant: { quickQuestions: boolean };
+	assistant: { quickQuestions: boolean; capabilities: boolean };
 	alerts: { traffic: boolean; maintenance: boolean };
 }
 
@@ -67,7 +67,7 @@ export const DEFAULT_MOBILE_CONFIG: MobileConfig = {
 		},
 		map: { liveStatus: true, forecastView: true },
 		community: { shareUpdate: true, reportIncident: true, filters: true },
-		assistant: { quickQuestions: true },
+		assistant: { quickQuestions: true, capabilities: true },
 		alerts: { traffic: true, maintenance: true },
 	},
 	advisory: { active: false, tone: 'info', message: '' },

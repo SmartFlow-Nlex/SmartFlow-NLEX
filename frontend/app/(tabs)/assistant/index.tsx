@@ -54,6 +54,7 @@ export default function AssistantScreen(): React.ReactElement {
   // is why the Assistant tab has no "at least one section" floor.
   const { config: mobileConfig } = useMobileConfig();
   const quickQuestionsEnabled = mobileConfig.sections.assistant.quickQuestions;
+  const capabilitiesEnabled = mobileConfig.sections.assistant.capabilities;
   const styles = useThemedStyles(makeStyles);
   const [draft, setDraft] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -182,6 +183,7 @@ export default function AssistantScreen(): React.ReactElement {
               <AssistantMascot size={76} />
               <Text style={styles.introText}>{INTRO_TEXT}</Text>
 
+              {capabilitiesEnabled && (
               <View style={styles.capabilityList}>
                 {capabilities.map((item) => (
                   <View key={item.text} style={styles.capabilityRow}>
@@ -192,6 +194,7 @@ export default function AssistantScreen(): React.ReactElement {
                   </View>
                 ))}
               </View>
+              )}
             </View>
           ) : null}
 
