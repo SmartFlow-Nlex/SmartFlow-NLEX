@@ -9,6 +9,7 @@ import FeedComposer from '../../../components/community/FeedComposer';
 import FilterTabs from '../../../components/community/FilterTabs';
 import ReportIncidentModal from '../../../components/community/ReportIncidentModal';
 import ShareUpdateModal from '../../../components/community/ShareUpdateModal';
+import { useMobileConfig } from '../../../lib/mobileConfig';
 import { useTheme, useThemedStyles } from '../../../theme';
 import AppHeader from '../../../components/AppHeader';
 import PageHeading from '../../../components/PageHeading';
@@ -18,6 +19,11 @@ import { Typography } from '../../../constants/typography';
 import { useCommunityFeed } from '../../../hooks/useCommunityFeed';
 
 export default function CommunityScreen(): React.ReactElement {
+  // Composer actions and feed filters are switched from the dashboard's
+  // Mobile Control Centre.
+  const { config: mobileConfig } = useMobileConfig();
+  const communitySections = mobileConfig.sections.community;
+
   const { colors } = useTheme();
   const router = useRouter();
   const styles = useThemedStyles(makeStyles);
@@ -58,9 +64,13 @@ export default function CommunityScreen(): React.ReactElement {
             <FeedComposer
               onShare={() => setShowShareModal(true)}
               onReport={() => setShowReportModal(true)}
+              showShare={communitySections.shareUpdate}
+              showReport={communitySections.reportIncident}
             />
 
-            <FilterTabs activeTab={activeTab} onTabChange={setActiveTab} />
+            {communitySections.filters && (
+              <FilterTabs activeTab={activeTab} onTabChange={setActiveTab} />
+            )}
 
             <View style={styles.sectionHeader}>
               <Ionicons name={sectionIcon} size={16} color={colors.accent} />
@@ -168,7 +178,11 @@ export default function CommunityScreen(): React.ReactElement {
           Alert('AI assistant modal opened') - a dead end. It goes to the
           assistant now, like the same button on every other tab.
         */}
-        <AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />
+        {/* The route stops resolving when the Assistant tab is off, so the
+            shortcut to it goes too rather than navigating nowhere. */}
+        {mobileConfig.features.assistant && (
+          <AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />
+        )}
 
         <ShareUpdateModal
           onClose={() => setShowShareModal(false)}

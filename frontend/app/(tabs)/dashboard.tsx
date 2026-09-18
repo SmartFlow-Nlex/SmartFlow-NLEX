@@ -31,6 +31,7 @@ import { SegmentPrediction, predictNetwork, predictSegment } from '../../lib/tra
 import { useLiveClock } from '../../hooks/useNow';
 import AppHeader from '../../components/AppHeader';
 import AIAssistantFAB, { FAB_CLEARANCE } from '../../components/community/AIAssistantFAB';
+import { useMobileConfig } from '../../lib/mobileConfig';
 import ViewAllSheet from '../../components/dashboard/ViewAllSheet';
 import { useAuth } from '../../auth';
 import StatusSummaryCard from '../../components/dashboard/StatusSummaryCard';
@@ -75,6 +76,12 @@ export default function DashboardScreen(): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const router = useRouter();
+
+  // Which parts of this screen an operator has left switched on, set in the
+  // dashboard's Mobile Control Centre. Defaults leave every section in place,
+  // so a slow or unreachable backend never blanks the screen.
+  const { config: mobileConfig } = useMobileConfig();
+  const sections = mobileConfig.sections.dashboard;
   const { session } = useAuth();
 
   // Coarse ticker: the seconds-accurate clock lives inside StatusSummaryCard so
@@ -269,109 +276,127 @@ export default function DashboardScreen(): React.ReactElement {
             </Text>
           </View>
 
-          <StatusSummaryCard status={networkStatus} />
+          {sections.statusSummary && <StatusSummaryCard status={networkStatus} />}
 
-          <SectionTitle icon="trending-up" title="Traffic Forecast" />
-          {/*
-            One card, three steps, in the order the dependency runs: route,
-            then hour, then result. This was two sections with two headings and
-            the hour chips sat ABOVE the route they were locked behind.
-          */}
-          <SegmentForecastCard
-            direction={direction}
-            fromId={fromId}
-            toId={toId}
-            onChangeDirection={handleDirectionChange}
-            onChangeFrom={handleFromChange}
-            onChangeTo={setToId}
-            prediction={prediction}
-            predictionNow={predictionNow}
-            eventDriver={eventImpact.source}
-            horizonLabel={horizonLabel}
-            now={now}
-            offsetHours={effectiveOffset}
-            onChangeOffset={setOffsetHours}
-            onClear={handleClearRoute}
-            forecastAt={forecastAt}
-          />
-
-          <SectionTitle icon="calendar-outline" title="Corridor Outlook" />
-          {/*
-            Its own section now. It was sitting under "Traffic Forecast" above
-            the segment card, looking like a control for it - and its "Right
-            Now" option rendered nothing at all, so a third of the time the
-            control appeared broken. Today and This Week both draw a strip.
-          */}
-          <View
-            accessibilityRole="tablist"
-            style={styles.segmented}
-          >
-            {filterOptions.map((item) => {
-              const active = item === activeFilter;
-              return (
-                <Pressable
-                  key={item}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: active }}
-                  onPress={() => setActiveFilter(item)}
-                  style={({ pressed }) => [
-                    styles.segment,
-                    active && styles.segmentActive,
-                    pressed && !active && styles.segmentPressed,
-                  ]}
-                >
-                  <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
-                    {item}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <OutlookStrip
-            scope={activeFilter === 'Today' ? 'today' : 'week'}
-            direction={direction}
-            now={now}
-          />
-
-          <SectionTitle
-            icon="calendar"
-            title="Event Forecasts"
-            badge={String(upcomingEvents.length)}
-            total={upcomingEvents.length}
-            shown={previewEvents.length}
-            onSeeAll={() => setViewAll('events')}
-          />
-          <View style={styles.cardList}>
-            {previewEvents.map((event) => (
-              <EventForecastCard
-                key={event.id}
-                event={event}
+          {sections.segmentForecast && (
+            <>
+              <SectionTitle icon="trending-up" title="Traffic Forecast" />
+              {/*
+                One card, three steps, in the order the dependency runs: route,
+                then hour, then result. This was two sections with two headings and
+                the hour chips sat ABOVE the route they were locked behind.
+              */}
+              <SegmentForecastCard
+                direction={direction}
+                fromId={fromId}
+                toId={toId}
+                onChangeDirection={handleDirectionChange}
+                onChangeFrom={handleFromChange}
+                onChangeTo={setToId}
+                prediction={prediction}
+                predictionNow={predictionNow}
+                eventDriver={eventImpact.source}
+                horizonLabel={horizonLabel}
                 now={now}
-                affectsSelection={affectsSelection(event)}
+                offsetHours={effectiveOffset}
+                onChangeOffset={setOffsetHours}
+                onClear={handleClearRoute}
+                forecastAt={forecastAt}
               />
-            ))}
-          </View>
+            </>
+          )}
 
-          <SectionTitle
-            icon="alert-circle"
-            title="ML Hotspots"
-            tone="danger"
-            badge={String(mlHotspots.length)}
-            total={mlHotspots.length}
-            shown={previewHotspots.length}
-            onSeeAll={() => setViewAll('hotspots')}
-          />
-          {/* Last list in the scroll, so no trailing margin - the scroll
-              view's own FAB clearance is the only space wanted below it. */}
-          <View style={[styles.cardList, styles.cardListLast]}>
-            {previewHotspots.map((hotspot) => (
-              <MlHotspotCard key={hotspot.id} hotspot={hotspot} />
-            ))}
-          </View>
+          {sections.corridorOutlook && (
+            <>
+              <SectionTitle icon="calendar-outline" title="Corridor Outlook" />
+              {/*
+                Its own section now. It was sitting under "Traffic Forecast" above
+                the segment card, looking like a control for it - and its "Right
+                Now" option rendered nothing at all, so a third of the time the
+                control appeared broken. Today and This Week both draw a strip.
+              */}
+              <View
+                accessibilityRole="tablist"
+                style={styles.segmented}
+              >
+                {filterOptions.map((item) => {
+                  const active = item === activeFilter;
+                  return (
+                    <Pressable
+                      key={item}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: active }}
+                      onPress={() => setActiveFilter(item)}
+                      style={({ pressed }) => [
+                        styles.segment,
+                        active && styles.segmentActive,
+                        pressed && !active && styles.segmentPressed,
+                      ]}
+                    >
+                      <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                        {item}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <OutlookStrip
+                scope={activeFilter === 'Today' ? 'today' : 'week'}
+                direction={direction}
+                now={now}
+              />
+            </>
+          )}
+
+          {sections.eventForecasts && (
+            <>
+              <SectionTitle
+                icon="calendar"
+                title="Event Forecasts"
+                badge={String(upcomingEvents.length)}
+                total={upcomingEvents.length}
+                shown={previewEvents.length}
+                onSeeAll={() => setViewAll('events')}
+              />
+              <View style={styles.cardList}>
+                {previewEvents.map((event) => (
+                  <EventForecastCard
+                    key={event.id}
+                    event={event}
+                    now={now}
+                    affectsSelection={affectsSelection(event)}
+                  />
+                ))}
+              </View>
+            </>
+          )}
+
+          {sections.mlHotspots && (
+            <>
+              <SectionTitle
+                icon="alert-circle"
+                title="ML Hotspots"
+                tone="danger"
+                badge={String(mlHotspots.length)}
+                total={mlHotspots.length}
+                shown={previewHotspots.length}
+                onSeeAll={() => setViewAll('hotspots')}
+              />
+              {/* Last list in the scroll, so no trailing margin - the scroll
+                  view's own FAB clearance is the only space wanted below it. */}
+              <View style={[styles.cardList, styles.cardListLast]}>
+                {previewHotspots.map((hotspot) => (
+                  <MlHotspotCard key={hotspot.id} hotspot={hotspot} />
+                ))}
+              </View>
+            </>
+          )}
         </ScrollView>
 
-        <AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />
+        {mobileConfig.features.assistant && (
+          <AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />
+        )}
 
         {/*
           The full lists, as sheets over the dashboard. They were a pushed

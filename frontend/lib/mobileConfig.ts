@@ -22,8 +22,27 @@ export interface MobileAdvisory {
 	message: string;
 }
 
+/**
+ * What is inside each tab. The keys match the screens that read them, so a
+ * section can only be added here once the screen honours it.
+ */
+export interface MobileSections {
+	dashboard: {
+		statusSummary: boolean;
+		segmentForecast: boolean;
+		corridorOutlook: boolean;
+		eventForecasts: boolean;
+		mlHotspots: boolean;
+	};
+	map: { liveStatus: boolean; forecastView: boolean };
+	community: { shareUpdate: boolean; reportIncident: boolean; filters: boolean };
+	assistant: { quickQuestions: boolean };
+	alerts: { traffic: boolean; maintenance: boolean };
+}
+
 export interface MobileConfig {
 	features: Record<MobileFeature, boolean>;
+	sections: MobileSections;
 	advisory: MobileAdvisory;
 }
 
@@ -38,6 +57,19 @@ export interface MobileConfig {
  */
 export const DEFAULT_MOBILE_CONFIG: MobileConfig = {
 	features: { dashboard: true, map: true, community: true, assistant: true, alerts: true },
+	sections: {
+		dashboard: {
+			statusSummary: true,
+			segmentForecast: true,
+			corridorOutlook: true,
+			eventForecasts: true,
+			mlHotspots: true,
+		},
+		map: { liveStatus: true, forecastView: true },
+		community: { shareUpdate: true, reportIncident: true, filters: true },
+		assistant: { quickQuestions: true },
+		alerts: { traffic: true, maintenance: true },
+	},
 	advisory: { active: false, tone: 'info', message: '' },
 };
 
@@ -65,6 +97,29 @@ function parseConfig(raw: unknown): MobileConfig {
 		}
 	}
 
+	// Same rule as features: start from the defaults and overwrite only what the
+	// payload actually carries a boolean for. A tab the server has never heard
+	// of keeps its local default rather than disappearing.
+	const sections = {
+		dashboard: { ...DEFAULT_MOBILE_CONFIG.sections.dashboard },
+		map: { ...DEFAULT_MOBILE_CONFIG.sections.map },
+		community: { ...DEFAULT_MOBILE_CONFIG.sections.community },
+		assistant: { ...DEFAULT_MOBILE_CONFIG.sections.assistant },
+		alerts: { ...DEFAULT_MOBILE_CONFIG.sections.alerts },
+	};
+	const rawSections = obj.sections;
+	if (rawSections !== null && typeof rawSections === 'object') {
+		for (const tab of FEATURE_KEYS) {
+			const group = (rawSections as Record<string, unknown>)[tab];
+			if (group === null || typeof group !== 'object') continue;
+			const target = sections[tab] as Record<string, boolean>;
+			for (const key of Object.keys(target)) {
+				const value = (group as Record<string, unknown>)[key];
+				if (typeof value === 'boolean') target[key] = value;
+			}
+		}
+	}
+
 	let advisory = { ...DEFAULT_MOBILE_CONFIG.advisory };
 	const rawAdvisory = obj.advisory;
 	if (rawAdvisory !== null && typeof rawAdvisory === 'object') {
@@ -79,7 +134,7 @@ function parseConfig(raw: unknown): MobileConfig {
 		};
 	}
 
-	return { features, advisory };
+	return { features, sections, advisory };
 }
 
 export async function fetchMobileConfig(signal?: AbortSignal): Promise<MobileConfig> {

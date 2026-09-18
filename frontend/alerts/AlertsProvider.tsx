@@ -35,6 +35,13 @@ export interface AlertItem {
   tone: AlertTone;
   unread: boolean;
   category: AlertCategory;
+  /**
+   * Shown whatever category is being viewed. Only an operator-published
+   * advisory sets this: it is a deliberate broadcast, so filing it under
+   * `traffic` and letting a category filter hide it would mean an operator
+   * posts a closure notice and nobody sees it.
+   */
+  pinned?: boolean;
 }
 
 const initialAlerts: AlertItem[] = [
@@ -160,8 +167,10 @@ export const AlertsProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       tone: a.tone,
       unread: !readAdvisories.includes(id),
       // Grouped with traffic rather than maintenance: an advisory is something
-      // happening now, which is exactly what the traffic list is for.
+      // happening now, which is exactly what the traffic list is for. `pinned`
+      // keeps it visible even when that category is switched off.
       category: 'traffic',
+      pinned: true,
     };
   }, [config.advisory, readAdvisories]);
 

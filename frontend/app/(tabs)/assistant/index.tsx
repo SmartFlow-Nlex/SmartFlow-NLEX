@@ -19,6 +19,7 @@ import AssistantMascot from '../../../components/AssistantMascot';
 import type { ThemePalette } from '../../../theme';
 import { Typography } from '../../../constants/typography';
 import { AssistantError, ChatMessage, askAssistant, toolLabel } from '../../../lib/assistantApi';
+import { useMobileConfig } from '../../../lib/mobileConfig';
 
 const quickQuestions = [
   'How is NLEX right now?',
@@ -48,6 +49,11 @@ function formatTime(at: number): string {
 
 export default function AssistantScreen(): React.ReactElement {
   const { colors } = useTheme();
+
+  // The suggested prompts are optional; the chat box below them is not, which
+  // is why the Assistant tab has no "at least one section" floor.
+  const { config: mobileConfig } = useMobileConfig();
+  const quickQuestionsEnabled = mobileConfig.sections.assistant.quickQuestions;
   const styles = useThemedStyles(makeStyles);
   const [draft, setDraft] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -279,6 +285,7 @@ export default function AssistantScreen(): React.ReactElement {
             for "this scrolls sideways". They read as broken buttons; the row
             being cut off at the edge already says the same thing.
           */}
+          {quickQuestionsEnabled && (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -302,6 +309,7 @@ export default function AssistantScreen(): React.ReactElement {
               </Pressable>
             ))}
           </ScrollView>
+          )}
 
           <View style={styles.inputRow}>
             <TextInput

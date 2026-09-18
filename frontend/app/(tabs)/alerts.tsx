@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import AIAssistantFAB, { FAB_CLEARANCE } from '../../components/community/AIAssistantFAB';
 import { useAlerts, type AlertCategory, type AlertItem, type AlertTone } from '../../alerts';
+import { useMobileConfig } from '../../lib/mobileConfig';
 import { useTheme, useThemedStyles } from '../../theme';
 import AppHeader from '../../components/AppHeader';
 import PageHeading from '../../components/PageHeading';
@@ -59,6 +60,19 @@ export default function AlertsScreen(): React.ReactElement {
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(false);
   const [category, setCategory] = useState<AlertCategory>('traffic');
 
+  // Either category can be withdrawn from the dashboard's Mobile Control
+  // Centre. The API refuses to switch both off while the tab is on, so
+  // `allowedCategories` always has at least one member in practice.
+  const { config: mobileConfig } = useMobileConfig();
+  const alertSections = mobileConfig.sections.alerts;
+  const allowedCategories = useMemo(
+    () => categories.filter((c) => (c.key === 'traffic' ? alertSections.traffic : alertSections.maintenance)),
+    [alertSections],
+  );
+  const activeCategory: AlertCategory = allowedCategories.some((c) => c.key === category)
+    ? category
+    : (allowedCategories[0]?.key ?? 'traffic');
+
   /** Per-category totals and unread, for the chips. Always over everything. */
   const tallies = useMemo(() => {
     const build = (key: AlertCategory) => {
@@ -69,8 +83,8 @@ export default function AlertsScreen(): React.ReactElement {
   }, [alerts]);
 
   const visible = useMemo(
-    () => alerts.filter((item) => item.category === category),
-    [alerts, category],
+    () => alerts.filter((item) => item.pinned === true || item.category === activeCategory),
+    [alerts, activeCategory],
   );
 
   const unreadHere = useMemo(() => visible.filter((item) => item.unread).length, [visible]);
@@ -154,10 +168,11 @@ export default function AlertsScreen(): React.ReactElement {
         />
 
         {/* Pinned with the header: the tab you are on should not scroll away. */}
+        {allowedCategories.length > 1 && (
         <View style={styles.tabShell}>
           <View accessibilityRole="tablist" style={styles.tabBar}>
-            {categories.map((item) => {
-              const active = category === item.key;
+            {allowedCategories.map((item) => {
+              const active = activeCategory === item.key;
               const tally = tallies[item.key];
               return (
                 <Pressable
@@ -191,6 +206,7 @@ export default function AlertsScreen(): React.ReactElement {
             })}
           </View>
         </View>
+        )}
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.body}>
@@ -239,10 +255,10 @@ export default function AlertsScreen(): React.ReactElement {
                   />
                 </View>
                 <Text style={styles.emptyTitle}>
-                  {category === 'traffic' ? 'No traffic alerts' : 'No maintenance notices'}
+                  {activeCategory === 'traffic' ? 'No traffic alerts' : 'No maintenance notices'}
                 </Text>
                 <Text style={styles.emptyText}>
-                  {category === 'traffic'
+                  {activeCategory === 'traffic'
                     ? 'Congestion, event and incident alerts will appear here.'
                     : 'Scheduled roadworks and lane closures will appear here.'}
                 </Text>

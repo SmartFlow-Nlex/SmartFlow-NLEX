@@ -10,6 +10,10 @@ import { initialsFor } from '../AppHeader';
 export interface FeedComposerProps {
   onShare: () => void;
   onReport: () => void;
+  /** Operator switches from the dashboard. Default on, so existing callers
+   *  that pass neither behave exactly as before. */
+  showShare?: boolean;
+  showReport?: boolean;
 }
 
 /**
@@ -22,15 +26,25 @@ export interface FeedComposerProps {
  * demoting the report action to an outline puts the two in the order people
  * actually use them.
  */
-const FeedComposer: React.FC<FeedComposerProps> = ({ onShare, onReport }) => {
+const FeedComposer: React.FC<FeedComposerProps> = ({
+  onShare,
+  onReport,
+  showShare = true,
+  showReport = true,
+}) => {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { session } = useAuth();
 
   const initials = useMemo(() => initialsFor(session?.fullName), [session?.fullName]);
 
+  // Both withdrawn means there is nothing to compose with, and an empty
+  // bordered box above the feed reads as a rendering fault. Render nothing.
+  if (!showShare && !showReport) return null;
+
   return (
     <View style={styles.wrap}>
+      {showShare && (
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Share a traffic update"
@@ -47,7 +61,9 @@ const FeedComposer: React.FC<FeedComposerProps> = ({ onShare, onReport }) => {
           <Ionicons name="paper-plane" size={14} color={colors.textInverse} />
         </View>
       </Pressable>
+      )}
 
+      {showReport && (
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Report an incident"
@@ -57,6 +73,7 @@ const FeedComposer: React.FC<FeedComposerProps> = ({ onShare, onReport }) => {
         <Ionicons name="warning-outline" size={15} color={colors.danger} />
         <Text style={styles.reportText}>Report an incident</Text>
       </Pressable>
+      )}
     </View>
   );
 };

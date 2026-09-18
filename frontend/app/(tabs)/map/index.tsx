@@ -12,6 +12,7 @@ import { Typography } from '../../../constants/typography';
 import useNow from '../../../hooks/useNow';
 import ForecastCorridorView from '../../../components/map/ForecastCorridorView';
 import LiveCorridorStatus from '../../../components/map/LiveCorridorStatus';
+import { useMobileConfig } from '../../../lib/mobileConfig';
 
 type CorridorView = 'live' | 'forecast';
 
@@ -33,6 +34,21 @@ export default function MapScreen(): React.ReactElement {
   const router = useRouter();
   const styles = useThemedStyles(makeStyles);
   const [view, setView] = useState<CorridorView>('live');
+
+  // Live readings and forecasts can be switched off independently from the
+  // dashboard's Mobile Control Centre.
+  const { config: mobileConfig } = useMobileConfig();
+  const mapSections = mobileConfig.sections.map;
+  const allowed = views.filter((v) =>
+    v.key === 'live' ? mapSections.liveStatus : mapSections.forecastView,
+  );
+
+  // If the view being shown has just been switched off, fall back to whichever
+  // one is left rather than rendering nothing. The API refuses to disable both,
+  // so `allowed` is never empty in practice; the guard below covers the case
+  // where an older stored document slipped through anyway.
+  const activeView: CorridorView =
+    allowed.some((v) => v.key === view) ? view : (allowed[0]?.key ?? 'live');
 
   // Coarse ticker: minute-level precision is plenty for a 6h/12h/24h/48h horizon.
   const now = useNow(30000);
@@ -56,10 +72,11 @@ export default function MapScreen(): React.ReactElement {
           divider={false}
         />
 
+        {allowed.length > 1 && (
         <View style={styles.switchShell}>
           <View accessibilityRole="tablist" style={styles.viewSwitch}>
-            {views.map((item) => {
-              const active = view === item.key;
+            {allowed.map((item) => {
+              const active = activeView === item.key;
               return (
                 <Pressable
                   key={item.key}
@@ -85,12 +102,13 @@ export default function MapScreen(): React.ReactElement {
             })}
           </View>
         </View>
+        )}
 
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          {view === 'live' ? <LiveCorridorStatus /> : <ForecastCorridorView now={now} />}
+          {activeView === 'live' ? <LiveCorridorStatus /> : <ForecastCorridorView now={now} />}
         </ScrollView>
 
         <AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />
