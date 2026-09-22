@@ -1683,12 +1683,23 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
            Zoomed in the constraint disappears on its own, because the exits
            have spread out, so the search is allowed to run and everything is
            named. */
-        const LEAD_TRIES = { far: 3, mid: 7, near: 16 } as const;
+        const LEAD_TRIES = { wide: 2, mid: 6, near: 16 } as const;
 
         /* Clearance around a placed plate. Air is what stops a group of names
            reading as one block, and the less room there is the more of it each
            name needs to stay separate. */
-        const PLATE_PAD = { far: 10, mid: 6, near: 3 } as const;
+        const PLATE_PAD = { wide: 18, mid: 9, near: 3 } as const;
+
+        /* Names are thinned on their own zoom scale, not on the one that sizes
+           the rings.
+
+           plazaTier calls everything below z11.5 "far", which is right for a
+           marker -- a ring is small until you are close. It is wrong for a
+           name: at z9 the whole corridor is on screen and twenty names cannot
+           be read, while at z11 there are four exits in view with room to
+           spare, and holding both to the same rule gave six names out of nine
+           at a zoom where all nine would have been fine. */
+        const labelBand = (z: number) => (z < 10.3 ? "wide" : z < 12.5 ? "mid" : "near");
         const LABEL_H = 15;
         /* How much height a leader claims.
 
@@ -1704,7 +1715,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
            It shrinks as the view tightens, because by then the exits have
            separated on their own and a tall band would only cost names that
            had room. */
-        const LEAD_H = { far: 17, mid: 12, near: 8 } as const;
+        const LEAD_H = { wide: 24, mid: 14, near: 8 } as const;
 
         type Box = { x0: number; x1: number; y0: number; y1: number };
         const overlaps = (a: Box, b: Box) =>
@@ -1878,9 +1889,10 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
           const height = map.getCanvas().clientHeight;
           const half = DOT_W[tier] / 2;
           const base = LEAD_BASE[tier];
-          const tries = LEAD_TRIES[tier];
-          const pad = PLATE_PAD[tier];
-          const leadH = LEAD_H[tier];
+          const band = labelBand(map.getZoom());
+          const tries = LEAD_TRIES[band];
+          const pad = PLATE_PAD[band];
+          const leadH = LEAD_H[band];
 
           /* What a callout has to stay clear of: the reports, every exit ring,
              and the callouts already placed. Reports are still the thing the
