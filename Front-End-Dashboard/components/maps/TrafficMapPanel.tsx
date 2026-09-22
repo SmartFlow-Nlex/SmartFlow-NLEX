@@ -1875,6 +1875,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
           }
 
           const width = map.getCanvas().clientWidth;
+          const height = map.getCanvas().clientHeight;
           const half = DOT_W[tier] / 2;
           const base = LEAD_BASE[tier];
           const tries = LEAD_TRIES[tier];
@@ -1916,6 +1917,26 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
 
           for (let oi = 0; oi < ordered.length; oi++) {
             const { pin, q, level } = ordered[oi];
+
+            /* Off the top or the bottom of the map, so there is nowhere to put
+               the name at all. A plate sits level with its ring and reaching
+               further out only moves it sideways, so this is settled before
+               any side or length is tried.
+
+               It used to be settled nowhere. Names were bounded left and right
+               and never up and down, so on a short, wide panel a name past the
+               edge was placed anyway: invisible to the reader, counted as
+               drawn, published to the other panel as one to match, and holding
+               room that a name still on screen could have used. Measured on a
+               1600x840 window, five of the fourteen -- Sta. Ines fifty-four
+               pixels past the edge, Balintawak thirty-six. It is also how the
+               two panels came to disagree about which exits they showed: each
+               clipped its own invisible names at its own edge. */
+            if (q.y - LABEL_H / 2 < 4 || q.y + LABEL_H / 2 > height - 4) {
+              pin.el.style.display = "none";
+              continue;
+            }
+
             const w = plateW.get(pin.el) ?? 60;
             const home: "east" | "west" = pin.index % 2 === 0 ? "east" : "west";
             const sides: ("east" | "west")[] = [home, home === "east" ? "west" : "east"];
