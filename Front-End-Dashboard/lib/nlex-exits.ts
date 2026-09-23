@@ -141,6 +141,25 @@ export function displayExitName(name: string): string {
   return DISPLAY_NAMES[name.toLowerCase().trim()] ?? name;
 }
 
+/**
+ * The exit as a place on the road: "Paso de Blas Valenzuela Toll Plaza".
+ *
+ * A bare exit name reads as a town -- "starts 311 m before Meycauayan" could
+ * be the municipality, which is several kilometres of it. Naming the facility
+ * says which point on the corridor is meant.
+ *
+ * Four of the twenty already name what they are and would read as nonsense
+ * with it added: Bocaue Barrier is a barrier, Bocaue Interchange an
+ * interchange, NLEX Harbor Link is where another expressway joins, and SCTEX
+ * likewise. Those are left as they are.
+ */
+export function plazaLabel(name: string): string {
+  const shown = displayExitName(name);
+  return /(barrier|interchange|link|sctex)$/i.test(shown.trim())
+    ? shown
+    : `${shown} Toll Plaza`;
+}
+
 /** Nearest exit to a km-post — used to label a position on the corridor. */
 export function exitNearestKm(exits: NlexExit[], km: number): NlexExit | null {
   if (exits.length === 0) return null;

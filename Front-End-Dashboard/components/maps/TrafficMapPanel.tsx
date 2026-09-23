@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import nlexGeometry from "./nlex-geometry.json";
 import { corridorGuard, directionLabel, sliceCorridor, type LngLat } from "../../lib/corridor-shape";
 import { corridorSegmentLevels } from "../../lib/corridor-status";
-import { FALLBACK_EXITS, accessLabel, displayExitName } from "../../lib/nlex-exits";
+import { FALLBACK_EXITS, accessLabel, displayExitName, plazaLabel } from "../../lib/nlex-exits";
 import { useChartTheme } from "../../lib/chart-theme";
 import { mapPalette } from "../../lib/map-palette";
 import { isDisputedReport, isReportType, isUnconfirmedReport } from "../../lib/waze-reports";
@@ -1294,9 +1294,10 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         const a = p.rel_a as string | undefined;
         const b = p.rel_b as string | undefined;
         const m = p.rel_m == null ? null : Number(p.rel_m);
-        // Stored spellings are title-cased match keys, so they go through the
-        // same display fix the rest of the dashboard uses.
-        const nm = (x: string) => esc(displayExitName(x));
+        /* Named as the facility, not just the place: "before Meycauayan" could
+           be the municipality, which is kilometres of it, where "before
+           Meycauayan Toll Plaza" is a point on the road. */
+        const nm = (x: string) => esc(plazaLabel(x));
         if (kind === "at" && a) return `Starts at ${nm(a)}`;
         if (kind === "past" && a && m != null) return `Starts ${km(m)} past ${nm(a)}`;
         if (kind === "before" && a && m != null) return `Starts ${km(m)} before ${nm(a)}`;
@@ -1304,10 +1305,10 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
 
         const exit = p.starts_at;
         const metres = p.starts_m == null ? null : Number(p.starts_m);
-        if (!exit) return null;
-        if (metres == null) return `Starts near ${esc(exit)}`;
-        if (metres < 100) return `Starts at ${esc(exit)}`;
-        return `Starts ${km(metres)} from ${esc(exit)}`;
+        if (typeof exit !== "string" || !exit) return null;
+        if (metres == null) return `Starts near ${nm(exit)}`;
+        if (metres < 100) return `Starts at ${nm(exit)}`;
+        return `Starts ${km(metres)} from ${nm(exit)}`;
       };
 
       // The line and its marker carry identical properties, so both open the
