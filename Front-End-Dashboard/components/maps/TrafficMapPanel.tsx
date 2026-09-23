@@ -337,6 +337,11 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
       rel_a: string | null;
       rel_b: string | null;
       rel_m: number | null;
+      /* The km post where the queue begins, so the card can name the marker a
+         driver would actually pass. Interpolated between the two plazas either
+         side by how far the point is from each: km differences along this
+         corridor ARE distances, so the split is the same in both units. */
+      rel_km: number | null;
     };
 
     const queueWhere = (upstream: [number, number], dir: "NB" | "SB"): QueueWhere | null => {
@@ -354,6 +359,11 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
       const dBehind = groundM(upstream, [behind.longitude, behind.latitude]);
       const dAhead = groundM(upstream, [ahead.longitude, ahead.latitude]);
 
+      const dSouth = groundM(upstream, [south.longitude, south.latitude]);
+      const dNorth = groundM(upstream, [north.longitude, north.latitude]);
+      const along = dSouth + dNorth;
+      const rel_km = along > 0 ? south.km + (north.km - south.km) * (dSouth / along) : south.km;
+
       const nearest = dBehind <= dAhead ? behind : ahead;
       const nearestM = Math.min(dBehind, dAhead);
       /* Close enough to call it the plaza itself.
@@ -368,7 +378,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
          Eighty metres is about the toll booths themselves, so "at" now means
          at, and anything beyond gets the side it is on. */
       if (nearestM < 80) {
-        return { rel_kind: "at", rel_a: nearest.exit_name, rel_b: null, rel_m: null };
+        return { rel_kind: "at", rel_a: nearest.exit_name, rel_b: null, rel_m: null, rel_km };
       }
       /* Neither end of the stretch is close: the queue begins out in the
          middle of it, and naming one plaza would put it nearer that plaza than
@@ -376,11 +386,11 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
       const span = dBehind + dAhead;
       const frac = span > 0 ? dBehind / span : 0.5;
       if (frac > 0.33 && frac < 0.67) {
-        return { rel_kind: "between", rel_a: behind.exit_name, rel_b: ahead.exit_name, rel_m: null };
+        return { rel_kind: "between", rel_a: behind.exit_name, rel_b: ahead.exit_name, rel_m: null, rel_km };
       }
       return dBehind < dAhead
-        ? { rel_kind: "past", rel_a: behind.exit_name, rel_b: null, rel_m: Math.round(dBehind) }
-        : { rel_kind: "before", rel_a: ahead.exit_name, rel_b: null, rel_m: Math.round(dAhead) };
+        ? { rel_kind: "past", rel_a: behind.exit_name, rel_b: null, rel_m: Math.round(dBehind), rel_km }
+        : { rel_kind: "before", rel_a: ahead.exit_name, rel_b: null, rel_m: Math.round(dAhead), rel_km };
     };
 
     /* What the exit PLATES are coloured from, which is not the same thing on
@@ -1347,7 +1357,9 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
             `<div class="mjp">
                <div class="mjp-head is-${lvl >= 3 ? "congested" : lvl >= 1 ? "slow" : "clear"}">
                  ${LEVEL_WORD[lvl] ?? "Reported"}
-                 <span>${String(p.direction ?? "")}</span>
+                 <span>${String(p.direction ?? "")}${
+                   p.rel_km == null ? "" : ` &middot; km ${Math.round(Number(p.rel_km))}`
+                 }</span>
                </div>
                <div class="mjp-where">${where ?? esc(p.street ?? p.nearest_exit ?? "NLEX")}</div>
                ${len != null ? row("Queue length", km(len)) : ""}
@@ -1678,7 +1690,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
                   ${esc(displayExitName(toll.name))}
                   <!-- One decimal. The list carries two (69.15), which is a
                        centimetre-accurate claim about a kilometre post. -->
-                  <span>${stat ? `km ${Math.round(stat.km * 10) / 10}` : esc(toll.type)}</span>
+                  <span>${stat ? `km ${Math.round(stat.km)}` : esc(toll.type)}</span>
                 </div>
                 <div class="mjp-where">${esc(toll.location)}</div>
                 ${access ? row("Access", esc(access)) : ""}
