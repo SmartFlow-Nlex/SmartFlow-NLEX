@@ -6049,6 +6049,45 @@ body {
   font-weight: 600;
   color: var(--text-primary, #0f172a);
 }
+
+/* The first-report line. A key and a value rather than a sentence, because it
+   is answering a different question from the line above it and the two would
+   otherwise read as one paragraph about the same instant. */
+.wz-rd-first {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-subtle, var(--border-default));
+  font-size: 0.78rem;
+}
+.wz-rd-first-k {
+  flex: none;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.wz-rd-first-v {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  font-weight: 650;
+  color: var(--text-primary);
+  text-align: right;
+}
+/* The qualifier, which is what stops the date being read as one unbroken
+   incident running since then. */
+.wz-rd-first-v em {
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
 /* The absolute timestamp sits under the relative one: "40h ago" is what a
    reader wants first, the exact instant is what they need to cite. */
 .wz-rd-when span {

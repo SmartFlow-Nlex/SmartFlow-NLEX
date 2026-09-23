@@ -394,6 +394,7 @@ export async function getLiveMapGeoJson() {
       uuid: string | null; subtype: string | null; report_rating: number | null;
       road_type: number | null; by_municipality: string | null; heading: number | null;
       reported_at: Date | null; exit_distance_m: number | null;
+      first_report_at: Date | null; reports_here: string | null;
     }>(
       `WITH latest AS (
          SELECT raw_data FROM bronze.waze_raw_alerts ORDER BY ingested_at DESC LIMIT 1
@@ -443,8 +444,37 @@ export async function getLiveMapGeoJson() {
               -- Parsed here rather than in the browser so every consumer gets one
               -- ISO instant, and NULLIF guards the rows where it is absent.
               to_timestamp(NULLIF(a.x->>'pubDate', ''), 'Dy Mon DD HH24:MI:SS +0000 YYYY') AS reported_at,
-              ROUND(e.d)::int                    AS exit_distance_m
+              ROUND(e.d)::int                    AS exit_distance_m,
+              -- How long this spot has been reporting this KIND of thing.
+              --
+              -- The live feed is one snapshot, so a report carries only its own
+              -- pubDate: click a hazard at a roadworks site that has been
+              -- reported on and off for weeks and it reads as an hour old. The
+              -- warehouse keeps every report it has ever ingested, so the
+              -- earliest one within 150 m of this point, of this same type, is
+              -- the first time anybody reported anything like it here.
+              --
+              -- Deliberately NOT windowed: asked for the first report with no
+              -- time constraint, so this reaches back as far as the history
+              -- goes. On the corridor today that is about seven weeks, and a
+              -- busy spot has sixty-odd reports in it -- which is why the count
+              -- is carried alongside. The pair says "reported here 64 times
+              -- since 7 August", which is a fact about the place. It does NOT
+              -- say this particular problem has been running since then, and
+              -- the panel must not present it as though it does.
+              --
+              -- 150 m because the same hazard drifts between GPS fixes; the one
+              -- in hand sat 1 m from its own logged row.
+              h.first_report_at,
+              h.reports_here
        FROM a
+       LEFT JOIN LATERAL (
+         SELECT MIN(f.published_at) AS first_report_at,
+                COUNT(*)            AS reports_here
+         FROM silver.fact_incident_log f
+         WHERE f.alert_type = a.x->>'type'
+           AND ST_DistanceSphere(f.geom::geometry, ST_MakePoint(a.lon, a.lat)) < 150
+       ) h ON TRUE
        JOIN LATERAL (
          SELECT exit_name,
                 ST_DistanceSphere(ST_MakePoint(a.lon, a.lat), ST_MakePoint(longitude, latitude)) AS d
@@ -507,6 +537,8 @@ export async function getLiveMapGeoJson() {
         by_municipality: r.by_municipality === "true",
         heading: r.heading ?? null,
         reported_at: r.reported_at ? new Date(r.reported_at).toISOString() : null,
+        first_report_at: r.first_report_at ? new Date(r.first_report_at).toISOString() : null,
+        reports_here: r.reports_here != null ? Number(r.reports_here) : null,
         exit_distance_m: r.exit_distance_m ?? null,
         lon: r.lon,
         lat: r.lat,

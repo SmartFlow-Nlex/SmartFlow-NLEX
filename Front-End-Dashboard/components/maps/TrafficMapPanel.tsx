@@ -47,6 +47,8 @@ type ReportDetail = {
   by_municipality: boolean | null;
   heading: number | null;
   reported_at: string | null;
+  first_report_at: string | null;
+  reports_here: number | null;
   uuid: string | null;
   lon: number | null;
   lat: number | null;
@@ -2086,6 +2088,8 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
               by_municipality: props.by_municipality ?? null,
               heading: props.heading ?? null,
               reported_at: props.reported_at ?? null,
+              first_report_at: props.first_report_at ?? null,
+              reports_here: props.reports_here ?? null,
               uuid: props.uuid ?? null,
               lon: Array.isArray(coords) ? Number(coords[0]) : null,
               lat: Array.isArray(coords) ? Number(coords[1]) : null,
@@ -2264,6 +2268,41 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
                 <span>{new Date(selectedReport.reported_at).toLocaleString()}</span>
               </p>
             )}
+
+            {/* When this kind of thing was FIRST reported at this spot.
+
+                The live feed is one snapshot, so the line above is only this
+                report's own publication: a hazard at a site that has been
+                reported on and off for weeks still reads as an hour old. The
+                warehouse remembers every report it has ingested, so this is the
+                earliest of them within 150 m, of this same kind.
+
+                Not windowed, by request -- it reaches back as far as the
+                history goes, which on this corridor is currently about seven
+                weeks. That makes it a fact about the PLACE, not about this
+                problem, and the count is shown beside it so it cannot be read
+                as one unbroken closure: "64 reports here since 7 Aug" says what
+                it is. With no earlier record the first report is this one, and
+                the line says so rather than inventing a date. */}
+            {(() => {
+              const first = selectedReport.first_report_at ?? selectedReport.reported_at;
+              if (!first) return null;
+              const n = selectedReport.reports_here ?? 0;
+              const earlier = selectedReport.first_report_at != null && n > 1;
+              return (
+                <p className="wz-rd-first">
+                  <span className="wz-rd-first-k">First report</span>
+                  <span className="wz-rd-first-v">
+                    {new Date(first).toLocaleString()}
+                    <em>
+                      {earlier
+                        ? `${n} reports here since then`
+                        : "no earlier report on record here"}
+                    </em>
+                  </span>
+                </p>
+              );
+            })()}
 
             <dl className="wz-rd-grid">
               {selectedReport.reliability != null && (
