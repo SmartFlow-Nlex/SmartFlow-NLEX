@@ -75,7 +75,25 @@ export async function searchExitsInDb(query: string) {
               x.exit_name,
               x.latitude,
               x.longitude,
-              ROUND((n.m / 1000.0)::numeric, 2)::float AS km,
+              -- The NLEX km POST, not the distance from the start of the
+              -- corridor. Cumulative segment length gives the distance, which
+              -- is a true measurement and the wrong label: no sign on this road
+              -- says km 0. Balintawak is km 12, and a km post is distance along
+              -- the road, so every other exit is that plus how far it is from
+              -- Balintawak -- which is exactly what n.m already holds.
+              --
+              -- gold.exit_km_post was meant to carry these and cannot be used
+              -- as it stands: its hand-entered values put Balintawak to Harbor
+              -- Link at 4.00 km against 1.63 km measured, and four of them run
+              -- BACKWARDS along the corridor, Tabang Guiguinto to Balagtas by
+              -- five kilometres. Anchoring the measurement instead lands within
+              -- a tenth of that table's own coordinate-calibrated figures at
+              -- the far end -- Dau 83.05 against 83.1, SCTEX 85.23 against 85.4
+              -- -- which is the part of it that was derived rather than typed.
+              --
+              -- Only the offset changes, so every distance taken as a
+              -- DIFFERENCE of these stays exactly as it was.
+              ROUND((n.m / 1000.0 + 12)::numeric, 2)::float AS km,
               -- Per-direction access from silver.nlex_exit_reference. A node
               -- with no entry or exit either way is a mainline toll barrier,
               -- not an interchange.
