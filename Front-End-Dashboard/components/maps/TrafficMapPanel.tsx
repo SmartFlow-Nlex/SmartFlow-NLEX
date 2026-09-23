@@ -310,6 +310,71 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
        counts as much as its start. */
     const queuePins: { at: [number, number]; line: [number, number][]; level: number }[] = [];
 
+    /* Where a queue begins, relative to the toll plazas either side of it.
+
+       "Starts 340 m from San Simon" was true and not much use: it never said
+       which side, so the reader could not tell whether the queue is on the
+       approach to the plaza or already past it -- which is the difference
+       between joining the back of it before the toll and meeting it after.
+
+       Measured against the exits by latitude. The corridor runs
+       north-north-west for its whole length and the twenty exits are strictly
+       increasing in latitude with km-post, checked, so latitude orders the
+       corridor exactly and needs no projection.
+
+       A and B are named in TRAVEL order: A is the plaza this traffic has
+       already passed, B the one it is coming to. That is what lets the words
+       be "past" and "before" rather than "north of" and "south of", which a
+       driver would have to translate. */
+    const CORRIDOR_BY_KM = [...FALLBACK_EXITS].sort((a, b) => a.km - b.km);
+    const M_LON_C = 111320 * Math.cos((15 * Math.PI) / 180);
+    const M_LAT_C = 110574;
+    const groundM = (a: [number, number], b: [number, number]) =>
+      Math.hypot((a[0] - b[0]) * M_LON_C, (a[1] - b[1]) * M_LAT_C);
+
+    type QueueWhere = {
+      rel_kind: "at" | "past" | "before" | "between";
+      rel_a: string | null;
+      rel_b: string | null;
+      rel_m: number | null;
+    };
+
+    const queueWhere = (upstream: [number, number], dir: "NB" | "SB"): QueueWhere | null => {
+      if (CORRIDOR_BY_KM.length < 2) return null;
+      const lat = upstream[1];
+      // The pair of exits this point sits between, south first.
+      let i = 0;
+      while (i < CORRIDOR_BY_KM.length - 2 && CORRIDOR_BY_KM[i + 1].latitude <= lat) i++;
+      const south = CORRIDOR_BY_KM[i];
+      const north = CORRIDOR_BY_KM[i + 1];
+
+      // Travel order: northbound passes the southern one first.
+      const behind = dir === "NB" ? south : north;
+      const ahead = dir === "NB" ? north : south;
+      const dBehind = groundM(upstream, [behind.longitude, behind.latitude]);
+      const dAhead = groundM(upstream, [ahead.longitude, ahead.latitude]);
+
+      const nearest = dBehind <= dAhead ? behind : ahead;
+      const nearestM = Math.min(dBehind, dAhead);
+      /* Close enough to call it the plaza itself. An interchange is a few
+         hundred metres of ramps, so a queue starting inside that is not
+         "before" or "past" anything -- it is there. */
+      if (nearestM < 250) {
+        return { rel_kind: "at", rel_a: nearest.exit_name, rel_b: null, rel_m: null };
+      }
+      /* Neither end of the stretch is close: the queue begins out in the
+         middle of it, and naming one plaza would put it nearer that plaza than
+         it is. */
+      const span = dBehind + dAhead;
+      const frac = span > 0 ? dBehind / span : 0.5;
+      if (frac > 0.33 && frac < 0.67) {
+        return { rel_kind: "between", rel_a: behind.exit_name, rel_b: ahead.exit_name, rel_m: null };
+      }
+      return dBehind < dAhead
+        ? { rel_kind: "past", rel_a: behind.exit_name, rel_b: null, rel_m: Math.round(dBehind) }
+        : { rel_kind: "before", rel_a: ahead.exit_name, rel_b: null, rel_m: Math.round(dAhead) };
+    };
+
     /* What the exit PLATES are coloured from, which is not the same thing on
        both maps.
 
@@ -399,26 +464,49 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
             direction: snapped.direction,
             direction_source: snapped.directionSource,
           };
-          /* The head of the snapped line, which is the queue's upstream end --
-             Waze orders its vertices with the traffic, checked against the
-             direction it puts in the street name on 40 of 40 live jams. */
-          const head = snapped.coords[0];
+          /* The queue's upstream end -- the back of it, where traffic arrives.
+
+             snap() returns the centreline slice, and a slice is always in
+             corridor order, south to north, whichever way the traffic on it is
+             going. Taking coords[0] therefore marked the southern end every
+             time, which is the back of a northbound queue and the FRONT of a
+             southbound one. Five of the nine queues in a live sample were
+             southbound, so the marker and the "starts at" attribution were
+             pointing at the wrong end of better than half of them.
+
+             The geometry itself is left in corridor order on purpose: the
+             ribbons are drawn from it with line-offset, whose side depends on
+             the direction the line runs, and the flow patterns scroll along
+             it. Reversing the coordinates would move southbound queues onto
+             the other carriageway and run their animation backwards. Only the
+             END being picked out changes here. */
+          const coords = snapped.coords;
+          const head = (snapped.direction === "SB" ? coords[coords.length - 1] : coords[0]) as
+            | [number, number]
+            | undefined;
           if (head) {
             queuePins.push({
-              at: head as [number, number],
-              line: snapped.coords as [number, number][],
+              at: head,
+              line: coords as [number, number][],
               level: Number((f.properties as { level?: unknown })?.level ?? 0),
             });
+            const where = queueWhere(head, snapped.direction);
+            const marked = { ...properties, ...(where ?? {}) };
             marks.push({
               type: "Feature",
-              properties: { ...properties, feature_type: "jam_mark" },
+              properties: { ...marked, feature_type: "jam_mark" },
               geometry: { type: "Point", coordinates: head },
             });
+            return {
+              ...f,
+              properties: marked,
+              geometry: { type: "LineString", coordinates: coords } as GeoJSON.Geometry,
+            };
           }
           return {
             ...f,
             properties,
-            geometry: { type: "LineString", coordinates: snapped.coords } as GeoJSON.Geometry,
+            geometry: { type: "LineString", coordinates: coords } as GeoJSON.Geometry,
           };
         }),
       };
@@ -1195,7 +1283,27 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
       /* Where the queue begins, the way a driver would say it. Under 100 m the
          distance is noise against an interchange's own footprint, so it reads
          as "at" rather than claiming a precision the match does not have. */
-      const startsLine = (exit: unknown, metres: number | null) => {
+      /* Where the queue begins, said the way a driver would say it: which
+         plaza they will have passed, or are coming to, when they reach the
+         back of it. See queueWhere for how the side is worked out.
+
+         Falls back to the old wording when the corridor position could not be
+         established, which keeps a queue describable rather than silent. */
+      const startsLine = (p: Record<string, unknown>) => {
+        const kind = p.rel_kind as string | undefined;
+        const a = p.rel_a as string | undefined;
+        const b = p.rel_b as string | undefined;
+        const m = p.rel_m == null ? null : Number(p.rel_m);
+        // Stored spellings are title-cased match keys, so they go through the
+        // same display fix the rest of the dashboard uses.
+        const nm = (x: string) => esc(displayExitName(x));
+        if (kind === "at" && a) return `Starts at ${nm(a)}`;
+        if (kind === "past" && a && m != null) return `Starts ${km(m)} past ${nm(a)}`;
+        if (kind === "before" && a && m != null) return `Starts ${km(m)} before ${nm(a)}`;
+        if (kind === "between" && a && b) return `Starts midway between ${nm(a)} and ${nm(b)}`;
+
+        const exit = p.starts_at;
+        const metres = p.starts_m == null ? null : Number(p.starts_m);
         if (!exit) return null;
         if (metres == null) return `Starts near ${esc(exit)}`;
         if (metres < 100) return `Starts at ${esc(exit)}`;
@@ -1214,8 +1322,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         const delay = p.delay_seconds == null ? null : Number(p.delay_seconds);
         const running = p.running_min == null ? null : Number(p.running_min);
         const speed = p.speed == null ? null : Number(p.speed);
-        const startsM = p.starts_m == null ? null : Number(p.starts_m);
-        const where = startsLine(p.starts_at, startsM);
+        const where = startsLine(p);
 
         const row = (label: string, value: string) =>
           `<div class="mjp-row"><span>${label}</span><b>${value}</b></div>`;

@@ -132,6 +132,9 @@ export function useNlexExits(): { exits: NlexExit[]; loading: boolean } {
 const DISPLAY_NAMES: Record<string, string> = {
   "cdv/ph arena": "CDV/PH Arena",
   "sctex": "SCTEX",
+  // Title-casing the stored key capitalised the particle. It is the only other
+  // name in the twenty that the match key spells differently from the place.
+  "paso de blas valenzuela": "Paso de Blas Valenzuela",
 };
 
 export function displayExitName(name: string): string {
