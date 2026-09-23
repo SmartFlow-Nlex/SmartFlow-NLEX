@@ -356,10 +356,18 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
 
       const nearest = dBehind <= dAhead ? behind : ahead;
       const nearestM = Math.min(dBehind, dAhead);
-      /* Close enough to call it the plaza itself. An interchange is a few
-         hundred metres of ramps, so a queue starting inside that is not
-         "before" or "past" anything -- it is there. */
-      if (nearestM < 250) {
+      /* Close enough to call it the plaza itself.
+
+         This was 250 m, on the reasoning that an interchange is a few hundred
+         metres of ramps. Too generous: it swallowed the very distinction the
+         line exists to draw. A southbound queue at Bocaue began 214 m north of
+         the plaza -- two hundred metres of stopped traffic that a driver meets
+         BEFORE the toll -- and the card called it "at Bocaue Interchange",
+         which tells that driver nothing about where to expect it.
+
+         Eighty metres is about the toll booths themselves, so "at" now means
+         at, and anything beyond gets the side it is on. */
+      if (nearestM < 80) {
         return { rel_kind: "at", rel_a: nearest.exit_name, rel_b: null, rel_m: null };
       }
       /* Neither end of the stretch is close: the queue begins out in the
