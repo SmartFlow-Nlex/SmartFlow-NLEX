@@ -36,13 +36,16 @@ const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
-const SOURCE_LABEL: Record<"road" | "moto" | "stalled", string> = {
-  road: "Road crashes",
-  moto: "Motorcycle crashes",
-  stalled: "Stalled vehicles",
+const SOURCE_LABEL: Record<"accident" | "breakdown", string> = {
+  accident: "Accidents",
+  breakdown: "Breakdowns",
 };
 
 // ---------- Data contract ----------
+/** The three rankings the analytics endpoint returns, in the order shown. */
+const CAUSE_MODES = ["Accident causes", "Breakdown causes", "Types"] as const;
+type CauseMode = (typeof CAUSE_MODES)[number];
+
 type Analytics = {
   range: { from: string; to: string };
   meta: { minDate: string; maxDate: string };
@@ -55,15 +58,23 @@ type Analytics = {
     rainyCrashes: number;
     weatherKnown: number;
   };
-  dailyTrend: { d: string; road: number; moto: number; stalled: number }[];
-  hotspots: { km_bin: number; total: number; road: number; moto: number; stalled: number; injuries: number; fatalities: number }[];
+  dailyTrend: { d: string; accident: number; breakdown: number }[];
+  hotspots: { km_bin: number; total: number; accident: number; breakdown: number; injuries: number; fatalities: number }[];
   heatmap: { dow: number; hour: number; v: number }[];
-  causes: { label: string; total: number; injuries: number; fatalities: number }[];
+  /* The API splits causes in two. Accidents are logged against a driver or
+     road cause, breakdowns against a mechanical fault, and the service keeps
+     them as separate rankings on purpose -- "a different vocabulary entirely",
+     as it puts it -- so one list would rank flat tyres against tailgating.
+
+     This page asked for `causes`, which the API stopped sending, and read
+     `.length` off undefined on first render. */
+  accidentCauses: { label: string; total: number; injuries: number; fatalities: number }[];
+  breakdownCauses: { label: string; total: number; injuries: number; fatalities: number }[];
   types: { label: string; total: number; injuries: number; fatalities: number }[];
   weather: {
     wetHours: number;
     dryHours: number;
-    incidents: { wet: Record<"road" | "moto" | "stalled", number>; dry: Record<"road" | "moto" | "stalled", number> };
+    incidents: { wet: Record<"accident" | "breakdown", number>; dry: Record<"accident" | "breakdown", number> };
     jam: { wet: { speed: number; jam_level: number } | null; dry: { speed: number; jam_level: number } | null };
   };
 };
@@ -72,7 +83,7 @@ type Granularity = "daily" | "weekly" | "monthly";
 type RangeMode = "3" | "12" | "all" | "custom";
 type WeatherFilter = "all" | "dry" | "wet";
 /** Matches the source enum the incident endpoint validates against. */
-type SourceFilter = "all" | "road" | "moto" | "stalled";
+type SourceFilter = "all" | "accident" | "breakdown";
 type Detail = { title: string; subtitle?: string; rows: [string, string][]; note?: string };
 
 // ---------- Formatting ----------
@@ -118,7 +129,7 @@ export default function IncidentPage() {
   const [causeSort, setCauseSort] = useState<"desc" | "asc">("desc");
   const [grain, setGrain] = useState<Granularity>("monthly");
   const [timeView, setTimeView] = useState<"hour" | "dow">("hour");
-  const [causeMode, setCauseMode] = useState<"Causes" | "Types">("Causes");
+  const [causeMode, setCauseMode] = useState<CauseMode>("Accident causes");
   const [allHotspotsOpen, setAllHotspotsOpen] = useState(false);
   const [detail, setDetail] = useState<Detail | null>(null);
 
@@ -220,8 +231,8 @@ export default function IncidentPage() {
 
     // Crash rate per day of each weather, wet vs dry (crashes = road + moto).
     // Exposure-normalized: wet hours are far rarer than dry, so raw counts can't be compared.
-    const wetCrashes = weather.incidents.wet.road + weather.incidents.wet.moto;
-    const dryCrashes = weather.incidents.dry.road + weather.incidents.dry.moto;
+    const wetCrashes = weather.incidents.wet.accident;
+    const dryCrashes = weather.incidents.dry.accident;
     const wetRate = weather.wetHours > 0 ? (wetCrashes / weather.wetHours) * 24 : 0;
     const dryRate = weather.dryHours > 0 ? (dryCrashes / weather.dryHours) * 24 : 0;
     const rainMultiplier = dryRate > 0 ? wetRate / dryRate : null;
@@ -230,19 +241,19 @@ export default function IncidentPage() {
   }, [data]);
 
     // ---------- Trend ----------
-  type TrendRow = { label: string; road: number; moto: number; stalled: number; total: number };
+  type TrendRow = { label: string; accident: number; breakdown: number; total: number };
   const trendRows = useMemo<TrendRow[]>(() => {
     if (!data) return [];
     const keyOf = grain === "daily" ? (d: string) => d : grain === "weekly" ? weekStart : (d: string) => d.slice(0, 7);
-    const acc = new Map<string, { road: number; moto: number; stalled: number }>();
+    const acc = new Map<string, { accident: number; breakdown: number }>();
     for (const r of data.dailyTrend) {
       const k = keyOf(r.d);
-      const cur = acc.get(k) ?? { road: 0, moto: 0, stalled: 0 };
-      acc.set(k, { road: cur.road + r.road, moto: cur.moto + r.moto, stalled: cur.stalled + r.stalled });
+      const cur = acc.get(k) ?? { accident: 0, breakdown: 0 };
+      acc.set(k, { accident: cur.accident + r.accident, breakdown: cur.breakdown + r.breakdown });
     }
     const rows = [...acc.entries()]
       .sort(([a], [b]) => (a < b ? -1 : 1))
-      .map(([label, v]) => ({ label, ...v, total: v.road + v.moto + v.stalled }));
+      .map(([label, v]) => ({ label, ...v, total: v.accident + v.breakdown }));
     if (grain === "daily" || rows.length < 3) return rows;
 
     /* A bucket at either end is only drawn if the data covers the whole of it.
@@ -293,9 +304,8 @@ export default function IncidentPage() {
 
        Same three series, same values, same buckets. Only the arrangement. */
     const PANELS = [
-      { name: "Road crashes", key: "road" as const, color: TYPE_HUES[0] },
-      { name: "Motorcycle crashes", key: "moto" as const, color: TYPE_HUES[1] },
-      { name: "Stalled vehicles", key: "stalled" as const, color: TYPE_HUES[2] },
+      { name: "Accidents", key: "accident" as const, color: TYPE_HUES[0] },
+      { name: "Breakdowns", key: "breakdown" as const, color: TYPE_HUES[2] },
     ];
 
     // Laid out in the chart's own pixels so the three panels divide the height
@@ -508,9 +518,20 @@ export default function IncidentPage() {
     };
   }, [data, hotspotSort]);
 
-  const causeChart = useMemo<{ option: EChartsOption; rows: Analytics["causes"] } | null>(() => {
+  /* One place decides what a mode means, so the chart, the click handler and
+     the heading cannot drift apart. Defaulted to an empty list rather than
+     indexed blindly: the page should show "no rows" if a ranking ever goes
+     missing again, not throw on first render. */
+  const causeRows = (d: Analytics | null, mode: CauseMode) =>
+    (mode === "Accident causes"
+      ? d?.accidentCauses
+      : mode === "Breakdown causes"
+        ? d?.breakdownCauses
+        : d?.types) ?? [];
+
+  const causeChart = useMemo<{ option: EChartsOption; rows: Analytics["types"] } | null>(() => {
     if (!data) return null;
-    const src = causeMode === "Causes" ? data.causes : data.types;
+    const src = causeRows(data, causeMode);
     if (src.length === 0) return null;
     const top = src.slice(0, 9);
     const display = causeSort === "desc" ? [...top].reverse() : [...top];
@@ -547,8 +568,8 @@ export default function IncidentPage() {
     if (!data || !derived) return null;
     const w = data.weather;
     if (w.wetHours === 0 && w.dryHours === 0) return null;
-    const cats = ["Road crashes", "Motorcycle crashes", "Stalled vehicles"] as const;
-    const keys = ["road", "moto", "stalled"] as const;
+    const cats = ["Accidents", "Breakdowns"] as const;
+    const keys = ["accident", "breakdown"] as const;
     // Per day of that weather = incidents / hours-of-exposure × 24, so rare wet
     // hours compare fairly against abundant dry hours.
     const rate = (n: number, hours: number) => (hours > 0 ? Number(((n / hours) * 24).toFixed(1)) : 0);
@@ -589,9 +610,8 @@ export default function IncidentPage() {
       subtitle: `Incidents · ${periodWord}ly`,
       rows: [
         ["Total incidents", fmtInt(r.total)],
-        ["Road crashes", fmtInt(r.road)],
-        ["Motorcycle crashes", fmtInt(r.moto)],
-        ["Stalled vehicles", fmtInt(r.stalled)],
+        ["Accidents", fmtInt(r.accident)],
+        ["Breakdowns", fmtInt(r.breakdown)],
         ["vs range average", avg > 0 ? fmtPct(((r.total - avg) / avg) * 100) : "—"],
         ["Rank in range", `#${rank} of ${totals.length} ${periodWord}s`],
       ],
@@ -640,9 +660,8 @@ export default function IncidentPage() {
       subtitle: "Incident hotspot (5-km segment)",
       rows: [
         ["Total incidents", fmtInt(r.total)],
-        ["Road crashes", fmtInt(r.road)],
-        ["Motorcycle crashes", fmtInt(r.moto)],
-        ["Stalled vehicles", fmtInt(r.stalled)],
+        ["Accidents", fmtInt(r.accident)],
+        ["Breakdowns", fmtInt(r.breakdown)],
         ["Injuries", fmtInt(r.injuries)],
         ["Fatalities", fmtInt(r.fatalities)],
         ["Share of located incidents", derived.hotspotTotal > 0 ? `${((r.total / derived.hotspotTotal) * 100).toFixed(1)}%` : "—"],
@@ -660,11 +679,16 @@ export default function IncidentPage() {
     if (!causeChart || !data) return;
     const r = causeChart.rows[p.dataIndex];
     if (!r) return;
-    const pool = causeMode === "Causes" ? data.causes : data.types;
+    const pool = causeRows(data, causeMode);
     const total = pool.reduce((s, x) => s + x.total, 0);
     setDetail({
       title: r.label,
-      subtitle: causeMode === "Causes" ? "Reported cause" : "Accident type (crashes only)",
+      subtitle:
+        causeMode === "Accident causes"
+          ? "Reported cause (crashes)"
+          : causeMode === "Breakdown causes"
+            ? "Reported fault (breakdowns)"
+            : "Accident type (crashes only)",
       rows: [
         ["Incidents", fmtInt(r.total)],
         ["Share", total > 0 ? `${((r.total / total) * 100).toFixed(1)}%` : "—"],
@@ -677,7 +701,7 @@ export default function IncidentPage() {
 
   const onWeatherClick = (p: { dataIndex: number; seriesName?: string }) => {
     if (!data || !derived) return;
-    const keys = ["road", "moto", "stalled"] as const;
+    const keys = ["accident", "breakdown"] as const;
     const k = keys[p.dataIndex];
     const w = data.weather;
     setDetail({
@@ -922,7 +946,7 @@ export default function IncidentPage() {
           <span className={styles.kpiIcon} aria-hidden="true"><AlertTriangle size={15} /></span>
           <h3>
             Total Incidents
-            {kpiInfo("All logged incidents — road crashes, motorcycle crashes, and stalled vehicles — in the selected Range, compared to the equivalent prior period.")}
+            {kpiInfo("All logged incidents — accidents and breakdowns — in the selected Range, compared to the equivalent prior period.")}
           </h3>
           <div className={styles.kpiValue}>{kpiValue(data ? fmtInt(data.kpis.totalIncidents) : null)}</div>
           <p className={styles.kpiHint}>
@@ -982,7 +1006,7 @@ export default function IncidentPage() {
           <div className={styles.headText}>
             <h3>
               Incident Trend
-              <InfoTooltip text="Incident counts over the selected Range, by type (road crashes, motorcycle crashes, stalled vehicles). Daily, weekly, or monthly — click a point to see that period's breakdown." />
+              <InfoTooltip text="Incident counts over the selected Range, by type (accidents, breakdowns). Daily, weekly, or monthly — click a point to see that period's breakdown." />
             </h3>
           </div>
         </div>
@@ -994,9 +1018,8 @@ export default function IncidentPage() {
               onChange={(v) => setSource(v as SourceFilter)}
               options={[
                 { label: "All types", value: "all" },
-                { label: "Road crashes", value: "road" },
-                { label: "Motorcycle crashes", value: "moto" },
-                { label: "Stalled vehicles", value: "stalled" },
+                { label: "Accidents", value: "accident" },
+                { label: "Breakdowns", value: "breakdown" },
               ]}
             />
           </div>
@@ -1074,7 +1097,11 @@ export default function IncidentPage() {
         <div className={styles.chartHead}>
           <div className={styles.headText}>
             <h3>
-              {causeMode === "Causes" ? "Top Incident Causes" : "Top Accident Types"}
+              {causeMode === "Accident causes"
+                ? "Top Accident Causes"
+                : causeMode === "Breakdown causes"
+                  ? "Top Breakdown Causes"
+                  : "Top Accident Types"}
               <InfoTooltip text="Top 9 logged causes or collision types by incident count in the Range, with injuries and fatalities on hover. Toggle between Causes and Types on the right." />
             </h3>
           </div>
@@ -1088,7 +1115,7 @@ export default function IncidentPage() {
             {causeSort === "desc" ? <ArrowDownWideNarrow size={15} /> : <ArrowUpNarrowWide size={15} />}
           </button>
           <div className={styles.segmentedSmall}>
-            {(["Causes", "Types"] as const).map((m) => (
+            {CAUSE_MODES.map((m) => (
               <button key={m} className={causeMode === m ? "active" : ""} onClick={() => setCauseMode(m)}>
                 {causeMode === m && <svg width="10" height="10" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>}
                 {m}
@@ -1165,7 +1192,7 @@ export default function IncidentPage() {
             <div className={styles.plazaTableWrap}>
               <table className={styles.plazaTable}>
                 <thead>
-                  <tr><th>#</th><th>Segment</th><th>Total</th><th>Road</th><th>Moto</th><th>Stalled</th><th>Injured</th><th>Fatal</th></tr>
+                  <tr><th>#</th><th>Segment</th><th>Total</th><th>Accident</th><th>Breakdown</th><th>Injured</th><th>Fatal</th></tr>
                 </thead>
                 <tbody>
                   {data.hotspots.map((r, i) => (
@@ -1173,9 +1200,8 @@ export default function IncidentPage() {
                       <td className={styles.plazaRank}>{i + 1}</td>
                       <td>{kmLabel(r.km_bin)}</td>
                       <td className={styles.plazaNum}>{fmtInt(r.total)}</td>
-                      <td className={styles.plazaNum}>{fmtInt(r.road)}</td>
-                      <td className={styles.plazaNum}>{fmtInt(r.moto)}</td>
-                      <td className={styles.plazaNum}>{fmtInt(r.stalled)}</td>
+                      <td className={styles.plazaNum}>{fmtInt(r.accident)}</td>
+                      <td className={styles.plazaNum}>{fmtInt(r.breakdown)}</td>
                       <td className={styles.plazaNum}>{fmtInt(r.injuries)}</td>
                       <td className={styles.plazaNum}>{fmtInt(r.fatalities)}</td>
                     </tr>
