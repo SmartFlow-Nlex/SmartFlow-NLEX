@@ -5,7 +5,9 @@ import mapboxgl, { GeoJSONSource } from "mapbox-gl";
 import type { Point } from "geojson";
 import { useEffect, useRef, useState } from "react";
 import nlexGeometry from "./nlex-geometry.json";
-import { corridorGuard, directionLabel, sliceCorridor, type LngLat } from "../../lib/corridor-shape";
+import {
+  corridorGuard, directionFromStreet, directionLabel, sliceCorridor, type LngLat,
+} from "../../lib/corridor-shape";
 import { corridorSegmentLevels } from "../../lib/corridor-status";
 import { FALLBACK_EXITS, accessLabel, displayExitName, plazaLabel } from "../../lib/nlex-exits";
 import { useChartTheme } from "../../lib/chart-theme";
@@ -65,6 +67,122 @@ const headingLabel = (deg: number) => {
   const points = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
   return `${points[Math.round(((deg % 360) / 22.5)) % 16]} (${deg}°)`;
 };
+
+/* Where a queue begins, relative to the toll plazas either side of it.
+
+   "Starts 340 m from San Simon" was true and not much use: it never said
+   which side, so the reader could not tell whether the queue is on the
+   approach to the plaza or already past it -- which is the difference
+   between joining the back of it before the toll and meeting it after.
+
+   Measured against the exits by latitude. The corridor runs
+   north-north-west for its whole length and the twenty exits are strictly
+   increasing in latitude with km-post, checked, so latitude orders the
+   corridor exactly and needs no projection.
+
+   A and B are named in TRAVEL order: A is the plaza this traffic has
+   already passed, B the one it is coming to. That is what lets the words
+   be "past" and "before" rather than "north of" and "south of", which a
+   driver would have to translate. */
+const CORRIDOR_BY_KM = [...FALLBACK_EXITS].sort((a, b) => a.km - b.km);
+const M_LON_C = 111320 * Math.cos((15 * Math.PI) / 180);
+const M_LAT_C = 110574;
+const groundM = (a: [number, number], b: [number, number]) =>
+  Math.hypot((a[0] - b[0]) * M_LON_C, (a[1] - b[1]) * M_LAT_C);
+
+type QueueWhere = {
+  rel_kind: "at" | "past" | "before" | "between";
+  rel_a: string | null;
+  rel_b: string | null;
+  rel_m: number | null;
+  /* The km post where the queue begins, so the card can name the marker a
+     driver would actually pass. Interpolated between the two plazas either
+     side by how far the point is from each: km differences along this
+     corridor ARE distances, so the split is the same in both units. */
+  rel_km: number | null;
+};
+
+/* Which way a REPORT is facing.
+
+   A report is a point, so there is no line to take a bearing from. Waze
+   sends two clues and they mostly agree: the carriageway in the street name
+   ("E1: North Luzon Expressway S") and magvar, the reporter's own heading.
+   Checked over four hundred snapshots, they agree on 98 of the 104 reports
+   where the street says anything at all -- 50 southbound, 48 northbound --
+   and disagree on 6.
+
+   The street wins those six, for the same reason it wins for jams: it names
+   the carriageway the report is ON, where magvar is where one driver
+   happened to be pointing, which a stop or a turn can spoil. Another 22
+   reports had no direction in the street at all, and for those the heading
+   is the only thing there is.
+
+   The corridor runs north-north-west, so a northbound driver is heading
+   about 340 degrees: anything within ninety degrees of that is northbound,
+   the rest southbound. */
+const directionOfReport = (
+  street: unknown,
+  heading: unknown,
+): { dir: "NB" | "SB" | null; source: "street" | "heading" | null } => {
+  const named = directionFromStreet(typeof street === "string" ? street : null);
+  if (named) return { dir: named, source: "street" };
+  const h = heading == null ? null : Number(heading);
+  if (h == null || !Number.isFinite(h)) return { dir: null, source: null };
+  const north = ((h % 360) + 360) % 360;
+  return { dir: north >= 250 || north <= 70 ? "NB" : "SB", source: "heading" };
+};
+
+const queueWhere = (upstream: [number, number], dir: "NB" | "SB"): QueueWhere | null => {
+  if (CORRIDOR_BY_KM.length < 2) return null;
+  const lat = upstream[1];
+  // The pair of exits this point sits between, south first.
+  let i = 0;
+  while (i < CORRIDOR_BY_KM.length - 2 && CORRIDOR_BY_KM[i + 1].latitude <= lat) i++;
+  const south = CORRIDOR_BY_KM[i];
+  const north = CORRIDOR_BY_KM[i + 1];
+
+  // Travel order: northbound passes the southern one first.
+  const behind = dir === "NB" ? south : north;
+  const ahead = dir === "NB" ? north : south;
+  const dBehind = groundM(upstream, [behind.longitude, behind.latitude]);
+  const dAhead = groundM(upstream, [ahead.longitude, ahead.latitude]);
+
+  const dSouth = groundM(upstream, [south.longitude, south.latitude]);
+  const dNorth = groundM(upstream, [north.longitude, north.latitude]);
+  const along = dSouth + dNorth;
+  const rel_km = along > 0 ? south.km + (north.km - south.km) * (dSouth / along) : south.km;
+
+  const nearest = dBehind <= dAhead ? behind : ahead;
+  const nearestM = Math.min(dBehind, dAhead);
+  /* Close enough to call it the plaza itself.
+
+     This was 250 m, on the reasoning that an interchange is a few hundred
+     metres of ramps. Too generous: it swallowed the very distinction the
+     line exists to draw. A southbound queue at Bocaue began 214 m north of
+     the plaza -- two hundred metres of stopped traffic that a driver meets
+     BEFORE the toll -- and the card called it "at Bocaue Interchange",
+     which tells that driver nothing about where to expect it.
+
+     Eighty metres is about the toll booths themselves, so "at" now means
+     at, and anything beyond gets the side it is on. */
+  if (nearestM < 80) {
+    return { rel_kind: "at", rel_a: nearest.exit_name, rel_b: null, rel_m: null, rel_km };
+  }
+  /* Neither end of the stretch is close: the queue begins out in the
+     middle of it, and naming one plaza would put it nearer that plaza than
+     it is. */
+  const span = dBehind + dAhead;
+  const frac = span > 0 ? dBehind / span : 0.5;
+  if (frac > 0.33 && frac < 0.67) {
+    return { rel_kind: "between", rel_a: behind.exit_name, rel_b: ahead.exit_name, rel_m: null, rel_km };
+  }
+  return dBehind < dAhead
+    ? { rel_kind: "past", rel_a: behind.exit_name, rel_b: null, rel_m: Math.round(dBehind), rel_km }
+    : { rel_kind: "before", rel_a: ahead.exit_name, rel_b: null, rel_m: Math.round(dAhead), rel_km };
+};
+
+/** Metres, or kilometres once that reads better. Matches the queue card. */
+const fmtM = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
 
 const sinceLabel = (iso: string) => {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -309,89 +427,6 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
        whether an exit IS congested is about the ground and the queue's body
        counts as much as its start. */
     const queuePins: { at: [number, number]; line: [number, number][]; level: number }[] = [];
-
-    /* Where a queue begins, relative to the toll plazas either side of it.
-
-       "Starts 340 m from San Simon" was true and not much use: it never said
-       which side, so the reader could not tell whether the queue is on the
-       approach to the plaza or already past it -- which is the difference
-       between joining the back of it before the toll and meeting it after.
-
-       Measured against the exits by latitude. The corridor runs
-       north-north-west for its whole length and the twenty exits are strictly
-       increasing in latitude with km-post, checked, so latitude orders the
-       corridor exactly and needs no projection.
-
-       A and B are named in TRAVEL order: A is the plaza this traffic has
-       already passed, B the one it is coming to. That is what lets the words
-       be "past" and "before" rather than "north of" and "south of", which a
-       driver would have to translate. */
-    const CORRIDOR_BY_KM = [...FALLBACK_EXITS].sort((a, b) => a.km - b.km);
-    const M_LON_C = 111320 * Math.cos((15 * Math.PI) / 180);
-    const M_LAT_C = 110574;
-    const groundM = (a: [number, number], b: [number, number]) =>
-      Math.hypot((a[0] - b[0]) * M_LON_C, (a[1] - b[1]) * M_LAT_C);
-
-    type QueueWhere = {
-      rel_kind: "at" | "past" | "before" | "between";
-      rel_a: string | null;
-      rel_b: string | null;
-      rel_m: number | null;
-      /* The km post where the queue begins, so the card can name the marker a
-         driver would actually pass. Interpolated between the two plazas either
-         side by how far the point is from each: km differences along this
-         corridor ARE distances, so the split is the same in both units. */
-      rel_km: number | null;
-    };
-
-    const queueWhere = (upstream: [number, number], dir: "NB" | "SB"): QueueWhere | null => {
-      if (CORRIDOR_BY_KM.length < 2) return null;
-      const lat = upstream[1];
-      // The pair of exits this point sits between, south first.
-      let i = 0;
-      while (i < CORRIDOR_BY_KM.length - 2 && CORRIDOR_BY_KM[i + 1].latitude <= lat) i++;
-      const south = CORRIDOR_BY_KM[i];
-      const north = CORRIDOR_BY_KM[i + 1];
-
-      // Travel order: northbound passes the southern one first.
-      const behind = dir === "NB" ? south : north;
-      const ahead = dir === "NB" ? north : south;
-      const dBehind = groundM(upstream, [behind.longitude, behind.latitude]);
-      const dAhead = groundM(upstream, [ahead.longitude, ahead.latitude]);
-
-      const dSouth = groundM(upstream, [south.longitude, south.latitude]);
-      const dNorth = groundM(upstream, [north.longitude, north.latitude]);
-      const along = dSouth + dNorth;
-      const rel_km = along > 0 ? south.km + (north.km - south.km) * (dSouth / along) : south.km;
-
-      const nearest = dBehind <= dAhead ? behind : ahead;
-      const nearestM = Math.min(dBehind, dAhead);
-      /* Close enough to call it the plaza itself.
-
-         This was 250 m, on the reasoning that an interchange is a few hundred
-         metres of ramps. Too generous: it swallowed the very distinction the
-         line exists to draw. A southbound queue at Bocaue began 214 m north of
-         the plaza -- two hundred metres of stopped traffic that a driver meets
-         BEFORE the toll -- and the card called it "at Bocaue Interchange",
-         which tells that driver nothing about where to expect it.
-
-         Eighty metres is about the toll booths themselves, so "at" now means
-         at, and anything beyond gets the side it is on. */
-      if (nearestM < 80) {
-        return { rel_kind: "at", rel_a: nearest.exit_name, rel_b: null, rel_m: null, rel_km };
-      }
-      /* Neither end of the stretch is close: the queue begins out in the
-         middle of it, and naming one plaza would put it nearer that plaza than
-         it is. */
-      const span = dBehind + dAhead;
-      const frac = span > 0 ? dBehind / span : 0.5;
-      if (frac > 0.33 && frac < 0.67) {
-        return { rel_kind: "between", rel_a: behind.exit_name, rel_b: ahead.exit_name, rel_m: null, rel_km };
-      }
-      return dBehind < dAhead
-        ? { rel_kind: "past", rel_a: behind.exit_name, rel_b: null, rel_m: Math.round(dBehind), rel_km }
-        : { rel_kind: "before", rel_a: ahead.exit_name, rel_b: null, rel_m: Math.round(dAhead), rel_km };
-    };
 
     /* What the exit PLATES are coloured from, which is not the same thing on
        both maps.
@@ -2450,17 +2485,66 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
                 <div className="wz-rd-wide">
                   <dt>Nearest exit</dt>
                   <dd>
-                    {selectedReport.nearest_exit}
-                    {selectedReport.exit_distance_m != null && (
-                      <span className="wz-rd-note">
-                        {selectedReport.exit_distance_m < 1000
-                          ? ` ${selectedReport.exit_distance_m} m away`
-                          : ` ${(selectedReport.exit_distance_m / 1000).toFixed(1)} km away`}
-                      </span>
-                    )}
+                    {/* Which SIDE of the plaza, not just how far from it. A
+                        distance alone leaves the reader to guess whether they
+                        meet this before the toll or after, which is the thing
+                        they are looking at the card to find out. Same wording
+                        and the same measurement as the queue card. */}
+                    {(() => {
+                      const { dir } = directionOfReport(selectedReport.street, selectedReport.heading);
+                      const at =
+                        selectedReport.lon != null && selectedReport.lat != null
+                          ? ([selectedReport.lon, selectedReport.lat] as [number, number])
+                          : null;
+                      const w = dir && at ? queueWhere(at, dir) : null;
+                      const k = w?.rel_kind;
+                      const a = w?.rel_a;
+                      const b = w?.rel_b;
+                      const m = w?.rel_m;
+                      if (k === "at" && a) return `At ${plazaLabel(a)}`;
+                      if (k === "past" && a && m != null) return `${fmtM(m)} past ${plazaLabel(a)}`;
+                      if (k === "before" && a && m != null) return `${fmtM(m)} before ${plazaLabel(a)}`;
+                      if (k === "between" && a && b) {
+                        return `Midway between ${plazaLabel(a)} and ${plazaLabel(b)}`;
+                      }
+                      return (
+                        <>
+                          {selectedReport.nearest_exit}
+                          {selectedReport.exit_distance_m != null && (
+                            <span className="wz-rd-note">
+                              {selectedReport.exit_distance_m < 1000
+                                ? ` ${selectedReport.exit_distance_m} m away`
+                                : ` ${(selectedReport.exit_distance_m / 1000).toFixed(1)} km away`}
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
                   </dd>
                 </div>
               )}
+              {(() => {
+                /* Worked out here rather than carried on the record, so a
+                   report opened from the alerts list says the same thing as one
+                   clicked on the map -- the list hands over its own row and
+                   knows nothing about the corridor. */
+                const { dir, source } = directionOfReport(selectedReport.street, selectedReport.heading);
+                if (!dir) return null;
+                return (
+                  /* Full width: "Southbound" plus where it was read from does
+                     not fit a third of the card, and wrapped it collided with
+                     the row beneath. */
+                  <div className="wz-rd-wide">
+                    <dt>Direction</dt>
+                    <dd>
+                      {dir === "NB" ? "Northbound" : "Southbound"}
+                      <span className="wz-rd-note">
+                        {source === "street" ? " from road name" : " from heading"}
+                      </span>
+                    </dd>
+                  </div>
+                );
+              })()}
               {selectedReport.heading != null && (
                 <div><dt>Heading</dt><dd>{headingLabel(selectedReport.heading)}</dd></div>
               )}
