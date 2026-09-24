@@ -15,8 +15,6 @@ import PredictiveIncidentChart from "../../../components/dashboard/PredictiveInc
 import PredictiveCorridorChart from "../../../components/dashboard/PredictiveCorridorChart";
 import IncidentSeverityModels from "../../../components/dashboard/IncidentSeverityModels";
 import SecondaryIncidentRiskPanel from "../../../components/dashboard/SecondaryIncidentRiskPanel";
-import CorridorRiskModelsPanel from "../../../components/dashboard/CorridorRiskModelsPanel";
-import HighIncidentDayRiskPanel from "../../../components/dashboard/HighIncidentDayRiskPanel";
 import PrescriptiveDeploymentPanel from "../../../components/dashboard/PrescriptiveDeploymentPanel";
 import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import SecondaryRiskMitigationPanel from "../../../components/dashboard/SecondaryRiskMitigationPanel";
@@ -869,16 +867,6 @@ export default function IncidentPage() {
         {activeTab === "Predictive" && (
           <div className={styles.spanFull}>
             <IncidentSeverityModels />
-          </div>
-        )}
-        {activeTab === "Predictive" && (
-          <div className={styles.spanFull}>
-            <CorridorRiskModelsPanel />
-          </div>
-        )}
-        {activeTab === "Predictive" && (
-          <div className={styles.spanFull}>
-            <HighIncidentDayRiskPanel />
           </div>
         )}
         {activeTab === "Prescriptive" && (
