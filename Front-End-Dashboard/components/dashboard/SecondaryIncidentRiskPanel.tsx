@@ -30,9 +30,17 @@ type SecondaryRiskByKmSegment = { label: string; kmStart: number; kmEnd: number;
 
 type SeverityData = {
   severityBreakdown: SeverityBreakdownRow[];
+  // Mean of each row's Cox PH predict_median -- tracks the (heavily
+  // right-skewed) accident population's own MEDIAN clearance time, not its
+  // mean. See meanPredictedClearanceMin for the figure comparable to the
+  // Descriptive tab's mean MTTC.
   avgPredictedClearanceMin: number | null;
+  meanPredictedClearanceMin: number | null;
   avgSecondaryRisk: number | null;
   secondaryRiskByExit: SecondaryRiskByExit[];
+  // Exits with no held-out incident to score (see the service's own note) — named
+  // in the panel so "18 exits" is never a silent gap in a 20-exit corridor.
+  exitsWithoutData?: string[];
   secondaryRiskByKmSegment: SecondaryRiskByKmSegment[];
   trainedAt: string | null;
   metadata: Metadata | null;
@@ -104,6 +112,7 @@ export default function SecondaryIncidentRiskPanel() {
     n: x.n, avgRisk: x.avgRisk, actualSecondaryCount: x.actualSecondaryCount,
   }));
   const allRows = view === "km" ? kmRows : exitRows;
+  const missingExits = data.exitsWithoutData ?? [];
 
   // Top corridors only, not all of them — cut by evidence, not by a round
   // number. Sorted by n descending, kept until the running total crosses
@@ -297,6 +306,12 @@ export default function SecondaryIncidentRiskPanel() {
             held-out incidents — enough evidence to rank with some confidence. Even within this set n still varies,
             so thin bars are less certain than they look; the rest are listed, not dropped, below.
           </p>
+          {view === "exit" && missingExits.length > 0 && (
+            <p style={{ color: "#94a3b8", fontSize: "0.72rem", margin: "-4px 0 10px 0" }}>
+              Showing {allRows.length} of {allRows.length + missingExits.length} exits — {missingExits.join(" and ")}{" "}
+              {missingExits.length > 1 ? "have" : "has"} no incident data to score, so {missingExits.length > 1 ? "they are" : "it is"} not listed.
+            </p>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
             {topRows.map((row, i) => renderRow(row, i + 1))}
           </div>
@@ -378,13 +393,34 @@ export default function SecondaryIncidentRiskPanel() {
       </div>
 
       <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "12px" }}>
-        <h4 style={{ margin: "0 0 8px 0", fontSize: "0.85rem", color: "#0f172a", fontWeight: 700 }}>Predicted clearance time</h4>
-        <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#0f172a" }}>
-          {data.avgPredictedClearanceMin != null ? `${fmtNum(data.avgPredictedClearanceMin, 1)} min avg` : "—"}
+        <h4 style={{ margin: "0 0 2px 0", fontSize: "0.85rem", color: "#0f172a", fontWeight: 700 }}>
+          Predicted clearance time
+          <InfoTooltip text="Cox PH survival model, trained and scored on accidents only (silver.nlex_accident_events_clean) -- it never sees breakdown_data. Compare against the Descriptive tab's accident-only clearance figure, not its blended accident+breakdown MTTC." />
+        </h4>
+        <p style={{ color: "#94a3b8", fontSize: "0.7rem", margin: "0 0 8px 0" }}>Accident-only — excludes breakdowns</p>
+        <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#0f172a" }}>
+              {data.avgPredictedClearanceMin != null ? `${fmtNum(data.avgPredictedClearanceMin, 1)} min` : "—"}
+            </div>
+            <div style={{ fontSize: "0.66rem", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+              Median-based
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#0f172a" }}>
+              {data.meanPredictedClearanceMin != null ? `${fmtNum(data.meanPredictedClearanceMin, 1)} min` : "—"}
+            </div>
+            <div style={{ fontSize: "0.66rem", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+              Mean-based
+            </div>
+          </div>
         </div>
-        <p style={{ color: "#94a3b8", fontSize: "0.72rem", margin: "4px 0 0 0" }}>
+        <p style={{ color: "#94a3b8", fontSize: "0.72rem", margin: "8px 0 0 0" }}>
           Cox PH concordance {meta ? fmtNum(meta.cox_ph.concordance_index, 3) : "—"}
           {meta?.cox_ph.mae_minutes != null ? ` · MAE ${fmtNum(meta.cox_ph.mae_minutes, 1)} min` : ""} on held-out incidents.
+          The two figures diverge because clearance time is heavily right-skewed — most accidents clear in minutes, a minority take hours,
+          which pulls the mean well above the median.
         </p>
       </div>
     </article>

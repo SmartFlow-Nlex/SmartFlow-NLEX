@@ -74,6 +74,24 @@ from xgboost import XGBRegressor
 # leaves MAE flat (6.78 -> 6.11) and improves WMAPE (28.6% -> 21.1%), so this
 # buys a trustworthy estimate rather than a flattering one.
 VALIDATION_DAYS = 90
+# Days left out of SCORING — never out of the series. The day stays in
+# ml_daily_actuals as the 0 the source implies (so the chart shows exactly what
+# silver holds), it is not imputed, and it still feeds the lag/rolling features of
+# later days. It only stops counting toward MAE/RMSE/R2/MASE/WMAPE, because one
+# missing-data day was doing a third of the squared error: on the 2026-04-02..
+# 2026-06-30 holdout it moved the champion's RMSE from ~18.1 to 21.6. Each entry is
+# written to metadata.evaluation.excluded_from_scoring so a reader of the stored
+# metrics can see what was dropped, why, and how many days were actually scored.
+# The dashboard's live accuracy table reads that same list (incident.service.ts),
+# so the trainer and the UI cannot disagree about which days were scored.
+EVAL_EXCLUDED_DAYS: dict[str, str] = {
+    "2026-04-19": (
+        "Suspected data gap, not a real zero: silver.nlex_accident_events_clean and "
+        "silver.nlex_breakdown_events_clean both hold no rows for this ordinary Sunday, "
+        "while every other day since 2022-01-01 has events. Excluded from evaluation; "
+        "the value was not imputed."
+    ),
+}
 # 28 so the dashboard's Future control has a full month to trim: its presets are
 # 1 wk / 2 wk / 1 mo, and a preset wider than what this writes renders disabled.
 #
@@ -103,8 +121,9 @@ YOY_LAG = 364  # 52 weeks — keeps day-of-week aligned across the year boundary
 # An incident needs a vehicle to happen to, so the count is partly a function of
 # how many vehicles there were — the rest of the feature set describes *when* a
 # day is, but nothing described *how busy* it was. Measured on the joined series
-# (2,398 days, 2020-01-01..2026-07-25): Pearson r = +0.720 against daily
-# incidents, and the relationship is monotonic across volume quintiles —
+# (2,398 days, 2020-01-01..2026-07-25 — a since-changed state of the table; on
+# what it holds now, 2022-01-01..2025-12-31, r = +0.469): Pearson r = +0.720
+# against daily incidents, and the relationship is monotonic across volume quintiles —
 # 16.2 incidents/day in the lowest fifth rising to 36.6 in the highest. Volume
 # alone regresses to R2 = 0.518, against 0.0016 for rainfall.
 #
@@ -161,23 +180,78 @@ HOLIDAY_DATES: set = set()
 VOLUME_BY_DATE: dict = {}
 MODEL_NAMES = ["XGBoost", "RandomForest", "Poisson_GLM", "NegBinomial_GLM", "SARIMAX", "LSTM", "GRU"]
 
-# Daily incident counts from the three operations logs, matching INCIDENTS_CTE in
-# src/services/incident.service.ts so the forecast counts the same incidents the
-# rest of the incident dashboard shows. `date` is TEXT in two formats.
-_D = "CASE WHEN date LIKE '%/%' THEN to_date(date, 'MM/DD/YYYY') ELSE date::date END"
-DAILY_COUNTS_SQL = f"""
+# Daily incident counts from the client's own accident/breakdown event
+# exports, matching EVENTS_CTE in src/services/incident.service.ts so this
+# forecast counts the same incidents the descriptive dashboard and the
+# severity/clearance models (train_incident_severity_models.py) now do.
+#
+# Migrated off nlex_road_crashes/nlex_motorcycle_crashes (views over silver.
+# nlex_incidents_clean/bronze.nlex_incidents, 9,718 rows combined — see
+# scripts/medallion/07-repoint-views.sql) and nlex_stalled_vehicles (its own
+# separate, never-deduplicated legacy table, 54,990 rows) — this pipeline was
+# the one piece of the incident stack the accident_data/breakdown_data
+# rewrite hadn't reached yet, so its published accuracy metrics were being
+# measured against a smaller, older population (~64,708 rows total through
+# the old three-table source) than the one the rest of the dashboard already
+# reports against (~176,819 accident+breakdown events — 21,428 + 155,391). No
+# _D date-format branch needed here, unlike the old source: both new tables'
+# timestamp columns are already TIMESTAMP, not TEXT in two formats.
+DAILY_COUNTS_SQL = """
     WITH all_incidents AS (
-        SELECT {_D} AS d FROM nlex_road_crashes        WHERE date IS NOT NULL
+        SELECT event_start_date::date AS d FROM silver.nlex_accident_events_clean
+        WHERE event_start_date IS NOT NULL
         UNION ALL
-        SELECT {_D} AS d FROM nlex_motorcycle_crashes  WHERE date IS NOT NULL
-        UNION ALL
-        SELECT {_D} AS d FROM nlex_stalled_vehicles    WHERE date IS NOT NULL
+        SELECT event_encoded_date::date AS d FROM silver.nlex_breakdown_events_clean
+        WHERE event_encoded_date IS NOT NULL
     )
     SELECT d, COUNT(*)::float AS total
     FROM all_incidents
     GROUP BY 1
     ORDER BY 1
 """
+
+# --series accident: the same forecast, fitted on accidents alone. Added
+# because blending hurts the minority series: measured on the same 90-day
+# holdout, an accident-only model reaches R2 0.38 (MAE 5.3), but the accident
+# share read out of the blended fit only reaches R2 0.12 (MAE 6.3) — accidents
+# are ~12% of daily volume, so a fit optimised for the combined count is
+# optimised for breakdowns. Breakdowns showed no such gain from their own
+# model (blended-implied R2 0.30 vs 0.26 dedicated), so there is no
+# breakdown series: the dashboard derives it as blended total - accident.
+#
+# Re-measured 2026-09-21 on the current volume-free setup (holdout 2026-04-02..
+# 2026-06-30, 2026-04-19 unscored; the 0.38 / 0.12 figures above were volume-aware
+# on 2025-10-03..2025-12-31 and reproduce exactly from the pre-fix backups —
+# accident-only R2 0.397 / MAE 5.43 vs blended champion x train accident share
+# R2 0.115 / MAE 6.29). Now: accident-only Random Forest R2 0.159 / MAE 3.70 vs
+# blended champion x share R2 -0.423 / MAE 5.02. The accident-only forecast beats
+# the blended read-out by 1.32 incidents/day of MAE (paired 7-day-block bootstrap
+# 95% CI +0.77..+2.14), so a separate model still beats deriving accidents from the
+# blended fit — but the blended read-out is now worse than a constant (-1.13,
+# CI -1.73..-0.65 vs the training mean) and the dedicated model is NOT
+# distinguishable from that constant (+0.19, CI -0.24..+0.78): without volume there
+# is little accident signal left to recover. Keep the series; do not read its
+# forecast as skilled until volume returns.
+ACCIDENT_DAILY_COUNTS_SQL = """
+    SELECT event_start_date::date AS d, COUNT(*)::float AS total
+    FROM silver.nlex_accident_events_clean
+    WHERE event_start_date IS NOT NULL
+    GROUP BY 1
+    ORDER BY 1
+"""
+
+# Output-table suffix: "" for the blended series (the original tables, which
+# every existing reader uses), "_accident" for --series accident so it writes
+# ALONGSIDE them rather than over them.
+TABLE_SUFFIX = ""
+SERIES_LABEL = "blended"
+
+
+def _t(sql: str) -> str:
+    """Point a statement's ml_* table names at the active series' tables."""
+    for name in ("ml_daily_actuals", "ml_predictive_incidents", "ml_training_metadata"):
+        sql = sql.replace(name, name + TABLE_SUFFIX)
+    return sql
 
 # Local-day rainfall total, bucketed the same way src/services/incident.service.ts
 # buckets hourly_weather for the descriptive dashboard's wet/dry split (UTC+8).
@@ -190,8 +264,15 @@ DAILY_RAIN_SQL = """
 
 # Observed daily vehicle volume. Read from gold.ml_predictive_volume rather than
 # gold.daily_traffic_volume so history and forecast come from one table on one
-# scale — the two series correlate at 0.9998 but differ by a constant factor of
-# ~4.4, and mixing them would put a step change in the middle of the feature.
+# scale. The original justification here — that the two "correlate at 0.9998 but
+# differ by a constant factor of ~4.4" — does NOT hold for the tables as they
+# stand (checked 2026-09-21, 2022-01-01..2025-12-31): daily correlation is +0.04
+# and the ratio swings 2.7x..16x; only the monthly means sit near 4.4x apart.
+# They are different measurements. actual_volume is exactly the daily sum of
+# plaza Entries (nlex_traffic_volume, type='Entries', vehicle_class='Total';
+# r = 1.0000, ratio 1.0000 on all 1,461 days) and tracks daily incidents at
+# r = +0.47, whereas gold.daily_traffic_volume tracks them at +0.17 — so it is
+# NOT a substitute for extending the series past where Entries data ends.
 #
 # split_label = '80_20': the traffic module now stores each date TWICE in this
 # table (an '80_20' row and a '90_10' row, one per train/test split protocol
@@ -292,10 +373,16 @@ def load_daily_rain(conn) -> pd.DataFrame:
 
 
 def load_daily_volume(conn) -> pd.DataFrame:
-    """Observed daily vehicle volume, inner-joined onto the incident series in
-    main(). Coverage is exact — 2,398 volume days against 2,398 incident days
-    over 2020-01-01..2026-07-25, no gaps and no non-positive readings — so this
-    costs no training rows and needs no imputation."""
+    """Observed daily vehicle volume (plaza Entries, all classes), left-joined onto
+    the incident series in main() only when it covers every incident day.
+
+    Coverage is NOT guaranteed to match the incident tables and has diverged: as
+    of 2026-09-21 this is 2022-01-01..2025-12-31 (1,461 days) — the last day
+    gold.fact_traffic_hourly holds — against incident data through 2026-06-30.
+    main() handles that by dropping the volume features for the run rather than
+    truncating the incident series or imputing volume; see the comment there. An
+    earlier version of this docstring claimed exact coverage (2,398 days over
+    2020-01-01..2026-07-25); that described a previous state of the table."""
     df = pd.read_sql(DAILY_VOLUME_SQL, conn)
     df["d"] = pd.to_datetime(df["d"])
     return df
@@ -474,6 +561,42 @@ def evaluation_folds(n_rows: int, protocol: str) -> list[tuple[int, int]]:
     return holdout_fold(n_rows) if protocol == "holdout" else walk_forward_folds(n_rows)
 
 
+def scoring_mask(dates) -> np.ndarray:
+    """True for each date that counts toward the metrics, False for a date listed
+    in EVAL_EXCLUDED_DAYS. Applied to y_true / y_pred / y_naive together so every
+    metric — including MASE's naive denominator and R2's mean — is computed over
+    the same days."""
+    excluded = {pd.Timestamp(d).date() for d in EVAL_EXCLUDED_DAYS}
+    return np.array([pd.Timestamp(d).date() not in excluded for d in dates], dtype=bool)
+
+
+def excluded_days_in_scored_windows(feat: pd.DataFrame, protocol: str, daily: pd.DataFrame) -> list[dict]:
+    """The EVAL_EXCLUDED_DAYS that actually fall inside a scored window of THIS
+    run, as audit records for metadata. A listed day outside every test window
+    (e.g. a different --holdout-days) was not excluded from anything, so it is not
+    reported as if it were. observed_total / next_lowest_total are read from the
+    series being trained, so the record is correct for the blended and the
+    accident-only run alike."""
+    scored = np.zeros(len(feat), dtype=bool)
+    for a, b in evaluation_folds(len(feat), protocol):
+        scored[a:b] = True
+    in_window = {pd.Timestamp(d).date() for d in feat["d"][scored]}
+    out = []
+    for day, reason in EVAL_EXCLUDED_DAYS.items():
+        d = pd.Timestamp(day)
+        if d.date() not in in_window:
+            continue
+        rest = daily.loc[daily["d"] != d, "total"]
+        observed = daily.loc[daily["d"] == d, "total"]
+        out.append({
+            "date": day,
+            "reason": reason,
+            "observed_total": int(observed.iloc[0]) if len(observed) else None,
+            "next_lowest_total": int(rest.min()) if len(rest) else None,
+        })
+    return out
+
+
 def mase_of(y_true: np.ndarray, y_pred: np.ndarray, y_naive: np.ndarray) -> float | None:
     naive_mae = mean_absolute_error(y_true, y_naive)
     if naive_mae <= 0:
@@ -483,16 +606,39 @@ def mase_of(y_true: np.ndarray, y_pred: np.ndarray, y_naive: np.ndarray) -> floa
 
 # Gap above which train/validation divergence is called overfitting. Matches the
 # threshold implied by the project's earlier reporting, where a 0.0932 gap read
-# JUST RIGHT and 0.1360 read OVERFITTING.
+# JUST RIGHT and 0.1360 read OVERFITTING. Left as-is (see the module-level CV=32%
+# note near VALIDATION_DAYS for why even this is a soft call on a noisy series) --
+# the taxonomy bug this replaces was in what train_r2 alone could and couldn't
+# gate, not in this number itself.
 OVERFIT_GAP = 0.10
-UNDERFIT_TRAIN_R2 = 0.05
+# Raised from 0.05. The old floor only caught a model that learned essentially
+# nothing (R2 near zero), so a model with a genuinely weak-but-nonzero fit --
+# LSTM measured at Train_R2=0.118, GRU at 0.199, on the 2025-10-03..2025-12-31
+# holdout -- fell through to the gap check below and got labeled OVERFITTING
+# purely because its (even lower) Val_R2 produced a >0.10 gap. That is
+# backwards: "overfitting" implies a strong fit that didn't transfer, and
+# these never fit the TRAINING data well to begin with -- that is
+# underfitting, full stop, regardless of the gap. 0.25 sits above both RNNs'
+# worst observed Train_R2 (0.199) and below every GLM/tree/SARIMAX
+# candidate's (>=0.406 in the same run), so it separates "didn't learn much"
+# from "learned the training set" cleanly on this series without hardcoding
+# model names.
+UNDERFIT_TRAIN_R2 = 0.25
+# Second gate on the overfitting branch, not just the gap: a model can only
+# be diagnosed OVERFITTING if it fit the training data reasonably well to
+# start with. Without this, a model sitting just above UNDERFIT_TRAIN_R2
+# with a wide gap could be called both "barely fit" and "overfitting" at
+# once, which is incoherent -- a fit that never really landed on the
+# training data isn't "fitting noise", it's failing to fit, same conclusion
+# as the underfit branch above.
+OVERFIT_MIN_TRAIN_R2 = 0.30
 
 
 def diagnose(train_r2: float, val_r2: float) -> str:
     gap = train_r2 - val_r2
     if train_r2 < UNDERFIT_TRAIN_R2:
         return "UNDERFITTING"
-    if gap > OVERFIT_GAP:
+    if gap > OVERFIT_GAP and train_r2 >= OVERFIT_MIN_TRAIN_R2:
         return "OVERFITTING"
     return "JUST RIGHT"
 
@@ -502,8 +648,10 @@ def full_metrics(
     train_true: np.ndarray, train_pred: np.ndarray, n_features: int,
 ) -> dict:
     """Every figure the project's model-comparison report carries. Percentage
-    errors guard against zero actuals; the daily incident series never hits 0 in
-    practice (min = 2), but a filled calendar gap could."""
+    errors guard against zero actuals. The daily incident series has exactly one
+    zero (2026-04-19, a suspected data gap that main() zero-fills and
+    EVAL_EXCLUDED_DAYS keeps out of scoring); every other day is >= 36 — but a
+    filled calendar gap can always reintroduce one."""
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
     err = y_true - y_pred
@@ -668,7 +816,8 @@ def run_evaluation(feat: pd.DataFrame, protocol: str) -> dict[str, list[dict]]:
             try:
                 print(f"  {name}...", end=" ", flush=True)
                 train_pred, val_pred = fitter(train_df, val_df)
-                m = full_metrics(val_df["total"].values, val_pred, y_val_naive,
+                keep = scoring_mask(val_df["d"])  # EVAL_EXCLUDED_DAYS: scored on the rest
+                m = full_metrics(val_df["total"].values[keep], np.asarray(val_pred)[keep], y_val_naive[keep],
                                  train_df["total"].values, train_pred, n_feat)
                 per_model_fold_metrics[name].append(m)
                 print(f"MAE={m['MAE']:.3f} Val_R2={m['R2']:.3f} {m['Diagnosis']}")
@@ -682,9 +831,11 @@ def run_evaluation(feat: pd.DataFrame, protocol: str) -> dict[str, list[dict]]:
                 train_true, train_pred, val_pred, _, _ = _cv_rnn(kind, feat, train_end, test_end)
                 val_true = feat["total"].values[max(train_end, SEQ_LEN):test_end]
                 val_naive = feat["lag_7"].values[max(train_end, SEQ_LEN):test_end]
+                keep = scoring_mask(feat["d"].values[max(train_end, SEQ_LEN):test_end])
                 # RNNs are univariate on the sequence, so only the lookback counts
                 # as a parameter for the adjusted-R2 penalty.
-                m = full_metrics(val_true, val_pred, val_naive, train_true, train_pred, SEQ_LEN)
+                m = full_metrics(val_true[keep], np.asarray(val_pred)[keep], val_naive[keep],
+                                 train_true, train_pred, SEQ_LEN)
                 per_model_fold_metrics[kind].append(m)
                 print(f"MAE={m['MAE']:.3f} Val_R2={m['R2']:.3f} {m['Diagnosis']}")
             except Exception as e:
@@ -765,11 +916,17 @@ def format_report(comparison: list[dict], champion: str, degraded: bool, evaluat
     L.append("  (target: incident_count)")
     L.append("=" * 80)
     L.append("")
-    L.append(f"  Source        : nlex_road_crashes + nlex_motorcycle_crashes + nlex_stalled_vehicles")
+    L.append("  Source        : " + ("silver.nlex_accident_events_clean (accident-only series)" if SERIES_LABEL == "accident"
+                                          else "silver.nlex_accident_events_clean + silver.nlex_breakdown_events_clean"))
     L.append(f"  Protocol      : {evaluation['protocol']} ({evaluation['holdout_days']}-day window)")
     L.append(f"  Holdout window: {evaluation['holdout_window'][0]} .. {evaluation['holdout_window'][1]}")
     L.append(f"  Train rows    : {evaluation['train_rows']}")
     L.append(f"  Selected by   : {evaluation['selected_by']}")
+    for ex in evaluation.get("excluded_from_scoring", []):
+        L.append(f"  Excluded      : {ex['date']} (observed {ex['observed_total']}, next-lowest day "
+                 f"{ex['next_lowest_total']}) — suspected data gap, left out of every metric below")
+    if evaluation.get("scored_days") is not None:
+        L.append(f"  Scored days   : {evaluation['scored_days']} of {evaluation['holdout_days']}")
     L.append("")
 
     # Rank by whichever criterion actually picked the champion. Ranking by R2
@@ -1057,7 +1214,7 @@ def build_all_final_predictions(feat: pd.DataFrame, rain_by_date: dict) -> tuple
 def ensure_schema(conn, commit: bool = True) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            """
+            _t("""
             CREATE TABLE IF NOT EXISTS ml_daily_actuals (
                 d DATE PRIMARY KEY,
                 total DOUBLE PRECISION NOT NULL
@@ -1131,7 +1288,7 @@ def ensure_schema(conn, commit: bool = True) -> None:
             -- importance.
             ALTER TABLE ml_predictive_incidents
                 ADD COLUMN IF NOT EXISTS rainfall_mm DOUBLE PRECISION;
-            """
+            """)
         )
     if commit:
         conn.commit()
@@ -1204,12 +1361,12 @@ def write_to_db(conn, daily: pd.DataFrame, feat: pd.DataFrame, champion: str,
         # nothing left to race against. Old dates that legitimately fall out
         # of range (the source data's start date moving forward) are swept
         # up by the WHERE NOT IN below rather than a blanket DELETE first.
-        cur.execute("SELECT d FROM ml_daily_actuals")
+        cur.execute(_t("SELECT d FROM ml_daily_actuals"))
         existing_dates = {row[0] for row in cur.fetchall()}
         new_dates = {row.d.date() for row in daily.itertuples()}
         stale_dates = existing_dates - new_dates
         if stale_dates:
-            cur.execute("DELETE FROM ml_daily_actuals WHERE d = ANY(%s)", (list(stale_dates),))
+            cur.execute(_t("DELETE FROM ml_daily_actuals WHERE d = ANY(%s)"), (list(stale_dates),))
         # Deduplicated defensively, keeping the LAST occurrence of any
         # repeated date: `daily` is built by reindexing onto a unique
         # DatetimeIndex so it should never carry a duplicate `d`, but a
@@ -1221,12 +1378,12 @@ def write_to_db(conn, daily: pd.DataFrame, feat: pd.DataFrame, champion: str,
             print(f"  WARNING: daily had {len(daily)} rows but only {len(actuals_by_date)} distinct dates — deduplicated (kept last)")
         psycopg2.extras.execute_values(
             cur,
-            "INSERT INTO ml_daily_actuals (d, total) VALUES %s "
-            "ON CONFLICT (d) DO UPDATE SET total = EXCLUDED.total",
+            _t("INSERT INTO ml_daily_actuals (d, total) VALUES %s "
+               "ON CONFLICT (d) DO UPDATE SET total = EXCLUDED.total"),
             list(actuals_by_date.items()),
         )
 
-        cur.execute("DELETE FROM ml_predictive_incidents WHERE forecast_date < %s OR forecast_date > %s",
+        cur.execute(_t("DELETE FROM ml_predictive_incidents WHERE forecast_date < %s OR forecast_date > %s"),
                      (min(val_dates + future_dates), max(val_dates + future_dates)))
         pred_rows = [row_for(d, "validation") for d in val_dates]
         pred_rows += [row_for(d, "future") for d in future_dates]
@@ -1236,16 +1393,16 @@ def write_to_db(conn, daily: pd.DataFrame, feat: pd.DataFrame, champion: str,
         )
         psycopg2.extras.execute_values(
             cur,
-            "INSERT INTO ml_predictive_incidents (forecast_date, prediction_type, "
-            "predicted_incident_count, champion_model, same_day_last_year, "
-            + ", ".join(model_cols) + ", rainfall_mm, " + ", ".join(nv_cols) + ", " + ", ".join(nw_cols) + ") VALUES %s "
-            "ON CONFLICT (forecast_date, prediction_type) DO UPDATE SET "
-            + ", ".join(f"{c} = EXCLUDED.{c}" for c in update_cols),
+            _t("INSERT INTO ml_predictive_incidents (forecast_date, prediction_type, "
+               "predicted_incident_count, champion_model, same_day_last_year, "
+               + ", ".join(model_cols) + ", rainfall_mm, " + ", ".join(nv_cols) + ", " + ", ".join(nw_cols) + ") VALUES %s "
+               "ON CONFLICT (forecast_date, prediction_type) DO UPDATE SET "
+               + ", ".join(f"{c} = EXCLUDED.{c}" for c in update_cols)),
             pred_rows,
         )
 
-        cur.execute("DELETE FROM ml_training_metadata")
-        cur.execute("INSERT INTO ml_training_metadata (metadata_json) VALUES (%s)", [json.dumps(metadata)])
+        cur.execute(_t("DELETE FROM ml_training_metadata"))
+        cur.execute(_t("INSERT INTO ml_training_metadata (metadata_json) VALUES (%s)"), [json.dumps(metadata)])
     if dry:
         conn.rollback()
         print("DRY WRITE: every query ran, transaction rolled back — the shared table is unchanged")
@@ -1255,9 +1412,16 @@ def write_to_db(conn, daily: pd.DataFrame, feat: pd.DataFrame, champion: str,
 
 def main() -> None:
     global HOLIDAY_DATES, VALIDATION_DAYS, VOLUME_BY_DATE, FEATURE_COLS, EXOG_COLS
+    global DAILY_COUNTS_SQL, TABLE_SUFFIX, SERIES_LABEL
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--write-db", action="store_true", help="Also write the champion's predictions/metadata to the database")
+    parser.add_argument(
+        "--series", choices=["blended", "accident"], default="blended",
+        help="blended (default): accidents + breakdowns as one daily count, into the "
+             "original ml_* tables. accident: accidents alone, into ml_*_accident "
+             "alongside them (see ACCIDENT_DAILY_COUNTS_SQL for why).",
+    )
     parser.add_argument(
         "--dry-write", action="store_true",
         help="Run the entire write path — both model passes, the schema migration "
@@ -1315,6 +1479,10 @@ def main() -> None:
              "before volume was, so isolating it takes removing it.",
     )
     args = parser.parse_args()
+    if args.series == "accident":
+        DAILY_COUNTS_SQL = ACCIDENT_DAILY_COUNTS_SQL
+        TABLE_SUFFIX = "_accident"
+        SERIES_LABEL = "accident"
     VALIDATION_DAYS = args.holdout_days
     if args.no_volume:
         FEATURE_COLS = [c for c in FEATURE_COLS if c not in VOLUME_COLS]
@@ -1334,7 +1502,7 @@ def main() -> None:
     set_all_seeds()
     conn = get_conn()
     try:
-        print("Loading daily incident counts (road + motorcycle crashes + stalled vehicles)...")
+        print(f"Loading daily incident counts ({'accident_data only' if SERIES_LABEL == 'accident' else 'accident_data + breakdown_data'})...")
         daily = load_daily_counts(conn)
         print(f"  {len(daily)} calendar days, {int(daily['total'].sum())} total incidents")
 
@@ -1345,17 +1513,51 @@ def main() -> None:
         print(f"  rainfall joined from hourly_weather ({len(rain_daily)} days, "
               f"latest {rain_daily['d'].max().date()})")
 
+        volume_gap = None
         if not args.no_volume:
             vol_daily = load_daily_volume(conn)
-            # Inner join: a day with no volume reading has no exposure figure to
-            # reason from, and imputing one would invent the very quantity being
-            # tested. Coverage is currently exact, so this drops nothing.
-            before = len(daily)
-            daily = daily.merge(vol_daily, on="d", how="inner")
-            VOLUME_BY_DATE = dict(zip(vol_daily["d"].dt.date, vol_daily["volume"]))
-            print(f"  volume joined from gold.ml_predictive_volume ({len(vol_daily)} days, "
-                  f"latest {vol_daily['d'].max().date()}"
-                  f"{f'; {before - len(daily)} incident day(s) dropped for want of a reading' if before != len(daily) else ''})")
+            # Volume is an OPTIONAL feature, never a filter on the incident series.
+            # A day with no volume reading has no exposure figure to reason from,
+            # and imputing one would invent the very quantity being tested — and
+            # not a marginal one: log_volume and volume_ratio_7 carry ~73% of the
+            # volume-aware champion's feature importance, so a filled-in value
+            # would put a fabricated feature behind most of the fit and behind the
+            # whole validation window. So volume is used only when it covers EVERY
+            # incident day. When it does not, the run drops the volume features
+            # (exactly what --no-volume does) and trains on the incident data's own
+            # full range, instead of truncating the series to the volume table's
+            # horizon. That truncation is what an inner join here used to do,
+            # silently: the comment above it claimed coverage was exact, but the
+            # volume source (gold.fact_traffic_hourly -> nlex_traffic_volume ->
+            # gold.ml_predictive_volume) ends 2025-12-31 while the incident tables
+            # run to 2026-06-30, so 180 days / 22,826 events never reached a model.
+            covered = daily["d"].isin(vol_daily["d"])
+            if covered.all():
+                daily = daily.merge(vol_daily, on="d", how="left")
+                VOLUME_BY_DATE = dict(zip(vol_daily["d"].dt.date, vol_daily["volume"]))
+                print(f"  volume joined from gold.ml_predictive_volume ({len(vol_daily)} days, "
+                      f"latest {vol_daily['d'].max().date()}; covers all {len(daily)} incident days)")
+            else:
+                missing = daily.loc[~covered, "d"]
+                volume_gap = {
+                    "reason": "volume source does not cover every incident day; volume features dropped "
+                              "for this run rather than imputed or the incident series truncated",
+                    "volume_first_date": str(vol_daily["d"].min().date()),
+                    "volume_last_date": str(vol_daily["d"].max().date()),
+                    "incident_first_date": str(daily["d"].min().date()),
+                    "incident_last_date": str(daily["d"].max().date()),
+                    "incident_days_without_volume": int(len(missing)),
+                    "first_missing_date": str(missing.min().date()),
+                    "last_missing_date": str(missing.max().date()),
+                }
+                args.no_volume = True
+                FEATURE_COLS = [c for c in FEATURE_COLS if c not in VOLUME_COLS]
+                EXOG_COLS = [c for c in EXOG_COLS if c not in VOLUME_COLS]
+                print(f"  WARNING: volume covers {vol_daily['d'].min().date()}..{vol_daily['d'].max().date()} but the "
+                      f"incident series runs {daily['d'].min().date()}..{daily['d'].max().date()} "
+                      f"({len(missing)} incident days, {missing.min().date()}..{missing.max().date()}, have no volume reading).")
+                print("  Volume features DROPPED for this run (as --no-volume); training on the full incident range. "
+                      "The primary columns are therefore volume-free and no volume-free twin is stored.")
         else:
             print("  volume features DISABLED (--no-volume)")
 
@@ -1399,9 +1601,17 @@ def main() -> None:
                      "the traffic module in gold.ml_model_metrics. 90 days rather than 14 "
                      "because R2 is unstable on a 14-day window for this series."),
         }
+        # Days left out of scoring (EVAL_EXCLUDED_DAYS), recorded so the stored metrics
+        # are auditable: which day, why, what the series held for it, and how many
+        # days the figures above were actually computed over. Always present, empty
+        # when nothing was excluded, so a reader never has to guess.
+        excluded = excluded_days_in_scored_windows(feat, args.protocol, daily)
+        evaluation["excluded_from_scoring"] = excluded
+        if args.protocol == "holdout":
+            evaluation["scored_days"] = VALIDATION_DAYS - len(excluded)
 
         report = format_report(comparison, champion, degraded, evaluation)
-        report_path = Path(__file__).resolve().parent / "model_results.txt"
+        report_path = Path(__file__).resolve().parent / ("model_results_accident.txt" if SERIES_LABEL == "accident" else "model_results.txt")
         report_path.write_text(report, encoding="utf-8")
         print(f"Full per-model report written to {report_path}\n")
 
@@ -1463,7 +1673,26 @@ def main() -> None:
 
         metadata = {
             "champion_model": champion,
+            # Provenance for whoever next investigates a "does this number
+            # look right" report on this panel — states which source table
+            # generation trained it without requiring a re-derivation from
+            # the training script's own SQL.
+            "series": SERIES_LABEL,
+            "data_source": (
+                "silver.nlex_accident_events_clean"
+                if SERIES_LABEL == "accident"
+                else "silver.nlex_accident_events_clean + silver.nlex_breakdown_events_clean"
+            ),
             "model_comparison": comparison,
+            # Caveats on the per-model Diagnosis column above that don't fit in a
+            # single word — kept here, alongside the numbers they qualify, rather
+            # than only in code comments or a chat transcript neither of which
+            # travels with the data.
+            "diagnosis_notes": [
+                "OVERFITTING label for Poisson_GLM/NegBinomial_GLM is window-dependent "
+                "(confirmed via Spring/Summer holdout test: gap ranges 0.064-0.297 across "
+                "quarters) and should not be read as a stable model property.",
+            ],
             "metrics": {"MAE": champion_row["MAE"], "RMSE": champion_row["RMSE"],
                         "R2": champion_row["R2"], "MASE": champion_row["MASE"]},
             "feature_importance": feature_importance,
@@ -1490,8 +1719,12 @@ def main() -> None:
         }
         if degraded:
             metadata["warning"] = "No model beat the naive seasonal (MASE<=1.0) baseline; champion is a fallback pick."
+        if volume_gap:
+            # Why uses_volume is false on a run that was not started with
+            # --no-volume, so a volume-free table is never mistaken for a choice.
+            metadata["volume_gap"] = volume_gap
 
-        print("Writing ml_daily_actuals, ml_predictive_incidents, ml_training_metadata (one transaction)...")
+        print(_t("Writing ml_daily_actuals, ml_predictive_incidents, ml_training_metadata (one transaction)..."))
         conn = ensure_live_conn(conn)
         write_to_db(conn, daily, feat, champion, by_model, metadata, rain_by_date, by_model_nv,
                     by_model_nw, dry=args.dry_write and not args.write_db)

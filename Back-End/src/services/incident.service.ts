@@ -8,11 +8,18 @@ import { buildExitToExitSegments, segmentIndexForKm } from "../lib/exit-segments
 
 // ---------------------------------------------------------------------------
 // Incident analytics for the descriptive dashboard.
-// Sources: nlex_road_crashes, nlex_motorcycle_crashes, nlex_stalled_vehicles
-// (operations logs with Km-post locations), plus hourly_weather for exposure.
+// Sources: silver.nlex_accident_events_clean, silver.nlex_breakdown_events_clean
+// (the client's own operations export, replacing the earlier
+// nlex_road_crashes/nlex_motorcycle_crashes/nlex_stalled_vehicles trio per
+// scripts/medallion/10-bronze-accident-breakdown.sql's own migration note),
+// plus hourly_weather for exposure.
+//
+// The old trio is untouched and still backs getIncidentHourlyFromDb and the
+// predictive endpoint below — this migration covers only the descriptive
+// /analytics query, not those.
 // ---------------------------------------------------------------------------
 
-export type IncidentSource = "all" | "road" | "moto" | "stalled";
+export type IncidentSource = "all" | "accident" | "breakdown";
 
 export type IncidentWeather = "all" | "dry" | "wet";
 
@@ -60,6 +67,41 @@ const RESPONSE_MIN = `
 const HOUR_OF = `EXTRACT(hour FROM rt::time)::int`;
 const KM_OF = `(regexp_match(location, 'Km\\s*(\\d+)'))[1]::int`;
 
+// Client-table event union, scoped to this function only. Deliberately
+// separate from INCIDENTS_CTE above, which getIncidentHourlyFromDb and the
+// predictive endpoint still read — those haven't been migrated in this pass.
+//
+// No cause/type columns here: the causes/types queries below read
+// main_cause/sub_cause/type_of_event straight off each source table instead,
+// because the two tables' cause vocabularies don't share a domain (mechanical
+// fault vs. driver behavior) and the previous single ranked list conflated
+// them (see the earlier audit). corridor_km, not km_value: the source
+// tables' raw km_value follows the Philippine DPWH km-post convention
+// (Balintawak ~ km 12), not this dashboard's Balintawak-as-km-0 scale —
+// corridor_km (= km_value - 12.0, added in scripts/medallion/
+// 10-bronze-accident-breakdown.sql) is already on the same scale as
+// nlex_exits, so hotspot bins line up with the exit list instead of sitting
+// ~12km off it.
+const EVENTS_CTE = `
+  events AS (
+    SELECT event_start_date::date AS d,
+           EXTRACT(hour FROM event_start_date)::int AS h,
+           corridor_km, weather_condition,
+           COALESCE(number_of_injured, 0) AS inj,
+           COALESCE(number_of_fatality, 0) AS fat,
+           'accident' AS src
+    FROM silver.nlex_accident_events_clean
+    WHERE event_start_date IS NOT NULL
+    UNION ALL
+    SELECT event_encoded_date::date,
+           EXTRACT(hour FROM event_encoded_date)::int,
+           corridor_km, NULL,
+           0, 0,
+           'breakdown'
+    FROM silver.nlex_breakdown_events_clean
+    WHERE event_encoded_date IS NOT NULL
+  )`;
+
 export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilters) {
   if (!db) return null;
 
@@ -68,8 +110,13 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.data;
 
   try {
+    // Bounds span both tables — their date columns run close but aren't
+    // identical (verified: both currently max out 2026-06-30), so the window
+    // clamps against whichever side is wider.
     const bounds = await db.query(
-      `SELECT min(CASE WHEN date LIKE '%/%' THEN to_date(date, 'MM/DD/YYYY') ELSE date::date END)::text AS lo, max(CASE WHEN date LIKE '%/%' THEN to_date(date, 'MM/DD/YYYY') ELSE date::date END)::text AS hi FROM nlex_road_crashes`
+      `SELECT LEAST(a.lo, b.lo)::text AS lo, GREATEST(a.hi, b.hi)::text AS hi
+       FROM (SELECT min(event_start_date)::date AS lo, max(event_start_date)::date AS hi FROM silver.nlex_accident_events_clean) a,
+            (SELECT min(event_encoded_date)::date AS lo, max(event_encoded_date)::date AS hi FROM silver.nlex_breakdown_events_clean) b`
     );
     const minDate: string = bounds.rows[0].lo;
     const maxDate: string = bounds.rows[0].hi;
@@ -80,22 +127,27 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
       const [f, t] = filters.from <= filters.to ? [filters.from, filters.to] : [filters.to, filters.from];
       lo = f < minDate ? minDate : f;
       hi = t > maxDate ? maxDate : t;
+    } else if (filters.months === "all") {
+      lo = minDate;
+      hi = maxDate;
     } else {
-      // Month ranges anchor at the default year (2025), clamped to available data:
-      // "12 mo" opens as calendar 2025, "3 mo" as Jan-Apr 2025.
-      const anchor = "2025-01-01";
-      lo = anchor < minDate ? minDate : anchor > maxDate ? minDate : anchor;
-      hi =
-        filters.months === "all"
-          ? maxDate
-          : (
-              await db.query(`SELECT LEAST(($1::date + ($2 || ' months')::interval)::date, $3::date)::text AS hi`, [lo, filters.months, maxDate]))
-              .rows[0].hi;
+      // Trailing window counted back from the last actual day of data, not
+      // from today's wall-clock date: matches the "last ACTUAL day, not
+      // today" windowing emissions.service.ts's forecast query already uses,
+      // and avoids a window whose tail runs past the data into an empty gap.
+      hi = maxDate;
+      lo = (
+        await db.query(`SELECT GREATEST(($1::date - ($2 || ' months')::interval)::date, $3::date)::text AS lo`, [
+          hi,
+          filters.months,
+          minDate,
+        ])
+      ).rows[0].lo;
     }
 
     const src = filters.source && filters.source !== "all" ? filters.source : null;
     const wx = filters.weather && filters.weather !== "all" ? filters.weather : null;
-    // $1=lo $2=hi $3=src (nullable) $4=weather (nullable: 'wet'|'dry')
+    // $1=lo $2=hi $3=src (nullable: 'accident'|'breakdown') $4=weather (nullable: 'wet'|'dry')
     const params = [lo, hi, src, wx];
 
     // Hour-level wet/dry classification (expressway-avg rainfall > 0.3 mm), spanning
@@ -109,8 +161,12 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
         WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1::date - ($2::date - $1::date + 1) AND $2
         GROUP BY 1, 2
       )`;
-    const WEATHER_OK = `($4::text IS NULL OR (rt IS NOT NULL AND EXISTS (
-      SELECT 1 FROM wxall w WHERE w.d = incidents.d AND w.h = ${HOUR_OF} AND w.wet = ($4 = 'wet'))))`;
+    // events.d/events.h are always non-null (both source columns are real
+    // timestamps, never a possibly-blank time-of-day string like the old
+    // reported_time), so unlike the legacy WEATHER_OK there's no "rt IS NOT
+    // NULL" guard needed here.
+    const WEATHER_OK = `($4::text IS NULL OR EXISTS (
+      SELECT 1 FROM wxall w WHERE w.d = events.d AND w.h = events.h AND w.wet = ($4 = 'wet')))`;
     const WHERE = `d BETWEEN $1 AND $2 AND ($3::text IS NULL OR src = $3) AND ${WEATHER_OK}`;
 
     // Local time = UTC+8 for weather join
@@ -124,108 +180,233 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
         GROUP BY 1, 2
       )`;
 
-    const [trend, hotspot, heatmap, causes, types, weatherExposure, weatherIncidents, jamSpeedWx, kpi] =
-      await Promise.all([
-        // Daily counts by source (client rolls up to weekly/monthly)
-        db.query(
-          `WITH ${INCIDENTS_CTE}, ${WXALL_CTE}
-           SELECT d::text, COUNT(*) FILTER (WHERE src = 'road')::int AS road,
-                  COUNT(*) FILTER (WHERE src = 'moto')::int AS moto,
-                  COUNT(*) FILTER (WHERE src = 'stalled')::int AS stalled
-           FROM incidents WHERE ${WHERE} GROUP BY 1 ORDER BY 1`,
-          params
-        ),
-        // Hotspots: 5-km bins from the Km-post in the location field
-        db.query(
-          `WITH ${INCIDENTS_CTE}, ${WXALL_CTE}
-           SELECT (FLOOR(${KM_OF} / 5) * 5)::int AS km_bin, COUNT(*)::int AS total,
-                  COUNT(*) FILTER (WHERE src = 'road')::int AS road,
-                  COUNT(*) FILTER (WHERE src = 'moto')::int AS moto,
-                  COUNT(*) FILTER (WHERE src = 'stalled')::int AS stalled,
-                  SUM(inj)::int AS injuries, SUM(fat)::int AS fatalities
-           FROM incidents
-           WHERE ${WHERE} AND location ~ 'Km\\s*\\d+'
-           GROUP BY 1 ORDER BY 2 DESC`,
-          params
-        ),
-        // Hour x day-of-week frequency
-        db.query(
-          `WITH ${INCIDENTS_CTE}, ${WXALL_CTE}
-           SELECT EXTRACT(dow FROM d)::int AS dow, ${HOUR_OF} AS hour, COUNT(*)::int AS v
-           FROM incidents WHERE ${WHERE} AND rt IS NOT NULL
-           GROUP BY 1, 2 ORDER BY 1, 2`,
-          params
-        ),
-        // Top causes with severity
-        db.query(
-          `WITH ${INCIDENTS_CTE}, ${WXALL_CTE}
-           SELECT cause AS label, COUNT(*)::int AS total, SUM(inj)::int AS injuries, SUM(fat)::int AS fatalities
-           FROM incidents WHERE ${WHERE} AND cause IS NOT NULL
-           GROUP BY 1 ORDER BY 2 DESC LIMIT 12`,
-          params
-        ),
-        // Top accident types with severity (crashes only — stalled vehicles have no type)
-        db.query(
-          `WITH ${INCIDENTS_CTE}, ${WXALL_CTE}
-           SELECT itype AS label, COUNT(*)::int AS total, SUM(inj)::int AS injuries, SUM(fat)::int AS fatalities
-           FROM incidents WHERE ${WHERE} AND itype IS NOT NULL AND src <> 'stalled'
-           GROUP BY 1 ORDER BY 2 DESC LIMIT 12`,
-          params
-        ),
-        // Weather exposure: wet vs dry hours in range (expressway-wide avg rainfall)
-        db.query(
-          `WITH ${WX_CTE}
-           SELECT COUNT(*) FILTER (WHERE rain > 0.3)::int AS wet_hours,
-                  COUNT(*) FILTER (WHERE rain <= 0.3)::int AS dry_hours
-           FROM wx`,
-          [lo, hi]
-        ),
-        // Incidents on wet vs dry hours, by source
-        db.query(
-          `WITH ${INCIDENTS_CTE}, ${WX_CTE}
-           SELECT (w.rain > 0.3) AS wet, i.src, COUNT(*)::int AS n
-           FROM incidents i JOIN wx w ON w.d = i.d AND w.h = EXTRACT(hour FROM i.rt::time)::int
-           WHERE i.d BETWEEN $1 AND $2 AND ($3::text IS NULL OR i.src = $3) AND i.rt IS NOT NULL
-             AND ($4::text IS NULL OR (w.rain > 0.3) = ($4 = 'wet'))
-           GROUP BY 1, 2`,
-          params
-        ),
-        // Traffic impact: avg jam speed on wet vs dry hours
-        db.query(
-          `WITH ${WX_CTE}
-           SELECT (w.rain > 0.3) AS wet,
-                  ROUND(AVG(j.avg_speed_kmh)::numeric, 1)::float AS speed,
-                  ROUND(AVG(j.avg_jam_level)::numeric, 2)::float AS jam_level
-           FROM fact_hourly_jams j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
-           WHERE j.date_day BETWEEN $1 AND $2
-           GROUP BY 1`,
-          [lo, hi]
-        ),
-        // KPI: current vs previous period + severity + response time + rain share
-        db.query(
-          `WITH ${INCIDENTS_CTE}, ${WXALL_CTE}
-           SELECT
-             COUNT(*) FILTER (WHERE ${WHERE})::int AS cur_total,
-             COUNT(*) FILTER (WHERE d >= $1::date - ($2::date - $1::date + 1) AND d < $1::date AND ($3::text IS NULL OR src = $3) AND ${WEATHER_OK})::int AS prev_total,
-             SUM(inj) FILTER (WHERE ${WHERE})::int AS injuries,
-             SUM(fat) FILTER (WHERE ${WHERE})::int AS fatalities,
-             ROUND(AVG(${RESPONSE_MIN}) FILTER (WHERE ${WHERE} AND ${RESPONSE_MIN} BETWEEN 0 AND 120)::numeric, 1)::float AS avg_response_min,
-             COUNT(*) FILTER (WHERE ${WHERE} AND weather_condition = 'Rainy')::int AS rainy_crashes,
-             COUNT(*) FILTER (WHERE ${WHERE} AND weather_condition IS NOT NULL)::int AS weather_known
-           FROM incidents`,
-          params
-        ),
-      ]);
+    // Per-table weather-match helper for the causes/types queries below,
+    // which read straight off silver.nlex_*_events_clean rather than the
+    // shared `events` CTE.
+    const weatherOkFor = (tsExpr: string, weatherParam: string) => `
+      (${weatherParam}::text IS NULL OR EXISTS (
+        SELECT 1 FROM wxall w WHERE w.d = (${tsExpr})::date
+                                 AND w.h = EXTRACT(hour FROM ${tsExpr})::int
+                                 AND w.wet = (${weatherParam} = 'wet')))`;
 
-    const wxInc = { wet: { road: 0, moto: 0, stalled: 0 }, dry: { road: 0, moto: 0, stalled: 0 } };
+    const [
+      trend,
+      hotspot,
+      heatmap,
+      accidentCauses,
+      breakdownCauses,
+      types,
+      weatherExposure,
+      weatherIncidents,
+      jamSpeedWx,
+      kpi,
+      accidentClearance,
+      breakdownDeploy,
+    ] = await Promise.all([
+      // Daily counts by event type (client rolls up to weekly/monthly)
+      db.query(
+        `WITH ${EVENTS_CTE}, ${WXALL_CTE}
+         SELECT d::text, COUNT(*) FILTER (WHERE src = 'accident')::int AS accident,
+                COUNT(*) FILTER (WHERE src = 'breakdown')::int AS breakdown
+         FROM events WHERE ${WHERE} GROUP BY 1 ORDER BY 1`,
+        params
+      ),
+      // Hotspots: 5-km bins on corridor_km (Balintawak-relative), not the
+      // source tables' raw km_value (DPWH-relative) — both tables carry it
+      // natively, so there's no location text to regex-parse anymore.
+      db.query(
+        `WITH ${EVENTS_CTE}, ${WXALL_CTE}
+         SELECT (FLOOR(corridor_km / 5) * 5)::int AS km_bin, COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE src = 'accident')::int AS accident,
+                COUNT(*) FILTER (WHERE src = 'breakdown')::int AS breakdown,
+                SUM(inj)::int AS injuries, SUM(fat)::int AS fatalities
+         FROM events
+         WHERE ${WHERE} AND corridor_km IS NOT NULL
+         GROUP BY 1 ORDER BY 2 DESC`,
+        params
+      ),
+      // Hour x day-of-week frequency
+      db.query(
+        `WITH ${EVENTS_CTE}, ${WXALL_CTE}
+         SELECT EXTRACT(dow FROM d)::int AS dow, h AS hour, COUNT(*)::int AS v
+         FROM events WHERE ${WHERE}
+         GROUP BY 1, 2 ORDER BY 1, 2`,
+        params
+      ),
+      // Top accident causes. sub_cause is the specific label (e.g. "Driver
+      // Error"); main_cause rides along as the broader bucket (e.g. "Human
+      // Error") rather than being the group itself, since grouping by
+      // main_cause alone would collapse everything into ~4 bars.
+      db.query(
+        `WITH ${WXALL_CTE}
+         SELECT sub_cause AS label, main_cause AS "mainCause", COUNT(*)::int AS total,
+                SUM(COALESCE(number_of_injured,0))::int AS injuries,
+                SUM(COALESCE(number_of_fatality,0))::int AS fatalities
+         FROM silver.nlex_accident_events_clean e
+         WHERE e.event_start_date::date BETWEEN $1 AND $2 AND sub_cause IS NOT NULL
+           AND ${weatherOkFor("e.event_start_date", "$3")}
+         GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 12`,
+        [lo, hi, wx]
+      ),
+      // Top breakdown causes — mechanical faults, a different vocabulary
+      // entirely from accident causes, kept as its own ranking rather than
+      // merged into one list (see the earlier audit of this chart). No
+      // injuries/fatalities column: the breakdown table has neither.
+      db.query(
+        `WITH ${WXALL_CTE}
+         SELECT sub_cause AS label, main_cause AS "mainCause", COUNT(*)::int AS total
+         FROM silver.nlex_breakdown_events_clean e
+         WHERE e.event_encoded_date::date BETWEEN $1 AND $2 AND sub_cause IS NOT NULL
+           AND ${weatherOkFor("e.event_encoded_date", "$3")}
+         GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 12`,
+        [lo, hi, wx]
+      ),
+      // Top accident types (type_of_event) — breakdowns have no discrete
+      // "type" field, so this stays accident-only, same restriction the old
+      // query applied to stalled vehicles.
+      db.query(
+        `WITH ${WXALL_CTE}
+         SELECT type_of_event AS label, COUNT(*)::int AS total,
+                SUM(COALESCE(number_of_injured,0))::int AS injuries,
+                SUM(COALESCE(number_of_fatality,0))::int AS fatalities
+         FROM silver.nlex_accident_events_clean e
+         WHERE e.event_start_date::date BETWEEN $1 AND $2 AND type_of_event IS NOT NULL
+           AND ${weatherOkFor("e.event_start_date", "$3")}
+         GROUP BY 1 ORDER BY 2 DESC LIMIT 12`,
+        [lo, hi, wx]
+      ),
+      // Weather exposure: wet vs dry hours in range (unchanged — reads only
+      // hourly_weather, no incident table involved)
+      db.query(
+        `WITH ${WX_CTE}
+         SELECT COUNT(*) FILTER (WHERE rain > 0.3)::int AS wet_hours,
+                COUNT(*) FILTER (WHERE rain <= 0.3)::int AS dry_hours
+         FROM wx`,
+        [lo, hi]
+      ),
+      // Incidents on wet vs dry hours, by event type
+      db.query(
+        `WITH ${EVENTS_CTE}, ${WX_CTE}
+         SELECT (w.rain > 0.3) AS wet, e.src, COUNT(*)::int AS n
+         FROM events e JOIN wx w ON w.d = e.d AND w.h = e.h
+         WHERE e.d BETWEEN $1 AND $2 AND ($3::text IS NULL OR e.src = $3)
+           AND ($4::text IS NULL OR (w.rain > 0.3) = ($4 = 'wet'))
+         GROUP BY 1, 2`,
+        params
+      ),
+      // Traffic impact: avg jam speed on wet vs dry hours (unchanged)
+      db.query(
+        `WITH ${WX_CTE}
+         SELECT (w.rain > 0.3) AS wet,
+                ROUND(AVG(j.avg_speed_kmh)::numeric, 1)::float AS speed,
+                ROUND(AVG(j.avg_jam_level)::numeric, 2)::float AS jam_level
+         FROM fact_hourly_jams j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
+         WHERE j.date_day BETWEEN $1 AND $2
+         GROUP BY 1`,
+        [lo, hi]
+      ),
+      // KPI: current vs previous period + severity + rain share. Response
+      // time is deliberately absent here — see accidentClearance/
+      // breakdownDeploy below, which replace the old single avgResponseMin
+      // with two metrics that don't conflate the two event types.
+      db.query(
+        `WITH ${EVENTS_CTE}, ${WXALL_CTE}
+         SELECT
+           COUNT(*) FILTER (WHERE ${WHERE})::int AS cur_total,
+           COUNT(*) FILTER (WHERE d >= $1::date - ($2::date - $1::date + 1) AND d < $1::date AND ($3::text IS NULL OR src = $3) AND ${WEATHER_OK})::int AS prev_total,
+           SUM(inj) FILTER (WHERE ${WHERE})::int AS injuries,
+           SUM(fat) FILTER (WHERE ${WHERE})::int AS fatalities,
+           COUNT(*) FILTER (WHERE ${WHERE} AND weather_condition = 'Rainy')::int AS rainy_crashes,
+           COUNT(*) FILTER (WHERE ${WHERE} AND weather_condition IS NOT NULL)::int AS weather_known
+         FROM events`,
+        params
+      ),
+      // MTTC, accident side: clearance_min is already a computed duration
+      // (event start -> site cleared) on this table — nothing to derive,
+      // just aggregate with a sanity floor at 0 (a negative value here would
+      // be a data-entry error, not a real duration).
+      db.query(
+        `WITH ${WXALL_CTE}
+         SELECT COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE clearance_min IS NOT NULL AND clearance_min >= 0)::int AS valid_n,
+                ROUND(AVG(clearance_min) FILTER (WHERE clearance_min IS NOT NULL AND clearance_min >= 0)::numeric, 1)::float AS avg_min
+         FROM silver.nlex_accident_events_clean e
+         WHERE e.event_start_date::date BETWEEN $1 AND $2
+           AND ($3::text IS NULL OR $3 = 'accident')
+           AND ${weatherOkFor("e.event_start_date", "$4")}`,
+        params
+      ),
+      // MTTC + time-to-first-responder, breakdown side. Both are derived from
+      // the deployments JSONB array rather than trusted at face value:
+      // verified 15.7% of multi-dispatch events (314/2000 sampled) have their
+      // deployments NOT in chronological dispatch order, so "first dispatch"
+      // and "last departure" are picked by MIN/MAX(dispatch_time) instead of
+      // array position [0]/[-1] — using array order would silently mislabel
+      // the first responder on roughly 1 in 6 multi-dispatch events.
+      db.query(
+        `WITH ${WXALL_CTE},
+         scoped AS (
+           SELECT b.event_number, b.event_encoded_date, b.deployments
+           FROM silver.nlex_breakdown_events_clean b
+           WHERE b.event_encoded_date::date BETWEEN $1 AND $2
+             AND ($3::text IS NULL OR $3 = 'breakdown')
+             AND ${weatherOkFor("b.event_encoded_date", "$4")}
+         ),
+         per_event AS (
+           SELECT s.event_number, s.event_encoded_date,
+                  MAX(NULLIF(d->>'departure_time', '')::timestamp) AS last_departure,
+                  (SELECT NULLIF(d2->>'response_time_min', '')::numeric
+                     FROM jsonb_array_elements(s.deployments) d2
+                    WHERE d2->>'dispatch_time' IS NOT NULL AND d2->>'dispatch_time' <> ''
+                    ORDER BY (d2->>'dispatch_time')::timestamp ASC LIMIT 1) AS first_response_min
+           FROM scoped s, jsonb_array_elements(s.deployments) d
+           WHERE s.deployments IS NOT NULL
+             AND d->>'departure_time' IS NOT NULL AND d->>'departure_time' <> ''
+           GROUP BY s.event_number, s.event_encoded_date, s.deployments
+         )
+         SELECT
+           (SELECT COUNT(*) FROM scoped)::int AS total,
+           COUNT(*) FILTER (WHERE resp_min IS NOT NULL)::int AS response_valid_n,
+           ROUND(AVG(resp_min) FILTER (WHERE resp_min IS NOT NULL)::numeric, 1)::float AS avg_response_min,
+           COUNT(*) FILTER (WHERE mttc_min IS NOT NULL)::int AS mttc_valid_n,
+           ROUND(AVG(mttc_min) FILTER (WHERE mttc_min IS NOT NULL)::numeric, 1)::float AS avg_mttc_min
+         FROM (
+           SELECT
+             (CASE WHEN first_response_min BETWEEN 0 AND 1440 THEN first_response_min END) AS resp_min,
+             (CASE WHEN EXTRACT(EPOCH FROM (last_departure - event_encoded_date)) / 60 BETWEEN 0 AND 1440
+                   THEN EXTRACT(EPOCH FROM (last_departure - event_encoded_date)) / 60 END) AS mttc_min
+           FROM per_event
+         ) x`,
+        params
+      ),
+    ]);
+
+    const wxInc = { wet: { accident: 0, breakdown: 0 }, dry: { accident: 0, breakdown: 0 } };
     for (const r of weatherIncidents.rows) {
       const bucket = r.wet ? wxInc.wet : wxInc.dry;
-      bucket[r.src as "road" | "moto" | "stalled"] = r.n;
+      bucket[r.src as "accident" | "breakdown"] = r.n;
     }
     const jamWx = { wet: null as { speed: number; jam_level: number } | null, dry: null as { speed: number; jam_level: number } | null };
     for (const r of jamSpeedWx.rows) {
       jamWx[r.wet ? "wet" : "dry"] = { speed: r.speed, jam_level: r.jam_level };
     }
+
+    // MTTC blends both event types into one headline figure, weighted by how
+    // many valid durations each side actually contributed — an event with no
+    // deployments or a null clearance timestamp is excluded from the average
+    // entirely rather than counted as a zero-minute clearance.
+    const ac = accidentClearance.rows[0];
+    const bd = breakdownDeploy.rows[0];
+    const accidentValid = ac.valid_n ?? 0;
+    const accidentTotal = ac.total ?? 0;
+    const breakdownValid = bd.mttc_valid_n ?? 0;
+    const breakdownTotal = bd.total ?? 0;
+    const combinedValid = accidentValid + breakdownValid;
+    const combinedTotal = accidentTotal + breakdownTotal;
+    const overallMttcMin =
+      combinedValid > 0
+        ? Number((((ac.avg_min ?? 0) * accidentValid + (bd.avg_mttc_min ?? 0) * breakdownValid) / combinedValid).toFixed(1))
+        : null;
 
     const data = {
       range: { from: lo, to: hi },
@@ -235,14 +416,32 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
         prevTotalIncidents: kpi.rows[0].prev_total,
         injuries: kpi.rows[0].injuries ?? 0,
         fatalities: kpi.rows[0].fatalities ?? 0,
-        avgResponseMin: kpi.rows[0].avg_response_min,
         rainyCrashes: kpi.rows[0].rainy_crashes,
         weatherKnown: kpi.rows[0].weather_known,
+        // Breakdown-only: accidents have no per-dispatch record to measure
+        // this from, so they contribute nothing here rather than a fabricated
+        // value.
+        avgTimeToFirstResponder: {
+          min: bd.avg_response_min,
+          n: bd.response_valid_n ?? 0,
+          totalBreakdowns: breakdownTotal,
+        },
+        mttc: {
+          overallMin: overallMttcMin,
+          accidentMin: ac.avg_min,
+          breakdownMin: bd.avg_mttc_min,
+          coverage: {
+            accidents: { total: accidentTotal, valid: accidentValid },
+            breakdowns: { total: breakdownTotal, valid: breakdownValid },
+            pctValid: combinedTotal > 0 ? Number(((combinedValid / combinedTotal) * 100).toFixed(1)) : null,
+          },
+        },
       },
       dailyTrend: trend.rows,
       hotspots: hotspot.rows,
       heatmap: heatmap.rows,
-      causes: causes.rows,
+      accidentCauses: accidentCauses.rows,
+      breakdownCauses: breakdownCauses.rows,
       types: types.rows,
       weather: {
         wetHours: weatherExposure.rows[0].wet_hours,
@@ -702,24 +901,7 @@ export type IncidentPredictiveFilters = {
   // both-features series) so a caller that omits them gets today's behavior.
   volumeToggle?: "on" | "off";
   weatherToggle?: "on" | "off";
-  // The chart's Future control (1wk/2wk/1mo) — how many of the published
-  // future days corridorForecast apportions its total over. Absent means
-  // "the whole stored horizon", matching the chart's own default before the
-  // control is touched. Distinct from purely client-side trimming: the
-  // corridor total needs the actual per-day predictions for just this many
-  // days, not a scaled-down guess.
-  futureDays?: number;
-  // The Models toolbar's active selection — which model corridorForecast
-  // apportions. Falls back to the champion when absent or when the named
-  // model has no stored data for this table.
-  forecastModel?: ModelKeyString;
 };
-
-// Matches ModelKey in the frontend's incidentPredictive.shared.ts / MODEL_NAMES
-// in train_incident_models.py — kept as a plain union (not imported from the
-// Zod schema) since this service has no other dependency on the validator's
-// types beyond IncidentPredictiveResult.
-type ModelKeyString = (typeof INCIDENT_MODELS)[number]["key"];
 
 // The response shape is now the source of truth in incident.validator.ts
 // (IncidentPredictiveResponseSchema) and this type is inferred from it, so the
@@ -870,7 +1052,18 @@ export async function getIncidentPredictiveAnchors(): Promise<IncidentPredictive
       FROM pred_anchors, actual_bounds, seasonal
     `);
     const r = rows[0];
-    if (!r || !r.min_actual_date || !r.max_forecast_date) return null;
+    if (!r || !r.min_actual_date || !r.max_forecast_date) {
+      // A real error would have thrown into the catch below -- this is the
+      // OTHER null cause, the query ran fine but ml_predictive_incidents/
+      // ml_daily_actuals are empty (the pipeline hasn't written yet). Logged
+      // distinctly so a "database not reachable" report doesn't require
+      // re-deriving which of the two this was from scratch.
+      console.warn(
+        "ML incident forecast anchors: query succeeded but returned no usable rows " +
+          "(ml_predictive_incidents/ml_daily_actuals empty or pipeline hasn't written yet) -- not a connectivity failure."
+      );
+      return null;
+    }
     return {
       validationStart: r.validation_start,
       futureStart: r.future_start,
@@ -879,7 +1072,7 @@ export async function getIncidentPredictiveAnchors(): Promise<IncidentPredictive
       seasonalNaiveMae: r.seasonal_naive_mae != null ? Number(r.seasonal_naive_mae) : null,
     };
   } catch (error) {
-    console.error("Failed to fetch ML incident forecast anchors:", error);
+    console.error("ML incident forecast anchors: query threw (connectivity or SQL error):", error);
     return null;
   }
 }
@@ -1011,19 +1204,45 @@ function pickPrediction(
 }
 
 // ---------------------------------------------------------------------------
-// Corridor/exit breakdown for the predictive tab's "predicted incidents per
-// exit" card.
-//
-// There is no per-exit trained model — ml_predictive_incidents holds one
-// daily total for the whole corridor. So this apportions that total using
-// each exit's HISTORICAL SHARE of incidents, the same kind of derivation the
-// hourly drill-down already does (a daily total spread across hours by a
-// weekday profile — see getIncidentHourlyFromDb's own doc comment). It is
-// disclosed as an apportionment, not presented as a separately modeled
-// per-location forecast.
+// Corridor/exit breakdown — NOT used by the Predictive tab's own Corridor
+// forecast card any more (that now reads /api/incident/spatial, a genuinely
+// trained per-exit model; see incident-spatial.service.ts and
+// PredictiveCorridorChart.tsx). Still exported on this response because two
+// Prescriptive-tab panels (VmsAdvisoryPanel, PrescriptiveDeploymentPanel)
+// independently fetch /api/incident/predictive and read corridorForecast/
+// kmSegmentForecast straight off it — removing the fields here would break
+// those two without touching them at all. There is no per-exit trained model
+// behind THIS version — ml_predictive_incidents holds one daily total for the
+// whole corridor, apportioned by each exit's HISTORICAL SHARE of incidents,
+// the same kind of derivation the hourly drill-down already does (a daily
+// total spread across hours by a weekday profile — see
+// getIncidentHourlyFromDb's own doc comment). Disclosed as an apportionment,
+// not presented as a separately modeled per-location forecast.
 // ---------------------------------------------------------------------------
 
 const LOCATION_KM_RE = /Km\s*(\d+(?:\.\d+)?)/i;
+
+// Km figures in the legacy crash tables (nlex_road_crashes/nlex_motorcycle_crashes)
+// follow the Philippine DPWH km-post convention
+// (Balintawak ~ km 12), not this dashboard's Balintawak-as-km-0 scale — the
+// same offset already found and fixed in incident-severity.service.ts and in
+// train_incident_spatial_models.py. A literal "Km N" figure parsed out of
+// these tables' free-text `location` therefore needs the same -12.0
+// correction before it's compared against the exit list's own (Balintawak-
+// relative) km. Without it, "Km 16+800" (4.8km past Balintawak) was being
+// matched against whichever exit sits nearest RAW km 16.8 instead — off by
+// roughly one 12km stretch, 2-4 exits down the corridor, on every row.
+const LOCATION_KM_OFFSET = 12.0;
+
+// Applied per SOURCE, not blanket: verified against the data, nlex_road_crashes
+// spans km 14-79 and nlex_motorcycle_crashes sits in the same band (a fit for
+// DPWH's Balintawak-at-12 through ~88), but nlex_stalled_vehicles — 85% of
+// these legacy rows — spans only km 4-30, and 30% of it would go negative
+// under a -12 shift. That table is the generated one and doesn't follow the
+// DPWH scale, so it is left as it was rather than shifted on a guess.
+function kmOffsetForSource(src: string | null | undefined): number {
+  return src === "stalled" ? 0 : LOCATION_KM_OFFSET;
+}
 
 // Strip to lowercase alphanumerics so punctuation/spacing differences
 // ("Bocaue Interchange" vs "bocaue-interchange") can't cause a false miss —
@@ -1035,10 +1254,9 @@ function normalizeLocationText(s: string): string {
 
 // Maps one incident's free-text `location` to the exit it most likely
 // happened near. Two strategies, tried in order:
-//   1. A literal "Km N" figure — snapped to the exit whose own km-post is
-//      closest, the same nearest-km rule the frontend's exitNearestKm()
-//      already uses to label a position on the corridor (kept in sync by
-//      hand since one runs in SQL/Node and the other in the browser).
+//   1. A literal "Km N" figure — corrected to corridor-relative (see
+//      LOCATION_KM_OFFSET above), then snapped to the exit whose own km-post
+//      is closest.
 //   2. A plaza/exit name written directly ("Balintawak", "Bocaue Barrier") —
 //      the ETL cleaner validates incoming locations against exactly this kind
 //      of name (see NLEX_PLAZAS in src/etl/cleaner.ts), so many rows carry a
@@ -1049,11 +1267,12 @@ function normalizeLocationText(s: string): string {
 // "unclassified" and discloses the share rather than guessing.
 function resolveExitForLocation(
   location: string,
-  exits: { exit_id: number; exit_name: string; km: number }[]
+  exits: { exit_id: number; exit_name: string; km: number }[],
+  kmOffset: number
 ): { exit_id: number; exit_name: string; km: number } | null {
   const kmMatch = location.match(LOCATION_KM_RE);
   if (kmMatch) {
-    const km = Number(kmMatch[1]);
+    const km = Number(kmMatch[1]) - kmOffset;
     if (Number.isFinite(km) && exits.length > 0) {
       return exits.reduce((best, x) => (Math.abs(x.km - km) < Math.abs(best.km - km) ? x : best));
     }
@@ -1079,7 +1298,7 @@ export type CorridorForecastPoint = {
 };
 
 function buildCorridorForecast(
-  locationRows: { location: string | null }[],
+  locationRows: { location: string | null; src?: string | null }[],
   exitRows: { exit_id: number; exit_name: string; km: number }[],
   totalPredicted: number
 ): { corridorForecast: CorridorForecastPoint[] | null; unclassifiedLocationShare: number | null } {
@@ -1091,7 +1310,7 @@ function buildCorridorForecast(
   let unclassified = 0;
   for (const row of locationRows) {
     if (!row.location) continue;
-    const exit = resolveExitForLocation(row.location, exitRows);
+    const exit = resolveExitForLocation(row.location, exitRows, kmOffsetForSource(row.src));
     if (exit) counts.set(exit.exit_id, (counts.get(exit.exit_id) ?? 0) + 1);
     else unclassified++;
   }
@@ -1130,26 +1349,27 @@ export type KmSegmentForecastPoint = {
   predictedIncidents: number;
 };
 
-// Prefers a literal "Km N" figure in the location text over the resolved
-// exit's own km — that reading is more precise (an exact position, not
-// "nearest interchange"), and it's exactly what resolveExitForLocation
-// itself discards once it has picked a nearest exit. Falls back to the
-// matched exit's km for a name-only location ("Balintawak"), same source of
-// truth corridorForecast uses for the same rows.
+// Prefers a literal "Km N" figure in the location text (corridor-corrected,
+// same as resolveExitForLocation) over the resolved exit's own km — that
+// reading is more precise (an exact position, not "nearest interchange").
+// Falls back to the matched exit's km for a name-only location
+// ("Balintawak"), same source of truth corridorForecast uses for the same
+// rows.
 function resolveKmForLocation(
   location: string,
-  exits: { exit_id: number; exit_name: string; km: number }[]
+  exits: { exit_id: number; exit_name: string; km: number }[],
+  kmOffset: number
 ): number | null {
   const kmMatch = location.match(LOCATION_KM_RE);
   if (kmMatch) {
-    const km = Number(kmMatch[1]);
+    const km = Number(kmMatch[1]) - kmOffset;
     if (Number.isFinite(km)) return km;
   }
-  return resolveExitForLocation(location, exits)?.km ?? null;
+  return resolveExitForLocation(location, exits, kmOffset)?.km ?? null;
 }
 
 function buildKmSegmentForecast(
-  locationRows: { location: string | null }[],
+  locationRows: { location: string | null; src?: string | null }[],
   exitRows: { exit_id: number; exit_name: string; km: number }[],
   totalPredicted: number
 ): { kmSegmentForecast: KmSegmentForecastPoint[] | null; unclassifiedLocationShare: number | null } {
@@ -1162,7 +1382,7 @@ function buildKmSegmentForecast(
   let unclassified = 0;
   for (const row of locationRows) {
     if (!row.location) continue;
-    const km = resolveKmForLocation(row.location, exitRows);
+    const km = resolveKmForLocation(row.location, exitRows, kmOffsetForSource(row.src));
     if (km == null || km < 0) {
       unclassified++;
       continue;
@@ -1244,10 +1464,12 @@ export function buildIncidentPredictiveResponse(
   // forecast beyond that (see DAILY_VOLUME_SQL). Optional so existing callers
   // and tests keep working — an absent map simply draws no exposure overlay.
   volumeByDate: Map<string, number> = new Map(),
-  // Raw `location` text for every incident in the resolved Range — feeds
-  // corridorForecast below. Optional for the same reason volumeByDate is: an
-  // absent array just means the corridor card can't be built.
-  locationRows: { location: string | null }[] = [],
+  // Raw `location` text for every incident in the resolved Range — feeds the
+  // legacy-source corridorForecast/kmSegmentForecast below, still consumed by
+  // VmsAdvisoryPanel/PrescriptiveDeploymentPanel on the Prescriptive tab.
+  // Optional for the same reason volumeByDate is: an absent array just means
+  // those two fields come back null.
+  locationRows: { location: string | null; src?: string | null }[] = [],
   // The corridor's authoritative exit list (see searchExitsInDb). Optional
   // for the same reason.
   exitRows: { exit_id: number; exit_name: string; km: number }[] = []
@@ -1342,48 +1564,24 @@ export function buildIncidentPredictiveResponse(
   );
   const championModel = predictions.find((p) => p.champion_model)?.champion_model ?? (metadata.champion_model as string | undefined) ?? null;
 
-  // Which trained variant modelMetrics/weatherMetrics/corridorForecast are
-  // scored/apportioned against — must match the chart's own choice of series
-  // so nothing on this response ever describes a different model than the one
-  // whose line is on screen.
+  // Which trained variant modelMetrics/weatherMetrics are scored against —
+  // must match the chart's own choice of series so nothing on this response
+  // ever describes a different model than the one whose line is on screen.
   const includeVolume = filters.volumeToggle !== "off";
   const includeWeather = filters.weatherToggle !== "off";
 
-  // Which model corridorForecast apportions: the Models toolbar's active
-  // selection when one was sent and it actually has stored data on this
-  // table, else the champion — the same fallback the frontend's own model
-  // toolbar uses when a Range change leaves a previously-selected model
-  // without data. predicted_incident_count is a fixed column that's always
-  // the champion's PRIMARY (volume+weather-aware) series and has no _nv/_nw
-  // twin of its own, so either way this reads pickPrediction off the
-  // resolved model's OWN column (pred_xgboost/_nv/_nw etc.) for the same
-  // toggle-aware total the chart and modelMetrics already use, rather than
-  // the corridor card silently staying pinned to one fixed series.
-  const corridorModelKey =
-    filters.forecastModel && availableModels.some((m) => m.key === filters.forecastModel)
-      ? filters.forecastModel
-      : championModel;
-  const corridorModelEntry = INCIDENT_MODELS.find((m) => m.key === corridorModelKey);
-  // futurePreds is ordered by forecast_date ASC (see the SQL in
-  // getIncidentPredictiveFromDb), so slicing the first N rows takes the
-  // NEAREST N future days — the same window the chart's own Future control
-  // (1wk/2wk/1mo) trims to on screen, per PredictiveIncidentChart's
-  // effectiveFutureDays. Clamped so a stale futureDays wider than what's
-  // actually published can't slice past the array's end.
-  const corridorFutureDays =
-    filters.futureDays != null ? Math.max(0, Math.min(filters.futureDays, futurePreds.length)) : futurePreds.length;
-  const corridorFuturePreds = futurePreds.slice(0, corridorFutureDays);
-  const totalPredictedForCorridor = corridorModelEntry
-    ? corridorFuturePreds.reduce(
-        (sum, p) => sum + (pickPrediction(p, corridorModelEntry, includeVolume, includeWeather) ?? Number(p.predicted_incident_count)),
-        0
-      )
-    : corridorFuturePreds.reduce((sum, p) => sum + Number(p.predicted_incident_count), 0);
-
+  // Legacy-source apportionment, kept only for VmsAdvisoryPanel/
+  // PrescriptiveDeploymentPanel on the Prescriptive tab (see the doc comment
+  // on buildCorridorForecast) — the Predictive tab's own Corridor forecast
+  // card no longer reads this. totalPredictedNext7Days is reused rather than
+  // a second toolbar-aware total: neither Prescriptive panel sends a
+  // forecastModel/futureDays override, so this was always going to resolve
+  // to the same "full published horizon, champion's primary series" number
+  // the summary card already computed.
   const { corridorForecast, unclassifiedLocationShare } = buildCorridorForecast(
     locationRows,
     exitRows,
-    totalPredictedForCorridor
+    totalPredictedNext7Days
   );
   // Same rows, same total, grouped by fixed km buckets instead of nearest
   // exit — see buildKmSegmentForecast's own doc comment for why that's a
@@ -1391,7 +1589,7 @@ export function buildIncidentPredictiveResponse(
   // exit one. unclassifiedLocationShare comes out numerically identical to
   // the exit version (same "did this location resolve at all" test), so
   // only one is kept on the response rather than two names for one number.
-  const { kmSegmentForecast } = buildKmSegmentForecast(locationRows, exitRows, totalPredictedForCorridor);
+  const { kmSegmentForecast } = buildKmSegmentForecast(locationRows, exitRows, totalPredictedNext7Days);
 
   // The pipeline's own comparison table — now used only as a fallback for a
   // model whose Range+Weather slice has zero scored rows (e.g. a 3-month
@@ -1406,7 +1604,25 @@ export function buildIncidentPredictiveResponse(
   // via the caller's SQL, Weather via this filter) — so composing the two
   // filters and re-reading the metrics table shows the number that matches
   // what's on screen, not a number from a different slice of history.
-  const rangeAligned = toAlignedValidationRows(predictions, actualByDate, wetByDate, availableModels, includeVolume, includeWeather);
+  // Days the trainer left out of scoring (metadata.evaluation.excluded_from_scoring —
+  // a suspected data gap, e.g. 2026-04-19, where the source holds no rows at all).
+  // The live accuracy numbers below must drop the same days, or this table would
+  // contradict the metrics stored beside the model. Only the SCORING is affected:
+  // `daily` (what the chart draws) still shows the day exactly as recorded.
+  const excludedScoringDates = new Set(
+    (
+      (metadata.evaluation as { excluded_from_scoring?: { date?: unknown }[] } | undefined)
+        ?.excluded_from_scoring ?? []
+    )
+      .map((d) => d?.date)
+      .filter((d): d is string => typeof d === "string")
+  );
+  const scoredOnly = <T extends { date: string }>(rows: T[]): T[] =>
+    excludedScoringDates.size === 0 ? rows : rows.filter((r) => !excludedScoringDates.has(r.date));
+
+  const rangeAligned = scoredOnly(
+    toAlignedValidationRows(predictions, actualByDate, wetByDate, availableModels, includeVolume, includeWeather)
+  );
   const weatherFilteredRangeAligned =
     filters.weather === "all" ? rangeAligned : rangeAligned.filter((r) => r.isWet === (filters.weather === "wet"));
 
@@ -1484,7 +1700,9 @@ export function buildIncidentPredictiveResponse(
   // holdoutPredictions/holdoutActuals carry the full holdout independent of
   // whatever the user picked in the Range control.
   const holdoutActualByDate = new Map(holdoutActuals.map((r) => [r.date, Number(r.total)]));
-  const holdoutAligned = toAlignedValidationRows(holdoutPredictions, holdoutActualByDate, wetByDate, availableModels, includeVolume, includeWeather);
+  const holdoutAligned = scoredOnly(
+    toAlignedValidationRows(holdoutPredictions, holdoutActualByDate, wetByDate, availableModels, includeVolume, includeWeather)
+  );
 
   const weatherMetrics =
     filters.weather === "all"
@@ -1535,28 +1753,25 @@ export function buildIncidentPredictiveResponse(
         (metadata.evaluation as { train_rows?: number } | undefined)?.train_rows ?? null,
     },
     weatherMetrics,
-    // Predicted incidents per exit/corridor — an apportionment of
-    // totalPredictedForCorridor (corridorModelEntry's toggle-aware forecast
-    // summed over corridorForecastDays days, NOT summary.totalPredictedNext7Days)
-    // by each exit's historical share of incidents in the current Range, not a
-    // separately trained per-location model. Null when the exit list or the
-    // location data needed to build it wasn't available.
+    // Legacy-source apportionment of totalPredictedNext7Days by each exit's
+    // historical share of incidents in the current Range — NOT a trained
+    // per-location model, and no longer what the Predictive tab's Corridor
+    // forecast card shows (that reads /api/incident/spatial). Kept because
+    // VmsAdvisoryPanel/PrescriptiveDeploymentPanel read it. Null when the
+    // exit list or usable location data wasn't available.
     corridorForecast,
-    // Same apportionment, grouped by fixed 5km corridor segments instead of
-    // nearest exit — see buildKmSegmentForecast's doc comment. Null under
-    // the identical conditions corridorForecast is (no exit list, or no
-    // usable location rows in the current Range).
+    // Same apportionment grouped by exit-to-exit segments; null under the
+    // identical conditions corridorForecast is.
     kmSegmentForecast,
     unclassifiedLocationShare,
-    // How many of the published future days corridorForecast was actually
-    // apportioned over — echoes filters.futureDays (clamped to what's
-    // published) so the card's axis/caption can say "next Nd" honestly
-    // instead of assuming the chart's Future control and this total agree.
-    corridorForecastDays: corridorFutureDays,
-    // Which model corridorForecast was actually apportioned from — echoes
-    // filters.forecastModel when it was valid and had data, else the
-    // champion. Null only alongside corridorForecast: null.
-    corridorForecastModel: corridorForecast ? corridorModelKey : null,
+    // Always the full published horizon now (no per-request Future override),
+    // but still echoed so the Prescriptive panels' "N-day forecast" captions
+    // keep reading a real number rather than assuming one.
+    corridorForecastDays: futurePreds.length,
+    // Always the champion now (no per-request model override). Null only
+    // alongside corridorForecast: null.
+    corridorForecastModel: corridorForecast ? championModel : null,
+    accidentSplit: null,
     scoringWindow,
     // Whether the Weather control means anything for the current Range: with
     // zero scored rows (scoringWindow === null) every model has already
@@ -1595,6 +1810,59 @@ export function buildIncidentPredictiveResponse(
 
 const INCIDENT_MODEL_COLUMNS_SQL = INCIDENT_MODELS.map((m) => m.column).join(", ");
 
+// The dedicated accident-only forecast written by `train_incident_models.py
+// --series accident` into ml_*_accident. Its own try/catch and a null return
+// on ANY failure (table not created yet, empty, query error): the blended
+// chart is the primary payload and must never be taken down by this optional
+// overlay, which is exactly the failure mode the null-collapsing 503 path
+// above is prone to.
+async function getAccidentSplit(
+  historicalStart: string,
+  historicalEnd: string | null
+): Promise<IncidentPredictiveResult["accidentSplit"]> {
+  if (!db) return null;
+  try {
+    const [metaRes, actualsRes, predsRes] = await Promise.all([
+      db.query<{ metadata_json: Record<string, unknown>; created_at: string }>(
+        `SELECT metadata_json, created_at FROM ml_training_metadata_accident ORDER BY created_at DESC LIMIT 1`
+      ),
+      db.query<{ date: string; total: string | number }>(
+        `SELECT d::text AS date, total FROM ml_daily_actuals_accident
+         WHERE d >= $1::date AND ($2::date IS NULL OR d <= $2::date) ORDER BY d ASC`,
+        [historicalStart, historicalEnd]
+      ),
+      db.query<{ date: string; predicted_incident_count: string | number }>(
+        `SELECT forecast_date::text AS date, predicted_incident_count FROM ml_predictive_incidents_accident
+         WHERE prediction_type = 'future'
+            OR (forecast_date >= $1::date AND ($2::date IS NULL OR forecast_date <= $2::date))
+         ORDER BY forecast_date ASC`,
+        [historicalStart, historicalEnd]
+      ),
+    ]);
+    if (metaRes.rows.length === 0 || actualsRes.rows.length === 0) return null;
+
+    const byDate = new Map<string, { actual: number | null; predicted: number | null }>();
+    for (const r of actualsRes.rows) byDate.set(r.date, { actual: Number(r.total), predicted: null });
+    for (const r of predsRes.rows) {
+      const cur = byDate.get(r.date) ?? { actual: null, predicted: null };
+      cur.predicted = Number(r.predicted_incident_count);
+      byDate.set(r.date, cur);
+    }
+    const meta = metaRes.rows[0].metadata_json;
+    return {
+      championModel: (meta.champion_model as string | undefined) ?? null,
+      trainedAt: metaRes.rows[0].created_at ? new Date(metaRes.rows[0].created_at).toISOString() : null,
+      metrics: (meta.metrics as Record<string, unknown> | undefined) ?? null,
+      daily: Array.from(byDate.entries())
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .map(([date, v]) => ({ date, actual: v.actual, predicted: v.predicted })),
+    };
+  } catch (error) {
+    console.warn("Accident-only forecast unavailable (optional overlay, main chart unaffected):", (error as Error).message);
+    return null;
+  }
+}
+
 export async function getIncidentPredictiveFromDb(
   filters: IncidentPredictiveFilters = DEFAULT_PREDICTIVE_FILTERS,
   anchors: IncidentPredictiveAnchors
@@ -1604,7 +1872,13 @@ export async function getIncidentPredictiveFromDb(
     const metaRes = await db.query(
       `SELECT metadata_json, created_at FROM ml_training_metadata ORDER BY created_at DESC LIMIT 1`
     );
-    if (metaRes.rows.length === 0) return null;
+    if (metaRes.rows.length === 0) {
+      // Same distinction as getIncidentPredictiveAnchors: a thrown error
+      // lands in the catch below, this is the "query ran, table's empty"
+      // case -- ml_training_metadata hasn't been written by a training run.
+      console.warn("ML incident forecast: ml_training_metadata is empty (pipeline hasn't written yet) -- not a connectivity failure.");
+      return null;
+    }
 
     const { historicalStart, historicalEnd } = resolveIncidentHistoricalWindow(filters, anchors);
 
@@ -1696,12 +1970,12 @@ export async function getIncidentPredictiveFromDb(
          ORDER BY forecast_date ASC`
       ),
       // Raw location text for every incident in the resolved Range — feeds the
-      // per-exit/corridor breakdown card. Bounded the same way `actuals` is so
-      // the corridor split answers to the same Range control as the rest of
-      // the tab, rather than always describing the whole corpus.
-      db.query<{ location: string | null }>(
+      // legacy-source corridorForecast still read by the Prescriptive tab's
+      // VmsAdvisoryPanel/PrescriptiveDeploymentPanel. Bounded the same way
+      // `actuals` is so it answers to the same Range control.
+      db.query<{ location: string | null; src: string | null }>(
         `WITH ${INCIDENTS_CTE}
-         SELECT location FROM incidents WHERE d >= $1::date AND ($2::date IS NULL OR d <= $2::date) AND location IS NOT NULL`,
+         SELECT location, src FROM incidents WHERE d >= $1::date AND ($2::date IS NULL OR d <= $2::date) AND location IS NOT NULL`,
         [historicalStart, historicalEnd]
       ),
       // The corridor's one authoritative exit list (see the import above) —
@@ -1721,7 +1995,8 @@ export async function getIncidentPredictiveFromDb(
         .filter((r) => r.volume != null)
         .map((r) => [r.date, Number(r.volume)])
     );
-    return buildIncidentPredictiveResponse(
+    const accidentSplit = await getAccidentSplit(historicalStart, historicalEnd);
+    const response = buildIncidentPredictiveResponse(
       actualsRes.rows,
       predsRes.rows,
       metaRes.rows[0].metadata_json ?? {},
@@ -1737,8 +2012,9 @@ export async function getIncidentPredictiveFromDb(
       locationsRes.rows,
       exitRows ?? []
     );
+    return { ...response, accidentSplit };
   } catch (error) {
-    console.error("Failed to fetch ML incident forecast:", error);
+    console.error("ML incident forecast: query threw (connectivity or SQL error):", error);
     return null;
   }
 }
