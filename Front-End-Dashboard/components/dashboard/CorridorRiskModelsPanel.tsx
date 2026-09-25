@@ -127,7 +127,7 @@ export default function CorridorRiskModelsPanel() {
             <div style={{ fontSize: "0.68rem", fontWeight: 800, color: "#4f46e5", letterSpacing: "0.04em", textTransform: "uppercase" }}>
               Spatial LSTM — next-24h forecast
             </div>
-            <div style={{ fontSize: "0.75rem", color: "#64748b" }}>Each exit's own recent history + its nearest neighbors', temporally held out</div>
+            <div style={{ fontSize: "0.75rem", color: "#64748b" }}>Each exit&apos;s own recent history + its nearest neighbors&apos;, temporally held out</div>
           </div>
           {lstmMeta && (
             <div style={{ display: "flex", gap: "10px", fontSize: "0.72rem", color: "#94a3b8" }}>
@@ -238,3 +238,5 @@ export default function CorridorRiskModelsPanel() {
     </article>
   );
 }
+
+

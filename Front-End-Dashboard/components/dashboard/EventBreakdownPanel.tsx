@@ -71,7 +71,7 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
   if (loading) {
     return (
       <article className="chart-card wide" style={{ height: "320px", padding: "20px", display: "grid", placeItems: "center" }}>
-        <div style={{ color: "#64748b" }}>Loading event breakdown…</div>
+        <div style={{ color: "var(--text-muted)" }}>Loading event breakdown…</div>
       </article>
     );
   }
@@ -80,8 +80,8 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
     return (
       <article className="chart-card wide" style={{ height: "260px", padding: "20px", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", maxWidth: "420px" }}>
-          <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px" }}>Response time breakdown unavailable</div>
-          <div style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
+          <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: "6px" }}>Response time breakdown unavailable</div>
+          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
             {error ?? "No breakdown dispatch data has been ingested yet."}
           </div>
         </div>
@@ -119,15 +119,15 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
 
   return (
     <article className="chart-card wide" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "18px" }}>
-      <h3 style={{ fontSize: "1.05rem", color: "#0f172a", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
+      <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
         Response Time Breakdown
         <InfoTooltip text="Dispatch response times (AAP, Patrol Vehicle, RAMFA, and others) from the breakdown log, by cause or by service." />
       </h3>
 
       <div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", marginBottom: "8px" }}>
-          <h4 style={{ margin: 0, fontSize: "0.85rem", color: "#0f172a", fontWeight: 700 }}>Median Dispatch Response Time</h4>
-          <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface, #fff)", border: "1px solid #dce2ef", borderRadius: "999px" }}>
+          <h4 style={{ margin: 0, fontSize: "0.85rem", color: "var(--text-primary)", fontWeight: 700 }}>Median Dispatch Response Time</h4>
+          <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px" }}>
             {(["cause", "service"] as const).map((v) => (
               <button
                 key={v}
@@ -135,7 +135,7 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
                 style={{
                   padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
                   background: responseView === v ? "var(--page-accent, #4f46e5)" : "transparent",
-                  color: responseView === v ? "#fff" : "#4b5e7d",
+                  color: responseView === v ? "var(--text-on-dark)" : "var(--text-secondary)",
                   fontWeight: 600, fontSize: "0.72rem",
                 }}
               >
@@ -145,7 +145,7 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
           </div>
         </div>
         <DashboardChart option={responseOption} height={Math.max(160, displayRows.length * 32)} />
-        <p style={{ color: "#94a3b8", fontSize: "0.72rem", margin: "6px 0 0 0" }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", margin: "6px 0 0 0" }}>
           Built from breakdown_data&apos;s per-dispatch records — only the subset of breakdowns with a logged AAP/
           Patrol Vehicle/RAMFA dispatch are included; responses over 24h are treated as data-entry noise and excluded.
         </p>

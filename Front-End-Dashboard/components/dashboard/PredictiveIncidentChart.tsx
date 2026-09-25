@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useThemeTokens, zoneTints } from "./useThemeTokens";
 import { useRouter } from "next/navigation";
 import type { EChartsOption } from "echarts";
 import DashboardChart from "./DashboardChart";
@@ -44,12 +45,25 @@ type Props = {
   // weatherApplicable, so the page can disable the Weather chips when the
   // current Range has nothing for them to filter.
   onWeatherApplicableChange?: (applicable: boolean) => void;
+  // Legacy callback to power PredictiveCorridorChart from this component's fetch.
+  // Kept so the page can render PredictiveCorridorChart as its own card without this
+  // component fetching /api/incident/predictive a second time for the same
+  // Range/Weather-scoped data.
+  onCorridorForecastChange?: (corridor: {
+    corridorForecast: PredictiveData["corridorForecast"];
+    kmSegmentForecast: PredictiveData["kmSegmentForecast"];
+    unclassifiedLocationShare: number | null;
+    forecastHorizon: number;
+    forecastModelLabel: string | null;
+    showVolume: boolean;
+    showWeather: boolean;
+  }) => void;
 };
 
-const zoneLabel = (text: string, show: boolean) => ({
+const zoneLabel = (text: string, show: boolean, color: string) => ({
   show,
   position: "insideTop" as const,
-  color: "#94a3b8",
+  color,
   fontSize: 11,
   fontWeight: 600 as const,
   formatter: text,
@@ -87,6 +101,7 @@ export default function PredictiveIncidentChart({
   weather,
   onDataBoundsChange,
   onWeatherApplicableChange,
+  onCorridorForecastChange,
 }: Props = {}) {
   const [data, setData] = useState<PredictiveData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,6 +135,13 @@ export default function PredictiveIncidentChart({
   // forecast exists (data.accidentSplit); off by default so the chart opens on
   // the same total-count view it always has.
   const [splitView, setSplitView] = useState(false);
+
+  /* ECharts resolves no CSS, so every colour inside `option` below has to be a
+     real string. The surrounding DOM uses var() directly. Both come from the
+     same tokens, which is what keeps the chart and its card in step when the
+     theme flips. */
+  const T = useThemeTokens();
+  const ZONE = zoneTints(T.isDark);
   // Guards the one-time "open on the champion" default against filter refetches.
   const seededRef = useRef(false);
   const router = useRouter();
@@ -171,6 +193,17 @@ export default function PredictiveIncidentChart({
         setData(payload);
         onDataBoundsChange?.(payload.dataBounds);
         onWeatherApplicableChange?.(payload.weatherApplicable);
+        
+        onCorridorForecastChange?.({
+          corridorForecast: payload.corridorForecast,
+          kmSegmentForecast: payload.kmSegmentForecast,
+          unclassifiedLocationShare: payload.unclassifiedLocationShare,
+          forecastHorizon: payload.corridorForecastDays,
+          forecastModelLabel: payload.corridorForecast ? (META[payload.corridorForecastModel as ModelKey]?.label ?? payload.corridorForecastModel) : null,
+          showVolume,
+          showWeather,
+        });
+
         // Open on the champion so the default view matches the headline metrics,
         // but only on first load — re-seeding on every filter change would throw
         // away a model comparison the user had set up. `selected` isn't a fetch
@@ -191,7 +224,7 @@ export default function PredictiveIncidentChart({
     return () => {
       cancelled = true;
     };
-  }, [months, from, to, weather, showVolume, showWeather, onDataBoundsChange, onWeatherApplicableChange]);
+  }, [months, from, to, weather, showVolume, showWeather, onDataBoundsChange, onWeatherApplicableChange, onCorridorForecastChange]);
 
   // Only blank the card on the very first load. Changing Range or Weather
   // refetches, and swapping the whole chart out for a spinner each time made the
@@ -199,7 +232,7 @@ export default function PredictiveIncidentChart({
   if (loading && !data) {
     return (
       <article className="chart-card wide" style={{ height: "480px", padding: "20px", display: "grid", placeItems: "center" }}>
-        <div style={{ color: "#64748b" }}>Loading ML forecast from AWS…</div>
+        <div style={{ color: "var(--text-muted)" }}>Loading ML forecast from AWS…</div>
       </article>
     );
   }
@@ -209,7 +242,7 @@ export default function PredictiveIncidentChart({
       <article className="chart-card wide" style={{ height: "480px", padding: "20px", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", maxWidth: "420px" }}>
           <div style={{ fontWeight: 700, color: "#b91c1c", marginBottom: "6px" }}>Predictive analytics unavailable</div>
-          <div style={{ fontSize: "0.85rem", color: "#94a3b8" }}>{error ?? "Database not reachable"}</div>
+          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>{error ?? "Database not reachable"}</div>
         </div>
       </article>
     );
@@ -441,19 +474,19 @@ export default function PredictiveIncidentChart({
   const markAreaData: [ZoneMarkAreaPoint, ZoneMarkAreaPoint][] = [];
   if (showPast) {
     markAreaData.push([
-      { xAxis: 0, itemStyle: { color: "rgba(37, 99, 235, 0.05)" }, label: zoneLabel("Past", showZoneLabel("Past")) },
+      { xAxis: 0, itemStyle: { color: ZONE.past }, label: zoneLabel("Past", showZoneLabel("Past"), T.textMuted) },
       { xAxis: Math.max(effHoldoutStart - 1, 0) },
     ]);
   }
   if (showPresent) {
     markAreaData.push([
-      { xAxis: effHoldoutStart, itemStyle: { color: "rgba(249, 115, 22, 0.08)" }, label: zoneLabel("Present", showZoneLabel("Present")) },
+      { xAxis: effHoldoutStart, itemStyle: { color: ZONE.present }, label: zoneLabel("Present", showZoneLabel("Present"), T.textMuted) },
       { xAxis: Math.max(effFutureStart - 1, 0) },
     ]);
   }
   if (showFuture) {
     markAreaData.push([
-      { xAxis: effFutureStart, itemStyle: { color: "rgba(22, 163, 74, 0.08)" }, label: zoneLabel("Future", showZoneLabel("Future")) },
+      { xAxis: effFutureStart, itemStyle: { color: ZONE.future }, label: zoneLabel("Future", showZoneLabel("Future"), T.textMuted) },
       { xAxis: effLastIndex },
     ]);
   }
@@ -486,7 +519,7 @@ export default function PredictiveIncidentChart({
             silent: true,
             symbol: "none" as const,
             label: { show: false },
-            lineStyle: { type: "dashed" as const, color: "#94a3b8" },
+            lineStyle: { type: "dashed" as const, color: ZONE.divider },
             data: markLineData,
           },
         }
@@ -546,17 +579,20 @@ export default function PredictiveIncidentChart({
         bottom: 30,
         height: 16,
         borderColor: "transparent",
-        backgroundColor: "#fbf3e3",
-        fillerColor: "rgba(184,118,10,0.25)",
-        handleStyle: { color: "#b8760a", borderColor: "#b8760a" },
-        moveHandleStyle: { color: "#b8760a" },
-        textStyle: { color: "#64748b", fontSize: 10 },
+        backgroundColor: T.isDark ? "rgba(255,255,255,0.04)" : "#fbf3e3",
+        fillerColor: T.isDark ? "rgba(240,169,43,0.28)" : "rgba(184,118,10,0.25)",
+        handleStyle: { color: T.isDark ? "#f0a92b" : "#b8760a", borderColor: T.isDark ? "#f0a92b" : "#b8760a" },
+        moveHandleStyle: { color: T.isDark ? "#f0a92b" : "#b8760a" },
+        textStyle: { color: T.textMuted, fontSize: 10 },
         showDetail: false,
       },
       { type: "inside", xAxisIndex: 0 },
     ],
     tooltip: {
       trigger: "axis",
+      backgroundColor: T.tooltipBg,
+      borderColor: T.border,
+      textStyle: { color: T.tooltipText },
       formatter: (params: unknown) => {
         const items = params as { name: string; marker: string; seriesName: string; value: number | null }[];
         let tip = `<b>${items[0].name}</b><br/>`;
@@ -570,7 +606,7 @@ export default function PredictiveIncidentChart({
                 : fmtInt(Number(p.value));
           tip += `${p.marker} ${p.seriesName}: <b>${val}</b><br/>`;
         });
-        tip += `<span style="color:#94a3b8;font-size:11px">${
+        tip += `<span style="color:${T.textMuted};font-size:11px">${
           isAggregated ? "Switch to Daily to open a day" : "Click to view hourly breakdown"
         }</span>`;
         return tip;
@@ -585,7 +621,7 @@ export default function PredictiveIncidentChart({
       // forecast) so the legend matches the line style; a coloured dot was the same for
       // both members of a pair. Total view keeps the dots.
       ...(splitOn ? { itemWidth: 28, itemHeight: 3 } : {}),
-      textStyle: { fontSize: 12 },
+      textStyle: { fontSize: 12, color: T.chartText },
     },
     xAxis: {
       type: "category",
@@ -593,8 +629,8 @@ export default function PredictiveIncidentChart({
       // Labels are click targets too — a wider hit area than the line symbols
       // (matches PredictiveVolumeChart's xAxis).
       triggerEvent: true,
-      axisLabel: { color: "#64748b" },
-      axisLine: { lineStyle: { color: "#cbd5e1" } },
+      axisLabel: { color: T.chartText },
+      axisLine: { lineStyle: { color: T.chartAxis } },
     },
     yAxis: [
       {
@@ -603,8 +639,9 @@ export default function PredictiveIncidentChart({
         nameLocation: "middle",
         nameGap: 40,
         min: 0,
-        axisLabel: { color: "#64748b" },
-        splitLine: { lineStyle: { color: "#e2e8f0", type: "dashed" } },
+        nameTextStyle: { color: T.chartText },
+        axisLabel: { color: T.chartText },
+        splitLine: { lineStyle: { color: T.chartSplit, type: "dashed" } },
       },
       {
         type: "value",
@@ -729,11 +766,11 @@ export default function PredictiveIncidentChart({
 
   const modelToolbar = (
     <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: "0 1 auto", minWidth: 0 }}>
-      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "#94a3b8", flex: "none" }}>
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)", flex: "none" }}>
         <path d="M2 11.5l3.5-4 3 3L13.5 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         <path d="M10.5 4h3v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
-      <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--text-secondary, #4b5e7d)", letterSpacing: "0.02em", whiteSpace: "nowrap" }}>
+      <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--text-secondary)", letterSpacing: "0.02em", whiteSpace: "nowrap" }}>
         Models
       </span>
       {/* Same segmented-pill control the traffic chart uses, with each selected
@@ -741,7 +778,7 @@ export default function PredictiveIncidentChart({
       <div
         style={{
           display: "inline-flex", flexWrap: "wrap", gap: "2px", padding: "3px",
-          background: "var(--bg-surface, #fff)", border: "1px solid #dce2ef", borderRadius: "999px",
+          background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px",
         }}
       >
         {availableModels.map((m) => {
@@ -759,7 +796,7 @@ export default function PredictiveIncidentChart({
                 fontSize: "0.76rem", fontWeight: 600, whiteSpace: "nowrap",
                 cursor: locked ? "default" : "pointer", transition: "all 0.15s",
                 background: on ? m.color : "transparent",
-                color: on ? "#fff" : "var(--text-secondary, #4b5e7d)",
+                color: on ? "var(--text-on-dark)" : "var(--text-secondary)",
                 boxShadow: on ? `0 1px 4px ${m.color}40` : "none",
               }}
             >
@@ -777,7 +814,7 @@ export default function PredictiveIncidentChart({
   );
 
   const th: React.CSSProperties = { padding: "6px 10px", fontWeight: 600, textAlign: "right" };
-  const td: React.CSSProperties = { padding: "10px", textAlign: "right", color: "#0f172a" };
+  const td: React.CSSProperties = { padding: "10px", textAlign: "right", color: "var(--text-primary)" };
 
   // The table is a read-out of what's plotted, not a static leaderboard — it
   // lists exactly the models toggled on, the same way the traffic chart does.
@@ -793,16 +830,16 @@ export default function PredictiveIncidentChart({
     : `Full-holdout metrics from the last training run (${fmtTrainedAt(modelInfo.trainedAt)})`;
 
   const metricsTable = (
-    <div style={{ background: "#f8fafc", borderRadius: "8px", padding: "16px", border: "1px solid #e2e8f0" }}>
+    <div style={{ background: "var(--bg-surface-hover)", borderRadius: "8px", padding: "16px", border: "1px solid var(--border-default)" }}>
       <div style={{ marginBottom: "12px" }}>
-        <h4 style={{ margin: 0, fontSize: "0.95rem", color: "#334155", fontWeight: 600 }}>
+        <h4 style={{ margin: 0, fontSize: "0.95rem", color: "var(--text-primary)", fontWeight: 600 }}>
           Real-World ML Validation Metrics
         </h4>
       </div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem", minWidth: "610px" }}>
           <thead>
-            <tr style={{ textAlign: "left", color: "#64748b", fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            <tr style={{ textAlign: "left", color: "var(--text-muted)", fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
               <th style={{ padding: "6px 10px", fontWeight: 600 }}>Model</th>
               <th style={th}><MetricHint hint={metricHintFor("RMSE")}>RMSE</MetricHint></th>
               <th style={th}><MetricHint hint={metricHintFor("MAE")}>MAE</MetricHint></th>
@@ -814,16 +851,16 @@ export default function PredictiveIncidentChart({
           <tbody>
             {shownMetrics.map((m) => {
               const meta = META[m.model as ModelKey];
-              const color = meta?.color ?? "#64748b";
+              const color = meta?.color ?? "var(--text-muted)";
               return (
-                <tr key={m.model} style={{ background: "#fff", borderTop: "1px solid #e2e8f0" }}>
-                  <td style={{ padding: "10px", fontWeight: 700, color: "#0f172a" }}>
+                <tr key={m.model} style={{ background: "var(--bg-surface)", borderTop: "1px solid var(--border-default)" }}>
+                  <td style={{ padding: "10px", fontWeight: 700, color: "var(--text-primary)" }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
                       <span style={{ width: 10, height: 10, borderRadius: "50%", background: color }} />
                       <MetricHint hint={modelHintFor(m.model as ModelKey)}>{meta?.label ?? m.model}</MetricHint>
                       {m.isChampion && (
                         <span
-                          style={{ fontSize: "0.72rem", fontWeight: 600, color: "#15803d" }}
+                          style={{ fontSize: "0.72rem", fontWeight: 600, color: T.isDark ? "#4ade80" : "#15803d" }}
                           title="Selected on the full holdout window when the model was trained, not on the currently visible Range/Weather slice"
                         >
                           Champion
@@ -831,7 +868,7 @@ export default function PredictiveIncidentChart({
                       )}
                       {m.source === "holdout" && (
                         <span
-                          style={{ fontSize: "0.72rem", fontWeight: 500, color: "#94a3b8" }}
+                          style={{ fontSize: "0.72rem", fontWeight: 500, color: "var(--text-muted)" }}
                           title="No scored days in the current Range/Weather selection — showing the pipeline's full-holdout numbers instead"
                         >
                           (full holdout)
@@ -867,24 +904,35 @@ export default function PredictiveIncidentChart({
   const wm = data.weatherMetrics;
   const weatherPanel =
     wm == null ? null : (
-      <div style={{ background: wm.weather === "wet" ? "#f0f9ff" : "#fffbeb", borderRadius: "8px", padding: "16px", border: `1px solid ${wm.weather === "wet" ? "#bae6fd" : "#fde68a"}` }}>
+      <div style={{
+        /* Tinted to say which slice is on screen. The light washes read as
+           bright panels on a dark card, so on dark the same two hues come
+           through as low-alpha overlays on the card instead. */
+        background: T.isDark
+          ? (wm.weather === "wet" ? "rgba(56,189,248,0.10)" : "rgba(251,191,36,0.10)")
+          : (wm.weather === "wet" ? "#f0f9ff" : "#fffbeb"),
+        borderRadius: "8px", padding: "16px",
+        border: `1px solid ${T.isDark
+          ? (wm.weather === "wet" ? "rgba(56,189,248,0.30)" : "rgba(251,191,36,0.30)")
+          : (wm.weather === "wet" ? "#bae6fd" : "#fde68a")}`,
+      }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
-          <h4 style={{ margin: 0, fontSize: "0.95rem", color: "#334155", fontWeight: 600 }}>
+          <h4 style={{ margin: 0, fontSize: "0.95rem", color: "var(--text-primary)", fontWeight: 600 }}>
             Accuracy on {wm.weather === "wet" ? "wet" : "dry"} days only
           </h4>
-          <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
+          <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
             {wm.days} of {modelInfo.scoredDays ?? "—"} holdout days · wet = expressway-average rainfall &gt; 0.3 mm
           </span>
         </div>
         {wm.days === 0 ? (
-          <div style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
+          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
             No {wm.weather} days in the scored window.
           </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem", minWidth: "420px" }}>
               <thead>
-                <tr style={{ textAlign: "left", color: "#64748b", fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                <tr style={{ textAlign: "left", color: "var(--text-muted)", fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                   <th style={{ padding: "6px 10px", fontWeight: 600 }}>Model</th>
                   <th style={th}>MAE</th>
                   <th style={th}>RMSE</th>
@@ -896,16 +944,16 @@ export default function PredictiveIncidentChart({
                   .filter((m) => activeModels.includes(m.model as ModelKey))
                   .map((m) => {
                     const meta = META[m.model as ModelKey];
-                    const color = meta?.color ?? "#64748b";
+                    const color = meta?.color ?? "var(--text-muted)";
                     return (
-                      <tr key={m.model} style={{ background: "#fff", borderTop: "1px solid #e2e8f0" }}>
-                        <td style={{ padding: "10px", fontWeight: 700, color: "#0f172a" }}>
+                      <tr key={m.model} style={{ background: "var(--bg-surface)", borderTop: "1px solid var(--border-default)" }}>
+                        <td style={{ padding: "10px", fontWeight: 700, color: "var(--text-primary)" }}>
                           <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
                             <span style={{ width: 10, height: 10, borderRadius: "50%", background: color }} />
                             {meta?.label ?? m.model}
                             {m.isChampion && (
                               <span
-                                style={{ fontSize: "0.72rem", fontWeight: 600, color: "#15803d" }}
+                                style={{ fontSize: "0.72rem", fontWeight: 600, color: T.isDark ? "#4ade80" : "#15803d" }}
                                 title="Selected on the full holdout window when the model was trained, not on the currently visible Range/Weather slice"
                               >
                                 Champion
@@ -932,18 +980,18 @@ export default function PredictiveIncidentChart({
           too narrow to hold both. */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
         <div style={{ minWidth: "260px" }}>
-          <h3 style={{ fontSize: "1.05rem", color: "#0f172a", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
+          <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
             Incident Walk-Forward Forecast
             <InfoTooltip text="Daily incident forecast, scored against real held-out data. Past = training history, Present = the model's held-out accuracy check (never trained on), Future = the published forecast for days that haven't happened yet." />
           </h3>
-          <p style={{ color: "#64748b", fontSize: "0.82rem", margin: "4px 0 0 0" }}>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", margin: "4px 0 0 0" }}>
             Click any point to view that day&apos;s hourly breakdown
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
           {data.accidentSplit && (
             <div
-              style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface, #fff)", border: "1px solid #dce2ef", borderRadius: "999px" }}
+              style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px" }}
               title="Total: the blended forecast with every candidate model. Split: a dedicated accident forecast, with breakdowns derived as blended total minus accidents."
             >
               {([false, true] as const).map((on) => (
@@ -954,7 +1002,7 @@ export default function PredictiveIncidentChart({
                   style={{
                     padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
                     background: splitView === on ? "#4f46e5" : "transparent",
-                    color: splitView === on ? "#fff" : "#4b5e7d",
+                    color: splitView === on ? "var(--text-on-dark)" : "var(--text-secondary)",
                     fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap",
                   }}
                 >
@@ -978,10 +1026,10 @@ export default function PredictiveIncidentChart({
             }
             style={{
               display: "inline-flex", alignItems: "center", gap: "6px", padding: "5px 14px",
-              borderRadius: "999px", border: "1px solid #dce2ef",
+              borderRadius: "999px", border: "1px solid var(--border-default)",
               fontSize: "0.76rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
-              background: showVolume ? "linear-gradient(135deg, #fbbf24, #f59e0b)" : "var(--bg-surface, #fff)",
-              color: showVolume ? "var(--bg-surface, #fff)" : "var(--text-secondary, #4b5e7d)",
+              background: showVolume ? "linear-gradient(135deg, #fbbf24, #f59e0b)" : "var(--bg-surface)",
+              color: showVolume ? "var(--text-on-dark)" : "var(--text-secondary)",
               boxShadow: showVolume ? "0 1px 6px rgba(245,158,11,0.35)" : "none",
             }}
           >
@@ -1010,10 +1058,10 @@ export default function PredictiveIncidentChart({
             }
             style={{
               display: "inline-flex", alignItems: "center", gap: "6px", padding: "5px 14px",
-              borderRadius: "999px", border: "1px solid #dce2ef",
+              borderRadius: "999px", border: "1px solid var(--border-default)",
               fontSize: "0.76rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
-              background: showWeather ? `linear-gradient(135deg, ${RAIN_COLOR}, #0284c7)` : "var(--bg-surface, #fff)",
-              color: showWeather ? "var(--bg-surface, #fff)" : "var(--text-secondary, #4b5e7d)",
+              background: showWeather ? `linear-gradient(135deg, ${RAIN_COLOR}, #0284c7)` : "var(--bg-surface)",
+              color: showWeather ? "var(--text-on-dark)" : "var(--text-secondary)",
               boxShadow: showWeather ? `0 1px 6px ${RAIN_COLOR}59` : "none",
             }}
           >
@@ -1038,7 +1086,7 @@ export default function PredictiveIncidentChart({
           split view (saying why the picker doesn't apply) so nothing below shifts either. */}
       <div style={{ display: "flex", alignItems: "center", minHeight: 40 }}>
         {splitOn && split ? (
-          <span style={{ fontSize: "0.76rem", color: "#64748b" }}>
+          <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>
             Model picker not used in this view — the accident forecast is{" "}
             {split.championModel ? (META[split.championModel as ModelKey]?.label ?? split.championModel) : "its own champion model"},
             fitted on accidents alone; breakdowns are derived as blended total minus accidents.
@@ -1056,7 +1104,7 @@ export default function PredictiveIncidentChart({
         <div style={{
           display: "inline-flex", alignItems: "center", gap: "6px", alignSelf: "flex-start",
           padding: "5px 12px", borderRadius: "999px",
-          background: "linear-gradient(135deg, var(--page-accent, #4f46e5), color-mix(in srgb, var(--page-accent, #4f46e5) 88%, #0b1020))", color: "#fff",
+          background: "linear-gradient(135deg, var(--page-accent, #4f46e5), color-mix(in srgb, var(--page-accent, #4f46e5) 88%, #0b1020))", color: "var(--text-on-dark)",
           fontSize: "0.74rem", fontWeight: 600,
         }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
@@ -1075,14 +1123,14 @@ export default function PredictiveIncidentChart({
         {/* GRANULARITY control pill */}
         <span style={{
           display: "inline-flex", alignItems: "center", gap: "8px", padding: "10px 14px",
-          borderRadius: "10px", background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: "0.76rem",
+          borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)", fontSize: "0.76rem",
         }}>
           <b style={{ color: "var(--page-accent, #3b82f6)", letterSpacing: "0.04em", fontSize: "0.75rem", textTransform: "uppercase" }}>
             GRANULARITY
           </b>
           <div style={{
             display: "inline-flex", alignItems: "center", padding: "2px",
-            borderRadius: "999px", background: "#fff", border: "1px solid #dce2ef",
+            borderRadius: "999px", background: "var(--bg-surface)", border: "1px solid var(--border-default)",
           }}>
             {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
               <button
@@ -1096,7 +1144,7 @@ export default function PredictiveIncidentChart({
                 style={{
                   padding: "3px 10px", borderRadius: "999px", cursor: "pointer", border: "none",
                   background: "transparent",
-                  color: granularity === g ? "#2563eb" : "#4b5e7d",
+                  color: granularity === g ? "#2563eb" : "var(--text-secondary)",
                   fontWeight: granularity === g ? 700 : 600, fontSize: "0.72rem",
                 }}
               >
@@ -1113,9 +1161,9 @@ export default function PredictiveIncidentChart({
             borderRadius: "10px", background: "rgba(37,99,235,0.07)", border: "1px solid rgba(37,99,235,0.18)", fontSize: "0.76rem",
           }}>
             <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(37,99,235,0.5)" }} />
-            <b style={{ color: "#0f172a" }}>Past</b>
+            <b style={{ color: "var(--text-primary)" }}>Past</b>
             {modelInfo.trainedDays != null && (
-              <span style={{ color: "#4b5e7d" }}>
+              <span style={{ color: "var(--text-secondary)" }}>
                 {fmtInt(modelInfo.trainedDays)}d trained{trainedPct != null ? ` · ${trainedPct.toFixed(2)}%` : ""} · showing last {fmtInt(effHoldoutStart)}d
               </span>
             )}
@@ -1129,8 +1177,8 @@ export default function PredictiveIncidentChart({
             borderRadius: "10px", background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.22)", fontSize: "0.76rem",
           }}>
             <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(249,115,22,0.55)" }} />
-            <b style={{ color: "#0f172a" }}>Present</b>
-            <span style={{ color: "#4b5e7d" }}>
+            <b style={{ color: "var(--text-primary)" }}>Present</b>
+            <span style={{ color: "var(--text-secondary)" }}>
               {presentScoredDays}d scored{scoredPct != null ? ` · ${scoredPct.toFixed(2)}%` : ""} · fixed by evaluation
             </span>
           </span>
@@ -1145,7 +1193,7 @@ export default function PredictiveIncidentChart({
             borderRadius: "10px", background: "rgba(22,163,74,0.07)", border: "1px solid rgba(22,163,74,0.2)", fontSize: "0.76rem",
           }}>
             <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(22,163,74,0.5)" }} />
-            <b style={{ color: "#0f172a" }}>Future</b>
+            <b style={{ color: "var(--text-primary)" }}>Future</b>
             {FUTURE_PRESETS.map((item) => {
               const unavailable = item.d > futureAvailable;
               const active = effectiveFutureDays === item.d;
@@ -1163,9 +1211,9 @@ export default function PredictiveIncidentChart({
                     padding: "3px 10px",
                     borderRadius: "999px",
                     cursor: unavailable ? "not-allowed" : "pointer",
-                    border: active ? "1px solid #16a34a" : "1px solid #dce2ef",
-                    background: active ? "#16a34a" : "#fff",
-                    color: active ? "#fff" : "#4b5e7d",
+                    border: active ? "1px solid #16a34a" : "1px solid var(--border-default)",
+                    background: active ? "#16a34a" : "var(--bg-surface)",
+                    color: active ? "var(--bg-surface)" : "var(--text-secondary)",
                     fontWeight: 600,
                     fontSize: "0.72rem",
                     opacity: unavailable ? 0.4 : 1,
@@ -1175,7 +1223,7 @@ export default function PredictiveIncidentChart({
                 </button>
               );
             })}
-            <span style={{ color: "#64748b" }}>
+            <span style={{ color: "var(--text-muted)" }}>
               · validated at {presentScoredDays}d
             </span>
           </span>
@@ -1196,10 +1244,10 @@ export default function PredictiveIncidentChart({
       {showWeather && (
         <div style={{
           display: "flex", alignItems: "center", gap: "18px", flexWrap: "wrap",
-          padding: "10px 14px", borderRadius: "10px", background: "#f8fafc",
-          border: "1px solid #e2e8f0", fontSize: "0.75rem", color: "#4b5e7d",
+          padding: "10px 14px", borderRadius: "10px", background: "var(--bg-surface-hover)",
+          border: "1px solid var(--border-default)", fontSize: "0.75rem", color: "var(--text-secondary)",
         }}>
-          <span style={{ fontWeight: 700, color: "#0f172a" }}>Daily rainfall</span>
+          <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>Daily rainfall</span>
           {RAIN_BANDS.map((b, i) => (
             <span key={b.label} style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
               <span style={{
@@ -1207,14 +1255,14 @@ export default function PredictiveIncidentChart({
                 border: "1px solid rgba(2,132,199,0.5)", display: "inline-block",
               }} />
               {b.label}
-              <span style={{ color: "#94a3b8" }}>
+              <span style={{ color: "var(--text-muted)" }}>
                 {i === 0 ? `< ${b.max} mm`
                   : b.max === Infinity ? `≥ ${RAIN_BANDS[i - 1].max} mm`
                   : `${RAIN_BANDS[i - 1].max}–${b.max} mm`}
               </span>
             </span>
           ))}
-          <span style={{ color: "#4b5e7d", borderLeft: "1px solid #e2e8f0", paddingLeft: "14px" }}>
+          <span style={{ color: "var(--text-secondary)", borderLeft: "1px solid var(--border-default)", paddingLeft: "14px" }}>
             Taller bar = wetter day. Heavy rain typically coincides with higher incident rates and worse congestion, even as traffic volume drops.
           </span>
         </div>

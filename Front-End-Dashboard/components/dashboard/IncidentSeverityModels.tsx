@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useThemeTokens } from "./useThemeTokens";
 import type { EChartsOption } from "echarts";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
@@ -69,6 +70,14 @@ export default function IncidentSeverityModels() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("severity");
+  // Read before the early returns below -- a hook cannot sit after one.
+  // ECharts resolves no CSS, so the chart blocks take these as literals while
+  // the surrounding DOM uses var() directly.
+  const T = useThemeTokens();
+
+  const accentInk = T.isDark
+    ? "color-mix(in srgb, var(--page-accent, #4f46e5) 36%, #ffffff)"
+    : "color-mix(in srgb, var(--page-accent, #4f46e5) 72%, #0b1020)";
 
   useEffect(() => {
     let cancelled = false;
@@ -93,7 +102,7 @@ export default function IncidentSeverityModels() {
   if (loading) {
     return (
       <article className="chart-card wide" style={{ height: "320px", padding: "20px", display: "grid", placeItems: "center" }}>
-        <div style={{ color: "#64748b" }}>Loading severity/clearance models…</div>
+        <div style={{ color: "var(--text-muted)" }}>Loading severity/clearance models…</div>
       </article>
     );
   }
@@ -102,8 +111,8 @@ export default function IncidentSeverityModels() {
     return (
       <article className="chart-card wide" style={{ height: "260px", padding: "20px", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", maxWidth: "420px" }}>
-          <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px" }}>Severity/clearance models unavailable</div>
-          <div style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
+          <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: "6px" }}>Severity/clearance models unavailable</div>
+          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
             {error ?? "The severity pipeline hasn't written its output yet — run train_incident_severity_models.py --write-db."}
           </div>
         </div>
@@ -201,6 +210,9 @@ export default function IncidentSeverityModels() {
     grid: { left: 56, right: 24, top: 24, bottom: 48 },
     tooltip: {
       trigger: "item",
+      backgroundColor: T.tooltipBg,
+      borderColor: T.border,
+      textStyle: { color: T.tooltipText },
       formatter: (p: unknown) => {
         const x = kmMedians[(p as { dataIndex: number }).dataIndex];
         return `<b>${x.group}</b><br/>Median: <b>${x.median} min</b> to response<br/>n=${x.n}`;
@@ -212,8 +224,9 @@ export default function IncidentSeverityModels() {
       name: "Corridor position",
       nameLocation: "middle",
       nameGap: 32,
-      axisLabel: { color: "#64748b", fontSize: 11 },
-      axisLine: { lineStyle: { color: "#cbd5e1" } },
+      nameTextStyle: { color: T.chartText },
+      axisLabel: { color: T.chartText, fontSize: 11 },
+      axisLine: { lineStyle: { color: T.chartAxis } },
     },
     yAxis: {
       type: "value",
@@ -221,16 +234,17 @@ export default function IncidentSeverityModels() {
       nameLocation: "middle",
       nameGap: 40,
       min: 0,
-      axisLabel: { color: "#64748b" },
-      splitLine: { lineStyle: { color: "#eef1f7" } },
+      nameTextStyle: { color: T.chartText },
+      axisLabel: { color: T.chartText },
+      splitLine: { lineStyle: { color: T.chartSplit } },
     },
     series: [
       {
         type: "bar",
         data: kmMedians.map((x) => x.median),
         barMaxWidth: 60,
-        itemStyle: { color: "#b8760a", borderRadius: [4, 4, 0, 0] },
-        label: { show: true, position: "top", color: "#334155", fontSize: 11, fontWeight: 600, formatter: (p: unknown) => `${(p as { value: number }).value}m` },
+        itemStyle: { color: T.isDark ? "#f0a92b" : "#b8760a", borderRadius: [4, 4, 0, 0] },
+        label: { show: true, position: "top", color: T.textSecondary, fontSize: 11, fontWeight: 600, formatter: (p: unknown) => `${(p as { value: number }).value}m` },
       },
     ],
   };
@@ -248,6 +262,9 @@ export default function IncidentSeverityModels() {
     grid: { left: 56, right: 24, top: 24, bottom: 64 + (legendRows - 1) * 30 },
     tooltip: {
       trigger: "axis",
+      backgroundColor: T.tooltipBg,
+      borderColor: T.border,
+      textStyle: { color: T.tooltipText },
       formatter: (params: unknown) => {
         const items = params as { seriesName: string; value: [number, number]; marker: string }[];
         if (items.length === 0) return "";
@@ -255,19 +272,20 @@ export default function IncidentSeverityModels() {
         items.forEach((p) => {
           const n = nOf(p.seriesName);
           tip += `${p.marker} ${p.seriesName}: <b>${(p.value[1] * 100).toFixed(1)}%</b> still unresolved` +
-            `${n != null ? ` <span style="color:#94a3b8">(n=${n})</span>` : ""}<br/>`;
+            `${n != null ? ` <span style="color:${T.textMuted}">(n=${n})</span>` : ""}<br/>`;
         });
         return tip;
       },
     },
-    legend: { bottom: 0, icon: "circle", itemGap: 16, textStyle: { fontSize: 12 } },
+    legend: { bottom: 0, icon: "circle", itemGap: 16, textStyle: { fontSize: 12, color: T.chartText } },
     xAxis: {
       type: "value",
       name: "Minutes since report",
       nameLocation: "middle",
       nameGap: 28,
       min: 0,
-      axisLabel: { color: "#64748b" },
+      nameTextStyle: { color: T.chartText },
+      axisLabel: { color: T.chartText },
       // Vertical gridlines add crossing clutter without helping a reader
       // compare curves (that comparison is vertical, along the y-axis) —
       // dropped in favor of the horizontal ones below.
@@ -280,8 +298,9 @@ export default function IncidentSeverityModels() {
       nameGap: 44,
       min: 0,
       max: 1,
-      axisLabel: { color: "#64748b", formatter: (v: number) => `${Math.round(v * 100)}%` },
-      splitLine: { lineStyle: { color: "#eef1f7" } },
+      nameTextStyle: { color: T.chartText },
+      axisLabel: { color: T.chartText, formatter: (v: number) => `${Math.round(v * 100)}%` },
+      splitLine: { lineStyle: { color: T.chartSplit } },
     },
     series: groups.map((g, i) => {
       const median = medianOf(g);
@@ -299,11 +318,11 @@ export default function IncidentSeverityModels() {
         lineStyle: {
           width: isBaseline ? 2.25 : 2.5,
           type: isBaseline ? [7, 4] : "solid",
-          color: GROUP_COLOR[g] ?? "#64748b",
+          color: GROUP_COLOR[g] ?? T.textMuted,
           cap: "round",
           join: "round",
         },
-        itemStyle: { color: GROUP_COLOR[g] ?? "#64748b" },
+        itemStyle: { color: GROUP_COLOR[g] ?? T.textMuted },
         z: isBaseline ? 3 : 2,
         // Hover (legend or the line itself) highlights this series and
         // blurs the rest to 15% opacity — the standard ECharts pattern for
@@ -320,8 +339,8 @@ export default function IncidentSeverityModels() {
               markLine: {
                 silent: true,
                 symbol: "none",
-                lineStyle: { color: "#cbd5e1", type: "dotted", width: 1.5 },
-                label: { formatter: "50% resolved", position: "insideEndTop", color: "#94a3b8", fontSize: 10 },
+                lineStyle: { color: T.chartAxis, type: "dotted", width: 1.5 },
+                label: { formatter: "50% resolved", position: "insideEndTop", color: T.textMuted, fontSize: 10 },
                 data: [{ yAxis: 0.5 }],
               },
             }
@@ -343,16 +362,19 @@ export default function IncidentSeverityModels() {
                 symbol: "circle",
                 symbolSize: isBaseline ? 8 : 7,
                 itemStyle: isBaseline
-                  ? { color: "#fff", borderColor: GROUP_COLOR[g] ?? "#64748b", borderWidth: 2 }
-                  : { color: GROUP_COLOR[g] ?? "#64748b", borderColor: "#fff", borderWidth: 1.5 },
+                  ? { color: T.surface, borderColor: GROUP_COLOR[g] ?? T.textMuted, borderWidth: 2 }
+                  : { color: GROUP_COLOR[g] ?? T.textMuted, borderColor: T.surface, borderWidth: 1.5 },
                 label: {
                   show: true,
                   formatter: `${median}m`,
                   position: i % 2 === 0 ? "top" : "bottom",
-                  color: GROUP_COLOR[g] ?? "#64748b",
+                  color: GROUP_COLOR[g] ?? T.textMuted,
                   fontSize: 10,
                   fontWeight: 700,
-                  backgroundColor: "rgba(255,255,255,0.85)",
+                  // The halo that keeps clustered median labels legible has to
+                  // be the card's own colour, not white, or it reads as a row
+                  // of bright stickers on a dark chart.
+                  backgroundColor: T.isDark ? "rgba(22,27,34,0.88)" : "rgba(255,255,255,0.85)",
                   padding: [1, 3],
                   borderRadius: 3,
                 },
@@ -367,12 +389,12 @@ export default function IncidentSeverityModels() {
   return (
     <article className="chart-card wide" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "14px" }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
-        <h3 style={{ fontSize: "1.05rem", color: "#0f172a", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
+        <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
           Time to Clear, by{" "}
           {view === "severity" ? "Severity" : view === "source" ? "Incident Source" : view === "both" ? "Severity and Source" : "Corridor Position"}
           <InfoTooltip text="How quickly incidents clear (report-to-response duration — the best available proxy, since no scene-cleared timestamp exists), broken down by severity, source, or corridor position. Each curve is the probability an incident is still unresolved at a given number of minutes since it was reported; steeper curve / lower bar = clears faster. Weather and traffic volume are trained covariates inside this same model (weather condition, and a real train/test volume feature — see the model's own coefficient table), not separate views here, since neither one groups the corridor into categories the way severity, source, or position do." />
         </h3>
-        <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface, #fff)", border: "1px solid #dce2ef", borderRadius: "999px", flexShrink: 0, flexWrap: "wrap" }}>
+        <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px", flexShrink: 0, flexWrap: "wrap" }}>
           {(["severity", "source", "both", "km"] as const).map((v) => (
             <button
               key={v}
@@ -380,7 +402,7 @@ export default function IncidentSeverityModels() {
               style={{
                 padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
                 background: view === v ? "var(--page-accent, #4f46e5)" : "transparent",
-                color: view === v ? "#fff" : "#4b5e7d",
+                color: view === v ? "var(--text-on-dark)" : "var(--text-secondary)",
                 fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap",
               }}
             >
@@ -389,7 +411,7 @@ export default function IncidentSeverityModels() {
           ))}
         </div>
       </div>
-      <p style={{ color: "#64748b", fontSize: "0.82rem", margin: 0 }}>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", margin: 0 }}>
         {view === "km" ? (
           <>
             Quantile bins (equal incident count, unequal km width), not fixed-width ones — km position holds
@@ -404,7 +426,7 @@ export default function IncidentSeverityModels() {
       </p>
       {view !== "both" && fastest && slowest && fastest.group !== slowest.group && (
         <div style={{ padding: "10px 14px", borderRadius: "10px", background: "color-mix(in srgb, var(--page-accent, #4f46e5) 9%, transparent)", border: "1px solid color-mix(in srgb, var(--page-accent, #4f46e5) 28%, transparent)" }}>
-          <p style={{ margin: 0, fontSize: "0.85rem", color: "color-mix(in srgb, var(--page-accent, #4f46e5) 72%, #0b1020)" }}>
+          <p style={{ margin: 0, fontSize: "0.85rem", color: accentInk }}>
             <strong>{fastest.group}</strong> incidents clear fastest — a median of <strong>{fastest.median} min</strong>{" "}
             to response — versus <strong>{slowest.group}</strong> at <strong>{slowest.median} min</strong> (
             {slowest.median - fastest.median} min slower).{" "}
@@ -425,7 +447,7 @@ export default function IncidentSeverityModels() {
       )}
       {view === "both" && oppositeTrends && (
         <div style={{ padding: "10px 14px", borderRadius: "10px", background: "color-mix(in srgb, var(--page-accent, #4f46e5) 9%, transparent)", border: "1px solid color-mix(in srgb, var(--page-accent, #4f46e5) 28%, transparent)" }}>
-          <p style={{ margin: 0, fontSize: "0.85rem", color: "color-mix(in srgb, var(--page-accent, #4f46e5) 72%, #0b1020)" }}>
+          <p style={{ margin: 0, fontSize: "0.85rem", color: accentInk }}>
             Severity pulls clearance time in <strong>opposite directions</strong> depending on source: within{" "}
             <strong>Road Crashes</strong>, a Fatal incident takes {medianOf("Road Crash — Fatal")}min versus{" "}
             {medianOf("Road Crash — Property Damage Only")}min for Property Damage Only —{" "}
@@ -440,7 +462,7 @@ export default function IncidentSeverityModels() {
       )}
       {view === "km" && kmFirst && kmLast && (
         <div style={{ padding: "10px 14px", borderRadius: "10px", background: "color-mix(in srgb, var(--page-accent, #4f46e5) 9%, transparent)", border: "1px solid color-mix(in srgb, var(--page-accent, #4f46e5) 28%, transparent)" }}>
-          <p style={{ margin: 0, fontSize: "0.85rem", color: "color-mix(in srgb, var(--page-accent, #4f46e5) 72%, #0b1020)" }}>
+          <p style={{ margin: 0, fontSize: "0.85rem", color: accentInk }}>
             {kmMonotonicIncreasing || kmMonotonicDecreasing ? (
               <>
                 Clearance time moves <strong>steadily {kmMonotonicIncreasing ? "up" : "down"}</strong> along the

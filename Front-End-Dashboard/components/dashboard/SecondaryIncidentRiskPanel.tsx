@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useThemeTokens } from "./useThemeTokens";
 import InfoTooltip from "./InfoTooltip";
 import { shadeFor } from "./PredictiveCorridorChart";
 import { fmtInt, fmtNum } from "./incidentPredictive.shared";
@@ -46,11 +47,26 @@ type SeverityData = {
   metadata: Metadata | null;
 };
 
+/** "A", "A and B", "A, B and C" -- never "A and B and C". */
+const listPhrase = (names: string[]) =>
+  names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
 export default function SecondaryIncidentRiskPanel() {
   const [data, setData] = useState<SeverityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<"exit" | "km">("exit");
+  // Read before the early returns below -- a hook cannot sit after one.
+  const T = useThemeTokens();
+
+  /* The accent, darkened for light backgrounds. Mixing toward #0b1020 is what
+     makes it readable on white, and exactly what makes it vanish on a dark
+     card, so on dark it mixes toward white instead. */
+  const accentInk = T.isDark
+    ? "color-mix(in srgb, var(--page-accent, #4f46e5) 36%, #ffffff)"
+    : "color-mix(in srgb, var(--page-accent, #4f46e5) 72%, #0b1020)";
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -76,7 +92,7 @@ export default function SecondaryIncidentRiskPanel() {
   if (loading) {
     return (
       <article className="chart-card wide" style={{ height: "320px", padding: "20px", display: "grid", placeItems: "center" }}>
-        <div style={{ color: "#64748b" }}>Loading secondary incident risk…</div>
+        <div style={{ color: "var(--text-muted)" }}>Loading secondary incident risk…</div>
       </article>
     );
   }
@@ -85,8 +101,8 @@ export default function SecondaryIncidentRiskPanel() {
     return (
       <article className="chart-card wide" style={{ height: "260px", padding: "20px", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", maxWidth: "420px" }}>
-          <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px" }}>Secondary incident risk unavailable</div>
-          <div style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
+          <div style={{ fontWeight: 700, color: "var(--text-secondary)", marginBottom: "6px" }}>Secondary incident risk unavailable</div>
+          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
             {error ?? "The severity pipeline hasn't written its output yet — run train_incident_severity_models.py --write-db."}
           </div>
         </div>
@@ -177,15 +193,15 @@ export default function SecondaryIncidentRiskPanel() {
           cursor: "default",
         }}
       >
-        <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#0f172a", textAlign: "right" }}>{displayIndex}</span>
+        <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-primary)", textAlign: "right" }}>{displayIndex}</span>
         <span
           title={row.tooltipDetail ? `${row.label} (${row.tooltipDetail})` : row.label}
-          style={{ fontSize: "0.8rem", fontWeight: 600, color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
         >
           {row.label}
         </span>
         <div style={{ position: "relative" }}>
-          <div style={{ height: 16, borderRadius: "999px", background: "#eef1f7", overflow: "hidden" }}>
+          <div style={{ height: 16, borderRadius: "999px", background: "var(--bg-surface-hover)", overflow: "hidden" }}>
             <div
               style={{
                 height: "100%",
@@ -200,8 +216,11 @@ export default function SecondaryIncidentRiskPanel() {
             <div style={{ position: "absolute", left: `${pct}%`, top: -18, transform: "translateX(-50%)", pointerEvents: "none" }}>
               <span
                 style={{
-                  fontSize: "0.6rem", fontWeight: 800, color: "#b45309", background: "#fffbeb",
-                  border: "1px solid #fde68a", borderRadius: "999px", padding: "1px 6px", whiteSpace: "nowrap",
+                  fontSize: "0.6rem", fontWeight: 800,
+                  color: T.isDark ? "#fbbf24" : "#b45309",
+                  background: T.isDark ? "rgba(251,191,36,0.14)" : "#fffbeb",
+                  border: `1px solid ${T.isDark ? "rgba(251,191,36,0.38)" : "#fde68a"}`,
+                  borderRadius: "999px", padding: "1px 6px", whiteSpace: "nowrap",
                 }}
               >
                 Highest
@@ -212,7 +231,9 @@ export default function SecondaryIncidentRiskPanel() {
             <div
               style={{
                 position: "absolute", right: 0, bottom: "calc(100% + 8px)", zIndex: 20, pointerEvents: "none",
-                background: "#0f172a", color: "#f1f5f9", borderRadius: "8px", padding: "8px 10px",
+                background: T.isDark ? "#05080f" : "#0f172a", color: "#f1f5f9",
+                border: T.isDark ? "1px solid var(--border-strong)" : "none",
+                borderRadius: "8px", padding: "8px 10px",
                 fontSize: "0.72rem", lineHeight: 1.5, minWidth: "200px", boxShadow: "0 10px 24px rgba(15,23,42,0.28)",
               }}
             >
@@ -229,8 +250,8 @@ export default function SecondaryIncidentRiskPanel() {
         <span
           style={{
             justifySelf: "end", padding: "3px 10px", borderRadius: "8px",
-            background: "#fff", border: "1.5px solid #e2e8f0",
-            fontSize: "0.78rem", fontWeight: 700, color: "color-mix(in srgb, var(--page-accent, #4f46e5) 62%, #0b1020)",
+            background: "var(--bg-surface)", border: "1.5px solid var(--border-default)",
+            fontSize: "0.78rem", fontWeight: 700, color: accentInk,
           }}
         >
           {(row.avgRisk * 100).toFixed(1)}%
@@ -243,12 +264,12 @@ export default function SecondaryIncidentRiskPanel() {
     <article className="chart-card wide" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 220px", minWidth: 0 }}>
-          <h3 style={{ fontSize: "1.05rem", color: "#0f172a", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
+          <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
             Secondary Incident Risk
             <InfoTooltip text={`Probability another incident starts within ${meta?.secondary_km_radius ?? 2}km while a first one is still being responded to — a logistic regression scored on held-out incidents, not an observed rate.`} />
           </h3>
         </div>
-        <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface, #fff)", border: "1px solid #dce2ef", borderRadius: "999px", flexShrink: 0 }}>
+        <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px", flexShrink: 0 }}>
           {(["exit", "km"] as const).map((v) => (
             <button
               key={v}
@@ -258,7 +279,7 @@ export default function SecondaryIncidentRiskPanel() {
               style={{
                 padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
                 background: view === v ? "var(--page-accent, #4f46e5)" : "transparent",
-                color: view === v ? "#fff" : "#4b5e7d",
+                color: view === v ? "var(--text-on-dark)" : "var(--text-secondary)",
                 fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap",
                 opacity: v === "km" && data.secondaryRiskByKmSegment.length === 0 ? 0.4 : 1,
               }}
@@ -269,46 +290,46 @@ export default function SecondaryIncidentRiskPanel() {
         </div>
       </div>
       <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-        <div style={{ flex: "1 1 120px", padding: "10px 14px", borderRadius: "10px", background: "#f8fafc", border: "1px solid #e2e8f0" }}>
-          <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Risk score AUC</div>
-          <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#0f172a" }}>
+        <div style={{ flex: "1 1 120px", padding: "10px 14px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
+          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Risk score AUC</div>
+          <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--text-primary)" }}>
             {meta?.secondary_risk.auc != null ? fmtNum(meta.secondary_risk.auc, 3) : "—"}
           </div>
         </div>
-        <div style={{ flex: "1 1 120px", padding: "10px 14px", borderRadius: "10px", background: "#f8fafc", border: "1px solid #e2e8f0" }}>
-          <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Avg. risk score</div>
-          <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#0f172a" }}>
+        <div style={{ flex: "1 1 120px", padding: "10px 14px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
+          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Avg. risk score</div>
+          <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--text-primary)" }}>
             {data.avgSecondaryRisk != null ? `${(data.avgSecondaryRisk * 100).toFixed(1)}%` : "—"}
           </div>
         </div>
       </div>
 
       {topRows.length > 0 && (
-        <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "12px" }}>
+        <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: "12px" }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", marginBottom: "6px" }}>
             <div>
               <div style={{ fontSize: "0.68rem", fontWeight: 800, color: "var(--page-accent, #4f46e5)", letterSpacing: "0.04em", textTransform: "uppercase" }}>
                 Top {view === "km" ? "segments" : "corridors"} by evidence
               </div>
-              <div style={{ fontSize: "0.75rem", color: "#64748b" }}>Avg. predicted secondary-incident risk</div>
+              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Avg. predicted secondary-incident risk</div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px", fontSize: "0.7rem", color: "#94a3b8" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", fontSize: "0.7rem", color: "var(--text-muted)" }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                <span style={{ width: 10, height: 10, borderRadius: "999px", background: "linear-gradient(90deg, color-mix(in srgb, var(--page-accent, #4f46e5) 50%, white), var(--page-accent, #4f46e5))", display: "inline-block" }} />
+                <span style={{ width: 10, height: 10, borderRadius: "999px", background: `linear-gradient(90deg, color-mix(in srgb, var(--page-accent, #4f46e5) 50%, ${T.isDark ? "#0d1117" : "white"}), var(--page-accent, #4f46e5))`, display: "inline-block" }} />
                 darker = higher risk
               </span>
               <span>Hover a row to inspect its numbers</span>
             </div>
           </div>
-          <p style={{ color: "#94a3b8", fontSize: "0.72rem", margin: "0 0 10px 0" }}>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", margin: "0 0 10px 0" }}>
             Charting the {topRows.length} of {allRows.length} {view === "km" ? "km segments" : "exits"} that
             together account for at least {Math.round(COVERAGE_TARGET * 100)}% of this panel&apos;s {fmtInt(totalN)}{" "}
             held-out incidents — enough evidence to rank with some confidence. Even within this set n still varies,
             so thin bars are less certain than they look; the rest are listed, not dropped, below.
           </p>
           {view === "exit" && missingExits.length > 0 && (
-            <p style={{ color: "#94a3b8", fontSize: "0.72rem", margin: "-4px 0 10px 0" }}>
-              Showing {allRows.length} of {allRows.length + missingExits.length} exits — {missingExits.join(" and ")}{" "}
+            <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", margin: "-4px 0 10px 0" }}>
+              Showing {allRows.length} of {allRows.length + missingExits.length} exits — {listPhrase(missingExits)}{" "}
               {missingExits.length > 1 ? "have" : "has"} no incident data to score, so {missingExits.length > 1 ? "they are" : "it is"} not listed.
             </p>
           )}
@@ -318,9 +339,9 @@ export default function SecondaryIncidentRiskPanel() {
           <div style={{ display: "grid", gridTemplateColumns: "26px minmax(120px, 240px) 1fr 64px", columnGap: "10px", marginTop: "6px" }}>
             <span />
             <span />
-            <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #e2e8f0", paddingTop: "4px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid var(--border-default)", paddingTop: "4px" }}>
               {axisTicks.map((t, i) => (
-                <span key={i} style={{ fontSize: "0.66rem", color: "#94a3b8" }}>{Math.round(t * 100)}%</span>
+                <span key={i} style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>{Math.round(t * 100)}%</span>
               ))}
             </div>
             <span />
@@ -329,18 +350,18 @@ export default function SecondaryIncidentRiskPanel() {
                 caption centered under only that sub-column reads as
                 off-center relative to the card a reader is actually
                 looking at. */}
-            <div style={{ gridColumn: "1 / -1", textAlign: "center", fontSize: "0.66rem", color: "#94a3b8", marginTop: "2px" }}>
+            <div style={{ gridColumn: "1 / -1", textAlign: "center", fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "2px" }}>
               Avg. predicted secondary-incident risk
             </div>
           </div>
           {omittedRows.length > 0 && (
             <div style={{ marginTop: "12px" }}>
-              <p style={{ color: "#94a3b8", fontSize: "0.72rem", margin: "0 0 6px 0" }}>
+              <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", margin: "0 0 6px 0" }}>
                 Below the coverage threshold — not charted above, but not dropped either:
               </p>
               <table style={{ width: "100%", fontSize: "0.76rem", borderCollapse: "collapse" }}>
                 <thead>
-                  <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                  <tr style={{ color: "var(--text-muted)", textAlign: "left" }}>
                     <th style={{ fontWeight: 600, paddingBottom: "4px" }}>{view === "km" ? "Segment" : "Exit"}</th>
                     <th style={{ fontWeight: 600, paddingBottom: "4px", textAlign: "right" }}>n</th>
                     <th style={{ fontWeight: 600, paddingBottom: "4px", textAlign: "right" }}>Avg. risk</th>
@@ -348,10 +369,10 @@ export default function SecondaryIncidentRiskPanel() {
                 </thead>
                 <tbody>
                   {omittedRows.map((x) => (
-                    <tr key={x.key} style={{ borderTop: "1px solid #f1f5f9" }}>
-                      <td style={{ padding: "3px 0", color: "#64748b" }}>{x.label}</td>
-                      <td style={{ padding: "3px 0", textAlign: "right", color: "#64748b" }}>{x.n}</td>
-                      <td style={{ padding: "3px 0", textAlign: "right", color: "#64748b" }}>{(x.avgRisk * 100).toFixed(1)}%</td>
+                    <tr key={x.key} style={{ borderTop: "1px solid var(--border-default)" }}>
+                      <td style={{ padding: "3px 0", color: "var(--text-muted)" }}>{x.label}</td>
+                      <td style={{ padding: "3px 0", textAlign: "right", color: "var(--text-muted)" }}>{x.n}</td>
+                      <td style={{ padding: "3px 0", textAlign: "right", color: "var(--text-muted)" }}>{(x.avgRisk * 100).toFixed(1)}%</td>
                     </tr>
                   ))}
                 </tbody>
@@ -361,13 +382,13 @@ export default function SecondaryIncidentRiskPanel() {
         </div>
       )}
 
-      <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "12px" }}>
-        <h4 style={{ margin: "0 0 8px 0", fontSize: "0.85rem", color: "#0f172a", fontWeight: 700 }}>
+      <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: "12px" }}>
+        <h4 style={{ margin: "0 0 8px 0", fontSize: "0.85rem", color: "var(--text-primary)", fontWeight: 700 }}>
           Predicted severity level{champion ? ` (${champion})` : ""}
         </h4>
         <table style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse" }}>
           <thead>
-            <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+            <tr style={{ color: "var(--text-muted)", textAlign: "left" }}>
               <th style={{ fontWeight: 600, paddingBottom: "4px" }}>Severity</th>
               <th style={{ fontWeight: 600, paddingBottom: "4px", textAlign: "right" }}>Actual</th>
               <th style={{ fontWeight: 600, paddingBottom: "4px", textAlign: "right" }}>Predicted</th>
@@ -375,16 +396,16 @@ export default function SecondaryIncidentRiskPanel() {
           </thead>
           <tbody>
             {data.severityBreakdown.map((row) => (
-              <tr key={row.severityCode} style={{ borderTop: "1px solid #f1f5f9" }}>
-                <td style={{ padding: "4px 0", color: "#334155" }}>{row.label}</td>
-                <td style={{ padding: "4px 0", textAlign: "right", color: "#334155" }}>{fmtInt(row.actualCount)}</td>
-                <td style={{ padding: "4px 0", textAlign: "right", color: "#334155", fontWeight: 600 }}>{fmtInt(row.predictedCount)}</td>
+              <tr key={row.severityCode} style={{ borderTop: "1px solid var(--border-default)" }}>
+                <td style={{ padding: "4px 0", color: "var(--text-secondary)" }}>{row.label}</td>
+                <td style={{ padding: "4px 0", textAlign: "right", color: "var(--text-secondary)" }}>{fmtInt(row.actualCount)}</td>
+                <td style={{ padding: "4px 0", textAlign: "right", color: "var(--text-secondary)", fontWeight: 600 }}>{fmtInt(row.predictedCount)}</td>
               </tr>
             ))}
           </tbody>
         </table>
         {championMetrics && (
-          <p style={{ color: "#94a3b8", fontSize: "0.72rem", margin: "8px 0 0 0" }}>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", margin: "8px 0 0 0" }}>
             {(championMetrics.accuracy * 100).toFixed(1)}% accuracy on {fmtInt(championMetrics.n)} held-out
             incidents. Fatal incidents are rare enough in this holdout (11 of {fmtInt(championMetrics.n)}) that
             neither candidate model ever predicts that class.
@@ -392,31 +413,31 @@ export default function SecondaryIncidentRiskPanel() {
         )}
       </div>
 
-      <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "12px" }}>
-        <h4 style={{ margin: "0 0 2px 0", fontSize: "0.85rem", color: "#0f172a", fontWeight: 700 }}>
+      <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: "12px" }}>
+        <h4 style={{ margin: "0 0 2px 0", fontSize: "0.85rem", color: "var(--text-primary)", fontWeight: 700 }}>
           Predicted clearance time
           <InfoTooltip text="Cox PH survival model, trained and scored on accidents only (silver.nlex_accident_events_clean) -- it never sees breakdown_data. Compare against the Descriptive tab's accident-only clearance figure, not its blended accident+breakdown MTTC." />
         </h4>
-        <p style={{ color: "#94a3b8", fontSize: "0.7rem", margin: "0 0 8px 0" }}>Accident-only — excludes breakdowns</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.7rem", margin: "0 0 8px 0" }}>Accident-only — excludes breakdowns</p>
         <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#0f172a" }}>
+            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--text-primary)" }}>
               {data.avgPredictedClearanceMin != null ? `${fmtNum(data.avgPredictedClearanceMin, 1)} min` : "—"}
             </div>
-            <div style={{ fontSize: "0.66rem", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+            <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>
               Median-based
             </div>
           </div>
           <div>
-            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#0f172a" }}>
+            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--text-primary)" }}>
               {data.meanPredictedClearanceMin != null ? `${fmtNum(data.meanPredictedClearanceMin, 1)} min` : "—"}
             </div>
-            <div style={{ fontSize: "0.66rem", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+            <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>
               Mean-based
             </div>
           </div>
         </div>
-        <p style={{ color: "#94a3b8", fontSize: "0.72rem", margin: "8px 0 0 0" }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", margin: "8px 0 0 0" }}>
           Cox PH concordance {meta ? fmtNum(meta.cox_ph.concordance_index, 3) : "—"}
           {meta?.cox_ph.mae_minutes != null ? ` · MAE ${fmtNum(meta.cox_ph.mae_minutes, 1)} min` : ""} on held-out incidents.
           The two figures diverge because clearance time is heavily right-skewed — most accidents clear in minutes, a minority take hours,

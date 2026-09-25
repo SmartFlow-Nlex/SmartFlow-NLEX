@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useThemeTokens } from "./useThemeTokens";
 import InfoTooltip from "./InfoTooltip";
 import type { CorridorForecastPoint, KmSegmentForecastPoint } from "./incidentPredictive.shared";
 import { fmtInt } from "./incidentPredictive.shared";
@@ -81,11 +82,20 @@ export default function PredictiveCorridorChart({
 }: Props) {
   const [view, setView] = useState<"exit" | "km">("exit");
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  // Read before the early returns below -- a hook cannot sit after one.
+  const T = useThemeTokens();
+
+  /* The accent, darkened for light backgrounds. Mixing toward #0b1020 is what
+     makes it readable on white, and exactly what makes it vanish on a dark
+     card, so on dark it mixes toward white instead. */
+  const accentInk = T.isDark
+    ? "color-mix(in srgb, var(--page-accent, #4f46e5) 36%, #ffffff)"
+    : "color-mix(in srgb, var(--page-accent, #4f46e5) 72%, #0b1020)";
 
   if (loading && corridorForecast === null) {
     return (
       <article className="chart-card wide" style={{ height: "260px", padding: "20px", display: "grid", placeItems: "center" }}>
-        <div style={{ color: "#64748b" }}>Loading corridor breakdown…</div>
+        <div style={{ color: "var(--text-muted)" }}>Loading corridor breakdown…</div>
       </article>
     );
   }
@@ -94,8 +104,8 @@ export default function PredictiveCorridorChart({
     return (
       <article className="chart-card wide" style={{ height: "260px", padding: "20px", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", maxWidth: "420px" }}>
-          <div style={{ fontWeight: 700, color: "#334155", marginBottom: "6px" }}>Corridor breakdown unavailable</div>
-          <div style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
+          <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: "6px" }}>Corridor breakdown unavailable</div>
+          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
             No incidents in the current Range had a location that could be matched to a corridor exit.
           </div>
         </div>
@@ -176,17 +186,17 @@ export default function PredictiveCorridorChart({
           cursor: "default",
         }}
       >
-        <span style={{ fontSize: isTop ? "0.9rem" : "0.74rem", fontWeight: isTop ? 800 : 600, color: isTop ? "#0f172a" : "#94a3b8", textAlign: "right" }}>
+        <span style={{ fontSize: isTop ? "0.9rem" : "0.74rem", fontWeight: isTop ? 800 : 600, color: isTop ? "var(--text-primary)" : "var(--text-muted)", textAlign: "right" }}>
           {displayIndex}
         </span>
         <span
           title={row.tooltipDetail ? `${row.label} (${row.tooltipDetail})` : row.label}
-          style={{ fontSize: isTop ? "0.85rem" : "0.76rem", fontWeight: isTop ? 700 : 500, color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          style={{ fontSize: isTop ? "0.85rem" : "0.76rem", fontWeight: isTop ? 700 : 500, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
         >
           {row.label}
         </span>
         <div style={{ position: "relative" }}>
-          <div style={{ height: barHeight, borderRadius: "999px", background: "#eef1f7", overflow: "hidden" }}>
+          <div style={{ height: barHeight, borderRadius: "999px", background: "var(--bg-surface-hover)", overflow: "hidden" }}>
             <div
               style={{
                 height: "100%",
@@ -201,8 +211,11 @@ export default function PredictiveCorridorChart({
             <div style={{ position: "absolute", left: `${pct}%`, top: -18, transform: "translateX(-50%)", pointerEvents: "none" }}>
               <span
                 style={{
-                  fontSize: "0.6rem", fontWeight: 800, color: "#b45309", background: "#fffbeb",
-                  border: "1px solid #fde68a", borderRadius: "999px", padding: "1px 6px", whiteSpace: "nowrap",
+                  fontSize: "0.6rem", fontWeight: 800,
+                  color: T.isDark ? "#fbbf24" : "#b45309",
+                  background: T.isDark ? "rgba(251,191,36,0.14)" : "#fffbeb",
+                  border: `1px solid ${T.isDark ? "rgba(251,191,36,0.38)" : "#fde68a"}`,
+                  borderRadius: "999px", padding: "1px 6px", whiteSpace: "nowrap",
                 }}
               >
                 Highest
@@ -213,7 +226,9 @@ export default function PredictiveCorridorChart({
             <div
               style={{
                 position: "absolute", right: 0, bottom: "calc(100% + 8px)", zIndex: 20, pointerEvents: "none",
-                background: "#0f172a", color: "#f1f5f9", borderRadius: "8px", padding: "8px 10px",
+                background: T.isDark ? "#05080f" : "#0f172a", color: "#f1f5f9",
+                border: T.isDark ? "1px solid var(--border-strong)" : "none",
+                borderRadius: "8px", padding: "8px 10px",
                 fontSize: "0.72rem", lineHeight: 1.5, minWidth: "180px", boxShadow: "0 10px 24px rgba(15,23,42,0.28)",
               }}
             >
@@ -230,8 +245,8 @@ export default function PredictiveCorridorChart({
         <span
           style={{
             justifySelf: "end", padding: isTop ? "4px 12px" : "2px 9px", borderRadius: "8px",
-            background: "#fff", border: `1.5px solid ${isTop ? "color-mix(in srgb, var(--page-accent, #4f46e5) 34%, transparent)" : "#e2e8f0"}`,
-            fontSize: isTop ? "0.85rem" : "0.74rem", fontWeight: isTop ? 800 : 700, color: "color-mix(in srgb, var(--page-accent, #4f46e5) 62%, #0b1020)",
+            background: "var(--bg-surface)", border: `1.5px solid ${isTop ? "color-mix(in srgb, var(--page-accent, #4f46e5) 34%, transparent)" : "var(--border-default)"}`,
+            fontSize: isTop ? "0.85rem" : "0.74rem", fontWeight: isTop ? 800 : 700, color: accentInk,
           }}
         >
           {fmtInt(row.predictedIncidents)}
@@ -247,12 +262,12 @@ export default function PredictiveCorridorChart({
       style={{
         display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 9px",
         borderRadius: "999px", fontSize: "0.7rem", fontWeight: 600,
-        background: on ? "rgba(79,70,229,0.1)" : "var(--bg-surface-hover, #f1f5f9)",
-        color: on ? "color-mix(in srgb, var(--page-accent, #4f46e5) 88%, #0b1020)" : "#94a3b8",
-        border: `1px solid ${on ? "rgba(79,70,229,0.25)" : "#e2e8f0"}`,
+        background: on ? "color-mix(in srgb, var(--page-accent, #4f46e5) 12%, transparent)" : "var(--bg-surface-hover)",
+        color: on ? accentInk : "var(--text-muted)",
+        border: `1px solid ${on ? "color-mix(in srgb, var(--page-accent, #4f46e5) 28%, transparent)" : "var(--border-default)"}`,
       }}
     >
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: on ? "var(--page-accent, #4f46e5)" : "#cbd5e1" }} />
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: on ? "var(--page-accent, #4f46e5)" : "var(--border-strong)" }} />
       {label}: {on ? "ON" : "OFF"}
     </span>
   );
@@ -260,7 +275,7 @@ export default function PredictiveCorridorChart({
   return (
     <article className="chart-card wide" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "14px" }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
-        <h3 style={{ fontSize: "1.05rem", color: "#0f172a", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
+        <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
           Predicted Incidents Ranking
           <InfoTooltip text="Derived, not separately modeled: splits the total forecast above across exits or km segments by each one's historical share of incidents — there's no per-location trained model behind this chart. Follows the Models toolbar and Volume/Weather toggles above: switching either re-derives it from that selection's own forecast." />
         </h3>
@@ -268,7 +283,7 @@ export default function PredictiveCorridorChart({
             description below so a long description never has to compete
             with them for width and get squeezed into a sliver. */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0, flexWrap: "wrap" }}>
-          <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface, #fff)", border: "1px solid #dce2ef", borderRadius: "999px" }}>
+          <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px" }}>
             {(["exit", "km"] as const).map((v) => (
               <button
                 key={v}
@@ -278,7 +293,7 @@ export default function PredictiveCorridorChart({
                 style={{
                   padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
                   background: view === v ? "var(--page-accent, #4f46e5)" : "transparent",
-                  color: view === v ? "#fff" : "#4b5e7d",
+                  color: view === v ? "var(--text-on-dark)" : "var(--text-secondary)",
                   fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap",
                   opacity: v === "km" && (kmSegmentForecast == null || kmSegmentForecast.length === 0) ? 0.4 : 1,
                 }}
@@ -293,8 +308,8 @@ export default function PredictiveCorridorChart({
                 style={{
                   display: "inline-flex", alignItems: "center", padding: "2px 9px",
                   borderRadius: "999px", fontSize: "0.7rem", fontWeight: 600,
-                  background: "var(--bg-surface-hover, #f1f5f9)", color: "#334155",
-                  border: "1px solid #e2e8f0",
+                  background: "var(--bg-surface-hover)", color: "var(--text-secondary)",
+                  border: "1px solid var(--border-default)",
                 }}
               >
                 Model: {forecastModelLabel}
@@ -306,7 +321,7 @@ export default function PredictiveCorridorChart({
         </div>
       </div>
       {((unclassifiedPct != null && Number(unclassifiedPct) > 0) || useKmView) && (
-        <p style={{ color: "#64748b", fontSize: "0.82rem", margin: 0 }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", margin: 0 }}>
           {unclassifiedPct != null && Number(unclassifiedPct) > 0 && (
             <>{unclassifiedPct}% of logged locations in this Range couldn&apos;t be matched to a specific exit and are excluded from the split.</>
           )}
@@ -319,7 +334,7 @@ export default function PredictiveCorridorChart({
       )}
       {topRow && (
         <div style={{ padding: "10px 14px", borderRadius: "10px", background: "color-mix(in srgb, var(--page-accent, #4f46e5) 9%, transparent)", border: "1px solid color-mix(in srgb, var(--page-accent, #4f46e5) 28%, transparent)" }}>
-          <p style={{ margin: 0, fontSize: "0.85rem", color: "color-mix(in srgb, var(--page-accent, #4f46e5) 72%, #0b1020)" }}>
+          <p style={{ margin: 0, fontSize: "0.85rem", color: accentInk }}>
             {useKmView ? (
               <>The <strong>{topRow.label}</strong> stretch</>
             ) : (
@@ -346,13 +361,13 @@ export default function PredictiveCorridorChart({
             <div style={{ fontSize: "0.68rem", fontWeight: 800, color: "var(--page-accent, #4f46e5)", letterSpacing: "0.04em", textTransform: "uppercase" }}>
               {useKmView ? "Segment" : "Exit"} forecast ranking
             </div>
-            <div style={{ fontSize: "0.75rem", color: "#64748b" }}>
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
               Predicted incidents · next {forecastHorizon} days
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px", fontSize: "0.7rem", color: "#94a3b8" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", fontSize: "0.7rem", color: "var(--text-muted)" }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-              <span style={{ width: 10, height: 10, borderRadius: "999px", background: "linear-gradient(90deg, color-mix(in srgb, var(--page-accent, #4f46e5) 50%, white), var(--page-accent, #4f46e5))", display: "inline-block" }} />
+              <span style={{ width: 10, height: 10, borderRadius: "999px", background: `linear-gradient(90deg, color-mix(in srgb, var(--page-accent, #4f46e5) 50%, ${T.isDark ? "#0d1117" : "white"}), var(--page-accent, #4f46e5))`, display: "inline-block" }} />
               darker = more predicted
             </span>
             <span>Hover a row to inspect its numbers</span>
@@ -361,7 +376,7 @@ export default function PredictiveCorridorChart({
 
         {topTierRows.length > 0 && (
           <>
-            <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.04em", textTransform: "uppercase", margin: "10px 0 2px 0" }}>
+            <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "var(--text-muted)", letterSpacing: "0.04em", textTransform: "uppercase", margin: "10px 0 2px 0" }}>
               Top {topTierRows.length}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
@@ -372,7 +387,7 @@ export default function PredictiveCorridorChart({
 
         {remainingRows.length > 0 && (
           <>
-            <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.04em", textTransform: "uppercase", margin: topTierRows.length > 0 ? "12px 0 2px 0" : "10px 0 2px 0" }}>
+            <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "var(--text-muted)", letterSpacing: "0.04em", textTransform: "uppercase", margin: topTierRows.length > 0 ? "12px 0 2px 0" : "10px 0 2px 0" }}>
               {useKmView ? "All segments, in corridor order" : "Remaining exits"}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "1px" }}>
@@ -384,9 +399,9 @@ export default function PredictiveCorridorChart({
         <div style={{ display: "grid", gridTemplateColumns: "26px minmax(120px, 240px) 1fr 64px", columnGap: "10px", marginTop: "6px" }}>
           <span />
           <span />
-          <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #e2e8f0", paddingTop: "4px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid var(--border-default)", paddingTop: "4px" }}>
             {axisTicks.map((t, i) => (
-              <span key={i} style={{ fontSize: "0.66rem", color: "#94a3b8" }}>{fmtInt(t)}</span>
+              <span key={i} style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>{fmtInt(t)}</span>
             ))}
           </div>
           <span />
@@ -394,7 +409,7 @@ export default function PredictiveCorridorChart({
               not just the narrow track column the ticks sit in — a caption
               centered under only that sub-column reads as off-center
               relative to the card a reader is actually looking at. */}
-          <div style={{ gridColumn: "1 / -1", textAlign: "center", fontSize: "0.66rem", color: "#94a3b8", marginTop: "2px" }}>
+          <div style={{ gridColumn: "1 / -1", textAlign: "center", fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "2px" }}>
             Predicted incidents (next {forecastHorizon}d)
           </div>
         </div>
