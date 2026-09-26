@@ -33,7 +33,7 @@ import { useEffect, useRef, useState } from "react";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
-type Scenario = {
+export type Scenario = {
   date: string;
   availableDates: string[];
   volume: {
@@ -41,6 +41,10 @@ type Scenario = {
     segmentSharePct: number | null;
     segmentName: string | null;
     peakHourInflow: number | null;
+    /** Corridor-wide vehicles per hour (0-23) — the Traffic page's hourly drill-down for the same model. */
+    hourly: (number | null)[] | null;
+    /** `hourly` at the segment: the arrival rate the simulation runs at that hour. */
+    hourlyInflow: (number | null)[] | null;
     clamped: boolean;
     model: string | null;
     wmape: number | null;
@@ -52,8 +56,13 @@ type Scenario = {
     model: string | null;
     byExit: { exitName: string; km: number; perDay: number }[];
     horizonDays: number;
+    /** Whole incidents per hour (0-23), corridor-wide — the Incident page's hourly drill-down for the same model. */
+    hourly: number[] | null;
+    hourlyModel: string | null;
   };
   emissions: { predictedTonnes: number | null; model: string | null; wmape: number | null };
+  /** The fleet-mix model's forecast Class 1 / 2 / 3 shares (fractions) for this date; null outside its ~7-day horizon. */
+  fleet: { c1: number; c2: number; c3: number; heavyShare: number; heavySurge: boolean; model: string | null } | null;
   notes: string[];
 };
 
@@ -72,6 +81,45 @@ const dayLabel = (iso: string) =>
 
 const shortDay = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+/**
+ * The hour a forecast is read at: the one chosen, otherwise the busiest hour of the chosen day (the same
+ * default the hour control opens on).
+ */
+export function forecastHour(data: Scenario | null, hour: number | null): number | null {
+  if (hour != null) return hour;
+  const h = data?.volume.hourlyInflow;
+  if (!h) return null;
+  let best = -1;
+  let at = 0;
+  h.forEach((v, i) => {
+    if (v != null && v > best) {
+      best = v;
+      at = i;
+    }
+  });
+  return best >= 0 ? at : null;
+}
+
+/**
+ * The arrival rate the forecast gives at one hour of the chosen day. Falls back to the day's peak-hour
+ * figure only when the day has no hourly shape at all, never to another hour's number.
+ */
+export function forecastInflowAt(data: Scenario | null, hour: number | null): number | null {
+  if (!data) return null;
+  const hr = forecastHour(data, hour);
+  const v = hr != null ? data.volume.hourlyInflow?.[hr] : null;
+  return v ?? data.volume.peakHourInflow;
+}
+
+/** Whole incidents the forecast expects at one hour of the chosen day, or null when it forecasts none for it. */
+export function forecastIncidentsAt(data: Scenario | null, hour: number | null): number | null {
+  const hr = forecastHour(data, hour);
+  const h = data?.incidents.hourly;
+  return h && hr != null ? h[hr] ?? null : null;
+}
+
+const hhmm = (h: number) => `${String(h).padStart(2, "0")}:00`;
 
 /**
  * Fetches the forecast for the chosen day and holds which day that is, so the
@@ -147,10 +195,16 @@ export type ScenarioForecast = ReturnType<typeof useScenarioForecast>;
 
 export default function ScenarioForecastPanel({
   forecast,
+  hour,
+  following = false,
   onApplyInflow,
 }: {
   forecast: ScenarioForecast;
-  /** Hands the derived arrival rate, and the day it came from, to the page. */
+  /** The hour of day the forecast is read at (the page's shared hour); null until it has one. */
+  hour: number | null;
+  /** Once loaded, the road keeps following the chosen day and hour, so the button says so instead of offering a reload. */
+  following?: boolean;
+  /** Hands the arrival rate for the chosen hour, and the day it came from, to the page. */
   onApplyInflow: (vehPerHour: number, forecastDate: string) => void;
 }) {
   const { data, busy, failed, applied, setApplied } = forecast;
@@ -160,8 +214,12 @@ export default function ScenarioForecastPanel({
 
   const v = data?.volume;
   const inc = data?.incidents;
-  const isApplied = applied != null && applied === data?.date;
-  const canApply = v?.peakHourInflow != null && !busy && !isApplied;
+  const isApplied = following || (applied != null && applied === data?.date);
+  const hr = forecastHour(data, hour);
+  const hourLabel = hr != null && v?.hourly ? hhmm(hr) : null;
+  const inflowNow = forecastInflowAt(data, hour);
+  const incidentsNow = forecastIncidentsAt(data, hour);
+  const canApply = inflowNow != null && !busy && !isApplied;
 
   // The forecast horizon starts where observed data ends, so the dates on offer
   // sit in the past whenever ingestion has fallen behind. Saying so turns a
@@ -184,13 +242,14 @@ export default function ScenarioForecastPanel({
         <button
           className={`sandbox-forecast-apply${isApplied ? " is-applied" : ""}`}
           onClick={() => {
-            if (!data || v?.peakHourInflow == null) return;
-            onApplyInflow(v.peakHourInflow, data.date);
+            if (!data || inflowNow == null) return;
+            onApplyInflow(inflowNow, data.date);
             setApplied(data.date);
           }}
           disabled={!canApply}
+          title={isApplied && following ? "The road follows the forecast day and time chosen above" : undefined}
         >
-          {busy ? "Loading…" : isApplied ? "✓ Applied" : "Load into simulation"}
+          {busy ? "Loading…" : isApplied ? (following ? "✓ Following forecast" : "✓ Applied") : "Load into simulation"}
         </button>
       </div>
 
@@ -198,26 +257,28 @@ export default function ScenarioForecastPanel({
         <>
           <div className="sandbox-forecast-tiles">
             <Tile
-              k="Corridor volume"
-              v={`${fmt(v?.dailyVehicles)} veh`}
-              s={`${v?.model ?? "—"}${v?.wmape != null ? ` · ${v.wmape.toFixed(1)}% WMAPE` : ""}`}
+              k={hourLabel ? `Corridor volume · ${hourLabel}` : "Corridor volume"}
+              v={`${fmt(hourLabel && hr != null ? v?.hourly?.[hr] : v?.dailyVehicles)} veh`}
+              s={`${hourLabel ? `day ${fmt(v?.dailyVehicles)} veh · ` : ""}${v?.model ?? "—"}${v?.wmape != null ? ` · ${v.wmape.toFixed(1)}% WMAPE` : ""}`}
             />
             <Tile
-              k="Segment inflow"
-              v={`${fmt(v?.peakHourInflow)} veh/h`}
+              k={hourLabel ? `Segment inflow · ${hourLabel}` : "Segment inflow"}
+              v={`${fmt(inflowNow)} veh/h`}
               s={
                 v?.segmentName
                   ? `${v.segmentName} · ${v.segmentSharePct?.toFixed(1)}% of corridor`
-                  : "peak hour"
+                  : hourLabel
+                    ? "this hour"
+                    : "peak hour"
               }
               accent
             />
             <Tile
-              k="Predicted incidents"
-              v={inc.covered ? fmt(inc.predictedForDate, 1) : "No forecast"}
+              k={inc.covered && incidentsNow != null && hr != null ? `Predicted incidents · ${hhmm(hr)}` : "Predicted incidents"}
+              v={inc.covered ? (incidentsNow != null ? fmt(incidentsNow) : fmt(inc.predictedForDate, 1)) : "No forecast"}
               s={
                 inc.covered
-                  ? `corridor-wide · ${inc.model ?? "—"}`
+                  ? `${incidentsNow != null ? `day ${fmt(inc.predictedForDate, 1)} · ` : ""}corridor-wide · ${inc.model ?? "—"}`
                   : coverageEnd
                     ? `incident forecast runs to ${shortDay(coverageEnd)}`
                     : "incident forecast unavailable"
@@ -233,6 +294,13 @@ export default function ScenarioForecastPanel({
           </div>
 
           <div className="sandbox-forecast-foot">
+            {data.fleet && (
+              <span>
+                <b>Fleet mix:</b> Class 1 {(data.fleet.c1 * 100).toFixed(1)}% · Class 2 {(data.fleet.c2 * 100).toFixed(1)}% · Class 3{" "}
+                {(data.fleet.c3 * 100).toFixed(1)}%{data.fleet.heavySurge ? " · heavy-vehicle surge day" : ""}
+                {data.fleet.model ? ` · ${data.fleet.model}` : ""}
+              </span>
+            )}
             {inc.byExit.length > 0 && (
               <span>
                 <b>Highest risk:</b>{" "}
@@ -249,11 +317,14 @@ export default function ScenarioForecastPanel({
 
           {showHelp && (
             <div className="sandbox-forecast-foot" style={{ display: "block" }}>
-              Only the <b>segment inflow</b> is loaded into the simulation, on each carriageway the
-              Carriageway control at the top shows. The incident and CO₂
-              figures are the conditions forecast for that day — place incidents yourself to test a
-              response. The simulation&apos;s own CO₂ rate covers one 280 m stretch and is not
-              comparable to the corridor-wide tonnage.
+              The <b>segment inflow</b> for the chosen hour is loaded into the simulation, on each
+              carriageway the Carriageway control at the top shows, and the incidents forecast for
+              that hour are placed on the road in focus. Both are the same hourly figures the Traffic
+              and Incident tabs show for that day; change the day or the time and the road follows.
+              Within a week of the last observation the fleet-mix forecast sets how many cars, buses
+              and trucks arrive — its daily shares, shaped by the observed hour-to-hour pattern.
+              The CO₂ figure is the condition forecast for the day. The simulation&apos;s own CO₂
+              rate covers one short stretch and is not comparable to the corridor-wide tonnage.
               {lastDay && (
                 <>
                   {" "}

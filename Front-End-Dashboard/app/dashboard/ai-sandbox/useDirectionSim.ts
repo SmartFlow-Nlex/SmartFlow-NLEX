@@ -19,6 +19,7 @@ import {
   scenarioTimeS,
   stepToScenarioTime,
   type Direction,
+  type Incident,
   type ManualControls,
   type NewEventSpec,
   type Ownership,
@@ -27,6 +28,7 @@ import {
   type ScenarioEvent,
 } from "./scenarios/adapter";
 import type { SkipView } from "./components/ScenarioPanel";
+import { shapeForecastMix, type ClassShares } from "./forecastMix";
 
 /**
  * One carriageway's worth of simulation: its own TrafficSim, its own scenario
@@ -94,6 +96,23 @@ export type SharedRoadInputs = {
    * that was skipping.
    */
   readonly resetSimAccumulator: () => void;
+  /**
+   * The arrival rate (veh/h at the segment) the forecast gives for the chosen day and hour, once the operator has
+   * loaded a forecast. Null before that, and the observed hourly profile drives the inflow as it always did. Both
+   * carriageways get the same number: the forecast is one segment-level prediction, not one per direction.
+   */
+  readonly forecastInflow: number | null;
+  /**
+   * Whole incidents the forecast expects at the chosen hour (the Incident tab's hourly figure), and the one
+   * carriageway they are shown on — the forecast is corridor-wide and names no direction, so it is the road in focus.
+   */
+  readonly forecastIncidents: { readonly count: number; readonly on: Direction | null };
+  /**
+   * The fleet-mix forecast's Class 1 / 2 / 3 shares for the loaded day. Null when none is loaded or the day is
+   * outside that model's horizon, and the observed hourly mix runs as before. It is shaped to the hour here, per
+   * direction, from that direction's own demand profile (see forecastMix.ts).
+   */
+  readonly forecastMix: ClassShares | null;
 };
 
 function buildInterventions(lanes: number, len: number): Partial<Interventions> {
@@ -111,7 +130,7 @@ function buildInterventions(lanes: number, len: number): Partial<Interventions> 
 const SEED_BY_DIRECTION: Readonly<Record<Direction, number>> = { NB: 12345, SB: 12345 + 7919 };
 
 export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) {
-  const { BACKEND, fromKm, toKm, segLengthM, EXITS, nearestExit, segmentLanes, hourOfDay, proposeHourOfDay, classProfile, resetSimAccumulator } = shared;
+  const { BACKEND, fromKm, toKm, segLengthM, EXITS, nearestExit, segmentLanes, hourOfDay, proposeHourOfDay, classProfile, resetSimAccumulator, forecastInflow, forecastIncidents, forecastMix } = shared;
 
   const simRef = useRef<TrafficSim | null>(null);
   const [scenarioBinding] = useState(createEngineBinding);
@@ -244,6 +263,9 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
   const dataAnchor = useMemo(() => {
     const hr = hourOfDay ?? demand?.peakHour ?? 8;
     const ceiling = laneCount * 2200;
+    // A loaded forecast decides the inflow outright: the road shows what the forecast day and hour say, not the
+    // observed profile for that hour. The floor is lower than the observed one because a forecast quiet hour is quiet.
+    if (forecastInflow != null) return Math.max(100, Math.min(ceiling, forecastInflow));
     const entryKm = direction === "NB" ? fromKm : toKm;
     const mainline = mainlineAtKm(entryKm, hr);
     if (mainline != null && mainline > 0) return Math.max(300, Math.min(ceiling, mainline));
@@ -254,9 +276,12 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     if (!total) return null;
     const peakHourly = Math.round((total / volDays / 24) * 1.6);
     return Math.max(600, Math.min(ceiling, peakHourly));
-  }, [hourOfDay, demand, laneCount, direction, fromKm, toKm, mainlineAtKm, activeHour, plazaVol, nearestExit, volDays]);
+  }, [hourOfDay, demand, laneCount, direction, fromKm, toKm, mainlineAtKm, activeHour, plazaVol, nearestExit, volDays, forecastInflow]);
 
   const inflowBasis = useMemo(() => {
+    if (forecastInflow != null) {
+      return "Inflow from the forecast for the chosen day and hour: the Traffic tab's hourly volume forecast at this segment's share of corridor volume — a prediction, not observed flow.";
+    }
     const hr = hourOfDay ?? demand?.peakHour ?? 8;
     const entryKm = direction === "NB" ? fromKm : toKm;
     const mainline = mainlineAtKm(entryKm, hr);
@@ -272,7 +297,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     const names = feeders.slice(0, 3).map((e) => String(e.exit_name)).join(" + ");
     const more = feeders.length > 3 ? ` +${feeders.length - 3} more` : "";
     return `Mainline flow at Km ${entryKm.toFixed(2)}: ${mainline.toLocaleString()} veh/h — entries minus exits upstream (${names}${more}).`;
-  }, [hourOfDay, demand, direction, fromKm, toKm, mainlineAtKm, EXITS, flowAt, activeHour, nearestExit]);
+  }, [hourOfDay, demand, direction, fromKm, toKm, mainlineAtKm, EXITS, flowAt, activeHour, nearestExit, forecastInflow]);
 
   useEffect(() => {
     if (dataAnchor != null) setInflow(dataAnchor);
@@ -286,16 +311,26 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     if (segmentLanes != null) setLaneCount(segmentLanes);
   }, [segmentLanes]);
 
+  // The mix the road runs. With a forecast day loaded that is the fleet-mix forecast (shaped to the hour); without
+  // one, the observed mix for the hour. Keyed on the three shares, not the object: this feeds rebuild(), and a new
+  // object every render would rebuild the whole simulation every render.
+  const fm1 = forecastMix?.[1];
+  const fm2 = forecastMix?.[2];
+  const fm3 = forecastMix?.[3];
+  const forecastShares = useMemo(
+    () => (fm1 != null && fm2 != null && fm3 != null ? shapeForecastMix({ 1: fm1, 2: fm2, 3: fm3 }, demand?.hours ?? null, activeHour) : null),
+    [fm1, fm2, fm3, demand, activeHour],
+  );
   const effectiveClassProfile = useMemo(() => {
-    if (!classProfile && !activeHour) return undefined;
+    if (!classProfile && !activeHour && !forecastShares) return undefined;
     const out: Partial<Record<1 | 2 | 3, { co2PerM?: number; share?: number }>> = {};
     for (const k of [1, 2, 3] as const) {
       const co2PerM = classProfile?.[k]?.co2PerM;
-      const share = activeHour ? activeHour.mix[k] : classProfile?.[k]?.share;
+      const share = forecastShares ? forecastShares[k] : activeHour ? activeHour.mix[k] : classProfile?.[k]?.share;
       if (co2PerM != null || share != null) out[k] = { co2PerM, share };
     }
     return Object.keys(out).length ? out : undefined;
-  }, [classProfile, activeHour]);
+  }, [classProfile, activeHour, forecastShares]);
 
   const ramps = useMemo(() => {
     if (fromKm >= toKm) return [];
@@ -360,6 +395,30 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
   useEffect(() => {
     rebuild();
   }, [rebuild]);
+
+  /* The incidents the forecast expects this hour, shown on the carriageway the operator is looking at.
+   *
+   * rebuild() makes a fresh engine, and the hour is one of the things that rebuilds it (the ramp flows follow it),
+   * so these are placed after EVERY rebuild rather than once. This effect is declared after the one above and so
+   * runs after it in the same commit, onto the new engine. What was placed last time is lifted out by identity
+   * before the new set goes in, so changing the hour swaps them instead of stacking them.
+   * They are ordinary incidents: they count in "Clear (n)" and the operator can remove them. The first sits in the
+   * outer lane (where a breakdown pulls over), any more stagger inwards and upstream. */
+  const forecastPlacedRef = useRef<Incident[]>([]);
+  const forecastIncidentCount = forecastIncidents.on === direction ? forecastIncidents.count : 0;
+  useEffect(() => {
+    const sim = simRef.current;
+    if (!sim) return;
+    const prev = forecastPlacedRef.current;
+    if (prev.length) sim.interventions.incidents = sim.interventions.incidents.filter((i) => !prev.includes(i));
+    const placed: Incident[] = [];
+    for (let i = 0; i < Math.min(forecastIncidentCount, laneCount); i++) {
+      sim.addIncident(laneCount - 1 - i, segLengthM * (0.6 - 0.08 * i));
+      placed.push(sim.interventions.incidents[sim.interventions.incidents.length - 1]);
+    }
+    forecastPlacedRef.current = placed;
+    setIncidentCount(scenarioBinding.operatorIncidents(sim).length);
+  }, [rebuild, forecastIncidentCount, laneCount, segLengthM, scenarioBinding]);
 
   useEffect(() => {
     if (simRef.current) simRef.current.cfg.inflowVehPerHour = inflow;

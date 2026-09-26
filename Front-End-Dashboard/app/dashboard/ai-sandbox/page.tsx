@@ -5,7 +5,7 @@ import { displayExitName, useNlexExits, type NlexExit } from "../../../lib/nlex-
 import { lanesForSegment, laneSources } from "../../../lib/nlex-lanes";
 import { Car } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
-import ScenarioForecastPanel, { useScenarioForecast } from "../../../components/dashboard/ScenarioForecastPanel";
+import ScenarioForecastPanel, { forecastHour, forecastIncidentsAt, forecastInflowAt, useScenarioForecast } from "../../../components/dashboard/ScenarioForecastPanel";
 import ForecastDayPicker from "../../../components/dashboard/ForecastDayPicker";
 import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import filterStyles from "../traffic/traffic.module.css";
@@ -319,6 +319,10 @@ export default function AiSandboxPage() {
   const animClockRef = useRef<number>(0);
   /** The lane reallocation in force, for the canvas (the rAF loop reads it outside React). */
   const zipperRef = useRef<ZipperState | null>(null);
+  /** Cursor over the canvas in CSS px, and the vehicle whose speed bubble a click pinned — the render loop reads both. */
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
+  const pinnedVehicleRef = useRef<VehicleRef | null>(null);
+  const placingArmedRef = useRef(false);
   const metricAccRef = useRef<number>(0);
   const simAccRef = useRef<number>(0);
   /** Running cost of one sim.step(), ms, per direction — what a skip's estimated duration is worked out from. Null until the animation loop has stepped that direction. */
@@ -343,6 +347,14 @@ export default function AiSandboxPage() {
   // rather than reshape the page for every visit, the road can take the whole
   // viewport on demand and give it back.
   const [expanded, setExpanded] = useState(false);
+  // Full screen lifts the card out of the page grid, which would let the page behind it reflow and
+  // throw the scroll position on exit. A placeholder of the card's docked height holds its slot.
+  const mainCardRef = useRef<HTMLElement>(null);
+  const [heldHeight, setHeldHeight] = useState(0);
+  const toggleExpanded = () => {
+    if (!expanded) setHeldHeight(mainCardRef.current?.offsetHeight ?? 0);
+    setExpanded((v) => !v);
+  };
 
   // Actual drawn width, so the legibility hint reflects this screen rather than
   // an assumption made when the canvas was a third of the page.
@@ -542,12 +554,11 @@ export default function AiSandboxPage() {
     km: x.km,
   }));
 
-  // Which forecast day the inflow came from, when it came from one. Kept apart
-  // from dataAnchor so the slider caption can never call a prediction an
-  // observation. Shared: the forecast is one corridor prediction, not one per
-  // carriageway, and "Load into simulation" applies it to whichever direction
-  // is focused (Both mode) or the only one there is (NB-only/SB-only).
-  const [forecastDay, setForecastDay] = useState<string | null>(null);
+  // Whether the road is running a loaded forecast. "Load into simulation" turns it on; from then on the
+  // road follows the forecast day and time chosen in the top strip, so what it shows is what the Traffic and
+  // Incident tabs forecast for that day and hour. Kept apart from dataAnchor so the slider caption can never
+  // call a prediction an observation. Shared: the forecast is one corridor prediction, not one per carriageway.
+  const [forecastFollowing, setForecastFollowing] = useState(false);
   // Exit the incident model rates highest for the chosen day, when the sandbox
   // has been positioned there.
   const [hotspot, setHotspot] = useState<string | null>(null);
@@ -645,8 +656,36 @@ export default function AiSandboxPage() {
     simAccRef.current = 0;
   }, []);
 
+  // The forecast is fetched here, above the direction hooks, because what it says for the chosen day and hour is
+  // an input to them (their inflow and the incidents placed on the road), not just something the panel displays.
+  const forecast = useScenarioForecast({
+    onHotspot: (name, km) => {
+      // Only reposition while the operator has not chosen a span of their
+      // own — a suggestion should not overwrite a deliberate choice.
+      if (segFromKm != null || segToKm != null) return;
+      if (km < routeFromKm || km > routeToKm) return;
+      const half = DEFAULT_SEG_M / 2000;
+      const from = Math.max(routeFromKm, Math.min(km - half, routeToKm - DEFAULT_SEG_M / 1000));
+      setSegFromKm(Number(from.toFixed(2)));
+      setSegToKm(Number((from + DEFAULT_SEG_M / 1000).toFixed(2)));
+      setHotspot(name);
+    },
+    onIncidentCoverage: setIncidentCovered,
+  });
+  // What the road runs once a forecast is loaded: the chosen day at the chosen hour. Until then nothing is
+  // overridden and the observed hourly profile drives it as before.
+  const loadedForecast = forecastFollowing ? forecast.data : null;
+  const forecastDay = loadedForecast?.date ?? null;
+  // Its own values as dependencies: the hook keys the simulation rebuild on the mix, so a fresh object each render
+  // would rebuild the road every render.
+  const fleet = loadedForecast?.fleet ?? null;
+  const forecastMix = useMemo(() => (fleet ? ({ 1: fleet.c1, 2: fleet.c2, 3: fleet.c3 } as const) : null), [fleet]);
+
   const sharedRoadInputs: SharedRoadInputs = {
     BACKEND, fromKm, toKm, segLengthM, EXITS, nearestExit, segmentLanes, hourOfDay, proposeHourOfDay, classProfile, resetSimAccumulator,
+    forecastInflow: forecastInflowAt(loadedForecast, hourOfDay),
+    forecastIncidents: { count: forecastIncidentsAt(loadedForecast, hourOfDay) ?? 0, on: loadedForecast ? focusDirection : null },
+    forecastMix,
   };
   // Called unconditionally, twice, regardless of `view` — an inactive direction's sim just is not
   // stepped or rendered below. Hooks cannot be called conditionally, and there is no need to: the
@@ -688,6 +727,7 @@ export default function AiSandboxPage() {
     else d.setPlacingClosure(true);
   };
   const placingArmed = activeDirections.some((dn) => byDirection[dn].placingIncident || byDirection[dn].placingClosure);
+  placingArmedRef.current = placingArmed;
 
   /* ── Lane reallocation ────────────────────────────────────────────────────
    *
@@ -882,6 +922,17 @@ export default function AiSandboxPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // Drawn after the road, so the bubble sits over the traffic, scenes and weather. While an incident or
+    // closure is armed the click belongs to placement, so hovering shows nothing and the cursor stays a crosshair.
+    const paintVehicleProbe = () => {
+      const armed = placingArmedRef.current;
+      const r = drawVehicleProbes(ctx, canvas.clientWidth, canvas.clientHeight, armed ? null : pointerRef.current, pinnedVehicleRef.current);
+      // A pinned vehicle that has left the road (or whose sim was rebuilt) is no longer there to point at.
+      if (pinnedVehicleRef.current && !r.pinnedFound) pinnedVehicleRef.current = null;
+      const cursor = r.hovering && !armed ? "pointer" : "";
+      if (canvas.style.cursor !== cursor) canvas.style.cursor = cursor;
+    };
+
     const loop = (now: number) => {
       rafRef.current = requestAnimationFrame(loop);
       const dtReal = Math.min(0.1, (now - (lastFrameRef.current || now)) / 1000);
@@ -941,11 +992,13 @@ export default function AiSandboxPage() {
             scenarioOverlayRef.current.NB ?? null, scenarioOverlayRef.current.SB ?? null,
             animClockRef.current, zipperRef.current,
           );
+          paintVehicleProbe();
         }
       } else {
         const focusedSim = byDirection[focusDirection].simRef.current;
         if (focusedSim) {
           render(ctx, canvas, focusedSim, locationRef.current, marksRef.current, maxLaneRef.current, exitsRef.current, scenarioOverlayRef.current[focusDirection] ?? null, animClockRef.current);
+          paintVehicleProbe();
         }
       }
     };
@@ -953,6 +1006,28 @@ export default function AiSandboxPage() {
     return () => cancelAnimationFrame(rafRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, simSpeed, activeDirections.join(), view, focusDirection, nb.simRef, sb.simRef, nb.scenarioBinding, sb.scenarioBinding, nb.publishOwners, sb.publishOwners, nb.setMetrics, sb.setMetrics]);
+
+  // Clicking a vehicle pins its speed bubble to it (it follows the vehicle until the same one, or empty
+  // road, is clicked). Only reached when nothing is armed — an armed click belongs to placement below.
+  const pinVehicleAt = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const hit = vehicleAt(e.clientX - rect.left, e.clientY - rect.top);
+    const cur = pinnedVehicleRef.current;
+    pinnedVehicleRef.current =
+      hit === null || (cur !== null && cur.id === hit.id && cur.dir === hit.dir && cur.born === hit.born)
+        ? null
+        : { id: hit.id, dir: hit.dir, born: hit.born };
+  };
+
+  // The render loop hit-tests this every frame, so a vehicle drifting under a still cursor is followed.
+  const trackPointer = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    pointerRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
 
   /* Incident placement and closure drawing: arm a mode from a control, then click the road.
    *
@@ -968,7 +1043,10 @@ export default function AiSandboxPage() {
    * instead of throwing away the start because the end went over the median-side lane. */
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const armed = activeDirections.find((dn) => byDirection[dn].placingIncident || byDirection[dn].placingClosure);
-    if (armed === undefined) return;
+    if (armed === undefined) {
+      pinVehicleAt(e);
+      return;
+    }
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -1340,70 +1418,10 @@ export default function AiSandboxPage() {
   const baselineSummaryOf = (d: DirectionApi) => (d.baseline ? `${fmt(d.baseline.avgSpeedKmh)} km/h · ${fmt(d.baseline.throughputPerMin)}/min captured` : "not captured");
   const baselineSummary = both ? `NB ${nb.baseline ? "captured" : "not captured"} · SB ${sb.baseline ? "captured" : "not captured"}` : baselineSummaryOf(focused);
 
-  const forecast = useScenarioForecast({
-    onHotspot: (name, km) => {
-      // Only reposition while the operator has not chosen a span of their
-      // own — a suggestion should not overwrite a deliberate choice.
-      if (segFromKm != null || segToKm != null) return;
-      if (km < routeFromKm || km > routeToKm) return;
-      const half = DEFAULT_SEG_M / 2000;
-      const from = Math.max(routeFromKm, Math.min(km - half, routeToKm - DEFAULT_SEG_M / 1000));
-      setSegFromKm(Number(from.toFixed(2)));
-      setSegToKm(Number((from + DEFAULT_SEG_M / 1000).toFixed(2)));
-      setHotspot(name);
-    },
-    onIncidentCoverage: setIncidentCovered,
-  });
-
-  return (
-    <section className="ds-content sandbox-page">
-      <PageHeader
-        icon={Car}
-        title="AI Traffic Sandbox"
-        subtitle={`Agent-based what-if simulation · ${originExit ? displayExitName(originExit.exit_name) : ""} → ${destExit ? displayExitName(destExit.exit_name) : ""} · Km ${fromKm.toFixed(2)}–${toKm.toFixed(2)}`}
-      />
-
-      {/* The two choices that apply to the whole sandbox — which carriageway(s), and which forecast day —
-          in one strip under the header, the way the Traffic and Incident tabs hold their Range. Full
-          screen covers this strip, so the card carries its own copy of the Carriageway choice there. */}
-      <div className="sandbox-toprow">
-        <div className={filterStyles.filterGroup}>
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)" }} aria-hidden="true"><path d="M4 14 6 2M12 14 10 2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /><path d="M8 3v1.5M8 7v2M8 11.5V13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
-          <span className={filterStyles.filterLabel}>Carriageway</span>
-          <div className={filterStyles.segmented} role="tablist" aria-label="Carriageway view">
-            {(["Both", "NB", "SB"] as const).map((v) => (
-              <button key={v} role="tab" aria-selected={view === v} className={view === v ? "active" : ""} onClick={() => setView(v)} title={viewTitle(v)}>
-                {view === v && <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                {viewLabel(v)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className={filterStyles.filterGroup}>
-          <span className={filterStyles.filterLabel}>Forecast day</span>
-          <ForecastDayPicker
-            value={forecast.date}
-            dates={forecast.data?.availableDates ?? []}
-            coverageEnd={forecast.data?.incidents.coverageEnd ?? null}
-            onChange={forecast.selectDay}
-            disabled={!forecast.data}
-          />
-        </div>
-      </div>
-
-      {/* The prescriptive seam: the three forecasts choose the conditions this
-          scenario starts from. */}
-      <ScenarioForecastPanel
-        forecast={forecast}
-        onApplyInflow={(v, day) => {
-          // The forecast is one segment-level prediction, not one per carriageway (D2 §3), so it
-          // seeds every carriageway the Carriageway control shows: the one road in NB / SB, both in
-          // Both. Each road's own Inflow slider still moves it afterwards.
-          activeDirections.forEach((dn) => byDirection[dn].setInflow(v));
-          setForecastDay(day);
-        }}
-      />
-
+  // The metric tiles, once, so full screen can put the same ones inside the card (the row above the grid is
+  // covered by it) and the page draws them in their usual place otherwise.
+  const metricTiles = (
+    <>
       {/* Metric tiles. NB-only/SB-only: one tile per metric, exactly as always. Both mode: the corridor
           figure on top of each tile with each carriageway's own value under it (per-direction rows,
           always visible) — see bothMetrics.ts for which metrics sum, which take the max, which are
@@ -1497,10 +1515,84 @@ export default function AiSandboxPage() {
         <MetricTile label="Density" value={focused.metrics ? `${fmt(focused.metrics.densityPerKmLane)}/km/ln` : "…"} />
       </div>
       )}
+    </>
+  );
+
+  return (
+    <section className="ds-content sandbox-page">
+      <PageHeader
+        icon={Car}
+        title="AI Traffic Sandbox"
+        subtitle={`Agent-based what-if simulation · ${originExit ? displayExitName(originExit.exit_name) : ""} → ${destExit ? displayExitName(destExit.exit_name) : ""} · Km ${fromKm.toFixed(2)}–${toKm.toFixed(2)}`}
+      />
+
+      {/* The two choices that apply to the whole sandbox — which carriageway(s), and which forecast day —
+          in one strip under the header, the way the Traffic and Incident tabs hold their Range. Full
+          screen covers this strip, so the card carries its own copy of the Carriageway choice there. */}
+      <div className="sandbox-toprow">
+        <div className={filterStyles.filterGroup}>
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)" }} aria-hidden="true"><path d="M4 14 6 2M12 14 10 2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /><path d="M8 3v1.5M8 7v2M8 11.5V13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+          <span className={filterStyles.filterLabel}>Carriageway</span>
+          <div className={filterStyles.segmented} role="tablist" aria-label="Carriageway view">
+            {(["Both", "NB", "SB"] as const).map((v) => (
+              <button key={v} role="tab" aria-selected={view === v} className={view === v ? "active" : ""} onClick={() => setView(v)} title={viewTitle(v)}>
+                {view === v && <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                {viewLabel(v)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className={filterStyles.filterGroup}>
+          <span className={filterStyles.filterLabel}>Forecast day</span>
+          <ForecastDayPicker
+            value={forecast.date}
+            dates={forecast.data?.availableDates ?? []}
+            coverageEnd={forecast.data?.incidents.coverageEnd ?? null}
+            onChange={forecast.selectDay}
+            disabled={!forecast.data}
+          />
+        </div>
+        {/* The hour of that day. The same shared hour as the Hour of day slider in the rail (one value, two
+            controls), so the road, the forecast tiles and that slider always agree on the time. */}
+        <div className={filterStyles.filterGroup}>
+          <span className={filterStyles.filterLabel}>Forecast time</span>
+          <select
+            aria-label="Forecast time of day"
+            value={hourOfDay ?? ""}
+            onChange={(e) => setHourOfDay(Number(e.target.value))}
+            disabled={hourOfDay == null}
+            title="The hour of the forecast day the road shows. Load the forecast and the road follows it."
+          >
+            {hourOfDay == null && <option value="">--:--</option>}
+            {Array.from({ length: 24 }, (_, h) => (
+              <option key={h} value={h}>
+                {`${String(h).padStart(2, "0")}:00`}
+                {h === (forecastHour(forecast.data, null) ?? focused.demand?.peakHour) ? " · peak" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* The prescriptive seam: the three forecasts choose the conditions this
+          scenario starts from. */}
+      <ScenarioForecastPanel
+        forecast={forecast}
+        hour={hourOfDay}
+        following={forecastFollowing}
+        // The forecast is one segment-level prediction, not one per carriageway (D2 §3), so it seeds every
+        // carriageway (each direction hook reads the same forecastInflow). Loading turns following on; the
+        // inflow itself arrives through the hook's dataAnchor, so it tracks the day and hour from here on.
+        // Each road's own Inflow slider can still move it afterwards, until the day or hour next changes.
+        onApplyInflow={() => setForecastFollowing(true)}
+      />
+
+      {!expanded && metricTiles}
 
       <div className="sandbox-grid" style={{ marginTop: 14 }}>
         {/* Simulation canvas + recommendation */}
-        <article className={`sandbox-main${expanded ? " is-expanded" : ""}`}>
+        {expanded && <div className="sandbox-main-hold" aria-hidden style={{ height: heldHeight }} />}
+        <article ref={mainCardRef} className={`sandbox-main${expanded ? " is-expanded" : ""}`}>
           <div className="sandbox-head">
             <h2>Traffic Simulation</h2>
             <div>
@@ -1519,7 +1611,7 @@ export default function AiSandboxPage() {
               </button>
               <button
                 className="btn-muted"
-                onClick={() => setExpanded((v) => !v)}
+                onClick={toggleExpanded}
                 title={expanded ? "Exit full screen (Esc)" : "Expand the road to fill the screen"}
               >
                 {expanded ? "Exit full screen" : "Full screen"}
@@ -1548,12 +1640,15 @@ export default function AiSandboxPage() {
               </div>
             </div>
           )}
+          {/* Full screen is the road and its analytics and nothing else: the tiles the page draws above the
+              grid are covered by the card, so the same ones are drawn here. */}
+          {expanded && metricTiles}
           {both && placeNote !== null && !expanded && (
             <p className="sandbox-place-hint" data-place-note>
               {placeNote}
             </p>
           )}
-          {view === "Both" && (
+          {view === "Both" && !expanded && (
             <p className="sandbox-live-note">
               Both carriageways run together, median-separated, lane 1 against the median on each
               side. Every control, event and readout below belongs to one carriageway and says which.
@@ -1598,7 +1693,13 @@ export default function AiSandboxPage() {
                   }
             }
             onClick={handleCanvasClick}
-            onMouseMove={previewClosureAt}
+            onMouseMove={(e) => {
+              trackPointer(e);
+              previewClosureAt(e);
+            }}
+            onMouseLeave={() => {
+              pointerRef.current = null;
+            }}
           />
 
           {/* Wrapper so the legend and the recommendation can sit side by side
@@ -2975,6 +3076,119 @@ function RailSection({
 /** Set once so a per-frame failure is reported, not repeated 60 times a second. */
 let renderFailureReported = false;
 
+/* ── Vehicle probe ───────────────────────────────────────────────────────────
+ * Hover a vehicle to read its speed, or click it to pin the bubble to it.
+ *
+ * Where a sprite lands depends on the carriageway's mirroring, the enlargement
+ * floor and the lane slot, all of which drawCarriageway() has already worked
+ * out. So it records each footprint as it draws and the probe hit-tests those,
+ * instead of a mouse handler keeping a second copy of the geometry (which is
+ * what click placement has to do by hand — see handleCanvasClick). Rebuilt
+ * every frame, so a footprint is always where the vehicle was last drawn. */
+type VehicleHit = {
+  id: number;
+  dir: Direction;
+  /** Sim second the vehicle entered — with `id`, tells it apart from a later sim's vehicle that reuses the id. */
+  born: number;
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  kmh: number;
+  vClass: 1 | 2 | 3;
+  /** 1-based, the same numbering as the L1..L4 tags on the road. */
+  lane: number;
+  moto: boolean;
+};
+type VehicleRef = { id: number; dir: Direction; born: number };
+
+const vehicleHits: VehicleHit[] = [];
+/** Sprites are a few pixels across at corridor scale; the hover target is a little bigger than the drawing. */
+const PROBE_SLOP_PX = 4;
+const VEHICLE_NAME = { 1: "Car", 2: "Bus", 3: "Truck" } as const;
+
+/** The vehicle drawn under (x, y) in canvas CSS px — the one whose centre is nearest when footprints overlap. */
+function vehicleAt(x: number, y: number): VehicleHit | null {
+  let best: VehicleHit | null = null;
+  let bestD = Infinity;
+  for (const h of vehicleHits) {
+    if (x < h.left - PROBE_SLOP_PX || x > h.right + PROBE_SLOP_PX || y < h.top - PROBE_SLOP_PX || y > h.bottom + PROBE_SLOP_PX) continue;
+    const d = Math.hypot(x - (h.left + h.right) / 2, y - (h.top + h.bottom) / 2);
+    if (d < bestD) {
+      best = h;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/** Draws the speed bubble for the pinned vehicle and for the one under the cursor, over the finished frame. */
+function drawVehicleProbes(
+  ctx: CanvasRenderingContext2D,
+  cssW: number,
+  cssH: number,
+  pointer: { x: number; y: number } | null,
+  pinned: VehicleRef | null,
+): { hovering: boolean; pinnedFound: boolean } {
+  const pinnedHit = pinned ? vehicleHits.find((h) => h.id === pinned.id && h.dir === pinned.dir && h.born === pinned.born) ?? null : null;
+  const hovered = pointer ? vehicleAt(pointer.x, pointer.y) : null;
+  if (pinnedHit) drawProbeBubble(ctx, cssW, cssH, pinnedHit, true);
+  if (hovered && hovered !== pinnedHit) drawProbeBubble(ctx, cssW, cssH, hovered, false);
+  return { hovering: hovered !== null, pinnedFound: pinnedHit !== null };
+}
+
+function drawProbeBubble(ctx: CanvasRenderingContext2D, cssW: number, cssH: number, h: VehicleHit, pinned: boolean) {
+  const accent = pinned ? "#fbbf24" : "#7dd3fc";
+  const speed = `${Math.round(h.kmh)} km/h`;
+  const what = `${h.moto ? "Motorcycle" : VEHICLE_NAME[h.vClass]} · Lane ${h.lane}`;
+  const hint = pinned ? "click to unpin" : "click to pin";
+
+  ctx.save();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = "700 18px system-ui";
+  const w1 = ctx.measureText(speed).width;
+  ctx.font = "500 13px system-ui";
+  const w2 = ctx.measureText(what).width;
+  ctx.font = "12px system-ui";
+  const w3 = ctx.measureText(hint).width;
+  const padX = 11;
+  const padY = 9;
+  const bw = Math.max(w1, w2, w3) + padX * 2;
+  const bh = padY * 2 + 23 + 18 + 14;
+
+  // Outline the vehicle, so it is clear which one the bubble is about when the traffic is dense.
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, h.left - 2, h.top - 2, h.right - h.left + 4, h.bottom - h.top + 4, 3);
+  ctx.stroke();
+
+  // Above the vehicle, or below it when there is no room; kept inside the canvas either side.
+  const gap = 8;
+  const cx = (h.left + h.right) / 2;
+  const bx = Math.max(2, Math.min(cssW - bw - 2, cx - bw / 2));
+  const above = h.top - 2 - gap - bh;
+  const by = Math.max(2, Math.min(cssH - bh - 2, above >= 2 ? above : h.bottom + 2 + gap));
+
+  ctx.fillStyle = "rgba(15,23,42,0.94)";
+  roundRect(ctx, bx, by, bw, bh, 7);
+  ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.25;
+  ctx.stroke();
+
+  ctx.fillStyle = "#f8fafc";
+  ctx.font = "700 18px system-ui";
+  ctx.fillText(speed, bx + padX, by + padY);
+  ctx.fillStyle = "rgba(226,232,240,0.88)";
+  ctx.font = "500 13px system-ui";
+  ctx.fillText(what, bx + padX, by + padY + 23);
+  ctx.fillStyle = "rgba(148,163,184,0.9)";
+  ctx.font = "12px system-ui";
+  ctx.fillText(hint, bx + padX, by + padY + 23 + 18);
+  ctx.restore();
+}
+
 /** Tick spacing in km that yields a readable number of markers for a span. */
 function kmTickStep(spanKm: number): number {
   for (const step of [0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 5]) {
@@ -3452,7 +3666,22 @@ function drawCarriageway(
       const moto = isMotorcycle(v.id, v.vClass, motoShare);
       if (v.vClass === 1) class1++;
       if (moto) motorcycles++;
-      drawVehicle(ctx, xPx(v.x), y, len, wid, v.vClass, moto ? motorcyclePaintFor(v.id) : paintFor(v.id, v.vClass), braking, sb, trailerPaintFor(v.id), moto);
+      const xNose = xPx(v.x);
+      drawVehicle(ctx, xNose, y, len, wid, v.vClass, moto ? motorcyclePaintFor(v.id) : paintFor(v.id, v.vClass), braking, sb, trailerPaintFor(v.id), moto);
+      // The body trails behind the nose: to the left going north, to the right going south.
+      vehicleHits.push({
+        id: v.id,
+        dir: sb ? "SB" : "NB",
+        born: v.spawnTime,
+        left: sb ? xNose : xNose - len,
+        right: sb ? xNose + len : xNose,
+        top: y - wid / 2,
+        bottom: y + wid / 2,
+        kmh: v.v * 3.6,
+        vClass: v.vClass,
+        lane: v.lane + 1,
+        moto,
+      });
     } catch (err) {
       // One unusable sprite must not take the remaining traffic with it: a
       // throw here previously painted the road and skipped every vehicle after
@@ -3692,6 +3921,7 @@ function render(
   overlay: ScenarioOverlay | null,
   animT: number,
 ) {
+  vehicleHits.length = 0; // re-recorded by drawCarriageway() below
   const dpr = window.devicePixelRatio || 1;
   const cssW = canvas.clientWidth;
   const cssH = canvas.clientHeight;
@@ -3789,6 +4019,7 @@ function renderBoth(
   animT: number,
   zipper: ZipperState | null,
 ) {
+  vehicleHits.length = 0; // re-recorded by both drawCarriageway() calls below
   const dpr = window.devicePixelRatio || 1;
   const cssW = canvas.clientWidth;
   const cssH = canvas.clientHeight;

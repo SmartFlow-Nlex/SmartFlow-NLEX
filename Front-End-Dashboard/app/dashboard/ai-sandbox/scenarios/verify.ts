@@ -20,6 +20,7 @@ import { combineBaselines, combineMetrics, flowWeightedSpeed } from "../bothMetr
 import { drawBorrowedLanes, drawMovableBarrier, drawScenes, drawWater, drawWeather, hasSceneArt, type SceneCtx, type SceneGeometry } from "../sceneArt";
 import { borrowedLanes, defaultStretch, planStretch, planZipper, REALLOCATION_NAME, zipperCounts, zipperHolds, type StretchLimits } from "../zipper";
 import { drawMotorcycle, type BikeCtx } from "../motorcycleArt";
+import { shapeForecastMix, type ClassShares } from "../forecastMix";
 import { BUS_PAINTS, CAB_PAINTS, CAR_PAINTS, MOTORCYCLE_PAINTS, PAINT_WHITE, TRAILER_PAINTS, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint } from "../vehiclePaint";
 import {
   ASSUMPTIONS,
@@ -2110,7 +2111,7 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check(
     "focus: there is no separate Focus control in the toolbar — the one-road-at-a-time things (Add to, Commands apply to) carry their own NB / SB choice, all moving the same state; the forecast has no direction pick of its own and seeds every carriageway the Carriageway control shows",
     !/aria-label="Focused carriageway"/.test(pageSource) && !/>Focus<\/span>/.test(pageSource) && !/Load forecast into/.test(pageSource) && !/data-forecast="direction"/.test(pageSource) &&
-      /activeDirections\.forEach\(\(dn\) => byDirection\[dn\]\.setInflow\(v\)\)/.test(pageSource) && /Commands apply to/.test(pageSource) &&
+      /forecastInflow: forecastInflowAt\(loadedForecast, hourOfDay\)/.test(pageSource) && /Commands apply to/.test(pageSource) &&
       !/aria-label="Carriageway the full-screen controls act on"/.test(pageSource) && /data-scn="direction-pick"/.test(panelSource) && (pageSource.match(/onClick=\{\(\) => chooseFocus\(dn\)\}/g) ?? []).length === 1,
   );
   check(
@@ -2296,6 +2297,74 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   );
   check("lane reallocation: 'Off' restores the lane counts the road had before the scheme", /nb\.setLaneCount\(zipper\.base\.NB\);\s*sb\.setLaneCount\(zipper\.base\.SB\);/.test(pageSource));
   check("lane reallocation: the canvas draws the movable barrier and the borrowed lanes only when a scheme is on (borrowedLanes(zipper, ...) feeds each carriageway)", /borrowed: borrowedLanes\(zipper, "NB"\)/.test(pageSource) && /borrowed: borrowedLanes\(zipper, "SB"\)/.test(pageSource) && /if \(zipper === null\) \{\s*drawMedian/.test(pageSource));
+}
+
+/* ───────────── forecast fleet mix, and how each class moves ───────────── */
+{
+  // An observed profile in which trucks are a bigger part of the night than of the morning peak.
+  const at = (vehPerHour: number, c1: number, c2: number, c3: number) => ({ vehPerHour, mix: { 1: c1, 2: c2, 3: c3 } as ClassShares });
+  const hours = Array.from({ length: 24 }, (_, h) => (h === 2 ? at(600, 0.6, 0.2, 0.2) : h === 8 ? at(4000, 0.85, 0.12, 0.03) : at(2000, 0.78, 0.16, 0.06)));
+  const normalDay: ClassShares = { 1: 0.78, 2: 0.16, 3: 0.06 };
+  const heavyDay: ClassShares = { 1: 0.7, 2: 0.18, 3: 0.12 };
+  const nightNormal = shapeForecastMix(normalDay, hours, hours[2]);
+  const peakNormal = shapeForecastMix(normalDay, hours, hours[8]);
+  const nightHeavy = shapeForecastMix(heavyDay, hours, hours[2]);
+  const total = (m: ClassShares) => m[1] + m[2] + m[3];
+  check(
+    "forecast mix: the day's forecast shares, shaped to an hour, are still a composition (sum to 1, none negative)",
+    [nightNormal, peakNormal, nightHeavy].every((m) => Math.abs(total(m) - 1) < 1e-9 && m[1] >= 0 && m[2] >= 0 && m[3] >= 0),
+  );
+  check(
+    "forecast mix: with no hourly profile the forecast day mix is used as it is — flat, not guessed at",
+    shapeForecastMix(normalDay, null, hours[2]) === normalDay && shapeForecastMix(normalDay, hours, null) === normalDay && shapeForecastMix(normalDay, [], hours[2]) === normalDay,
+  );
+  check(
+    "forecast mix: the observed hour-to-hour pattern survives — the same forecast day carries more heavy vehicles at night than at the peak",
+    nightNormal[3] > peakNormal[3] * 2,
+    `night ${nightNormal[3].toFixed(3)} vs peak ${peakNormal[3].toFixed(3)}`,
+  );
+  check(
+    "forecast mix: the forecast sets the level — a truck-heavy forecast day has more Class 3 than a normal one at the same hour",
+    nightHeavy[3] > nightNormal[3] * 1.4,
+    `heavy ${nightHeavy[3].toFixed(3)} vs normal ${nightNormal[3].toFixed(3)}`,
+  );
+
+  // The engine: drivers of different classes are not the same driver in a bigger body.
+  const sim = new TrafficSim(
+    { length: 2000, laneCount: 3, inflowVehPerHour: 3600, seed: 5, warmupS: 60, classProfile: { 1: { share: 0.4 }, 2: { share: 0.3 }, 3: { share: 0.3 } } },
+    { closedLanes: [false, false, false], closurePoint: 1e9, closureEnd: 1e9, incidents: [], speedLimitKmh: null, speedZone: [0, 0] },
+  );
+  // Every vehicle that enters over ten minutes, once each: a driver's traits are fixed at birth, and the handful on the
+  // road at any one instant is too few for the class means to separate reliably.
+  const born = new Map<number, (typeof sim.vehicles)[number]>();
+  for (let i = 0; i < 12000; i++) {
+    sim.step(0.05);
+    if (i % 20 === 0) for (const v of sim.vehicles) if (!born.has(v.id)) born.set(v.id, { ...v });
+  }
+  const everyone = [...born.values()];
+  const stat = (k: 1 | 2 | 3, f: (v: (typeof sim.vehicles)[number]) => number) => {
+    const xs = everyone.filter((v) => v.vClass === k).map(f);
+    const mean = xs.reduce((s, x) => s + x, 0) / Math.max(1, xs.length);
+    return { n: xs.length, mean, sd: Math.sqrt(xs.reduce((s, x) => s + (x - mean) ** 2, 0) / Math.max(1, xs.length)) };
+  };
+  const acc = ([1, 2, 3] as const).map((k) => stat(k, (v) => v.aMax));
+  const hw = ([1, 2, 3] as const).map((k) => stat(k, (v) => v.T));
+  const spd = ([1, 2, 3] as const).map((k) => stat(k, (v) => v.v0 / CLASS_META[k].v0));
+  check(
+    "class dynamics: heavier classes accelerate more slowly (Class 1 > Class 2 > Class 3 mean acceleration)",
+    acc.every((a) => a.n >= 50) && acc[0].mean > acc[1].mean && acc[1].mean > acc[2].mean,
+    acc.map((a) => a.mean.toFixed(2)).join(" > "),
+  );
+  check(
+    "class dynamics: heavier classes leave longer headways (Class 3 > Class 2 > Class 1 mean time headway)",
+    hw.every((a) => a.n >= 50) && hw[2].mean > hw[1].mean && hw[1].mean > hw[0].mean,
+    hw.map((a) => a.mean.toFixed(2)).join(" < "),
+  );
+  check(
+    "class dynamics: heavy vehicles cluster tighter around their own desired speed than cars do",
+    spd.every((a) => a.n >= 50) && spd[2].sd < spd[0].sd,
+    `Class 3 sd ${spd[2].sd.toFixed(3)} vs Class 1 sd ${spd[0].sd.toFixed(3)}`,
+  );
 }
 
 /* ───────────────────────────── report ───────────────────────────── */

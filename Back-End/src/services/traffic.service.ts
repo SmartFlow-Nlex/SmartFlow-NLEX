@@ -1031,6 +1031,12 @@ const MODEL_COLUMN: Record<string, string> = {
   HoltWinters: "pred_holtwinters",
   SARIMAX: "pred_sarimax",
   HoltsLinear: "pred_holts_linear",
+  // The names gold.ml_model_metrics uses, which the AI Sandbox reads its champion from. Unknown names
+  // fall back to LSTM below, so a champion missing here would be silently answered with the wrong model.
+  Holts_Linear: "pred_holts_linear",
+  Prophet_nw: "pred_prophet_nw",
+  SARIMAX_nw: "pred_sarimax_nw",
+  LSTM_nw: "pred_lstm_nw",
 };
 
 export async function getMLPredictiveVolumeHourly(

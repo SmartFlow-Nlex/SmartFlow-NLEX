@@ -1,10 +1,13 @@
+import { db } from "../config/db.js";
 import {
   getMLPredictiveVolume,
+  getMLPredictiveVolumeHourly,
   getMLModelMetrics,
   getEmissionForecast,
   getTrafficAnalyticsFromDb,
 } from "./traffic.service.js";
 import {
+  getIncidentHourlyFromDb,
   getIncidentPredictiveFromDb,
   getIncidentPredictiveAnchors,
 } from "./incident.service.js";
@@ -56,6 +59,11 @@ const PEAK_HOUR_FACTOR = 1.6;
 /** Bounds the sandbox simulation accepts. Mirrors the page's own inflow slider. */
 const INFLOW_MIN = 500;
 const INFLOW_MAX = 12_000;
+/**
+ * Floor for a single hour's inflow. A quiet hour really is a fraction of the peak, so the peak's floor
+ * (INFLOW_MIN) would overstate 03:00 several times over; this only keeps the engine from being asked for none.
+ */
+const HOURLY_INFLOW_MIN = 100;
 
 export type ScenarioContext = {
   date: string;
@@ -69,6 +77,14 @@ export type ScenarioContext = {
     segmentName: string | null;
     /** Derived arrival rate for the simulation, already clamped to its range. */
     peakHourInflow: number | null;
+    /**
+     * Corridor-wide vehicles the champion predicts for each hour (0-23) of this date: the Traffic page's own
+     * hourly drill-down for the same model — the day's prediction spread over this weekday's typical shape.
+     * Null when no hourly shape exists for the date.
+     */
+    hourly: (number | null)[] | null;
+    /** `hourly` at one segment (× segmentSharePct), the arrival rate the simulation runs at that hour. */
+    hourlyInflow: (number | null)[] | null;
     clamped: boolean;
     model: string | null;
     wmape: number | null;
@@ -90,12 +106,26 @@ export type ScenarioContext = {
      */
     byExit: { exitName: string; km: number; perDay: number }[];
     horizonDays: number;
+    /**
+     * Whole incidents the champion expects in each hour (0-23) of this date, corridor-wide: the Incident
+     * page's own hourly drill-down for the same model. That model predicts a daily count only, so this is
+     * the day spread over the weekday's typical shape and rounded — a derived curve, as that page labels it.
+     * Null when the date is outside the incident horizon or no shape exists.
+     */
+    hourly: number[] | null;
+    hourlyModel: string | null;
   };
   emissions: {
     predictedTonnes: number | null;
     model: string | null;
     wmape: number | null;
   };
+  /**
+   * The fleet-mix model's forecast Class 1 / 2 / 3 shares for this date (fractions summing to 1), which is what
+   * sets the mix of vehicles the road runs. That model's horizon is 7 days against the volume model's ~90, so most
+   * dates have none: null, and the road keeps the observed hourly mix rather than borrowing another day's.
+   */
+  fleet: { c1: number; c2: number; c3: number; heavyShare: number; heavySurge: boolean; model: string | null } | null;
   /** Set when a module forecasts the date but stored no value for it, or does not forecast it. */
   notes: string[];
 };
@@ -128,6 +158,38 @@ const readableDay = (isoDay: string) =>
     year: "numeric",
     timeZone: "UTC",
   });
+
+/**
+ * gold.ml_predictive_fleet_mix is written by the fleet-mix training script, and no API route serves it, so it is read
+ * here. Absent table, absent day, or shares that do not form a composition all give null — never a default mix.
+ */
+async function getFleetMixForDate(date: string): Promise<ScenarioContext["fleet"]> {
+  if (!db) return null;
+  try {
+    const { rows } = await db.query(
+      `SELECT pred_c1::float AS c1, pred_c2::float AS c2, pred_c3::float AS c3,
+              heavy_pred::float AS heavy, heavy_surge, champion_model
+       FROM gold.ml_predictive_fleet_mix
+       WHERE forecast_date = $1::date AND pred_c1 IS NOT NULL AND pred_c2 IS NOT NULL AND pred_c3 IS NOT NULL
+       ORDER BY updated_at DESC LIMIT 1`,
+      [date],
+    );
+    const r = rows[0];
+    if (!r) return null;
+    const sum = r.c1 + r.c2 + r.c3;
+    if (![r.c1, r.c2, r.c3].every((v) => Number.isFinite(v) && v >= 0) || Math.abs(sum - 1) > 0.02) return null;
+    return {
+      c1: r.c1 / sum,
+      c2: r.c2 / sum,
+      c3: r.c3 / sum,
+      heavyShare: (r.c2 + r.c3) / sum,
+      heavySurge: Boolean(r.heavy_surge),
+      model: r.champion_model ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export async function getScenarioContext(date?: string): Promise<ScenarioContext | null> {
   const anchors = await getIncidentPredictiveAnchors();
@@ -251,6 +313,32 @@ export async function getScenarioContext(date?: string): Promise<ScenarioContext
     );
   }
 
+  // ── the hour ────────────────────────────────────────────────────────────────
+  // The Traffic and Incident pages each draw this date hour by hour. Reading the same functions with the
+  // same model is what makes the sandbox show the figures those pages show, rather than a copy of their
+  // logic that can drift. Either can be missing (no weekday shape, outside the incident horizon), and
+  // then the field is null — never a number borrowed from another hour or day.
+  const [hourlyVol, hourlyInc, fleet] = await Promise.all([
+    champion && rawDaily != null && col ? getMLPredictiveVolumeHourly(chosen, champion.model, "all") : Promise.resolve(null),
+    covered ? getIncidentHourlyFromDb(chosen) : Promise.resolve(null),
+    getFleetMixForDate(chosen),
+  ]);
+  if (!fleet) {
+    notes.push(
+      "No fleet-mix forecast for this date (that model forecasts about a week ahead), so the vehicle mix on the road is the observed mix for the chosen hour.",
+    );
+  }
+  const hourly = hourlyVol?.hours.some((h) => h.predicted != null) ? hourlyVol.hours.map((h) => h.predicted) : null;
+  const hourlyInflow =
+    hourly && segmentShare != null
+      ? hourly.map((v) => (v == null ? null : Math.min(INFLOW_MAX, Math.max(HOURLY_INFLOW_MIN, Math.round(v * segmentShare)))))
+      : null;
+  const incChampion = (hourlyInc as any)?.models?.find((m: any) => m.isChampion) ?? null;
+  const incHourly: number[] | null =
+    incChampion && Array.isArray(incChampion.hours) && incChampion.hours.every((v: unknown) => typeof v === "number")
+      ? (incChampion.hours as number[])
+      : null;
+
   // ── emissions ───────────────────────────────────────────────────────────────
   const eRow = emiFuture.get(chosen);
   const eChampion = (emissions as any).championModel ?? null;
@@ -264,6 +352,8 @@ export async function getScenarioContext(date?: string): Promise<ScenarioContext
       segmentSharePct: segmentShare != null ? segmentShare * 100 : null,
       segmentName,
       peakHourInflow,
+      hourly,
+      hourlyInflow,
       clamped,
       model: champion?.model ?? null,
       wmape: champion?.wmape ?? null,
@@ -275,12 +365,15 @@ export async function getScenarioContext(date?: string): Promise<ScenarioContext
       model: (incidents as any)?.summary?.championModel ?? null,
       byExit,
       horizonDays,
+      hourly: incHourly,
+      hourlyModel: incHourly ? String(incChampion.key) : null,
     },
     emissions: {
       predictedTonnes: eRow?.predicted != null ? Number(eRow.predicted) : null,
       model: eChampion,
       wmape: eMetric?.wmape ?? null,
     },
+    fleet,
     notes,
   };
 }

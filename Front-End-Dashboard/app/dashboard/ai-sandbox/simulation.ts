@@ -199,10 +199,23 @@ export type RampSpec = {
 // LANE_CHANGE_BASE_SEC. It scales with size, not mass: a 14 m articulated
 // truck has slower steering, has to swing its trailer, and is driven across
 // gently because the load shifts. A hatchback just goes.
+//
+// How each class MOVES, beyond how fast it wants to go. These four are engineering defaults, not fitted to NLEX:
+// the warehouse holds no per-class speed, acceleration or headway (see validate_sandbox.ts), so they encode only
+// the direction and rough size of differences that are not in dispute, and are here to be replaced by
+// measurements when there are any.
+//   aF        acceleration relative to a car. Heavier vehicles with less power per tonne pull away and recover
+//             speed far more slowly, which is what turns a truck into a moving bottleneck on a grade or out of a queue.
+//   tF        time headway relative to a car (scales the profile's T). Longer vehicles that need longer to stop
+//             leave a longer gap.
+//   v0Sd      spread of desired speed among drivers of the class. Heavy vehicles are speed-limited or governed,
+//             so they cluster tighter around their cruising speed than cars do.
+//   keepRight extra pull towards the outer lane, on top of LANE_DISCIPLINE (m/s²): heavy vehicles are expected to
+//             stay out of the overtaking lanes, and do so more than a car that merely prefers to.
 const CLASS = {
-  1: { v0: 30, len: 4.6, co2PerM: 0.16, color: "#3e67ef", share: 0.78, lcSec: 1.1 }, // light — blue
-  2: { v0: 25, len: 9, co2PerM: 0.55, color: "#1f9d57", share: 0.16, lcSec: 1.9 }, // medium — green
-  3: { v0: 22, len: 14, co2PerM: 0.95, color: "#9b5de5", share: 0.06, lcSec: 2.7 }, // heavy — purple
+  1: { v0: 30, len: 4.6, co2PerM: 0.16, color: "#3e67ef", share: 0.78, lcSec: 1.1, aF: 1.0, tF: 1.0, v0Sd: 0.1, keepRight: 0 }, // light — blue
+  2: { v0: 25, len: 9, co2PerM: 0.55, color: "#1f9d57", share: 0.16, lcSec: 1.9, aF: 0.75, tF: 1.15, v0Sd: 0.08, keepRight: 0.25 }, // medium — green
+  3: { v0: 22, len: 14, co2PerM: 0.95, color: "#9b5de5", share: 0.06, lcSec: 2.7, aF: 0.45, tF: 1.35, v0Sd: 0.06, keepRight: 0.5 }, // heavy — purple
 } as const;
 
 // Driver profile modifiers: time headway T, desired-speed factor, politeness.
@@ -222,10 +235,18 @@ const CLASS = {
 // within the 0.8-2.0 s that the car-following literature reports for motorway
 // headway, so this is a calibration, not a fudge.
 // See All_Scripts/Simulation_Validation/validate_sandbox.ts.
+//
+// RE-CALIBRATED once the entrance stopped filtering who gets on (see TrafficSim.waiting). The 2.0 / 1.57 / 1.12
+// set above measured 2,515 pc/h/lane on this engine — but only because a refused arrival was replaced by a fresh
+// random one, so the drivers who got on were disproportionately the short-headway ones (half the trucks, against 15%
+// of the population). With every arrival kept as who they are, the same values measure 1,692 pc/h/lane, under the
+// HCM's 2,000-2,400, so they are scaled by 0.72 to 1.44 / 1.13 / 0.81 (capacity 2,073 by the same measure: the harness's
+// sweep and mix, run without the database; 1,784 / 1,879 / 2,021 at 0.92 / 0.85 / 0.78). The shortest of the three is
+// still inside the 0.8-2.0 s range the literature reports. The per-class factors in CLASS (tF) sit on top of these.
 const PROFILE = {
-  cautious: { T: 2.0, v0f: 0.92, politeness: 0.5, lcf: 1.16, scanf: 1.15, pat: 1.5, react: 1.2 },
-  normal: { T: 1.57, v0f: 1.0, politeness: 0.3, lcf: 1.0, scanf: 1.0, pat: 1.0, react: 1.0 },
-  aggressive: { T: 1.12, v0f: 1.12, politeness: 0.1, lcf: 0.85, scanf: 0.8, pat: 0.6, react: 0.82 },
+  cautious: { T: 1.44, v0f: 0.92, politeness: 0.5, lcf: 1.16, scanf: 1.15, pat: 1.5, react: 1.2 },
+  normal: { T: 1.13, v0f: 1.0, politeness: 0.3, lcf: 1.0, scanf: 1.0, pat: 1.0, react: 1.0 },
+  aggressive: { T: 0.81, v0f: 1.12, politeness: 0.1, lcf: 0.85, scanf: 0.8, pat: 0.6, react: 0.82 },
 } as const;
 
 // IDM constants
@@ -459,9 +480,9 @@ function makeDriver(rng: () => number, vClass: VehicleClass, profile: DriverProf
   return {
     // ±10%, so a calm driver may still out-run a hurried one — which is what
     // stops the three profiles reading as three fixed speeds on the canvas.
-    v0: c.v0 * p.v0f * gauss(rng, 0.1, 0.72, 1.3),
-    T: p.T * gauss(rng, 0.15, 0.65, 1.5),
-    aMax: A_MAX * gauss(rng, 0.13, 0.65, 1.4),
+    v0: c.v0 * p.v0f * gauss(rng, c.v0Sd, 0.72, 1.3),
+    T: p.T * c.tF * gauss(rng, 0.15, 0.65, 1.5),
+    aMax: A_MAX * c.aF * gauss(rng, 0.13, 0.65, 1.4),
     politeness: Math.min(0.85, Math.max(0, p.politeness * gauss(rng, 0.25, 0.3, 1.9))),
     // Size sets the scale, temperament nudges it, and the draw keeps two
     // identical trucks from steering in lockstep.
@@ -493,6 +514,9 @@ function varyColor(hex: string, r: number): string {
   return t >= 0 ? mixHex(hex, "#ffffff", t) : mixHex(hex, "#0b1226", -t);
 }
 
+/** Who is waiting to enter the road: their class, temperament, the traits drawn for them and where they are headed, fixed once. */
+type Arrival = { vClass: VehicleClass; profile: DriverProfile; d: ReturnType<typeof makeDriver>; exitAtX: number | null };
+
 function mulberry32(seed: number) {
   let a = seed >>> 0;
   return () => {
@@ -512,6 +536,20 @@ export class TrafficSim {
   private rng: () => number;
   private nextId = 1;
   private spawnAccumulator = 0;
+  /**
+   * An arrival the entrance refused, kept whole for the retry — its class AND its driver.
+   *
+   * The credit for a refused arrival was given back but the arrival itself was drawn afresh next tick, and the gap
+   * test depends on what was drawn: a long vehicle, or a driver who keeps a long headway, needs a bigger gap. So the
+   * queue at the entrance filtered the fleet. A truck turned away came back as a car about nine times in ten, and a
+   * cautious driver came back as an aggressive one. Measured: Class 3 was 8% of arrivals against 14% configured, and
+   * half the trucks that did get on were the short-headway "aggressive" type against 15% of the population, which
+   * cancelled any difference in how a truck drives from a car and made the fleet mix a function of entrance
+   * congestion rather than of the forecast. A refused arrival now waits as who it was. The mainline entrance keeps a
+   * short queue that whoever fits leaves in order of arrival; each on-ramp has a single lane, so a single place in line.
+   */
+  private waiting: Arrival[] = [];
+  private rampPendingArrival: (Arrival | null)[] = [];
 
   /**
    * Vehicles per lane, ordered by position, rebuilt once per step.
@@ -716,10 +754,17 @@ export class TrafficSim {
     return r < 0.25 ? "cautious" : r < 0.85 ? "normal" : "aggressive";
   }
 
-  private spawn(lane: number, vClass: VehicleClass, exitAtX: number | null = null) {
+  /** `entryX` is where they join, for choosing a destination downstream of it; null for a joiner whose destination is chosen at the ramp. */
+  private newArrival(entryX: number | null = null): Arrival {
+    const vClass = this.pickClass();
     const profile = this.pickProfile();
-    const c = this.cls[vClass];
     const d = makeDriver(this.rng, vClass, profile);
+    return { vClass, profile, d, exitAtX: entryX == null ? null : this.pickExit(entryX) };
+  }
+
+  private spawn(lane: number, arrival: Arrival, exitAtX: number | null = null) {
+    const { vClass, profile, d } = arrival;
+    const c = this.cls[vClass];
 
     /* Enter at the speed of the traffic already in the lane.
      *
@@ -1104,7 +1149,8 @@ export class TrafficSim {
        * lane is not choosing a cruising lane, and charging it for moving
        * inward would send it the wrong way or nowhere at all. */
       if (!mustEscape) {
-        gain += lane > v.lane ? LANE_DISCIPLINE : -LANE_DISCIPLINE;
+        const discipline = LANE_DISCIPLINE + CLASS[v.vClass].keepRight;
+        gain += lane > v.lane ? discipline : -discipline;
       }
       // Scaled by the same urgency: a distant closure is a nudge, the taper is
       // an order. Without the floor a vehicle 150 m out would ignore the closure
@@ -1234,10 +1280,10 @@ export class TrafficSim {
       while (this.rampAccumulator[i] >= 1) {
         this.rampAccumulator[i] -= 1;
         const lane = this.exitLane;
-        const vClass = this.pickClass();
+        const arrival = this.rampPendingArrival[i] ?? this.newArrival();
+        this.rampPendingArrival[i] = null;
+        const { vClass, profile, d } = arrival;
         const c = this.cls[vClass];
-        const profile = this.pickProfile();
-        const d = makeDriver(this.rng, vClass, profile);
 
         /* Scanned live, not through the lane index, for the same reason the
          * mainline spawn is: the index is a step old and several joins can
@@ -1263,6 +1309,7 @@ export class TrafficSim {
         const needBehind = behind ? S0 + behind.v * 0.8 : S0;
         if ((ahead && ahead.x - ahead.length - r.x < needAhead - c.len) ||
             (behind && r.x - c.len - behind.x < needBehind)) {
+          this.rampPendingArrival[i] = arrival; // waits on the ramp as who it is
           this.rampAccumulator[i] = Math.min(this.rampAccumulator[i] + 1, MAX_ENTRY_QUEUE);
           break;
         }
@@ -1340,12 +1387,24 @@ export class TrafficSim {
     this.spawnAccumulator += (this.cfg.inflowVehPerHour / 3600) * dt;
     while (this.spawnAccumulator >= 1) {
       this.spawnAccumulator -= 1;
+      /* A new arrival joins the entrance queue, whole: class, driver and destination drawn once. Past a few the
+       * surplus is not traffic waiting to enter but demand the segment cannot serve, and is counted as such (it is
+       * in `demanded` and never in `admitted`) rather than stored — left uncapped the queue reached 978 vehicles
+       * in a 10-minute run, a phantom that nothing rendered and that would have flooded the road when demand eased. */
+      if (this.waiting.length < MAX_ENTRY_QUEUE) this.waiting.push(this.newArrival(0));
+    }
+    /* Whoever fits goes in, in order of arrival. One that does not fit does not hold up the rest: they are in
+     * different lanes, and a truck waiting for a long gap in one lane says nothing about a car that fits in
+     * another. What matters is that nobody is discarded, so a queue that clears delivers exactly the fleet that
+     * arrived. */
+    for (let w = 0; w < this.waiting.length; ) {
+      const arrival = this.waiting[w];
       // Class first, then a lane that class is allowed in. Picking the lane
       // first and downgrading anything heavy that landed in L1 would quietly
       // delete a quarter of the buses and trucks from the whole run; choosing
       // among the legal lanes instead keeps the fleet mix exactly as
       // configured and simply spreads the heavies over the lanes they may use.
-      const vClass = this.pickClass();
+      const vClass = arrival.vClass;
       /* Destination first, because it decides which lane they join in.
        *
        * Assigning a random lane and then asking the driver to cross the
@@ -1354,7 +1413,7 @@ export class TrafficSim {
        * 66% of them missed their exit and were silently re-assigned to a
        * later one, so the ramps drained at a third of the turning proportion
        * they were configured with. */
-      const exitAtX = this.pickExit(0);
+      const exitAtX = arrival.exitAtX;
       const legal: number[] = [];
       for (let l = 0; l < this.cfg.laneCount; l++) if (laneAllowsClass(vClass, l)) legal.push(l);
       // A one-lane road is all inner lane; there is nowhere legal to put a
@@ -1384,18 +1443,13 @@ export class TrafficSim {
        * within each group, so no single lane is favoured. */
       if (exitAtX != null && exitAtX < EXIT_APPROACH_M * 1.5) legal.sort((a, b) => b - a);
       for (const lane of legal) {
-        if (this.spawn(lane, vClass, exitAtX)) { placed = true; this.admitted++; break; }
+        if (this.spawn(lane, arrival, exitAtX)) { placed = true; break; }
       }
-      if (!placed) {
-        this.spawnAccumulator += 1; // retry on a later tick
-        /* Cap the backlog. Left uncapped it reached 978 vehicles in a
-         * 10-minute run — a phantom queue that nothing rendered, that no
-         * metric reported, and that would have flooded the road the moment
-         * demand eased. Past a few vehicles this is not traffic waiting to
-         * enter, it is demand the segment cannot serve, and it is counted as
-         * such rather than stored. */
-        if (this.spawnAccumulator > MAX_ENTRY_QUEUE) this.spawnAccumulator = MAX_ENTRY_QUEUE;
-        break; // entrance is full this step; stop trying
+      if (placed) {
+        this.waiting.splice(w, 1); // in; the next one shifts into slot w
+        this.admitted++;
+      } else {
+        w++; // stays in the queue as the same vehicle and driver, see waiting
       }
     }
 

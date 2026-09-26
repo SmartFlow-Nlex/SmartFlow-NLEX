@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 import { Brain, CheckCircle2, Database, ScanSearch, UploadCloud } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
 
@@ -35,19 +35,39 @@ type EtlResult = {
   duration_ms: number;
 };
 
+const formatSize = (bytes: number) =>
+  bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
 export default function DataManagementPage() {
   const [fileName, setFileName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<EtlResult | null>(null);
   const [success, setSuccess] = useState<boolean | null>(null);
+  // A picked file waits here, unsent, until the operator confirms. Loading writes to the warehouse and this
+  // page has no undo, so choosing a file must not be the same act as sending it.
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
 
-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+  useEffect(() => {
+    if (!pendingFile) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPendingFile(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pendingFile]);
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
       return;
     }
+    setPendingFile(file);
+    // Reset the input so the same file can be picked again after cancelling; the File itself is kept in state.
+    event.target.value = "";
+  }
 
+  async function uploadFile(file: File) {
     setFileName(file.name);
     setError("");
     setResult(null);
@@ -80,9 +100,14 @@ export default function DataManagementPage() {
       setError(err instanceof Error ? err.message : "Unable to process the uploaded file.");
     } finally {
       setLoading(false);
-      // Reset input so the same file can be uploaded again if needed
-      event.target.value = "";
     }
+  }
+
+  function confirmUpload() {
+    if (!pendingFile) return;
+    const file = pendingFile;
+    setPendingFile(null);
+    void uploadFile(file);
   }
 
   return (
@@ -113,6 +138,42 @@ export default function DataManagementPage() {
         <small>{fileName || "No file selected yet"}</small>
         {loading && <small style={{ color: "var(--page-accent, #3b82f6)", display: "block", marginTop: "10px" }}>Running ETL Pipeline... this may take a moment for large files.</small>}
       </article>
+
+      {pendingFile && (
+        <div
+          className="ds-modal-backdrop"
+          role="presentation"
+          onClick={(e) => {
+            // Only a click on the backdrop itself cancels; one that started inside the dialog does not.
+            if (e.target === e.currentTarget) setPendingFile(null);
+          }}
+        >
+          <div className="ds-modal" role="dialog" aria-modal="true" aria-labelledby="upload-confirm-title" style={{ width: "min(460px, 100%)" }}>
+            <header className="ds-modal-head">
+              <h2 id="upload-confirm-title">Upload this file?</h2>
+            </header>
+            <div className="ds-modal-body">
+              <p className="ds-modal-note" style={{ fontSize: "0.86rem", color: "var(--text-primary)" }}>
+                <strong style={{ wordBreak: "break-all" }}>{pendingFile.name}</strong>
+                <br />
+                {formatSize(pendingFile.size)}
+              </p>
+              <p className="ds-modal-note">
+                The pipeline will classify and validate it, then write every row that passes into the AWS warehouse. This page cannot undo a
+                load, so check that this is the right file.
+              </p>
+            </div>
+            <footer className="ds-modal-foot">
+              <button type="button" className="btn-muted" onClick={() => setPendingFile(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-primary" autoFocus onClick={confirmUpload}>
+                Upload &amp; load
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
 
       {!result && !error && (
         <ol className="ds-steps" aria-label="What happens after you upload">

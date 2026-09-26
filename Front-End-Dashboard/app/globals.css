@@ -10427,6 +10427,50 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   }
 }
 
+/* --- full screen ----------------------------------------------------------
+   The Full screen button only ever toggled `.is-expanded`; nothing gave the card
+   the viewport, so the button changed its own label and widened the lanes and
+   that was all. The card is lifted out of the page grid and pinned over
+   everything (topbar 20, mobile sidebar 45 — below the modals at 60+, so a
+   dialog still opens above it).
+
+   The road takes whatever height the head and the footbar leave. `flex: 1 1 0`
+   rather than `height: auto`: a canvas sizes itself from its own width/height
+   attributes, which render() sets from what it measured, so an auto height
+   feeds each frame's size back into the next. Zero basis breaks the loop.
+   The floor keeps a Both-mode road legible; below it the card scrolls. */
+.sandbox-page .sandbox-main.is-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  align-self: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 16px 20px;
+}
+.sandbox-page .sandbox-main.is-expanded .sandbox-canvas {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 360px;
+  /* Edge to edge: the road runs the full width of the screen, the text keeps its gutter. */
+  width: calc(100% + 40px);
+  margin-left: -20px;
+  margin-right: -20px;
+  border-radius: 0;
+}
+/* Full screen is the road and its analytics: the paragraph explaining how the Both-mode tiles add up is reference,
+   and stays with the docked page. */
+.sandbox-main.is-expanded .sandbox-metric-caption {
+  display: none;
+}
+/* Holds the card's docked slot in the grid while it is lifted out (see page.tsx). */
+.sandbox-main-hold {
+  visibility: hidden;
+}
+
 .sandbox-main.is-expanded .sandbox-footbar {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
