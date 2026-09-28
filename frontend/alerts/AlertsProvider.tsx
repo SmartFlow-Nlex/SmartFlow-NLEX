@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { useMobileConfig, type AdvisoryTone } from '../lib/mobileConfig';
 
 /**
  * Alert state, lifted out of the Alerts screen.
@@ -10,7 +11,12 @@ import { Ionicons } from '@expo/vector-icons';
  * lives above both.
  */
 
-export type AlertTone = 'critical' | 'warning';
+/**
+ * `info` exists because an operator can publish an advisory at three levels
+ * from the dashboard's Mobile Control Centre, and a three-level control that
+ * renders as two is a control that lies about what it did.
+ */
+export type AlertTone = 'critical' | 'warning' | 'info';
 
 /**
  * Maintenance notices are grouped separately because they behave differently
@@ -29,6 +35,13 @@ export interface AlertItem {
   tone: AlertTone;
   unread: boolean;
   category: AlertCategory;
+  /**
+   * Shown whatever category is being viewed. Only an operator-published
+   * advisory sets this: it is a deliberate broadcast, so filing it under
+   * `traffic` and letting a category filter hide it would mean an operator
+   * posts a closure notice and nobody sees it.
+   */
+  pinned?: boolean;
 }
 
 const initialAlerts: AlertItem[] = [
@@ -116,10 +129,81 @@ interface AlertsContextValue {
 
 const AlertsContext = createContext<AlertsContextValue | null>(null);
 
+/** Compact, stable id for an advisory, so "already read" survives a re-render
+ *  but a NEW advisory with different text arrives unread. */
+function advisoryId(tone: AdvisoryTone, message: string): string {
+  let h = 5381;
+  const basis = `${tone}:${message}`;
+  for (let i = 0; i < basis.length; i += 1) h = ((h << 5) + h + basis.charCodeAt(i)) | 0;
+  return `advisory-${(h >>> 0).toString(36)}`;
+}
+
+const ADVISORY_ICON: Record<AdvisoryTone, keyof typeof Ionicons.glyphMap> = {
+  critical: 'alert-circle',
+  warning: 'warning-outline',
+  info: 'information-circle-outline',
+};
+
 export const AlertsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [alerts, setAlerts] = useState<AlertItem[]>(initialAlerts);
 
+  // An advisory published from the dashboard (/dashboard/mobile). It is derived
+  // rather than pushed into `alerts`, so an operator retracting it removes it
+  // here too instead of leaving a notice nobody can clear.
+  const { config } = useMobileConfig();
+  const [readAdvisories, setReadAdvisories] = useState<string[]>([]);
+
+  // Every advisory an operator has published, in the order they arranged them.
+  // Withdrawn ones are absent rather than dimmed: a notice nobody is meant to
+  // act on any more should not be occupying the top of the screen.
+  const advisories = useMemo<AlertItem[]>(
+    () =>
+      config.advisories
+        .filter((a) => a.active && a.message.trim().length > 0)
+        .map((a) => {
+          // Keyed on what it says, not on its id, so editing the text of a live
+          // advisory brings it back unread while a re-save of the same words
+          // does not.
+          const id = advisoryId(a.tone, a.message);
+          return {
+            id,
+            title:
+              a.tone === 'critical'
+                ? 'Critical advisory'
+                : a.tone === 'warning'
+                  ? 'Traffic advisory'
+                  : 'Notice',
+            message: a.message,
+            timeAgo: 'Now',
+            priority: a.tone === 'critical' ? 'high priority' : 'medium priority',
+            icon: ADVISORY_ICON[a.tone],
+            tone: a.tone,
+            unread: !readAdvisories.includes(id),
+            // Grouped with traffic rather than maintenance: an advisory is
+            // something happening now, which is what the traffic list is for.
+            // `pinned` keeps it visible even when that category is off.
+            category: 'traffic',
+            pinned: true,
+          } satisfies AlertItem;
+        })
+        // Critical first: with several pinned at once the order they were
+        // arranged in matters less than which one needs acting on.
+        .sort((x, y) => Number(y.tone === 'critical') - Number(x.tone === 'critical')),
+    [config.advisories, readAdvisories]
+  );
+
+  // Advisories lead: an operator posted them deliberately and they are the
+  // newest things in the list by definition.
+  const allAlerts = useMemo(
+    () => (advisories.length === 0 ? alerts : [...advisories, ...alerts]),
+    [advisories, alerts]
+  );
+
   const markAsRead = useCallback((id: string): void => {
+    if (id.startsWith('advisory-')) {
+      setReadAdvisories((current) => (current.includes(id) ? current : [...current, id]));
+      return;
+    }
     setAlerts((current) =>
       current.map((item) => (item.id === id ? { ...item, unread: false } : item))
     );
@@ -127,16 +211,20 @@ export const AlertsProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const markAllAsRead = useCallback((): void => {
     setAlerts((current) => current.map((item) => ({ ...item, unread: false })));
-  }, []);
+    setReadAdvisories((current) => {
+      const next = advisories.map((a) => a.id).filter((id) => !current.includes(id));
+      return next.length === 0 ? current : [...current, ...next];
+    });
+  }, [advisories]);
 
   const unreadCount = useMemo(
-    () => alerts.filter((item) => item.unread).length,
-    [alerts]
+    () => allAlerts.filter((item) => item.unread).length,
+    [allAlerts]
   );
 
   const value = useMemo(
-    () => ({ alerts, unreadCount, markAsRead, markAllAsRead }),
-    [alerts, unreadCount, markAsRead, markAllAsRead]
+    () => ({ alerts: allAlerts, unreadCount, markAsRead, markAllAsRead }),
+    [allAlerts, unreadCount, markAsRead, markAllAsRead]
   );
 
   return <AlertsContext.Provider value={value}>{children}</AlertsContext.Provider>;

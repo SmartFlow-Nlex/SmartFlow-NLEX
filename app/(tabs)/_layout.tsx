@@ -6,6 +6,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAlerts } from '../../frontend/alerts';
+import { useMobileConfig } from '../../frontend/lib/mobileConfig';
 import { useTheme, useThemedStyles } from '../../frontend/theme';
 import type { ThemePalette } from '../../frontend/theme';
 
@@ -137,6 +138,11 @@ const TabButton: React.FC<TabButtonProps> = ({
 export default function TabLayout(): React.ReactElement {
 	const { colors } = useTheme();
 	const { unreadCount } = useAlerts();
+
+	// Which tabs this build may show is set by an operator in the dashboard's
+	// Mobile Control Centre (/dashboard/mobile). Until that answer lands the
+	// defaults leave every tab in place, so a slow network never blanks the bar.
+	const { config: mobileConfig } = useMobileConfig();
 	const insets = useSafeAreaInsets();
 
 	return (
@@ -179,6 +185,7 @@ export default function TabLayout(): React.ReactElement {
 				<Tabs.Screen
 					name="dashboard"
 					options={{
+						href: mobileConfig.features.dashboard ? undefined : null,
 						title: 'Dashboard',
 						tabBarButton: (props) => (
 							<TabButton {...props} name="dashboard" label="Dashboard" />
@@ -188,6 +195,7 @@ export default function TabLayout(): React.ReactElement {
 				<Tabs.Screen
 					name="map"
 					options={{
+						href: mobileConfig.features.map ? undefined : null,
 						// The route keeps its `map` filename; only the label changes, so
 						// every existing router.push('/(tabs)/map') still resolves.
 						title: 'Corridor',
@@ -199,6 +207,7 @@ export default function TabLayout(): React.ReactElement {
 				<Tabs.Screen
 					name="community"
 					options={{
+						href: mobileConfig.features.community ? undefined : null,
 						title: 'Community',
 						tabBarButton: (props) => (
 							<TabButton {...props} name="community" label="Community" />
@@ -208,6 +217,7 @@ export default function TabLayout(): React.ReactElement {
 				<Tabs.Screen
 					name="assistant"
 					options={{
+						href: mobileConfig.features.assistant ? undefined : null,
 						title: 'Assistant',
 						tabBarButton: (props) => (
 							<TabButton {...props} name="assistant" label="Assistant" />
@@ -217,6 +227,7 @@ export default function TabLayout(): React.ReactElement {
 				<Tabs.Screen
 					name="alerts"
 					options={{
+						href: mobileConfig.features.alerts ? undefined : null,
 						title: 'Alerts',
 						tabBarButton: (props) => (
 							<TabButton {...props} name="alerts" label="Alerts" badge={unreadCount} />
