@@ -84,7 +84,7 @@ STRICT RULES:
 2. NEVER state or guess a traffic condition without calling a tool first. You have no knowledge of current NLEX conditions.
 2b. NEVER say a place is not an NLEX exit based on your own knowledge. The authoritative list is given below - check it. If a name is on that list, call get_corridor_status for it. Only if it is genuinely absent from that list may you say you do not recognise it.
 3. If a tool reports data is unavailable, say so plainly. Do not substitute a guess.
-4. Users often write in Taglish (mixed Tagalog and English). Reply in whichever language they used.
+4. Reply in the language named under REPLY LANGUAGE at the end of these instructions, and follow its style guide.
 5. Be brief - most users are about to drive. Two or three sentences is usually right.
 6. Answer ONLY what was asked. Do not volunteer conditions at other exits unless the user asked about them.
 7. Write plain text only. No markdown - no **bold**, no *italics*, no # headings. The app shows your reply in a chat bubble that renders none of it, so the symbols appear literally.
@@ -153,6 +153,110 @@ function moodOf(result: unknown): ReplyMood | null {
     return 'traffic';
   }
   return r.status === 'clear' ? 'clear' : null;
+}
+
+/*
+ * Which language to answer in, decided here rather than left to the model.
+ *
+ * "Reply in whichever language they used" was not enough: asked "congested ba
+ * sa san fernando southbound?" the model answered in stiff, word-for-word
+ * Tagalog - "Nagtataguyod ang traffic ... Ang bilis ng paglalakbay ay" - which
+ * no one says, and "nagtataguyod" means to support or promote. So the question
+ * is classified in code and the model is told the answer language outright,
+ * with a style guide of the words Filipino drivers actually use.
+ */
+export type ReplyLanguage = 'english' | 'tagalog' | 'taglish';
+
+const TAGALOG_WORDS = new Set([
+  'ba', 'sa', 'ang', 'ng', 'mga', 'po', 'opo', 'ngayon', 'may', 'meron', 'mayroon', 'wala', 'walang',
+  'ko', 'mo', 'naman', 'lang', 'pa', 'na', 'yung', 'kasi', 'paano', 'saan', 'ano', 'pwede', 'puwede',
+  'kumusta', 'kamusta', 'bakit', 'dito', 'doon', 'dun', 'diyan', 'papunta', 'papuntang', 'galing',
+  'masikip', 'maluwag', 'mabigat', 'mabagal', 'trapik', 'trapiko', 'nga', 'din', 'rin', 'tayo', 'ako',
+  'ikaw', 'kayo', 'niyo', 'natin', 'oo', 'hindi', 'di', 'sana', 'gusto', 'pakicheck', 'daan', 'daloy',
+  'ba\'t', 'gaano', 'katagal', 'mula', 'hanggang', 'ito', 'iyan', 'yan', 'yun', 'nang', 'kung', 'ay',
+]);
+
+/*
+ * English is recognised from its own common words, and everything else counts
+ * for neither side. Counting every non-Tagalog word as English made place
+ * names ("Bocaue", "Manila") and Tagalog words missing from the list ("lagay")
+ * turn plain Tagalog into Taglish. "traffic" is deliberately absent: "may
+ * traffic ba sa Dau?" is ordinary Tagalog.
+ */
+const ENGLISH_WORDS = new Set([
+  'is', 'are', 'am', 'was', 'the', 'a', 'an', 'what', 'whats', 'how', 'hows', 'there', 'any', 'now',
+  'right', 'congested', 'congestion', 'clear', 'heavy', 'light', 'slow', 'fast', 'busy', 'jam',
+  'jammed', 'northbound', 'southbound', 'going', 'to', 'at', 'on', 'in', 'of', 'and', 'or', 'can',
+  'could', 'you', 'please', 'check', 'road', 'today', 'tonight', 'currently', 'status', 'condition',
+  'conditions', 'bad', 'good', 'moving', 'speed', 'near', 'from', 'toward', 'towards', 'for', 'it',
+  'its', 'does', 'do', 'will', 'should', 'i', 'my', 'me', 'we', 'route', 'avoid', 'time', 'travel',
+  'long', 'hello', 'hi', 'hey', 'thanks', 'thank', 'yes', 'which', 'where', 'when', 'why', 'who',
+  'much', 'many', 'lane', 'lanes', 'accident', 'update', 'latest', 'like', 'about', 'tell', 'show',
+  'expressway', 'highway', 'exits', 'still', 'already', 'very', 'really', 'so',
+]);
+
+export function detectLanguage(message: string): ReplyLanguage {
+  const words = message.toLowerCase().match(/[a-zñ']+/g) ?? [];
+  let tagalog = 0;
+  let english = 0;
+  for (const word of words) {
+    if (TAGALOG_WORDS.has(word)) tagalog += 1;
+    else if (ENGLISH_WORDS.has(word)) english += 1;
+  }
+  if (tagalog === 0) return 'english';
+  return english === 0 ? 'tagalog' : 'taglish';
+}
+
+const LANGUAGE_REMINDER: Record<ReplyLanguage, string> = {
+  english: 'Reply in plain English only.',
+  tagalog:
+    'Sumagot sa natural na Tagalog, hal. "May traffic ngayon sa ..., mga 4 km/h lang ang takbo." o "Walang traffic ngayon sa ..., maluwag ang daan." Huwag gamitin ang "bilis ng paglalakbay", "humigit-kumulang" o "nagtataguyod".',
+  taglish:
+    'Reply in natural Taglish, e.g. "Congested ngayon sa ... southbound, mga 4 km/h lang ang takbo." or "Clear ngayon sa ... northbound, walang traffic." Never "bilis ng paglalakbay", "humigit-kumulang" or "nagtataguyod".',
+};
+
+/** Earlier replies may predate these rules, and the model copies their wording otherwise. */
+const HISTORY_NOTE =
+  'Earlier replies in this conversation may use wording that breaks these rules. Do not copy their phrasing; follow the style guide above.';
+
+const LANGUAGE_GUIDE: Record<ReplyLanguage, string> = {
+  english: `REPLY LANGUAGE: English. The user wrote in English, so answer entirely in plain, everyday English. No Tagalog words at all.
+Examples: "Traffic is heavy at San Fernando southbound right now, moving at about 4 km/h." / "Bocaue northbound is clear right now."`,
+  tagalog: `REPLY LANGUAGE: Tagalog. The user wrote in Tagalog, so answer in natural, conversational Tagalog - the way a Filipino driver actually talks, not a formal or word-for-word translation. Keep "km/h", exit names and "NLEX" as they are, and use "po" only if the user did.
+Say it this way: "may traffic", "walang traffic", "mabigat ang daloy", "maluwag ang daan", "mabagal ang takbo", "mga 4 km/h lang ang takbo", "papuntang Manila".
+NEVER use stiff or literal words: not "nagtataguyod", not "bilis ng paglalakbay", not "paglalakbay", not "humigit-kumulang" (say "mga"), not "kasalukuyan", not "siksikan ng trapiko".
+Examples: "May traffic ngayon sa San Fernando papuntang Manila, mga 4 km/h lang ang takbo." / "Walang traffic ngayon sa Bocaue papuntang Clark, maluwag ang daan."`,
+  taglish: `REPLY LANGUAGE: Taglish. The user mixed Tagalog and English, so answer the same way - Tagalog sentence structure with the everyday English traffic terms Filipinos use when texting: "traffic", "congested", "clear", "southbound", "northbound", "right now".
+NEVER use stiff or literal Tagalog: not "nagtataguyod", not "bilis ng paglalakbay", not "paglalakbay", not "humigit-kumulang" (say "mga").
+Examples: "Congested ngayon sa San Fernando southbound, mga 4 km/h lang ang takbo." / "Clear ngayon sa Bocaue northbound, walang traffic."`,
+};
+
+/*
+ * The exit a message names, if any, so an answer that skips the lookup can be
+ * caught. Matched on the name's distinctive words ("paso de blas", "harbor
+ * link", "sta rita"), since nobody types "Paso de Blas Valenzuela" in full.
+ */
+const GENERIC_NAME_WORDS = new Set(['nlex', 'interchange', 'barrier', 'valenzuela', 'guiguinto']);
+
+function normaliseText(value: string): string {
+  return ` ${value.toLowerCase().replace(/santa /g, 'sta ').replace(/[.,'"?!]/g, ' ').replace(/\s+/g, ' ')} `;
+}
+
+export function mentionedExit(message: string, exitNames: string[]): string | null {
+  const text = normaliseText(message);
+  for (const name of exitNames) {
+    for (const part of name.split('/')) {
+      const key = normaliseText(part)
+        .trim()
+        .split(' ')
+        .filter((word) => word.length > 0 && !GENERIC_NAME_WORDS.has(word))
+        .join(' ');
+      if (key.length >= 3 && text.includes(` ${key} `)) {
+        return name;
+      }
+    }
+  }
+  return null;
 }
 
 function buildSystemPrompt(exitNames: string[]): string {
@@ -352,15 +456,25 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
   // tool call a moment later joins the request already under way.
   refreshExitNames();
 
+  const language = detectLanguage(message);
+  const namedExit = mentionedExit(message, knownExitNames);
+
   const messages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: buildSystemPrompt(knownExitNames) },
+    {
+      role: 'system',
+      content: `${buildSystemPrompt(knownExitNames)}\n\n${LANGUAGE_GUIDE[language]}\n${HISTORY_NOTE}`,
+    },
     ...history,
-    { role: 'user', content: message },
+    // The reminder rides on the question itself: with a stiff earlier reply in
+    // the history, the model copied its wording despite the system prompt, and
+    // the latest message is what it weighs most. Only the model sees this.
+    { role: 'user', content: `${message}\n\n[${LANGUAGE_REMINDER[language]}]` },
   ];
 
   try {
     const toolsUsed: string[] = [];
     const moods: ReplyMood[] = [];
+    let sentBackToLook = false;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
       const params: ChatCompletionCreateParamsNonStreaming = {
@@ -408,6 +522,23 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
       }
 
       const calls = choice.tool_calls ?? [];
+
+      /*
+       * An exit was named but nothing was looked up. Asked "congested ba sa san
+       * fernando southbound?" right after a Mexico question, the model skipped
+       * the tool and answered "10.5 km/h" from the pattern of its last reply -
+       * the live reading was 4.3. Rule 2 says never do that, but a rule in the
+       * prompt is a request; this is the check. Sent back once to look first.
+       */
+      if (calls.length === 0 && toolsUsed.length === 0 && namedExit !== null && !sentBackToLook) {
+        sentBackToLook = true;
+        messages.push({
+          role: 'system',
+          content: `You answered without checking. Call get_corridor_status for "${namedExit}" first, then answer from what it returns.`,
+        });
+        continue;
+      }
+
       if (calls.length === 0) {
         const reply = toPlainText(choice.content ?? '');
 
