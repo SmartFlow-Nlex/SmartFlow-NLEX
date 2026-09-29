@@ -105,9 +105,56 @@ GEOGRAPHY: northbound runs from Balintawak (KM 0, Metro Manila) towards Sta. Ine
  * to guess at, so it is stated up front. Conditions still come only from
  * tools; this is the roster, not the traffic.
  *
- * Built per request from the live feed rather than written into the source, so
- * an exit added upstream appears here without a code change.
+ * Taken from the live feed, so an exit added upstream appears here without a
+ * code change - but never waited for. Fetching the feed first meant that when
+ * the team's dashboard was asleep every question stalled for up to 50s before
+ * the model even started, the app gave up at 45s, and when the feed failed the
+ * model ran without the list and fell back to guessing. So the prompt uses the
+ * last list the feed gave, or this built-in copy of the 20 exits until then.
  */
+const BUILT_IN_EXIT_NAMES = [
+  'Balintawak', 'NLEX Harbor Link', 'Paso de Blas Valenzuela', 'Meycauayan', 'Marilao',
+  'CDV/PH Arena', 'Bocaue Barrier', 'Bocaue Interchange', 'Tambubong', 'Tabang Guiguinto',
+  'Balagtas', 'Sta. Rita Guiguinto', 'Pulilan', 'San Simon', 'San Fernando', 'Mexico',
+  'Angeles', 'Dau', 'SCTEX', 'Sta. Ines',
+];
+let knownExitNames: string[] = BUILT_IN_EXIT_NAMES;
+
+/** Refreshes the roster in the background; the reply never waits for it. */
+function refreshExitNames(): void {
+  void getCorridorStatus().then((corridor) => {
+    if (corridor.available && corridor.data.exits.length > 0) {
+      knownExitNames = corridor.data.exits.map((exit) => exit.display_name);
+    }
+  });
+}
+
+/**
+ * What kind of answer this was, for the mascot beside it: `traffic` when the
+ * road it looked at is slow or congested, `clear` when all of it is running
+ * clear, `alert` for anything else - no lookup, an unknown exit, or the feed
+ * being down. Read from the tool results, not the reply's wording, so it
+ * follows the data whatever language the answer is in.
+ */
+export type ReplyMood = 'traffic' | 'clear' | 'alert';
+
+function moodOf(result: unknown): ReplyMood | null {
+  if (typeof result !== 'object' || result === null || 'error' in result) {
+    return null;
+  }
+  const r = result as { status?: string; has_ramp?: boolean; counts?: { congested?: number; slow?: number } };
+  if (r.counts !== undefined) {
+    return (r.counts.congested ?? 0) + (r.counts.slow ?? 0) > 0 ? 'traffic' : 'clear';
+  }
+  if (r.has_ramp === false) {
+    return null;
+  }
+  if (r.status === 'congested' || r.status === 'slow') {
+    return 'traffic';
+  }
+  return r.status === 'clear' ? 'clear' : null;
+}
+
 function buildSystemPrompt(exitNames: string[]): string {
   if (exitNames.length === 0) {
     return SYSTEM_PROMPT_BASE;
@@ -300,22 +347,20 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
     ? (body.history as ChatCompletionMessageParam[]).slice(-10)
     : [];
 
-  // Reads the cached corridor feed (30s TTL), so this costs nothing per turn.
-  // If the feed is down the prompt falls back to its static form and the tools
-  // report the outage - the assistant still refuses to invent conditions.
-  const corridor = await getCorridorStatus();
-  const exitNames = corridor.available
-    ? corridor.data.exits.map((exit) => exit.display_name)
-    : [];
+  // The roster comes from the last good feed (see knownExitNames) and is
+  // refreshed alongside, never awaited. Starting the fetch now also means a
+  // tool call a moment later joins the request already under way.
+  refreshExitNames();
 
   const messages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: buildSystemPrompt(exitNames) },
+    { role: 'system', content: buildSystemPrompt(knownExitNames) },
     ...history,
     { role: 'user', content: message },
   ];
 
   try {
     const toolsUsed: string[] = [];
+    const moods: ReplyMood[] = [];
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
       const params: ChatCompletionCreateParamsNonStreaming = {
@@ -402,9 +447,15 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
           `[assistant] answered using [${toolsUsed.join(', ') || 'no tools'}] ` +
             `via ${completion.model} on ${servedBy} (zdr=${LLM_ZDR})`,
         );
+        // Traffic anywhere it looked outweighs clear elsewhere.
+        const mood: ReplyMood = moods.includes('traffic')
+          ? 'traffic'
+          : moods.includes('clear')
+            ? 'clear'
+            : 'alert';
         res.json({
           success: true,
-          data: { reply, toolsUsed, model: completion.model },
+          data: { reply, toolsUsed, model: completion.model, mood },
         });
         return;
       }
@@ -417,6 +468,10 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
         }
         toolsUsed.push(call.function.name);
         const result = await runTool(call.function.name, call.function.arguments);
+        const mood = moodOf(result);
+        if (mood !== null) {
+          moods.push(mood);
+        }
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
