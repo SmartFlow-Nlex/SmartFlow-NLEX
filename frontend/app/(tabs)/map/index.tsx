@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import AIAssistantFAB, { FAB_CLEARANCE } from '../../../components/community/AIAssistantFAB';
+import { Reveal } from '../../../components/motion';
 import { useTheme, useThemedStyles } from '../../../theme';
 import AppHeader from '../../../components/AppHeader';
 import PageHeading from '../../../components/PageHeading';
@@ -108,7 +109,15 @@ export default function MapScreen(): React.ReactElement {
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          {activeView === 'live' ? <LiveCorridorStatus /> : <ForecastCorridorView now={now} />}
+          {/*
+            Keyed on the active view so switching Live/Forecast remounts and
+            replays the entrance. Without the key React reuses the subtree and
+            the toggle swaps content with no acknowledgement at all, which is
+            what made the switch feel unresponsive.
+          */}
+          <Reveal delay={0} key={activeView}>
+            {activeView === 'live' ? <LiveCorridorStatus /> : <ForecastCorridorView now={now} />}
+          </Reveal>
         </ScrollView>
 
         <AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />

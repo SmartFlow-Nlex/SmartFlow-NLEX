@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import AIAssistantFAB, { FAB_CLEARANCE } from '../../../components/community/AIAssistantFAB';
 import CommunityPostCard from '../../../components/community/CommunityPostCard';
+import { Reveal } from '../../../components/motion';
 import FeedComposer from '../../../components/community/FeedComposer';
 import FilterTabs from '../../../components/community/FilterTabs';
 import ReportIncidentModal from '../../../components/community/ReportIncidentModal';
@@ -167,8 +168,16 @@ export default function CommunityScreen(): React.ReactElement {
               </View>
             ) : null}
 
-            {posts.map((post) => (
-              <CommunityPostCard key={post.id} onLike={handleLike} post={post} />
+            {/*
+              Staggered by position, so the feed deals itself out rather than
+              appearing all at once. The index is capped inside Reveal, so a
+              feed of forty posts still finishes arriving in under half a
+              second instead of trickling for a minute.
+            */}
+            {posts.map((post, index) => (
+              <Reveal index={index} key={post.id}>
+                <CommunityPostCard onLike={handleLike} post={post} />
+              </Reveal>
             ))}
           </View>
         </ScrollView>

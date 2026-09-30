@@ -16,6 +16,7 @@ import { useTheme, useThemedStyles } from '../../../theme';
 import AppHeader from '../../../components/AppHeader';
 import PageHeading from '../../../components/PageHeading';
 import AssistantMascot from '../../../components/AssistantMascot';
+import { PressableScale, Reveal } from '../../../components/motion';
 import type { ThemePalette } from '../../../theme';
 import { Typography } from '../../../constants/typography';
 import { AssistantError, ChatMessage, askAssistant, toolLabel } from '../../../lib/assistantApi';
@@ -198,9 +199,15 @@ export default function AssistantScreen(): React.ReactElement {
             </View>
           ) : null}
 
+          {/*
+            `delay={0}`, not a stagger: each bubble mounts once and fades in as
+            it arrives. Staggering by index would make the tenth reply of a
+            conversation wait behind nine that are already on screen.
+          */}
           {messages.map((message) =>
             message.role === 'assistant' ? (
-              <View key={message.id} style={styles.chatRow}>
+              <Reveal delay={0} key={message.id}>
+              <View style={styles.chatRow}>
                 <AssistantMascot size={32} style={styles.assistantBadge} />
                 <View style={styles.chatColumn}>
                   <View style={styles.chatBubble}>
@@ -233,15 +240,18 @@ export default function AssistantScreen(): React.ReactElement {
                   <Text style={styles.timeText}>{formatTime(message.at)}</Text>
                 </View>
               </View>
+              </Reveal>
             ) : (
-              <View key={message.id} style={styles.userRow}>
-                <View style={styles.userColumn}>
-                  <View style={styles.userBubble}>
-                    <Text style={styles.userText}>{message.text}</Text>
+              <Reveal delay={0} key={message.id}>
+                <View style={styles.userRow}>
+                  <View style={styles.userColumn}>
+                    <View style={styles.userBubble}>
+                      <Text style={styles.userText}>{message.text}</Text>
+                    </View>
+                    <Text style={styles.userTimeText}>{formatTime(message.at)}</Text>
                   </View>
-                  <Text style={styles.userTimeText}>{formatTime(message.at)}</Text>
                 </View>
-              </View>
+              </Reveal>
             ),
           )}
 
@@ -295,7 +305,8 @@ export default function AssistantScreen(): React.ReactElement {
             contentContainerStyle={styles.quickQuestionsRow}
           >
             {quickQuestions.map((item) => (
-              <Pressable
+              <PressableScale
+                activeScale={0.96}
                 disabled={isThinking}
                 key={item}
                 onPress={() => void send(item)}
@@ -309,7 +320,7 @@ export default function AssistantScreen(): React.ReactElement {
                 <Text numberOfLines={1} style={styles.quickChipText}>
                   {item}
                 </Text>
-              </Pressable>
+              </PressableScale>
             ))}
           </ScrollView>
           )}

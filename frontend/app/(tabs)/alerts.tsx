@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import AIAssistantFAB, { FAB_CLEARANCE } from '../../components/community/AIAssistantFAB';
+import { Reveal } from '../../components/motion';
 import { useAlerts, type AlertCategory, type AlertItem, type AlertTone } from '../../alerts';
 import { useMobileConfig } from '../../lib/mobileConfig';
 import { useTheme, useThemedStyles } from '../../theme';
@@ -102,11 +103,11 @@ export default function AlertsScreen(): React.ReactElement {
   };
 
   /** One alert card. Shared so a maintenance notice looks like any other. */
-  const renderAlert = (item: AlertItem): React.ReactElement => {
+  const renderAlert = (item: AlertItem, index: number): React.ReactElement => {
     const tone = alertTone(item.tone, colors);
     return (
+      <Reveal index={index} key={item.id}>
       <Pressable
-        key={item.id}
         accessibilityRole="button"
         accessibilityLabel={`${item.title}. ${item.message}. ${item.priority}${
           item.unread ? ', unread' : ''
@@ -147,6 +148,7 @@ export default function AlertsScreen(): React.ReactElement {
           </View>
         </View>
       </Pressable>
+      </Reveal>
     );
   };
 

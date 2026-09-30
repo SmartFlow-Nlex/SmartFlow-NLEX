@@ -31,6 +31,16 @@ export interface ThemePalette {
    * between themes while `primary` stays a surface colour.
    */
   accent: string;
+  /**
+   * The gold half of the logo, as a UI colour.
+   *
+   * The mark is half gold road and half navy circuitry, but until now only the
+   * navy appeared anywhere in the app - which is a large part of why every
+   * screen read as one flat blue. Used sparingly, for brand furniture rather
+   * than for status: a status colour has to mean a severity, and this means
+   * "SmartFlow".
+   */
+  brandGold: string;
 
   // Status
   success: string;
@@ -140,6 +150,7 @@ export const lightPalette: ThemePalette = {
   primarySoftBorder: '#CBD8EA',
   primaryShadow: '#0B1A2E',
   accent: '#152A48',
+  brandGold: '#F2B01C',
 
   success: '#34C759',
   warning: '#FF9500',
@@ -203,6 +214,8 @@ export const darkPalette: ThemePalette = {
   primarySoftBorder: '#2E4364',
   primaryShadow: '#000000',
   accent: '#7FA9E0',
+  // Lifted a little on the dark page, where the light theme's gold goes muddy.
+  brandGold: '#F9C749',
 
   success: '#4ADE80',
   warning: '#FBBF24',

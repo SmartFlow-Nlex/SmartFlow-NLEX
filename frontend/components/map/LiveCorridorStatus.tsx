@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
+import { Pulse } from '../motion';
 import { CongestionLevel } from '../../lib/trafficModel';
 import {
   CorridorDirectionStatus,
@@ -114,6 +115,9 @@ function readingFor(
   return {
     level: statusTone[status.status] ?? 'low',
     value: speed ?? statusLabel[status.status],
+    // The raw figure as well as the formatted one: the road diagram paces the
+    // traffic it draws from this, so it needs the number rather than "2 km/h".
+    speedKph: status.speedKmh,
     bands,
   };
 }
@@ -340,7 +344,15 @@ const LiveCorridorStatus: React.FC = () => {
             <Text style={[styles.headline, { color: headlineTone.text }]}>{headline}</Text>
           </View>
           <View style={[styles.livePill, { backgroundColor: feedTone.background }]}>
-            <View style={[styles.liveDot, { backgroundColor: feedTone.solid }]} />
+            {/*
+              The one pulsing thing in the app. It breathes only while the feed
+              is actually live - on STALE or OFFLINE it holds still, because a
+              dot that keeps beating over frozen readings tells the driver the
+              opposite of the truth.
+            */}
+            <Pulse active={feedState === 'live'}>
+              <View style={[styles.liveDot, { backgroundColor: feedTone.solid }]} />
+            </Pulse>
             <Text style={[styles.liveText, { color: feedTone.text }]}>
               {feedState === 'offline' ? 'OFFLINE' : feedState === 'stale' ? 'STALE' : 'LIVE'}
             </Text>

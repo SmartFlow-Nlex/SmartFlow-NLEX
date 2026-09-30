@@ -44,3 +44,6 @@ dist/
 # Environment
 .env
 .env.local
+
+# Timestamped .env backups (contain real keys - never commit)
+.env.bak-*

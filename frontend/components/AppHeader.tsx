@@ -52,6 +52,13 @@ const AppHeader: React.FC<AppHeaderProps> = ({ children }) => {
 
   return (
     <View style={styles.bar}>
+      {/*
+        A lit edge along the top. One hairline of white at 9% is the whole
+        trick: it catches where the bar meets the status area and gives the
+        navy a surface, instead of a flat rectangle of colour.
+      */}
+      <View pointerEvents="none" style={styles.topSheen} />
+
       <View style={styles.brandGroup}>
         <View style={styles.logoWrap}>
           <Image
@@ -60,15 +67,34 @@ const AppHeader: React.FC<AppHeaderProps> = ({ children }) => {
             resizeMode="contain"
           />
         </View>
-        <Text style={styles.title} numberOfLines={1}>
-          SmartFlow NLEX
-        </Text>
+
+        <View style={styles.brandText}>
+          <Text style={styles.title} numberOfLines={1}>
+            SmartFlow NLEX
+          </Text>
+          {/*
+            The bar was one short word floating in a very wide empty field. The
+            line says what the app is for, and gives the title something to sit
+            against so the brand reads as a lockup rather than a stray label.
+          */}
+          <Text style={styles.tagline} numberOfLines={1}>
+            TRAFFIC INTELLIGENCE
+          </Text>
+        </View>
       </View>
 
       <View style={styles.actions}>
         {children}
         <AvatarButton initials={initials} onPress={() => router.push('/profile')} />
       </View>
+
+      {/*
+        The gold rule. The logo is half gold road and half navy circuitry, but
+        only the navy had ever made it into the UI - which is most of why every
+        screen read as one flat blue. This is the other half, used as brand
+        furniture and nowhere near a status colour.
+      */}
+      <View pointerEvents="none" style={styles.brandRule} />
     </View>
   );
 };
@@ -114,12 +140,39 @@ const makeStyles = (c: ThemePalette) =>
       width: 25,
       height: 25,
     },
-    title: {
+    brandText: {
       flex: 1,
+    },
+    title: {
       color: c.textInverse,
       fontSize: Typography.fontSize.lg,
-      fontWeight: '700',
+      fontWeight: '800',
       letterSpacing: 0.2,
+    },
+    tagline: {
+      color: 'rgba(255,255,255,0.58)',
+      fontSize: 9.5,
+      fontWeight: '700',
+      // Wide tracking, because at this size a lowercase-height line of text
+      // under a bold title just looks like a wrapped second line otherwise.
+      letterSpacing: 1.6,
+      marginTop: 1,
+    },
+    topSheen: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      height: 1,
+      backgroundColor: 'rgba(255,255,255,0.09)',
+    },
+    brandRule: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      height: 2,
+      backgroundColor: c.brandGold,
     },
     actions: {
       flexDirection: 'row',

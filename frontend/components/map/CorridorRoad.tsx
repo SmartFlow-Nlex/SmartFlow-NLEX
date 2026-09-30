@@ -1,11 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 import { useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
 import type { CongestionLevel } from '../../lib/trafficModel';
 import { toneFor } from '../dashboard/severity';
+import {
+  HEADLIGHT,
+  PAINT_BLACK,
+  PAINT_BLUE,
+  PAINT_GREEN,
+  PAINT_GREY,
+  PAINT_NAVY,
+  PAINT_ORANGE,
+  PAINT_RED,
+  PAINT_SILVER,
+  PAINT_WHITE,
+  PAINT_YELLOW,
+  TAILLIGHT,
+  bandsFor,
+  edgeOf,
+  glassOf,
+  type Paint,
+} from './vehiclePaint';
 
 export type DirectionKey = 'NB' | 'SB';
 
@@ -126,6 +145,12 @@ export interface RoadDirectionReading {
   /** The headline figure: "2 km/h", "Moderate", "+8 min". */
   value: string;
   /**
+   * Measured speed, when the feed has one, used to pace the traffic drawn on
+   * this stretch. Null or absent falls back to a speed assumed from `level`,
+   * so a segment without a figure still moves plausibly rather than freezing.
+   */
+  speedKph?: number | null;
+  /**
    * Where the queues actually sit within this stretch, as fractions of the row
    * from top to bottom, each with its own severity.
    *
@@ -151,6 +176,382 @@ export interface RoadRow {
 // ---------------------------------------------------------------------------
 // The road
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Traffic
+// ---------------------------------------------------------------------------
+
+/**
+ * Road length between one vehicle and the next.
+ *
+ * Also the distance each loop travels, which is what makes the cycle seamless:
+ * after translating by exactly one gap the pattern is identical to where it
+ * started, so there is no jump when the loop restarts.
+ */
+const CAR_GAP = 78;
+
+/**
+ * Ceiling on vehicles per carriageway.
+ *
+ * Twelve is enough to keep the corridor populated at CAR_GAP spacing without
+ * turning a twenty-row road into a car park - and it caps the animated views
+ * at twenty-four for the whole diagram, which is fewer than the per-segment
+ * version used on its own.
+ */
+const MAX_CARS = 12;
+
+/**
+ * Points per second for a given speed.
+ *
+ * Not to scale - at true scale a 100 km/h car would cross a 70pt segment in a
+ * blink and a 4 km/h one would take a minute. The offset keeps a jam visibly
+ * crawling instead of stopping dead, and the slope keeps the gap between "5"
+ * and "60 km/h" obvious at a glance, which is the whole point of drawing them.
+ */
+function paceFor(speedKph: number): number {
+  return 4 + speedKph * 0.62;
+}
+
+/**
+ * What to assume when the feed reports no figure.
+ *
+ * The API returns `speedKmh: null` for most clear exits, so without this the
+ * majority of the corridor would have no traffic drawn on it at all - and an
+ * empty road is a much stronger claim than "flowing, figure not given".
+ */
+const ASSUMED_KPH: Record<CongestionLevel, number> = {
+  low: 65,
+  moderate: 35,
+  high: 16,
+  severe: 5,
+};
+
+type VehicleKind = 'car' | 'truck' | 'bus' | 'moto';
+
+interface VehicleSpec {
+  kind: VehicleKind;
+  paint: Paint;
+  /** Trucks only: the box is painted independently of the cab. */
+  trailer?: Paint;
+}
+
+/**
+ * What uses this road, in roughly the proportion you would see it.
+ *
+ * NLEX is the freight corridor to Clark and Subic, so trucks and provincial
+ * buses are not a garnish here. The colour weighting is the dashboard's: mostly
+ * white, silver, grey and black cars, then blues and reds, with the odd beige
+ * or yellow - buses and cabs wear liveries, trailers stay pale.
+ *
+ * A fixed list rather than a random draw. The dashboard can roll a colour from
+ * a vehicle id because its vehicles are simulated objects with a life; these
+ * are twelve recycled sprites, so a roll would re-run on every render and a
+ * car would change colour halfway down the corridor.
+ */
+const TRAFFIC_MIX: VehicleSpec[] = [
+  { kind: 'car', paint: PAINT_WHITE },
+  { kind: 'truck', paint: PAINT_BLUE, trailer: PAINT_WHITE },
+  { kind: 'car', paint: PAINT_BLACK },
+  { kind: 'moto', paint: PAINT_RED },
+  { kind: 'car', paint: PAINT_SILVER },
+  { kind: 'bus', paint: PAINT_GREEN },
+  { kind: 'car', paint: PAINT_RED },
+  { kind: 'truck', paint: PAINT_WHITE, trailer: PAINT_SILVER },
+  { kind: 'car', paint: PAINT_GREY },
+  { kind: 'moto', paint: PAINT_YELLOW },
+  { kind: 'truck', paint: PAINT_ORANGE, trailer: PAINT_WHITE },
+  { kind: 'car', paint: PAINT_NAVY },
+];
+
+/** Longest body, used to park a slot fully off the road before it enters. */
+const VEHICLE_MAX_LEN = 38;
+
+/**
+ * A body panel, shaded across its width.
+ *
+ * This is the single thing that separated the dashboard's traffic from the
+ * flat rectangles this diagram had: a body lit on one side and shaded on the
+ * other reads as a moulded object, and a body of one flat colour reads as a
+ * toy. The dashboard hands the canvas a linear gradient; with no gradient
+ * library here the same shading is laid down as four flat strips, exactly as
+ * the flow sheen further up this file builds its softness from bands.
+ */
+const Panel: React.FC<{
+  paint: Paint;
+  style?: StyleProp<ViewStyle>;
+  children?: React.ReactNode;
+}> = ({ paint, style, children }) => {
+  const styles = useThemedStyles(makeStyles);
+  const bands = bandsFor(paint);
+  return (
+    <View style={[styles.panel, { borderColor: edgeOf(paint) }, style]}>
+      <View pointerEvents="none" style={styles.panelShade}>
+        {bands.map((color, index) => (
+          <View key={index} style={[styles.panelBand, { backgroundColor: color }]} />
+        ))}
+      </View>
+      {children}
+    </View>
+  );
+};
+
+/**
+ * One top-down vehicle, drawn to match the dashboard's canvas sprites.
+ *
+ * Built from views rather than an icon: every vehicle glyph in the icon set is
+ * drawn side-on, and a side-on truck seen from above has fallen over.
+ *
+ * Bodies are painted, not tinted by the road. A vehicle crosses green, amber
+ * and red inside one lap, so there is no single stretch for it to match;
+ * congestion is carried by the pavement and by how fast the thing on it moves.
+ *
+ * `flip` turns the sprite so the nose leads on both carriageways.
+ */
+const Vehicle: React.FC<{ spec: VehicleSpec; flip: boolean }> = ({ spec, flip }) => {
+  const styles = useThemedStyles(makeStyles);
+  const { kind, paint } = spec;
+  const glass = glassOf(paint);
+  const placement = flip ? { transform: [{ scaleY: -1 }] } : null;
+
+  const lamps = (
+    <>
+      <View style={[styles.lamp, styles.lampLeft]} />
+      <View style={[styles.lamp, styles.lampRight]} />
+      <View style={[styles.tailLamp, styles.lampLeft]} />
+      <View style={[styles.tailLamp, styles.lampRight]} />
+    </>
+  );
+
+  if (kind === 'moto') {
+    // A rider on a car-sized slot. Too small for glazing, so the handlebars
+    // and the rider are the whole read.
+    return (
+      <View style={[styles.motoWrap, placement]}>
+        <Panel paint={paint} style={styles.moto} />
+        <View style={styles.motoBars} />
+        <View style={styles.motoRider} />
+      </View>
+    );
+  }
+
+  if (kind === 'truck') {
+    // Ribbed trailer, hitch, cab - the dashboard's arrangement, and the hitch
+    // is drawn rather than left as a gap so the rig stays one silhouette.
+    return (
+      <View style={[styles.truck, placement]}>
+        <Panel paint={paint} style={styles.truckCab}>
+          <View style={[styles.glass, { backgroundColor: glass }]} />
+          <View style={[styles.lamp, styles.lampLeft]} />
+          <View style={[styles.lamp, styles.lampRight]} />
+        </Panel>
+        <View style={styles.truckCoupling} />
+        <Panel paint={spec.trailer ?? PAINT_WHITE} style={styles.truckTrailer}>
+          <View style={styles.trailerRibs}>
+            {Array.from({ length: 5 }).map((_, index) => (
+              <View key={index} style={styles.trailerRib} />
+            ))}
+          </View>
+          <View style={[styles.tailLamp, styles.lampLeft]} />
+          <View style={[styles.tailLamp, styles.lampRight]} />
+        </Panel>
+      </View>
+    );
+  }
+
+  if (kind === 'bus') {
+    // A long body with a windscreen and a run of side windows - the run is
+    // what distinguishes a coach from a van at this length.
+    return (
+      <Panel paint={paint} style={[styles.bus, placement]}>
+        <View style={[styles.glass, { backgroundColor: glass }]} />
+        <View style={styles.busWindows}>
+          {Array.from({ length: 4 }).map((_, index) => (
+            <View key={index} style={[styles.busWindow, { backgroundColor: glass }]} />
+          ))}
+        </View>
+        {lamps}
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel paint={paint} style={[styles.car, placement]}>
+      {/* Lighter roof, then windscreen and rear window: body shows as bonnet
+          and boot at either end, which is what reads as a car rather than as
+          a rectangle with stripes across it. */}
+      <View style={styles.carRoof} />
+      <View style={[styles.carScreen, { backgroundColor: glass }]} />
+      <View style={[styles.carRear, { backgroundColor: glass }]} />
+      {lamps}
+    </Panel>
+  );
+};
+
+/**
+ * Journey timings for one carriageway.
+ *
+ * `stops` are the fractions of a whole lap at which the car reaches each row
+ * boundary, and `points` the matching y positions. Feeding the pair to a
+ * single interpolation gives one continuous run down the corridor whose speed
+ * changes at every boundary - so a car genuinely slows into a queue and picks
+ * up again past it, instead of crossing a jam at the same rate as clear road.
+ */
+interface Journey {
+  stops: number[];
+  points: number[];
+  /** Whole-lap duration in ms. */
+  duration: number;
+}
+
+/**
+ * Builds the piecewise journey for one direction.
+ *
+ * Time spent on a row is its height divided by the pace its speed earns, so
+ * the slow rows take proportionally longer - which is the entire point. NB
+ * runs bottom to top, SB top to bottom, matching `directionArrow`.
+ */
+function journeyFor(
+  heights: number[],
+  speeds: number[],
+  direction: DirectionKey,
+): Journey | null {
+  const total = heights.reduce((sum, height) => sum + height, 0);
+  if (total <= 0 || heights.length !== speeds.length) {
+    return null;
+  }
+
+  // Walk the rows in travel order. NB starts at the bottom of the stack.
+  const order = direction === 'NB' ? [...heights.keys()].reverse() : [...heights.keys()];
+
+  /*
+   * A body-length of run-in and run-out.
+   *
+   * The slot is parked a full body above the road (`carSlot`'s negative top),
+   * so without this extra leg a lap ended with the vehicle still a body-length
+   * short of clearing the far cap - and the wrap back to the start showed as a
+   * blink. Travelled at clear-road pace, off-road and out of sight either way.
+   */
+  const RUN_OFF = VEHICLE_MAX_LEN;
+  const runOffMs = (RUN_OFF / paceFor(ASSUMED_KPH.low)) * 1000;
+
+  const points: number[] = [];
+  const times: number[] = [];
+  // NB drives up the page and enters from below the last row; SB enters from
+  // above the first. Both begin a full body off the road.
+  let y = direction === 'NB' ? total + RUN_OFF : 0;
+  let elapsed = 0;
+  points.push(y);
+  times.push(0);
+
+  if (direction === 'NB') {
+    // Run-in first: up onto the road.
+    elapsed += runOffMs;
+    y = total;
+    points.push(y);
+    times.push(elapsed);
+  }
+
+  for (const index of order) {
+    const height = heights[index] ?? 0;
+    elapsed += (height / paceFor(speeds[index] ?? 0)) * 1000;
+    y += direction === 'NB' ? -height : height;
+    points.push(y);
+    times.push(elapsed);
+  }
+
+  if (direction === 'SB') {
+    // Run-out last: on down past the final cap.
+    elapsed += runOffMs;
+    y = total + RUN_OFF;
+    points.push(y);
+    times.push(elapsed);
+  }
+
+  if (elapsed <= 0) {
+    return null;
+  }
+
+  // Interpolation needs a strictly increasing input range; a zero-height row
+  // would repeat a stop and throw.
+  const stops = times.map((time) => time / elapsed);
+  for (let i = 1; i < stops.length; i += 1) {
+    if (stops[i]! <= stops[i - 1]!) {
+      stops[i] = stops[i - 1]! + 0.0001;
+    }
+  }
+
+  return { stops, points, duration: Math.round(elapsed) };
+}
+
+interface CarStreamProps {
+  journey: Journey;
+  direction: DirectionKey;
+  /** Corridor height, used to space the cars along it. */
+  height: number;
+}
+
+/**
+ * Every vehicle on one carriageway, as one continuous stream.
+ *
+ * Lives in the corridor-wide overlay beside the sheen rather than inside each
+ * row. Inside a row the pavement's own `overflow: hidden` clipped every car at
+ * the segment boundary, so cars blinked out of existence at each change of
+ * colour - which is what made the road look broken rather than busy.
+ *
+ * The cars share one driver and are spread along the lap with `Animated.modulo`,
+ * so they stay evenly spaced without a timer each.
+ */
+const CarStream: React.FC<CarStreamProps> = ({ journey, direction, height }) => {
+  const styles = useThemedStyles(makeStyles);
+  const travel = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(travel, {
+        toValue: 1,
+        duration: journey.duration,
+        // Linear over the lap; the speed changes come from the piecewise
+        // interpolation, not from easing.
+        easing: Easing.linear,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      travel.setValue(0);
+    };
+  }, [travel, journey.duration]);
+
+  const count = Math.min(Math.max(Math.round(height / CAR_GAP), 2), MAX_CARS);
+
+  return (
+    <View pointerEvents="none" style={styles.carTrack} testID={`corridor-cars-${direction}`}>
+      {Array.from({ length: count }).map((_, index) => {
+        // Each car is the same lap, offset in phase - so they follow one
+        // another down the road instead of moving as a block.
+        const phase = Animated.modulo(Animated.add(travel, index / count), 1);
+        const y = phase.interpolate({
+          inputRange: journey.stops,
+          outputRange: journey.points,
+        });
+        return (
+          <Animated.View
+            key={index}
+            style={[styles.carSlot, { transform: [{ translateY: y }] }]}
+          >
+            <Vehicle
+              // Phase-shifted per carriageway, so the two do not run an
+              // identical convoy side by side.
+              spec={TRAFFIC_MIX[(index + (direction === 'NB' ? 0 : 5)) % TRAFFIC_MIX.length]!}
+              flip={direction === 'SB'}
+            />
+          </Animated.View>
+        );
+      })}
+    </View>
+  );
+};
 
 interface RoadLaneProps {
   color: string;
@@ -181,6 +582,7 @@ const RoadLane: React.FC<RoadLaneProps> = ({
   bands,
 }) => {
   const styles = useThemedStyles(makeStyles);
+
   return (
     <View
       style={[
@@ -309,6 +711,7 @@ const ExitRow: React.FC<ExitRowProps> = ({ row, first, last, expanded, onToggle,
       reading.level === null
         ? colors.border
         : toneFor(reading.bands === undefined ? reading.level : 'low', colors).solid;
+
 
     return (
       <View style={styles.laneCol}>
@@ -541,6 +944,52 @@ const CorridorRoad: React.FC<CorridorRoadProps> = ({
   /** One spare streak at each end, so the pattern never runs short mid-slide. */
   const streakCount = Math.ceil(roadHeight / FLOW_PERIOD) + 2;
 
+  /*
+   * Per-row heights, measured.
+   *
+   * The traffic has to know where each stretch begins and ends to change speed
+   * at the boundary, and a row's height is set by its own content - a two-line
+   * exit name makes it taller - so there is nothing to compute it from.
+   */
+  const [rowHeights, setRowHeights] = useState<number[]>([]);
+  const measureRow = (index: number, height: number): void => {
+    setRowHeights((current) => {
+      if (Math.abs((current[index] ?? 0) - height) < 0.5) {
+        return current;
+      }
+      const next = [...current];
+      next[index] = height;
+      return next;
+    });
+  };
+
+  /** Resolved speed per row for one carriageway, in row order. */
+  const speedsFor = (key: DirectionKey): number[] =>
+    rows.map((row) => {
+      const reading = row[key];
+      if (reading.level === null) {
+        // No carriageway here: keep the journey continuous by carrying the
+        // car through at a clear-road pace rather than stalling it.
+        return ASSUMED_KPH.low;
+      }
+      return reading.speedKph !== null && reading.speedKph !== undefined
+        ? reading.speedKph
+        : ASSUMED_KPH[reading.level];
+    });
+
+  const measured = rowHeights.length === rows.length && rowHeights.every((h) => h > 0);
+  const journeys = useMemo(
+    () =>
+      measured
+        ? {
+            NB: journeyFor(rowHeights, speedsFor('NB'), 'NB'),
+            SB: journeyFor(rowHeights, speedsFor('SB'), 'SB'),
+          }
+        : { NB: null, SB: null },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [measured, rowHeights, rows],
+  );
+
   const drift = useMemo(
     () => ({
       // Matches `directionArrow`: northbound sheen travels up the page,
@@ -591,15 +1040,19 @@ const CorridorRoad: React.FC<CorridorRoadProps> = ({
         style={styles.roadStack}
       >
         {rows.map((row, index) => (
-          <ExitRow
+          <View
             key={row.id}
-            row={row}
-            first={index === 0}
-            last={index === rows.length - 1}
-            expanded={expandedId === row.id}
-            onToggle={() => setExpandedId((current) => (current === row.id ? null : row.id))}
-            onOpen={onOpenRow === undefined ? undefined : () => onOpenRow(row.id)}
-          />
+            onLayout={(event) => measureRow(index, event.nativeEvent.layout.height)}
+          >
+            <ExitRow
+              row={row}
+              first={index === 0}
+              last={index === rows.length - 1}
+              expanded={expandedId === row.id}
+              onToggle={() => setExpandedId((current) => (current === row.id ? null : row.id))}
+              onOpen={onOpenRow === undefined ? undefined : () => onOpenRow(row.id)}
+            />
+          </View>
         ))}
 
         {/*
@@ -618,6 +1071,34 @@ const CorridorRoad: React.FC<CorridorRoadProps> = ({
           <View style={styles.flowSpacer} />
           <View style={styles.laneCol}>
             <FlowStreaks drift={drift[RIGHT_LANE]} count={streakCount} direction={RIGHT_LANE} />
+          </View>
+        </View>
+
+        {/*
+          The traffic, in its own overlay above the sheen so a car is never
+          washed out by a streak passing under it. Same mirrored-flex trick as
+          the sheen: the lanes line up because they share ExitRow's layout, not
+          because an offset was computed to match.
+        */}
+        <View style={styles.flowOverlay}>
+          <View style={styles.laneCol}>
+            {journeys[LEFT_LANE] === null ? null : (
+              <CarStream
+                direction={LEFT_LANE}
+                height={roadHeight}
+                journey={journeys[LEFT_LANE]}
+              />
+            )}
+          </View>
+          <View style={styles.flowSpacer} />
+          <View style={styles.laneCol}>
+            {journeys[RIGHT_LANE] === null ? null : (
+              <CarStream
+                direction={RIGHT_LANE}
+                height={roadHeight}
+                journey={journeys[RIGHT_LANE]}
+              />
+            )}
           </View>
         </View>
       </View>
@@ -829,7 +1310,231 @@ const makeStyles = (c: ThemePalette) =>
       left: 0,
       right: 0,
     },
-    roadDashes: {
+    /*
+     * The moving strip of traffic. Absolutely filling the lane, so it is
+     * clipped by the pavement's own `overflow: hidden` and a car slides out of
+     * sight at the segment boundary instead of escaping over the card.
+     */
+    /*
+     * Masked to the road, exactly like `flowClip`.
+     *
+     * Without this the vehicles were not clipped by anything: a slot parked
+     * off the top of the corridor rendered over the header, so a truck sat on
+     * the NB label before its lap began. Same width, flex and cap radii as the
+     * sheen's clip, so both are masked to the road's real shape rather than to
+     * its bounding box.
+     */
+    carTrack: {
+      width: BAR_WIDTH,
+      flex: 1,
+      overflow: 'hidden',
+      borderTopLeftRadius: ROAD_CAP_RADIUS,
+      borderTopRightRadius: ROAD_CAP_RADIUS,
+      borderBottomLeftRadius: ROAD_CAP_RADIUS,
+      borderBottomRightRadius: ROAD_CAP_RADIUS,
+    },
+    // Full-width, so each vehicle centres on the carriageway and then steps to
+    // its lane, without any of them needing to know the bar's width or its
+    // border inset. `top: -VEHICLE_MAX_LEN` parks the slot just off the end of
+    // the road; the journey's own translateY drives it from there.
+    carSlot: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      top: -VEHICLE_MAX_LEN,
+      alignItems: 'center',
+    },
+    /*
+     * A shaded body panel. `overflow: hidden` clips the shade strips to the
+     * rounded corners; without it they square off the silhouette.
+     */
+    panel: {
+      overflow: 'hidden',
+      borderWidth: 0.9,
+    },
+    panelShade: {
+      ...StyleSheet.absoluteFill,
+      flexDirection: 'row',
+    },
+    panelBand: {
+      flex: 1,
+    },
+
+    car: {
+      width: 18,
+      height: 27,
+      // Nose rounder than the tail: enough asymmetry to read direction of
+      // travel without drawing a bonnet.
+      borderTopLeftRadius: 7,
+      borderTopRightRadius: 7,
+      borderBottomLeftRadius: 5,
+      borderBottomRightRadius: 5,
+      shadowColor: '#000000',
+      shadowOpacity: 0.32,
+      shadowRadius: 2.5,
+      shadowOffset: { width: 0, height: 1.5 },
+      elevation: 3,
+    },
+    carRoof: {
+      position: 'absolute',
+      top: 8,
+      left: 3,
+      right: 3,
+      height: 11,
+      borderRadius: 3.5,
+      backgroundColor: 'rgba(255,255,255,0.28)',
+    },
+    carScreen: {
+      position: 'absolute',
+      top: 5.5,
+      left: 2.5,
+      right: 2.5,
+      height: 4,
+      borderRadius: 2,
+    },
+    carRear: {
+      position: 'absolute',
+      bottom: 4,
+      left: 3.5,
+      right: 3.5,
+      height: 3.2,
+      borderRadius: 1.6,
+    },
+
+    /* Head and tail lamps, as the dashboard places them. */
+    lamp: {
+      position: 'absolute',
+      top: 1.2,
+      width: 3.4,
+      height: 2.2,
+      borderRadius: 1.1,
+      backgroundColor: HEADLIGHT,
+    },
+    tailLamp: {
+      position: 'absolute',
+      bottom: 1.2,
+      width: 3.4,
+      height: 2.4,
+      borderRadius: 1,
+      backgroundColor: TAILLIGHT,
+    },
+    lampLeft: {
+      left: 2,
+    },
+    lampRight: {
+      right: 2,
+    },
+
+    /* Articulated semi: cab, hitch, ribbed box. */
+    truck: {
+      width: 19,
+      height: 38,
+    },
+    truckCab: {
+      height: 12,
+      borderTopLeftRadius: 5,
+      borderTopRightRadius: 5,
+      borderBottomLeftRadius: 2,
+      borderBottomRightRadius: 2,
+      shadowColor: '#000000',
+      shadowOpacity: 0.3,
+      shadowRadius: 2.5,
+      shadowOffset: { width: 0, height: 1.5 },
+      elevation: 3,
+    },
+    glass: {
+      position: 'absolute',
+      top: 2,
+      left: 2.5,
+      right: 2.5,
+      height: 4,
+      borderRadius: 1.5,
+    },
+    // The hitch, drawn rather than left as a hole: spacing the two apart let
+    // pavement through and the rig read as two vehicles.
+    truckCoupling: {
+      height: 2,
+      marginHorizontal: 5.5,
+      backgroundColor: 'rgba(15,23,42,0.8)',
+    },
+    truckTrailer: {
+      height: 24,
+      borderRadius: 2.5,
+      shadowColor: '#000000',
+      shadowOpacity: 0.3,
+      shadowRadius: 2.5,
+      shadowOffset: { width: 0, height: 1.5 },
+      elevation: 3,
+    },
+    trailerRibs: {
+      ...StyleSheet.absoluteFill,
+      justifyContent: 'space-evenly',
+      paddingVertical: 3,
+    },
+    /* Container ribs, so the box is not a blank eraser. */
+    trailerRib: {
+      height: 0.8,
+      marginHorizontal: 1.5,
+      backgroundColor: 'rgba(15,23,42,0.22)',
+    },
+
+    /* Provincial coach: windscreen, then a run of side windows. */
+    bus: {
+      width: 19,
+      height: 38,
+      borderRadius: 5,
+      shadowColor: '#000000',
+      shadowOpacity: 0.3,
+      shadowRadius: 2.5,
+      shadowOffset: { width: 0, height: 1.5 },
+      elevation: 3,
+    },
+    busWindows: {
+      position: 'absolute',
+      top: 11,
+      bottom: 5,
+      left: 2.5,
+      right: 2.5,
+      justifyContent: 'space-between',
+    },
+    busWindow: {
+      height: 3.4,
+      borderRadius: 1.2,
+    },
+
+    /* Motorcycle: a rider on a car-sized slot. */
+    motoWrap: {
+      width: 9,
+      height: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    moto: {
+      ...StyleSheet.absoluteFill,
+      borderRadius: 3.5,
+      shadowColor: '#000000',
+      shadowOpacity: 0.3,
+      shadowRadius: 2,
+      shadowOffset: { width: 0, height: 1 },
+      elevation: 3,
+    },
+    motoBars: {
+      position: 'absolute',
+      top: 3.5,
+      left: -2,
+      right: -2,
+      height: 1.5,
+      borderRadius: 1,
+      backgroundColor: 'rgba(15,23,42,0.75)',
+    },
+    motoRider: {
+      position: 'absolute',
+      top: 6,
+      width: 6,
+      height: 8,
+      borderRadius: 3,
+      backgroundColor: 'rgba(28,38,58,0.9)',
+    },  roadDashes: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'space-evenly',

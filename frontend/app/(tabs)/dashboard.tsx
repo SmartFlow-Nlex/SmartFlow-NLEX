@@ -31,6 +31,7 @@ import { SegmentPrediction, predictNetwork, predictSegment } from '../../lib/tra
 import { useLiveClock } from '../../hooks/useNow';
 import AppHeader from '../../components/AppHeader';
 import AIAssistantFAB, { FAB_CLEARANCE } from '../../components/community/AIAssistantFAB';
+import { Reveal } from '../../components/motion';
 import { useMobileConfig } from '../../lib/mobileConfig';
 import ViewAllSheet from '../../components/dashboard/ViewAllSheet';
 import { useAuth } from '../../auth';
@@ -269,17 +270,29 @@ export default function DashboardScreen(): React.ReactElement {
             it in full, and the same date twice within one screenful is the
             redundancy this dashboard keeps being cleaned of.
           */}
-          <View style={styles.greeting}>
-            <Text style={styles.greetingText} numberOfLines={1}>
-              {greetingFor(now)}
-              {firstName === null ? '' : `, ${firstName}`}
-            </Text>
-          </View>
+          {/*
+            The whole screen arrives in one staggered movement, top to bottom.
+            Each section is one step of it, so the order the eye travels in is
+            the order the content appears - the greeting, then the headline
+            status, then the things you might act on.
+          */}
+          <Reveal index={0}>
+            <View style={styles.greeting}>
+              <Text style={styles.greetingText} numberOfLines={1}>
+                {greetingFor(now)}
+                {firstName === null ? '' : `, ${firstName}`}
+              </Text>
+            </View>
+          </Reveal>
 
-          {sections.statusSummary && <StatusSummaryCard status={networkStatus} />}
+          {sections.statusSummary && (
+            <Reveal index={1}>
+              <StatusSummaryCard status={networkStatus} />
+            </Reveal>
+          )}
 
           {sections.segmentForecast && (
-            <>
+            <Reveal index={2}>
               <SectionTitle icon="trending-up" title="Traffic Forecast" />
               {/*
                 One card, three steps, in the order the dependency runs: route,
@@ -303,11 +316,11 @@ export default function DashboardScreen(): React.ReactElement {
                 onClear={handleClearRoute}
                 forecastAt={forecastAt}
               />
-            </>
+            </Reveal>
           )}
 
           {sections.corridorOutlook && (
-            <>
+            <Reveal index={3}>
               <SectionTitle icon="calendar-outline" title="Corridor Outlook" />
               {/*
                 Its own section now. It was sitting under "Traffic Forecast" above
@@ -346,11 +359,11 @@ export default function DashboardScreen(): React.ReactElement {
                 direction={direction}
                 now={now}
               />
-            </>
+            </Reveal>
           )}
 
           {sections.eventForecasts && (
-            <>
+            <Reveal index={4}>
               <SectionTitle
                 icon="calendar"
                 title="Event Forecasts"
@@ -369,11 +382,11 @@ export default function DashboardScreen(): React.ReactElement {
                   />
                 ))}
               </View>
-            </>
+            </Reveal>
           )}
 
           {sections.mlHotspots && (
-            <>
+            <Reveal index={5}>
               <SectionTitle
                 icon="alert-circle"
                 title="ML Hotspots"
@@ -390,7 +403,7 @@ export default function DashboardScreen(): React.ReactElement {
                   <MlHotspotCard key={hotspot.id} hotspot={hotspot} />
                 ))}
               </View>
-            </>
+            </Reveal>
           )}
         </ScrollView>
 
