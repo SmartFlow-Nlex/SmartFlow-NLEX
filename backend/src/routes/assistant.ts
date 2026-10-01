@@ -70,7 +70,7 @@ function getClient(): OpenAI {
   return client;
 }
 
-const SYSTEM_PROMPT_BASE = `You are the SmartFlow NLEX assistant. You help commuters and drivers on the NLEX expressway in the Philippines.
+const SYSTEM_PROMPT_BASE = `You are Lex, the SmartFlow NLEX traffic assistant - a friendly little car mascot. If asked who you are, you are Lex. You help commuters and drivers on the NLEX expressway in the Philippines.
 
 STRICT RULES:
 1. You ONLY answer questions about CURRENT TRAFFIC CONDITIONS on the NLEX corridor, and about which exits exist and where they are. For anything else, politely say it is outside what you can help with and offer an NLEX-related suggestion instead.
@@ -681,6 +681,197 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
       error: 'Assistant unavailable',
       message: 'Could not reach the assistant service. Please try again.',
     });
+  }
+});
+
+/*
+ * POST /api/assistant/greeting - Lex says hello when a new chat opens.
+ *
+ * Written by the model each time, so it comes from the same "brain" as the
+ * answers. Left to itself the model opened every one "Hi <name>! I'm Lex" and
+ * repeated a whole greeting within six tries, so variety is decided here:
+ * an opening and an angle are drawn at random, openings used in the app's
+ * recent greetings are skipped, a near-repeat is regenerated once, and extra
+ * emoji are trimmed.
+ *
+ * It must not state any traffic condition - nothing has been looked up yet,
+ * and a welcome that guessed "the road is clear!" would break the rule that
+ * every condition comes from the live feed.
+ */
+const GREETING_ANGLES = [
+  'ask where they are headed on NLEX today',
+  'offer to check the traffic at any of the 20 exits',
+  'wish them a safe and smooth drive',
+  'mention that you read live traffic, so they can ask before they leave',
+  'invite them to ask about northbound or southbound',
+  'be cheerful about being their road buddy for the trip',
+  'say you are ready whenever they are',
+  'suggest they ask about a place they pass often',
+];
+
+type GreetingLanguage = 'english' | 'taglish';
+
+/** Opening lines; {name} and {time} are filled in, {name} dropped when unknown. */
+const GREETING_OPENINGS: Record<GreetingLanguage, string[]> = {
+  english: [
+    'Hey {name}!',
+    'Good {time}, {name}!',
+    'Hello there, {name}!',
+    'Welcome, {name}!',
+    'Look who is here, {name}!',
+    'Hi hi, {name}!',
+    'Great to see you, {name}!',
+    'Ready to roll, {name}?',
+  ],
+  taglish: [
+    'Uy, {name}!',
+    'Kumusta, {name}?',
+    'Magandang {time}, {name}!',
+    'Hello, {name}! Tara,',
+    'Musta na, {name}?',
+    'Hi {name}! Andito na si Lex,',
+    'Welcome back, {name}!',
+    'Ayan, {name}!',
+  ],
+};
+
+const TIME_WORDS: Record<GreetingLanguage, Record<'morning' | 'afternoon' | 'evening', string>> = {
+  english: { morning: 'morning', afternoon: 'afternoon', evening: 'evening' },
+  taglish: { morning: 'umaga', afternoon: 'hapon', evening: 'gabi' },
+};
+
+function hourInManila(): number {
+  return (
+    Number(
+      new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', hour12: false }).format(
+        new Date(),
+      ),
+    ) % 24
+  );
+}
+
+function pick<T>(items: T[]): T {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+/** First two words, lowercased - what makes two greetings sound alike. */
+function openingOf(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .join(' ');
+}
+
+/** Keeps the first emoji and drops any after it. */
+function oneEmoji(text: string): string {
+  let seen = false;
+  return text
+    .replace(/\p{Extended_Pictographic}(\uFE0F|\u200D\p{Extended_Pictographic})*/gu, (match) => {
+      if (seen) return '';
+      seen = true;
+      return match;
+    })
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+router.post('/greeting', async (req: Request, res: Response): Promise<void> => {
+  if (!isAssistantConfigured) {
+    res.status(503).json({ success: false, error: 'Assistant not configured' });
+    return;
+  }
+
+  const body = req.body as { name?: unknown; hour?: unknown; avoid?: unknown };
+  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 40) : '';
+  const hour =
+    typeof body.hour === 'number' && Number.isInteger(body.hour) && body.hour >= 0 && body.hour < 24
+      ? body.hour
+      : hourInManila();
+  const avoid = Array.isArray(body.avoid)
+    ? body.avoid
+        .filter((item): item is string => typeof item === 'string')
+        .slice(-6)
+        .map((item) => item.slice(0, 200))
+    : [];
+  const recentOpenings = new Set(avoid.map(openingOf));
+
+  const partOfDay = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+  const language: GreetingLanguage = Math.random() < 0.5 ? 'english' : 'taglish';
+  const fill = (template: string): string =>
+    (name.length > 0 ? template.replace('{name}', name) : template.replace(/,?\s*\{name\}/, '')).replace(
+      '{time}',
+      TIME_WORDS[language][partOfDay],
+    );
+  const openings = GREETING_OPENINGS[language].map(fill);
+  const fresh = openings.filter((opening) => !recentOpenings.has(openingOf(opening)));
+  const opening = pick(fresh.length > 0 ? fresh : openings);
+  const angle = pick(GREETING_ANGLES);
+  const languageLine =
+    language === 'english'
+      ? 'plain, friendly English'
+      : 'natural Taglish (Tagalog sentence structure with everyday English words, the way Filipinos text)';
+  const avoidLines =
+    avoid.length > 0
+      ? `- It must not resemble any of these earlier greetings:\n${avoid.map((g) => `  "${g}"`).join('\n')}`
+      : '';
+
+  const system = `You are Lex, the SmartFlow NLEX traffic assistant - a friendly little car mascot in a commuter app for the NLEX expressway in the Philippines.
+Write ONE short greeting that welcomes the user to a new chat with you.
+- Start with exactly: "${opening}"
+- Mention that you are Lex somewhere in it, in your own words - not necessarily "I'm Lex".
+- For this greeting: ${angle}.
+- Write it in ${languageLine}.
+- One or two sentences, at most 30 words. Plain text only, no markdown, at most one emoji.
+- NEVER state or guess any traffic condition, speed or road status - you have not checked anything yet.
+${avoidLines}`;
+
+  const extras: Record<string, unknown> = { reasoning: { enabled: false } };
+  if (LLM_ZDR) {
+    extras.provider = { zdr: true };
+  }
+
+  const generate = async (): Promise<{ text: string; model: string }> => {
+    const completion = await getClient().chat.completions.create({
+      model: QWEN_MODEL,
+      messages: [
+        { role: 'system', content: system },
+        // "/no_think" is Qwen3's own switch. reasoning.enabled=false alone was
+        // not honoured here: the model thought out loud, spent the whole token
+        // budget on it and returned no greeting at all.
+        { role: 'user', content: 'Greet me. /no_think' },
+      ],
+      temperature: 1,
+      max_tokens: 300,
+      ...extras,
+    } as ChatCompletionCreateParamsNonStreaming);
+    const raw = (completion.choices[0]?.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '');
+    return {
+      text: oneEmoji(toPlainText(raw).trim().replace(/^["']|["']$/g, '')),
+      model: completion.model,
+    };
+  };
+
+  /** Same words as a recent greeting, or the same first five words. */
+  const firstFive = (s: string): string => s.toLowerCase().split(/\s+/).slice(0, 5).join(' ');
+  const tooClose = (text: string): boolean =>
+    avoid.some((g) => g.trim() === text || firstFive(g) === firstFive(text));
+
+  try {
+    let result = await generate();
+    if (result.text.length === 0 || tooClose(result.text)) {
+      result = await generate();
+    }
+    if (result.text.length === 0) {
+      res.status(502).json({ success: false, error: 'Empty greeting' });
+      return;
+    }
+    res.json({ success: true, data: { greeting: result.text, model: result.model } });
+  } catch (caught) {
+    console.error('[assistant] greeting failed:', caught instanceof Error ? caught.message : caught);
+    res.status(502).json({ success: false, error: 'Greeting unavailable' });
   }
 });
 
