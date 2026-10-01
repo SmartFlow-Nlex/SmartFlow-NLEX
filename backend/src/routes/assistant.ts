@@ -698,15 +698,17 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
  * and a welcome that guessed "the road is clear!" would break the rule that
  * every condition comes from the live feed.
  */
+/*
+ * Kept plain on purpose. Angles that named the 20 exits, northbound and
+ * southbound or "live traffic" turned the welcome into a feature list, and the
+ * capabilities panel under it already says all of that.
+ */
 const GREETING_ANGLES = [
-  'ask where they are headed on NLEX today',
-  'offer to check the traffic at any of the 20 exits',
-  'wish them a safe and smooth drive',
-  'mention that you read live traffic, so they can ask before they leave',
-  'invite them to ask about northbound or southbound',
-  'be cheerful about being their road buddy for the trip',
-  'say you are ready whenever they are',
-  'suggest they ask about a place they pass often',
+  'ask where they are headed',
+  'say you are ready to help',
+  'wish them a safe trip',
+  'invite them to ask about NLEX traffic',
+  'ask how you can help today',
 ];
 
 type GreetingLanguage = 'english' | 'taglish';
@@ -729,7 +731,7 @@ const GREETING_OPENINGS: Record<GreetingLanguage, string[]> = {
     'Magandang {time}, {name}!',
     'Hello, {name}! Tara,',
     'Musta na, {name}?',
-    'Hi {name}! Andito na si Lex,',
+    'Hi {name}!',
     'Welcome back, {name}!',
     'Ayan, {name}!',
   ],
@@ -812,19 +814,21 @@ router.post('/greeting', async (req: Request, res: Response): Promise<void> => {
   const languageLine =
     language === 'english'
       ? 'plain, friendly English'
-      : 'natural Taglish (Tagalog sentence structure with everyday English words, the way Filipinos text)';
+      : // The bare instruction gave stiff or wrong Tagalog ("babala na lang safe
+        // trip po" - babala is "warning"); a sample of the register fixes that.
+        'casual Taglish the way Filipinos text, using only common everyday words - like "Ako si Lex! Saan ka papunta?" or "Si Lex \'to, ready na ako tumulong."';
   const avoidLines =
     avoid.length > 0
       ? `- It must not resemble any of these earlier greetings:\n${avoid.map((g) => `  "${g}"`).join('\n')}`
       : '';
 
   const system = `You are Lex, the SmartFlow NLEX traffic assistant - a friendly little car mascot in a commuter app for the NLEX expressway in the Philippines.
-Write ONE short greeting that welcomes the user to a new chat with you.
+Write ONE short, simple greeting that welcomes the user to a new chat with you.
 - Start with exactly: "${opening}"
-- Mention that you are Lex somewhere in it, in your own words - not necessarily "I'm Lex".
-- For this greeting: ${angle}.
+- Say you are Lex, in your own words - not necessarily "I'm Lex".
+- Then, briefly: ${angle}.
 - Write it in ${languageLine}.
-- One or two sentences, at most 30 words. Plain text only, no markdown, at most one emoji.
+- At most 15 words in total, including the opening. Keep it simple: no lists of features, exits or directions. Plain text only, no markdown, at most one emoji.
 - NEVER state or guess any traffic condition, speed or road status - you have not checked anything yet.
 ${avoidLines}`;
 
