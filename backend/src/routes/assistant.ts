@@ -697,6 +697,11 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
  * It must not state any traffic condition - nothing has been looked up yet,
  * and a welcome that guessed "the road is clear!" would break the rule that
  * every condition comes from the live feed.
+ *
+ * Always English, while replies follow the user's language: the greeting is
+ * written before the user has said anything, so there is no language to follow.
+ * The model's Taglish greetings were also often stiff or wrong ("babala na
+ * lang safe trip po" - babala is "warning").
  */
 /*
  * Kept plain on purpose. Angles that named the 20 exits, northbound and
@@ -711,36 +716,20 @@ const GREETING_ANGLES = [
   'ask how you can help today',
 ];
 
-type GreetingLanguage = 'english' | 'taglish';
-
 /** Opening lines; {name} and {time} are filled in, {name} dropped when unknown. */
-const GREETING_OPENINGS: Record<GreetingLanguage, string[]> = {
-  english: [
-    'Hey {name}!',
-    'Good {time}, {name}!',
-    'Hello there, {name}!',
-    'Welcome, {name}!',
-    'Look who is here, {name}!',
-    'Hi hi, {name}!',
-    'Great to see you, {name}!',
-    'Ready to roll, {name}?',
-  ],
-  taglish: [
-    'Uy, {name}!',
-    'Kumusta, {name}?',
-    'Magandang {time}, {name}!',
-    'Hello, {name}! Tara,',
-    'Musta na, {name}?',
-    'Hi {name}!',
-    'Welcome back, {name}!',
-    'Ayan, {name}!',
-  ],
-};
-
-const TIME_WORDS: Record<GreetingLanguage, Record<'morning' | 'afternoon' | 'evening', string>> = {
-  english: { morning: 'morning', afternoon: 'afternoon', evening: 'evening' },
-  taglish: { morning: 'umaga', afternoon: 'hapon', evening: 'gabi' },
-};
+const GREETING_OPENINGS = [
+  'Hey {name}!',
+  'Hi {name}!',
+  'Good {time}, {name}!',
+  'Hello there, {name}!',
+  'Welcome, {name}!',
+  'Welcome back, {name}!',
+  'Look who is here, {name}!',
+  'Hi hi, {name}!',
+  'Great to see you, {name}!',
+  'Good to see you, {name}!',
+  'Ready to roll, {name}?',
+];
 
 function hourInManila(): number {
   return (
@@ -801,22 +790,15 @@ router.post('/greeting', async (req: Request, res: Response): Promise<void> => {
   const recentOpenings = new Set(avoid.map(openingOf));
 
   const partOfDay = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
-  const language: GreetingLanguage = Math.random() < 0.5 ? 'english' : 'taglish';
   const fill = (template: string): string =>
     (name.length > 0 ? template.replace('{name}', name) : template.replace(/,?\s*\{name\}/, '')).replace(
       '{time}',
-      TIME_WORDS[language][partOfDay],
+      partOfDay,
     );
-  const openings = GREETING_OPENINGS[language].map(fill);
+  const openings = GREETING_OPENINGS.map(fill);
   const fresh = openings.filter((opening) => !recentOpenings.has(openingOf(opening)));
   const opening = pick(fresh.length > 0 ? fresh : openings);
   const angle = pick(GREETING_ANGLES);
-  const languageLine =
-    language === 'english'
-      ? 'plain, friendly English'
-      : // The bare instruction gave stiff or wrong Tagalog ("babala na lang safe
-        // trip po" - babala is "warning"); a sample of the register fixes that.
-        'casual Taglish the way Filipinos text, using only common everyday words - like "Ako si Lex! Saan ka papunta?" or "Si Lex \'to, ready na ako tumulong."';
   const avoidLines =
     avoid.length > 0
       ? `- It must not resemble any of these earlier greetings:\n${avoid.map((g) => `  "${g}"`).join('\n')}`
@@ -827,7 +809,7 @@ Write ONE short, simple greeting that welcomes the user to a new chat with you.
 - Start with exactly: "${opening}"
 - Say you are Lex, in your own words - not necessarily "I'm Lex".
 - Then, briefly: ${angle}.
-- Write it in ${languageLine}.
+- Write it in plain, friendly English only - no Tagalog or Taglish words.
 - At most 15 words in total, including the opening. Keep it simple: no lists of features, exits or directions. Plain text only, no markdown, at most one emoji.
 - NEVER state or guess any traffic condition, speed or road status - you have not checked anything yet.
 ${avoidLines}`;
