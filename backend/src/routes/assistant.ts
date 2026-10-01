@@ -92,6 +92,7 @@ STRICT RULES:
 CHOOSING A TOOL:
 - The user named a place (Bocaue, Balintawak, Marilao...) -> get_corridor_status for THAT exit. One call.
 - The user asked about NLEX generally, with no place named -> get_corridor_overview.
+- The user asked WHERE traffic is slow, heavy, congested or moving ("saan mabagal", "saan may traffic", "where is it slow") -> get_corridor_overview. These are live traffic questions, NOT travel time: "daloy" means the flow of traffic, and "mabagal ang daloy" means traffic is slow. Rule 1b applies only to how long a trip takes.
 - Never use get_corridor_overview to answer a question about one specific exit.
 
 GEOGRAPHY: northbound runs from Balintawak (KM 0, Metro Manila) towards Sta. Ines (KM 86, near Clark). Southbound is the reverse. "Papuntang Manila" or "going to Manila" means SOUTHBOUND. "Papuntang Clark/Pampanga" means NORTHBOUND.`;
@@ -259,6 +260,22 @@ export function mentionedExit(message: string, exitNames: string[]): string | nu
   return null;
 }
 
+/*
+ * Whether a message asks about live traffic, so an answer that skipped the
+ * lookup can be caught when no exit is named. Asked "saan mabagal ang daloy ng
+ * traffic ngayon?" - where is traffic slow right now - the model took "daloy"
+ * (flow) for travel time and replied that travel times are not in the app.
+ * Real travel-time questions are excluded: those do get that reply.
+ */
+const TRAFFIC_WORDS =
+  /\b(traffic|trapik|trapiko|congest\w*|mabagal|mabigat|daloy|siksik\w*|masikip|sikip|maluwag|slow|heavy|jam\w*|busy|lagay)\b/i;
+const TRAVEL_TIME_WORDS =
+  /(gaano katagal|katagal|how long|travel time|\beta\b|ilang oras|ilang minuto|duration)/i;
+
+export function asksAboutTraffic(message: string): boolean {
+  return TRAFFIC_WORDS.test(message) && !TRAVEL_TIME_WORDS.test(message);
+}
+
 function buildSystemPrompt(exitNames: string[]): string {
   if (exitNames.length === 0) {
     return SYSTEM_PROMPT_BASE;
@@ -307,7 +324,7 @@ const tools: LabelledTool[] = [
     function: {
       name: 'get_corridor_overview',
       description:
-        'Corridor-wide summary. Use ONLY when the user asks about NLEX as a whole and names no specific exit, e.g. "How is NLEX right now?". Do NOT use this to answer about a single named exit.',
+        'Corridor-wide summary: counts, plus where traffic is congested and where it is slow right now. Use when the user asks about NLEX as a whole or asks WHERE traffic is bad, slow or flowing, without naming an exit - e.g. "How is NLEX right now?", "Where is it congested?", "Saan mabagal ang daloy ng traffic?", "Saan may traffic ngayon?". Do NOT use this to answer about a single named exit.',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -344,23 +361,48 @@ async function runTool(name: string, rawArgs: string): Promise<unknown> {
   }
 
   if (name === 'get_corridor_overview') {
-    const worst = exits
-      .flatMap((exit: CorridorExit) =>
-        (['NB', 'SB'] as const)
-          .filter((key) => exit.directions[key].status === 'congested')
-          .map((key) => ({
-            exit: exit.display_name,
-            direction: key === 'NB' ? 'northbound' : 'southbound',
-            speedKmh: exit.directions[key].speedKmh,
-          })),
-      )
-      .slice(0, 6);
+    // Slow spots too, not only congested ones: "saan mabagal ang daloy?" asks
+    // where traffic is SLOW, and a list of only the worst spots cannot say.
+    const spots = (status: 'congested' | 'slow') =>
+      exits
+        .flatMap((exit: CorridorExit) =>
+          (['NB', 'SB'] as const)
+            .filter((key) => exit.directions[key].status === status)
+            .map((key) => ({
+              exit: exit.display_name,
+              direction: key === 'NB' ? 'northbound' : 'southbound',
+              speedKmh: exit.directions[key].speedKmh,
+            })),
+        )
+        .slice(0, 6);
 
+    /*
+     * Finished statements as well as the lists. Given only the lists, the model
+     * dropped a congested spot and called a slow one "walang traffic, maluwag
+     * ang daan" - slow means moving but slower than normal, never clear. So the
+     * wording of each spot is decided here and the model only phrases it.
+     */
+    const line = (s: { exit: string; direction: string; speedKmh: number | null }) =>
+      `${s.exit} ${s.direction}${s.speedKmh === null ? '' : ` (${Math.round(s.speedKmh)} km/h)`}`;
+    const congested = spots('congested');
+    const slow = spots('slow');
     return {
       feed: describeFeedAge(feed),
       stale: feed.stale,
       counts,
-      congested_spots: worst,
+      congested_spots: congested,
+      slow_spots: slow,
+      facts: [
+        congested.length > 0
+          ? `CONGESTED (heavy traffic): ${congested.map(line).join('; ')}.`
+          : 'No congested spots right now.',
+        slow.length > 0
+          ? `SLOW (moving, but slower than normal - NOT clear): ${slow.map(line).join('; ')}.`
+          : 'No slow spots right now.',
+        `Everywhere else on NLEX is clear.`,
+      ],
+      instructions:
+        'Mention EVERY congested spot and EVERY slow spot listed in facts, each with its direction and speed. Never describe a slow spot as clear or as having no traffic. Do not mention clear exits unless asked.',
     };
   }
 
@@ -458,6 +500,7 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
 
   const language = detectLanguage(message);
   const namedExit = mentionedExit(message, knownExitNames);
+  const trafficQuestion = asksAboutTraffic(message);
 
   const messages: ChatCompletionMessageParam[] = [
     {
@@ -535,6 +578,16 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
         messages.push({
           role: 'system',
           content: `You answered without checking. Call get_corridor_status for "${namedExit}" first, then answer from what it returns.`,
+        });
+        continue;
+      }
+      // The same check for a traffic question that names no exit.
+      if (calls.length === 0 && toolsUsed.length === 0 && namedExit === null && trafficQuestion && !sentBackToLook) {
+        sentBackToLook = true;
+        messages.push({
+          role: 'system',
+          content:
+            'That is a live traffic question, not travel time. Call get_corridor_overview first, then answer from what it returns.',
         });
         continue;
       }
