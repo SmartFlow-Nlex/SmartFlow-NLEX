@@ -48,6 +48,18 @@ export const MaintenanceStatusSchema = z
     path: ["reason"],
   });
 
+/*
+ * The :id path parameter.
+ *
+ * Without this, a malformed id reached Postgres, which threw casting it to uuid.
+ * The service catches every query error alike and returns null, and the
+ * controller reads null as "database not reachable" — so a client typo answered
+ * 503. That is the wrong answer twice over: it tells the operator the warehouse
+ * is down when it is healthy, and it would raise an infrastructure alarm for
+ * what is a bad request.
+ */
+export const MaintenanceIdSchema = z.string().uuid();
+
 export const MaintenanceListQuerySchema = z.object({
   status: z.enum([...MAINTENANCE_STATUSES, "all"]).optional().default("all"),
 });

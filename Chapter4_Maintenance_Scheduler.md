@@ -110,6 +110,7 @@ why neither had surfaced in ordinary use.
 | --- | --- | --- | --- |
 | 1 | The kilometre range was not ordered | A job could be saved running from Km 40 to Km 10. Every consumer reads the pair as a span, so a reversed entry yields a negative length: the dashboard draws nothing and the mobile application reports a closure of less than zero kilometres | The server now requires the end marker to be at or beyond the start. Equality is still permitted, since work at a single marker is a legitimate entry |
 | 2 | Deletion did not check whether a row was removed | A `DELETE` against an identifier that did not exist answered 200 "Deleted" and wrote an audit entry for a deletion that never happened — the audit log recording an event the database never saw | Deletion now distinguishes the three outcomes and answers 404 where no row matched |
+| 3 | A malformed identifier was reported as a database outage | The identifier reached the database, which rejected it as badly formed. The service treats every query failure alike and reports the database unreachable, so a mistyped identifier answered 503 — telling the operator the warehouse was down while it was healthy, and raising an infrastructure alarm for what was a bad request | The identifier is checked before the database is consulted, and an unparseable one answers 404 |
 
 Defect 1 was not hypothetical. A record already in the table — a toll booth
 repair entered as Km 76.25 to Km 73.23 — carries a reversed range and is in the
@@ -156,7 +157,36 @@ entry left the list; and it remained absent after the page was reloaded, which
 confirms the removal reached the database rather than only the browser's copy of
 the list.
 
-All twenty-six checks passed after the corrections in Section 4.2.5.4.
+All twenty-six checks passed after the corrections in Section 4.2.5.4. A further
+adversarial pass of twenty-four checks — boundary values at both ends of every
+numeric and text field, malformed and absent timestamps, script and SQL payloads
+in free-text fields, malformed identifiers, and every invalid status transition —
+passed in full once defect 3 was corrected.
+
+### 4.2.5.6 Limitation: Status Is Not Reconciled with the Clock
+
+A schedule's status is whatever an operator last set. Nothing advances it when
+its window begins, and nothing closes it when the window passes.
+
+The consequence is visible in the delivered system. Both records presently in the
+table have windows that closed in August. One is still marked *in progress*, so
+the page's summary reports three kilometres of carriageway "under work right
+now" for work that finished forty-six days ago. The other is still marked
+*scheduled*, which places a count of one beside a caption reading "nothing
+upcoming" — the two disagree because the only scheduled item is in the past.
+
+This is a design gap rather than bad data, and the proponents record it as such:
+no amount of correcting these two rows prevents the third. Two resolutions are
+available. A status could be *derived* for display — a window that has closed
+shown as elapsed regardless of the stored value — which changes no data and no
+interface contract. Alternatively a scheduled task could advance statuses as
+windows open and close, which is closer to how an operations system should
+behave but alters records the mobile application also reads, and so is the larger
+change.
+
+The proponents recommend the derived presentation as the immediate measure,
+because a dashboard that reports current roadwork which ended six weeks ago is
+wrong in the way most likely to be noticed and least likely to be forgiven.
 
 ---
 
