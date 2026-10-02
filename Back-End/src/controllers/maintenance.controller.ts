@@ -117,9 +117,15 @@ export const updateScheduleStatus = async (req: Request, res: Response) => {
 
 // DELETE /api/maintenance/:id
 export const deleteSchedule = async (req: Request, res: Response) => {
-  const success = await deleteMaintenanceScheduleInDb(req.params.id);
-  if (!success) {
+  const result = await deleteMaintenanceScheduleInDb(req.params.id);
+  if (result === null) {
     return res.status(503).json({ success: false, message: "Could not delete schedule: database not reachable" });
+  }
+  // A missing row is 404, matching the update path. Reporting "Deleted" for an
+  // id that was never there tells the operator the list is now correct when
+  // nothing happened, and the audit entry below would record a fiction.
+  if (result === "not_found") {
+    return res.status(404).json({ success: false, message: "Schedule not found" });
   }
   audit(req, "maintenance.schedule_deleted", req.params.id, {});
   res.json({ success: true, source: "database", message: "Deleted" });

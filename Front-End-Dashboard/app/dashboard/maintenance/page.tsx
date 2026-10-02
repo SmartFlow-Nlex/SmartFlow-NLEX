@@ -264,6 +264,19 @@ export default function MaintenancePage() {
   }, []);
   const [cancelTarget, setCancelTarget] = useState<Schedule | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  /*
+   * Deleting is deliberately separate from cancelling, and both are offered.
+   *
+   * Cancelling keeps the row and writes a reason, which is what a schedule that
+   * was called off should leave behind — the corridor record still shows work
+   * was planned for that window. Deleting erases it, which is only right for a
+   * row that should never have existed, such as a duplicate or a typo.
+   *
+   * The API has supported DELETE since the endpoint was written; the page never
+   * called it, so a mistaken entry could be cancelled but not removed and sat in
+   * the list permanently.
+   */
+  const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null);
   const [mutating, setMutating] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -363,6 +376,35 @@ export default function MaintenancePage() {
       setActionError(msg);
       setTimeout(() => setActionError(null), 5000);
       toast.error(`Could not update "${s.title}".`, msg);
+    } finally {
+      setMutating(false);
+    }
+  };
+
+  const removeSchedule = async (s: Schedule) => {
+    if (mutating) return; // ignore double-fires while a request is in flight
+    setMutating(true);
+    setActionError(null);
+    try {
+      const r = await fetch(`${BACKEND}/api/maintenance/${s.id}`, {
+        method: "DELETE",
+        headers: { "x-user": actor },
+      });
+      const json = await r.json();
+      // A 404 here means someone else removed it first. The row is gone either
+      // way, so the list is refreshed rather than an error raised over a state
+      // the operator already wanted.
+      if (!json.success && r.status !== 404) throw new Error(json.message ?? "Delete failed");
+      await refresh();
+      setDeleteTarget(null);
+      setDetail(null);
+      toast.success(`"${s.title}" was deleted.`);
+    } catch (e) {
+      await refresh();
+      const msg = e instanceof Error ? e.message : "Delete failed";
+      setActionError(msg);
+      setTimeout(() => setActionError(null), 5000);
+      toast.error(`Could not delete "${s.title}".`, msg);
     } finally {
       setMutating(false);
     }
@@ -572,7 +614,7 @@ export default function MaintenancePage() {
             </table>
           </div>
         )}
-        {actionError && !detail && !cancelTarget && (
+        {actionError && !detail && !cancelTarget && !deleteTarget && (
           <p style={{ color: "var(--color-danger)", fontSize: "0.8rem", padding: "8px 18px" }}>{actionError}</p>
         )}
       </article>
@@ -609,16 +651,22 @@ export default function MaintenancePage() {
               ))}
             </div>
             {actionError && <p style={{ color: "var(--color-danger)", fontSize: "0.8rem", padding: "0 18px 8px" }}>{actionError}</p>}
-            {(NEXT_ACTIONS[detail.status].length > 0 || detail.status === "scheduled" || detail.status === "in_progress") && (
-              <div className="ms-form-actions" style={{ padding: "0 18px 16px", flexWrap: "wrap" }}>
+            {/* Always rendered, because Delete applies to every status. The
+                live-only actions are gated individually inside: a completed or
+                already-cancelled schedule has nothing to advance or call off,
+                and the API answers 409 if asked, but it can still be removed. */}
+            <div className="ms-form-actions" style={{ padding: "0 18px 16px", flexWrap: "wrap" }}>
+              {(detail.status === "scheduled" || detail.status === "in_progress") && (
                 <button className="ms-btn-cancel" disabled={mutating} onClick={() => openEdit(detail)}>
                   Edit details
                 </button>
-                {NEXT_ACTIONS[detail.status].map((a) => (
-                  <button key={a.to} className="ms-btn-submit" disabled={mutating} onClick={() => changeStatus(detail, a.to)}>
-                    {mutating ? "Saving…" : a.label}
-                  </button>
-                ))}
+              )}
+              {NEXT_ACTIONS[detail.status].map((a) => (
+                <button key={a.to} className="ms-btn-submit" disabled={mutating} onClick={() => changeStatus(detail, a.to)}>
+                  {mutating ? "Saving…" : a.label}
+                </button>
+              ))}
+              {(detail.status === "scheduled" || detail.status === "in_progress") && (
                 <button
                   className="ms-btn-cancel"
                   disabled={mutating}
@@ -626,8 +674,64 @@ export default function MaintenancePage() {
                 >
                   Cancel schedule
                 </button>
+              )}
+              <button
+                className="ms-btn-cancel"
+                disabled={mutating}
+                style={{ marginLeft: "auto", color: "var(--color-danger)" }}
+                onClick={() => { setDeleteTarget(detail); setDetail(null); }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete-confirmation modal.
+          No reason field: a reason is for a schedule that is being called off and
+          kept, which is what Cancel does. This erases the row, so the only thing
+          worth asking is whether the operator means it. The copy spells out the
+          difference, because "cancel" and "delete" sitting side by side is
+          otherwise a guess. */}
+      {deleteTarget && (
+        <div className={styles.detailBackdrop} role="dialog" aria-modal="true" aria-label="Delete schedule" onClick={() => setDeleteTarget(null)}>
+          <div className={styles.detailModal} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.detailAccent} />
+            <div className={styles.detailHeader}>
+              <div className={styles.detailIcon}>🗑️</div>
+              <div className={styles.detailTitles}>
+                <h3>Delete this schedule?</h3>
+                <p>{deleteTarget.title} · {kmRange(deleteTarget)}</p>
               </div>
-            )}
+              <button className={styles.detailClose} onClick={() => setDeleteTarget(null)} aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: "4px 18px 0" }}>
+              <p style={{ fontSize: "0.84rem", color: "var(--text-secondary)", margin: 0, lineHeight: 1.55 }}>
+                This removes the record entirely. If the work was planned and then called
+                off, use <strong>Cancel schedule</strong> instead — that keeps the entry and
+                its reason on the corridor record.
+              </p>
+              {actionError && <p style={{ color: "var(--color-danger)", fontSize: "0.8rem", marginTop: 8 }}>{actionError}</p>}
+            </div>
+            <div className="ms-form-actions" style={{ padding: "12px 18px 16px" }}>
+              <button
+                className="ms-btn-submit ms-btn-danger-action"
+                disabled={mutating}
+                onClick={() => removeSchedule(deleteTarget)}
+              >
+                {mutating ? "Deleting…" : "Delete permanently"}
+              </button>
+              <button className="ms-btn-cancel" disabled={mutating} onClick={() => setDeleteTarget(null)}>
+                Keep it
+              </button>
+            </div>
+            <div className={styles.detailFooter}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.4" /><path d="M8 7v4M8 5.2v.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+              <p>This cannot be undone.</p>
+            </div>
           </div>
         </div>
       )}

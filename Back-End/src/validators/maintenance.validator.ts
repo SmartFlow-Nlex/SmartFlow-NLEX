@@ -20,6 +20,21 @@ export const MaintenanceScheduleSchema = z
   .refine((v) => new Date(v.endsAt) > new Date(v.startsAt), {
     message: "endsAt must be after startsAt",
     path: ["endsAt"],
+  })
+  /*
+   * The time range was ordered; the KM range was not. A job could be saved
+   * running from Km 40 to Km 10, which the corridor has no way to represent:
+   * every consumer reads these as a span from start to end, so a reversed pair
+   * yields a negative length. The dashboard draws nothing for it and the mobile
+   * app shows a closure of less than zero kilometres.
+   *
+   * Equality is allowed deliberately — a job at a single marker, such as a sign
+   * replacement at Km 23.4, is a legitimate entry rather than a zero-length
+   * mistake.
+   */
+  .refine((v) => v.endKm >= v.startKm, {
+    message: "endKm must be the same as or greater than startKm",
+    path: ["endKm"],
   });
 
 // PATCH /api/maintenance/:id/status

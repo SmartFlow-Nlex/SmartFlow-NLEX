@@ -108,11 +108,24 @@ export async function updateMaintenanceStatusInDb(id: string, status: Maintenanc
   }
 }
 
+/**
+ * Delete one schedule.
+ *
+ * Returns null when the database is unreachable, "not_found" when the id
+ * matched no row, and true when a row was removed. The three are distinct
+ * because the caller answers each differently.
+ *
+ * This previously discarded rowCount and returned true unconditionally, so a
+ * DELETE against an id that did not exist answered 200 "Deleted" and wrote an
+ * audit entry for a deletion that never happened — the audit log recording an
+ * event the database never saw. The update path already distinguished
+ * not-found; this one did not.
+ */
 export async function deleteMaintenanceScheduleInDb(id: string) {
   if (!db) return null;
   try {
-    await db.query(`DELETE FROM nlex_maintenance_schedules WHERE id = $1`, [id]);
-    return true;
+    const result = await db.query(`DELETE FROM nlex_maintenance_schedules WHERE id = $1`, [id]);
+    return (result.rowCount ?? 0) > 0 ? true : ("not_found" as const);
   } catch (error) {
     console.error("Database query failed for delete maintenance:", error);
     return null;
