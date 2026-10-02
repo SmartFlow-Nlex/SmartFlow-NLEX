@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import type {
   ChatCompletionCreateParamsNonStreaming,
   ChatCompletionMessageParam,
+  ChatCompletionMessageToolCall,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions';
 import type { AssistantToolName } from '@smartflow/shared';
@@ -216,21 +217,70 @@ const LANGUAGE_REMINDER: Record<ReplyLanguage, string> = {
     'Reply in natural Taglish, e.g. "Congested ngayon sa ... southbound, mga 4 km/h lang ang takbo." or "Clear ngayon sa ... northbound, walang traffic." Never "bilis ng paglalakbay", "humigit-kumulang" or "nagtataguyod".',
 };
 
-/** Earlier replies may predate these rules, and the model copies their wording otherwise. */
+/**
+ * Earlier replies may predate these rules, or be in the other language if the
+ * user flipped the switch mid-chat, and the model copies them otherwise.
+ */
 const HISTORY_NOTE =
-  'Earlier replies in this conversation may use wording that breaks these rules. Do not copy their phrasing; follow the style guide above.';
+  'Earlier replies in this conversation may be in a different language or use wording that breaks these rules. Do not copy their language or phrasing; answer in the REPLY LANGUAGE above and follow its style guide.';
 
-const LANGUAGE_GUIDE: Record<ReplyLanguage, string> = {
-  english: `REPLY LANGUAGE: English. The user wrote in English, so answer entirely in plain, everyday English. No Tagalog words at all.
+/** How to write each language. Why it is the answer language is added by languageGuide. */
+const LANGUAGE_STYLE: Record<ReplyLanguage, string> = {
+  english: `Answer entirely in plain, everyday English. No Tagalog words at all.
 Examples: "Traffic is heavy at San Fernando southbound right now, moving at about 4 km/h." / "Bocaue northbound is clear right now."`,
-  tagalog: `REPLY LANGUAGE: Tagalog. The user wrote in Tagalog, so answer in natural, conversational Tagalog - the way a Filipino driver actually talks, not a formal or word-for-word translation. Keep "km/h", exit names and "NLEX" as they are, and use "po" only if the user did.
+  tagalog: `Answer in natural, conversational Tagalog - the way a Filipino driver actually talks, not a formal or word-for-word translation. Keep "km/h", exit names and "NLEX" as they are, and use "po" only if the user did.
 Say it this way: "may traffic", "walang traffic", "mabigat ang daloy", "maluwag ang daan", "mabagal ang takbo", "mga 4 km/h lang ang takbo", "papuntang Manila".
+Match the status exactly: congested = "may traffic" / "mabigat ang daloy"; slow = "medyo mabagal ang takbo" (NOT "walang traffic" - slow is not clear); clear = "walang traffic" / "maluwag ang daan".
 NEVER use stiff or literal words: not "nagtataguyod", not "bilis ng paglalakbay", not "paglalakbay", not "humigit-kumulang" (say "mga"), not "kasalukuyan", not "siksikan ng trapiko".
-Examples: "May traffic ngayon sa San Fernando papuntang Manila, mga 4 km/h lang ang takbo." / "Walang traffic ngayon sa Bocaue papuntang Clark, maluwag ang daan."`,
-  taglish: `REPLY LANGUAGE: Taglish. The user mixed Tagalog and English, so answer the same way - Tagalog sentence structure with the everyday English traffic terms Filipinos use when texting: "traffic", "congested", "clear", "southbound", "northbound", "right now".
+Examples: "May traffic ngayon sa San Fernando papuntang Manila, mga 4 km/h lang ang takbo." / "Medyo mabagal ang takbo ngayon sa San Fernando papuntang Manila, mga 50 km/h." / "Walang traffic ngayon sa Bocaue papuntang Clark, maluwag ang daan."`,
+  taglish: `Answer in Taglish - Tagalog sentence structure with the everyday English traffic terms Filipinos use when texting: "traffic", "congested", "clear", "southbound", "northbound", "right now".
+Match the status exactly: congested = "congested" / "may traffic"; slow = "medyo slow ang takbo" (NOT "clear" - slow is not clear); clear = "clear" / "walang traffic".
 NEVER use stiff or literal Tagalog: not "nagtataguyod", not "bilis ng paglalakbay", not "paglalakbay", not "humigit-kumulang" (say "mga").
-Examples: "Congested ngayon sa San Fernando southbound, mga 4 km/h lang ang takbo." / "Clear ngayon sa Bocaue northbound, walang traffic."`,
+Examples: "Congested ngayon sa San Fernando southbound, mga 4 km/h lang ang takbo." / "Medyo slow ngayon sa San Fernando southbound, mga 50 km/h ang takbo." / "Clear ngayon sa Bocaue northbound, walang traffic."`,
 };
+
+const LANGUAGE_NAME: Record<ReplyLanguage, string> = {
+  english: 'English',
+  tagalog: 'Tagalog',
+  taglish: 'Taglish',
+};
+
+/** The language switch in the app's Assistant header. */
+export type LanguageChoice = 'english' | 'tagalog';
+
+function languageChoiceOf(value: unknown): LanguageChoice | null {
+  return value === 'english' || value === 'tagalog' ? value : null;
+}
+
+/**
+ * The answer language: the one picked in the app when there is a pick,
+ * otherwise whatever the question was written in (apps from before the switch
+ * send none). A Tagalog pick still answers Taglish questions in Taglish -
+ * both are Tagalog to the person who picked it, and pure Tagalog back at
+ * "congested ba sa Bocaue?" reads stiffer than the question.
+ */
+function replyLanguageFor(message: string, choice: LanguageChoice | null): ReplyLanguage {
+  const written = detectLanguage(message);
+  if (choice === 'english') return 'english';
+  if (choice === 'tagalog') return written === 'taglish' ? 'taglish' : 'tagalog';
+  return written;
+}
+
+function languageGuide(language: ReplyLanguage, choice: LanguageChoice | null): string {
+  const why =
+    choice === null
+      ? language === 'english'
+        ? 'The user wrote in English.'
+        : language === 'tagalog'
+          ? 'The user wrote in Tagalog.'
+          : 'The user mixed Tagalog and English, so answer the same way.'
+      : choice === 'english'
+        ? 'The user picked English in the app, so answer in English even when they write in Tagalog.'
+        : language === 'taglish'
+          ? 'The user picked Tagalog in the app and writes in Taglish, so answer in Taglish.'
+          : 'The user picked Tagalog in the app, so answer in Tagalog even when they write in English.';
+  return `REPLY LANGUAGE: ${LANGUAGE_NAME[language]}. ${why}\n${LANGUAGE_STYLE[language]}`;
+}
 
 /*
  * The exit a message names, if any, so an answer that skips the lookup can be
@@ -274,6 +324,77 @@ const TRAVEL_TIME_WORDS =
 
 export function asksAboutTraffic(message: string): boolean {
   return TRAFFIC_WORDS.test(message) && !TRAVEL_TIME_WORDS.test(message);
+}
+
+/*
+ * The exit a direction-only follow-up is about. "What about southbound?" after
+ * "Is San Fernando congested northbound?" names no exit, so neither check
+ * caught it, and the model answered from nothing: "clear" one time, "5 km/h"
+ * the next, while the feed said slow at 52 km/h. A message that asks about a
+ * direction without naming an exit is taken to mean the last exit the user
+ * named. Only the user's own turns are searched - an overview reply names a
+ * dozen exits, and its first match would be arbitrary.
+ */
+const DIRECTION_WORDS =
+  /\b(south\s?bound|north\s?bound|sb|nb|southward|northward|pa-?manila|papuntang manila|pa-?norte|papuntang norte|papuntang clark|pa-?clark|pauwi|pabalik|kabila|opposite|other way|other side|other direction)\b/i;
+
+const SOUTH_WORDS = /\b(south\s?bound|sb|southward|south|pa-?manila|papuntang manila)\b/i;
+const NORTH_WORDS = /\b(north\s?bound|nb|northward|north|pa-?norte|papuntang norte|papuntang clark|pa-?clark)\b/i;
+const OPPOSITE_WORDS = /\b(kabila|pabalik|opposite|other way|other side|other direction)\b/i;
+
+function directionIn(text: string): 'northbound' | 'southbound' | null {
+  if (SOUTH_WORDS.test(text) && !NORTH_WORDS.test(text)) return 'southbound';
+  if (NORTH_WORDS.test(text) && !SOUTH_WORDS.test(text)) return 'northbound';
+  return null;
+}
+
+/**
+ * Which direction(s) a question asks about, for when the server does the
+ * lookup itself. "The other way" flips the direction of the user's last
+ * question; anything unclear gets both, so nothing is guessed.
+ */
+export function directionsAsked(
+  message: string,
+  history: ChatCompletionMessageParam[],
+): ('northbound' | 'southbound')[] {
+  const stated = directionIn(message);
+  if (stated !== null) {
+    return [stated];
+  }
+  if (OPPOSITE_WORDS.test(message)) {
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      const turn = history[i];
+      if (turn.role !== 'user' || typeof turn.content !== 'string') {
+        continue;
+      }
+      const before = directionIn(turn.content);
+      if (before !== null) {
+        return [before === 'northbound' ? 'southbound' : 'northbound'];
+      }
+    }
+  }
+  return ['northbound', 'southbound'];
+}
+
+export function followUpExit(
+  message: string,
+  history: ChatCompletionMessageParam[],
+  exitNames: string[],
+): string | null {
+  if (!DIRECTION_WORDS.test(message)) {
+    return null;
+  }
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const turn = history[i];
+    if (turn.role !== 'user' || typeof turn.content !== 'string') {
+      continue;
+    }
+    const name = mentionedExit(turn.content, exitNames);
+    if (name !== null) {
+      return name;
+    }
+  }
+  return null;
 }
 
 function buildSystemPrompt(exitNames: string[]): string {
@@ -465,6 +586,8 @@ export function toPlainText(reply: string): string {
 interface ChatRequestBody {
   message?: unknown;
   history?: unknown;
+  /** 'english' or 'tagalog' from the app's language switch; absent from older apps. */
+  language?: unknown;
 }
 
 /** Caps the tool loop so a confused model cannot spin forever on our bill. */
@@ -498,14 +621,16 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
   // tool call a moment later joins the request already under way.
   refreshExitNames();
 
-  const language = detectLanguage(message);
-  const namedExit = mentionedExit(message, knownExitNames);
+  const languageChoice = languageChoiceOf(body.language);
+  const language = replyLanguageFor(message, languageChoice);
+  const namedExit =
+    mentionedExit(message, knownExitNames) ?? followUpExit(message, history, knownExitNames);
   const trafficQuestion = asksAboutTraffic(message);
 
   const messages: ChatCompletionMessageParam[] = [
     {
       role: 'system',
-      content: `${buildSystemPrompt(knownExitNames)}\n\n${LANGUAGE_GUIDE[language]}\n${HISTORY_NOTE}`,
+      content: `${buildSystemPrompt(knownExitNames)}\n\n${languageGuide(language, languageChoice)}\n${HISTORY_NOTE}`,
     },
     ...history,
     // The reminder rides on the question itself: with a stiff earlier reply in
@@ -518,6 +643,26 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
     const toolsUsed: string[] = [];
     const moods: ReplyMood[] = [];
     let sentBackToLook = false;
+
+    /** Runs tool calls - the model's or our own - and adds their results to the conversation. */
+    const runCalls = async (calls: ChatCompletionMessageToolCall[]): Promise<void> => {
+      for (const call of calls) {
+        if (call.type !== 'function') {
+          continue;
+        }
+        toolsUsed.push(call.function.name);
+        const result = await runTool(call.function.name, call.function.arguments);
+        const mood = moodOf(result);
+        if (mood !== null) {
+          moods.push(mood);
+        }
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: JSON.stringify(result),
+        });
+      }
+    };
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
       const params: ChatCompletionCreateParamsNonStreaming = {
@@ -591,6 +736,29 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
         });
         continue;
       }
+      /*
+       * Sent back and still nothing looked up: do the lookup here and hand the
+       * model the result. Asked "eh pa-Manila?" after a San Fernando question,
+       * the model ignored the send-back too and answered "4 km/h" from nothing.
+       * Forcing it through tool_choice was tried first; the provider ignores it.
+       */
+      if (calls.length === 0 && toolsUsed.length === 0 && sentBackToLook && (namedExit !== null || trafficQuestion)) {
+        const lookups =
+          namedExit !== null
+            ? directionsAsked(message, history).map((direction) => ({
+                name: 'get_corridor_status',
+                args: { exit_name: namedExit, direction },
+              }))
+            : [{ name: 'get_corridor_overview', args: {} }];
+        const lookupCalls = lookups.map((lookup, index) => ({
+          id: `server-lookup-${round}-${index}`,
+          type: 'function' as const,
+          function: { name: lookup.name, arguments: JSON.stringify(lookup.args) },
+        }));
+        messages.push({ role: 'assistant', content: null, tool_calls: lookupCalls });
+        await runCalls(lookupCalls);
+        continue;
+      }
 
       if (calls.length === 0) {
         const reply = toPlainText(choice.content ?? '');
@@ -645,23 +813,7 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
       }
 
       messages.push(choice);
-
-      for (const call of calls) {
-        if (call.type !== 'function') {
-          continue;
-        }
-        toolsUsed.push(call.function.name);
-        const result = await runTool(call.function.name, call.function.arguments);
-        const mood = moodOf(result);
-        if (mood !== null) {
-          moods.push(mood);
-        }
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: JSON.stringify(result),
-        });
-      }
+      await runCalls(calls);
     }
 
     // Ran out of rounds while still asking for tools, so the model never
