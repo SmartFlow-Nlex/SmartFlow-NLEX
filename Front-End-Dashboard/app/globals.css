@@ -10901,6 +10901,21 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 .sandbox-compare-row .d { text-align: right; font-weight: 700; font-size: 0.72rem; color: var(--text-muted); }
 .sandbox-compare-row .d.good { color: #16a34a; }
 .sandbox-compare-row .d.bad { color: var(--color-danger); }
+/* Names the was/now columns once, above the metric rows, rather than making
+   the reader infer "before" and "after" from the arrow between them. */
+.sandbox-compare-labels {
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border-default);
+}
+.sandbox-compare-labels .was,
+.sandbox-compare-labels .now {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
 
 .sandbox-compare-none {
   display: flex;
@@ -11070,6 +11085,103 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   outline: 2px solid color-mix(in srgb, var(--page-accent, var(--brand-primary)) 55%, transparent);
   outline-offset: 1px;
   border-color: transparent;
+}
+
+/* TimeField: HH / MM / SS as separate steppable boxes rather than one free-typed string. Every
+   piece (digits, arrow stack, the ":" between segments) shares one explicit height (22px) so they
+   line up on one row instead of each sizing itself from its own padding/line-height and drifting
+   a px or two out of line with its neighbours — which is what made the control look cramped and
+   uneven rather than merely compact. */
+.sandbox-time-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.sandbox-time-sep {
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.sandbox-time-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.sandbox-time-seg-input {
+  box-sizing: border-box;
+  width: 1.7em;
+  height: 22px;
+  padding: 0 3px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.sandbox-time-seg-input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--page-accent, var(--brand-primary)) 55%, transparent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+/* The two tiny steppers, stacked beside the digits like a native number input's — its own pill,
+   not fused to the digit box, so the eye reads "value, then its control" rather than one smeared
+   shape. */
+.sandbox-time-seg-arrows {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex-direction: column;
+  height: 22px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.sandbox-time-seg-arrows button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 11px;
+  line-height: 1;
+  font-size: 0.5rem;
+  color: var(--text-muted);
+  background: var(--bg-surface-hover);
+  cursor: pointer;
+}
+.sandbox-time-seg-arrows button:hover {
+  color: var(--text-primary);
+  background: var(--border-default);
+}
+.sandbox-time-seg-arrows button:first-child {
+  border-bottom: 1px solid var(--border-default);
+}
+/* On the dark glass HUD (full screen), the light chrome above would read as a
+   mismatched white chip on a dark bar — match the translucent glass instead. */
+.sandbox-main.is-expanded .sandbox-time-seg-input,
+.sandbox-main.is-expanded .sandbox-time-seg-arrows {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #e8eefc;
+}
+.sandbox-main.is-expanded .sandbox-time-seg-arrows button {
+  color: #93a4c4;
+  background: transparent;
+}
+.sandbox-main.is-expanded .sandbox-time-seg-arrows button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+.sandbox-main.is-expanded .sandbox-time-seg-arrows button:first-child {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+.sandbox-main.is-expanded .sandbox-time-sep {
+  color: #93a4c4;
 }
 
 /* --- vehicle legend swatches ---------------------------------------------

@@ -19,6 +19,7 @@ import { getIncidentSpatialFromDb } from "../services/incident-spatial.service.j
 import { getIncidentSeverityFromDb } from "../services/incident-severity.service.js";
 import { getIncidentWeatherSpeedFromDb } from "../services/incident-weather-speed.service.js";
 import { getEventBreakdownFromDb } from "../services/incident-events.service.js";
+import { getBreakdownResponseFromDb } from "../services/breakdown-response.service.js";
 
 const IncidentAnalyticsQuerySchema = z.object({
   months: z.enum(["3", "12", "all"]).optional().default("12"),
@@ -193,6 +194,24 @@ export const getIncidentSeverity = async (_req: Request, res: Response) => {
     return res.status(503).json({
       success: false,
       message: "Severity/clearance models unavailable: database not reachable or the pipeline hasn't written yet",
+    });
+  }
+  res.json({ success: true, source: "database", data });
+};
+
+// GET /api/incident/breakdown-response — the model from
+// train_breakdown_response_models.py: Cox PH vs XGBoost competing on a
+// breakdown deployment's response_time_min, reported as Actual vs Predicted
+// median response minutes by cause and by service — the trained-model
+// counterpart to /event-breakdown's descriptive-only numbers. Single
+// "as of the last training run" snapshot, no query params, same as
+// /spatial and /severity.
+export const getIncidentBreakdownResponse = async (_req: Request, res: Response) => {
+  const data = await getBreakdownResponseFromDb();
+  if (!data) {
+    return res.status(503).json({
+      success: false,
+      message: "Breakdown response-time model unavailable: database not reachable or the pipeline hasn't written yet",
     });
   }
   res.json({ success: true, source: "database", data });

@@ -205,18 +205,76 @@ function clockLabel(totalMin: number): string {
 }
 
 /**
- * A time-of-day box (HH:MM, or HH:MM:SS when `step` asks for second precision) that commits on
- * blur or Enter, like NumberField, so a half-typed time is never acted on. It speaks in SECONDS
- * since midnight and clamps to [minS, maxS]: the run only goes forward from the top of the
- * selected hour, and one day has no times past 23:59:59. `step` defaults to 60 (minute
+ * One HH / MM / SS segment of TimeField: a two-digit box that steps by ±1, wrapping within its
+ * own 0..max range (23 for hours, 59 for minutes/seconds) — the up/down buttons, or the arrow
+ * keys while the box has focus, move only this unit, the way setting an alarm clock does (an
+ * hour stepping past 23 wraps to 0 rather than carrying into the next day). Typed digits replace
+ * the segment outright on blur or Enter, clamped to its own range, same half-typed-value-never-
+ * acted-on rule as NumberField/TimeField.
+ */
+function TimeSegment({
+  value,
+  max,
+  onStep,
+  onType,
+  scn,
+  label,
+}: {
+  value: number;
+  max: number;
+  onStep: (delta: 1 | -1) => void;
+  onType: (digits: number) => void;
+  scn: string;
+  label: string;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = String(value).padStart(2, "0");
+  const commit = () => {
+    if (draft === null || draft === "") { setDraft(null); return; }
+    onType(Math.min(max, Math.max(0, Number(draft))));
+    setDraft(null);
+  };
+  return (
+    <span className="sandbox-time-seg">
+      <input
+        type="text"
+        inputMode="numeric"
+        className="sandbox-time-seg-input"
+        aria-label={label}
+        data-scn={scn}
+        value={draft ?? shown}
+        onChange={(e) => setDraft(e.target.value.replace(/\D/g, "").slice(-2))}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape") setDraft(null);
+          else if (e.key === "ArrowUp") { e.preventDefault(); onStep(1); }
+          else if (e.key === "ArrowDown") { e.preventDefault(); onStep(-1); }
+        }}
+      />
+      <span className="sandbox-time-seg-arrows">
+        <button type="button" tabIndex={-1} aria-label={`${label} up`} onClick={() => onStep(1)}>▲</button>
+        <button type="button" tabIndex={-1} aria-label={`${label} down`} onClick={() => onStep(-1)}>▼</button>
+      </span>
+    </span>
+  );
+}
+
+/**
+ * A time-of-day control — separate HH / MM (/ SS when `step` asks for second precision) boxes,
+ * each steppable on its own via TimeSegment — rather than one HH:MM:SS text box: editing one unit
+ * no longer means retyping the whole time or hitting it exactly in one string. Speaks in SECONDS
+ * since midnight and clamps the result to [minS, maxS]: the run only goes forward from the top of
+ * the selected hour, and one day has no times past 23:59:59. `step` defaults to 60 (minute
  * granularity, no seconds shown) for the scenario form's own use, where a start time has never
  * needed finer than a minute.
  *
- * Plain text, not `<input type="time">`: a native time control's displayed format (12-hour AM/PM
- * vs. 24-hour) follows the browser/OS locale, not the page. `lang="en-GB"` on the input was tried
- * to force Chromium's own picker chrome into 24-hour and did not hold on every machine (still
- * showed AM/PM on Windows). A plain text box has no native picker to disagree with it — what's
- * rendered here, always HH:MM[:SS] in 24-hour, is exactly what shows, everywhere.
+ * Built from plain text boxes, not `<input type="time">`: a native time control's displayed
+ * format (12-hour AM/PM vs. 24-hour) follows the browser/OS locale, not the page. `lang="en-GB"`
+ * on the input was tried to force Chromium's own picker chrome into 24-hour and did not hold on
+ * every machine (still showed AM/PM on Windows). Plain text boxes have no native picker to
+ * disagree with them — what's rendered here, always HH:MM[:SS] in 24-hour, is exactly what shows,
+ * everywhere.
  */
 export function TimeField({
   valueS,
@@ -233,32 +291,45 @@ export function TimeField({
   onCommit: (totalS: number) => void;
   scn: string;
 }) {
-  const [draft, setDraft] = useState<string | null>(null);
   const rounded = Math.round(valueS);
   const withSeconds = step < 60;
-  const shown =
-    `${String(Math.floor(rounded / 3600) % 24).padStart(2, "0")}:${String(Math.floor(rounded / 60) % 60).padStart(2, "0")}` +
-    (withSeconds ? `:${String(rounded % 60).padStart(2, "0")}` : "");
-  const commit = () => {
-    if (draft === null) return;
-    const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(draft);
-    setDraft(null);
-    if (m) onCommit(Math.min(maxS, Math.max(minS, Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3] ?? 0))));
-  };
+  const hh = Math.floor(rounded / 3600) % 24;
+  const mm = Math.floor(rounded / 60) % 60;
+  const ss = rounded % 60;
+  const clampCommit = (totalS: number) => onCommit(Math.min(maxS, Math.max(minS, totalS)));
   return (
-    <input
-      type="text"
-      className="sandbox-km-input"
-      data-scn={scn}
-      placeholder={withSeconds ? "HH:MM:SS" : "HH:MM"}
-      value={draft ?? shown}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-        else if (e.key === "Escape") setDraft(null);
-      }}
-    />
+    <span className="sandbox-time-field">
+      <TimeSegment
+        value={hh}
+        max={23}
+        label="Hour"
+        scn={`${scn}-h`}
+        onStep={(d) => clampCommit((((hh + d) % 24) + 24) % 24 * 3600 + mm * 60 + ss)}
+        onType={(digits) => clampCommit(digits * 3600 + mm * 60 + ss)}
+      />
+      <span className="sandbox-time-sep">:</span>
+      <TimeSegment
+        value={mm}
+        max={59}
+        label="Minute"
+        scn={`${scn}-m`}
+        onStep={(d) => clampCommit(hh * 3600 + ((((mm + d) % 60) + 60) % 60) * 60 + ss)}
+        onType={(digits) => clampCommit(hh * 3600 + digits * 60 + ss)}
+      />
+      {withSeconds && (
+        <>
+          <span className="sandbox-time-sep">:</span>
+          <TimeSegment
+            value={ss}
+            max={59}
+            label="Second"
+            scn={`${scn}-s`}
+            onStep={(d) => clampCommit(hh * 3600 + mm * 60 + ((((ss + d) % 60) + 60) % 60))}
+            onType={(digits) => clampCommit(hh * 3600 + mm * 60 + digits)}
+          />
+        </>
+      )}
+    </span>
   );
 }
 

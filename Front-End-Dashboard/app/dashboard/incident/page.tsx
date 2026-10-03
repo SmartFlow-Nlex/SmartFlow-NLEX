@@ -13,14 +13,10 @@ import CustomSelect from "../../../components/dashboard/CustomSelect";
 import PageHeader from "../../../components/dashboard/PageHeader";
 import PredictiveIncidentChart from "../../../components/dashboard/PredictiveIncidentChart";
 import PredictiveCorridorChart from "../../../components/dashboard/PredictiveCorridorChart";
-import IncidentSeverityModels from "../../../components/dashboard/IncidentSeverityModels";
-import SecondaryIncidentRiskPanel from "../../../components/dashboard/SecondaryIncidentRiskPanel";
+import BreakdownResponseModel from "../../../components/dashboard/BreakdownResponseModel";
 import PrescriptiveDeploymentPanel from "../../../components/dashboard/PrescriptiveDeploymentPanel";
+import PatrolAlertWindowPanel from "../../../components/dashboard/PatrolAlertWindowPanel";
 import InfoTooltip from "../../../components/dashboard/InfoTooltip";
-import SecondaryRiskMitigationPanel from "../../../components/dashboard/SecondaryRiskMitigationPanel";
-import IncidentTypePriorityPanel from "../../../components/dashboard/IncidentTypePriorityPanel";
-import VmsAdvisoryPanel from "../../../components/dashboard/VmsAdvisoryPanel";
-import ClearanceSimulatorPanel from "../../../components/dashboard/ClearanceSimulatorPanel";
 import EventBreakdownPanel from "../../../components/dashboard/EventBreakdownPanel";
 import type { CorridorForecastPoint, KmSegmentForecastPoint } from "../../../components/dashboard/incidentPredictive.shared";
 import DateRangePicker from "../traffic/components/DateRangePicker";
@@ -813,19 +809,7 @@ export default function IncidentPage() {
               {weatherFilter}
             </>
           )}
-          {activeTab === "Prescriptive" && (
-            <>
-              {rangeFilter}
-              {/* .filterNote, not .filterLabel: the label class carries
-                  white-space:nowrap for one-word controls, and on this
-                  sentence it ran the text off the screen. A merge had put
-                  the label class back once already. */}
-              <span className={styles.filterNote}>
-                Applies to Resource Staging and VMS Advisory Routing — clearance-time recommendations come from a
-                trained model and don&apos;t change per Range.
-              </span>
-            </>
-          )}
+          {activeTab === "Prescriptive" && rangeFilter}
           <span className={styles.spacer} />
           <div className={styles.modeTabs}>
             {(["Descriptive", "Predictive", "Prescriptive"] as const).map((t) => (
@@ -865,12 +849,7 @@ export default function IncidentPage() {
         )}
         {activeTab === "Predictive" && (
           <div className={styles.spanHalf}>
-            <SecondaryIncidentRiskPanel />
-          </div>
-        )}
-        {activeTab === "Predictive" && (
-          <div className={styles.spanFull}>
-            <IncidentSeverityModels />
+            <BreakdownResponseModel />
           </div>
         )}
         {activeTab === "Prescriptive" && (
@@ -883,27 +862,12 @@ export default function IncidentPage() {
           </div>
         )}
         {activeTab === "Prescriptive" && (
-          <div className={styles.spanHalf}>
-            <SecondaryRiskMitigationPanel />
-          </div>
-        )}
-        {activeTab === "Prescriptive" && (
-          <div className={styles.spanHalf}>
-            <VmsAdvisoryPanel
+          <div className={styles.spanFull}>
+            <PatrolAlertWindowPanel
               months={rangeMode === "custom" ? "all" : rangeMode}
               from={rangeMode === "custom" ? customFrom : undefined}
               to={rangeMode === "custom" ? customTo : undefined}
             />
-          </div>
-        )}
-        {activeTab === "Prescriptive" && (
-          <div className={styles.spanHalf}>
-            <IncidentTypePriorityPanel />
-          </div>
-        )}
-        {activeTab === "Prescriptive" && (
-          <div className={styles.spanHalf}>
-            <ClearanceSimulatorPanel />
           </div>
         )}
       </section>

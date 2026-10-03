@@ -9,7 +9,7 @@ import {
   explainFeature,
   incidentModelsNarrative,
   clearanceNarrative,
-  incidentPriorityNarrative,
+  breakdownResponseNarrative,
   corridorRiskNarrative,
   highIncidentDayNarrative,
 } from "../controllers/ai-insight.controller.js";
@@ -34,7 +34,7 @@ router.post("/explain", asyncHandler(explainFeature));
  * is scored on the forecast scale -- see ai-insight.incident.service.ts. */
 router.post("/incident-models-narrative", asyncHandler(incidentModelsNarrative));
 router.post("/clearance-narrative", asyncHandler(clearanceNarrative));
-router.post("/incident-priority-narrative", asyncHandler(incidentPriorityNarrative));
+router.post("/breakdown-response-narrative", asyncHandler(breakdownResponseNarrative));
 router.post("/corridor-risk-narrative", asyncHandler(corridorRiskNarrative));
 router.post("/high-incident-day-narrative", asyncHandler(highIncidentDayNarrative));
 
