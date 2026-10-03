@@ -98,6 +98,29 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
 }
 
 /**
+ * The user a bearer token belongs to, checked with Supabase, or null when the
+ * token is missing, invalid, Supabase is not configured, or it does not answer
+ * in time. For the audit log, which must name who did something without ever
+ * slowing the action down: answers are cached for five minutes per token, and a
+ * lookup gives up after four seconds. Same client and same least-privilege
+ * fallback role as authenticateToken.
+ */
+const verified = new Map<string, { at: number; user: { email: string; role: string } | null }>();
+export async function verifiedUser(token: string | undefined): Promise<{ email: string; role: string } | null> {
+  const supabase = getSupabase();
+  if (!token || !supabase) return null;
+  const hit = verified.get(token);
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.user;
+  const lookup = supabase.auth.getUser(token).then(({ data, error }) =>
+    error || !data.user ? null : { email: data.user.email ?? data.user.id, role: data.user.user_metadata?.role || FALLBACK_ROLE });
+  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 4_000));
+  const user = await Promise.race([lookup.catch(() => null), timeout]);
+  if (verified.size > 500) verified.clear();
+  verified.set(token, { at: Date.now(), user });
+  return user;
+}
+
+/**
  * Restrict a route to the listed roles.
  *
  * Always 403: the caller authenticated successfully and the token is current,

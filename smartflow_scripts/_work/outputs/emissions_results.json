@@ -1,11 +1,11 @@
 {
-  "generated": "2026-09-05",
+  "generated": "2026-10-03",
   "source": "gold.fact_emissions_hourly (rebuilt from gold.fact_traffic_hourly)",
   "series": {
-    "days": 1461,
+    "days": 1642,
     "from": "2022-01-01",
-    "to": "2025-12-31",
-    "mean_tonnes_per_day": 425.20604514049285
+    "to": "2026-06-30",
+    "mean_tonnes_per_day": 428.89234741443363
   },
   "protocol": {
     "origins": 42,
@@ -16,60 +16,74 @@
   },
   "baseline": {
     "name": "SeasonalNaive",
-    "wmape": 10.441545526720226
+    "wmape": 12.387795744469273
   },
   "results": [
     {
-      "model": "Polynomial",
+      "model": "GBR",
       "n": 294,
-      "mape": 8.579012653393615,
-      "wmape": 6.789944776520689,
-      "rmse": 47.71144354372946,
-      "mae": 29.780135574161168,
-      "mase": 0.8184764817698074,
-      "r2": 0.655991524374552,
+      "mape": 9.626363967997547,
+      "wmape": 7.492360535154632,
+      "rmse": 54.84043201799552,
+      "mae": 33.907391796385525,
+      "mase": 0.9082633304523374,
+      "r2": 0.5774589856921323,
       "accepted": true,
       "rank": 1,
       "tied_with_best": true,
-      "diagnosis": "tied with GBR - within 0.15pp WMAPE, the measured run-to-run jitter, so the ordering between them is not meaningful"
+      "diagnosis": null
     },
     {
-      "model": "GBR",
+      "model": "Derived",
       "n": 294,
-      "mape": 8.20622369202642,
-      "wmape": 6.79161216300274,
-      "rmse": 48.72788198105246,
-      "mae": 29.78744859320983,
-      "mase": 0.8186774725976416,
-      "r2": 0.6411779700772791,
-      "accepted": true,
+      "mape": 10.700208943620154,
+      "wmape": 8.39079419229407,
+      "rmse": 59.97142533999027,
+      "mae": 37.973338953192716,
+      "mase": 1.0171761813215858,
+      "r2": 0.4946923451202849,
+      "accepted": false,
       "rank": 2,
-      "tied_with_best": true,
-      "diagnosis": "tied with Polynomial - within 0.15pp WMAPE, the measured run-to-run jitter, so the ordering between them is not meaningful"
+      "tied_with_best": false,
+      "diagnosis": null
     },
     {
       "model": "LSTM",
       "n": 294,
-      "mape": 10.46120870113061,
-      "wmape": 8.188650551768712,
-      "rmse": 58.290759635281,
-      "mae": 35.914743289865235,
-      "mase": 0.9870798827745998,
-      "r2": 0.48652008634297106,
-      "accepted": true,
+      "mape": 10.848451223100039,
+      "wmape": 8.848576553338047,
+      "rmse": 58.78049497923264,
+      "mae": 40.04507666530112,
+      "mase": 1.0726709656306481,
+      "r2": 0.5145621747799097,
+      "accepted": false,
       "rank": 3,
+      "tied_with_best": false,
+      "diagnosis": null
+    },
+    {
+      "model": "Polynomial",
+      "n": 294,
+      "mape": 11.699057151222215,
+      "wmape": 9.728127309546784,
+      "rmse": 62.78381568516314,
+      "mae": 44.02556745397101,
+      "mase": 1.1792947319840823,
+      "r2": 0.44618776187613496,
+      "accepted": false,
+      "rank": 4,
       "tied_with_best": false,
       "diagnosis": null
     },
     {
       "model": "SeasonalNaive",
       "n": 294,
-      "mape": 20.83494510860679,
-      "wmape": 15.997542608509102,
-      "rmse": 103.16668183687854,
-      "mae": 70.163897265,
-      "mase": 1.9283827515729166,
-      "r2": -0.6084329244463518,
+      "mape": 11.824669596100437,
+      "wmape": 9.829243375285818,
+      "rmse": 76.80236715796408,
+      "mae": 44.48317784816325,
+      "mase": 1.1915525530271909,
+      "r2": 0.17126372807984291,
       "accepted": false,
       "rank": null,
       "tied_with_best": false,
@@ -78,17 +92,17 @@
     {
       "model": "Climatology",
       "n": 294,
-      "mape": 22.116937772612946,
-      "wmape": 19.231230792767843,
-      "rmse": 100.51217037604437,
-      "mae": 84.34658588785716,
-      "mase": 2.318179401664217,
-      "r2": -0.5267268071469076,
+      "mape": 20.601669676390213,
+      "wmape": 18.10364949630938,
+      "rmse": 97.72331062655816,
+      "mae": 81.92979149035712,
+      "mase": 2.1946195605121632,
+      "r2": -0.34172489668140527,
       "accepted": false,
       "rank": null,
       "tied_with_best": false,
       "diagnosis": "baseline, not a candidate"
     }
   ],
-  "champion": "Polynomial"
+  "champion": "GBR"
 }

@@ -33,7 +33,11 @@ import {
   type Role,
 } from "../../lib/auth-access";
 import { SESSION_LOST_EVENT } from "../../lib/api";
+import { installBackendAuth, logActivity, logPageView } from "../../lib/backend-auth";
 import ThemeToggle from "../../components/dashboard/ThemeToggle";
+
+// Before any page fetches: every request to the backend carries the signed-in user, for the audit log.
+if (typeof window !== "undefined") installBackendAuth();
 
 // The sidebar is the product's spine, so it is grouped by what the user is
 // trying to do rather than listed flat. Admin utilities sit in their own group
@@ -146,6 +150,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
    */
   const confirmLogout = useCallback(async () => {
     setLoggingOut(true);
+    // The audit entry goes first: it needs the session to name the user.
+    await logActivity({ type: "session.logout" });
     try {
       await supabase.auth.signOut();
     } catch {
@@ -179,6 +185,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (authState !== "authed" || !userRole) return;
     if (!canAccess(userRole, pathname)) router.replace(FALLBACK_ROUTE);
   }, [authState, pathname, userRole, router]);
+
+  // Which pages are actually used: the audit log's page views, once signed in and allowed there.
+  useEffect(() => {
+    if (authState === "authed" && userRole && pathname && canAccess(userRole, pathname)) logPageView(pathname);
+  }, [authState, userRole, pathname]);
 
   // Detect mobile breakpoint
   useEffect(() => {

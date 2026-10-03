@@ -17,10 +17,11 @@ import { readFileSync } from "node:fs";
 import calibrationJson from "./calibration.json";
 import { CLASS_META, TrafficSim, type Interventions, type Metrics } from "../simulation";
 import { combineBaselines, combineMetrics, flowWeightedSpeed } from "../bothMetrics";
-import { drawBorrowedLanes, drawMovableBarrier, drawScenes, drawWater, drawWeather, hasSceneArt, type SceneCtx, type SceneGeometry } from "../sceneArt";
-import { borrowedLanes, defaultStretch, planStretch, planZipper, REALLOCATION_NAME, zipperCounts, zipperHolds, type StretchLimits } from "../zipper";
+import { drawBorrowedLanes, drawScenes, drawWater, drawWeather, hasSceneArt, type SceneCtx, type SceneGeometry } from "../sceneArt";
+import { borrowedLanes, crossoverM, defaultStretch, planStretch, planZipper, REALLOCATION_NAME, zipperCounts, zipperHolds, type StretchLimits } from "../zipper";
 import { drawMotorcycle, type BikeCtx } from "../motorcycleArt";
 import { shapeForecastMix, type ClassShares } from "../forecastMix";
+import { getRecommendation, CLOSURE_LANE_CAPACITY_VEH_H, type Supply } from "../recommendation";
 import { BUS_PAINTS, CAB_PAINTS, CAR_PAINTS, MOTORCYCLE_PAINTS, PAINT_WHITE, TRAILER_PAINTS, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint } from "../vehiclePaint";
 import {
   ASSUMPTIONS,
@@ -1674,9 +1675,9 @@ check(
   );
   check("page: the console hook is gone now that the panel exists (nothing is exposed on window)", !/sandboxScenarios/.test(pageSource) && !/Object\.defineProperty\(window/.test(pageSource));
   check(
-    "page: each direction's recommendation reads that direction's OWN effective state (NB's from nb, SB's from sb — never one direction's numbers under the other's heading)",
-    /NB: getRecommendation\(nb\.metrics, nb\.baseline, \[\.\.\.nb\.eff\.closedLanes\], nb\.effIncidentCount, nb\.eff\.speedLimitKmh\)/.test(pageSource) &&
-      /SB: getRecommendation\(sb\.metrics, sb\.baseline, \[\.\.\.sb\.eff\.closedLanes\], sb\.effIncidentCount, sb\.eff\.speedLimitKmh\)/.test(pageSource),
+    "page: each direction's recommendation reads that direction's OWN effective state and inflow (NB's from nb, SB's from sb — never one direction's numbers under the other's heading)",
+    /NB: getRecommendation\(nb\.metrics, nb\.baseline, \[\.\.\.nb\.eff\.closedLanes\], nb\.effIncidentCount, nb\.eff\.speedLimitKmh, \{ inflow: nb\.inflow, inflowFrom: nb\.inflowFrom, anchor: nb\.dataAnchor \}\)/.test(pageSource) &&
+      /SB: getRecommendation\(sb\.metrics, sb\.baseline, \[\.\.\.sb\.eff\.closedLanes\], sb\.effIncidentCount, sb\.eff\.speedLimitKmh, \{ inflow: sb\.inflow, inflowFrom: sb\.inflowFrom, anchor: sb\.dataAnchor \}\)/.test(pageSource),
   );
   check(
     "hook: anyIntervention and the folded before/after / event-list summaries are built from the effective state, per direction",
@@ -1837,7 +1838,8 @@ check(
   check("click routing: SB's drawn slot is un-reversed back to the engine lane (SB is drawn with lane 1 at the bottom of its block)", /const lane = both && target === "SB" \? lanes - 1 - drawnSlot : drawnSlot;/.test(clickSource));
   check(
     "Both mode layout: Southbound (right to left) is the TOP carriageway and Northbound (left to right) the bottom one, with the median and shared km axis between them, and the tab opens on Both",
-    /const sbRoadTop = CANVAS_PAD \+ rampGutter \+ Math\.max\(0, \(cssH - CANVAS_PAD \* 2 - usedH\) \/ 2\);\s*const medianTop = sbRoadTop \+ sbRoadH;\s*const nbRoadTop = medianTop \+ MEDIAN_GUTTER_PX;/.test(pageSource) &&
+    // Each carriageway keeps its own gutter (its plazas and service areas hang off its outer edge): SB's above it, NB's below.
+    /const sbRoadTop = CANVAS_PAD \+ gutterSB \+ Math\.max\(0, \(cssH - CANVAS_PAD \* 2 - usedH\) \/ 2\);\s*const medianTop = sbRoadTop \+ sbRoadH;\s*const nbRoadTop = medianTop \+ MEDIAN_GUTTER_PX;/.test(pageSource) &&
       /useState<Direction \| "Both">\("Both"\)/.test(pageSource) && !/useState<Direction \| "Both">\("NB"\)/.test(pageSource),
   );
   check(
@@ -2003,7 +2005,8 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   });
   const base: SceneMark = {
     eventId: "e1", name: "x", kind: "speed_zone", state: "active",
-      secondsUntilStart: null, xM: 300, lane: null, text: "", family: "rain", phaseId: "active", phaseFraction: 0.5,
+      secondsUntilStart: null,
+      secondsSinceStart: 0, xM: 300, lane: null, text: "", family: "rain", phaseId: "active", phaseFraction: 0.5,
     closedLanes: [], stretch: null, intensity: "heavy", capKmh: 60, vehicle: null,
   };
   const paintWeather = (marks: readonly SceneMark[], t: number): Recorder => { const r = new Recorder(); drawWeather(geom(r, t), marks); return r; };
@@ -2045,7 +2048,9 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   const blocked = paintScene([collision]);
   const towing = paintScene([{ ...collision, phaseId: "tow", phaseFraction: 0.6 }]);
   const clearing = paintScene([{ ...collision, phaseId: "clearing", closedLanes: [], stretch: null }]);
-  check("scene art: a wreck is painted while lanes are blocked, more is painted with the tow trucks in, and far less once only the cones remain", blocked.calls.length > 300 && towing.calls.length > blocked.calls.length * 0.9 && clearing.calls.length < blocked.calls.length / 2, `${blocked.calls.length} / ${towing.calls.length} / ${clearing.calls.length}`);
+  // The wrecked vehicles and the responders are agents now, drawn with the traffic (simulation.ts crashAt /
+  // dispatchResponder), so the scene layer paints only what stands around them: people, cones, flares.
+  check("scene art: people and cones are painted while lanes are blocked, more once the tow crew is working, and less once only the cones remain (the vehicles themselves are agents, drawn with the traffic)", blocked.calls.length > 40 && towing.calls.length > blocked.calls.length && clearing.calls.length < blocked.calls.length, `${blocked.calls.length} / ${towing.calls.length} / ${clearing.calls.length}`);
   check("scene art: an event holding no lane and not clearing paints nothing (no wreck the engine is not honouring)", paintScene([{ ...collision, closedLanes: [], stretch: null }]).calls.length === 0);
   check("scene art: a pending event paints nothing (it keeps the faint marker)", paintScene([{ ...collision, state: "pending" }]).calls.length === 0);
   check("scene art: hazard lights and beacons blink — the picture changes with the clock (and repeats exactly for the same clock)", paintScene([collision], 1.0).calls.join("|") !== paintScene([collision], 1.25).calls.join("|") && paintScene([collision], 1.0).calls.join("|") === paintScene([collision], 1.0).calls.join("|"));
@@ -2057,16 +2062,41 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   );
   const roadworks = paintScene([{ ...collision, family: "scheduled_roadworks", phaseId: "active" }]);
   check("scene art: roadworks paint a work zone — cones, barrels, a truck and its lit arrow board (many arcs and filled rects)", roadworks.count("arc") > 15 && roadworks.count("fillRect") > 5);
-  const barrierA = new Recorder();
-  drawMovableBarrier(barrierA, 800, 200, 6, 1, 1);
-  const barrierB = new Recorder();
-  drawMovableBarrier(barrierB, 800, 200, 6, 3, 1);
-  check("reallocation art: the movable barrier is a chain of segments with a transfer vehicle that MOVES along it", barrierA.count("arcTo") > 100 && barrierA.calls.join("|") !== barrierB.calls.join("|"));
   const lanesR = new Recorder();
-  drawBorrowedLanes(geom(lanesR, 1), 1, "REALLOCATED");
+  drawBorrowedLanes(geom(lanesR, 1), 1, "REALLOCATED", 1);
   const noLanes = new Recorder();
-  drawBorrowedLanes(geom(noLanes, 1), 0, "REALLOCATED");
-  check("reallocation art: borrowed lanes are marked (wash, chevrons, an edge line and the scheme's name); none borrowed paints nothing", lanesR.count("fillRect") >= 1 && lanesR.count("fillText") === 1 && lanesR.count("stroke") > 5 && noLanes.calls.length === 0);
+  drawBorrowedLanes(geom(noLanes, 1), 0, "REALLOCATED", 1);
+  check("reallocation art: borrowed lanes are marked (wash, chevrons, a line of traffic cones on the edge away from the median, and the scheme's name); none borrowed paints nothing", lanesR.count("fillRect") >= 1 && lanesR.count("fillText") === 1 && lanesR.count("stroke") > 5 && lanesR.count("arc") > 30 && noLanes.calls.length === 0);
+}
+
+// --- lane reallocation in the engine: lent lanes are entered and left only at the crossovers
+{
+  check("lane reallocation: the crossover is the recorded 150 m, or a fifth of a stretch too short for two", crossoverM(1000) === 150 && crossoverM(500) === 100 && ASSUMPTIONS.ZIPPER_LANES.value.crossoverM === 150);
+  const len = 1000;
+  const lent = { lanes: 1, crossM: crossoverM(len) };
+  const e = new TrafficSim({ length: len, laneCount: 5, inflowVehPerHour: 6000, seed: 12345, warmupS: 60, ramps: [{ x: 450, onVehPerHour: 0, offFraction: 0.08, name: "mid exit" }], borrowed: lent });
+  const was = new Map<number, number>();
+  let outside = 0;
+  let into = 0;
+  let outOf = 0;
+  let shutIn = 0;
+  for (let t = 0; t < 300; t += 0.05) {
+    e.step(0.05);
+    for (const v of e.vehicles) {
+      const p = was.get(v.id);
+      if (p !== undefined && (p < lent.lanes) !== (v.lane < lent.lanes)) {
+        if (v.x > lent.crossM && v.x < len - lent.crossM) outside++;
+        else if (v.lane < lent.lanes) into++;
+        else outOf++;
+      }
+      if (v.lane < lent.lanes && v.exitAtX != null && v.exitAtX < len - lent.crossM) shutIn++;
+      was.set(v.id, v.lane);
+    }
+  }
+  check(
+    `lane reallocation (engine): traffic moves between its own lanes and the lent one only at the crossovers (${outside} elsewhere; ${into} in, ${outOf} out), and nobody leaving before the far one is in it (${shutIn})`,
+    outside === 0 && into > 0 && outOf > 0 && shutIn === 0,
+  );
 }
 
 // --- lane reallocation (was zipper lane / counterflow): the lane-transfer rules, pure
@@ -2137,9 +2167,9 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check("lane reallocation: the shared km axis gets a dark chip behind its numbers while the striped barrier is drawn", /backdrop: zipper !== null/.test(pageSource));
   const resetHookSource = readFileSync(new URL("../useDirectionSim.ts", import.meta.url), "utf8");
   check(
-    "reset: the button resets EVERYTHING, scenarios included — both carriageways (resetAll), a lane reallocation undone, a command proposal and old confidence result dropped, and the Add-event form remounted on its defaults",
+    "reset: the button resets EVERYTHING, scenarios included — both carriageways (resetAll), a lane reallocation undone, a command proposal and old confidence result dropped, the Add-event form remounted on its defaults, and the replay recording cleared (its frames belong to the run that was just replaced)",
     /onClick=\{resetEverything\}/.test(pageSource) && !/onClick=\{\(\) => \{ nb\.rebuild\(\); sb\.rebuild\(\); \}\}/.test(pageSource) &&
-      /const resetEverything = \(\) => \{\s*endReallocation\(\);\s*setReallocFrom\(null\);\s*setReallocTo\(null\);\s*nb\.resetAll\(\);\s*sb\.resetAll\(\);\s*disarmPlacing\(\);\s*setPlan\(null\);\s*setCommandError\(null\);\s*setRepResult\(null\);\s*setScenarioFormKey\(\(k\) => k \+ 1\);\s*\};/.test(pageSource) &&
+      /const resetEverything = \(\) => \{\s*endReallocation\(\);\s*setReallocFrom\(null\);\s*setReallocTo\(null\);\s*nb\.resetAll\(\);\s*sb\.resetAll\(\);\s*disarmPlacing\(\);\s*setPlan\(null\);\s*setCommandError\(null\);\s*setRepResult\(null\);\s*setScenarioFormKey\(\(k\) => k \+ 1\);(?:\s*\/\/[^\n]*)*\s*replayRef\.current\.NB\.clear\(\);\s*replayRef\.current\.SB\.clear\(\);\s*setReplayIndex\(null\);\s*setReplayLen\(0\);\s*setReplayHasEvent\(false\);\s*\};/.test(pageSource) &&
       /<ScenarioPanel\s+key=\{scenarioFormKey\}/.test(pageSource),
   );
   check(
@@ -2271,8 +2301,8 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   const operatorText = [pageSource, artSource, panelSource, previewSource, readFileSync(new URL("./assumptions.ts", import.meta.url), "utf8"), readFileSync(new URL("./catalogue.ts", import.meta.url), "utf8"), readFileSync(new URL("../../../globals.css", import.meta.url), "utf8")].join("\n");
   check("lane reallocation: nothing the operator can read still calls it a zipper lane or counterflow (UI strings, canvas labels, assumption text)", !/Zipper lane|ZIPPER LANE|Counterflow|COUNTERFLOW|zipper lane|counterflow/.test(operatorText));
   check(
-    "lane reallocation: the control is titled with the name and its \"i\" states the model — 'Lanes are reassigned between carriageways; vehicles do not cross the median.' — and warns what a change restarts",
-    /<InfoLabel info=\{REALLOCATION_INFO\}>\{REALLOCATION_NAME\}<\/InfoLabel>/.test(pageSource) && /Lanes are reassigned between carriageways; vehicles do not cross the median\./.test(pageSource) &&
+    "lane reallocation: the control is titled with the name and its \"i\" states the model — the other carriageway's inner lanes, entered and left at a median opening at each end — and warns what a change restarts",
+    /<InfoLabel info=\{REALLOCATION_INFO\}>\{REALLOCATION_NAME\}<\/InfoLabel>/.test(pageSource) && /Its traffic crosses the median at an opening at each end of the stretch and drives the borrowed lanes coned off from the other carriageway's traffic/.test(pageSource) &&
       /Changing it restarts BOTH carriageways: clocks, baselines, and hand-set closures, speed limits and incidents are cleared\. Scenario events stay and replay from their start\./.test(pageSource) &&
       /\$\{REALLOCATION_NAME\.toUpperCase\(\)\} · /.test(pageSource),
   );
@@ -2334,7 +2364,7 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
     /\{both && \(\s*<ZipperControl\s/.test(pageSource) && /const plan = planZipper\(zipper === null \? laneCounts : zipper\.base, toward, lanes\);/.test(pageSource) && /if \(zipper !== null && !zipperHolds\(zipper, \{ NB: nb\.laneCount, SB: sb\.laneCount \}\)\) setZipper\(null\);/.test(pageSource),
   );
   check("lane reallocation: 'Off' restores the lane counts the road had before the scheme", /nb\.setLaneCount\(zipper\.base\.NB\);\s*sb\.setLaneCount\(zipper\.base\.SB\);/.test(pageSource));
-  check("lane reallocation: the canvas draws the movable barrier and the borrowed lanes only when a scheme is on (borrowedLanes(zipper, ...) feeds each carriageway)", /borrowed: borrowedLanes\(zipper, "NB"\)/.test(pageSource) && /borrowed: borrowedLanes\(zipper, "SB"\)/.test(pageSource) && /if \(zipper === null\) \{\s*drawMedian/.test(pageSource));
+  check("lane reallocation: the canvas opens the median and draws the borrowed lanes only when a scheme is on (borrowedLanes(zipper, ...) feeds each carriageway)", /borrowed: borrowedLanes\(zipper, "NB"\)/.test(pageSource) && /borrowed: borrowedLanes\(zipper, "SB"\)/.test(pageSource) && /if \(zipper === null\) \{\s*drawMedian/.test(pageSource));
 }
 
 /* ───────────── forecast fleet mix, and how each class moves ───────────── */
@@ -2402,6 +2432,110 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
     "class dynamics: heavy vehicles cluster tighter around their own desired speed than cars do",
     spd.every((a) => a.n >= 50) && spd[2].sd < spd[0].sd,
     `Class 3 sd ${spd[2].sd.toFixed(3)} vs Class 1 sd ${spd[0].sd.toFixed(3)}`,
+  );
+}
+
+/* ───────────── the prescriptive recommendation: no data, extreme demand, a closed lane ───────────── */
+{
+  const reading = (o: Partial<Metrics>): Metrics => ({
+    activeAgents: 40, avgSpeedKmh: 92, throughputPerMin: 50, densityPerKmLane: 10, stoppedCount: 0, longestQueueM: 0,
+    co2RatePerMin: 5, avgTravelTimeS: 25, completed: 300, elapsedS: 300, warm: true, unmetVehPerHour: 0, ...o,
+  });
+  const fromRecord = (inflow: number): Supply => ({ inflow, inflowFrom: "record", anchor: inflow });
+  const open4 = [false, false, false, false];
+  const oneClosed = [false, false, false, true];
+
+  // Extreme demand: the road reads healthy because the surplus never got on.
+  const flooded = getRecommendation(reading({ unmetVehPerHour: 2100 }), null, [false, false], 0, null, fromRecord(8000));
+  check(
+    "recommendation, extreme demand: demand turned away is named with its figure and the advice is to meter and divert, never 'Flow is stable'",
+    flooded.tone === "bad" && flooded.text.includes("2,100 veh/h cannot get on") && /meter the on-ramps/i.test(flooded.text) && !/Flow is stable/.test(flooded.text),
+    flooded.text,
+  );
+  const floodedSet = getRecommendation(reading({ unmetVehPerHour: 2100 }), null, [false, false], 0, null, { inflow: 8000, inflowFrom: "operator", anchor: 2400 });
+  check(
+    "recommendation, extreme demand: an inflow the operator set is called that, beside what the data gives",
+    floodedSet.text.includes("8,000 veh/h set here (the data gives 2,400)"),
+    floodedSet.text,
+  );
+  const trickle = getRecommendation(reading({ unmetVehPerHour: 20 }), null, open4, 0, null, fromRecord(4000));
+  check("recommendation, extreme demand: a few vehicles of admission noise are not a turned-away demand", trickle.tone === "good" && /Flow is stable/.test(trickle.text), trickle.text);
+
+  // A closed lane is always acknowledged, with what it costs, even when the road absorbs it.
+  const absorbed = getRecommendation(reading({}), { avgSpeedKmh: 95 }, oneClosed, 0, null, fromRecord(3000));
+  check(
+    "recommendation, closed lane: a closure the road absorbs is still named, with the open lanes' load against their capacity and the speed against the baseline",
+    absorbed.text.startsWith("1 of 4 lanes closed.") && absorbed.text.includes(`about 65% of the ~${(3 * CLOSURE_LANE_CAPACITY_VEH_H).toLocaleString("en-US")} they can take`) &&
+      absorbed.text.includes("3% below the baseline") && !/Flow is stable/.test(absorbed.text),
+    absorbed.text,
+  );
+  const tight = getRecommendation(reading({}), null, oneClosed, 0, null, fromRecord(4200));
+  check("recommendation, closed lane: near the open lanes' capacity it warns", tight.tone === "warn" && tight.text.includes("about 90%"), tight.text);
+  const collapsed = getRecommendation(reading({ avgSpeedKmh: 15 }), { avgSpeedKmh: 90 }, oneClosed, 0, null, fromRecord(5000));
+  check("recommendation, closed lane: a collapse is called one, against the baseline", collapsed.tone === "bad" && collapsed.text.includes("1 of 4 lanes closed, flow has collapsed to 15 km/h (83% below baseline)"), collapsed.text);
+  const building = getRecommendation(reading({ stoppedCount: 9, longestQueueM: 95 }), null, oneClosed, 0, null, fromRecord(4000));
+  check("recommendation, closed lane: when congestion is building, the closure is named in the same breath", building.tone === "warn" && building.text.includes("with 1 of 4 lanes closed"), building.text);
+  const shut = getRecommendation(reading({ unmetVehPerHour: 4000 }), null, [true, true], 0, null, fromRecord(4000));
+  check("recommendation, closed lane: every lane closed is its own case, not 'beyond what 0 open lanes can take'", shut.tone === "bad" && shut.text.startsWith("Every lane is closed") && !/0 open lanes/.test(shut.text), shut.text);
+
+  // No data for the segment: every piece of advice carries the caveat.
+  const assumed: Supply = { inflow: 4500, inflowFrom: "assumed", anchor: null };
+  const noData = [
+    getRecommendation(reading({}), null, open4, 0, null, assumed),
+    getRecommendation(reading({ unmetVehPerHour: 900 }), null, open4, 0, null, assumed),
+    getRecommendation(reading({}), null, oneClosed, 0, null, assumed),
+  ];
+  check(
+    "recommendation, no data: with no flow derivable for the stretch every recommendation says the inflow is assumed, not observed",
+    noData.every((r) => r.text.includes("No observed flow could be derived for this stretch, so the 4,500 veh/h inflow is assumed, not observed")),
+    noData.map((r) => r.text).join(" | "),
+  );
+  const slipRoad = getRecommendation(reading({}), null, open4, 0, null, { inflow: 770, inflowFrom: "interchange", anchor: 770 });
+  check(
+    "recommendation, no data: an inflow that is only the nearest interchange's volume is called that, not passed off as the expressway's flow",
+    slipRoad.text.includes("770 veh/h inflow is the volume at the nearest interchange, not the flow along the expressway"),
+    slipRoad.text,
+  );
+  check(
+    "recommendation, no data: from the record's mainline flow or the forecast, no such caveat",
+    !/assumed|nearest interchange/.test(getRecommendation(reading({}), null, open4, 0, null, fromRecord(4500)).text) &&
+      !/assumed|nearest interchange/.test(getRecommendation(reading({}), null, open4, 0, null, { inflow: 4500, inflowFrom: "forecast", anchor: 4500 }).text),
+  );
+  const filling = getRecommendation(reading({ warm: false, avgSpeedKmh: 100 }), null, open4, 0, null, fromRecord(4500));
+  check("recommendation: before warm-up it gives no advice (a filling road is not the scenario)", !/Maintain|stable/.test(filling.text) && filling.text.startsWith("Advice follows"), filling.text);
+
+  // On the real engine: the readings the cases above stand on are what it produces.
+  const run = (lanes: number, inflow: number, closedLanes: boolean[]) => {
+    const e = new TrafficSim({ length: 800, laneCount: lanes, inflowVehPerHour: inflow, seed: 21, warmupS: 60 }, { ...engineIv(800, lanes), closedLanes });
+    for (let i = 0; i < 6000; i++) e.step(0.05);
+    return e.metrics();
+  };
+  const jam = run(2, 8000, [false, false]);
+  const jamAdvice = getRecommendation(jam, null, [false, false], 0, null, fromRecord(8000));
+  check(
+    "recommendation on the engine, extreme demand: 8,000 veh/h on 2 lanes turns demand away and the advice says so",
+    jam.warm && jam.unmetVehPerHour > 2000 && jamAdvice.tone === "bad" && /cannot get on/.test(jamAdvice.text),
+    `${Math.round(jam.unmetVehPerHour)} veh/h turned away: ${jamAdvice.text}`,
+  );
+  const lane = run(4, 3000, oneClosed);
+  const laneAdvice = getRecommendation(lane, null, oneClosed, 0, null, fromRecord(3000));
+  check(
+    "recommendation on the engine, closed lane: 3,000 veh/h with one of four lanes closed is absorbed, and the advice still names the closure",
+    lane.warm && lane.unmetVehPerHour < 100 && laneAdvice.text.includes("1 of 4 lanes closed") && !/Flow is stable/.test(laneAdvice.text),
+    `${Math.round(lane.avgSpeedKmh)} km/h, ${Math.round(lane.unmetVehPerHour)} veh/h turned away: ${laneAdvice.text}`,
+  );
+  // The capacity the closed-lane advice quotes is the engine's own: open lanes past a closure at saturating demand.
+  const pastClosure = (seed: number): number => {
+    const inflow = 2600 * 4;
+    const e = new TrafficSim({ length: 1000, laneCount: 4, inflowVehPerHour: inflow, seed, warmupS: 60 }, { ...engineIv(1000, 4), closedLanes: oneClosed });
+    for (let i = 0; i < 18000; i++) e.step(0.05);
+    return (inflow - e.metrics().unmetVehPerHour) / 3;
+  };
+  const measured = (pastClosure(11) + pastClosure(12)) / 2;
+  check(
+    "recommendation: CLOSURE_LANE_CAPACITY_VEH_H is what the engine's open lanes carry past a closure (at or below it, within 10%), so 'absorbed' never promises room the road does not have",
+    measured >= CLOSURE_LANE_CAPACITY_VEH_H && measured <= CLOSURE_LANE_CAPACITY_VEH_H * 1.1,
+    `${measured.toFixed(0)} veh/h per open lane measured vs ${CLOSURE_LANE_CAPACITY_VEH_H}`,
   );
 }
 

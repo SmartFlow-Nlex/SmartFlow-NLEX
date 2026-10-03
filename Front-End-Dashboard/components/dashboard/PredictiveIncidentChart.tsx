@@ -413,7 +413,6 @@ export default function PredictiveIncidentChart({
   const effActual = agg ? agg.baseActual : actualData;
   const effRainfall = agg ? agg.rainfall : daily.map((d) => d.rainfallMm);
   const effModels: Record<AggKey, (number | null)[]> = agg ? agg.models : (modelsFlat as Record<AggKey, (number | null)[]>);
-  const effVolume = effModels.__volume ?? daily.map((d) => d.volume ?? null);
   const effAccA = agg ? agg.models.__accA : accA;
   const effAccP = agg ? agg.models.__accP : accP;
   const effBdA = agg ? agg.models.__bdA : bdA;
@@ -421,6 +420,15 @@ export default function PredictiveIncidentChart({
   const effHoldoutStart = agg ? agg.holdoutStart : validationStart;
   const effFutureStart = agg ? agg.futureStart : futureStart;
   const effLastIndex = effDates.length - 1;
+  // Trimmed to the Past band only, even though real recorded volume exists
+  // through the end of Present (Present is a held-out slice of real history,
+  // not a forecast) -- Volume is drawn as corridor-wide TRAINING context for
+  // the models above it, and letting it run into Present/Future crowded the
+  // one region this chart exists to show cleanly: actual vs. predicted
+  // incident counts. Rainfall is deliberately left alone here; only Volume
+  // was asked to stop at the boundary.
+  const rawEffVolume = effModels.__volume ?? daily.map((d) => d.volume ?? null);
+  const effVolume = rawEffVolume.map((v, i) => (i < effHoldoutStart ? v : null));
 
   const showPast = effHoldoutStart > 0;
   const showPresent = effFutureStart > effHoldoutStart;
@@ -493,9 +501,70 @@ export default function PredictiveIncidentChart({
   // A divider only at a boundary where both neighboring bands are actually
   // drawn — a line at validationStart with no Past band to its left (or at
   // futureStart with nothing to its left) would be a stray mark, not a divider.
-  const markLineData: { xAxis: number }[] = [];
+  type MarkLineItem = {
+    xAxis: number;
+    lineStyle?: { type?: "dashed"; color?: string; width?: number; opacity?: number };
+    label?: { show: boolean; position?: "insideEndTop"; formatter?: string; color?: string; fontSize?: number; fontWeight?: 700; backgroundColor?: string; padding?: [number, number]; borderRadius?: number };
+  };
+  const markLineData: MarkLineItem[] = [];
   if (showPast && showPresent) markLineData.push({ xAxis: effHoldoutStart });
   if (showFuture && (showPast || showPresent)) markLineData.push({ xAxis: effFutureStart });
+
+  // Period dividers (W1/W3/… or M1/M3/…) at Weekly/Monthly granularity --
+  // same feature and the same thinning/tagging rules as
+  // PredictiveVolumeChart's own markLine (see its doc comment: unthinned,
+  // a long Monthly range drew two dozen unlabelled lines that read as noise
+  // rather than as boundaries). Indexed into effDates rather than matched by
+  // date-label string, consistent with how this file's own zone dividers
+  // above already address positions by index, not by label text.
+  const weeklyPeriods: { weekNum: number; startIdx: number }[] = [];
+  for (let i = 0, weekNum = 1; i < effDates.length; i += 7, weekNum++) {
+    weeklyPeriods.push({ weekNum, startIdx: i });
+  }
+  const monthlyPeriods: { monthNum: number; startIdx: number }[] = [];
+  {
+    let currentMonth = "";
+    let monthNum = 0;
+    for (let i = 0; i < effDates.length; i++) {
+      const monthName = (effDates[i] || "").split(" ")[0];
+      if (monthName !== currentMonth) {
+        monthNum++;
+        monthlyPeriods.push({ monthNum, startIdx: i });
+        currentMonth = monthName;
+      }
+    }
+  }
+  const periodDividers: MarkLineItem[] = (() => {
+    const periods =
+      granularity === "Weekly" ? weeklyPeriods.map((w) => ({ idx: w.startIdx, tag: `W${w.weekNum}` }))
+      : granularity === "Monthly" ? monthlyPeriods.map((m) => ({ idx: m.startIdx, tag: `M${m.monthNum}` }))
+      : [];
+    if (periods.length === 0) return [];
+    const stride = Math.max(1, Math.ceil(periods.length / 12));
+    const tint = granularity === "Weekly" ? "#3b82f6" : "#16a34a";
+    const ink = granularity === "Weekly" ? "#1d4ed8" : "#15803d";
+    const wash = T.isDark
+      ? (granularity === "Weekly" ? "rgba(30,58,138,0.55)" : "rgba(20,83,45,0.55)")
+      : (granularity === "Weekly" ? "rgba(239,246,255,0.92)" : "rgba(240,253,244,0.92)");
+    return periods
+      .filter((_, i) => i % stride === 0)
+      .map((p) => ({
+        xAxis: p.idx,
+        lineStyle: { type: "dashed" as const, color: tint, width: 1, opacity: 0.45 },
+        label: {
+          show: true,
+          position: "insideEndTop" as const,
+          formatter: p.tag,
+          color: ink,
+          fontSize: 9,
+          fontWeight: 700 as const,
+          backgroundColor: wash,
+          padding: [1, 3] as [number, number],
+          borderRadius: 2,
+        },
+      }));
+  })();
+  markLineData.push(...periodDividers);
 
   // Rainfall shaded by intensity so the bars read as a weather condition at a
   // glance rather than as anonymous blue blocks. Thresholds match

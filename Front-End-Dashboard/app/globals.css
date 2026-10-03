@@ -2809,6 +2809,11 @@ body {
 
 /* Incident placement mode */
 .sandbox-canvas.placing { cursor: crosshair; }
+/* A scenario chip is being dragged: the road is where it goes. */
+.sandbox-canvas.is-drop-target {
+  outline: 2px dashed color-mix(in srgb, var(--page-accent, var(--brand-primary)) 70%, transparent);
+  outline-offset: -2px;
+}
 .btn-muted.active {
   background: var(--color-danger-bg);
   color: var(--color-danger);
@@ -5596,7 +5601,7 @@ body {
    --------------------------------------------------------------------------- */
 .viz-traffic   { --page-accent: #2a78d6; --kpi-1: #3f7ad9; --kpi-2: #1d3f8f; --kpi-3: #8ab6f5; --kpi-4: var(--color-info);    --kpi-5: var(--color-success); }
 .viz-incident  { --page-accent: #b8760a; --kpi-1: #b8760a; --kpi-2: #7d4606; --kpi-3: #e0b01f; --kpi-4: var(--color-danger);  --kpi-5: var(--color-warning); }
-.viz-emissions { --page-accent: #0f8a4a; --kpi-1: #118f46; --kpi-2: #08582b; --kpi-3: #4cbd79; --kpi-4: var(--color-success); --kpi-5: var(--color-info); }
+.viz-emissions { --page-accent: #0f8a4a; --kpi-1: #118f46; --kpi-2: #08582b; --kpi-3: #4cbd79; --kpi-4: var(--color-success); --kpi-5: var(--color-info); --kpi-6: var(--color-warning); }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .viz-traffic   { --kpi-1: #5b8fe6; --kpi-2: #a8c8f8; --kpi-3: #2f5fba; }
@@ -10768,7 +10773,8 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   /* Inset, not inset:0. A full-bleed canvas put the outer lane under the
      readout strip and the top lane under the toolbar, so the HUD hid the very
      traffic it was describing. The road owns the band between them. */
-  top: 104px;
+  /* --fs-top is the floating header's measured bottom (page.tsx), 96px until measured. */
+  top: calc(var(--fs-top, 96px) + 8px);
   left: 0;
   right: 0;
   width: 100%;
@@ -10776,8 +10782,7 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
      replaced element, so height:auto resolves to its own height ATTRIBUTE --
      which render() sets from the size it last measured -- and the bottom inset
      is then dropped as over-constrained. The box grew every frame. */
-  height: calc(104px + var(--fs-strip) + 8px);
-  height: calc(100% - 104px - var(--fs-strip) - 8px);
+  height: calc(100% - var(--fs-top, 96px) - 8px - var(--fs-strip) - 8px);
   margin: 0;
   border-radius: 0;
   min-height: 0;
@@ -10824,9 +10829,10 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   font-size: 1rem;
   letter-spacing: 0.01em;
 }
-/* Carriageway and the key hints/notes toggle share one row so they in turn
-   can never overlap each other — wrap lets them drop to a second line
-   rather than clip or overlap at a narrow width. */
+/* Carriageway, Forecast day and the key hints/notes toggle share one row so
+   they in turn can never overlap each other — wrap lets them drop to a second
+   line rather than clip or overlap at a narrow width. (Forecast day had a row
+   of its own, which the fixed 104px canvas top then ran under.) */
 .sandbox-hud-row {
   display: flex;
   align-items: center;
@@ -11036,6 +11042,21 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 .sandbox-compare-row .d { text-align: right; font-weight: 700; font-size: 0.72rem; color: var(--text-muted); }
 .sandbox-compare-row .d.good { color: #16a34a; }
 .sandbox-compare-row .d.bad { color: var(--color-danger); }
+/* Names the was/now columns once, above the metric rows, rather than making
+   the reader infer "before" and "after" from the arrow between them. */
+.sandbox-compare-labels {
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border-default);
+}
+.sandbox-compare-labels .was,
+.sandbox-compare-labels .now {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
 
 .sandbox-compare-none {
   display: flex;
@@ -11207,6 +11228,121 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   border-color: transparent;
 }
 
+/* TimeField: HH / MM / SS as separate steppable boxes rather than one free-typed string. Every
+   piece (digits, arrow stack, the ":" between segments) shares one explicit height (22px) so they
+   line up on one row instead of each sizing itself from its own padding/line-height and drifting
+   a px or two out of line with its neighbours — which is what made the control look cramped and
+   uneven rather than merely compact. */
+.sandbox-time-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.sandbox-time-sep {
+  height: 22px;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.sandbox-time-seg {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+}
+.sandbox-time-seg-input {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  /* 2ch for the digits themselves plus 8px (4px each side) of padding, not
+     a width that only just fits two tabular-nums digits — "19" was clipping
+     against the box edge at the old 1.7em. */
+  width: calc(2ch + 8px);
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  /* Belt-and-braces: this is type="text", which Chrome/Safari never put
+     spinner arrows on, but hide them explicitly anyway so the custom
+     up/down pill beside it (sandbox-time-seg-arrows) is never fighting a
+     native one for the same few pixels. */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.sandbox-time-seg-input::-webkit-inner-spin-button,
+.sandbox-time-seg-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.sandbox-time-seg-input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--page-accent, var(--brand-primary)) 55%, transparent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+/* The two tiny steppers, stacked beside the digits like a native number input's — its own pill,
+   not fused to the digit box, so the eye reads "value, then its control" rather than one smeared
+   shape. */
+.sandbox-time-seg-arrows {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  height: 22px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.sandbox-time-seg-arrows button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 11px;
+  line-height: 1;
+  font-size: 0.5rem;
+  color: var(--text-muted);
+  background: var(--bg-surface-hover);
+  cursor: pointer;
+}
+.sandbox-time-seg-arrows button:hover {
+  color: var(--text-primary);
+  background: var(--border-default);
+}
+.sandbox-time-seg-arrows button:first-child {
+  border-bottom: 1px solid var(--border-default);
+}
+/* On the dark glass HUD (full screen), the light chrome above would read as a
+   mismatched white chip on a dark bar — match the translucent glass instead. */
+.sandbox-main.is-expanded .sandbox-time-seg-input,
+.sandbox-main.is-expanded .sandbox-time-seg-arrows {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #e8eefc;
+}
+.sandbox-main.is-expanded .sandbox-time-seg-arrows button {
+  color: #93a4c4;
+  background: transparent;
+}
+.sandbox-main.is-expanded .sandbox-time-seg-arrows button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+.sandbox-main.is-expanded .sandbox-time-seg-arrows button:first-child {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+.sandbox-main.is-expanded .sandbox-time-sep {
+  color: #93a4c4;
+}
+
 /* --- vehicle legend swatches ---------------------------------------------
    The legend renders an <i> per class; without a size they collapsed to
    nothing and the legend read as bare text. */
@@ -11262,6 +11398,9 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   color: var(--text-primary);
 }
 .sandbox-scn-fam svg { flex: none; }
+/* Chips can be dragged onto the road (ScenarioPanel). */
+.sandbox-scn-fam[draggable="true"] { cursor: grab; }
+.sandbox-scn-fam[draggable="true"]:active { cursor: grabbing; }
 
 /* The animated preview of what is about to be added. */
 .sandbox-scn-scene,
@@ -11280,6 +11419,39 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   gap: 4px;
   margin-top: 10px;
 }
+
+/* "Where": the incident log's busiest places, a click on the road, a plaza, or a km. */
+.sandbox-scn-place { margin-top: 10px; }
+.sandbox-scn-place .sandbox-mini-label { margin-top: 0; }
+.sandbox-scn-place .sandbox-speed-seg { flex-wrap: wrap; margin: 0 0 6px; }
+.sandbox-scn-place .sandbox-speed-seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+.sandbox-scn-hot { display: flex; flex-direction: column; gap: 4px; }
+.sandbox-scn-hot-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.sandbox-scn-hot-row b { font-size: 0.8rem; color: var(--text-primary); }
+.sandbox-scn-hot-row span { font-size: 0.72rem; color: var(--text-muted); line-height: 1.35; }
+.sandbox-scn-hot-row:hover { border-color: color-mix(in srgb, var(--page-accent, var(--brand-primary)) 45%, transparent); }
+.sandbox-scn-hot-row.active {
+  border-color: color-mix(in srgb, var(--page-accent, var(--brand-primary)) 70%, transparent);
+  background: color-mix(in srgb, var(--page-accent, var(--brand-primary)) 10%, transparent);
+}
+.sandbox-scn-site { display: flex; flex-direction: column; gap: 6px; }
+.sandbox-scn-site select { width: 100%; }
+.sandbox-scn-stations { display: flex; flex-direction: column; gap: 3px; }
+.sandbox-scn-check { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text-secondary); cursor: pointer; }
+.sandbox-scn-check input { margin: 0; }
 .sandbox-scn-desc {
   margin: 4px 0 0;
   font-size: 0.74rem;
@@ -11602,6 +11774,228 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   }
 }
 
+/* Data Management, "What can I upload?": the layouts in one block per area,
+   side by side. A block with more than two layouts is twice as wide and lists
+   them in two columns, so the blocks come out about the same height. */
+.dm-formats {
+  container-type: inline-size;
+}
+
+.dm-format-groups {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr 1fr;
+  grid-auto-flow: dense;   /* a smaller block fills the gap a wide one leaves */
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.dm-format-group {
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-hover);
+}
+
+.dm-format-group h4 {
+  margin: 0 0 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.dm-format-group ul {
+  display: grid;
+  gap: 10px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dm-format-group.is-wide ul {
+  grid-template-columns: 1fr 1fr;
+}
+
+.dm-format-group li b {
+  display: block;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+
+.dm-format-group li span {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.dm-format-group li.is-off {
+  opacity: 0.7;
+}
+
+@container (max-width: 1000px) {
+  .dm-format-groups {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .dm-format-group.is-wide {
+    grid-column: span 2;
+  }
+}
+
+@container (max-width: 560px) {
+  .dm-format-groups {
+    grid-template-columns: 1fr;
+  }
+
+  .dm-format-group.is-wide {
+    grid-column: auto;
+  }
+
+  .dm-format-group.is-wide ul {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Audit Log insights ──────────────────────────────────────────────────── */
+.audit-insights {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.audit-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.audit-card h3 {
+  margin: 0 0 4px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.audit-bars {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.audit-bars li {
+  display: grid;
+  grid-template-columns: minmax(90px, 38%) 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+}
+
+.audit-bar-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.audit-bar-track {
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--bg-surface-hover);
+  overflow: hidden;
+}
+
+.audit-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--page-accent, var(--brand-primary));
+}
+
+.audit-bar-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.audit-days {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 84px;
+}
+
+.audit-day {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column-reverse;
+  height: 100%;
+  min-width: 3px;
+}
+
+.audit-day-actions,
+.audit-day-views {
+  display: block;
+  width: 100%;
+}
+
+.audit-day-actions {
+  border-radius: 2px 2px 0 0;
+  background: var(--page-accent, var(--brand-primary));
+}
+
+.audit-day-views {
+  background: var(--color-purple-bg);
+}
+
+.audit-key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin: 0 4px 0 8px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+.audit-key.actions { margin-left: 0; background: var(--page-accent, var(--brand-primary)); }
+.audit-key.views { background: var(--color-purple-bg); }
+
+.audit-note,
+.audit-line,
+.audit-empty {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.audit-line b,
+.audit-note b {
+  color: var(--text-primary);
+}
+
+.audit-empty,
+.audit-muted {
+  color: var(--text-muted);
+}
+
+.audit-warn,
+.audit-note b.audit-warn {
+  color: var(--color-warning);
+}
 
 /* ---------------------------------------------------------------------------
    Session gate
@@ -11648,3 +12042,92 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 @media (prefers-reduced-motion: reduce) {
   .ds-auth-gate-spinner { animation: none; opacity: 0.5; }
 }
+
+/* Scenario sandbox: what lies along the chosen route, one row per place in km
+   order (components/PlacesList.tsx): km, name, and a button per facility there. */
+.sb-places {
+  display: grid;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 2px 0 6px;
+  padding-right: 2px;
+}
+.sb-place {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 8px;
+}
+.sb-place:hover { background: var(--bg-surface-hover); }
+.sb-place.is-on {
+  background: var(--color-info-bg);
+  box-shadow: inset 2px 0 0 var(--color-info);
+}
+.sb-place-km {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.sb-place-name {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  text-align: left;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.sb-place-name:hover { text-decoration: underline; }
+.sb-place-kinds {
+  display: inline-flex;
+  gap: 4px;
+}
+.sb-place-kind {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sb-place-kind.k-entry_ramp { color: var(--color-success); border-color: var(--color-success-border); }
+.sb-place-kind.k-exit_ramp { color: var(--color-info); border-color: var(--color-info-border); }
+.sb-place-kind.k-service_area { color: var(--color-warning); border-color: var(--color-warning-border); }
+.sb-place-kind.k-barrier { color: var(--color-purple); border-color: var(--color-purple); }
+.sb-place-kind.is-on { background: var(--color-info-bg); }
+/* The first junction of a span being picked. */
+.sb-place.is-anchor {
+  background: var(--color-warning-bg);
+  box-shadow: inset 2px 0 0 var(--color-warning);
+}
+.sb-place.is-stop .sb-place-name { color: var(--text-secondary); }
+/* What the buttons mean, once, above the list. */
+.sb-places-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 4px 0 2px;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+/* Each half wraps as a whole, never "service area" alone on a line. */
+.sb-places-key > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.sb-places-key .sb-place-kind { cursor: default; padding: 0 6px; }

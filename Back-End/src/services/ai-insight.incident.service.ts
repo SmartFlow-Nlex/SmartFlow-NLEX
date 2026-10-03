@@ -341,107 +341,79 @@ export async function generateClearanceInsight(req: ClearanceInsightRequest): Pr
   });
 }
 
-/* ── 3. Type priority: measured clearance crossed with a forecast ───────────── */
+/* ── 2b. Breakdown response time: a trained model's PREDICTION, by cause/service ── */
 
-export type IncidentPriorityInsightRequest = {
-  horizonDays: number;
-  totalPredicted?: number | null;
-  forecastModel?: string | null;
-  types: {
-    label: string;
-    medianClearanceMin?: number | null;
-    predictedCount?: number | null;
-    expectedLaneMinutes?: number | null;
-    sharePct?: number | null;
-    dispatch?: string | null;
-  }[];
+export type BreakdownResponseInsightRequest = {
+  dimension: string;
+  championModel?: string | null;
+  maeMinutes?: number | null;
+  trainedAt?: string | null;
+  groups: { group: string; n?: number | null; predictedMedianMin?: number | null }[];
 };
 
-const PRIORITY_SYSTEM = `You explain an incident-response priority ranking to traffic operations staff who are not statisticians. Reply with JSON only.
+const BREAKDOWN_RESPONSE_SYSTEM = `You explain a trained model's PREDICTED dispatch response times for NLEX breakdowns to traffic operations staff who are not statisticians. Reply with JSON only.
 
-OUTPUT SHAPE — every <...> below is a PLACEHOLDER. Replace each one with your own
-words. Returning the placeholder text itself is a failed answer.
-Write out every perModel entry in full. Never abbreviate the array with "...",
-"etc" or a comment, and never return fewer entries than there are names listed.
+OUTPUT SHAPE
 {
-  "summary": "<2-4 sentences on which incident types deserve resourcing first over this horizon, and why>",
-  "perModel": [{"model": "<exact type label, copied from the list below>", "verdict": "<one sentence on that type>"}],
-  "caveat": "<the single most important limitation>, or null"
+  "summary": "2-4 sentences: which breakdown causes or services the model expects to take longest to reach, and what that means for staging response units",
+  "perModel": [{"model": "<exact group label as given>", "verdict": "one sentence"}],
+  "caveat": "the single most important limitation, or null"
 }
-Write one perModel entry for EVERY type in the list below, using its label exactly.
 
-HOW THE RANKING IS BUILT
-Two numbers are crossed per incident type:
-- its MEASURED median clearance time on this corridor, and
-- a PREDICTED count over the horizon, apportioned from the corridor's total incident forecast by that type's historical share.
-Multiplying them gives EXPECTED LANE-MINUTES LOST: roughly how much blocked-road time that type is expected to cause. A type that is common but clears fast can matter less than a rare type that blocks the road for hours. That trade-off is the whole point of the ranking.
-
-WHAT IS AND IS NOT A MODEL OUTPUT
-- The clearance times are measured from real incidents.
-- The total incident forecast comes from the named forecasting model.
-- The per-type split is apportioned by historical share, NOT separately forecast. Say so if you lean on it.
-- The DISPATCH PACKAGE per type is standard operational doctrine, not something any model predicted. Never present it as a model recommendation.
+HOW TO READ THE NUMBERS
+- These are a trained model's PREDICTIONS on held-out dispatches -- not the observed historical average for that cause or service. The model's own held-out error (MAE, given below if supplied) says how far a typical prediction can run from reality; a model with a large MAE deserves less confident claims.
+- n is how many held-out dispatches sit behind each group's prediction. A group built on very few dispatches is a weak basis for a claim, and you should say so rather than treat it as equal to the others.
 
 RULES
 - Never state a number that was not given to you. Never estimate one.
-- Every claim must be traceable to a number above. Do not speculate about responder availability, budgets, staffing or anything else you were not told.
-- Rank by expected lane-minutes where given, and say plainly when a type ranks high for frequency rather than duration, or the reverse.
+- Never describe these numbers as a measured/historical average -- they are a model's prediction, which is a different claim even when it is close to what actually happened.
+- Every claim must be traceable to a number above. You know NOTHING about why a cause or service scores the way it does, staffing levels, or anything else you were not told -- do not speculate.
+- Translate into consequences a control room can act on: which cause or service needs response units staged closer, given what the model expects.
 - Do not recommend retraining, more data, or model changes. The reader operates this system, they do not build it.
 - Plain English. No jargon that is not defined in the sentence that uses it.
 
 THE CAVEAT FIELD
-Use it ONLY for a limitation the supplied numbers demonstrate: a per-type count resting on an apportioned share rather than its own forecast, a median resting on few incidents, two types close enough that the order between them is arbitrary. If the numbers show no such problem, return null. Never invent one.`;
+Use it ONLY for a limitation the supplied numbers themselves demonstrate: a group with very few held-out dispatches behind it, or a held-out MAE large enough that the ranking's precision shouldn't be over-trusted. If the numbers show no such problem, return null. Never invent one.`;
 
-function buildPriorityMessage(req: IncidentPriorityInsightRequest): string {
+function buildBreakdownResponseMessage(req: BreakdownResponseInsightRequest): string {
   const lines: string[] = [];
   lines.push(
-    "SUBJECT: which kinds of NLEX corridor incident to resource first.",
-    "READER: a traffic control centre allocating response units for the period ahead.",
-    `HORIZON: the next ${req.horizonDays} days.`,
+    `SUBJECT: a trained model's predicted dispatch response time for NLEX breakdowns, split by ${req.dimension}.`,
+    "READER: a traffic control centre deciding where to stage response units.",
   );
-  if (int(req.totalPredicted)) {
-    lines.push(
-      `TOTAL INCIDENTS FORECAST over that horizon: ${int(req.totalPredicted)}${
-        req.forecastModel ? `, from the ${req.forecastModel} model` : ""
-      }.`,
-      "Each type's count below is that total apportioned by the type's historical share, not a separate forecast per type.",
-    );
+  if (req.championModel) {
+    lines.push(`MODEL: ${req.championModel}${req.maeMinutes != null ? ` (held-out MAE ${req.maeMinutes.toFixed(1)} min)` : ""}.`);
   }
+  if (req.trainedAt) lines.push(`Model last fitted: ${req.trainedAt}.`);
 
-  lines.push("", "BY INCIDENT TYPE");
-  for (const t of req.types) {
+  lines.push("", "PREDICTED RESPONSE BY GROUP");
+  for (const g of req.groups) {
     const parts = [
-      num(t.medianClearanceMin, 0) ? `median clearance ${num(t.medianClearanceMin, 0)} min (measured)` : null,
-      int(t.predictedCount) ? `about ${int(t.predictedCount)} expected` : null,
-      num(t.sharePct, 0) ? `${num(t.sharePct, 0)}% of incidents historically` : null,
-      int(t.expectedLaneMinutes) ? `expected lane-minutes lost ${int(t.expectedLaneMinutes)}` : null,
+      g.predictedMedianMin != null ? `predicted median ${g.predictedMedianMin.toFixed(0)} min` : null,
+      g.n ? `${g.n.toLocaleString()} held-out dispatches` : null,
     ].filter(Boolean);
-    lines.push(`- ${t.label}: ${parts.length ? parts.join(", ") : "no figures supplied"}`);
-    if (t.dispatch) {
-      lines.push(`    standard dispatch package (doctrine, not a model output): ${t.dispatch}`);
-    }
+    lines.push(`- ${g.group}: ${parts.length ? parts.join(", ") : "no figures supplied"}`);
   }
 
+  lines.push("", `Write one verdict for each of the ${req.groups.length} groups above, using their exact labels.`);
   return lines.join("\n");
 }
 
-export async function generateIncidentPriorityInsight(
-  req: IncidentPriorityInsightRequest,
-): Promise<Insight> {
-  if (req.types.length === 0) {
-    throw new GlmError("No incident types were supplied.", "bad_model_output");
+export async function generateBreakdownResponseInsight(req: BreakdownResponseInsightRequest): Promise<Insight> {
+  if (req.groups.length === 0) {
+    throw new GlmError("No response-time groups were supplied.", "bad_model_output");
   }
   const content = await chat({
-    system: PRIORITY_SYSTEM,
-    user: buildPriorityMessage(req),
+    system: BREAKDOWN_RESPONSE_SYSTEM,
+    user: buildBreakdownResponseMessage(req),
     json: true,
-    maxTokens: 1500,
+    maxTokens: 1400,
     temperature: 0.3,
   });
   return validate(extractJson(content), {
     quantity: "incidents",
-    metrics: req.types.map((t) => ({ model: t.label })),
-    horizonDays: req.horizonDays,
+    metrics: req.groups.map((g) => ({ model: g.group })),
+    horizonDays: 1,
   });
 }
 

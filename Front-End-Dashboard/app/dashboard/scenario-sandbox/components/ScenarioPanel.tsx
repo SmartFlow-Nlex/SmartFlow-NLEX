@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   addEventToBucket,
   addTargets,
@@ -37,6 +37,19 @@ import DirectionPill, { DIRECTION_NAME } from "./DirectionPill";
 import FamilyIcon from "./FamilyIcon";
 import ScenePreview from "./ScenePreview";
 import InfoTooltip from "../../../../components/dashboard/InfoTooltip";
+import {
+  HOTSPOT_FAMILIES,
+  SITE_FAMILIES,
+  candidatesFrom,
+  resolvePlace,
+  stationLabel,
+  useHotspots,
+  type PickResult,
+  type PlaceMode,
+  type ScenarioDrop,
+  SCENARIO_DRAG_TYPE,
+  type SiteOption,
+} from "./placement";
 
 /**
  * The Add-event panel and the event list (phase 3).
@@ -96,6 +109,8 @@ export type DirectionScenarioData = {
   skipPlan: SkipPlan | null;
   onSkip: () => void;
   onCancelSkip: () => void;
+  /** Toll plazas, ramps and service areas on this carriageway's stretch. */
+  sites: readonly SiteOption[];
 };
 
 type Props = {
@@ -118,6 +133,16 @@ type Props = {
    * after warm-up (the engine's clock); this is what lets the form and the list speak in time of day.
    */
   clockStartMin: number;
+  /** Arm the canvas: the next click on the road (or a booth) is handed back here. */
+  onPickOnRoad?: (direction: Direction, done: (p: PickResult) => void) => void;
+  /** Filled by the panel: what the road calls when a scenario chip is dropped on it. */
+  dropRef?: { current: ScenarioDrop | null };
+  /** A chip is being dragged (its family), or the drag ended (null): the road shows where it would land. */
+  onDragFamily?: (family: FamilyKey | null) => void;
+  /** Disarm it again. */
+  onCancelPick?: () => void;
+  /** Outline a plaza or service area on the canvas while it is the chosen place. */
+  onHighlight?: (facilityId: string | null) => void;
 };
 
 type DurationChoice = "sampled" | "p50" | "p90" | "manual";
@@ -180,18 +205,76 @@ function clockLabel(totalMin: number): string {
 }
 
 /**
- * A time-of-day box (HH:MM, or HH:MM:SS when `step` asks for second precision) that commits on
- * blur or Enter, like NumberField, so a half-typed time is never acted on. It speaks in SECONDS
- * since midnight and clamps to [minS, maxS]: the run only goes forward from the top of the
- * selected hour, and one day has no times past 23:59:59. `step` defaults to 60 (minute
+ * One HH / MM / SS segment of TimeField: a two-digit box that steps by ±1, wrapping within its
+ * own 0..max range (23 for hours, 59 for minutes/seconds) — the up/down buttons, or the arrow
+ * keys while the box has focus, move only this unit, the way setting an alarm clock does (an
+ * hour stepping past 23 wraps to 0 rather than carrying into the next day). Typed digits replace
+ * the segment outright on blur or Enter, clamped to its own range, same half-typed-value-never-
+ * acted-on rule as NumberField/TimeField.
+ */
+function TimeSegment({
+  value,
+  max,
+  onStep,
+  onType,
+  scn,
+  label,
+}: {
+  value: number;
+  max: number;
+  onStep: (delta: 1 | -1) => void;
+  onType: (digits: number) => void;
+  scn: string;
+  label: string;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = String(value).padStart(2, "0");
+  const commit = () => {
+    if (draft === null || draft === "") { setDraft(null); return; }
+    onType(Math.min(max, Math.max(0, Number(draft))));
+    setDraft(null);
+  };
+  return (
+    <span className="sandbox-time-seg">
+      <input
+        type="text"
+        inputMode="numeric"
+        className="sandbox-time-seg-input"
+        aria-label={label}
+        data-scn={scn}
+        value={draft ?? shown}
+        onChange={(e) => setDraft(e.target.value.replace(/\D/g, "").slice(-2))}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape") setDraft(null);
+          else if (e.key === "ArrowUp") { e.preventDefault(); onStep(1); }
+          else if (e.key === "ArrowDown") { e.preventDefault(); onStep(-1); }
+        }}
+      />
+      <span className="sandbox-time-seg-arrows">
+        <button type="button" tabIndex={-1} aria-label={`${label} up`} onClick={() => onStep(1)}>▲</button>
+        <button type="button" tabIndex={-1} aria-label={`${label} down`} onClick={() => onStep(-1)}>▼</button>
+      </span>
+    </span>
+  );
+}
+
+/**
+ * A time-of-day control — separate HH / MM (/ SS when `step` asks for second precision) boxes,
+ * each steppable on its own via TimeSegment — rather than one HH:MM:SS text box: editing one unit
+ * no longer means retyping the whole time or hitting it exactly in one string. Speaks in SECONDS
+ * since midnight and clamps the result to [minS, maxS]: the run only goes forward from the top of
+ * the selected hour, and one day has no times past 23:59:59. `step` defaults to 60 (minute
  * granularity, no seconds shown) for the scenario form's own use, where a start time has never
  * needed finer than a minute.
  *
- * Plain text, not `<input type="time">`: a native time control's displayed format (12-hour AM/PM
- * vs. 24-hour) follows the browser/OS locale, not the page. `lang="en-GB"` on the input was tried
- * to force Chromium's own picker chrome into 24-hour and did not hold on every machine (still
- * showed AM/PM on Windows). A plain text box has no native picker to disagree with it — what's
- * rendered here, always HH:MM[:SS] in 24-hour, is exactly what shows, everywhere.
+ * Built from plain text boxes, not `<input type="time">`: a native time control's displayed
+ * format (12-hour AM/PM vs. 24-hour) follows the browser/OS locale, not the page. `lang="en-GB"`
+ * on the input was tried to force Chromium's own picker chrome into 24-hour and did not hold on
+ * every machine (still showed AM/PM on Windows). Plain text boxes have no native picker to
+ * disagree with them — what's rendered here, always HH:MM[:SS] in 24-hour, is exactly what shows,
+ * everywhere.
  */
 export function TimeField({
   valueS,
@@ -208,32 +291,45 @@ export function TimeField({
   onCommit: (totalS: number) => void;
   scn: string;
 }) {
-  const [draft, setDraft] = useState<string | null>(null);
   const rounded = Math.round(valueS);
   const withSeconds = step < 60;
-  const shown =
-    `${String(Math.floor(rounded / 3600) % 24).padStart(2, "0")}:${String(Math.floor(rounded / 60) % 60).padStart(2, "0")}` +
-    (withSeconds ? `:${String(rounded % 60).padStart(2, "0")}` : "");
-  const commit = () => {
-    if (draft === null) return;
-    const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(draft);
-    setDraft(null);
-    if (m) onCommit(Math.min(maxS, Math.max(minS, Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3] ?? 0))));
-  };
+  const hh = Math.floor(rounded / 3600) % 24;
+  const mm = Math.floor(rounded / 60) % 60;
+  const ss = rounded % 60;
+  const clampCommit = (totalS: number) => onCommit(Math.min(maxS, Math.max(minS, totalS)));
   return (
-    <input
-      type="text"
-      className="sandbox-km-input"
-      data-scn={scn}
-      placeholder={withSeconds ? "HH:MM:SS" : "HH:MM"}
-      value={draft ?? shown}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-        else if (e.key === "Escape") setDraft(null);
-      }}
-    />
+    <span className="sandbox-time-field">
+      <TimeSegment
+        value={hh}
+        max={23}
+        label="Hour"
+        scn={`${scn}-h`}
+        onStep={(d) => clampCommit((((hh + d) % 24) + 24) % 24 * 3600 + mm * 60 + ss)}
+        onType={(digits) => clampCommit(digits * 3600 + mm * 60 + ss)}
+      />
+      <span className="sandbox-time-sep">:</span>
+      <TimeSegment
+        value={mm}
+        max={59}
+        label="Minute"
+        scn={`${scn}-m`}
+        onStep={(d) => clampCommit(hh * 3600 + ((((mm + d) % 60) + 60) % 60) * 60 + ss)}
+        onType={(digits) => clampCommit(hh * 3600 + digits * 60 + ss)}
+      />
+      {withSeconds && (
+        <>
+          <span className="sandbox-time-sep">:</span>
+          <TimeSegment
+            value={ss}
+            max={59}
+            label="Second"
+            scn={`${scn}-s`}
+            onStep={(d) => clampCommit(hh * 3600 + mm * 60 + ((((ss + d) % 60) + 60) % 60))}
+            onType={(digits) => clampCommit(hh * 3600 + mm * 60 + digits)}
+          />
+        </>
+      )}
+    </span>
   );
 }
 
@@ -432,11 +528,17 @@ function EventRow({
   // "Shoulder" is right for a breakdown beside the road; rain has no location at all (its zone is the whole
   // segment, see ASSUMPTIONS.RAIN_ZONE) so it gets its own word instead of borrowing a place that isn't true of it.
   const place =
-    event.variant.family === "rain"
-      ? `Corridor-wide · ${ASSUMPTIONS.RAIN_SPEED_KMH.value[event.variant.intensity]} km/h cap`
-      : event.lane === null
-        ? "Shoulder"
-        : `Lane ${event.lane}`;
+    event.site
+      ? `${event.site.facilityName} · ${
+          event.site.kind === "approach"
+            ? event.site.facilityId.startsWith("barrier:") ? "before the booths" : "on the ramp"
+            : `${event.site.kind} ${event.site.stations.map((i) => i + 1).join(", ")}`
+        }`
+      : event.variant.family === "rain"
+        ? `Corridor-wide · ${ASSUMPTIONS.RAIN_SPEED_KMH.value[event.variant.intensity]} km/h cap`
+        : event.lane === null
+          ? "Shoulder"
+          : `Lane ${event.lane}`;
   const where = `${place} · Km ${event.positionKm.toFixed(2)} · starts ${clockLabel(clockStartMin + event.startS / 60)}`;
   return (
     <div className={`sandbox-scn-event${invalid ? " is-invalid" : ""}`} data-scn-event={event.id}>
@@ -505,6 +607,17 @@ export default function ScenarioPanel(props: Props) {
   const [wantBoth, setWantBoth] = useState(false);
   // The scenario's description lives behind the "i" on its picture rather than taking up the panel.
   const [infoOpen, setInfoOpen] = useState(false);
+  /* Where: from the incident log, a click on the road, a plaza or service
+     area, or a typed km — see placement.ts. The log is the default for
+     anything it records: "where it usually happens" is the first question
+     to ask of an incident, and the answer is in the corridor's own record. */
+  const [placeMode, setPlaceMode] = useState<PlaceMode>("data");
+  const [hotChoice, setHotChoice] = useState<string | null>(null);
+  const [pick, setPick] = useState<PickResult | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [siteId, setSiteId] = useState<string | null>(null);
+  const [siteStations, setSiteStations] = useState<number[]>([0]);
+  const [siteApproach, setSiteApproach] = useState(false);
 
   const pickFamily = (f: FamilyKey) => {
     const t = getTemplate(f);
@@ -515,6 +628,9 @@ export default function ScenarioPanel(props: Props) {
     setExtraLanes([]);
     setPosKm(null);
     setRefusal(null);
+    setHotChoice(null);
+    // Keep the operator's way of placing wherever it still applies to the new family.
+    setPlaceMode((m) => (m === "data" && !HOTSPOT_FAMILIES.has(f) ? "km" : m === "site" && !SITE_FAMILIES.has(f) ? "km" : m === "km" && HOTSPOT_FAMILIES.has(f) ? "data" : m));
     // A family with no calibration entry only accepts Manual (resolveDuration throws otherwise);
     // force it here so the panel can never sit on a now-invalid Sampled/Median/90th choice.
     if (t.durationSource === "manual_only") setChoice("manual");
@@ -544,10 +660,64 @@ export default function ScenarioPanel(props: Props) {
   // Where this Add goes: one carriageway (the focused one) or, for weather and flooding in Both mode, both.
   const targets = addTargets(template.carriageways, directions, direction, wantBoth);
   const onBoth = targets.length > 1;
+
+  // Where the event goes. With two targets (weather, flooding) only a km makes sense.
+  const mode: PlaceMode = onBoth ? "km" : placeMode === "data" && !HOTSPOT_FAMILIES.has(family) ? "km" : placeMode === "site" && !SITE_FAMILIES.has(family) ? "km" : placeMode;
+  const defaultKm = Math.min(toKm, Math.max(fromKm, data[targets[0]].kmAtPct(template.defaultPlacement.pct)));
+  const sites = onBoth ? [] : data[direction].sites;
+  const hot = useHotspots(family, direction, fromKm, toKm, mode === "data");
+  const candidates = candidatesFrom(hot.data, SITE_FAMILIES.has(family) ? sites : [], fromKm, toKm);
+  const place = resolvePlace({
+    mode,
+    defaultKm,
+    fromKm,
+    toKm,
+    posKm,
+    candidates,
+    choice: hotChoice,
+    pick: pick && pick.direction === direction ? pick : null,
+    sites,
+    siteId,
+    siteStations,
+    siteApproach,
+    hotLoading: hot.loading,
+    hotError: hot.error,
+  });
+  const site = SITE_FAMILIES.has(family) ? place.site : null;
+  const siteSel = sites.find((x) => x.id === siteId) ?? sites[0] ?? null;
+  // The plaza or service area being aimed at is outlined on the road.
+  const highlightId = site?.facilityId ?? (mode === "site" ? siteSel?.id ?? null : null);
+  const { onHighlight, onPickOnRoad, onCancelPick } = props;
+  useEffect(() => {
+    onHighlight?.(highlightId);
+  }, [highlightId, onHighlight]);
+  useEffect(() => () => onHighlight?.(null), [onHighlight]);
+  const armPick = () => {
+    if (!onPickOnRoad) return;
+    setPicking(true);
+    onPickOnRoad(direction, (res) => {
+      setPick(res);
+      setPicking(false);
+      setLane(null);
+    });
+  };
+  const choosePlaceMode = (m: PlaceMode) => {
+    setPlaceMode(m);
+    setLane(null);
+    if (m === "pick") armPick();
+    else if (picking) {
+      setPicking(false);
+      onCancelPick?.();
+    }
+  };
   // Lane numbers mean the same on both carriageways (lane 1 against the median), so with two targets the
   // lane list is the shorter road's and both events get the same lane.
   const laneCap = Math.min(...targets.map((d) => data[d].laneCount));
-  const laneNow = lane === null ? defaultOperatorLane(template, laneCap) : Math.min(Math.max(1, lane), laneCap);
+  // The place's own lane (the log's usual lane there, or the lane clicked) until the operator picks one.
+  const laneNow =
+    lane === null
+      ? Math.min(Math.max(1, place.lane ?? defaultOperatorLane(template, laneCap)), laneCap)
+      : Math.min(Math.max(1, lane), laneCap);
   // Re-clamped every render against the current laneCap/laneNow, same spirit as laneNow above: a lane
   // picked before switching to Both (a narrower road) or before changing the primary lane never lingers
   // as an out-of-range or duplicate entry.
@@ -555,11 +725,12 @@ export default function ScenarioPanel(props: Props) {
     ? [...new Set(extraLanes.filter((l) => l >= 1 && l <= laneCap && l !== laneNow))]
     : [];
   // One place for both carriageways: the first target's default, so Both does not put the two events at different km.
-  const kmNow = Math.min(toKm, Math.max(fromKm, posKm === null ? data[targets[0]].kmAtPct(template.defaultPlacement.pct) : posKm));
+  const kmNow = Math.min(toKm, Math.max(fromKm, place.positionKm));
   const variant = variantFor(family, vehicle, cause, label, intensity);
   const duration: DurationMode =
     choice === "sampled" ? { kind: "sampled", seed } : choice === "p50" ? { kind: "p50" } : choice === "p90" ? { kind: "p90" } : { kind: "manual", minutes: manualMin };
-  const specFor = (d: Direction): NewEventSpec => ({ variant, direction: d, lane: hasLane(family) ? laneNow : null, extraLanes: extraLanesNow, positionKm: kmNow, startMinutes: startMin, duration });
+  // At a plaza the event has no lane of the carriageway: the booth or pump is its place.
+  const specFor = (d: Direction): NewEventSpec => ({ variant, direction: d, lane: site ? null : hasLane(family) ? laneNow : null, extraLanes: site ? [] : extraLanesNow, positionKm: kmNow, startMinutes: startMin, duration, site });
 
   // The same call "Add event" makes, once per target, so what is shown is what will be stored (and why not, if
   // it will not). With two targets the Add is all or nothing: one refusal blocks both, and names its carriageway.
@@ -568,6 +739,8 @@ export default function ScenarioPanel(props: Props) {
     const v = addEventToBucket(d, data[d].events, specFor(d), data[d].road, data[d].nextSeq, data[d].manualClosure);
     if (!v.ok && refusalNow === null) refusalNow = v.reason;
   }
+  // A place not chosen yet comes first: until there is one, nothing else can be judged.
+  if (place.incomplete) refusalNow = place.note ?? "Choose where the event happens.";
   let preview: ResolvedDuration | null = null;
   try {
     preview = resolveDuration(variant, duration);
@@ -586,6 +759,48 @@ export default function ScenarioPanel(props: Props) {
     if (getTemplate(f).durationSource !== "manual_only") setChoice("sampled");
   };
 
+  /* A chip dropped on the road: this family as the form below has it (vehicle, cause, duration, start), at the
+     place it landed. The start is the form's, or now if that time has already passed, so a dropped incident
+     appears on the road straight away rather than in the past. Weather and flooding set to "Both" go on both
+     carriageways at the dropped km, as Add event would put them. */
+  const dropAt: ScenarioDrop = (f, at) => {
+    const t = getTemplate(f);
+    // Dragging a chip selects it first (onDragStart); a drop that beats that render is simply asked again.
+    if (f !== family) return `Drop ${t.displayName} again: it was still being selected.`;
+    if (at.site !== null && !SITE_FAMILIES.has(f)) return `${t.displayName} happens on a lane: drop it on a lane, not on a booth or pump.`;
+    const onto = onBoth && at.site === null ? targets : [at.direction];
+    if (!onto.includes(at.direction)) return `${t.displayName} cannot be added to that carriageway here.`;
+    const cap = Math.min(...onto.map((d) => data[d].laneCount));
+    const laneAt = at.site !== null || !hasLane(f) ? null : Math.min(Math.max(1, at.lane ?? defaultOperatorLane(t, cap)), cap);
+    const extras = laneAt === null || !canAddExtraLanes(f) ? [] : [...new Set(extraLanes.filter((l) => l >= 1 && l <= cap && l !== laneAt))];
+    let failure: string | null = null;
+    for (const d of onto) {
+      const r = data[d].onAdd({
+        variant, direction: d, lane: laneAt, extraLanes: extras,
+        positionKm: Math.min(toKm, Math.max(fromKm, at.km)),
+        startMinutes: Math.max(startMin, data[d].nowS / 60),
+        duration, site: SITE_FAMILIES.has(f) ? at.site : null,
+      });
+      if (!r.ok && failure === null) failure = r.reason;
+    }
+    if (failure !== null) {
+      setRefusal(failure);
+      return failure;
+    }
+    if (at.direction !== direction) props.onFocus(at.direction);
+    clearAnswers(f);
+    return null;
+  };
+  useEffect(() => {
+    if (props.dropRef) props.dropRef.current = dropAt;
+  });
+  useEffect(() => {
+    const ref = props.dropRef;
+    return () => {
+      if (ref) ref.current = null;
+    };
+  }, [props.dropRef]);
+
   const add = () => {
     let failure: string | null = null;
     for (const d of targets) {
@@ -599,9 +814,27 @@ export default function ScenarioPanel(props: Props) {
   return (
     <div className="sandbox-scn" data-scn="panel">
       <span className="sandbox-mini-label">Add a real-incident scenario</span>
+      <span className="sandbox-slider-hint" data-scn="drag-hint">
+        Drag one onto the road to put it there, or choose it and set where below.
+      </span>
       <div className="sandbox-scn-families">
         {SCENARIO_TEMPLATES.map((t) => (
-          <button key={t.family} className={`sandbox-scn-fam${family === t.family ? " active" : ""}`} data-scn-family={t.family} onClick={() => pickFamily(t.family)}>
+          <button
+            key={t.family}
+            className={`sandbox-scn-fam${family === t.family ? " active" : ""}`}
+            data-scn-family={t.family}
+            onClick={() => pickFamily(t.family)}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData(SCENARIO_DRAG_TYPE, t.family);
+              e.dataTransfer.effectAllowed = "copy";
+              // Selected as it is picked up, so the form below is this scenario's and the drop uses it.
+              if (family !== t.family) pickFamily(t.family);
+              props.onDragFamily?.(t.family);
+            }}
+            onDragEnd={() => props.onDragFamily?.(null)}
+            title={`Drag onto the road to place ${t.displayName} there`}
+          >
             <FamilyIcon family={t.family} />
             <span>{t.displayName}</span>
           </button>
@@ -727,8 +960,109 @@ export default function ScenarioPanel(props: Props) {
         </label>
       )}
 
+      <div className="sandbox-scn-place" data-scn="place">
+        <span className="sandbox-mini-label">Where</span>
+        <div className="sandbox-speed-seg" role="radiogroup" aria-label="Where the event happens">
+          {HOTSPOT_FAMILIES.has(family) && !onBoth && (
+            <button role="radio" aria-checked={mode === "data"} className={mode === "data" ? "active" : ""} data-scn-place="data" onClick={() => choosePlaceMode("data")}
+                    title="Where the incident log records this kind of event most often on this stretch">
+              Most frequent
+            </button>
+          )}
+          {!onBoth && onPickOnRoad && (
+            <button role="radio" aria-checked={mode === "pick"} className={mode === "pick" ? "active" : ""} data-scn-place="pick" onClick={() => choosePlaceMode("pick")}
+                    title="Click a lane, a toll booth or a pump on the road">
+              Pick on road
+            </button>
+          )}
+          {SITE_FAMILIES.has(family) && !onBoth && (
+            <button role="radio" aria-checked={mode === "site"} className={mode === "site" ? "active" : ""} data-scn-place="site" onClick={() => choosePlaceMode("site")}
+                    disabled={sites.length === 0}
+                    title={sites.length === 0 ? "No toll plaza, ramp or service area on this stretch for this carriageway — widen the window, or frame one from the Corridor section." : "At a toll plaza's booths, a service area's pumps, or on a ramp"}>
+              At a plaza
+            </button>
+          )}
+          <button role="radio" aria-checked={mode === "km"} className={mode === "km" ? "active" : ""} data-scn-place="km" onClick={() => choosePlaceMode("km")}>
+            Km
+          </button>
+        </div>
+
+        {mode === "data" && (
+          <div className="sandbox-scn-hot" data-scn="hotspots">
+            {candidates.slice(0, 5).map((c, i) => {
+              const on = (hotChoice ?? candidates[0]?.key) === c.key;
+              return (
+                <button key={c.key} className={`sandbox-scn-hot-row${on ? " active" : ""}`} data-scn-hot={i}
+                        onClick={() => { setHotChoice(c.key); setLane(null); }}>
+                  <b>{c.label}</b>
+                  <span>{c.detail}</span>
+                </button>
+              );
+            })}
+            {hot.data && (
+              <span className="sandbox-slider-hint" data-scn="hot-source">
+                {hot.data.inWindow.toLocaleString()} recorded on this stretch of the {direction === "NB" ? "northbound" : "southbound"} carriageway
+                {hot.data.period ? `, ${hot.data.period.from} to ${hot.data.period.to}` : ""}. Source: {hot.data.source}.{hot.data.note ? ` ${hot.data.note}` : ""}
+              </span>
+            )}
+          </div>
+        )}
+
+        {mode === "pick" && (
+          <div className="sandbox-btn-row" style={{ marginTop: 4 }}>
+            <button className={`btn-muted${picking ? " active" : ""}`} data-scn="pick-arm" onClick={() => (picking ? (setPicking(false), onCancelPick?.()) : armPick())}>
+              {picking ? "Cancel picking" : pick && pick.direction === direction ? "Pick again" : "Pick on road"}
+            </button>
+          </div>
+        )}
+
+        {mode === "site" && siteSel && (
+          <div className="sandbox-scn-site" data-scn="site">
+            <label>
+              Place
+              <select data-scn="site-id" value={siteSel.id} onChange={(e) => { setSiteId(e.target.value); setSiteStations([0]); setSiteApproach(false); }}>
+                {sites.map((x) => (
+                  <option key={x.id} value={x.id}>{x.name} · Km {x.km.toFixed(2)}</option>
+                ))}
+              </select>
+            </label>
+            {siteSel.stations > 0 ? (
+              <div className="sandbox-scn-stations" data-scn="stations">
+                {Array.from({ length: siteSel.stations }, (_, i) => (
+                  <label key={i} className="sandbox-scn-check">
+                    <input type="checkbox" data-scn-station={i} checked={!siteApproach && siteStations.includes(i)} disabled={siteApproach}
+                           onChange={(e) => {
+                             const next = e.target.checked ? [...siteStations, i] : siteStations.filter((x) => x !== i);
+                             if (next.length > 0) setSiteStations(next);
+                           }} />
+                    {stationLabel(siteSel.kind, i, siteSel.stations)}
+                  </label>
+                ))}
+                <label className="sandbox-scn-check">
+                  <input type="checkbox" data-scn="site-approach" checked={siteApproach} onChange={(e) => setSiteApproach(e.target.checked)} />
+                  {siteSel.kind === "barrier" ? "Before the booths (the plaza's approach)" : "On the ramp before the " + (siteSel.kind === "service_area" ? "pumps" : "booths") + " — blocks all of them"}
+                </label>
+              </div>
+            ) : (
+              <span className="sandbox-slider-hint">An untolled ramp: the event blocks the ramp itself, single file, so everything using it stops.</span>
+            )}
+          </div>
+        )}
+
+        {mode === "km" && (
+          <div className="sandbox-scn-row">
+            <label>
+              Position (km)
+              <NumberField value={kmNow} min={fromKm} max={toKm} step={0.05} decimals={2} scn="km" onCommit={setPosKm} />
+            </label>
+          </div>
+        )}
+        {place.note && mode !== "data" && <span className="sandbox-slider-hint" data-scn="place-note">{place.note}</span>}
+        {mode === "data" && place.note && candidates.length === 0 && <span className="sandbox-slider-hint" data-scn="place-note">{place.note}</span>}
+      </div>
+
       <div className="sandbox-scn-row">
-        {hasLane(family) && (
+        {hasLane(family) && !site && (
           <label>
             Lane
             <select data-scn="lane" value={laneNow} onChange={(e) => setLane(Number(e.target.value))}>
@@ -739,7 +1073,7 @@ export default function ScenarioPanel(props: Props) {
           </label>
         )}
       </div>
-      {canAddExtraLanes(family) && lane !== null && (
+      {canAddExtraLanes(family) && lane !== null && !site && (
         <div className="sandbox-scn-row" data-scn="extra-lanes">
           <label style={{ flex: 1, minWidth: 0 }}>
             <span className="sandbox-mini-label" style={{ margin: "0 0 3px" }}>
@@ -802,13 +1136,6 @@ export default function ScenarioPanel(props: Props) {
           />
         </label>
       </div>
-      <div className="sandbox-scn-row">
-        <label>
-          Position (km)
-          <NumberField value={kmNow} min={fromKm} max={toKm} step={0.05} decimals={2} scn="km" onCommit={setPosKm} />
-        </label>
-      </div>
-
       <span className="sandbox-mini-label">Duration</span>
       {template.durationSource === "manual_only" ? (
         <p className="sandbox-scn-desc" data-scn="manual-only-note">
