@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import SignalGlyph from "./SignalGlyph";
 import InfoTooltip from "./InfoTooltip";
 import {
   loadForecast, championValue, topsisRank, manilaDate, loadPrescriptive,
@@ -445,12 +446,15 @@ export function CongestionResponsePanel() {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
         {(top.length ? top : rows.slice(0, 3)).map((r, i) => (
-          <div key={r.segment} style={{ border: "1px solid var(--border-default)", borderLeft: `4px solid ${tone(r.label)}`, borderRadius: 10, padding: "12px 14px", display: "grid", gap: 6 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-              <span style={{ fontWeight: 800, fontSize: "0.9rem" }}>{i + 1}. {r.segment}</span>
-              <span style={{ fontSize: "0.7rem", fontWeight: 800, color: tone(r.label), textTransform: "uppercase", letterSpacing: "0.06em" }}>{r.label}</span>
+          <div key={r.segment} style={{ border: "1px solid var(--border-default)", borderRadius: 8, padding: "12px 14px", display: "grid", gap: 6, background: "var(--bg-surface)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: "0.9375rem" }}>{i + 1}. {r.segment}</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.75rem", fontWeight: 700, color: tone(r.label), textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                <SignalGlyph state={r.label === "Act" ? "congested" : r.label === "Prepare" ? "slow" : "none"} size={20} title="" />
+                {r.label}
+              </span>
             </div>
-            <div style={{ display: "flex", gap: 14, fontSize: "0.76rem", color: "var(--text-secondary)" }}>
+            <div style={{ display: "flex", gap: 14, fontSize: "0.8125rem", color: "var(--text-secondary)" }}>
               {r.first != null ? (
                 <>
                   <span>First High <b style={{ color: "var(--text-primary)" }}>+{r.first}h</b></span>
@@ -460,7 +464,7 @@ export function CongestionResponsePanel() {
                 <span style={{ fontStyle: "italic" }}>Never reaches High inside the horizon</span>
               )}
             </div>
-            <div style={{ fontSize: "0.76rem", lineHeight: 1.4 }}>{ACTION[r.label]}</div>
+            <div style={{ fontSize: "0.8125rem", lineHeight: 1.45 }}>{ACTION[r.label]}</div>
           </div>
         ))}
       </div>

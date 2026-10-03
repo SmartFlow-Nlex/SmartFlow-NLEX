@@ -130,7 +130,10 @@ export default function TrafficPage() {
   const SEQ = [chartTheme.seqLightest, ...RAMP];
   // Speed is a status reading, not a series, so it keeps the reserved
   // good/warning/critical colours rather than the tab hue.
-  const SEVERITY = ["#d0483e", "#e8a13a", "#1d9d61"];
+  // Speed is a measurement, not a road state, so it takes the Traffic blue ramp
+  // (slowest = deepest) rather than red/amber/green: those now mean the lane
+  // signals only, and on a min-to-max ramp they painted a 10 km/h jam green.
+  const SEVERITY = [RAMP[2], RAMP[1], RAMP[0]];
   const [activeTab, setActiveTab] = useState<"Descriptive" | "Predictive" | "Prescriptive">("Descriptive");
 
   // Global filters (Row A)
@@ -574,7 +577,7 @@ export default function TrafficPage() {
       [`vs previous ${periodWord}`, prev && prev.total > 0 ? fmtPct(((r.total - prev.total) / prev.total) * 100) : "—"],
       ["Rank in range", `#${rank} of ${totals.length} ${periodWord}s by volume`],
     ];
-    setDetail({ title, subtitle: `Entry volume · ${periodWord}ly`, rows, note: filtersNote });
+    setDetail({ title, subtitle: `Entry volume · ${grain}`, rows, note: filtersNote });
   };
 
   const onHeatmapClick = (p: { value: [number, number, number] }) => {
@@ -1152,7 +1155,7 @@ export default function TrafficPage() {
           <div className={styles.detailModal} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
             <div className={styles.detailHeader}>
-              <div className={styles.detailIcon}>📊</div>
+              <div className={styles.detailIcon}><TrendingUp size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>{detail.title}</h3>
                 {detail.subtitle && <p>{detail.subtitle}</p>}
@@ -1185,7 +1188,7 @@ export default function TrafficPage() {
           <div className={`${styles.detailModal} ${styles.plazaModal}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
             <div className={styles.detailHeader}>
-              <div className={styles.detailIcon}>🏢</div>
+              <div className={styles.detailIcon}><Building2 size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>Volume by Plaza — Full Ranking</h3>
                 <p>{data.byPlaza.length} toll plazas</p>
@@ -1221,7 +1224,7 @@ export default function TrafficPage() {
           <div className={`${styles.detailModal} ${impactMode === "Events" ? styles.impactModal : styles.plazaModal}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
             <div className={styles.detailHeader}>
-              <div className={styles.detailIcon}>{impactMode === "Events" ? "🎤" : "🎉"}</div>
+              <div className={styles.detailIcon}><CalendarClock size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>{impactMode === "Events" ? "Arena Events — Full List" : "Holidays — Full List"}</h3>
                 <p>

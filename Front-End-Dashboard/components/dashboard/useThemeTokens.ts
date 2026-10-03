@@ -103,17 +103,20 @@ export function useThemeTokens(): ThemeTokens {
 
 /** Zone tints. The light values wash out on a dark card, so they are lifted. */
 export function zoneTints(isDark: boolean) {
+  // Lane Signal: one quiet ramp instead of blue / orange / green washes, which
+  // read as road states. Past is near-plain, the held-out test window a faint
+  // neutral, and the forecast a faint action-blue tint.
   return isDark
     ? {
-        past: "rgba(56, 118, 245, 0.10)",
-        present: "rgba(249, 146, 66, 0.12)",
-        future: "rgba(52, 199, 123, 0.12)",
-        divider: "#4a5568",
+        past: "rgba(232, 238, 251, 0.025)",
+        present: "rgba(232, 238, 251, 0.06)",
+        future: "rgba(92, 200, 255, 0.10)",
+        divider: "#4a6396",
       }
     : {
-        past: "rgba(37, 99, 235, 0.05)",
-        present: "rgba(249, 115, 22, 0.08)",
-        future: "rgba(22, 163, 74, 0.08)",
-        divider: "#94a3b8",
+        past: "rgba(10, 22, 48, 0.015)",
+        present: "rgba(10, 22, 48, 0.045)",
+        future: "rgba(10, 108, 194, 0.07)",
+        divider: "#8d9ab5",
       };
 }

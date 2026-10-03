@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { EChartsOption } from "echarts";
 import DashboardChart from "./DashboardChart";
+import { useChartTheme } from "../../lib/chart-theme";
 import InfoTooltip from "./InfoTooltip";
 import EventSurgeNarrative from "./EventSurgeNarrative";
 import { ShieldCheck, ChevronRight } from "lucide-react";
@@ -109,7 +110,7 @@ function EventReplayChart({ series }: { series: { t: string; p: number; a: numbe
 
   return (
     <div ref={ref} style={{ position: "relative", width: "100%", overflowX: "auto" }}>
-      <div style={{ display: "flex", gap: 14, justifyContent: "flex-end", fontSize: "0.7rem", color: "#64748b", marginBottom: 2 }}>
+      <div style={{ display: "flex", gap: 14, justifyContent: "flex-end", fontSize: "0.7rem", color: "var(--text-secondary)", marginBottom: 2 }}>
         {[{ c: REPLAY_ACTUAL, fill: true, label: "Actually arrived" },
           { c: REPLAY_FORECAST, fill: false, label: "Model predicted" }].map((l) => (
           <span key={l.label} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -131,33 +132,33 @@ function EventReplayChart({ series }: { series: { t: string; p: number; a: numbe
              }}>
           {[0, 0.5, 1].map((f) => (
             <g key={f}>
-              <line x1={padL} x2={w - padR} y1={y(lo + (hi - lo) * f)} y2={y(lo + (hi - lo) * f)} stroke="#eef2f7" strokeWidth={1} />
-              <text x={padL - 6} y={y(lo + (hi - lo) * f) + 3} textAnchor="end" fontSize={9} fill="#94a3b8">{k(lo + (hi - lo) * f)}</text>
+              <line x1={padL} x2={w - padR} y1={y(lo + (hi - lo) * f)} y2={y(lo + (hi - lo) * f)} strokeWidth={1} style={{ stroke: "var(--bg-surface-hover)" }} />
+              <text x={padL - 6} y={y(lo + (hi - lo) * f) + 3} textAnchor="end" fontSize={11} style={{ fill: "var(--text-muted)" }}>{k(lo + (hi - lo) * f)}</text>
             </g>
           ))}
           {series.map((d, i) => (
             <g key={d.t} opacity={hover == null || hover === i ? 1 : 0.45}>
               {/* The gap IS the error, so it gets a mark of its own. */}
-              <line x1={x(i)} x2={x(i)} y1={y(d.p)} y2={y(d.a)} stroke="#94a3b8" strokeWidth={2} strokeLinecap="round" />
-              <circle cx={x(i)} cy={y(d.p)} r={3.6} fill="#fff" stroke={REPLAY_FORECAST} strokeWidth={2} />
-              <circle cx={x(i)} cy={y(d.a)} r={3.6} fill={REPLAY_ACTUAL} stroke="#fff" strokeWidth={1.5} />
+              <line x1={x(i)} x2={x(i)} y1={y(d.p)} y2={y(d.a)} strokeWidth={2} strokeLinecap="round" style={{ stroke: "var(--text-muted)" }} />
+              <circle cx={x(i)} cy={y(d.p)} r={3.6} stroke={REPLAY_FORECAST} strokeWidth={2} style={{ fill: "var(--bg-surface)" }} />
+              <circle cx={x(i)} cy={y(d.a)} r={3.6} fill={REPLAY_ACTUAL} strokeWidth={1.5} style={{ stroke: "var(--bg-surface)" }} />
             </g>
           ))}
-          <text x={padL} y={H - 5} fontSize={9} fill="#94a3b8">{fmtDay(series[0].t)}</text>
-          <text x={padL + plotW / 2} y={H - 5} textAnchor="middle" fontSize={9} fill="#cbd5e1">vertical axis zoomed to these days</text>
-          <text x={w - padR} y={H - 5} textAnchor="end" fontSize={9} fill="#94a3b8">{fmtDay(series[series.length - 1].t)}</text>
+          <text x={padL} y={H - 5} fontSize={11} style={{ fill: "var(--text-muted)" }}>{fmtDay(series[0].t)}</text>
+          <text x={padL + plotW / 2} y={H - 5} textAnchor="middle" fontSize={11} style={{ fill: "var(--border-strong)" }}>vertical axis zoomed to these days</text>
+          <text x={w - padR} y={H - 5} textAnchor="end" fontSize={11} style={{ fill: "var(--text-muted)" }}>{fmtDay(series[series.length - 1].t)}</text>
         </svg>
       )}
       {hv && (
         <div style={{
           position: "absolute", left: hvLeft, top: hvTop, transform: "translateX(-50%)", pointerEvents: "none",
-          background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "6px 9px",
+          background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: 8, padding: "6px 9px",
           boxShadow: "0 6px 16px rgba(15,23,42,0.12)", fontSize: "0.72rem", whiteSpace: "nowrap", zIndex: 2,
         }}>
-          <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 3 }}>{fmtDay(hv.t)}</div>
+          <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: 3 }}>{fmtDay(hv.t)}</div>
           <div style={{ color: REPLAY_FORECAST, fontWeight: 600 }}>Predicted {hv.p.toLocaleString()}</div>
           <div style={{ color: REPLAY_ACTUAL, fontWeight: 600 }}>Actually {hv.a.toLocaleString()}</div>
-          <div style={{ color: "#64748b" }}>off by {Math.abs((hv.p - hv.a) / hv.a * 100).toFixed(1)}%</div>
+          <div style={{ color: "var(--text-secondary)" }}>off by {Math.abs((hv.p - hv.a) / hv.a * 100).toFixed(1)}%</div>
         </div>
       )}
     </div>
@@ -165,6 +166,11 @@ function EventReplayChart({ series }: { series: { t: string; p: number; a: numbe
 }
 
 export default function PredictiveEventChart() {
+  // Theme-aware literals for the ECharts option (canvas cannot read CSS vars).
+  const chartTheme = useChartTheme();
+  const K = chartTheme.isDark
+    ? { surface: "#0f1f3d", ink: "#e8eefb", ink2: "#a9b9da", muted: "#8a9cc2", faint: "#4a6396", faint2: "#33497a", border: "#22396b", hover: "#1a2d54" }
+    : { surface: "#ffffff", ink: "#0a1630", ink2: "#3b4d72", muted: "#55678b", faint: "#b9c5da", faint2: "#d9e0ec", border: "#d9e0ec", hover: "#e3e8f1" };
   const [raw, setRaw] = useState<RawRow[] | null>(null);
   // Out-of-sample leaderboard from build_event_surge.py. The uplift table
   // itself is descriptive; this is the separate check that it predicts unseen
@@ -266,7 +272,7 @@ export default function PredictiveEventChart() {
   if (!model) {
     return (
       <article className="chart-card wide" style={{ padding: "24px", marginTop: "24px" }}>
-        <div style={{ color: "#64748b" }}>Loading ML event surge forecast from AWS…</div>
+        <div style={{ color: "var(--text-secondary)" }}>Loading ML event surge forecast from AWS…</div>
       </article>
     );
   }
@@ -285,22 +291,22 @@ export default function PredictiveEventChart() {
     grid: { left: 152, right: 210, top: 10, bottom: 36 },
     tooltip: {
       trigger: "item",
-      backgroundColor: "#ffffff",
-      borderColor: "#e2e8f0",
+      backgroundColor: K.surface,
+      borderColor: K.border,
       borderWidth: 1,
-      textStyle: { color: "#334155" },
+      textStyle: { color: K.ink },
       confine: true,
       extraCssText: TOOLTIP_CSS,
       formatter: (params: unknown) => {
         const r = rows[(params as { dataIndex: number }).dataIndex];
         return `
           <div style="padding:2px 4px; min-width:225px;">
-            <b style="font-size:1.05em; color:#0f172a;">${r.exit}</b>
+            <b style="font-size:1.05em; color:var(--text-primary);">${r.exit}</b>
             <div style="margin-top:8px; display:grid; grid-template-columns:auto 1fr; gap:5px 12px; font-size:0.9em;">
-              <span style="color:#64748b;">Added by event</span><span style="font-weight:700; color:${SURGE_COLOR};">+${fmtVeh(r.added)} (+${r.pct.toFixed(0)}%)</span>
-              <span style="color:#64748b;">Normal day</span><span style="font-weight:600;">${fmtVeh(r.baseline)}</span>
-              <span style="color:#64748b;">With event</span><span style="font-weight:600; color:${SURGE_COLOR};">${fmtVeh(r.surge)}</span>
-              <span style="color:#64748b;">Share of surge</span><span style="font-weight:500;">${r.shareOfSurge.toFixed(0)}%</span>
+              <span style="color:var(--text-secondary);">Added by event</span><span style="font-weight:700; color:${SURGE_COLOR};">+${fmtVeh(r.added)} (+${r.pct.toFixed(0)}%)</span>
+              <span style="color:var(--text-secondary);">Normal day</span><span style="font-weight:600;">${fmtVeh(r.baseline)}</span>
+              <span style="color:var(--text-secondary);">With event</span><span style="font-weight:600; color:${SURGE_COLOR};">${fmtVeh(r.surge)}</span>
+              <span style="color:var(--text-secondary);">Share of surge</span><span style="font-weight:500;">${r.shareOfSurge.toFixed(0)}%</span>
             </div>
           </div>`;
       },
@@ -310,16 +316,16 @@ export default function PredictiveEventChart() {
       name: "Extra vehicles per day",
       nameLocation: "middle",
       nameGap: 26,
-      nameTextStyle: { color: "#94a3b8", fontSize: 11 },
-      axisLabel: { color: "#94a3b8", formatter: (v: number) => (v === 0 ? "0" : `+${fmtK(v)}`), fontSize: 11 },
-      splitLine: { lineStyle: { color: "#eef2f7", type: "dashed" } },
+      nameTextStyle: { color: K.muted, fontSize: 11 },
+      axisLabel: { color: K.muted, formatter: (v: number) => (v === 0 ? "0" : `+${fmtK(v)}`), fontSize: 11 },
+      splitLine: { lineStyle: { color: K.hover, type: "dashed" } },
     },
     yAxis: {
       type: "category",
       data: rows.map((r) => r.exit),
       axisTick: { show: false },
       axisLine: { show: false },
-      axisLabel: { color: "#0f172a", fontWeight: 700, fontSize: 12 },
+      axisLabel: { color: K.ink, fontWeight: 700, fontSize: 12 },
     },
     series: [
       {
@@ -342,7 +348,7 @@ export default function PredictiveEventChart() {
           rich: {
             add: { color: SURGE_COLOR, fontWeight: 800, fontSize: 13, lineHeight: 17 },
             pct: { color: "#7aa8e0", fontWeight: 700, fontSize: 11, lineHeight: 17 },
-            ctx: { color: "#94a3b8", fontSize: 10, lineHeight: 14 },
+            ctx: { color: K.muted, fontSize: 10, lineHeight: 14 },
           },
         },
       },
@@ -373,8 +379,8 @@ export default function PredictiveEventChart() {
      read as a pile. Each fact now appears once, at the level it earns. */
   const stat = (value: string, label: string, tone?: string) => (
     <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-      <span style={{ fontSize: "1.05rem", fontWeight: 800, color: tone ?? "#0f172a", letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{value}</span>
-      <span style={{ fontSize: "0.68rem", color: "#64748b", whiteSpace: "nowrap" }}>{label}</span>
+      <span style={{ fontSize: "1.05rem", fontWeight: 800, color: tone ?? "var(--text-primary)", letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{value}</span>
+      <span style={{ fontSize: "0.68rem", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{label}</span>
     </div>
   );
 
@@ -382,7 +388,7 @@ export default function PredictiveEventChart() {
     <article className="chart-card wide" style={{ padding: "22px 24px", display: "flex", flexDirection: "column", gap: "14px", marginTop: "24px" }}>
       {/* Row 1: title on the left, provenance on the right. */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ fontSize: "1.05rem", color: "#0f172a", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
+        <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
           Event Surge Impact by Exit
           <InfoTooltip text="Extra vehicles each exit takes on a Philippine Arena event day versus a normal day. Choose a past pattern or an upcoming event above." />
         </h3>
@@ -392,7 +398,7 @@ export default function PredictiveEventChart() {
               Forecast · {chosenDate}
             </span>
           ) : (
-            <span style={{ fontSize: "0.7rem", padding: "2px 8px", background: "#ecfdf5", borderRadius: "999px", border: "1px solid #a7f3d0", color: "#047857", fontWeight: 600, whiteSpace: "nowrap" }}>
+            <span style={{ fontSize: "0.7rem", padding: "2px 8px", background: "var(--color-success-bg)", borderRadius: "999px", border: "1px solid var(--color-success-border)", color: "var(--color-success)", fontWeight: 600, whiteSpace: "nowrap" }}>
               Observed{meta?.nEvents ? ` · ${meta.nEvents} past event days` : ""}
             </span>
           )}
@@ -401,9 +407,9 @@ export default function PredictiveEventChart() {
               title={champ.diagnosis ?? undefined}
               style={{
                 fontSize: "0.7rem", padding: "2px 8px", borderRadius: "999px", fontWeight: 600, whiteSpace: "nowrap",
-                background: champ.accepted ? "#eff6ff" : "#fef2f2",
-                border: `1px solid ${champ.accepted ? "#bfdbfe" : "#fecaca"}`,
-                color: champ.accepted ? "#1d4ed8" : "#b91c1c",
+                background: champ.accepted ? "var(--color-info-bg)" : "var(--color-danger-bg)",
+                border: `1px solid ${champ.accepted ? "var(--color-info-border)" : "var(--color-danger-border)"}`,
+                color: champ.accepted ? "var(--action)" : "var(--color-danger)",
               }}
             >
               {champ.accepted ? "✓ tested" : "failed test"} · {champ.wmape.toFixed(1)}% error held-out
@@ -414,15 +420,15 @@ export default function PredictiveEventChart() {
 
       {/* Row 2: what is shown. A select, not seven pills -- the pills wrapped to
           three lines and pushed the finding below the fold. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: "0.8rem", color: "#64748b" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: "0.8rem", color: "var(--text-secondary)" }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.68rem" }}>Showing</span>
           <select
             value={selUpcoming == null ? "" : String(selUpcoming)}
             onChange={(e) => setSelUpcoming(e.target.value === "" ? null : Number(e.target.value))}
             style={{
-              font: "inherit", fontWeight: 600, color: "#0f172a", background: "#fff",
-              border: "1px solid #dce2ef", borderRadius: 8, padding: "5px 10px", cursor: "pointer", maxWidth: 360,
+              font: "inherit", fontWeight: 600, color: "var(--text-primary)", background: "var(--bg-surface)",
+              border: "1px solid var(--border-default)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", maxWidth: 360,
             }}
           >
             <option value="">Past events — what {eventName === "the upcoming event" ? "event" : eventName} days did</option>
@@ -526,7 +532,7 @@ export default function PredictiveEventChart() {
         />
       )}
 
-      <details style={{ fontSize: "0.76rem", color: "#64748b", borderTop: "1px solid #eef2f7", paddingTop: 10 }}>
+      <details style={{ fontSize: "0.76rem", color: "var(--text-secondary)", borderTop: "1px solid var(--bg-surface-hover)", paddingTop: 10 }}>
         <summary
           className="evidence-summary"
           style={{ cursor: "pointer", listStyle: "none", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}
@@ -573,7 +579,7 @@ export default function PredictiveEventChart() {
               <div style={{ fontSize: "0.82rem", fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.01em", marginBottom: 4 }}>
                 Did past predictions match what really happened?
               </div>
-              <p style={{ margin: "0 0 2px", fontSize: "0.76rem", lineHeight: 1.55, color: "#475569" }}>
+              <p style={{ margin: "0 0 2px", fontSize: "0.76rem", lineHeight: 1.55, color: "var(--text-secondary)" }}>
                 <b>{evalInfo.events_test} event days the model never saw</b>, in date order · the gap is the error
               </p>
               <EventReplayChart series={evalInfo.series} />
@@ -585,23 +591,23 @@ export default function PredictiveEventChart() {
                   [`${evalInfo.wmape.toFixed(1)}%`, "error across all exit-days"],
                   [`${evalInfo.baseline_wmape.toFixed(1)}%`, "if you ignored the event"]].map(([v, l]) => (
                   <div key={l} style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: "0.95rem", fontWeight: 800, color: "#0f172a", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{v}</span>
-                    <span style={{ fontSize: "0.68rem", color: "#64748b" }}>{l}</span>
+                    <span style={{ fontSize: "0.95rem", fontWeight: 800, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{v}</span>
+                    <span style={{ fontSize: "0.68rem", color: "var(--text-secondary)" }}>{l}</span>
                   </div>
                 ))}
               </div>
               {evalInfo.examples?.length > 0 && (
-                <div style={{ display: "grid", gap: 3, marginTop: 7, fontSize: "0.72rem", color: "#64748b" }}>
+                <div style={{ display: "grid", gap: 3, marginTop: 7, fontSize: "0.72rem", color: "var(--text-secondary)" }}>
                   {evalInfo.examples.map((ex) => (
                     <div key={ex.kind}>
                       {ex.kind.charAt(0).toUpperCase() + ex.kind.slice(1)} —{" "}
-                      <b style={{ color: "#0f172a" }}>{new Date(ex.t + "T00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</b>:
+                      <b style={{ color: "var(--text-primary)" }}>{new Date(ex.t + "T00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</b>:
                       {" "}predicted {ex.predicted.toLocaleString()}, actually {ex.actual.toLocaleString()}.
                     </div>
                   ))}
                 </div>
               )}
-              <p style={{ margin: "7px 0 0", fontSize: "0.72rem", lineHeight: 1.5, color: "#94a3b8" }}>
+              <p style={{ margin: "7px 0 0", fontSize: "0.72rem", lineHeight: 1.5, color: "var(--text-muted)" }}>
                 {evalInfo.events_total} Philippine Arena dates · attendance is not in the calendar, the largest
                 remaining source of error
                 <InfoTooltip
@@ -619,16 +625,16 @@ export default function PredictiveEventChart() {
             <div>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem" }}>
                 <thead>
-                  <tr style={{ textAlign: "left", color: "#94a3b8", borderBottom: "1px solid #eef2f7" }}>
+                  <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--bg-surface-hover)" }}>
                     <th style={{ padding: "4px 6px", fontWeight: 600 }}>Model</th>
                     <th style={{ padding: "4px 6px", fontWeight: 600, textAlign: "right" }}>Error on held-out events</th>
                   </tr>
                 </thead>
                 <tbody>
                   {[champ, ...others].map((m, i) => (
-                    <tr key={m.model} style={{ borderBottom: "1px solid #f1f5f9", color: i === 0 ? "#0f172a" : "#475569" }}>
+                    <tr key={m.model} style={{ borderBottom: "1px solid var(--bg-surface-hover)", color: i === 0 ? "var(--text-primary)" : "var(--text-secondary)" }}>
                       <td style={{ padding: "4px 6px", fontWeight: i === 0 ? 700 : 500 }}>
-                        {m.model}{i === 0 && <span style={{ marginLeft: 6, fontSize: "0.66rem", color: "#1d4ed8", fontWeight: 700 }}>used</span>}
+                        {m.model}{i === 0 && <span style={{ marginLeft: 6, fontSize: "0.66rem", color: "var(--action)", fontWeight: 700 }}>used</span>}
                       </td>
                       <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: i === 0 ? 700 : 500 }}>
                         {m.wmape != null ? `${m.wmape.toFixed(2)}%` : "—"}
@@ -636,14 +642,14 @@ export default function PredictiveEventChart() {
                     </tr>
                   ))}
                   {noAdj?.wmape != null && (
-                    <tr style={{ color: "#94a3b8" }}>
+                    <tr style={{ color: "var(--text-muted)" }}>
                       <td style={{ padding: "4px 6px", fontStyle: "italic" }}>Ignoring the event</td>
                       <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{noAdj.wmape.toFixed(2)}%</td>
                     </tr>
                   )}
                 </tbody>
               </table>
-              <p style={{ margin: "6px 0 0", lineHeight: 1.5, color: "#94a3b8" }}>
+              <p style={{ margin: "6px 0 0", lineHeight: 1.5, color: "var(--text-muted)" }}>
                 Fitted on earlier events, scored on later ones it never saw{champ.diagnosis ? ` (${champ.diagnosis})` : ""}.{" "}
                 {chosen
                   ? <>The day shown applies each exit&apos;s uplift to its normal same-weekday, same-month volume; the uplift does not yet vary with the act or its capacity.
@@ -666,18 +672,18 @@ export default function PredictiveEventChart() {
               {shownOthers.map((o) => (
                 <span key={o.exit} title={`${o.exit}: ${fmtVeh(o.baseline)} vehicles/day, no material event effect`} style={{
                   display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: "999px",
-                  background: "#fff", border: "1px solid #e2e8f0", fontSize: "0.72rem", color: "#94a3b8", whiteSpace: "nowrap",
+                  background: "var(--bg-surface)", border: "1px solid var(--border-default)", fontSize: "0.72rem", color: "var(--text-muted)", whiteSpace: "nowrap",
                 }}>
                   {o.exit}<span>no change</span>
                 </span>
               ))}
               {otherExits.length > VISIBLE_OTHERS && (
-                <button onClick={() => setShowAllOthers((v) => !v)} style={{ border: "1px solid #dce2ef", background: "#fff", borderRadius: "999px", padding: "3px 10px", fontSize: "0.7rem", fontWeight: 600, color: "#475569", cursor: "pointer" }}>
+                <button onClick={() => setShowAllOthers((v) => !v)} style={{ border: "1px solid var(--border-default)", background: "var(--bg-surface)", borderRadius: "999px", padding: "3px 10px", fontSize: "0.7rem", fontWeight: 600, color: "var(--text-secondary)", cursor: "pointer" }}>
                   {showAllOthers ? "fewer" : `+${otherExits.length - VISIBLE_OTHERS} more`}
                 </button>
               )}
               {otherPoints.length > 0 && (
-                <span style={{ alignSelf: "center", fontSize: "0.7rem", color: "#94a3b8" }} title={otherPoints.map((x) => x.exit).join(", ")}>
+                <span style={{ alignSelf: "center", fontSize: "0.7rem", color: "var(--text-muted)" }} title={otherPoints.map((x) => x.exit).join(", ")}>
                   · {otherPoints.length} barriers/ramps excluded
                 </span>
               )}

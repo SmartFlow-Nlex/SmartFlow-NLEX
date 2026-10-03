@@ -7,13 +7,15 @@ import { useEffect, useRef, useState } from "react";
  * same way: the same two hues, the same meaning for solid and dashed. A reader
  * who learns one chart can read the other.
  *
- * Blue and green clear the colour-blind separation checks at full contrast
- * against the panel, and neither collides with the Moving/Heavy/Severe ramp on
- * the congestion grid, so a line is never mistaken for a traffic state.
+ * Blue and magenta (Lane Signal, 3 Oct 2026: green now means a clear road, so
+ * the forecast line moved off it). Both clear 3:1 against the white panel and
+ * the navy dark panel (#3a80e0 3.9 / 4.2, #d1488a 4.2 / 3.9), separate under
+ * CVD, and neither collides with the Moving/Heavy/Severe ramp on the
+ * congestion grid, so a line is never mistaken for a traffic state.
  * Identity is never carried by colour alone: every chart using these also
  * labels each series and varies its line style. */
-export const REPLAY_ACTUAL = "#2a78d6";
-export const REPLAY_FORECAST = "#008300";
+export const REPLAY_ACTUAL = "#3a80e0";
+export const REPLAY_FORECAST = "#d1488a";
 
 /** Width of an element, tracked live. These charts sit inside a <details>, so
  *  they have no width until the panel opens — a one-shot measure on mount

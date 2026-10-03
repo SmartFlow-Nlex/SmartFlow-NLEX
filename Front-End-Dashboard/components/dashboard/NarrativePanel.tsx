@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Sparkles } from "lucide-react";
+import { FileText } from "lucide-react";
 import AiModelInsight, { type InsightMetric } from "./AiModelInsight";
 
 /**
@@ -51,11 +51,9 @@ export default function NarrativePanel({
   return (
     <section
       style={{
-        border: "1px solid color-mix(in srgb, var(--page-accent, #4f46e5) 28%, transparent)",
-        borderRadius: 12,
-        background:
-          "linear-gradient(135deg, color-mix(in srgb, var(--page-accent, #4f46e5) 11%, var(--bg-surface)), color-mix(in srgb, var(--page-accent, #4f46e5) 4%, var(--bg-surface)))",
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.5)",
+        border: "1px solid var(--border-default)",
+        borderRadius: 8,
+        background: "var(--bg-surface-hover)",
         padding: "18px 20px",
         display: "flex",
         flexDirection: "column",
@@ -66,15 +64,14 @@ export default function NarrativePanel({
         <div style={{ minWidth: 190, display: "flex", alignItems: "center", gap: 10 }}>
           <span
             style={{
-              display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: 9, flex: "none",
-              background: "linear-gradient(135deg, color-mix(in srgb, var(--page-accent, #4f46e5) 82%, white), var(--page-accent, #4f46e5))", color: "#fff",
-              boxShadow: "0 1px 6px color-mix(in srgb, var(--page-accent, #4f46e5) 35%, transparent)",
+              display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: 6, flex: "none",
+              border: "1px solid var(--border-strong)", color: "var(--color-purple)",
             }}
           >
-            <Sparkles size={15} strokeWidth={2.4} />
+            <FileText size={15} strokeWidth={2.2} aria-hidden="true" />
           </span>
           <div>
-            <h4 style={{ margin: 0, fontSize: "0.98rem", fontWeight: 800, letterSpacing: "-0.01em", color: "var(--text-primary)" }}>
+            <h4 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)" }}>
               Narrative Explanation
             </h4>
           </div>
@@ -85,7 +82,7 @@ export default function NarrativePanel({
           style={{
             display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px",
             marginLeft: "auto", flexShrink: 0,
-            borderRadius: 999, cursor: "pointer", fontSize: "0.76rem", fontWeight: 600,
+            borderRadius: 6, cursor: "pointer", fontSize: "0.8125rem", fontWeight: 600,
             border: "1px solid var(--border-strong)",
             background: "var(--bg-surface)",
             color: "var(--text-secondary)",
@@ -148,7 +145,7 @@ export function GenerateReportButton({ onClick }: { onClick: () => void }) {
     // different size and offset on each Predictive tab.
     <div className="ds-narrative-cta">
       <button type="button" className="ds-narrative-btn" onClick={onClick}>
-        <Sparkles size={15} strokeWidth={2.4} aria-hidden="true" />
+        <FileText size={15} strokeWidth={2.2} aria-hidden="true" />
         Generate report
       </button>
     </div>

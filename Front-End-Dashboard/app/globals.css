@@ -12513,3 +12513,21 @@ h1, h2, h3, h4 { letter-spacing: -0.005em; }
 .ds-rd-rail-hint { font-style: normal; }
 .ds-rd-titles h2 { font-size: var(--fs-title); font-weight: 700; }
 .ds-rd-tally span { border-radius: var(--radius-sm); }
+
+/* --- Narrative "Generate report": a quiet outlined control (Lane Signal) ---
+   It spends a model call and is secondary to the forecast it sits under, so
+   it is outlined, not a gradient pill, and it does not lift. */
+.ds-narrative-btn {
+  height: 34px;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--fs-caption);
+  font-weight: 650;
+  box-shadow: none;
+}
+.ds-narrative-btn svg { color: var(--color-purple); }
+.ds-narrative-btn:hover { transform: none; box-shadow: none; background: var(--bg-surface-hover); border-color: var(--text-muted); }
+.ds-narrative-btn:focus-visible { box-shadow: none; outline: 2px solid var(--action); outline-offset: 2px; }

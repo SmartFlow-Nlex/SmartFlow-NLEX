@@ -28,9 +28,9 @@ export function Shell({ title, hint, children, right }: { title: string; hint: s
 export const Banner = ({ children }: { children: React.ReactNode }) => (
   <div
     style={{
-      background: "color-mix(in srgb, var(--page-accent, #4f46e5) 9%, transparent)",
-      border: "1px solid color-mix(in srgb, var(--page-accent, #4f46e5) 28%, transparent)",
-      borderRadius: 10, padding: "12px 14px", fontSize: "0.85rem", lineHeight: 1.5, color: "var(--text-primary)",
+      background: "var(--color-info-bg)",
+      border: "1px solid var(--color-info-border)",
+      borderRadius: 6, padding: "12px 14px", fontSize: "0.875rem", lineHeight: 1.5, color: "var(--text-primary)",
     }}
   >
     {children}

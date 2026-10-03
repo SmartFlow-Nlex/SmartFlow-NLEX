@@ -45,11 +45,11 @@ type ModelMeta = {
 // twice gone stale silently and shown fabricated figures on screen when the API
 // call failed. "—" makes a missing fetch visibly missing instead of confidently wrong.
 const MODELS: ModelMeta[] = [
-  { key: "LSTM", label: "LSTM", note: "Loading…", accepted: false, color: "#16a34a", rmse: "—", mae: "—", wmape: "—", r2: "—" },
-  { key: "Prophet", label: "Prophet", note: "Loading…", accepted: false, color: "#f59e0b", rmse: "—", mae: "—", wmape: "—", r2: "—" },
-  { key: "HoltWinters", label: "Holt-Winters", note: "Loading…", accepted: false, color: "#8b5cf6", rmse: "—", mae: "—", wmape: "—", r2: "—" },
-  { key: "SARIMAX", label: "SARIMAX", note: "Loading…", accepted: false, color: "#ef4444", rmse: "—", mae: "—", wmape: "—", r2: "—" },
-  { key: "HoltsLinear", label: "Holts Linear", note: "Loading…", accepted: false, color: "#db2777", rmse: "—", mae: "—", wmape: "—", r2: "—" },
+  { key: "LSTM", label: "LSTM", note: "Loading…", accepted: false, color: "#2a78d6", rmse: "—", mae: "—", wmape: "—", r2: "—" },
+  { key: "Prophet", label: "Prophet", note: "Loading…", accepted: false, color: "#c2185b", rmse: "—", mae: "—", wmape: "—", r2: "—" },
+  { key: "HoltWinters", label: "Holt-Winters", note: "Loading…", accepted: false, color: "#0b8db0", rmse: "—", mae: "—", wmape: "—", r2: "—" },
+  { key: "SARIMAX", label: "SARIMAX", note: "Loading…", accepted: false, color: "#7a5fe0", rmse: "—", mae: "—", wmape: "—", r2: "—" },
+  { key: "HoltsLinear", label: "Holts Linear", note: "Loading…", accepted: false, color: "#e87ba4", rmse: "—", mae: "—", wmape: "—", r2: "—" },
 ];
 
 const META = Object.fromEntries(MODELS.map((m) => [m.key, m])) as Record<ModelType, ModelMeta>;
@@ -69,7 +69,13 @@ const META = Object.fromEntries(MODELS.map((m) => [m.key, m])) as Record<ModelTy
  */
 const SPLIT_ARM = "80_20";
 
-const ACTUAL_COLOR = "#2563eb";
+/* Lane Signal model palette (3 Oct 2026). Green, amber and red now mean road
+   state only, so the five models take blue / magenta / teal / violet / pink in
+   this fixed order, validated (dataviz validator, adjacent pairs) on #ffffff
+   and on the navy dark surface #0f1f3d. The light pink is under 3:1, which the
+   legend and the chip labels relieve. */
+const MODEL_LIGHT: Record<string, string> = { LSTM: "#2a78d6", Prophet: "#c2185b", HoltWinters: "#0b8db0", SARIMAX: "#7a5fe0", HoltsLinear: "#e87ba4" };
+const MODEL_DARK: Record<string, string> = { LSTM: "#3987e5", Prophet: "#d55181", HoltWinters: "#169bb8", SARIMAX: "#8c7ff0", HoltsLinear: "#cc6f97" };
 
 // Same pattern the other dashboard pages use. The literal URL was refactored out
 // of this file but the constant was never declared here, so every fetch threw a
@@ -218,6 +224,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const [granularity, setGranularity] = useState<"Hourly" | "Daily" | "Weekly" | "Monthly" | "Yearly">("Weekly");
   // ECharts needs literal colours, so the CSS tokens are resolved at runtime.
   const T = useThemeTokens();
+  const modelColor = (k: string) => (T.isDark ? MODEL_DARK : MODEL_LIGHT)[k] ?? "#2a78d6";
   const ZONE = zoneTints(T.isDark);
 
   const [pastDays, setPastDays] = useState<number>(ALL_PAST);
@@ -446,7 +453,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
       <div
         style={{
           display: "inline-flex", flexWrap: "wrap", gap: "2px", padding: "3px",
-          background: "var(--bg-surface)", border: "1px solid #dce2ef", borderRadius: "999px",
+          background: "var(--bg-surface)", border: "1px solid var(--border-strong)", borderRadius: "999px",
         }}
       >
         {MODELS.map((baseM) => {
@@ -465,13 +472,13 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               title={weatherLocked ? `${m.label} uses no weather inputs — turn Weather off to show it` : locked ? "At least one model must stay selected" : `${on ? "Hide" : "Show"} ${m.label}`}
               style={{
                 display: "inline-flex", alignItems: "center", border: 0,
-                padding: "5px 12px", borderRadius: "999px",
+                padding: "5px 12px", borderRadius: "4px",
                 fontSize: "0.76rem", fontWeight: 600, whiteSpace: "nowrap",
                 cursor: weatherLocked ? "not-allowed" : locked ? "default" : "pointer", transition: "all 0.15s",
                 opacity: weatherLocked ? 0.4 : 1,
-                background: on ? m.color : "transparent",
+                background: on ? modelColor(m.key) : "transparent",
                 color: on ? "var(--bg-surface)" : "var(--text-secondary, #4b5e7d)",
-                boxShadow: on ? `0 1px 4px ${m.color}40` : "none",
+                boxShadow: "none",
               }}
             >
               {on && (
@@ -490,7 +497,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const metricsTable = (
     <div style={{ display: "grid", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.4} />} tint="#2563eb" title="Held-out accuracy">
+        <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.4} />} tint="var(--action)" title="Held-out accuracy">
           <InfoTooltip text="Scored on the Present zone: real daily counts the model never trained on. WMAPE is the headline error; MASE below 1 beats repeating last week's pattern. Show more adds the secondary error measures." />
         </EvidenceHeading>
         <button
@@ -532,12 +539,12 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               <tr key={m.key} style={{ borderTop: "1px solid var(--border-default)" }}>
                 <td style={{ padding: "8px", fontWeight: 700, color: "var(--text-primary)", position: "sticky", left: 0, background: "var(--bg-surface-hover)", zIndex: 1, whiteSpace: "nowrap" }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ width: 9, height: 9, borderRadius: "50%", background: m.color }} />
+                    <span style={{ width: 9, height: 9, borderRadius: "50%", background: modelColor(m.key) }} />
                     {m.label}
                     <span style={{ fontSize: "0.7rem", fontWeight: 600, color: m.accepted ? "var(--color-success)" : "var(--color-danger)" }}>{m.note}</span>
                   </span>
                 </td>
-                <td style={{ padding: "8px", textAlign: "right", fontWeight: 700, color: m.color, fontVariantNumeric: "tabular-nums" }}>{m.wmape}</td>
+                <td style={{ padding: "8px", textAlign: "right", fontWeight: 700, color: modelColor(m.key), fontVariantNumeric: "tabular-nums" }}>{m.wmape}</td>
                 <td style={{ padding: "8px", textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums",
                   color: m.mase && m.mase !== "—" ? (parseFloat(m.mase) < 1 ? "var(--color-success)" : "var(--color-danger)") : "var(--text-secondary)" }}>
                   {m.mase ?? "—"}
@@ -624,7 +631,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   // Rainfall bars are sky-blue and the actual line was also blue, so two unrelated
   // quantities shared a hue. Actual moves to a neutral slate that reads as
   // "observation" against the saturated model colours.
-  const actualColor = T.isDark ? "#cbd5e1" : "#334155";
+  const actualColor = T.isDark ? "#e8eefb" : "#0a1630";
   const rainfall = agg ? agg.rainfall : dailyRain;
   // Bar HEIGHT is the bucket mean; bar COLOUR comes from the bucket's wettest
   // day. The band thresholds are PAGASA DAILY advisories, so colouring by a
@@ -883,7 +890,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             }
           }
         });
-        return `${tip}<span style="color:#94a3b8;font-size:11px">${
+        return `${tip}<span style="color:var(--text-muted);font-size:12px">${
           isAggregated ? "Switch to Daily to open a day" : "Click to view hourly"
         }</span>`;
       },
@@ -915,7 +922,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
     dataZoom: [
       { type: "slider", start: 0, end: 100, height: 18, bottom: 44,
         borderColor: T.border, fillerColor: T.isDark ? "rgba(56,118,245,0.18)" : "rgba(37,99,235,0.08)",
-        handleStyle: { color: "#2a78d6" }, textStyle: { color: T.textMuted, fontSize: 10 },
+        handleStyle: { color: T.isDark ? "#5cc8ff" : "#0a6cc2" }, textStyle: { color: T.textMuted, fontSize: 10 },
         backgroundColor: T.isDark ? "rgba(255,255,255,0.03)" : "transparent",
         dataBackground: { lineStyle: { color: T.chartAxis }, areaStyle: { color: T.chartSplit } } },
     ],
@@ -1029,9 +1036,9 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                 : [];
               if (periods.length === 0) return [];
               const stride = Math.max(1, Math.ceil(periods.length / 12));
-              const tint = granularity === "Weekly" ? "#3b82f6" : "#16a34a";
-              const ink = granularity === "Weekly" ? "#1d4ed8" : "var(--color-success)";
-              const wash = granularity === "Weekly" ? "rgba(239,246,255,0.92)" : "rgba(240,253,244,0.92)";
+              const tint = T.isDark ? "#4a6396" : "#8d9ab5";
+              const ink = T.isDark ? "#a9b9da" : "#3b4d72";
+              const wash = T.isDark ? "rgba(15,31,61,0.92)" : "rgba(255,255,255,0.92)";
               return periods
                 .filter((_, i) => i % stride === 0)
                 .map((p) => ({
@@ -1062,8 +1069,8 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         connectNulls: true,
         symbol: "circle",
         symbolSize: 5,
-        lineStyle: { width: dates.length > 400 ? 1.2 : 2.2, color: metricsMeta[key].color },
-        itemStyle: { color: metricsMeta[key].color },
+        lineStyle: { width: dates.length > 400 ? 1.2 : 2.2, color: modelColor(key) },
+        itemStyle: { color: modelColor(key) },
         emphasis: { scale: 2.2 },
       })),
       ...weatherSeries,
@@ -1194,9 +1201,9 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                   connectNulls: true,
                   symbol: "circle" as const,
                   symbolSize: 5,
-                  lineStyle: { width: 2.6, color: ACTUAL_COLOR },
-                  itemStyle: { color: ACTUAL_COLOR },
-                  areaStyle: { color: "rgba(37, 99, 235, 0.10)" },
+                  lineStyle: { width: 2.6, color: actualColor },
+                  itemStyle: { color: actualColor },
+                  areaStyle: { color: T.isDark ? "rgba(232, 238, 251, 0.06)" : "rgba(10, 22, 48, 0.05)" },
                   z: 3,
                 },
               ]
@@ -1212,8 +1219,8 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               symbol: "circle",
               symbolSize: 5,
               z: 3,
-              lineStyle: { width: 2.2, color: metricsMeta[k].color },
-              itemStyle: { color: metricsMeta[k].color },
+              lineStyle: { width: 2.2, color: modelColor(k) },
+              itemStyle: { color: modelColor(k) },
             })),
           ...hourlyWeatherSeries,
         ],
@@ -1279,7 +1286,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             onClick={closeDrill}
             style={{
               display: "inline-flex", alignItems: "center", gap: "6px", padding: "7px 14px", borderRadius: "8px",
-              border: "1px solid #cbd5e1", background: "var(--bg-surface)", color: "var(--text-primary)",
+              border: "1px solid var(--border-strong)", background: "var(--bg-surface)", color: "var(--text-primary)",
               fontSize: "0.85rem", fontWeight: 600, cursor: "pointer", flex: "none",
             }}
           >
@@ -1293,11 +1300,11 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             onClick={() => setShowWeather(!showWeather)}
             style={{
               display: "inline-flex", alignItems: "center", gap: "6px", padding: "5px 14px",
-              borderRadius: "999px", border: "1px solid #dce2ef",
+              borderRadius: "999px", border: "1px solid var(--border-strong)",
               fontSize: "0.76rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
-              background: showWeather ? "linear-gradient(135deg, #38bdf8, #0ea5e9)" : "var(--bg-surface, #fff)",
-              color: showWeather ? "var(--bg-surface)" : "var(--text-secondary, #4b5e7d)",
-              boxShadow: showWeather ? "0 1px 6px rgba(56,189,248,0.35)" : "none",
+              background: showWeather ? "var(--action)" : "var(--bg-surface)",
+              color: showWeather ? "var(--action-ink)" : "var(--text-secondary)",
+              boxShadow: "none",
             }}
           >
             {showWeather ? (
@@ -1326,16 +1333,16 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
 
         {anyHourly && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
-            <div style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            <div style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border-default)" }}>
               <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Day Actual</div>
               <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{anyHourly.dayActual != null ? fmtVeh(anyHourly.dayActual) : "—"}</div>
             </div>
             {visibleModels.map((k) => {
               const h = hourlyByModel[k];
               return (
-                <div key={k} style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                <div key={k} style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border-default)" }}>
                   <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>{metricsMeta[k].label} Predicted</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: metricsMeta[k].color }}>
+                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: modelColor(k) }}>
                     {h?.dayPredicted != null ? fmtVeh(h.dayPredicted) : "—"}
                     {h?.dayPredicted != null && anyHourly.dayActual ? (
                       <span style={{ marginLeft: 8, fontSize: "0.74rem", fontWeight: 600, color: "var(--text-secondary)" }}>
@@ -1346,11 +1353,11 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                 </div>
               );
             })}
-            <div style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            <div style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border-default)" }}>
               <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Peak Hour</div>
               <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{extremeLabel(anyHourly.hours, "max")}</div>
             </div>
-            <div style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            <div style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border-default)" }}>
               <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Quietest Hour</div>
               <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{extremeLabel(anyHourly.hours, "min")}</div>
             </div>
@@ -1377,8 +1384,8 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const futureAvailable = chartData.dates.length - chartData.futureStart;
 
   const pill = (on: boolean, colour: string) => ({
-    padding: "3px 10px", borderRadius: "999px", cursor: "pointer", border: `1px solid ${on ? colour : "#dce2ef"}`,
-    background: on ? colour : "var(--bg-surface)", color: on ? "var(--bg-surface)" : "var(--text-secondary)",
+    padding: "3px 10px", borderRadius: "4px", cursor: "pointer", border: `1px solid ${on ? colour : "var(--border-strong)"}`,
+    background: on ? colour : "var(--bg-surface)", color: on ? "var(--action-ink)" : "var(--text-secondary)",
     fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap" as const,
   });
   const groupLabel: React.CSSProperties = {
@@ -1423,9 +1430,9 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             title={showWeather ? "Showing the weather-aware forecasts and rainfall bars" : "Showing the weather-free forecasts"}
             style={{
               display: "inline-flex", alignItems: "center", gap: "6px", padding: "5px 14px", borderRadius: "999px",
-              border: "1px solid #dce2ef", fontSize: "0.76rem", fontWeight: 600, cursor: "pointer",
-              background: showWeather ? "linear-gradient(135deg, #38bdf8, #0ea5e9)" : "var(--bg-surface, #fff)",
-              color: showWeather ? "var(--bg-surface)" : "var(--text-secondary, #4b5e7d)",
+              border: "1px solid var(--border-strong)", fontSize: "0.76rem", fontWeight: 600, cursor: "pointer",
+              background: showWeather ? "var(--action)" : "var(--bg-surface)",
+              color: showWeather ? "var(--action-ink)" : "var(--text-secondary)",
             }}
           >
             Weather {showWeather ? "on" : "off"}
@@ -1434,7 +1441,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         <div style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
             <span style={groupLabel}>View</span>
-            <span style={{ display: "inline-flex", padding: 2, borderRadius: 999, background: "var(--bg-surface)", border: "1px solid #dce2ef" }}>
+            <span style={{ display: "inline-flex", padding: 2, borderRadius: 999, background: "var(--bg-surface)", border: "1px solid var(--border-strong)" }}>
               {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
                 <button key={g}
                   onClick={() => {
@@ -1445,7 +1452,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                     if (g === "Monthly" && futureDays < 28) setFutureDays(28);
                   }}
                   title={g === "Daily" ? "One point per day — the resolution the models actually forecast" : `Averaged per ${g.replace("ly", "").toLowerCase()} — a viewing aid, not a separate forecast`}
-                  style={{ padding: "3px 10px", borderRadius: 999, border: "none", background: granularity === g ? "var(--page-accent, #3876f5)" : "transparent", color: granularity === g ? "#fff" : "var(--text-secondary)", fontWeight: 600, fontSize: "0.72rem", cursor: "pointer" }}>
+                  style={{ padding: "3px 10px", borderRadius: 999, border: "none", background: granularity === g ? "var(--action)" : "transparent", color: granularity === g ? "var(--action-ink)" : "var(--text-secondary)", fontWeight: 600, fontSize: "0.72rem", cursor: "pointer" }}>
                   {g}
                 </button>
               ))}
@@ -1459,7 +1466,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               return (
                 <button key={item.label} onClick={() => setFutureDays(item.d)} disabled={off}
                   title={tooShort ? "Monthly view needs at least one month ahead" : off ? "Beyond the stored forecast" : undefined}
-                  style={{ ...pill(futureDays === item.d, "#16a34a"), cursor: off ? "not-allowed" : "pointer", opacity: off ? 0.4 : 1 }}>
+                  style={{ ...pill(futureDays === item.d, "var(--action)"), cursor: off ? "not-allowed" : "pointer", opacity: off ? 0.4 : 1 }}>
                   {item.label}
                 </button>
               );
