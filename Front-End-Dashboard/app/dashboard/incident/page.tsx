@@ -6,7 +6,7 @@ import { attachCategoryClick } from "../../../lib/chart-click";
 import { useChartTheme, applyChartTheme, seriesRamp, seriesPair, seriesNominal } from "../../../lib/chart-theme";
 import ReactECharts from "echarts-for-react";
 import type { EChartsOption } from "echarts";
-import { AlertTriangle, ArrowDownWideNarrow, ArrowUpNarrowWide, CloudRain, HeartPulse, MapPin, Timer } from "lucide-react";
+import { AlertTriangle, ArrowDownWideNarrow, ArrowUpNarrowWide, CloudRain, HeartPulse, MapPin, Timer, Siren } from "lucide-react";
 import DashboardChart from "../../../components/dashboard/DashboardChart";
 import ChartSkeleton, { KpiSkeleton } from "../../../components/dashboard/ChartSkeleton";
 import CustomSelect from "../../../components/dashboard/CustomSelect";
@@ -434,8 +434,8 @@ export default function IncidentPage() {
             markPoint: {
               symbol: "circle",
               symbolSize: 8,
-              itemStyle: { color: RAMP[2], borderColor: "#fff", borderWidth: 2 },
-              label: { show: true, position: "top", fontSize: 10, color: "#475069", formatter: `Peak · ${fmtHour(peakIdx)}` },
+              itemStyle: { color: RAMP[2], borderColor: chartTheme.isDark ? "#0f1f3d" : "#ffffff", borderWidth: 2 },
+              label: { show: true, position: "top", fontSize: 10, color: chartTheme.text, formatter: `Peak · ${fmtHour(peakIdx)}` },
               data: [{ name: "Peak", coord: [peakIdx, Number(timeProfile.weekday[peakIdx].toFixed(2))] }],
             },
           },
@@ -469,7 +469,7 @@ export default function IncidentPage() {
           data: timeProfile.dowAvg.map((v, i) => ({
             value: Number(v.toFixed(2)),
             itemStyle: { color: i === maxIdx ? RAMP[2] : RAMP[0], borderRadius: [4, 4, 0, 0] },
-            label: i === maxIdx ? { show: true, position: "top", fontSize: 10, color: "#475069", formatter: () => fmt1(v) } : undefined,
+            label: i === maxIdx ? { show: true, position: "top", fontSize: 10, color: chartTheme.text, formatter: () => fmt1(v) } : undefined,
           })),
           barMaxWidth: 26,
         },
@@ -1110,7 +1110,7 @@ export default function IncidentPage() {
           <div className={styles.detailModal} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
             <div className={styles.detailHeader}>
-              <div className={styles.detailIcon}>🚨</div>
+              <div className={styles.detailIcon}><Siren size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>{detail.title}</h3>
                 {detail.subtitle && <p>{detail.subtitle}</p>}
@@ -1143,7 +1143,7 @@ export default function IncidentPage() {
           <div className={`${styles.detailModal} ${styles.impactModal}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
             <div className={styles.detailHeader}>
-              <div className={styles.detailIcon}>📍</div>
+              <div className={styles.detailIcon}><MapPin size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>Hotspots — Full Ranking</h3>
                 <p>{data.hotspots.length} five-km segments · click a row for details</p>

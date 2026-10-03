@@ -522,7 +522,7 @@ function HourlyIncidentContent() {
                 padding: "10px 14px", margin: "0 0 14px", fontSize: "0.8rem", color: "#78350f",
               }}
             >
-              <span style={{ flexShrink: 0 }}>⚠️</span>
+              <AlertTriangle size={16} style={{ flexShrink: 0, color: "var(--color-warning)" }} aria-hidden="true" />
               <span>
                 No incident log covers this date — the operations log ends{" "}
                 <b>{data.sourceCoverage.stalled.lastLogged ?? "earlier"}</b>. Weather and the model curves are shown;

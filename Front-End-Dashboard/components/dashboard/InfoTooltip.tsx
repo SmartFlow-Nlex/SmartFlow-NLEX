@@ -55,7 +55,7 @@ export default function InfoTooltip({ text }: { text: string }) {
       aria-label={text}
       style={{
         display: "inline-flex", verticalAlign: "middle", marginLeft: "5px",
-        color: show ? "var(--page-accent, #4f46e5)" : "#94a3b8", cursor: "help", outline: "none",
+        color: show ? "var(--action)" : "var(--text-muted)", cursor: "help",
         transition: "color 120ms ease",
       }}
     >
@@ -71,8 +71,9 @@ export default function InfoTooltip({ text }: { text: string }) {
               top: pos.top - 9,
               left: pos.left,
               transform: "translate(-50%, -100%)",
-              background: "linear-gradient(160deg, color-mix(in srgb, var(--page-accent, #4f46e5) 55%, #0b1020), #0f172a)",
-              color: "#e5e7eb",
+              background: "#0a1630",
+              border: "1px solid #22396b",
+              color: "#e8eefb",
               padding: "10px 13px",
               borderRadius: 10,
               fontSize: "0.76rem",
@@ -97,7 +98,7 @@ export default function InfoTooltip({ text }: { text: string }) {
                 height: 0,
                 borderLeft: "6px solid transparent",
                 borderRight: "6px solid transparent",
-                borderTop: "6px solid #0f172a",
+                borderTop: "6px solid #0a1630",
               }}
             />
           </span>,

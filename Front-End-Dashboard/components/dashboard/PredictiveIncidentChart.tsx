@@ -241,7 +241,7 @@ export default function PredictiveIncidentChart({
     return (
       <article className="chart-card wide" style={{ height: "480px", padding: "20px", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", maxWidth: "420px" }}>
-          <div style={{ fontWeight: 700, color: "#b91c1c", marginBottom: "6px" }}>Predictive analytics unavailable</div>
+          <div style={{ fontWeight: 700, color: "var(--color-danger)", marginBottom: "6px" }}>Predictive analytics unavailable</div>
           <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>{error ?? "Database not reachable"}</div>
         </div>
       </article>
@@ -541,8 +541,8 @@ export default function PredictiveIncidentChart({
       : [];
     if (periods.length === 0) return [];
     const stride = Math.max(1, Math.ceil(periods.length / 12));
-    const tint = granularity === "Weekly" ? "#3b82f6" : "#16a34a";
-    const ink = granularity === "Weekly" ? "#1d4ed8" : "#15803d";
+    const tint = T.isDark ? "#4a6396" : "#8d9ab5";
+    const ink = T.isDark ? "#a9b9da" : "#3b4d72";
     const wash = T.isDark
       ? (granularity === "Weekly" ? "rgba(30,58,138,0.55)" : "rgba(20,83,45,0.55)")
       : (granularity === "Weekly" ? "rgba(239,246,255,0.92)" : "rgba(240,253,244,0.92)");
@@ -601,8 +601,11 @@ export default function PredictiveIncidentChart({
   // the Descriptive tab's Incident Trend chart uses (app/dashboard/incident/
   // page.tsx) -- and the same two series colours, so amber=Accidents /
   // magenta=Breakdowns carries between tabs.
-  const ACCIDENT_COLOR = T.isDark ? "#bb8a12" : "#b8760a";
-  const BREAKDOWN_COLOR = T.isDark ? "#cf5a90" : "#c2185b";
+  // Lane Signal (3 Oct 2026): amber and green now mean road state, so the
+  // three series take the validated incident triple, violet / magenta / teal
+  // (dataviz validator, all pairs, light and navy-dark surfaces).
+  const ACCIDENT_COLOR = T.isDark ? "#8c7ff0" : "#4a3aa7";
+  const BREAKDOWN_COLOR = T.isDark ? "#d55181" : "#c2185b";
   // Forecast reused the actual line's own colour before (a lightened tint of
   // it, before that reused it outright), distinguished only by the dashed
   // stroke -- a muted, de-emphasized line for the one thing this whole chart
@@ -610,9 +613,9 @@ export default function PredictiveIncidentChart({
   // across both panels instead, reusing the exact "this is the forward-
   // looking one" green this file already spends elsewhere -- the Future
   // zone/preset buttons and the "Champion" model badge below (T.isDark ?
-  // "#4ade80" : "#15803d") -- so Forecast reads as its own headline category
+  // "#4ade80" : "var(--color-success)") -- so Forecast reads as its own headline category
   // rather than a paler shade of whichever panel it's in.
-  const FORECAST_COLOR = T.isDark ? "#4ade80" : "#15803d";
+  const FORECAST_COLOR = T.isDark ? "#169bb8" : "#0b8db0";
   const SPLIT_PANELS = [
     { name: "Accidents", actual: effAccA, forecast: effAccP, color: ACCIDENT_COLOR, forecastColor: FORECAST_COLOR },
     { name: "Breakdowns", actual: effBdA, forecast: effBdP, color: BREAKDOWN_COLOR, forecastColor: FORECAST_COLOR },
@@ -725,10 +728,10 @@ export default function PredictiveIncidentChart({
       bottom: 30,
       height: 16,
       borderColor: "transparent",
-      backgroundColor: T.isDark ? "rgba(255,255,255,0.04)" : "#fbf3e3",
+      backgroundColor: T.isDark ? "rgba(255,255,255,0.04)" : "#f4f6fa",
       fillerColor: T.isDark ? "rgba(240,169,43,0.28)" : "rgba(184,118,10,0.25)",
-      handleStyle: { color: T.isDark ? "#f0a92b" : "#b8760a", borderColor: T.isDark ? "#f0a92b" : "#b8760a" },
-      moveHandleStyle: { color: T.isDark ? "#f0a92b" : "#b8760a" },
+      handleStyle: { color: T.isDark ? "#5cc8ff" : "#0a6cc2", borderColor: T.isDark ? "#5cc8ff" : "#0a6cc2" },
+      moveHandleStyle: { color: T.isDark ? "#5cc8ff" : "#0a6cc2" },
       textStyle: { color: T.textMuted, fontSize: 10 },
       showDetail: false,
     },
@@ -1108,7 +1111,7 @@ export default function PredictiveIncidentChart({
                       <MetricHint hint={modelHintFor(m.model as ModelKey)}>{meta?.label ?? m.model}</MetricHint>
                       {m.isChampion && (
                         <span
-                          style={{ fontSize: "0.72rem", fontWeight: 600, color: T.isDark ? "#4ade80" : "#15803d" }}
+                          style={{ fontSize: "0.72rem", fontWeight: 600, color: T.isDark ? "#169bb8" : "#0b8db0" }}
                           title="Selected on the full holdout window when the model was trained, not on the currently visible Range/Weather slice"
                         >
                           Champion
@@ -1158,11 +1161,11 @@ export default function PredictiveIncidentChart({
            through as low-alpha overlays on the card instead. */
         background: T.isDark
           ? (wm.weather === "wet" ? "rgba(56,189,248,0.10)" : "rgba(251,191,36,0.10)")
-          : (wm.weather === "wet" ? "#f0f9ff" : "#fffbeb"),
+          : (wm.weather === "wet" ? "#f0f9ff" : "var(--color-warning-bg)"),
         borderRadius: "8px", padding: "16px",
         border: `1px solid ${T.isDark
           ? (wm.weather === "wet" ? "rgba(56,189,248,0.30)" : "rgba(251,191,36,0.30)")
-          : (wm.weather === "wet" ? "#bae6fd" : "#fde68a")}`,
+          : (wm.weather === "wet" ? "#bae6fd" : "var(--color-warning-border)")}`,
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
           <h4 style={{ margin: 0, fontSize: "0.95rem", color: "var(--text-primary)", fontWeight: 600 }}>
@@ -1201,7 +1204,7 @@ export default function PredictiveIncidentChart({
                             {meta?.label ?? m.model}
                             {m.isChampion && (
                               <span
-                                style={{ fontSize: "0.72rem", fontWeight: 600, color: T.isDark ? "#4ade80" : "#15803d" }}
+                                style={{ fontSize: "0.72rem", fontWeight: 600, color: T.isDark ? "#169bb8" : "#0b8db0" }}
                                 title="Selected on the full holdout window when the model was trained, not on the currently visible Range/Weather slice"
                               >
                                 Champion
@@ -1249,8 +1252,8 @@ export default function PredictiveIncidentChart({
                   aria-pressed={splitView === on}
                   style={{
                     padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
-                    background: splitView === on ? "#4f46e5" : "transparent",
-                    color: splitView === on ? "var(--text-on-dark)" : "var(--text-secondary)",
+                    background: splitView === on ? "var(--action)" : "transparent",
+                    color: splitView === on ? "var(--action-ink)" : "var(--text-secondary)",
                     fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap",
                   }}
                 >
@@ -1276,9 +1279,9 @@ export default function PredictiveIncidentChart({
               display: "inline-flex", alignItems: "center", gap: "6px", padding: "5px 14px",
               borderRadius: "999px", border: "1px solid var(--border-default)",
               fontSize: "0.76rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
-              background: showVolume ? "linear-gradient(135deg, #fbbf24, #f59e0b)" : "var(--bg-surface)",
-              color: showVolume ? "var(--text-on-dark)" : "var(--text-secondary)",
-              boxShadow: showVolume ? "0 1px 6px rgba(245,158,11,0.35)" : "none",
+              background: showVolume ? "var(--action)" : "var(--bg-surface)",
+              color: showVolume ? "var(--action-ink)" : "var(--text-secondary)",
+              boxShadow: "none",
             }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
@@ -1308,7 +1311,7 @@ export default function PredictiveIncidentChart({
               display: "inline-flex", alignItems: "center", gap: "6px", padding: "5px 14px",
               borderRadius: "999px", border: "1px solid var(--border-default)",
               fontSize: "0.76rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
-              background: showWeather ? `linear-gradient(135deg, ${RAIN_COLOR}, #0284c7)` : "var(--bg-surface)",
+              background: showWeather ? "var(--action)" : "var(--bg-surface)",
               color: showWeather ? "var(--text-on-dark)" : "var(--text-secondary)",
               boxShadow: showWeather ? `0 1px 6px ${RAIN_COLOR}59` : "none",
             }}
@@ -1352,7 +1355,7 @@ export default function PredictiveIncidentChart({
         <div style={{
           display: "inline-flex", alignItems: "center", gap: "6px", alignSelf: "flex-start",
           padding: "5px 12px", borderRadius: "999px",
-          background: "linear-gradient(135deg, var(--page-accent, #4f46e5), color-mix(in srgb, var(--page-accent, #4f46e5) 88%, #0b1020))", color: "var(--text-on-dark)",
+          background: "var(--color-info-bg)", border: "1px solid var(--color-info-border)", color: "var(--text-primary)",
           fontSize: "0.74rem", fontWeight: 600,
         }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
@@ -1371,9 +1374,9 @@ export default function PredictiveIncidentChart({
         {/* GRANULARITY control pill */}
         <span style={{
           display: "inline-flex", alignItems: "center", gap: "8px", padding: "10px 14px",
-          borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)", fontSize: "0.76rem",
+          borderRadius: "6px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)", fontSize: "0.8125rem",
         }}>
-          <b style={{ color: "var(--page-accent, #3b82f6)", letterSpacing: "0.04em", fontSize: "0.75rem", textTransform: "uppercase" }}>
+          <b style={{ color: "var(--text-muted)", letterSpacing: "0.06em", fontSize: "0.75rem", fontWeight: 650, fontStretch: "82%", textTransform: "uppercase" }}>
             GRANULARITY
           </b>
           <div style={{
@@ -1392,7 +1395,7 @@ export default function PredictiveIncidentChart({
                 style={{
                   padding: "3px 10px", borderRadius: "999px", cursor: "pointer", border: "none",
                   background: "transparent",
-                  color: granularity === g ? "#2563eb" : "var(--text-secondary)",
+                  color: granularity === g ? "var(--action)" : "var(--text-secondary)",
                   fontWeight: granularity === g ? 700 : 600, fontSize: "0.72rem",
                 }}
               >
@@ -1406,9 +1409,9 @@ export default function PredictiveIncidentChart({
         {showPast && (
           <span style={{
             display: "inline-flex", alignItems: "center", gap: "8px", padding: "10px 14px",
-            borderRadius: "10px", background: "rgba(37,99,235,0.07)", border: "1px solid rgba(37,99,235,0.18)", fontSize: "0.76rem",
+            borderRadius: "6px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)", fontSize: "0.8125rem",
           }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(37,99,235,0.5)" }} />
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: "var(--border-strong)" }} />
             <b style={{ color: "var(--text-primary)" }}>Past</b>
             {modelInfo.trainedDays != null && (
               <span style={{ color: "var(--text-secondary)" }}>
@@ -1422,9 +1425,9 @@ export default function PredictiveIncidentChart({
         {showPresent && (
           <span style={{
             display: "inline-flex", alignItems: "center", gap: "8px", padding: "10px 14px",
-            borderRadius: "10px", background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.22)", fontSize: "0.76rem",
+            borderRadius: "6px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)", fontSize: "0.8125rem",
           }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(249,115,22,0.55)" }} />
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: "var(--text-muted)" }} />
             <b style={{ color: "var(--text-primary)" }}>Present</b>
             <span style={{ color: "var(--text-secondary)" }}>
               {presentScoredDays}d scored{scoredPct != null ? ` · ${scoredPct.toFixed(2)}%` : ""} · fixed by evaluation
@@ -1438,9 +1441,9 @@ export default function PredictiveIncidentChart({
         {futureAvailable > 0 && (
           <span style={{
             display: "inline-flex", alignItems: "center", gap: "8px", flexWrap: "wrap", padding: "10px 14px",
-            borderRadius: "10px", background: "rgba(22,163,74,0.07)", border: "1px solid rgba(22,163,74,0.2)", fontSize: "0.76rem",
+            borderRadius: "6px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)", fontSize: "0.8125rem",
           }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(22,163,74,0.5)" }} />
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: "var(--action)" }} />
             <b style={{ color: "var(--text-primary)" }}>Future</b>
             {FUTURE_PRESETS.map((item) => {
               const unavailable = item.d > futureAvailable;
@@ -1459,9 +1462,9 @@ export default function PredictiveIncidentChart({
                     padding: "3px 10px",
                     borderRadius: "999px",
                     cursor: unavailable ? "not-allowed" : "pointer",
-                    border: active ? "1px solid #16a34a" : "1px solid var(--border-default)",
-                    background: active ? "#16a34a" : "var(--bg-surface)",
-                    color: active ? "var(--bg-surface)" : "var(--text-secondary)",
+                    border: active ? "1px solid var(--action)" : "1px solid var(--border-default)",
+                    background: active ? "var(--action)" : "var(--bg-surface)",
+                    color: active ? "var(--action-ink)" : "var(--text-secondary)",
                     fontWeight: 600,
                     fontSize: "0.72rem",
                     opacity: unavailable ? 0.4 : 1,
@@ -1517,7 +1520,7 @@ export default function PredictiveIncidentChart({
       )}
 
       {splitOn && split && (
-        <div style={{ padding: "12px 16px", borderRadius: "10px", background: "#fef2f2", border: "1px solid #fecaca", fontSize: "0.82rem", color: "#7f1d1d", lineHeight: 1.55 }}>
+        <div style={{ padding: "12px 16px", borderRadius: "10px", background: "var(--color-danger-bg)", border: "1px solid var(--color-danger-border)", fontSize: "0.82rem", color: "var(--color-danger)", lineHeight: 1.55 }}>
           <strong>Accident forecast</strong> — {split.championModel ? (META[split.championModel as ModelKey]?.label ?? split.championModel) : "champion"},
           fitted on accidents alone (last trained {fmtTrainedAt(split.trainedAt)}).
           {typeof split.metrics?.MAE === "number" && typeof split.metrics?.R2 === "number" && (

@@ -108,8 +108,8 @@ export default function PredictiveCorridorChart({
      makes it readable on white, and exactly what makes it vanish on a dark
      card, so on dark it mixes toward white instead. */
   const accentInk = T.isDark
-    ? "color-mix(in srgb, var(--page-accent, #4f46e5) 36%, #ffffff)"
-    : "color-mix(in srgb, var(--page-accent, #4f46e5) 72%, #0b1020)";
+    ? "color-mix(in srgb, var(--page-accent, var(--action)) 36%, #ffffff)"
+    : "color-mix(in srgb, var(--page-accent, var(--action)) 72%, #0b1020)";
 
   if (loading && corridorForecast === null) {
     return (
@@ -216,9 +216,9 @@ export default function PredictiveCorridorChart({
               <span
                 style={{
                   fontSize: "0.6rem", fontWeight: 800,
-                  color: T.isDark ? "#fbbf24" : "#b45309",
-                  background: T.isDark ? "rgba(251,191,36,0.14)" : "#fffbeb",
-                  border: `1px solid ${T.isDark ? "rgba(251,191,36,0.38)" : "#fde68a"}`,
+                  color: T.isDark ? "#fbbf24" : "var(--color-warning)",
+                  background: T.isDark ? "rgba(251,191,36,0.14)" : "var(--color-warning-bg)",
+                  border: `1px solid ${T.isDark ? "rgba(251,191,36,0.38)" : "var(--color-warning-border)"}`,
                   borderRadius: "999px", padding: "1px 6px", whiteSpace: "nowrap",
                 }}
               >
@@ -230,7 +230,7 @@ export default function PredictiveCorridorChart({
             <div
               style={{
                 position: "absolute", right: 0, bottom: "calc(100% + 8px)", zIndex: 20, pointerEvents: "none",
-                background: T.isDark ? "#05080f" : "#0f172a", color: "#f1f5f9",
+                background: T.isDark ? "#05080f" : "var(--text-primary)", color: "var(--bg-surface-hover)",
                 border: T.isDark ? "1px solid var(--border-strong)" : "none",
                 borderRadius: "8px", padding: "8px 10px",
                 fontSize: "0.72rem", lineHeight: 1.5, minWidth: "180px", boxShadow: "0 10px 24px rgba(15,23,42,0.28)",
@@ -238,7 +238,7 @@ export default function PredictiveCorridorChart({
             >
               <div style={{ fontWeight: 700 }}>{row.label}</div>
               <div>{fmtInt(row.predictedIncidents)} predicted incidents · next {forecastHorizon}d</div>
-              <div style={{ color: "#94a3b8" }}>
+              <div style={{ color: "var(--text-muted)" }}>
                 Historical share: {(row.historicalShare * 100).toFixed(1)}% ({fmtInt(row.historicalCount)} logged)
               </div>
             </div>
@@ -247,7 +247,7 @@ export default function PredictiveCorridorChart({
         <span
           style={{
             justifySelf: "end", padding: isTop ? "4px 12px" : "2px 9px", borderRadius: "8px",
-            background: "var(--bg-surface)", border: `1.5px solid ${isTop ? "color-mix(in srgb, var(--page-accent, #4f46e5) 34%, transparent)" : "var(--border-default)"}`,
+            background: "var(--bg-surface)", border: `1.5px solid ${isTop ? "color-mix(in srgb, var(--page-accent, var(--action)) 34%, transparent)" : "var(--border-default)"}`,
             fontSize: isTop ? "0.85rem" : "0.74rem", fontWeight: isTop ? 800 : 700, color: accentInk,
           }}
         >
@@ -264,12 +264,12 @@ export default function PredictiveCorridorChart({
       style={{
         display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 9px",
         borderRadius: "999px", fontSize: "0.7rem", fontWeight: 600,
-        background: on ? "color-mix(in srgb, var(--page-accent, #4f46e5) 12%, transparent)" : "var(--bg-surface-hover)",
+        background: on ? "color-mix(in srgb, var(--page-accent, var(--action)) 12%, transparent)" : "var(--bg-surface-hover)",
         color: on ? accentInk : "var(--text-muted)",
-        border: `1px solid ${on ? "color-mix(in srgb, var(--page-accent, #4f46e5) 28%, transparent)" : "var(--border-default)"}`,
+        border: `1px solid ${on ? "color-mix(in srgb, var(--page-accent, var(--action)) 28%, transparent)" : "var(--border-default)"}`,
       }}
     >
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: on ? "var(--page-accent, #4f46e5)" : "var(--border-strong)" }} />
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: on ? "var(--page-accent, var(--action))" : "var(--border-strong)" }} />
       {label}: {on ? "ON" : "OFF"}
     </span>
   );
@@ -307,7 +307,7 @@ export default function PredictiveCorridorChart({
         </p>
       )}
       {topRow && (
-        <div style={{ padding: "10px 14px", borderRadius: "10px", background: "color-mix(in srgb, var(--page-accent, #4f46e5) 9%, transparent)", border: "1px solid color-mix(in srgb, var(--page-accent, #4f46e5) 28%, transparent)" }}>
+        <div style={{ padding: "10px 14px", borderRadius: "10px", background: "color-mix(in srgb, var(--page-accent, var(--action)) 9%, transparent)", border: "1px solid color-mix(in srgb, var(--page-accent, var(--action)) 28%, transparent)" }}>
           <p style={{ margin: 0, fontSize: "0.85rem", color: accentInk }}>
             The <strong>{topRow.label}</strong> stretch leads the corridor at{" "}
             <strong>{fmtInt(topRow.predictedIncidents)}</strong> predicted incidents —{" "}
@@ -328,7 +328,7 @@ export default function PredictiveCorridorChart({
       <div style={{ width: "100%" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", marginBottom: "6px" }}>
           <div>
-            <div style={{ fontSize: "0.68rem", fontWeight: 800, color: "var(--page-accent, #4f46e5)", letterSpacing: "0.04em", textTransform: "uppercase" }}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 800, color: "var(--page-accent, var(--action))", letterSpacing: "0.04em", textTransform: "uppercase" }}>
               Segment forecast ranking
             </div>
             <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
@@ -337,7 +337,7 @@ export default function PredictiveCorridorChart({
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "12px", fontSize: "0.7rem", color: "var(--text-muted)" }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-              <span style={{ width: 10, height: 10, borderRadius: "999px", background: `linear-gradient(90deg, color-mix(in srgb, var(--page-accent, #4f46e5) 50%, ${T.isDark ? "#0d1117" : "white"}), var(--page-accent, #4f46e5))`, display: "inline-block" }} />
+              <span style={{ width: 10, height: 10, borderRadius: "999px", background: `linear-gradient(90deg, color-mix(in srgb, var(--page-accent, var(--action)) 50%, ${T.isDark ? "#0d1117" : "white"}), var(--page-accent, var(--action)))`, display: "inline-block" }} />
               darker = more predicted
             </span>
             <span>Hover a row to inspect its numbers</span>

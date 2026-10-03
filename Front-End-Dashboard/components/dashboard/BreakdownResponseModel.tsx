@@ -49,8 +49,8 @@ type BreakdownResponseData = {
 // Forecast line and Future-zone furniture use — kept identical rather than a
 // second hand-picked green, so "predicted" reads as one consistent color
 // across every card on this tab, not just within this one.
-const PREDICTED_COLOR_LIGHT = "#15803d";
-const PREDICTED_COLOR_DARK = "#4ade80";
+const PREDICTED_COLOR_LIGHT = "#0b8db0";
+const PREDICTED_COLOR_DARK = "#169bb8";
 
 // Inline cap — matches TOP_N_GROUPS in the training script, so "why these
 // groups" has one real answer (evidence, not a display-only truncation of a
@@ -214,7 +214,7 @@ export default function BreakdownResponseModel() {
                 onClick={() => setView(v)}
                 style={{
                   padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
-                  background: view === v ? "var(--page-accent, #4f46e5)" : "transparent",
+                  background: view === v ? "var(--action)" : "transparent",
                   color: view === v ? "var(--text-on-dark)" : "var(--text-secondary)",
                   fontWeight: 600, fontSize: "0.72rem",
                 }}

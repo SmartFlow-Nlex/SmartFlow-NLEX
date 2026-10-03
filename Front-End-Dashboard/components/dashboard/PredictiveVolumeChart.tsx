@@ -1412,7 +1412,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
       {futAvg != null && (
         <div style={{
           padding: "12px 14px", borderRadius: "10px", fontSize: "0.88rem", lineHeight: 1.5,
-          background: "rgba(22,163,74,0.07)", border: "1px solid rgba(22,163,74,0.25)", color: "var(--text-primary)",
+          background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)", color: "var(--text-primary)",
         }}>
           <b>Next {futureDays} days</b> · <b>{fmtVeh(futAvg)}</b> vehicles/day on average
           {futPeak && <> · peak {isAggregated ? bucketNoun : "day"} <b>{dates[futPeak.idx]}</b> ({fmtVeh(futPeak.v)})</>}

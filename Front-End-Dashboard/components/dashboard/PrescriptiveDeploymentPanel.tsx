@@ -213,7 +213,7 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
         <span>{label}</span>
         <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{value}{suffix}</span>
       </div>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: "100%", accentColor: "var(--page-accent, #4f46e5)" }} />
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: "100%", accentColor: "var(--page-accent, var(--action))" }} />
     </div>
   );
 
@@ -231,8 +231,8 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
                 disabled={v === "km" && (predictive.kmSegmentForecast == null || predictive.kmSegmentForecast.length === 0)}
                 style={{
                   padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
-                  background: view === v ? "var(--page-accent, #4f46e5)" : "transparent",
-                  color: view === v ? "#fff" : "var(--text-secondary)",
+                  background: view === v ? "var(--action)" : "transparent",
+                  color: view === v ? "var(--action-ink)" : "var(--text-secondary)",
                   fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap",
                 }}
               >
@@ -274,7 +274,7 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
                 key={r.key}
                 style={{
                   borderBottom: "1px solid var(--border-default)",
-                  background: r.staffed ? "color-mix(in srgb, var(--page-accent, #4f46e5) 7%, transparent)" : undefined,
+                  background: r.staffed ? "color-mix(in srgb, var(--page-accent, var(--action)) 7%, transparent)" : undefined,
                 }}
               >
                 <td style={{ padding: "6px 8px", fontWeight: r.staffed ? 700 : 600, whiteSpace: "nowrap" }}>{r.label}</td>
@@ -283,7 +283,7 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
                 <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-secondary)" }}>{r.ratePerKm.toFixed(2)}</td>
                 <td style={{ padding: "6px 8px", textAlign: "right" }}>
                   {r.staffed ? (
-                    <span style={{ fontWeight: 800, fontSize: "0.68rem", letterSpacing: "0.03em", color: "var(--page-accent, #4f46e5)" }}>● STAFFED</span>
+                    <span style={{ fontWeight: 800, fontSize: "0.68rem", letterSpacing: "0.03em", color: "var(--page-accent, var(--action))" }}>● STAFFED</span>
                   ) : (
                     <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>—</span>
                   )}

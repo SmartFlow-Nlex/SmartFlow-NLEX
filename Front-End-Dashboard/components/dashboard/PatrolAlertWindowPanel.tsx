@@ -9,7 +9,7 @@ const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 1
 
 // Single-hue sequential ramp, endpoints pulled from this app's own theme
 // tokens (app/globals.css) rather than generic grey/navy guesses:
-//   light end = var(--border-strong), #D4DBEA — the same "muted border" this
+//   light end = var(--border-strong), var(--border-strong) — the same "muted border" this
 //               card already borders every cell with (below), so quiet hours
 //               read as barely-there in exactly the tone the UI already uses
 //               for "subtle structure," not an unrelated grey.
@@ -22,7 +22,7 @@ const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 1
 // --bg-sidebar to #0A0E14, barely different at this swatch size), consistent
 // with shadeFor/shadeHour's own precedent elsewhere on this tab of a fixed
 // RGB ramp rather than a live theme read.
-const SHADE_LIGHT: [number, number, number] = [212, 219, 234]; // #D4DBEA, var(--border-strong)
+const SHADE_LIGHT: [number, number, number] = [212, 219, 234]; // var(--border-strong), var(--border-strong)
 const SHADE_DARK: [number, number, number] = [10, 34, 64]; // #0A2240, var(--bg-sidebar)
 
 function shadeHour(t: number): string {
@@ -216,7 +216,7 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
                       style={{
                         padding: "6px 8px", whiteSpace: "nowrap",
                         fontWeight: r.dow === widest.dow ? 700 : 500,
-                        color: r.dow === widest.dow ? "var(--page-accent, #4f46e5)" : "var(--text-primary)",
+                        color: r.dow === widest.dow ? "var(--page-accent, var(--action))" : "var(--text-primary)",
                       }}
                     >
                       {windowLabel(r.primary)}
