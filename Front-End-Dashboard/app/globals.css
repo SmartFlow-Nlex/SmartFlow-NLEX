@@ -11100,20 +11100,26 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 .sandbox-time-sep {
   height: 22px;
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   color: var(--text-muted);
   font-size: 0.8rem;
 }
 .sandbox-time-seg {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 3px;
 }
 .sandbox-time-seg-input {
   box-sizing: border-box;
-  width: 1.7em;
+  flex-shrink: 0;
+  /* 2ch for the digits themselves plus 8px (4px each side) of padding, not
+     a width that only just fits two tabular-nums digits — "19" was clipping
+     against the box edge at the old 1.7em. */
+  width: calc(2ch + 8px);
   height: 22px;
-  padding: 0 3px;
+  padding: 0 4px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: var(--bg-surface);
@@ -11122,6 +11128,17 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   font-size: 0.8rem;
   text-align: center;
   font-variant-numeric: tabular-nums;
+  /* Belt-and-braces: this is type="text", which Chrome/Safari never put
+     spinner arrows on, but hide them explicitly anyway so the custom
+     up/down pill beside it (sandbox-time-seg-arrows) is never fighting a
+     native one for the same few pixels. */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.sandbox-time-seg-input::-webkit-inner-spin-button,
+.sandbox-time-seg-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 .sandbox-time-seg-input:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--page-accent, var(--brand-primary)) 55%, transparent);
@@ -11134,6 +11151,7 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 .sandbox-time-seg-arrows {
   box-sizing: border-box;
   display: inline-flex;
+  flex-shrink: 0;
   flex-direction: column;
   height: 22px;
   border: 1px solid var(--border-default);
