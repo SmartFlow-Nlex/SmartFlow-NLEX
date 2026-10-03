@@ -1,57 +1,28 @@
-import Image from "next/image";
-import { ChevronDown, Home } from "lucide-react";
+import { Home } from "lucide-react";
 import InteractiveRoadMap from "./components/InteractiveRoadMap";
-import HeroLiveStatus from "./components/HeroLiveStatus";
+import OverviewLive from "../../components/overview/OverviewLive";
 import PageHeader from "../../components/dashboard/PageHeader";
 
 /**
- * Home tab.
+ * Overview.
  *
- * The hero is a purpose-made banner that already carries the logo, wordmark and
- * tagline, so nothing is drawn over it.
+ * Opens on the corridor itself: live freshness, a 3D corridor the operator
+ * drives with a car (a km cursor) and a km ruler, and the corridor counts.
+ * The Live Corridor Status panel follows, unchanged in what it shows.
  *
- * There are two of them — a light and a dark cut of the same artwork — and the
- * swap is done in CSS rather than JavaScript. Both are rendered and one is hidden,
- * which costs a second download but is the only way to honour all three theme
- * states: an explicit Light or Dark choice has to beat the OS setting in either
- * direction, and a JS swap would also flash the wrong artwork on load, which is
- * precisely what the inline theme script in the root layout exists to prevent.
+ * The raster brand banner that used to fill the first screen was removed in
+ * the Lane Signal redesign at the user's request (3 Oct 2026); the brand lives
+ * in the shell. Its two images stay in /public in case it is wanted back.
  */
 export default function DashboardHomePage() {
   return (
-    <section className="ds-content">
-      <PageHeader icon={Home} title="Home Overview" subtitle="Live NLEX network status at a glance" />
-
-      <article className="ds-hero-card">
-        <Image
-          src="/smartflow-nlex-hero-light.png"
-          alt="SmartFlow NLEX — where traffic meets intelligence"
-          fill
-          className="ds-hero-image is-light"
-          sizes="100vw"
-          unoptimized
-          priority
-        />
-        <Image
-          src="/smartflow-nlex-hero-dark.png"
-          // Empty alt: the light cut above already carries the description, so
-          // announcing the same banner twice would just be noise.
-          alt=""
-          fill
-          className="ds-hero-image is-dark"
-          sizes="100vw"
-          unoptimized
-          priority
-        />
-
-        <HeroLiveStatus />
-
-        <a href="#nlex-roadmap" className="ds-scroll-down">
-          <span>Live Corridor Status</span>
-          <ChevronDown size={20} aria-hidden="true" />
-        </a>
-      </article>
-
+    <section className="ds-content ov-page">
+      <PageHeader
+        icon={Home}
+        title="Overview"
+        subtitle="Balintawak Km 12 to Sta. Ines Km 88.25, both carriageways"
+      />
+      <OverviewLive />
       <InteractiveRoadMap />
     </section>
   );

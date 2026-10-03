@@ -12036,8 +12036,8 @@ h1, h2, h3, h4 { letter-spacing: -0.005em; }
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border-bottom: 1px solid var(--border-default);
-  height: 56px;
 }
+@media (min-width: 641px) { .ds-topbar { height: 56px; } }
 
 .ds-top-brand { font-size: 1.125rem; font-weight: 750; font-stretch: 88%; letter-spacing: 0; }
 
@@ -12208,3 +12208,308 @@ h1, h2, h3, h4 { letter-spacing: -0.005em; }
 /* On the plate the glyph always uses the bright (dark-theme) signal values,
    because the plate is dark in both themes, as on a real gantry. */
 .ds-signal.has-plate { --signal-clear: #34d17f; --signal-slow: #ffb21e; --signal-congested: #ff5c5c; --signal-none: #5d6f96; }
+
+/* ===========================================================================
+   OVERVIEW (Lane Signal)
+   The 3D corridor stage, the km ruler and the corridor counts.
+   components/overview/OverviewLive.tsx and CorridorScene.tsx.
+   =========================================================================== */
+.ov-page { display: flex; flex-direction: column; gap: 14px; }
+.ov-page > .ds-page-header { margin-bottom: 0; }
+
+.ov-fresh {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.ov-fresh b { color: var(--text-primary); font-weight: 650; }
+
+.ov-stage {
+  position: relative;
+  height: clamp(400px, 58vh, 560px);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg-surface);
+  user-select: none;
+}
+.ov-stage-loading,
+.ov-stage-fallback {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
+}
+.ov-canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: pan-y; }
+.ov-canvas:active { cursor: grabbing; }
+
+.ov-stage-hint {
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  margin: 0;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+.ov-gantry-label {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding-bottom: 4px;
+  white-space: nowrap;
+  font-size: var(--fs-label);
+  font-weight: 650;
+  font-stretch: var(--font-cond-stretch);
+  color: var(--text-primary);
+  pointer-events: none;
+  text-shadow: 0 0 3px var(--bg-body), 0 0 6px var(--bg-body);
+}
+.ov-gantry-label em { font-style: normal; color: var(--text-muted); margin-right: 4px; font-variant-numeric: tabular-nums; }
+
+.ov-readout {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 10px));
+  width: 300px;
+  padding: 11px 13px 12px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+}
+.ov-readout-km {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  font-stretch: var(--font-cond-stretch);
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ov-readout-name { font-size: 1.0625rem; font-weight: 700; margin: 1px 0 8px; }
+.ov-readout-dir {
+  display: grid;
+  grid-template-columns: 20px 24px auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 1px;
+  padding: 3px 0;
+  font-size: var(--fs-body);
+}
+.ov-readout-dirname { font-weight: 700; font-stretch: var(--font-cond-stretch); color: var(--text-secondary); }
+.ov-readout-word { font-weight: 650; }
+.ov-readout-detail { grid-column: 3; font-size: var(--fs-caption); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+/* --- Km ruler: a native range input over a drawn track --------------------- */
+.ov-ruler { position: relative; height: 44px; margin: 0 6px; }
+.ov-ruler-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 12px;
+  height: 2px;
+  background: var(--border-strong);
+}
+.ov-ruler-exit {
+  position: absolute;
+  top: -6px;
+  width: 1px;
+  height: 14px;
+  background: var(--text-muted);
+}
+.ov-ruler-flag {
+  position: absolute;
+  top: -8px;
+  width: 3px;
+  height: 18px;
+  margin-left: -1px;
+  border-radius: 1px;
+}
+.ov-ruler-flag.is-congested { background: var(--signal-congested); }
+.ov-ruler-flag.is-slow { background: var(--signal-slow); }
+.ov-ruler-km {
+  position: absolute;
+  top: 14px;
+  transform: translateX(-50%);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  font-stretch: var(--font-cond-stretch);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ov-ruler-input {
+  position: absolute;
+  inset: 0 -6px;
+  width: calc(100% + 12px);
+  height: 26px;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.ov-ruler-input::-webkit-slider-runnable-track { height: 26px; background: transparent; }
+.ov-ruler-input::-moz-range-track { height: 26px; background: transparent; }
+.ov-ruler-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--action);
+  border: 3px solid var(--bg-body);
+  box-shadow: 0 0 0 1px var(--action);
+}
+.ov-ruler-input::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--action);
+  border: 3px solid var(--bg-body);
+}
+.ov-ruler-input:focus-visible { outline: 2px solid var(--action); outline-offset: 4px; border-radius: var(--radius-sm); }
+
+/* --- Counts and the reversed plate ---------------------------------------- */
+.ov-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.5fr);
+  gap: 12px;
+}
+.ov-count {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+}
+.ov-count .ds-signal { border-radius: var(--radius-md); }
+.ov-count-value {
+  font-size: var(--fs-numeral);
+  font-weight: 750;
+  font-stretch: var(--font-cond-stretch);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.ov-count.is-congested .ov-count-value { color: var(--signal-congested); }
+.ov-count-label { margin-top: 3px; font-size: var(--fs-caption); color: var(--text-secondary); }
+
+/* The one reversed plate on the screen, kept for the worst reading: navy on
+   the light theme, paper on the dark one. */
+.ov-worst {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 12px 18px;
+  border-radius: var(--radius-lg);
+  background: #0a1630;
+  color: #e8eefb;
+}
+:root[data-theme="dark"] .ov-worst { background: #eef3ff; color: #0a1630; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ov-worst { background: #eef3ff; color: #0a1630; } }
+.ov-worst-label { font-size: var(--fs-caption); font-weight: 600; opacity: 0.78; }
+.ov-worst-value { margin-top: 2px; font-size: 1.375rem; font-weight: 750; font-stretch: 90%; }
+.ov-worst-value span { color: #ff6b6b; font-variant-numeric: tabular-nums; }
+:root[data-theme="dark"] .ov-worst-value span { color: #c42a2a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ov-worst-value span { color: #c42a2a; } }
+.ov-worst-value.is-none { font-size: var(--fs-title); font-weight: 600; opacity: 0.85; }
+
+@media (max-width: 1100px) {
+  .ov-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ov-worst { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  .ov-counts { grid-template-columns: 1fr; }
+  .ov-readout { width: 260px; }
+  .ov-ruler-km:nth-child(even) { display: none; }
+}
+
+/* --- Live Corridor Status (InteractiveRoadMap), Lane Signal ---------------
+   The road is asphalt in both themes, so it always uses the bright signal
+   values, as the gantry plate does. Clear is the green shoulder line on the
+   outer edge of each carriageway; the queue band is the only colour on the
+   tarmac, so a jam is the thing the eye lands on. */
+.ds-rd-way {
+  background: #1d2c4c;
+  --signal-clear: #34d17f;
+  --signal-slow: #ffb21e;
+  --signal-congested: #ff5c5c;
+}
+.ds-rd-way.dir-sb { border-radius: var(--radius-md) var(--radius-md) 0 0; }
+.ds-rd-way.dir-nb { border-radius: 0 0 var(--radius-md) var(--radius-md); }
+.ds-rd-way::before,
+.ds-rd-way::after { background: rgba(232, 238, 251, 0.35); }
+.ds-rd-seg.seg-green { background: transparent; opacity: 1; }
+.ds-rd-way.dir-sb .ds-rd-seg.seg-green { box-shadow: inset 0 3px 0 var(--signal-clear); }
+.ds-rd-way.dir-nb .ds-rd-seg.seg-green { box-shadow: inset 0 -3px 0 var(--signal-clear); }
+.ds-rd-seg.is-active { filter: none; background: rgba(92, 200, 255, 0.12); }
+.ds-rd-jam { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4); border-radius: 1px; }
+
+/* Km posts: white tablets with navy numerals, as on the road. */
+.ds-rd-node { display: none; }
+.ds-rd-km {
+  padding: 2px 5px 1px;
+  border-radius: 3px;
+  background: #f4f7ff;
+  color: #0a1630;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  font-size: var(--fs-label);
+  font-weight: 700;
+  font-stretch: var(--font-cond-stretch);
+  line-height: 1.2;
+}
+.ds-rd-hit:hover .ds-rd-km,
+.ds-rd-stop.is-active .ds-rd-km { background: var(--action); color: var(--action-ink); box-shadow: none; }
+
+/* Exit names: horizontal, on three staggered rows, instead of rotated 90deg
+   and truncated. Each name hangs from a hairline under its own km post. */
+.ds-rd-labels { margin-top: 4px; }
+.ds-rd-labels > li { position: relative; height: 66px; overflow: visible; }
+.ds-rd-labels > li::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 1px;
+  background: var(--border-strong);
+}
+.ds-rd-labels > li:nth-child(3n + 1)::before { height: 6px; }
+.ds-rd-labels > li:nth-child(3n + 2)::before { height: 26px; }
+.ds-rd-labels > li:nth-child(3n + 3)::before { height: 46px; }
+.ds-rd-label {
+  position: absolute;
+  left: 50%;
+  writing-mode: horizontal-tb;
+  transform: translateX(-50%);
+  height: auto;
+  overflow: visible;
+  text-overflow: clip;
+  font-size: var(--fs-label);
+  font-weight: 650;
+  font-stretch: var(--font-cond-stretch);
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  padding: 0 3px;
+}
+.ds-rd-labels > li:nth-child(3n + 1) .ds-rd-label { top: 6px; }
+.ds-rd-labels > li:nth-child(3n + 2) .ds-rd-label { top: 26px; }
+.ds-rd-labels > li:nth-child(3n + 3) .ds-rd-label { top: 46px; }
+.ds-rd-labels > li:first-child .ds-rd-label { left: 0; transform: none; }
+.ds-rd-labels > li:last-child .ds-rd-label { left: auto; right: 0; transform: none; }
+.ds-rd-label:hover,
+.ds-rd-label.is-active { color: var(--action); }
+
+.ds-rd-rail-hint { font-style: normal; }
+.ds-rd-titles h2 { font-size: var(--fs-title); font-weight: 700; }
+.ds-rd-tally span { border-radius: var(--radius-sm); }
