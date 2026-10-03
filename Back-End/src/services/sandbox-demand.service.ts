@@ -38,10 +38,25 @@ export type DemandProfile = {
   source: string;
 };
 
+/* Kept in memory for six hours. It aggregates all 1.1M hourly rows of a table
+   that only changes when toll data is reloaded (it ends Dec 2025), and took
+   ~26 s alone and close to a minute on a cold, busy load. */
+const DEMAND_EXITS_TTL_MS = 6 * 3_600_000;
+let demandExitsCache: { at: number; value: { exits: unknown[]; source: string } } | null = null;
+
 /** Interchanges the sandbox can anchor demand to, busiest first. */
 export async function getDemandExits() {
   if (!db) return null;
-  const r = await db.query(
+  if (demandExitsCache && Date.now() - demandExitsCache.at < DEMAND_EXITS_TTL_MS) {
+    return demandExitsCache.value;
+  }
+  const value = await queryDemandExits();
+  demandExitsCache = { at: Date.now(), value };
+  return value;
+}
+
+async function queryDemandExits() {
+  const r = await db!.query(
     `SELECT exit_canonical AS exit, direction,
             ROUND(AVG(total)::numeric, 0)::int AS avg_veh_h,
             MAX(total)::int AS peak_veh_h,

@@ -4,6 +4,9 @@ import { getTrafficVolumesFromDb, getDirectionalFlowFromDb, getVehicleClassDistr
   getHorizonAccuracy,
   getCongestionHorizonAccuracy,
   getCongestionEval,
+  getCongestionJamEval,
+  getCongestionVolumeEval,
+  getCongestionLiveScore,
   getEventSurgeMetrics,
   getEventSurgeEval,
 } from "../services/traffic.service.js";
@@ -84,7 +87,7 @@ export const getForecast = async (req: Request, res: Response) => {
      the upcoming-events query alone rolls up a 1.1-million-row hourly table
      (~0.8 s). Three cards on the Predictive tab request this within the same
      second; with single-flight coalescing they share one run. */
-  const [volumes, congestion, events, modelMetrics, congestionModel, split, horizonAccuracy, congestionHorizon, eventMetrics, upcomingEvents, congestionEval, eventSurgeEval] =
+  const [volumes, congestion, events, modelMetrics, congestionModel, split, horizonAccuracy, congestionHorizon, eventMetrics, upcomingEvents, congestionEval, eventSurgeEval, congestionJamEval, congestionVolumeEval, congestionLiveScore] =
     await cached(`forecast:${JSON.stringify(query)}`, 10 * 60_000, () => Promise.all([
     getMLPredictiveVolume({ months: query.months, from: query.from, to: query.to, split: query.split }),
     getMLPredictiveCongestion(),
@@ -106,6 +109,12 @@ export const getForecast = async (req: Request, res: Response) => {
     getCongestionEval(),
     // How the event-surge model was scored, plus its held-out replay.
     getEventSurgeEval(),
+    // How the per-cell queue and delay figures held up on live jams.
+    getCongestionJamEval(),
+    // How jam frequency follows traffic volume, from the years both cover.
+    getCongestionVolumeEval(),
+    // The served forecasts, scored against what happened afterwards.
+    getCongestionLiveScore(),
   ]));
 
   if (!volumes && !congestion && !events) {
@@ -133,6 +142,9 @@ export const getForecast = async (req: Request, res: Response) => {
       horizonAccuracy: horizonAccuracy ?? [],
       congestionHorizonAccuracy: congestionHorizon ?? [],
       congestionEval: congestionEval ?? null,
+      congestionJamEval: congestionJamEval ?? null,
+      congestionVolumeEval: congestionVolumeEval ?? null,
+      congestionLiveScore: congestionLiveScore ?? null,
       eventSurgeMetrics: eventMetrics ?? [],
       eventSurgeEval: eventSurgeEval ?? null,
       modelMetrics: modelMetrics ?? [],

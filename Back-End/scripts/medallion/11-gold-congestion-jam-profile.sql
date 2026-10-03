@@ -111,9 +111,14 @@ COMMENT ON TABLE gold.congestion_jam_profile IS
 
 
 -- How well the profile describes jams it never saw.
-DROP TABLE IF EXISTS gold.congestion_jam_profile_eval;
+-- Refreshed in place, never dropped: gold.model_evaluation (a view built on
+-- top of it) depends on this table, and DROP would fail or take that with it.
+CREATE TABLE IF NOT EXISTS gold.congestion_jam_profile_eval (
+  id int PRIMARY KEY, payload jsonb, updated_at timestamptz);
 
-CREATE TABLE gold.congestion_jam_profile_eval AS
+DELETE FROM gold.congestion_jam_profile_eval;
+
+INSERT INTO gold.congestion_jam_profile_eval (id, payload, updated_at)
 WITH live AS (
   SELECT j.date_day,
          j.hour_of_day::int AS hour_of_day,
@@ -194,4 +199,104 @@ WHERE full_len IS NOT NULL AND base_len IS NOT NULL;
 COMMENT ON TABLE gold.congestion_jam_profile_eval IS
   'Out-of-time check of gold.congestion_jam_profile against live NLEX jams from silver.fact_waze_jams. One row. Built by 11-gold-congestion-jam-profile.sql.';
 
+
+-- WHERE A QUEUE SITS relative to its plaza, per exit and carriageway.
+--
+-- The history above says how far a jam was from the exit but not which way it
+-- was travelling, so it cannot say whether a queue forms before the plaza or
+-- after it. The forecast map first assumed "before", and that was wrong: of
+-- ~11,000 live NLEX jams, 57% touch the plaza, 34% sit past it (traffic
+-- merging after the on-ramp) and only 9% are wholly before it. At the busy
+-- exits the queue straddles the plaza with its front 50-250 m past it.
+--
+-- The live feed has the geometry and, where Waze names it, the carriageway, so
+-- this measures it: the signed distance from the plaza to the queue's FRONT
+-- (downstream end), negative before the plaza and positive past it, median per
+-- exit and direction. Duplicate re-reports of one queue (identical geometry)
+-- are counted once. exit_name 'ALL' is the corridor-wide median per direction,
+-- used where an exit has too few jams or an implausible median (the map's
+-- rule: at least 30 jams and within 1 km of the plaza).
+DROP TABLE IF EXISTS gold.congestion_queue_placement;
+
+CREATE TABLE gold.congestion_queue_placement AS
+WITH j AS (
+  SELECT DISTINCT ON (ST_AsBinary(j.geom))
+         e.exit_name, e.latitude AS elat, e.longitude AS elon, j.geom,
+         CASE WHEN j.street ~* '(NLEX|North Luzon Expressway)\s+N\M' THEN 'NB'
+              WHEN j.street ~* '(NLEX|North Luzon Expressway)\s+S\M' THEN 'SB' END AS dir
+  FROM silver.fact_waze_jams j
+  JOIN bronze.nlex_exits e ON e.id = j.nlex_exit_id
+  WHERE j.corridor_match = 'ON_CORRIDOR' AND j.geom IS NOT NULL
+  ORDER BY ST_AsBinary(j.geom), j.last_seen_at DESC
+), f AS (
+  -- The front is the downstream end: the northern end northbound, the
+  -- southern end southbound.
+  SELECT exit_name, dir, elat, elon,
+         CASE WHEN (dir = 'NB') = (ST_Y(ST_StartPoint(geom)) > ST_Y(ST_EndPoint(geom)))
+              THEN ST_StartPoint(geom) ELSE ST_EndPoint(geom) END AS front
+  FROM j WHERE dir IS NOT NULL
+), s AS (
+  SELECT exit_name, dir,
+         ST_DistanceSphere(front, ST_SetSRID(ST_MakePoint(elon, elat), 4326))
+           * CASE WHEN (dir = 'NB' AND ST_Y(front) >= elat) OR (dir = 'SB' AND ST_Y(front) <= elat)
+                  THEN 1 ELSE -1 END AS front_offset_m
+  FROM f
+)
+SELECT COALESCE(exit_name, 'ALL') AS exit_name, dir,
+       COUNT(*)::int AS n_jams,
+       ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY front_offset_m))::int AS front_offset_m,
+       ROUND(100.0 * AVG((front_offset_m > 0)::int), 1) AS pct_front_past_plaza
+FROM s
+GROUP BY GROUPING SETS ((exit_name, dir), (dir));
+
+COMMENT ON TABLE gold.congestion_queue_placement IS
+  'Median signed distance from each plaza to the front of its queues (negative = before, positive = past), per exit and direction, from live NLEX jams. Places predicted queues on the forecast map. Built by 11-gold-congestion-jam-profile.sql.';
+
+
+
+-- WHICH CARRIAGEWAY jams at each exit, by time of day.
+--
+-- The model predicts a jam at an exit, not on a side, and the forecast map
+-- first drew every predicted queue on both carriageways. That is wrong for
+-- most exits: corridor-wide the split is about even, but each exit is
+-- lopsided -- Balintawak's jams are 98% northbound, Bocaue Barrier's 98%
+-- southbound, CDV/PH Arena's 91% southbound -- and only 0-35% of an exit's
+-- jam-hours have a jam on both sides.
+--
+-- Unit: an exit-hour with at least one heavy or severe NLEX jam whose
+-- carriageway Waze named. nb_share / sb_share = the share of those hours with
+-- a jam on that side (they add to more than 1 when both sides jam). Rows per
+-- exit and time-of-day period, plus period 'all' for each exit; the map uses
+-- the period row when it rests on at least 30 jam-hours, else 'all'.
+DROP TABLE IF EXISTS gold.congestion_queue_direction;
+
+CREATE TABLE gold.congestion_queue_direction AS
+WITH j AS (
+  SELECT DISTINCT e.exit_name, j.date_day, j.hour_of_day,
+         CASE WHEN j.street ~* '(NLEX|North Luzon Expressway)\s+N\M' THEN 'NB'
+              WHEN j.street ~* '(NLEX|North Luzon Expressway)\s+S\M' THEN 'SB' END AS dir
+  FROM silver.fact_waze_jams j JOIN bronze.nlex_exits e ON e.id = j.nlex_exit_id
+  WHERE j.corridor_match = 'ON_CORRIDOR' AND j.speed_kmh < 20
+), h AS (
+  SELECT exit_name, date_day, hour_of_day,
+         CASE WHEN hour_of_day BETWEEN 5 AND 9 THEN 'am'
+              WHEN hour_of_day BETWEEN 10 AND 15 THEN 'midday'
+              WHEN hour_of_day BETWEEN 16 AND 20 THEN 'pm'
+              ELSE 'night' END AS period,
+         bool_or(dir = 'NB') AS nb, bool_or(dir = 'SB') AS sb
+  FROM j WHERE dir IS NOT NULL
+  GROUP BY 1, 2, 3
+)
+SELECT exit_name, COALESCE(period, 'all') AS period,
+       COUNT(*)::int AS jam_hours,
+       ROUND(AVG(nb::int)::numeric, 3) AS nb_share,
+       ROUND(AVG(sb::int)::numeric, 3) AS sb_share
+FROM h
+GROUP BY GROUPING SETS ((exit_name, period), (exit_name));
+
+COMMENT ON TABLE gold.congestion_queue_direction IS
+  'Share of each exit''s jam-hours with a heavy/severe jam on each carriageway, by time of day, from live NLEX jams. Chooses which side(s) the forecast map draws a predicted queue on. Built by 11-gold-congestion-jam-profile.sql.';
+
 SELECT payload FROM gold.congestion_jam_profile_eval;
+SELECT * FROM gold.congestion_queue_placement WHERE exit_name = 'ALL';
+SELECT * FROM gold.congestion_queue_direction WHERE period = 'all' ORDER BY jam_hours DESC;

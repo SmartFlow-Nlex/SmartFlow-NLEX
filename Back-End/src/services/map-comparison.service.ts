@@ -1,5 +1,6 @@
 import { db } from "../config/db.js";
 import { forecastTable } from "./forecast-source.js";
+import { directionSql, jamProfileAvailable, jamProfileSql, queuePlacementSql, volumeProfileSql } from "./jam-profile.js";
 
 // [DEV-01 & DEV-03] Fetch merged real-time data (volumes + active incidents).
 //
@@ -222,25 +223,44 @@ export async function getForecastCongestionFromDb(hoursAhead: number) {
   try {
     // Prefer the table only this pipeline writes; see forecast-source.
     const src = await forecastTable(db);
+    /* The typical queue for each predicted jam -- length, distance from the
+       plaza, delay, speed -- so the map can draw the stretch a jam would
+       actually occupy, the way the live map draws a real one, instead of
+       painting the whole exit-to-exit segment. See jam-profile.ts. */
+    const withProfile = await jamProfileAvailable(db);
+    const jp = jamProfileSql();
+    const qp = await queuePlacementSql(db);
+    const vp = withProfile ? await volumeProfileSql(db) : { cols: "", join: "" };
+    const dp = withProfile ? await directionSql(db) : { cols: "", join: "" };
     const { rows } = await db.query(
-      `SELECT g.segment_name,
-              g.hours_ahead,
-              g.congestion_state,
-              g.probability::float AS probability,
+      `SELECT c.segment_name,
+              c.hours_ahead,
+              c.congestion_state,
+              c.probability::float AS probability,
+              (COALESCE(c.p_med, 0) + COALESCE(c.p_high, 0))::float AS p_congested,
+              c.p_med::float AS p_med, c.p_high::float AS p_high,
               d.segment_name AS corridor_segment,
               d.location_id,
               ST_AsGeoJSON(d.geom::geometry) AS geojson
-       FROM ${src} g
+              ${withProfile ? jp.cols : ""}
+              ${qp.cols}
+              ${vp.cols}
+              ${dp.cols}
+       FROM ${src} c
        JOIN LATERAL (
          SELECT dl.location_id, dl.segment_name, dl.geom
          FROM dim_location dl
          WHERE dl.geom IS NOT NULL
-           AND (dl.start_node ILIKE g.segment_name || '%'
-                OR dl.start_node ILIKE '%' || g.segment_name || '%')
-         ORDER BY (dl.start_node ILIKE g.segment_name || '%') DESC, dl.location_id
+           AND (dl.start_node ILIKE c.segment_name || '%'
+                OR dl.start_node ILIKE '%' || c.segment_name || '%')
+         ORDER BY (dl.start_node ILIKE c.segment_name || '%') DESC, dl.location_id
          LIMIT 1
        ) d ON TRUE
-       WHERE g.hours_ahead = $1
+       ${withProfile ? jp.join : ""}
+       ${vp.join}
+       ${dp.join}
+       ${qp.join}
+       WHERE c.hours_ahead = $1
        ORDER BY d.location_id`,
       [hoursAhead]
     );
@@ -253,11 +273,43 @@ export async function getForecastCongestionFromDb(hoursAhead: number) {
         corridor_segment: r.corridor_segment,
         horizon: `${r.hours_ahead}h`,
         hours_ahead: r.hours_ahead,
-        congestion_state: r.congestion_state,
+        /* The state the dashboard SHOWS: a jam when the chance of one (heavy +
+           severe) is 50% or more, severity by the likelier of the two. The
+           model's own label is the likeliest of three, which called 244 cells
+           of one run "Low" at a 50-60% chance of a jam; above 50% the chance is
+           calibrated (said 55% -> 51% happened). Same rule as the congestion
+           card, so the map, its list and the card agree. */
+        congestion_state:
+          r.p_med != null && r.p_high != null
+            ? (r.p_med + r.p_high >= 0.5 ? (r.p_high >= r.p_med ? "High" : "Med") : "Low")
+            : r.congestion_state,
+        model_state: r.congestion_state,
         probability: r.probability,
+        p_congested: r.p_congested,
+        p_med: r.p_med,
+        p_high: r.p_high,
         // Kept for backward compatibility with the existing map styling, which
         // reads a 0-1 score rather than the Low/Med/High label.
         congestion_score: r.probability,
+        jam_queue_m: r.jamQueueM ?? null,
+        jam_queue_p75_m: r.jamQueueP75M ?? null,
+        jam_delay_s: r.jamDelayS ?? null,
+        jam_dist_m: r.jamDistM ?? null,
+        jam_speed_kmh: r.jamSpeedKmh ?? null,
+        jam_basis: r.jamBasis ?? null,
+        jam_basis_hours: r.jamBasisHours ?? null,
+        // Signed metres from the plaza to the queue's front, per carriageway.
+        front_nb_m: r.front_nb_m ?? null,
+        front_sb_m: r.front_sb_m ?? null,
+        front_nb_own: r.front_nb_own ?? null,
+        front_sb_own: r.front_sb_own ?? null,
+        // Typical vehicles per hour at this exit for the forecast hour.
+        vol_median: r.volMedian ?? null,
+        vol_rel: r.volRel ?? null,
+        // Share of this exit's jam-hours (at this time of day) on each side.
+        nb_share: r.nb_share ?? null,
+        sb_share: r.sb_share ?? null,
+        dir_jam_hours: r.dir_jam_hours ?? null,
       },
       geometry: JSON.parse(r.geojson),
     }));
@@ -288,11 +340,16 @@ export async function getForecastDailyPeaksFromDb(): Promise<
     // Prefer the table only this pipeline writes; see forecast-source.
     const src = await forecastTable(db);
     const { rows } = await db.query(
+      /* "Congested" is the rule the map draws by: a jam when the chance of one
+         (heavy + severe) is 50% or more. This counted only exits the model
+         LABELLED severe, so the week list said "1 congested" for days the map
+         drew with a dozen predicted queues. Confidence is the average chance
+         of a jam across the corridor at that hour. */
       `WITH per_hour AS (
          SELECT hours_ahead,
                 MAX(base_ts) AS base_ts,
-                COUNT(*) FILTER (WHERE congestion_state = 'High')::int AS congested,
-                AVG(p_high)::float                                     AS confidence
+                COUNT(*) FILTER (WHERE COALESCE(p_med, 0) + COALESCE(p_high, 0) >= 0.5)::int AS congested,
+                AVG(COALESCE(p_med, 0) + COALESCE(p_high, 0))::float                      AS confidence
            FROM ${src}
           GROUP BY hours_ahead
        ), stamped AS (

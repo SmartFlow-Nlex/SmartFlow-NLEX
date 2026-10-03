@@ -13,7 +13,14 @@ import { useNlexExits, exitNearestKm, displayExitName, CORRIDOR_KM, type NlexExi
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
 
-const DIRECTIONS = ["Both", "NB", "SB"] as const;
+/* A closure is on one carriageway, so the form asks for one. "Both" is no
+   longer offered for new work; rows saved with it before still display as
+   such (see Schedule.direction), and editing one asks for a side. */
+const DIRECTIONS = ["NB", "SB"] as const;
+const DIRECTION_LABEL: Record<(typeof DIRECTIONS)[number], string> = {
+  NB: "Northbound",
+  SB: "Southbound",
+};
 const LANE_CLOSURES = ["None", "Shoulder only", "1 lane", "2 lanes", "Full closure"] as const;
 
 type Status = "scheduled" | "in_progress" | "completed" | "cancelled";
@@ -229,7 +236,7 @@ const emptyForm = {
   description: "",
   startKm: "",
   endKm: "",
-  direction: "Both" as (typeof DIRECTIONS)[number],
+  direction: "NB" as (typeof DIRECTIONS)[number],
   laneClosure: "Shoulder only" as (typeof LANE_CLOSURES)[number],
   startDate: "",
   startTime: "08:00",
@@ -421,7 +428,9 @@ export default function MaintenancePage() {
       description: s.description ?? "",
       startKm: String(s.start_km),
       endKm: String(s.end_km),
-      direction: s.direction,
+      // Older rows may say "Both", which the form no longer offers. They open
+      // as northbound if they run up the km posts, southbound if down.
+      direction: s.direction === "Both" ? (s.end_km >= s.start_km ? "NB" : "SB") : s.direction,
       laneClosure: s.lane_closure as (typeof LANE_CLOSURES)[number],
       startDate: dateOf(starts),
       startTime: timeOf(starts),
@@ -439,9 +448,17 @@ export default function MaintenancePage() {
     const endKm = Number(form.endKm);
     if (form.title.trim().length < 3) return setFormError("Give the work a short title (at least 3 characters).");
     if (form.startKm === "" || form.endKm === "" || Number.isNaN(startKm) || Number.isNaN(endKm))
-      return setFormError("Both Km markers are required.");
-    if (startKm < 0 || startKm > 100 || endKm < 0 || endKm > 100)
-      return setFormError("Km markers must be between 0 and 100.");
+      return setFormError("Pick a start exit and an end exit.");
+    if (startKm < KM_MIN || startKm > KM_MAX || endKm < KM_MIN || endKm > KM_MAX)
+      return setFormError(`Km posts on this corridor run from ${KM_MIN} (${displayExitName(byKm[0]?.exit_name ?? "")}) to ${KM_MAX} (${displayExitName(byKm[byKm.length - 1]?.exit_name ?? "")}).`);
+    // Start is where traffic reaches the works first: northbound runs up the
+    // km posts, southbound down them.
+    if (form.direction === "NB" ? endKm < startKm : endKm > startKm)
+      return setFormError(
+        form.direction === "NB"
+          ? "Northbound runs up the km posts, so the end must be at a higher km than the start."
+          : "Southbound runs down the km posts, so the end must be at a lower km than the start.",
+      );
     if (!form.startDate || !form.endDate) return setFormError("Start and end date are required.");
     const startsAt = new Date(`${form.startDate}T${form.startTime || "00:00"}`);
     const endsAt = new Date(`${form.endDate}T${form.endTime || "00:00"}`);
@@ -488,6 +505,41 @@ export default function MaintenancePage() {
 
   const set = <K extends keyof typeof emptyForm>(k: K, v: (typeof emptyForm)[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
+
+  /* Exits along the corridor by km post, and the corridor's ends. The km of
+     each exit is the NLEX km post (Balintawak 12 -> Sta. Ines 88.25; see
+     lib/nlex-exits), so picking an exit fills its km and nobody has to type
+     one. The box stays editable for works that start between two exits. */
+  const byKm = useMemo(() => [...NLEX_EXITS].sort((a, b) => a.km - b.km), [NLEX_EXITS]);
+  const KM_MIN = byKm[0]?.km ?? 0;
+  const KM_MAX = byKm[byKm.length - 1]?.km ?? CORRIDOR_KM;
+
+  /* In the order a driver meets them: northbound up the km posts, southbound
+     down. The end list starts after the start exit, so an end the traffic
+     reaches BEFORE the start cannot be picked. */
+  const inTravelOrder = form.direction === "NB" ? byKm : [...byKm].reverse();
+  const exitOption = (x: NlexExit) => ({ label: `${displayExitName(x.exit_name)} · Km ${x.km}`, value: String(x.km) });
+  const startOptions = inTravelOrder.map(exitOption);
+  const startKmNum = form.startKm === "" ? null : Number(form.startKm);
+  const endOptions = inTravelOrder
+    .filter((x) => startKmNum == null || (form.direction === "NB" ? x.km >= startKmNum : x.km <= startKmNum))
+    .map(exitOption);
+
+  const pickStart = (v: string) =>
+    setForm((f) => {
+      const s = Number(v);
+      const e = f.endKm === "" ? null : Number(f.endKm);
+      // An end now behind the start, in travel order, is cleared rather than
+      // left contradicting it.
+      const endStillAhead = e == null || (f.direction === "NB" ? e >= s : e <= s);
+      return { ...f, startKm: v, endKm: endStillAhead ? f.endKm : "" };
+    });
+
+  /* Switching direction reverses the stretch: the end becomes where traffic
+     now arrives first. Picked Meycauayan -> Bocaue northbound, toggle to SB and
+     it reads Bocaue -> Meycauayan. */
+  const setDirection = (d: (typeof DIRECTIONS)[number]) =>
+    setForm((f) => (f.direction === d ? f : { ...f, direction: d, startKm: f.endKm, endKm: f.startKm }));
 
   const segmentNote =
     form.startKm !== "" && form.endKm !== "" && !Number.isNaN(Number(form.startKm)) && !Number.isNaN(Number(form.endKm))
@@ -812,59 +864,73 @@ export default function MaintenancePage() {
               </div>
 
               <p className="ms-section-label" style={{ ...SECTION_STYLE, marginTop: 8 }}>Location</p>
-              <div style={{ display: "grid", gridTemplateColumns: "0.65fr 1.35fr 0.65fr 1.35fr", gap: 12 }}>
-                <div className="ms-input-group">
-                  <label>Start Km <span className="ms-req">*</span></label>
-                  <input type="number" min={0} max={100} className="ms-input" placeholder={`0–${CORRIDOR_KM}`} value={form.startKm} onChange={(e) => set("startKm", e.target.value)} />
+              {/* Direction first: it decides which way the stretch runs, so the
+                  exit lists below follow it. */}
+              <div className="ms-input-group">
+                <label>Direction <span className="ms-req">*</span></label>
+                <div className={styles.segmentedSmall} style={{ width: "100%" }}>
+                  {DIRECTIONS.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      className={form.direction === d ? "active" : ""}
+                      style={{ flex: 1, padding: "9px 12px", fontSize: "0.88rem" }}
+                      onClick={() => setDirection(d)}
+                      aria-pressed={form.direction === d}
+                    >
+                      {form.direction === d && check}
+                      {d} <span style={{ fontWeight: 500, opacity: 0.75, marginLeft: 4 }}>{DIRECTION_LABEL[d]}</span>
+                    </button>
+                  ))}
                 </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.6fr 1.5fr 0.6fr", gap: 12 }}>
                 <div className="ms-input-group">
-                  <label>Start exit</label>
+                  <label>Start exit <span className="ms-req">*</span></label>
                   <Select
                     value={form.startKm}
-                    placeholder="Pick an exit…"
-                    options={NLEX_EXITS.map((x) => ({ label: `${displayExitName(x.exit_name)} (Km ${x.km})`, value: String(x.km) }))}
-                    onChange={(v) => set("startKm", v)}
+                    placeholder={form.direction === "NB" ? "Where it begins, going north…" : "Where it begins, going south…"}
+                    options={startOptions}
+                    onChange={pickStart}
                   />
                 </div>
                 <div className="ms-input-group">
-                  <label>End Km <span className="ms-req">*</span></label>
-                  <input type="number" min={0} max={100} className="ms-input" placeholder={`0–${CORRIDOR_KM}`} value={form.endKm} onChange={(e) => set("endKm", e.target.value)} />
+                  <label>Start Km</label>
+                  <input
+                    type="number" step={0.01} min={KM_MIN} max={KM_MAX} className="ms-input"
+                    placeholder="auto" value={form.startKm}
+                    title="Filled from the exit. Adjust only if the works start between two exits."
+                    onChange={(e) => set("startKm", e.target.value)}
+                  />
                 </div>
                 <div className="ms-input-group">
-                  <label>End exit</label>
+                  <label>End exit <span className="ms-req">*</span></label>
                   <Select
                     value={form.endKm}
-                    placeholder="Pick an exit…"
-                    options={NLEX_EXITS.map((x) => ({ label: `${displayExitName(x.exit_name)} (Km ${x.km})`, value: String(x.km) }))}
+                    placeholder={form.startKm === "" ? "Pick the start first…" : "Where it ends…"}
+                    options={endOptions}
                     onChange={(v) => set("endKm", v)}
+                  />
+                </div>
+                <div className="ms-input-group">
+                  <label>End Km</label>
+                  <input
+                    type="number" step={0.01} min={KM_MIN} max={KM_MAX} className="ms-input"
+                    placeholder="auto" value={form.endKm}
+                    title="Filled from the exit. Adjust only if the works end between two exits."
+                    onChange={(e) => set("endKm", e.target.value)}
                   />
                 </div>
               </div>
 
               {segmentNote && (
                 <p style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: "var(--text-secondary)", margin: "-4px 0 0" }}>
-                  <MapPin size={13} /> {segmentNote}
+                  <MapPin size={13} /> {DIRECTION_LABEL[form.direction]} · {segmentNote}
                 </p>
               )}
 
               <div className="ms-form-row">
-                <div className="ms-input-group">
-                  <label>Direction</label>
-                  <div className={styles.segmentedSmall} style={{ width: "100%" }}>
-                    {DIRECTIONS.map((d) => (
-                      <button
-                        key={d}
-                        type="button"
-                        className={form.direction === d ? "active" : ""}
-                        style={{ flex: 1, padding: "9px 12px", fontSize: "0.88rem" }}
-                        onClick={() => set("direction", d)}
-                      >
-                        {form.direction === d && check}
-                        {d}
-                      </button>
-                    ))}
-                  </div>
-                </div>
                 <div className="ms-input-group">
                   <label>Lane closure</label>
                   <Select

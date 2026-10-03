@@ -10,6 +10,7 @@ import {
 } from "../../lib/corridor-shape";
 import { corridorSegmentLevels } from "../../lib/corridor-status";
 import { FALLBACK_EXITS, accessLabel, displayExitName, plazaLabel } from "../../lib/nlex-exits";
+import { makePredictedQueues, shownForecastState } from "../../lib/predicted-queues";
 import { useChartTheme } from "../../lib/chart-theme";
 import { mapPalette } from "../../lib/map-palette";
 import { isDisputedReport, isReportType, isUnconfirmedReport } from "../../lib/waze-reports";
@@ -471,6 +472,13 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
 
     const guard = corridorGuard(corridorLine, corridorExits);
 
+    /* Forecast: each predicted jam drawn over the stretch it would occupy, on
+       the side(s) that exit actually jams on. See lib/predicted-queues.ts,
+       which holds the whole rule so it can be run and checked on its own. */
+    const predicted = makePredictedQueues(guard.centreline, FALLBACK_EXITS);
+    const withPredictedQueues = (fc: GeoJSON.FeatureCollection): GeoJSON.FeatureCollection =>
+      isRealtimeEndpoint ? fc : predicted.withPredictedQueues(fc);
+
     /* Keeps only what is on NLEX, then puts each jam onto the corridor itself
        rather than leaving it on the geometry Waze traced. See snap() in
        lib/corridor-shape.ts for why. */
@@ -691,7 +699,12 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
           );
           if (hit) {
             const order = (hit.properties as { segment_order: number }).segment_order;
-            const lvl = FORECAST_LEVEL[String(q.congestion_state)] ?? 0;
+            /* Where the forecast carries a typical queue, the queue is drawn
+               over its own length (withPredictedQueues) and the segment under
+               it is road that was forecast, so it is green, as on the live
+               map. Only a forecast with no queue to draw still colours the
+               whole segment, so a predicted jam is never silently lost. */
+            const lvl = q.jam_queue_m != null ? 0 : FORECAST_LEVEL[shownForecastState(q)] ?? 0;
             bySegment.set(order + ":NB", lvl);
             bySegment.set(order + ":SB", lvl);
           }
@@ -719,7 +732,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
 
     map.on("load", async () => {
       const response = await fetch(endpoint, { cache: "no-store" });
-      const data = onlyOnCorridor(await response.json());
+      const data = onlyOnCorridor(withPredictedQueues(await response.json()));
 
       const isRealtime = endpoint.includes("real-time");
 
@@ -821,11 +834,13 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
              contained. The colour now lives on jam-extent below, over the length
              each queue actually occupies, and this is the road under it.
 
-             The model has no such extent. It predicts ONE state per
-             exit-to-exit segment -- that is its unit of prediction, not a
-             summary of something finer -- so colouring the whole segment is the
-             honest rendering there, and narrowing it to part of the road would
-             be inventing a boundary the forecast never drew. */
+             The forecast now works the same way. The model predicts one
+             state per exit, and each predicted jam carries the typical queue
+             length and distance from the plaza for that exit and hour, from
+             four years of Waze history, so withPredictedQueues draws it over
+             that length and this ribbon is the green road under it. A forecast
+             segment is coloured whole only when it has no queue to draw, and
+             grey still means nobody forecast that stretch. */
           "line-color": isRealtimeEndpoint
             ? /* Green, and flat green, on the live map.
                  Not a neutral roadbed: Waze emits a record only where there IS
@@ -1038,6 +1053,29 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
          small mark register as an object rather than as noise on the ribbon.
          Cheap, and it never overstates: the casing is centred on the queue, so
          it grows the mark sideways, never along the road. */
+      /* Forecast only: how much further a predicted queue may reach (out to
+         its 75th-percentile length). Faint and dashed, under the casing, so the
+         solid queue always reads first and this reads as a possibility. */
+      map.addLayer({
+        id: "jam-tail",
+        type: "line",
+        source: "traffic",
+        filter: ["==", ["get", "feature_type"], "jam_tail"],
+        layout: { "line-join": "round", "line-cap": "butt" },
+        paint: {
+          "line-color": [
+            "match", ["get", "level"],
+            [1, 2], PALETTE.status.slow,
+            [3, 4, 5], PALETTE.status.congested,
+            PALETTE.noData,
+          ],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 5, 12, 9, 16, 11, 18, 18],
+          "line-opacity": 0.55,
+          "line-dasharray": [1.2, 1],
+          "line-offset": OFFSET,
+        },
+      });
+
       map.addLayer({
         id: "jam-casing",
         type: "line",
@@ -1387,6 +1425,50 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
            what they were pointing at. Same order the pin declutter uses. */
         plazaCard.remove();
 
+        /* A predicted queue reads like a real one, with three differences said
+           out loud: it is a forecast with a chance, its figures are what jams
+           here typically look like rather than a measurement, and its
+           direction is not forecast. */
+        if (p.predicted === true) {
+          // Never "100%": scored against what happened, the cells the model put
+          // at 100% jammed 86% of the time. Same wording as the congestion card.
+          const pc = p.p_congested == null ? null : Number(p.p_congested);
+          const chance = pc == null ? null : pc >= 0.95 ? ">95" : pc <= 0.05 ? "<5" : String(Math.round(pc * 100));
+          const basis =
+            p.jam_basis === "hour" ? "Typical for this exit at this hour, from Waze jams 2022–2026"
+            : p.jam_basis === "exit" ? "Typical for this exit at any hour, from Waze jams 2022–2026"
+            : "Corridor-wide typical; this exit has too little history of its own";
+          jamCard.show(
+            e.lngLat,
+            `<div class="mjp">
+               <div class="mjp-head is-${lvl >= 3 ? "congested" : "slow"}">
+                 Predicted &middot; ${lvl >= 3 ? "Congested" : "Slow"}
+                 <span>${p.rel_km == null ? "" : `km ${Math.round(Number(p.rel_km))}`}</span>
+               </div>
+               <div class="mjp-where">${where ?? esc(p.nearest_exit ?? "NLEX")}</div>
+               ${chance != null ? row("Chance of a jam", `${chance}%`) : ""}
+               ${len != null ? row("Queue length", `~${km(len)}`) : ""}
+               ${p.length_p75_m != null ? row("May extend to", `~${km(Number(p.length_p75_m))}`) : ""}
+               ${delay != null && delay > 0 ? row("Est. delay", `~${mins(delay)}`) : ""}
+               ${speed != null && speed > 0 ? row("Speed", `~${speed} km/h`) : ""}
+               ${p.vol_median != null && p.vol_rel != null
+                 ? row("Typical traffic", `~${Math.round(Number(p.vol_median) / 10) * 10} veh/h · ${Number(p.vol_rel).toFixed(1)}×`)
+                 : ""}
+               ${p.vol_rel != null && Number(p.vol_rel) < 0.7
+                 ? `<div class="mjp-where" style="font-weight:400; color:#b45309; margin-top:4px;">A jam in a quiet hour is usually an incident or roadworks.</div>`
+                 : ""}
+               <div class="mjp-where" style="font-weight:400; opacity:0.75; margin-top:6px;">
+                 ${basis}. ${
+                   p.side_share != null
+                     ? `${Math.round(Number(p.side_share) * 100)}% of jams here at this time of day are on this side${
+                         p.dir_jam_hours != null ? ` (${Number(p.dir_jam_hours)} live jam-hours)` : ""}; the other side is drawn only if it carries 40% or more.`
+                     : "No live jams here yet to say which side, so both are drawn."}
+               </div>
+             </div>`,
+          );
+          return;
+        }
+
         jamCard.show(
           e.lngLat,
             `<div class="mjp">
@@ -1410,7 +1492,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         jamCard.remove();
       };
 
-      for (const id of ["jam-extent", "jam-mark-nb", "jam-mark-sb"] as const) {
+      for (const id of ["jam-extent", "jam-mark-nb", "jam-mark-sb", "jam-tail"] as const) {
         map.on("mousemove", id, onJamMove);
         map.on("mouseleave", id, onJamLeave);
       }
@@ -1944,7 +2026,9 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
           const coversPin = (q: { x: number; y: number }) =>
             queuePts.some((k) => near(k.p, q, gap));
           if (levelVersion !== stateVersion) {
-            const source = isRealtimeEndpoint ? queuePins : segmentState;
+            // Forecast: its predicted queues where it has them, plus any
+            // segment still coloured whole because it had no queue to draw.
+            const source = isRealtimeEndpoint ? queuePins : [...queuePins, ...segmentState];
             for (const pin of plazaPins) {
               plateLevel.set(
                 pin.el,
@@ -2294,9 +2378,9 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
       pollTimer = setInterval(async () => {
         if (disposed) return;
         try {
-          const fresh = onlyOnCorridor(
+          const fresh = onlyOnCorridor(withPredictedQueues(
             await fetch(endpoint, { cache: "no-store" }).then((r) => r.json()),
-          );
+          ));
 
           const feedSig = signature(fresh);
           if (feedSig !== lastFeedSig) {

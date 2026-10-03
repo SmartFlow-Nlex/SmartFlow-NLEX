@@ -58,6 +58,25 @@ function createPool(): Pool | null {
     // request, during those periods.
     min: 2,
     max: 10,
+    /* A query in flight when the network drops (the laptop sleeps, the Wi-Fi
+       changes) used to wait forever on a dead socket: the database had already
+       forgotten it, the pool still counted it as busy. Ten of those and every
+       request queued for the full 45 s connection timeout and failed with
+       "timeout exceeded when trying to connect" while RDS itself was healthy
+       and holding no connections from this server at all.
+       keepAlive lets the OS notice a dead socket; query_timeout fails a query
+       that never answers, and pool.query then destroys that client instead of
+       returning it, so the slot comes back. statement_timeout stops the server
+       side of an abandoned query from running on after the client gave up.
+       The limits are generous on purpose. They were 55-60 s at first, and a
+       cold dashboard load, with this shared RDS busy, ran four real queries
+       (traffic and emissions analytics, sandbox scenario and demand-exits) to
+       40-62 s; demand-exits was killed. The point is to free a dead socket,
+       not to police slow queries, and two minutes does that as well. */
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+    query_timeout: 130_000,
+    statement_timeout: 120_000,
   });
 
   // A pool-level error (dropped backend, RDS failover) is emitted on the pool,
