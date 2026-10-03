@@ -12531,3 +12531,116 @@ h1, h2, h3, h4 { letter-spacing: -0.005em; }
 .ds-narrative-btn svg { color: var(--color-purple); }
 .ds-narrative-btn:hover { transform: none; box-shadow: none; background: var(--bg-surface-hover); border-color: var(--text-muted); }
 .ds-narrative-btn:focus-visible { box-shadow: none; outline: 2px solid var(--action); outline-offset: 2px; }
+
+/* ===========================================================================
+   LIVE MAP (Lane Signal)
+   Flat panel headers instead of the blue and purple gradient banners; the
+   Live / Forecast distinction rides on a tag, not a fill. Footer figures are
+   ink, not six different colours. Overlays on the map are lifted flat panels,
+   not frosted glass.
+   =========================================================================== */
+.mc-panel-wrapper {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+}
+
+.map-head,
+.map-head.blue,
+.map-head.purple {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-default);
+  padding: 12px 16px;
+}
+.map-head h3 { font-size: var(--fs-title); font-weight: 700; }
+.map-head p { font-size: var(--fs-caption); color: var(--text-secondary); opacity: 1; }
+.map-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: var(--fs-label);
+  font-weight: 700;
+  font-stretch: var(--font-cond-stretch);
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.map-head.purple span { color: var(--color-purple); border-color: color-mix(in srgb, var(--color-purple) 45%, transparent); }
+
+.mc-dot.green { background: var(--signal-clear); box-shadow: none; }
+.mc-dot.purple { background: var(--color-purple); }
+
+.mc-maximise {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--fs-caption);
+  letter-spacing: 0;
+}
+.mc-maximise:hover { background: var(--bg-surface-hover); }
+.mc-maximise:focus-visible { outline: 2px solid var(--action); }
+
+.mc-footer-stats { border-top: 1px solid var(--border-default); padding: 12px 20px; }
+.mc-stat-label {
+  font-size: var(--fs-label);
+  font-weight: 650;
+  font-stretch: var(--font-cond-stretch);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.mc-stat-value,
+.mc-stat-value.blue,
+.mc-stat-value.red,
+.mc-stat-value.orange,
+.mc-stat-value.purple,
+.mc-stat-value.green {
+  color: var(--text-primary);
+  font-size: 1.5rem;
+  font-weight: 750;
+  font-stretch: var(--font-cond-stretch);
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-legend-card { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--bg-surface); border-radius: var(--radius-md); }
+
+.mc-horizon {
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.mc-horizon-head { font-size: var(--fs-label); font-weight: 700; font-stretch: var(--font-cond-stretch); }
+.mc-horizon-ranges { border-radius: var(--radius-md); background: var(--bg-surface-hover); border: 1px solid var(--border-default); }
+.mc-horizon-range { border-radius: var(--radius-sm); font-size: var(--fs-caption); }
+.mc-horizon-range.is-active { background: var(--action); color: var(--action-ink); box-shadow: none; }
+
+.mc-model-card { box-shadow: var(--shadow-lg); border-radius: var(--radius-lg); }
+.mc-model-head { font-size: var(--fs-label); font-stretch: var(--font-cond-stretch); }
+.mc-model-name em { color: var(--color-purple); font-size: var(--fs-label); }
+.mc-model-note { font-size: var(--fs-label); }
+
+.fc-badge {
+  background: transparent;
+  color: var(--color-purple);
+  border: 1px solid color-mix(in srgb, var(--color-purple) 45%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-label);
+}
+.fc-head .fc-badge { color: #c9bfff; border-color: rgba(201, 191, 255, 0.5); }
+
+.wz-head { background: #0a1730; }
+.wz-mark { border-radius: var(--radius-md); }
+
+.custom-toll-marker .toll-pin-name {
+  font-size: var(--fs-label);
+  font-stretch: var(--font-cond-stretch);
+  border-radius: var(--radius-sm);
+}

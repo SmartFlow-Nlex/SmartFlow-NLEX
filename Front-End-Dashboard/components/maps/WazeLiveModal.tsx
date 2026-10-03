@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { mapPalette } from "../../lib/map-palette";
 import { useChartTheme } from "../../lib/chart-theme";
-import { AlertCircle, Clock, Gauge, RefreshCw, TrendingUp, X } from "lucide-react";
+import { AlertCircle, Clock, Gauge, RefreshCw, TrendingUp, X, Radio } from "lucide-react";
 import TrafficMapPanel from "./TrafficMapPanel";
 import { WAZE_REPORT_TYPES } from "../../lib/waze-reports";
 // Shared with the map markers and the collapsed legend, so all three
@@ -191,7 +191,7 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
       <div className="wz-shell" onClick={(e) => e.stopPropagation()}>
         <header className="wz-head">
           <div className="wz-brand">
-            <span className="wz-mark" aria-hidden="true">🚦</span>
+            <span className="wz-mark" aria-hidden="true"><Radio size={18} /></span>
             <div>
               <h2>Waze Real-Time Traffic</h2>
               <p>Live traffic conditions</p>

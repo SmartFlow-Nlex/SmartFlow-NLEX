@@ -172,8 +172,8 @@ export default function MapComparisonPage() {
     <section className="ds-content ds-long">
       <PageHeader
         icon={Map}
-        title="Traffic Map Comparison"
-        subtitle="Side-by-side live traffic sources across the NLEX corridor"
+        title="Live Map"
+        subtitle="Live Waze conditions beside the model's forecast, NLEX corridor"
         actions={
           <div className="mc-search-bar" style={{ position: "relative", cursor: "pointer" }}>
             <Milestone size={16} />
@@ -185,12 +185,12 @@ export default function MapComparisonPage() {
               style={{
                 flex: 1, display: "flex", alignItems: "center", gap: "8px",
                 border: "none", background: "transparent", cursor: "pointer",
-                font: "inherit", color: selectedExit ? "#0f172a" : "#94a3b8",
+                font: "inherit", color: selectedExit ? "var(--text-primary)" : "var(--text-muted)",
                 textAlign: "left", padding: 0,
               }}
             >
               {selectedExit || "Jump to exit…"}
-              <ChevronDown size={14} style={{ marginLeft: "auto", flexShrink: 0, color: "#64748b" }} />
+              <ChevronDown size={14} style={{ marginLeft: "auto", flexShrink: 0, color: "var(--text-secondary)" }} />
             </button>
 
             {exitOpen && (
@@ -199,7 +199,7 @@ export default function MapComparisonPage() {
                 style={{
                   position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 30,
                   margin: 0, padding: "4px", listStyle: "none", maxHeight: "320px", overflowY: "auto",
-                  background: "var(--bg-surface, #fff)", border: "1px solid #dce2ef",
+                  background: "var(--bg-surface, #fff)", border: "1px solid var(--border-default)",
                   borderRadius: "10px", boxShadow: "0 8px 24px rgba(15,23,42,0.12)",
                 }}
               >
@@ -210,14 +210,14 @@ export default function MapComparisonPage() {
                       display: "flex", width: "100%", alignItems: "center", gap: "8px",
                       padding: "8px 12px", border: "none", background: "transparent",
                       textAlign: "left", cursor: "pointer", borderRadius: "6px",
-                      fontSize: "0.85rem", color: "#64748b", borderBottom: "1px solid #eef2f7",
+                      fontSize: "0.85rem", color: "var(--text-secondary)", borderBottom: "1px solid var(--bg-surface-hover)",
                     }}
                   >
                     Whole corridor
                   </button>
                 </li>
                 {exits.length === 0 ? (
-                  <li style={{ padding: "10px 12px", fontSize: "0.85rem", color: "#64748b" }}>
+                  <li style={{ padding: "10px 12px", fontSize: "0.85rem", color: "var(--text-secondary)" }}>
                     Exit list unavailable
                   </li>
                 ) : (
@@ -231,8 +231,8 @@ export default function MapComparisonPage() {
                             display: "flex", width: "100%", alignItems: "baseline", gap: "8px",
                             padding: "8px 12px", border: "none", cursor: "pointer",
                             borderRadius: "6px", fontSize: "0.88rem", textAlign: "left",
-                            background: on ? "#eef2fb" : "transparent",
-                            fontWeight: on ? 700 : 500, color: "#0f172a",
+                            background: on ? "var(--bg-surface-hover)" : "transparent",
+                            fontWeight: on ? 700 : 500, color: "var(--text-primary)",
                           }}
                         >
                           <span style={{
