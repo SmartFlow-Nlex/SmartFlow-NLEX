@@ -94,8 +94,8 @@ const pct = (v: number | null | undefined) =>
   v == null ? "—" : `${(v * 100).toFixed(2)}%`;
 
 export default function FleetMixForecastChart() {
-  /* The card was written with light-mode greys baked in (#334155, #94a3b8,
-     #e2e8f0), so in dark mode its axes and tooltip were invisible against the
+  /* The card was written with light-mode greys baked in (var(--text-primary), var(--text-muted),
+     var(--border-default)), so in dark mode its axes and tooltip were invisible against the
      surface. Everything chrome-coloured now comes from the theme. */
   const T = useChartTheme();
   const RAMP = seriesRamp("emissions", T);
@@ -156,12 +156,12 @@ export default function FleetMixForecastChart() {
     return (
       <article className="chart-card wide" style={{ padding: 24, display: "grid", gap: 12 }}>
         <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>Forecasted Fleet Composition</h3>
-        <p style={{ color: "var(--color-danger, #ef4444)", fontSize: "0.88rem", margin: 0 }}>{error}</p>
+        <p style={{ color: "var(--color-danger, var(--color-danger))", fontSize: "0.88rem", margin: 0 }}>{error}</p>
         <div>
           <button
             onClick={() => { setError(null); setAttempt((a) => a + 1); }}
             style={{ padding: "6px 16px", borderRadius: 999, cursor: "pointer", border: "1px solid transparent",
-                     background: "linear-gradient(135deg, #6366f1, #4f46e5)", color: "#fff", fontSize: "0.78rem", fontWeight: 600 }}
+                     background: "var(--action)", color: "var(--action-ink)", fontSize: "0.78rem", fontWeight: 600 }}
           >Try again</button>
         </div>
       </article>
@@ -172,7 +172,7 @@ export default function FleetMixForecastChart() {
     return (
       <article className="chart-card wide" style={{ padding: 24 }}>
         <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>Forecasted Fleet Composition</h3>
-        <p style={{ color: "#64748b", fontSize: "0.85rem" }}>Loading…</p>
+        <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Loading…</p>
       </article>
     );
   }
@@ -184,7 +184,7 @@ export default function FleetMixForecastChart() {
     return (
       <article className="chart-card wide" style={{ padding: 24, display: "grid", gap: 8 }}>
         <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>Forecasted Fleet Composition</h3>
-        <p style={{ color: "#64748b", fontSize: "0.85rem", margin: 0 }}>
+        <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", margin: 0 }}>
           No fleet-mix forecast has been published yet. Run{" "}
           <code>smartflow_scripts/3_training_testing/fleet_mix/train_fleet_mix.py</code> to generate one.
         </p>
@@ -217,7 +217,7 @@ export default function FleetMixForecastChart() {
           return `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colorOf(c.tone)};margin-right:6px;"></span>${c.label}<span style="float:right;font-weight:700;margin-left:16px;">${pct(v)}</span>`;
         }).join("<br/>");
         const heavy = r.is_future && r.heavy_pred != null
-          ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid ${T.axis};">Heavy (C2+C3) <b>${pct(r.heavy_pred)}</b>${r.heavy_surge ? ' <span style="color:#b45309;font-weight:700;">· surge</span>' : ""}</div>`
+          ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid ${T.axis};">Heavy (C2+C3) <b>${pct(r.heavy_pred)}</b>${r.heavy_surge ? ' <span style="color:var(--color-warning);font-weight:700;">· surge</span>' : ""}</div>`
           : "";
         return `<div style="padding:2px 4px;min-width:220px;">
                   <b style="color:${T.tooltipText};">${r.d}</b>
@@ -338,12 +338,12 @@ export default function FleetMixForecastChart() {
     <article className="chart-card wide" style={{ padding: 20, display: "grid", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
+          <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>
             Forecasted Fleet Composition
             <InfoTooltip text="Share of corridor traffic by toll class, stacked to 100%. Solid is observed; the paler band past the dashed line is projected. Shares are a composition — a point gained by one class is lost by another — so they are modelled jointly rather than as three separate forecasts." />
           </h3>
-          <p style={{ margin: "4px 0 0", fontSize: "0.82rem", color: "#64748b" }}>
-            {champ ? <>Champion <b style={{ color: "#334155" }}>{champ.model_name}</b></> : "No model accepted"}
+          <p style={{ margin: "4px 0 0", fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+            {champ ? <>Champion <b style={{ color: "var(--text-primary)" }}>{champ.model_name}</b></> : "No model accepted"}
             {data.split?.future_days ? <> · {data.split.future_days}-day projection</> : null}
             {" "}· validated at {VALIDATED_HORIZON} days
             {data.split?.updated_at ? <> · trained {data.split.updated_at.slice(0, 10)}</> : null}
@@ -356,22 +356,22 @@ export default function FleetMixForecastChart() {
               happened and the reader should be told plainly rather than left to
               infer it from the axis. */}
           {staleDays != null && staleDays > 45 && (
-            <p style={{ margin: "4px 0 0", fontSize: "0.78rem", fontWeight: 600, color: "#b45309" }}>
+            <p style={{ margin: "4px 0 0", fontSize: "0.78rem", fontWeight: 600, color: "var(--color-warning)" }}>
               Data ends {lastObservedDate} — {staleDays} days ago. This projection covers a
               period that has already passed; refresh the warehouse to forecast forward.
             </p>
           )}
         </div>
         {heavyNowMean != null && heavyEndMean != null && (
-          <div style={{ textAlign: "right", fontSize: "0.82rem", color: "#64748b" }}>
+          <div style={{ textAlign: "right", fontSize: "0.82rem", color: "var(--text-secondary)" }}>
             Heavy share (C2+C3) · {HEAVY_WINDOW_DAYS}-day means
-            <div style={{ fontSize: "1rem", fontWeight: 800, color: "#334155" }}>
+            <div style={{ fontSize: "1rem", fontWeight: 800, color: "var(--text-primary)" }}>
               {pct(heavyNowMean)} → {pct(heavyEndMean)}
               {heavyDeltaPp != null && (
                 <span
                   style={{
                     marginLeft: 8, fontSize: "0.8rem", fontWeight: 700,
-                    color: Math.abs(heavyDeltaPp) < 1 ? "#64748b" : heavyDeltaPp > 0 ? "#b45309" : "#0c8231",
+                    color: Math.abs(heavyDeltaPp) < 1 ? "var(--text-secondary)" : heavyDeltaPp > 0 ? "var(--color-warning)" : "var(--color-success)",
                   }}
                 >
                   {Math.abs(heavyDeltaPp) < 1
@@ -387,7 +387,7 @@ export default function FleetMixForecastChart() {
       <DashboardChart option={option} height={320} />
 
       {surges.length > 0 && (
-        <div style={{ padding: "10px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, fontSize: "0.84rem", color: "#92400e" }}>
+        <div style={{ padding: "10px 12px", background: "var(--color-warning-bg)", border: "1px solid var(--color-warning-border)", borderRadius: 8, fontSize: "0.84rem", color: "var(--color-warning)" }}>
           <b>Heavy-vehicle surge predicted</b> on {surges.length} day{surges.length === 1 ? "" : "s"} —{" "}
           {surges.slice(0, 4).map((s) => s.d).join(", ")}{surges.length > 4 ? ` and ${surges.length - 4} more` : ""}.
           A day is flagged when the projected Class 2+3 share runs more than 1.5 standard deviations above its training mean.
@@ -402,7 +402,7 @@ export default function FleetMixForecastChart() {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
             <thead>
-              <tr style={{ textAlign: "left", color: "#64748b", borderBottom: "1px solid #e2e8f0" }}>
+              <tr style={{ textAlign: "left", color: "var(--text-secondary)", borderBottom: "1px solid var(--border-default)" }}>
                 <th style={{ padding: "6px 8px", fontWeight: 600 }}>MODEL</th>
                 <th style={{ padding: "6px 8px", fontWeight: 600, textAlign: "right" }}>MAE (pp)</th>
                 <th style={{ padding: "6px 8px", fontWeight: 600, textAlign: "right" }}>MAPE</th>
@@ -413,12 +413,12 @@ export default function FleetMixForecastChart() {
             </thead>
             <tbody>
               {data.models.map((m) => (
-                <tr key={m.model_name} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: "6px 8px", fontWeight: 700, color: "#0f172a" }}>
+                <tr key={m.model_name} style={{ borderBottom: "1px solid var(--bg-surface-hover)" }}>
+                  <td style={{ padding: "6px 8px", fontWeight: 700, color: "var(--text-primary)" }}>
                     {m.model_name}{" "}
                     {m.accepted
-                      ? <span style={{ color: "#16a34a", fontWeight: 600, fontSize: "0.92em" }}>accepted{m.rank === 1 ? " · champion" : ""}</span>
-                      : <span style={{ color: "#94a3b8", fontWeight: 500, fontSize: "0.92em" }} title={m.rejected_reason ?? m.diagnosis ?? undefined}>
+                      ? <span style={{ color: "var(--color-success)", fontWeight: 600, fontSize: "0.92em" }}>accepted{m.rank === 1 ? " · champion" : ""}</span>
+                      : <span style={{ color: "var(--text-muted)", fontWeight: 500, fontSize: "0.92em" }} title={m.rejected_reason ?? m.diagnosis ?? undefined}>
                           {m.rejected_reason ? "rejected" : "baseline"}
                         </span>}
                   </td>
@@ -426,14 +426,14 @@ export default function FleetMixForecastChart() {
                   <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{m.mape != null ? `${m.mape.toFixed(2)}%` : "—"}</td>
                   <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{m.wmape != null ? `${m.wmape.toFixed(2)}%` : "—"}</td>
                   <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{m.r2?.toFixed(3) ?? "—"}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: (m.mase ?? 1) < 1 ? "#16a34a" : "#b45309" }}>
+                  <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: (m.mase ?? 1) < 1 ? "var(--color-success)" : "var(--color-warning)" }}>
                     {m.mase?.toFixed(3) ?? "—"}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p style={{ margin: "8px 0 0", fontSize: "0.74rem", color: "#94a3b8", lineHeight: 1.5 }}>
+          <p style={{ margin: "8px 0 0", fontSize: "0.74rem", color: "var(--text-muted)", lineHeight: 1.5 }}>
             Ranked by Aitchison distance, the standard metric for compositional data — MAPE divides by the actual
             value, so on a fleet that is ~79% Class 1 and ~9% Class 3 it scores the same absolute miss ten times
             harder on the rarest class. <b>SKILL</b> is the ratio against a persistence baseline; below 1 means the

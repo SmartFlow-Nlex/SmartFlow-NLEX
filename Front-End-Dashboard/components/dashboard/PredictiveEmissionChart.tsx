@@ -108,12 +108,11 @@ const LABEL: Record<ModelKey, string> = {
 /** UI key -> model_name in gold.ml_model_metrics */
 const DB_NAME: Record<ModelKey, string> = { derived: "Derived", polynomial: "Polynomial", gbr: "GBR", lstm: "LSTM" };
 const FROM_DB: Record<string, ModelKey> = { Derived: "derived", Polynomial: "polynomial", GBR: "gbr", LSTM: "lstm" };
-const COLOR: Record<ModelKey, string> = {
-  derived: "#10b981",
-  polynomial: "#7c3aed",
-  gbr: "#f59e0b",
-  lstm: "#0ea5e9",
-};
+/* Lane Signal: the first four steps of the validated model order (blue /
+   magenta / teal / violet), stepped per theme. Green and amber now mean road
+   state, so the emission models no longer use them. */
+const COLOR_LIGHT: Record<ModelKey, string> = { derived: "#2a78d6", polynomial: "#c2185b", gbr: "#0b8db0", lstm: "#7a5fe0" };
+const COLOR_DARK: Record<ModelKey, string> = { derived: "#3987e5", polynomial: "#d55181", gbr: "#169bb8", lstm: "#8c7ff0" };
 const HOW_IT_WORKS: Record<ModelKey, string> = {
   derived:
     "The volume panel's forecast (Prophet) × the corridor's CO₂ per vehicle on that weekday over the previous 8 weeks. CO₂ here is vehicles × km × a fixed factor per class, so forecasting it through the volume forecast keeps the two panels in agreement.",
@@ -126,7 +125,8 @@ const HOW_IT_WORKS: Record<ModelKey, string> = {
 const NARRATIVE_VOCAB: NarrativeVocab = {
   dbName: DB_NAME,
   label: LABEL,
-  color: COLOR,
+  // The narrative names models in text only; the light step is its legend swatch.
+  color: COLOR_LIGHT,
   howItWorks: HOW_IT_WORKS,
   maeUnit: "t",
   // Tonnes, not vehicle counts — rounding these to integers would throw away
@@ -144,6 +144,7 @@ const shortDate = (iso: string) =>
 
 export default function PredictiveEmissionChart() {
   const T = useThemeTokens();
+  const COLOR = T.isDark ? COLOR_DARK : COLOR_LIGHT;
   const ZONE = zoneTints(T.isDark);
 
   const [data, setData] = useState<Payload | null>(null);
@@ -319,18 +320,18 @@ export default function PredictiveEmissionChart() {
   const option: EChartsOption | null = useMemo(() => {
     if (!view) return null;
     const { dates, holdoutStart, futureStart } = view;
-    const actualColor = T.isDark ? "#e2e8f0" : "#1e293b";
+    const actualColor = T.isDark ? "#e8eefb" : "#0a1630";
 
     // These render on a CANVAS, so a CSS variable is not a colour here: ECharts
     // hands "var(--text-muted)" straight to ctx.fillStyle, the browser rejects
     // it, and the label falls back to a near-invisible default. That is why the
     // three band names could not be found on the chart. Real values only.
     const ZONE_INK: Record<string, string> = T.isDark
-      ? { Past: "#93b4fd", Present: "#fdba74", Future: "#86efac" }
-      : { Past: "#1d4ed8", Present: "#c2410c", Future: "#15803d" };
+      ? { Past: "#a9b9da", Present: "#cfd9f0", Future: "#5cc8ff" }
+      : { Past: "#55678b", Present: "#3b4d72", Future: "#0a6cc2" };
     const ZONE_CHIP: Record<string, string> = T.isDark
-      ? { Past: "rgba(29,78,216,0.22)", Present: "rgba(194,65,12,0.22)", Future: "rgba(21,128,61,0.22)" }
-      : { Past: "rgba(37,99,235,0.10)", Present: "rgba(249,115,22,0.14)", Future: "rgba(22,163,74,0.14)" };
+      ? { Past: "rgba(232,238,251,0.06)", Present: "rgba(232,238,251,0.10)", Future: "rgba(92,200,255,0.16)" }
+      : { Past: "rgba(10,22,48,0.04)", Present: "rgba(10,22,48,0.07)", Future: "rgba(10,108,194,0.10)" };
 
     const zoneLabel = (text: string) => ({
       show: true,
@@ -385,7 +386,7 @@ export default function PredictiveEmissionChart() {
           itemStyle: { color: "rgba(249,115,22,0.22)" },
           label: {
             show: true, position: "insideTop", distance: 22,
-            color: "#b45309", fontSize: 10, fontWeight: 700,
+            color: "var(--color-warning)", fontSize: 10, fontWeight: 700,
             formatter: `⚠ ${w.label}`,
           },
         },
@@ -513,7 +514,7 @@ export default function PredictiveEmissionChart() {
             params.dataIndex >= futureStart ? 7 : 0,
           z: 4,
           lineStyle: { width: 2.2, color: COLOR[k], type: "dashed" as const },
-          itemStyle: { color: COLOR[k], borderColor: "#fff", borderWidth: 1.5 },
+          itemStyle: { color: COLOR[k], borderColor: T.isDark ? "#0f1f3d" : "#ffffff", borderWidth: 1.5 },
         })),
       ],
     };
@@ -526,7 +527,7 @@ export default function PredictiveEmissionChart() {
           Corridor CO₂ Walk-Forward Forecast
           <InfoTooltip text="Modeled daily CO₂ for the corridor: the model's past fit, its held-out test period, and the forecast ahead. Pick a model above." />
         </h3>
-        <div style={{ color: "var(--color-danger, #ef4444)", fontSize: "0.88rem" }}>{error}</div>
+        <div style={{ color: "var(--color-danger, var(--color-danger))", fontSize: "0.88rem" }}>{error}</div>
         <p style={{ margin: 0, fontSize: "0.78rem", color: "var(--text-muted)", maxWidth: 620, lineHeight: 1.5 }}>
           Three attempts were made. This instance is shared, so a connection can be slow to
           establish while the training pipelines run — the stored forecast itself is unaffected.
@@ -539,9 +540,9 @@ export default function PredictiveEmissionChart() {
             }}
             style={{
               padding: "6px 16px", borderRadius: 999, cursor: "pointer",
-              border: "1px solid transparent", background: "linear-gradient(135deg, color-mix(in srgb, var(--page-accent, #4f46e5) 82%, white), var(--page-accent, #4f46e5))",
-              color: "#fff", fontSize: "0.78rem", fontWeight: 600,
-              boxShadow: "0 1px 6px color-mix(in srgb, var(--page-accent, #4f46e5) 35%, transparent)",
+              border: "1px solid transparent", background: "var(--action)",
+              color: "var(--action-ink)", fontSize: "0.875rem", fontWeight: 650,
+              boxShadow: "none",
             }}
           >
             Try again
@@ -569,7 +570,7 @@ export default function PredictiveEmissionChart() {
       </svg>
       <span
         style={{
-          fontSize: "0.74rem", fontWeight: 700, color: "var(--text-secondary, #4b5e7d)",
+          fontSize: "0.74rem", fontWeight: 700, color: "var(--text-secondary, var(--text-secondary))",
           letterSpacing: "0.02em", whiteSpace: "nowrap",
         }}
       >
@@ -580,7 +581,7 @@ export default function PredictiveEmissionChart() {
       <div
         style={{
           display: "inline-flex", flexWrap: "wrap", gap: "2px", padding: "3px",
-          background: "var(--bg-surface)", border: "1px solid #dce2ef", borderRadius: "999px",
+          background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px",
         }}
       >
         {ORDER.map((k) => {
@@ -598,8 +599,8 @@ export default function PredictiveEmissionChart() {
                 fontSize: "0.76rem", fontWeight: 600, whiteSpace: "nowrap",
                 cursor: locked ? "default" : "pointer", transition: "all 0.15s",
                 background: on ? COLOR[k] : "transparent",
-                color: on ? "var(--bg-surface)" : "var(--text-secondary, #4b5e7d)",
-                boxShadow: on ? `0 1px 4px ${COLOR[k]}40` : "none",
+                color: on ? "var(--bg-surface)" : "var(--text-secondary, var(--text-secondary))",
+                boxShadow: "none",
               }}
             >
               {on && (
@@ -780,7 +781,7 @@ export default function PredictiveEmissionChart() {
           <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", margin: "4px 0 0 0" }}>
             {isAggregated ? (
               <>
-                Every point is a <b style={{ color: "#1d4ed8" }}>{meanLabel}</b> — the average of that {bucketNoun}
+                Every point is a <b style={{ color: "var(--action)" }}>{meanLabel}</b> — the average of that {bucketNoun}
                 &apos;s days, not a total · Toggle models to overlay predictions
               </>
             ) : (
@@ -815,27 +816,27 @@ export default function PredictiveEmissionChart() {
               style={{
                 display: "inline-flex", alignItems: "center", gap: "7px",
                 padding: "4px 11px", borderRadius: "999px",
-                background: "#1d4ed8", border: "1px solid #1d4ed8",
-                color: "#ffffff", fontSize: "0.78rem", fontWeight: 700,
+                background: "var(--color-info-bg)", border: "1px solid var(--color-info-border)",
+                color: "var(--text-primary)", fontSize: "0.8125rem", fontWeight: 700,
                 whiteSpace: "nowrap", letterSpacing: "0.01em",
                 boxShadow: "0 1px 6px rgba(29,78,216,0.30)",
               }}
             >
               <span style={{ fontSize: "0.85rem", lineHeight: 1 }}>⌀</span>
               Each point = {meanLabel}
-              <span style={{ fontWeight: 500, color: "#bfdbfe" }}>averaged, not totalled</span>
+              <span style={{ fontWeight: 500, color: "var(--text-secondary)" }}>averaged, not totalled</span>
             </span>
           )}
 
           {/* GRANULARITY control pill */}
           <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-            <b style={{ color: "var(--page-accent, #3b82f6)", letterSpacing: "0.04em", fontSize: "0.75rem", textTransform: "uppercase" }}>
+            <b style={{ color: "var(--text-muted)", letterSpacing: "0.06em", fontSize: "0.75rem", fontWeight: 650, fontStretch: "82%", textTransform: "uppercase" }}>
               GRANULARITY
             </b>
             <div
               style={{
                 display: "inline-flex", alignItems: "center", padding: "2px",
-                borderRadius: "999px", background: "var(--bg-surface)", border: "1px solid #dce2ef",
+                borderRadius: "999px", background: "var(--bg-surface)", border: "1px solid var(--border-default)",
               }}
             >
               {/* Hourly is greyed out: CO2 is stored hourly but forecast daily, so
@@ -880,13 +881,13 @@ export default function PredictiveEmissionChart() {
               history, so without this it is a sliver at the right edge no
               matter which granularity is chosen. */}
           <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-            <b style={{ color: "var(--page-accent, #3b82f6)", letterSpacing: "0.04em", fontSize: "0.75rem", textTransform: "uppercase" }}>
+            <b style={{ color: "var(--text-muted)", letterSpacing: "0.06em", fontSize: "0.75rem", fontWeight: 650, fontStretch: "82%", textTransform: "uppercase" }}>
               HISTORY
             </b>
             <div
               style={{
                 display: "inline-flex", alignItems: "center", padding: "2px",
-                borderRadius: "999px", background: "var(--bg-surface)", border: "1px solid #dce2ef",
+                borderRadius: "999px", background: "var(--bg-surface)", border: "1px solid var(--border-default)",
               }}
             >
               {WINDOWS.map((wd) => (
@@ -922,7 +923,7 @@ export default function PredictiveEmissionChart() {
         >
           {/* Past */}
           <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(37,99,235,0.25)" }} />
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: "var(--border-strong)" }} />
             <b style={{ color: "var(--text-primary)" }}>Past</b>
             {/* Without this the band reads as "the 80%", when the selected range
                 may be drawing only its final weeks. State both numbers. */}
@@ -942,7 +943,7 @@ export default function PredictiveEmissionChart() {
 
           {/* Present */}
           <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(249,115,22,0.35)" }} />
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: "var(--text-muted)" }} />
             <b style={{ color: "var(--text-primary)" }}>Present</b>
             <span style={{ color: "var(--text-secondary)" }}>
               {data.split.holdoutDays.toLocaleString()}d scored
@@ -952,7 +953,7 @@ export default function PredictiveEmissionChart() {
 
           {/* Future */}
           <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(22,163,74,0.3)" }} />
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: "var(--action)" }} />
             <b style={{ color: "var(--text-primary)" }}>Future</b>
             {/* Same steps as the volume panel, EXCEPT that a range is dropped when
                 everything it newly shows failed the gates.
@@ -987,9 +988,9 @@ export default function PredictiveEmissionChart() {
                 style={{
                   padding: "3px 10px", borderRadius: "999px",
                   cursor: it.d > data.split.futureDays ? "not-allowed" : "pointer",
-                  border: futureDays === it.d ? "1px solid #16a34a" : "1px solid var(--border-default)",
-                  background: futureDays === it.d ? "#16a34a" : "var(--bg-surface)",
-                  color: futureDays === it.d ? "#fff" : "var(--text-secondary)",
+                  border: futureDays === it.d ? "1px solid var(--action)" : "1px solid var(--border-default)",
+                  background: futureDays === it.d ? "var(--action)" : "var(--bg-surface)",
+                  color: futureDays === it.d ? "var(--action-ink)" : "var(--text-secondary)",
                   fontWeight: 600, fontSize: "0.72rem",
                   opacity: it.d > data.split.futureDays ? 0.4 : 1,
                 }}
@@ -1011,8 +1012,8 @@ export default function PredictiveEmissionChart() {
         return (
           <div style={{
             display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 14px",
-            borderRadius: 10, background: "rgba(249,115,22,0.08)",
-            border: "1px solid rgba(249,115,22,0.28)", fontSize: "0.75rem",
+            borderRadius: 6, background: "var(--color-warning-bg)",
+            border: "1px solid var(--color-warning-border)", fontSize: "0.8125rem",
             color: "var(--text-secondary)", lineHeight: 1.55,
           }}>
             <span style={{ fontSize: "0.9rem", lineHeight: 1 }}>⚠</span>

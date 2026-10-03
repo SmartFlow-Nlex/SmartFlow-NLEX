@@ -323,8 +323,8 @@ export default function SustainabilityPage() {
             markPoint: {
               symbol: "circle",
               symbolSize: 8,
-              itemStyle: { color: PAIR_A, borderColor: "#fff", borderWidth: 2 },
-              label: { show: true, position: "top", fontSize: 10, color: "#475069", formatter: `Peak · ${fmtHour(peakIdx)}` },
+              itemStyle: { color: PAIR_A, borderColor: chartTheme.isDark ? "#0f1f3d" : "#ffffff", borderWidth: 2 },
+              label: { show: true, position: "top", fontSize: 10, color: chartTheme.text, formatter: `Peak · ${fmtHour(peakIdx)}` },
               data: [{ name: "Peak", coord: [peakIdx, Number(timeProfile.weekday[peakIdx].toFixed(2))] }],
             },
           },
@@ -358,7 +358,7 @@ export default function SustainabilityPage() {
           data: timeProfile.dowAvg.map((v, i) => ({
             value: Number(v.toFixed(1)),
             itemStyle: { color: i === maxIdx ? PAIR_A : RAMP[0], borderRadius: [4, 4, 0, 0] },
-            label: i === maxIdx ? { show: true, position: "top", fontSize: 10, color: "#475069", formatter: () => fmt1(v) } : undefined,
+            label: i === maxIdx ? { show: true, position: "top", fontSize: 10, color: chartTheme.text, formatter: () => fmt1(v) } : undefined,
           })),
           barMaxWidth: 26,
         },
@@ -476,7 +476,7 @@ export default function SustainabilityPage() {
           markLine: {
             silent: true,
             symbol: "none",
-            lineStyle: { color: "#9aa4b8", type: "dashed", width: 1 },
+            lineStyle: { color: chartTheme.axis, type: "dashed", width: 1 },
             label: { fontSize: 9, color: chartTheme.text, formatter: `avg ${avg.toFixed(1)}%`, position: "insideEndTop" },
             data: [{ yAxis: Number(avg.toFixed(1)) }],
           },
@@ -517,7 +517,7 @@ export default function SustainabilityPage() {
         type: "bar" as const,
         stack: "aqi",
         data: rows.map((r, i) => share(r[k], i)),
-        itemStyle: { color: RAMP[ki], borderColor: "#fff", borderWidth: 1 },
+        itemStyle: { color: RAMP[ki], borderColor: chartTheme.isDark ? "#0f1f3d" : "#ffffff", borderWidth: 1 },
         barMaxWidth: 22,
       })),
     };
@@ -985,7 +985,7 @@ export default function SustainabilityPage() {
           <div className={styles.detailModal} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
             <div className={styles.detailHeader}>
-              <div className={styles.detailIcon}>🌿</div>
+              <div className={styles.detailIcon}><Leaf size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>{detail.title}</h3>
                 {detail.subtitle && <p>{detail.subtitle}</p>}

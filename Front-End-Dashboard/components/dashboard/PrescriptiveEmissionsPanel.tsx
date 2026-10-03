@@ -178,11 +178,11 @@ export default function PrescriptiveEmissionsPanel({
         data: rows.map((s) => ({
           value: s.reductionPct,
           itemStyle: s.evidenceBounded
-            ? { color: "#4bb782", borderRadius: [8, 8, 0, 0] }
+            ? { color: T.isDark ? "#3cc3cf" : "#1f97a5", borderRadius: [4, 4, 0, 0] }
             : // Hollow, so a scenario cannot be mistaken for a measured result.
               {
                 color: "transparent",
-                borderColor: "#4bb782",
+                borderColor: T.isDark ? "#3cc3cf" : "#1f97a5",
                 borderWidth: 2,
                 borderType: "dashed",
                 borderRadius: [8, 8, 0, 0],
