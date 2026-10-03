@@ -237,8 +237,8 @@
   padding: 8px 14px;
   margin: 0 -22px;
   background: var(--bg-surface-hover);
-  border-top: 1px solid #eef1f7;
-  border-bottom: 1px solid #eef1f7;
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
   flex-wrap: wrap;
 }
 
@@ -249,8 +249,9 @@
 }
 
 .heroFilterLabel {
-  font-size: 0.68rem;
-  font-weight: 700;
+  font-size: var(--fs-label);
+  font-weight: 650;
+  font-stretch: var(--font-cond-stretch);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted, #6b7b94);
@@ -333,7 +334,7 @@
 
 .customSelectBtn:hover {
   background: var(--bg-surface-hover);
-  border-color: #c9d2e3;
+  border-color: var(--border-strong);
 }
 
 .customSelectBtn[aria-expanded="true"] {
@@ -733,7 +734,7 @@
 .secondaryButton:hover {
   background: var(--bg-surface-hover);
   color: var(--text-primary, #1c2434);
-  border-color: #c9d2e3;
+  border-color: var(--border-strong);
 }
 
 .secondaryButton:active {
@@ -1306,93 +1307,122 @@
 }
 
 /* ===========================================================================
-   VISUAL REFRESH
+   LANE SIGNAL
    ---------------------------------------------------------------------------
-   These live here rather than in globals.css because the classes they target
-   are CSS-module classes: the build hashes .kpiTile into something like
+   The redesign's layer for this module. It lives here, not in globals.css,
+   because these are CSS-module classes: the build hashes .kpiTile into
    traffic_kpiTile__x1y2z, so a global selector of the same name matches
-   nothing at all and fails silently. The first cut of this refresh was written
-   in globals and did exactly nothing to any card on the page.
+   nothing.
+
+   Panels are flat steel: a 1px rule, a firm corner, no shadow, no wash, no
+   hover lift. A KPI tile is a readout, not a card: label, number, unit and a
+   qualifying line, with no icon square and no coloured edge, so the number
+   carries the tile. Selected controls take the one action colour.
    =========================================================================== */
 
-/* A wash of the tile's own accent, thrown from the corner its icon sits in, so
-   five tiles read as five subjects rather than five identical boxes. Kept
-   under 15% so no text moves off its contrast ratio. */
-.kpiTile {
-  background-image: radial-gradient(
-    120% 100% at 100% 0%,
-    color-mix(in srgb, var(--kpi-accent, var(--brand-primary)) 14%, transparent) 0%,
-    transparent 68%
-  );
-  border-radius: 16px;
-  border-color: color-mix(in srgb, var(--border-default) 70%, transparent);
-  box-shadow: 0 1px 2px rgba(15, 28, 58, 0.04), 0 8px 24px rgba(15, 28, 58, 0.05);
-}
-
-/* The leading bar fades down the card rather than stopping flat. */
-.kpiTile::before {
-  background: linear-gradient(
-    180deg,
-    var(--kpi-accent, var(--brand-primary)) 0%,
-    color-mix(in srgb, var(--kpi-accent, var(--brand-primary)) 35%, transparent) 100%
-  );
-}
-
-/* The shadow warms toward the tile's own accent, so the lift feels attached to
-   this card rather than generic. */
-.kpiTile:hover {
-  transform: translateY(-3px);
-  box-shadow:
-    0 14px 30px color-mix(in srgb, var(--kpi-accent, var(--brand-primary)) 18%, transparent),
-    0 2px 6px rgba(15, 28, 58, 0.06);
-}
-
-.kpiIcon { transition: transform 160ms ease; }
-.kpiTile:hover .kpiIcon { transform: scale(1.1) rotate(-4deg); }
-
-/* The headline figure is the point of the tile and was sized like a subtitle. */
-.kpiValue {
-  font-size: clamp(1.55rem, 1.35vw + 0.9rem, 2.05rem);
-  letter-spacing: -0.03em;
-}
-
-/* The uppercase label steps back so the number carries the card. */
-.kpiTile h3 { opacity: 0.8; }
-
-/* Cards: more radius, a border that reads as an edge rather than a line, and a
-   resting shadow with spread so they lift off the ground before anyone
-   touches them. */
+.kpiTile,
 .chartCard {
-  border-radius: 16px;
-  border-color: color-mix(in srgb, var(--border-default) 70%, transparent);
-  box-shadow: 0 1px 2px rgba(15, 28, 58, 0.04), 0 8px 24px rgba(15, 28, 58, 0.05);
+  background: var(--bg-surface);
+  background-image: none;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+  transform: none;
 }
 
-.chartCard:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 16px 36px rgba(15, 28, 58, 0.1), 0 2px 6px rgba(15, 28, 58, 0.05);
+.kpiTile { padding: 14px 16px 13px; gap: 6px; transition: border-color var(--transition-fast); }
+.kpiTile::before { content: none; }
+.kpiTile:hover { border-color: var(--border-strong); box-shadow: none; transform: none; }
+.kpiIcon { display: none; }
+
+.kpiTile h3 {
+  padding-right: 0;
+  font-size: var(--fs-label);
+  font-weight: 650;
+  font-stretch: var(--font-cond-stretch);
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  opacity: 1;
 }
 
-/* A short brand rule under each card title, so a column of cards has a rhythm
-   the eye can run down. */
+.kpiValue {
+  font-size: clamp(1.6rem, 1.1vw + 1rem, var(--fs-numeral));
+  font-weight: 750;
+  font-stretch: var(--font-cond-stretch);
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+}
+
+.kpiHint { font-size: var(--fs-caption); color: var(--text-secondary); }
+
+.chartCard { padding: 18px 20px 14px; }
+.chartCard:hover { border-color: var(--border-strong); box-shadow: none; transform: none; }
+
 .chartHead h3 {
-  position: relative;
-  padding-bottom: 8px;
+  position: static;
+  padding-bottom: 0;
+  font-size: var(--fs-title);
+  font-weight: 650;
+}
+.chartHead h3::after { content: none; }
+.hero .chartHead h3 { font-size: 1.0625rem; font-weight: 700; }
+.subtitle { font-size: var(--fs-caption); color: var(--text-muted); }
+
+/* Selected states: the action colour, flat. */
+.segmented,
+.segmentedSmall,
+.modeTabs {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+.segmented button,
+.segmentedSmall button,
+.modeTab {
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+.segmented button.active,
+.segmentedSmall button.active,
+.modeTabActive {
+  background: var(--action);
+  color: var(--action-ink);
+  box-shadow: none;
+}
+.segmented button:focus-visible,
+.segmentedSmall button:focus-visible,
+.modeTab:focus-visible,
+.secondaryButton:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 2px;
 }
 
-.chartHead h3::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  width: 30px;
-  height: 2.5px;
-  border-radius: 2px;
-  background: linear-gradient(90deg, var(--page-accent, var(--brand-primary)), transparent);
+.secondaryButton {
+  border-radius: var(--radius-md);
+  font-size: var(--fs-caption);
+  box-shadow: none;
+}
+.secondaryButton:hover { border-color: var(--border-strong); }
+.secondaryButton:active { background: var(--bg-surface-hover); }
+
+/* Detail dialog: one lifted overlay, no gradient strip, no tinted icon tile. */
+.detailBackdrop { background: rgba(6, 14, 32, 0.6); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.detailModal {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-lg);
+}
+.detailAccent { display: none; }
+.detailIcon { background: var(--bg-surface-hover); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+
+/* Entrance: cards appear in place, quickly, with no rise. */
+@keyframes cardRise {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .kpiTile:hover { transform: none; }
-  .kpiTile:hover .kpiIcon { transform: none; }
-  .chartCard:hover { transform: none; }
+  .chartCard { animation: none; }
 }

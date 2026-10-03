@@ -28,12 +28,12 @@ export type ChartTheme = {
 };
 
 const FALLBACK: ChartTheme = {
-  text: "#4b5e7d",
-  axis: "#c9d3e4",
-  split: "#eaeef6",
-  tooltipBg: "#ffffff",
-  tooltipText: "#071a44",
-  seqLightest: "#eef2fb",
+  text: "#3b4d72",
+  axis: "#b9c5da",
+  split: "#e3e8f1",
+  tooltipBg: "#0a1630",
+  tooltipText: "#e8eefb",
+  seqLightest: "#eef1f6",
   isDark: false,
 };
 
@@ -100,7 +100,7 @@ export function chartBase(t: ChartTheme) {
       backgroundColor: t.tooltipBg,
       borderColor: t.split,
       textStyle: { color: t.tooltipText },
-      extraCssText: "box-shadow: 0 6px 20px rgba(0,0,0,0.18); border-radius: 10px;",
+      extraCssText: "box-shadow: 0 14px 36px rgba(6,14,32,0.28); border-radius: 6px; font-family: Archivo, system-ui, sans-serif;",
     },
   };
 }
@@ -147,8 +147,8 @@ export function applyChartTheme<T extends Record<string, any>>(option: T, t: Cha
 /* ---------------------------------------------------------------------------
    Per-tab series palettes
 
-   One colour family per analytics tab: blue for Traffic, amber for Incidents,
-   green for Emissions. Both modes are selected steps, not an automatic flip.
+   One colour family per analytics tab: blue for Traffic, violet for Incidents,
+   teal for Emissions (see the Lane Signal note below). Both modes are selected steps, not an automatic flip.
 
    Every set below was produced by search and checked with the dataviz
    validator rather than picked by eye, because the constraints conflict and
@@ -173,11 +173,16 @@ export function applyChartTheme<T extends Record<string, any>>(option: T, t: Cha
 
 export type VizTab = "traffic" | "incident" | "emissions";
 
+/* Lane Signal redesign (3 Oct 2026): green, amber and red now belong to road
+   state alone (the lane signals), so Incidents moved from amber to violet and
+   Emissions from green to teal. Traffic keeps its blue. Every ramp below was
+   re-run through the dataviz validator (--ordinal) against #ffffff and the new
+   dark surface #0f1f3d: monotone lightness, adjacent dL >= 0.06, single hue,
+   light end >= 2:1 (2.03-3.99:1). */
 const SERIES_RAMPS: Record<VizTab, { light: [string, string, string]; dark: [string, string, string] }> = {
-  // light-end contrast 2.02–2.37:1, adjacent ΔL ≥ 0.06, single hue
   traffic:   { light: ["#8ab6f5", "#3f7ad9", "#1d3f8f"], dark: ["#a8c8f8", "#5b8fe6", "#2f5fba"] },
-  incident:  { light: ["#e0b01f", "#b8760a", "#7d4606"], dark: ["#f2c94c", "#d18f18", "#9d5d0d"] },
-  emissions: { light: ["#4cbd79", "#118f46", "#08582b"], dark: ["#6ed99a", "#23a55a", "#12703a"] },
+  incident:  { light: ["#b4a7f2", "#7a5fe0", "#45299e"], dark: ["#d0c6ff", "#9d87f5", "#6a50d4"] },
+  emissions: { light: ["#5fbcc6", "#1f97a5", "#0a5862"], dark: ["#a6edf2", "#3cc3cf", "#1c8a96"] },
 };
 
 /* ---------------------------------------------------------------------------
@@ -202,10 +207,17 @@ const SERIES_RAMPS: Record<VizTab, { light: [string, string, string]; dark: [str
    tab hue. Emissions has no nominal triple today — its Class 1/2/3 series are
    ordinal and correctly take the ramp — and if one is ever needed it will have
    to lead with a hue other than green. */
+/* Lane Signal: the amber and green leads above are retired (road-state hues).
+   The one triple that passes every all-pairs gate in both modes without a
+   state hue is violet / teal / magenta (validator, --pairs all: light vs
+   #ffffff and dark vs #0f1f3d both ALL PASS). Blue cannot join it: on the
+   navy dark surface blue and violet collapse under protan/deutan (dE < 4).
+   Only Incidents draws a nominal triple today; the other tabs reuse the same
+   validated set, led by their nearest hue. */
 const NOMINAL_TRIPLES: Record<VizTab, { light: [string, string, string]; dark: [string, string, string] }> = {
-  traffic:   { light: ["#2a78d6", "#b8760a", "#c2185b"], dark: ["#5288e2", "#bb8a12", "#cf5a90"] },
-  incident:  { light: ["#b8760a", "#2a78d6", "#c2185b"], dark: ["#bb8a12", "#5288e2", "#cf5a90"] },
-  emissions: { light: ["#008300", "#2a78d6", "#c2185b"], dark: ["#2e9e57", "#5288e2", "#cf5a90"] },
+  traffic:   { light: ["#0b8db0", "#4a3aa7", "#c2185b"], dark: ["#169bb8", "#8c7ff0", "#d55181"] },
+  incident:  { light: ["#4a3aa7", "#0b8db0", "#c2185b"], dark: ["#8c7ff0", "#169bb8", "#d55181"] },
+  emissions: { light: ["#0b8db0", "#4a3aa7", "#c2185b"], dark: ["#169bb8", "#8c7ff0", "#d55181"] },
 };
 
 /**
@@ -241,7 +253,7 @@ export function seriesRamp(tab: VizTab, t: ChartTheme): [string, string, string]
  */
 export function heatRamp(t: ChartTheme): string[] {
   return t.isDark
-    ? ["#0f1729", "#15294a", "#1b4272", "#2463a0", "#3d8bcb", "#77b6e6", "#b9dbf7"]
+    ? ["#13284d", "#1a3866", "#22508e", "#2f6dbb", "#4b90dc", "#86b9ef", "#c4defa"]
     : ["#f2f7fd", "#d3e5f8", "#a8caef", "#74a9e0", "#3f7fca", "#22589e", "#14356b"];
 }
 

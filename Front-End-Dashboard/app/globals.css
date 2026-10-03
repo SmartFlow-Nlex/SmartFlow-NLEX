@@ -4,52 +4,80 @@
 
 /* ---------- Design Tokens ---------- */
 :root {
-  /* Brand palette */
-  --brand-primary: #3660ff;
-  --brand-primary-light: #5c7aff;
-  --brand-primary-dark: #2b4fdb;
-  --brand-accent: #ea8b0d;
+  /* ----------------------------------------------------------------------
+     Lane Signal. The world is the overhead lane-control signal on an NLEX
+     gantry: a deep-navy shell, flat steel panels, and state spoken only in
+     the road's own signal language (green arrow, amber diagonal, red cross).
+     Sky blue is the one colour that means "you can press or drag this".
+     Token names are unchanged from the earlier system, so every component
+     that reads them moved with this block.
+     ---------------------------------------------------------------------- */
 
-  /* Surfaces */
-  --bg-body: #f3f5f9;
+  /* Type: one family, two widths. Labels and numerals use the condensed
+     width; running text stays at normal width. */
+  --font-sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-cond-stretch: 82%;
+
+  /* Type scale: seven steps, nothing functional below 12px. */
+  --fs-label: 0.75rem;     /* 12px: uppercase labels, table headers */
+  --fs-caption: 0.8125rem; /* 13px: captions, meta, footnotes */
+  --fs-body: 0.875rem;     /* 14px: body, table cells */
+  --fs-title: 1rem;        /* 16px: card titles */
+  --fs-headline: 1.375rem; /* 22px: page titles */
+  --fs-numeral: 2.25rem;   /* 36px: KPI readings */
+  --fs-display: 3rem;      /* 48px: login wordmark */
+
+  /* The one action colour, and the three signal states. */
+  --action: #0a6cc2;
+  --action-ink: #ffffff;
+  --signal-clear: #13834a;
+  --signal-slow: #a65f00;
+  --signal-congested: #c42a2a;
+  --signal-none: #8a97b0;
+
+  /* Brand palette (kept for existing rules; brand-primary IS the action). */
+  --brand-primary: var(--action);
+  --brand-primary-light: #3d8fd6;
+  --brand-primary-dark: #08579c;
+  --brand-accent: #d98a00;
+
+  /* Surfaces. The shell stays navy in both themes; the work surface is
+     cool paper in light and steel in dark. */
+  --bg-body: #eef1f6;
   --bg-surface: #ffffff;
-  --bg-surface-hover: #f8f9fc;
-  --bg-sidebar: #0a2240;
-  --bg-sidebar-active: #123b6b;
-  --bg-sidebar-hover: rgba(255, 255, 255, 0.08);
+  --bg-surface-hover: #f4f6fa;
+  --bg-sidebar: #0a1730;
+  --bg-sidebar-active: #183062;
+  --bg-sidebar-hover: rgba(255, 255, 255, 0.07);
   --bg-topbar: #ffffff;
-  --bg-login: #d8e1ef;
+  --bg-login: #eef1f6;
 
-  /* Borders were hardcoded (#e7ebf4 / #d4dbea) throughout, so card edges could
-     not follow the theme. Tokenised here and overridden in both dark blocks. */
-  --border-default: #e7ebf4;
-  --border-strong: #d4dbea;
+  --border-default: #d9e0ec;
+  --border-strong: #b9c5da;
 
-  /* Text */
-  /* Muted text and the success/warning hues were below WCAG AA 4.5 on both the
-     card and the page background (3.2-4.3). Darkened just enough to clear it —
-     the dark palette already passes, so only the light values moved. */
-  --text-primary: #071a44;
-  --text-secondary: #4b5e7d;
-  --text-muted: #627188;
+  /* Ink: navy, three steps, all AA on surface and ground. */
+  --text-primary: #0a1630;
+  --text-secondary: #3b4d72;
+  --text-muted: #55678b;
   --text-on-dark: #ffffff;
-  --text-on-dark-muted: rgba(255, 255, 255, 0.7);
+  --text-on-dark-muted: rgba(232, 238, 251, 0.74);
 
-  /* Semantic */
-  --color-success: #0c8231;
-  --color-success-bg: #e8f8ec;
-  --color-success-border: #b9e9c5;
-  --color-warning: #c2490a;
-  --color-warning-bg: #fff5dc;
-  --color-warning-border: #edd28a;
-  --color-danger: #dc2626;
-  --color-danger-bg: #fef0f0;
-  --color-danger-border: #f6c1c1;
-  --color-info: #2f57ea;
-  --color-info-bg: #edf3ff;
-  --color-info-border: #b8cffb;
-  --color-purple: #7c3aed;
-  --color-purple-bg: #ece0ff;
+  /* Semantic colours are the signal states. */
+  --color-success: var(--signal-clear);
+  --color-success-bg: #e6f4ec;
+  --color-success-border: #b5dcc5;
+  --color-warning: var(--signal-slow);
+  --color-warning-bg: #fbf0dc;
+  --color-warning-border: #e8cf9c;
+  --color-danger: var(--signal-congested);
+  --color-danger-bg: #fbe9e9;
+  --color-danger-border: #efbcbc;
+  --color-info: var(--action);
+  --color-info-bg: #e5f0fa;
+  --color-info-border: #b3d2ee;
+  /* Model and forecast content. Violet, so it never reads as a road state. */
+  --color-purple: #5b47c9;
+  --color-purple-bg: #ece9fb;
 
   /* Spacing */
   --space-xs: 4px;
@@ -58,149 +86,142 @@
   --space-lg: 20px;
   --space-xl: 28px;
 
-  /* Radii */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
+  /* Radii: firm, steel-panel corners. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
   --radius-full: 999px;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06);
-  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
-  --shadow-lg: 0 10px 24px rgba(15, 23, 42, 0.10);
-  --shadow-card: 0 2px 8px rgba(15, 23, 42, 0.06);
+  /* Elevation: flat. Panels are separated by rules and tone; only overlays
+     (dialogs, popovers, tooltips) are lifted. */
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-card: none;
+  --shadow-lg: 0 14px 36px rgba(6, 14, 32, 0.22);
 
-  /* Sidebar width */
-  --sidebar-width: 280px;
+  --sidebar-width: 248px;
 
-  /* Transitions */
-  --transition-fast: 150ms ease;
-  --transition-base: 220ms ease;
+  --transition-fast: 140ms cubic-bezier(0.2, 0, 0, 1);
+  --transition-base: 220ms cubic-bezier(0.2, 0, 0, 1);
 
-  /* Chart surface tokens — read by ECharts through getComputedStyle so plots
-     follow the theme instead of hardcoding near-black text on any background. */
-  --chart-text: #4b5e7d;
-  --chart-axis: #c9d3e4;
-  --chart-split: #eaeef6;
-  --chart-tooltip-bg: #ffffff;
-  --chart-tooltip-text: #071a44;
-  --chart-seq-lightest: #eef2fb;
+  /* Chart furniture, read by ECharts through getComputedStyle. */
+  --chart-text: #3b4d72;
+  --chart-axis: #b9c5da;
+  --chart-split: #e3e8f1;
+  --chart-tooltip-bg: #0a1630;
+  --chart-tooltip-text: #e8eefb;
+  --chart-seq-lightest: #eef1f6;
 }
 
 /* ============================================================
-   DARK THEME
-   Only tokens are redefined — no component rule below this point needs to
-   know which theme is active. Three states are covered deliberately:
-     :root                             the complete light palette (above)
+   DARK THEME, designed first for the night shift.
+   Only tokens are redefined; no component rule needs to know which theme
+   is active. Three states are covered deliberately:
+     :root                             the light palette (above)
      prefers-color-scheme: dark        the default "System" setting, which
                                        stamps no attribute at all
      [data-theme="dark"]               an explicit user choice, which must win
                                        even on a light OS
    The media query is guarded with :not([data-theme="light"]) so choosing Light
-   on a dark OS is respected.
+   on a dark OS is respected. The two dark blocks must stay identical.
    ============================================================ */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg-body: #0d1117;
-    --bg-surface: #161b22;
-    --bg-surface-hover: #1c2230;
-    --bg-sidebar: #0a0e14;
-    --bg-sidebar-active: #1a2942;
+    --action: #5cc8ff;
+    --action-ink: #06122a;
+    --signal-clear: #34d17f;
+    --signal-slow: #ffb21e;
+    --signal-congested: #ff5c5c;
+    --signal-none: #5d6f96;
+    --brand-primary-light: #8ad8ff;
+    --brand-primary-dark: #2fa8e6;
+    --brand-accent: #ffb21e;
+
+    --bg-body: #081327;
+    --bg-surface: #0f1f3d;
+    --bg-surface-hover: #142749;
+    --bg-sidebar: #06101f;
+    --bg-sidebar-active: #183062;
     --bg-sidebar-hover: rgba(255, 255, 255, 0.06);
-    --bg-topbar: #161b22;
-    --bg-login: #0d1117;
+    --bg-topbar: #0b1832;
+    --bg-login: #081327;
 
-    --text-primary: #e6edf3;
-    --text-secondary: #9aa8bd;
-    --text-muted: #7d8b9e;
+    --border-default: #22396b;
+    --border-strong: #2f4c86;
 
-    --brand-primary: #5c7aff;
-    --brand-primary-light: #7d93ff;
-    --brand-primary-dark: #3660ff;
+    --text-primary: #e8eefb;
+    --text-secondary: #a9b9da;
+    --text-muted: #8a9cc2;
 
-    /* Status colours keep their hue but drop the pale fills, which glow on a
-       dark ground; borders carry the meaning instead. */
-    --color-success: #3fb950;
-    --color-success-bg: rgba(63, 185, 80, 0.12);
-    --color-success-border: rgba(63, 185, 80, 0.35);
-    --color-warning: #f0883e;
-    --color-warning-bg: rgba(240, 136, 62, 0.12);
-    --color-warning-border: rgba(240, 136, 62, 0.35);
-    --color-danger: #f85149;
-    --color-danger-bg: rgba(248, 81, 73, 0.12);
-    --color-danger-border: rgba(248, 81, 73, 0.35);
-    --color-info: #6e9bff;
-    --color-info-bg: rgba(110, 155, 255, 0.12);
-    --color-info-border: rgba(110, 155, 255, 0.35);
-    --color-purple: #a371f7;
-    --color-purple-bg: rgba(163, 113, 247, 0.14);
+    --color-success-bg: rgba(52, 209, 127, 0.12);
+    --color-success-border: rgba(52, 209, 127, 0.38);
+    --color-warning-bg: rgba(255, 178, 30, 0.12);
+    --color-warning-border: rgba(255, 178, 30, 0.38);
+    --color-danger-bg: rgba(255, 92, 92, 0.13);
+    --color-danger-border: rgba(255, 92, 92, 0.4);
+    --color-info-bg: rgba(92, 200, 255, 0.12);
+    --color-info-border: rgba(92, 200, 255, 0.38);
+    --color-purple: #ab9dff;
+    --color-purple-bg: rgba(171, 157, 255, 0.14);
 
-    --border-default: #262c36;
-    --border-strong: #363d49;
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
 
-    /* Dark surfaces read depth from borders, not drop shadows. */
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
-    --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.55);
-    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
-
-    --chart-text: #9aa8bd;
-    --chart-axis: #30363d;
-    --chart-split: #21262d;
-    --chart-tooltip-bg: #1c2230;
-    --chart-tooltip-text: #e6edf3;
-    --chart-seq-lightest: #1f2937;
+    --chart-text: #a9b9da;
+    --chart-axis: #2f4c86;
+    --chart-split: #1a2d54;
+    --chart-tooltip-bg: #0b1832;
+    --chart-tooltip-text: #e8eefb;
+    --chart-seq-lightest: #142749;
   }
 }
 
 :root[data-theme="dark"] {
-  --bg-body: #0d1117;
-  --bg-surface: #161b22;
-  --bg-surface-hover: #1c2230;
-  --bg-sidebar: #0a0e14;
-  --bg-sidebar-active: #1a2942;
+  --action: #5cc8ff;
+  --action-ink: #06122a;
+  --signal-clear: #34d17f;
+  --signal-slow: #ffb21e;
+  --signal-congested: #ff5c5c;
+  --signal-none: #5d6f96;
+  --brand-primary-light: #8ad8ff;
+  --brand-primary-dark: #2fa8e6;
+  --brand-accent: #ffb21e;
+
+  --bg-body: #081327;
+  --bg-surface: #0f1f3d;
+  --bg-surface-hover: #142749;
+  --bg-sidebar: #06101f;
+  --bg-sidebar-active: #183062;
   --bg-sidebar-hover: rgba(255, 255, 255, 0.06);
-  --bg-topbar: #161b22;
-  --bg-login: #0d1117;
+  --bg-topbar: #0b1832;
+  --bg-login: #081327;
 
-  --border-default: #262c36;
-  --border-strong: #363d49;
+  --border-default: #22396b;
+  --border-strong: #2f4c86;
 
-  --text-primary: #e6edf3;
-  --text-secondary: #9aa8bd;
-  --text-muted: #7d8b9e;
+  --text-primary: #e8eefb;
+  --text-secondary: #a9b9da;
+  --text-muted: #8a9cc2;
 
-  --brand-primary: #5c7aff;
-  --brand-primary-light: #7d93ff;
-  --brand-primary-dark: #3660ff;
+  --color-success-bg: rgba(52, 209, 127, 0.12);
+  --color-success-border: rgba(52, 209, 127, 0.38);
+  --color-warning-bg: rgba(255, 178, 30, 0.12);
+  --color-warning-border: rgba(255, 178, 30, 0.38);
+  --color-danger-bg: rgba(255, 92, 92, 0.13);
+  --color-danger-border: rgba(255, 92, 92, 0.4);
+  --color-info-bg: rgba(92, 200, 255, 0.12);
+  --color-info-border: rgba(92, 200, 255, 0.38);
+  --color-purple: #ab9dff;
+  --color-purple-bg: rgba(171, 157, 255, 0.14);
 
-  --color-success: #3fb950;
-  --color-success-bg: rgba(63, 185, 80, 0.12);
-  --color-success-border: rgba(63, 185, 80, 0.35);
-  --color-warning: #f0883e;
-  --color-warning-bg: rgba(240, 136, 62, 0.12);
-  --color-warning-border: rgba(240, 136, 62, 0.35);
-  --color-danger: #f85149;
-  --color-danger-bg: rgba(248, 81, 73, 0.12);
-  --color-danger-border: rgba(248, 81, 73, 0.35);
-  --color-info: #6e9bff;
-  --color-info-bg: rgba(110, 155, 255, 0.12);
-  --color-info-border: rgba(110, 155, 255, 0.35);
-  --color-purple: #a371f7;
-  --color-purple-bg: rgba(163, 113, 247, 0.14);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
 
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.55);
-  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
-
-  --chart-text: #9aa8bd;
-  --chart-axis: #30363d;
-  --chart-split: #21262d;
-  --chart-tooltip-bg: #1c2230;
-  --chart-tooltip-text: #e6edf3;
-  --chart-seq-lightest: #1f2937;
+  --chart-text: #a9b9da;
+  --chart-axis: #2f4c86;
+  --chart-split: #1a2d54;
+  --chart-tooltip-bg: #0b1832;
+  --chart-tooltip-text: #e8eefb;
+  --chart-seq-lightest: #142749;
 }
 
 /* Respect users who ask the OS to reduce motion. */
@@ -231,7 +252,8 @@ body {
 }
 
 body {
-  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
   background: var(--bg-body);
   color: var(--text-primary);
   line-height: 1.5;
@@ -1885,10 +1907,13 @@ body {
    Anything that wants to carry the domain reads it and falls back to the brand
    blue, so a page that declares no accent is unchanged.
    --------------------------------------------------------------------------- */
-.ds-page-header { --page-accent: var(--brand-primary); }
-.ds-page-header[data-accent="traffic"]  { --page-accent: #2a78d6; }
-.ds-page-header[data-accent="incident"] { --page-accent: #b8760a; }
-.ds-page-header[data-accent="emissions"]{ --page-accent: #0f8a4a; }
+/* Lane Signal: selection, focus and the active tab use the one action colour
+   on every page, so a selected control looks the same everywhere. Domains
+   keep their identity in chart series (lib/chart-theme.ts), not in chrome. */
+.ds-page-header,
+.ds-page-header[data-accent="traffic"],
+.ds-page-header[data-accent="incident"],
+.ds-page-header[data-accent="emissions"] { --page-accent: var(--action); }
 
 /* The mode tabs are a SIBLING of the header, so an accent declared only on the
    header cannot reach them. Every analytics page already carries a .viz-*
@@ -4195,17 +4220,17 @@ body {
 .ds-rd-legend span { display: inline-flex; align-items: center; gap: 6px; }
 
 .ds-rd-legend i { width: 15px; height: 7px; border-radius: 2px; }
-.ds-rd-legend i.seg-red    { background: #e04434; }
-.ds-rd-legend i.seg-orange { background: #e08a2e; }
-.ds-rd-legend i.seg-green  { background: #23a55a; }
+.ds-rd-legend i.seg-red    { background: var(--signal-congested); }
+.ds-rd-legend i.seg-orange { background: var(--signal-slow); }
+.ds-rd-legend i.seg-green  { background: var(--signal-clear); }
 
 /* The road, and the queues on it, in the legend's own three colours -- declared
    here beside the key so the swatch and the thing it describes cannot drift.
    These are the hexes the Live Map paints with too, from lib/map-palette. */
-.ds-rd-seg.seg-green   { background: #23a55a; }
-.ds-rd-jam.seg-red     { background: #e04434; }
-.ds-rd-jam.seg-orange  { background: #e08a2e; }
-.ds-rd-jam.seg-green   { background: #23a55a; }
+.ds-rd-seg.seg-green   { background: var(--signal-clear); }
+.ds-rd-jam.seg-red     { background: var(--signal-congested); }
+.ds-rd-jam.seg-orange  { background: var(--signal-slow); }
+.ds-rd-jam.seg-green   { background: var(--signal-clear); }
 
 .ds-rd-foot p {
   margin: 0;
@@ -4776,7 +4801,7 @@ body {
 }
 
 .ms-btn-danger-action {
-  background: #ef4444;
+  background: var(--signal-congested);
 }
 .ms-btn-danger-action:hover {
   background: #dc2626;
@@ -5599,19 +5624,19 @@ body {
    same three ramp steps plus two reserved status colours. Set on the page shell
    so the tiles inherit without every tile knowing which tab it is on.
    --------------------------------------------------------------------------- */
-.viz-traffic   { --page-accent: #2a78d6; --kpi-1: #3f7ad9; --kpi-2: #1d3f8f; --kpi-3: #8ab6f5; --kpi-4: var(--color-info);    --kpi-5: var(--color-success); }
-.viz-incident  { --page-accent: #b8760a; --kpi-1: #b8760a; --kpi-2: #7d4606; --kpi-3: #e0b01f; --kpi-4: var(--color-danger);  --kpi-5: var(--color-warning); }
-.viz-emissions { --page-accent: #0f8a4a; --kpi-1: #118f46; --kpi-2: #08582b; --kpi-3: #4cbd79; --kpi-4: var(--color-success); --kpi-5: var(--color-info); --kpi-6: var(--color-warning); }
+.viz-traffic   { --page-accent: var(--action); --kpi-1: #3f7ad9; --kpi-2: #1d3f8f; --kpi-3: #8ab6f5; --kpi-4: var(--color-info);    --kpi-5: var(--color-success); }
+.viz-incident  { --page-accent: var(--action); --kpi-1: #b8760a; --kpi-2: #7d4606; --kpi-3: #e0b01f; --kpi-4: var(--color-danger);  --kpi-5: var(--color-warning); }
+.viz-emissions { --page-accent: var(--action); --kpi-1: #118f46; --kpi-2: #08582b; --kpi-3: #4cbd79; --kpi-4: var(--color-success); --kpi-5: var(--color-info); --kpi-6: var(--color-warning); }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .viz-traffic   { --kpi-1: #5b8fe6; --kpi-2: #a8c8f8; --kpi-3: #2f5fba; }
   :root:not([data-theme="light"]) .viz-incident  { --kpi-1: #d18f18; --kpi-2: #f2c94c; --kpi-3: #9d5d0d; }
-  :root:not([data-theme="light"]) .viz-emissions { --kpi-1: #23a55a; --kpi-2: #6ed99a; --kpi-3: #12703a; }
+  :root:not([data-theme="light"]) .viz-emissions { --kpi-1: var(--signal-clear); --kpi-2: #6ed99a; --kpi-3: #12703a; }
 }
 
 :root[data-theme="dark"] .viz-traffic   { --kpi-1: #5b8fe6; --kpi-2: #a8c8f8; --kpi-3: #2f5fba; }
 :root[data-theme="dark"] .viz-incident  { --kpi-1: #d18f18; --kpi-2: #f2c94c; --kpi-3: #9d5d0d; }
-:root[data-theme="dark"] .viz-emissions { --kpi-1: #23a55a; --kpi-2: #6ed99a; --kpi-3: #12703a; }
+:root[data-theme="dark"] .viz-emissions { --kpi-1: var(--signal-clear); --kpi-2: #6ed99a; --kpi-3: #12703a; }
 
 /* ===========================================================================
    WAZE LIVE — maximised view
@@ -5757,7 +5782,7 @@ body {
   border-radius: 50%;
   color: #fff;
 }
-.wz-chip.red { background: #ef4444; }
+.wz-chip.red { background: var(--signal-congested); }
 .wz-chip.darkred { background: #b91c1c; }
 .wz-chip.orange { background: #f97316; }
 .wz-chip.blue { background: #3b82f6; }
@@ -5810,7 +5835,7 @@ body {
   display: block;
   height: 9px;
   border-radius: 999px;
-  background: linear-gradient(to right, #22c55e, #eab308, #f97316, #ef4444);
+  background: linear-gradient(to right, #22c55e, #eab308, #f97316, var(--signal-congested));
 }
 .wz-density-mark {
   position: absolute;
@@ -6217,7 +6242,7 @@ body {
 
 .nlex-pop {
   width: 236px;
-  font-family: Inter, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
 }
 
 /* A tinted header carrying the mark and the name, so the card says what kind of
@@ -6428,16 +6453,16 @@ body {
   color: var(--text-primary);
 }
 
-.ds-rd-seg.seg-red    { background: #e04434; }
-.ds-rd-seg.seg-orange { background: #e08a2e; }
-.ds-rd-seg.seg-green  { background: #23a55a; }
+.ds-rd-seg.seg-red    { background: var(--signal-congested); }
+.ds-rd-seg.seg-orange { background: var(--signal-slow); }
+.ds-rd-seg.seg-green  { background: var(--signal-clear); }
 
-.ds-rd-scale-chip.lv-0 { background: #23a55a; }
+.ds-rd-scale-chip.lv-0 { background: var(--signal-clear); }
 .ds-rd-scale-chip.lv-1,
-.ds-rd-scale-chip.lv-2 { background: #e08a2e; }
+.ds-rd-scale-chip.lv-2 { background: var(--signal-slow); }
 .ds-rd-scale-chip.lv-3,
 .ds-rd-scale-chip.lv-4,
-.ds-rd-scale-chip.lv-5 { background: #e04434; }
+.ds-rd-scale-chip.lv-5 { background: var(--signal-congested); }
 
 /* Live Map: two full maps side by side need ~1000px to breathe; below that the
    forecast-model card lands on the other map's controls. Stack them. */
@@ -6750,122 +6775,10 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   .ds-live-dot::after { animation: none; opacity: 0; }
 }
 
-/* ===========================================================================
-   VISUAL REFRESH LAYER
-   ---------------------------------------------------------------------------
-   Appended rather than edited into the rules above, so the careful work in
-   this file keeps its shape and every change here is one block a reviewer can
-   read, argue with, or delete.
-
-   The brief was that the dashboard looked flat. It was not unfinished - the
-   tokens, the dark mode and the card choreography were all already here - but
-   every surface sat on the same plane in the same light, so nothing led the
-   eye. This adds depth and one accent gradient, and spends both only where
-   there is a hierarchy worth marking.
-   =========================================================================== */
-
-/* --- The shell ----------------------------------------------------------- */
-
-/* A vertical gradient rather than one flat navy: the nav reads as a panel with
-   light falling on it, and the footer no longer floats on the same value as
-   the brand. */
-.ds-sidebar {
-  background:
-    radial-gradient(120% 60% at 0% 0%, rgba(96, 148, 255, 0.16) 0%, transparent 60%),
-    linear-gradient(180deg, var(--bg-sidebar) 0%, color-mix(in srgb, var(--bg-sidebar) 86%, #000) 100%);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-/* Section kickers: quieter, wider, so they separate groups without competing
-   with the items under them. */
-.ds-sidebar-nav > p,
-.ds-nav-section-label {
-  letter-spacing: 0.14em !important;
-  opacity: 0.55;
-}
-
-.ds-sidebar-tab {
-  position: relative;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast),
-    transform var(--transition-fast);
-}
-
-/* Hover nudges toward the content it opens. 2px - enough to feel live, small
-   enough that a fast reader down the list sees no jitter. */
-.ds-sidebar-tab:hover { transform: translateX(2px); }
-
-/* The active item earns a gradient and a lit edge. The bar is an inset
-   pseudo-element so the tab's own radius stays intact, and it scales from the
-   centre on selection rather than sliding, which would race the page change. */
-.ds-sidebar-tab.active {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--brand-primary) 42%, transparent) 0%,
-    color-mix(in srgb, var(--brand-primary) 16%, transparent) 100%
-  );
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
-}
-
-.ds-sidebar-tab.active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: linear-gradient(180deg, #7fb0ff, var(--brand-primary));
-  box-shadow: 0 0 10px color-mix(in srgb, var(--brand-primary) 70%, transparent);
-  animation: ds-nav-mark 260ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
-}
-
-@keyframes ds-nav-mark {
-  from { transform: scaleY(0.2); opacity: 0; }
-  to   { transform: scaleY(1); opacity: 1; }
-}
-
-.ds-sidebar-tab.active svg { filter: drop-shadow(0 0 6px rgba(127, 176, 255, 0.45)); }
-
-/* The topbar becomes glass so content scrolling under it reads as depth
-   rather than as a collision. */
-.ds-topbar {
-  background: color-mix(in srgb, var(--bg-topbar) 82%, transparent);
-  backdrop-filter: blur(14px) saturate(1.3);
-  -webkit-backdrop-filter: blur(14px) saturate(1.3);
-  border-bottom: 1px solid var(--border-default);
-}
-
-/* --- Page header --------------------------------------------------------- */
-
-/* The icon tile carries the brand gradient and a soft throw, so each page
-   opens on one deliberate spot of colour instead of a flat pale square. */
-.ds-page-header .ds-page-header-icon {
-  background: linear-gradient(135deg, var(--page-accent), color-mix(in srgb, var(--page-accent) 62%, #ffffff)) !important;
-  color: #fff !important;
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--page-accent) 34%, transparent);
-}
-
-.ds-page-header h1 { letter-spacing: -0.025em; }
-
-@media (prefers-reduced-motion: reduce) {
-  .ds-sidebar-tab:hover { transform: none; }
-  .ds-sidebar-tab.active::before { animation: none; }
-}
-
-/* --- Second pass: the ground --------------------------------------------- */
-
-/* The page ground is no longer one flat grey. A cool wash at the top left and
-   a second at the top right give the cards something to sit on, which is most
-   of what "flat" meant. Fixed attachment so it belongs to the page rather than
-   scrolling away with the first screen. */
-.ds-main {
-  background-image:
-    radial-gradient(90% 55% at 12% -8%, color-mix(in srgb, var(--brand-primary) 10%, transparent) 0%, transparent 60%),
-    radial-gradient(70% 45% at 95% 4%, color-mix(in srgb, #7c5cff 8%, transparent) 0%, transparent 55%);
-  background-attachment: fixed;
-}
+/* The VISUAL REFRESH LAYER (gradient sidebar, glowing nav mark, glass
+   topbar, gradient icon tiles, radial ground washes) was removed in the
+   Lane Signal redesign. The shell is restyled in the LANE SIGNAL layer at
+   the end of this file. */
 
 /* ===========================================================================
    SECONDARY PAGES — same design system as the analytics tabs
@@ -6923,93 +6836,9 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--page-accent, var(--brand-primary)) 22%, transparent);
 }
 
-/* --- Stat cards ---------------------------------------------------------- */
-
-/* The same treatment the analytics KPI tiles carry: a leading accent that
-   fades down the card, a wash thrown from the icon's corner, and a lift that
-   is warmed by the accent rather than a generic grey. */
-.tab-stat-card,
-.sandbox-metric {
-  position: relative;
-  overflow: hidden;
-  border-radius: 16px;
-  border-color: color-mix(in srgb, var(--border-default) 70%, transparent);
-  box-shadow: 0 1px 2px rgba(15, 28, 58, 0.04), 0 8px 24px rgba(15, 28, 58, 0.05);
-  background-image: radial-gradient(
-    120% 100% at 100% 0%,
-    color-mix(in srgb, var(--page-accent, var(--brand-primary)) 10%, transparent) 0%,
-    transparent 68%
-  );
-}
-
-.tab-stat-card::before,
-.sandbox-metric::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: linear-gradient(
-    180deg,
-    var(--page-accent, var(--brand-primary)) 0%,
-    color-mix(in srgb, var(--page-accent, var(--brand-primary)) 35%, transparent) 100%
-  );
-}
-
-.tab-stat-card:hover,
-.sandbox-metric:hover {
-  transform: translateY(-3px);
-  box-shadow:
-    0 14px 30px color-mix(in srgb, var(--page-accent, var(--brand-primary)) 16%, transparent),
-    0 2px 6px rgba(15, 28, 58, 0.06);
-}
-
-.sandbox-metric { transition: box-shadow var(--transition-fast), transform var(--transition-fast); }
-
-/* The leading bar needs room, and these cards were padded for no bar. */
-.tab-stat-card { padding-left: 20px; }
-
-/* --- Buttons ------------------------------------------------------------- */
-
-/* The toolbar actions were flat fills. Same gradient and throw the rest of the
-   app uses for a primary action, so "Export JSON" reads as the same class of
-   control as every other button in the product. */
-.table-toolbar .btn-primary,
-.table-toolbar .btn-danger,
-.tab-toolbar .btn-primary,
-.tab-toolbar .btn-danger {
-  border: 1px solid transparent;
-  border-radius: 10px;
-  font-weight: 700;
-  transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast);
-}
-
-.table-toolbar .btn-primary,
-.tab-toolbar .btn-primary {
-  background: linear-gradient(135deg, var(--brand-primary), color-mix(in srgb, var(--brand-primary) 62%, #7c5cff));
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--brand-primary) 30%, transparent);
-}
-
-.table-toolbar .btn-danger,
-.tab-toolbar .btn-danger {
-  background: linear-gradient(135deg, var(--color-danger), color-mix(in srgb, var(--color-danger) 70%, #7a1020));
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--color-danger) 26%, transparent);
-}
-
-.table-toolbar .btn-primary:hover,
-.table-toolbar .btn-danger:hover,
-.tab-toolbar .btn-primary:hover,
-.tab-toolbar .btn-danger:hover { transform: translateY(-1px); filter: brightness(1.04); }
-
-@media (prefers-reduced-motion: reduce) {
-  .tab-stat-card:hover,
-  .sandbox-metric:hover,
-  .table-toolbar .btn-primary:hover,
-  .table-toolbar .btn-danger:hover,
-  .tab-toolbar .btn-primary:hover,
-  .tab-toolbar .btn-danger:hover { transform: none; }
-}
+/* Stat-card washes, leading bars, hover lifts and gradient toolbar buttons
+   were removed in the Lane Signal redesign: panels are flat, and the only
+   lift belongs to overlays. See the LANE SIGNAL layer at the end. */
 
 /* ===========================================================================
    TABLES
@@ -9547,11 +9376,11 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 }
 
 .fc-tally-item b { font-size: 1.1rem; font-weight: 800; color: var(--text-primary); }
-.fc-tally-item.is-high { border-color: color-mix(in srgb, #e04434 40%, transparent); }
+.fc-tally-item.is-high { border-color: color-mix(in srgb, var(--signal-congested) 40%, transparent); }
 .fc-tally-item.is-high b { color: #b3261e; }
-.fc-tally-item.is-med { border-color: color-mix(in srgb, #e08a2e 40%, transparent); }
+.fc-tally-item.is-med { border-color: color-mix(in srgb, var(--signal-slow) 40%, transparent); }
 .fc-tally-item.is-med b { color: #b06a15; }
-.fc-tally-item.is-low { border-color: color-mix(in srgb, #23a55a 38%, transparent); }
+.fc-tally-item.is-low { border-color: color-mix(in srgb, var(--signal-clear) 38%, transparent); }
 .fc-tally-item.is-low b { color: #1a7d45; }
 
 .fc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
@@ -9569,9 +9398,9 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 .fc-list li:nth-child(odd) { background: color-mix(in srgb, var(--text-secondary) 5%, transparent); }
 
 .fc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-secondary); }
-.fc-list li.is-low .fc-dot { background: #23a55a; }
-.fc-list li.is-med .fc-dot { background: #e08a2e; }
-.fc-list li.is-high .fc-dot { background: #e04434; }
+.fc-list li.is-low .fc-dot { background: var(--signal-clear); }
+.fc-list li.is-med .fc-dot { background: var(--signal-slow); }
+.fc-list li.is-high .fc-dot { background: var(--signal-congested); }
 
 .fc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .fc-state { font-size: 0.72rem; color: var(--text-secondary); }
@@ -9807,9 +9636,9 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   opacity: 0.85;
   font-size: 11px;
 }
-.mjp-head.is-clear { background: #23a55a; }
-.mjp-head.is-slow { background: #e08a2e; }
-.mjp-head.is-congested { background: #e04434; }
+.mjp-head.is-clear { background: var(--signal-clear); }
+.mjp-head.is-slow { background: var(--signal-slow); }
+.mjp-head.is-congested { background: var(--signal-congested); }
 /* An exit is not a traffic state, so it takes the plaza colour rather than one
    of the three. Same card, same header, different subject. */
 .mjp-head.is-exit { background: #0e7490; }
@@ -10037,20 +9866,20 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
    pointing at. */
 .custom-toll-marker[data-queue="slow"] .toll-pin-name {
   color: #9a5b12;
-  border-color: color-mix(in srgb, #e08a2e 55%, transparent);
-  background: color-mix(in srgb, #e08a2e 14%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--signal-slow) 55%, transparent);
+  background: color-mix(in srgb, var(--signal-slow) 14%, var(--bg-surface));
   font-weight: 700;
 }
 .custom-toll-marker[data-queue="congested"] .toll-pin-name {
   color: #a51d1d;
-  border-color: color-mix(in srgb, #e04434 55%, transparent);
-  background: color-mix(in srgb, #e04434 13%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--signal-congested) 55%, transparent);
+  background: color-mix(in srgb, var(--signal-congested) 13%, var(--bg-surface));
   font-weight: 700;
 }
 /* The leader carries the state as well as the plate, so a red name is joined
    to its ring by a red line and the pair reads as one object. */
-.custom-toll-marker[data-queue="slow"] .toll-pin-name { --callout-line: #e08a2e; }
-.custom-toll-marker[data-queue="congested"] .toll-pin-name { --callout-line: #e04434; }
+.custom-toll-marker[data-queue="slow"] .toll-pin-name { --callout-line: var(--signal-slow); }
+.custom-toll-marker[data-queue="congested"] .toll-pin-name { --callout-line: var(--signal-congested); }
 
 :root[data-theme="dark"] .custom-toll-marker[data-queue="slow"] .toll-pin-name { color: #fbbf24; }
 :root[data-theme="dark"] .custom-toll-marker[data-queue="congested"] .toll-pin-name { color: #fca5a5; }
@@ -12131,3 +11960,251 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   white-space: nowrap;
 }
 .sb-places-key .sb-place-kind { cursor: default; padding: 0 6px; }
+
+/* ===========================================================================
+   LANE SIGNAL
+   ---------------------------------------------------------------------------
+   The redesign's shared-component layer (3 Oct 2026). Appended last so it
+   wins over the earlier rules without rewriting them; each block says what
+   it replaces. The world: overhead lane-control signals on an NLEX gantry.
+   Deep-navy shell, flat steel panels separated by 1px rules, Archivo with
+   condensed labels and tabular numerals, state spoken only in the signal
+   colours (--signal-clear / -slow / -congested), and one action colour
+   (--action) on everything that can be pressed, dragged or is selected.
+   No gradients, no glass, no glows, no hover lifts: only overlays rise.
+   =========================================================================== */
+
+/* --- Browser surfaces ---------------------------------------------------- */
+::selection { background: color-mix(in srgb, var(--action) 32%, transparent); color: inherit; }
+html { scrollbar-color: var(--border-strong) transparent; accent-color: var(--action); }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+:where(button, a, [role="button"], [role="tab"], input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 2px;
+}
+
+h1, h2, h3, h4 { letter-spacing: -0.005em; }
+
+/* --- Shell: sidebar ------------------------------------------------------ */
+.ds-sidebar {
+  background: var(--bg-sidebar);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ds-nav-group-label,
+.ds-sidebar-nav > p {
+  font-size: var(--fs-label);
+  font-weight: 650;
+  font-stretch: var(--font-cond-stretch);
+  letter-spacing: 0.08em;
+  color: #8a9cc2;
+  opacity: 1;
+}
+
+.ds-sidebar-tab {
+  border-radius: var(--radius-md);
+  font-size: var(--fs-body);
+  font-weight: 550;
+  color: #cfd9f0;
+  transform: none;
+}
+.ds-sidebar-tab:hover { transform: none; color: #ffffff; }
+.ds-sidebar-tab.active {
+  background: var(--bg-sidebar-active);
+  box-shadow: none;
+  color: #ffffff;
+  font-weight: 650;
+}
+.ds-sidebar-tab.active:hover { background: #1d3a74; }
+.ds-sidebar-tab.active::before { content: none; }
+/* The active icon lights in the dark-theme action blue in both themes: the
+   rail is navy in both, so the light theme's deeper action blue would sink. */
+.ds-sidebar-tab.active svg { filter: none; color: #5cc8ff; }
+
+.ds-sidebar-footer .ds-avatar-circle {
+  background-color: #183062;
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+/* --- Shell: topbar -------------------------------------------------------- */
+.ds-topbar {
+  background: var(--bg-topbar);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 1px solid var(--border-default);
+  height: 56px;
+}
+
+.ds-top-brand { font-size: 1.125rem; font-weight: 750; font-stretch: 88%; letter-spacing: 0; }
+
+.ds-datetime-block { font-size: var(--fs-caption); font-stretch: var(--font-cond-stretch); }
+.ds-datetime-block strong {
+  color: var(--text-primary);
+  font-size: var(--fs-title);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-theme-toggle {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+.ds-theme-option { border-radius: var(--radius-sm); font-size: var(--fs-caption); }
+.ds-theme-option.active { background: var(--action); color: var(--action-ink); box-shadow: none; }
+
+/* The page ground is one flat tone: the radial washes are gone. */
+.ds-main { background-image: none; }
+
+/* --- Page header ---------------------------------------------------------- */
+.ds-page-header { gap: 12px; margin-bottom: 16px; }
+.ds-page-header .ds-page-header-icon,
+.ds-page-header-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  background: transparent !important;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary) !important;
+  box-shadow: none;
+}
+.ds-page-title {
+  font-size: var(--fs-headline);
+  font-weight: 750;
+  font-stretch: 92%;
+  letter-spacing: -0.005em;
+}
+.ds-page-subtitle { font-size: var(--fs-caption); color: var(--text-secondary); }
+
+/* --- Panels ---------------------------------------------------------------- */
+.chart-card,
+.tab-stat-card,
+.sandbox-metric,
+.table-card {
+  background: var(--bg-surface);
+  background-image: none;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+}
+.chart-card:hover,
+.tab-stat-card:hover,
+.sandbox-metric:hover { box-shadow: none; transform: none; border-color: var(--border-strong); }
+.tab-stat-card::before,
+.sandbox-metric::before { content: none; }
+.tab-stat-card { padding-left: 16px; }
+.tab-stat-card .value,
+.sandbox-metric .value {
+  font-weight: 750;
+  font-stretch: var(--font-cond-stretch);
+  letter-spacing: -0.01em;
+}
+.tab-stat-card h3 {
+  font-size: var(--fs-label);
+  font-weight: 650;
+  font-stretch: var(--font-cond-stretch);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.chart-head h3 { font-size: var(--fs-title); font-weight: 650; }
+
+/* --- Mode tabs (global variant) ------------------------------------------ */
+.mode-tabs {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  box-shadow: none;
+}
+.mode-tabs button { border-radius: var(--radius-sm); font-size: var(--fs-caption); }
+.mode-tabs button:hover:not(.active) { background: var(--bg-surface-hover); }
+.mode-tabs .active { background: var(--action); color: var(--action-ink); box-shadow: none; }
+
+/* --- Tags (pills and badges) ----------------------------------------------
+   Firm corners, tinted ground, ink from the same family. A tag states a fact;
+   road state always rides with its signal glyph elsewhere, never colour alone. */
+.pill,
+.badge {
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-label);
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+}
+.pill.green { background: var(--color-success-bg); color: var(--color-success); border-color: var(--color-success-border); }
+.pill.amber { background: var(--color-warning-bg); color: var(--color-warning); border-color: var(--color-warning-border); }
+.pill.red   { background: var(--color-danger-bg);  color: var(--color-danger);  border-color: var(--color-danger-border); }
+.pill.blue  { background: var(--color-info-bg);    color: var(--color-info);    border-color: var(--color-info-border); }
+.pill.purple,
+.badge      { background: var(--color-purple-bg);  color: var(--color-purple); }
+
+/* --- Buttons ----------------------------------------------------------------
+   Primary is the action colour, flat. Muted is a quiet outlined control that
+   follows the theme (it stayed pale #e7ecf5 in dark mode before). */
+.btn-primary,
+.btn-muted,
+.btn-danger {
+  border-radius: var(--radius-md);
+  font-size: var(--fs-body);
+  font-weight: 650;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  box-shadow: none;
+  transform: none;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.btn-primary,
+.table-toolbar .btn-primary,
+.tab-toolbar .btn-primary { background: var(--action); color: var(--action-ink); }
+.btn-primary:hover { background: var(--brand-primary-dark); filter: none; transform: none; }
+.btn-muted { background: var(--bg-surface); color: var(--text-primary); border-color: var(--border-strong); }
+.btn-muted:hover { background: var(--bg-surface-hover); }
+.btn-muted.active { background: var(--action); color: var(--action-ink); border-color: transparent; }
+.btn-danger,
+.table-toolbar .btn-danger,
+.tab-toolbar .btn-danger { background: var(--signal-congested); color: #ffffff; }
+.btn-danger:hover { filter: brightness(0.94); transform: none; }
+:root[data-theme="dark"] .btn-danger { color: #1a0606; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn-danger { color: #1a0606; } }
+
+/* --- Selects and inputs --------------------------------------------------- */
+.ds-main select,
+.ds-content select,
+.table-toolbar select,
+.tab-toolbar select { border-radius: var(--radius-md); border-color: var(--border-strong); }
+
+/* --- Tables ----------------------------------------------------------------
+   The hover keeps its row tint; the accent bar on the leading cell goes (a
+   coloured side stripe is decoration, and the tint already finds the row). */
+.table-card tbody tr:hover td:first-child::before { content: none; }
+.table-card thead th {
+  font-size: var(--fs-label);
+  font-weight: 650;
+  font-stretch: var(--font-cond-stretch);
+  letter-spacing: 0.06em;
+}
+
+/* --- Dialogs ---------------------------------------------------------------
+   The one place depth is spent: a dialog is lifted, everything else is flat. */
+.ds-modal-backdrop { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(6, 14, 32, 0.6); }
+.ds-modal {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-lg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-sidebar-tab, .chart-card, .tab-stat-card { transition: none; }
+}
+
+/* --- Signal glyph (components/dashboard/SignalGlyph.tsx) ----------------- */
+.ds-signal { display: inline-grid; place-items: center; flex: none; border-radius: var(--radius-sm); vertical-align: middle; }
+.ds-signal.has-plate { background: #0a1630; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+/* On the plate the glyph always uses the bright (dark-theme) signal values,
+   because the plate is dark in both themes, as on a real gantry. */
+.ds-signal.has-plate { --signal-clear: #34d17f; --signal-slow: #ffb21e; --signal-congested: #ff5c5c; --signal-none: #5d6f96; }

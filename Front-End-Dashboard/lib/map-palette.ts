@@ -23,21 +23,21 @@ export function mapPalette(isDark: boolean) {
     /* A wash over the base map. Every road in Central Luzon is drawn at much
        the same weight, so dimming all of it is what actually makes NLEX the
        subject — far more than thickening the corridor could. */
-    scrim: isDark ? "#070b14" : "#f1f5f9",
+    scrim: isDark ? "#081327" : "#eef1f6",
     scrimOpacity: isDark ? 0.55 : 0.6,
     /* A tint under the corridor rather than a coloured glow around it. The
        bright halo competed with the congestion colours it was meant to frame. */
-    halo: isDark ? "#38bdf8" : "#0f172a",
+    halo: isDark ? "#5cc8ff" : "#0a1630",
     haloOpacity: isDark ? 0.14 : 0.08,
     /* A stretch the feed said nothing about. Distinct from every congestion
        colour on purpose: "not reported" is not a traffic condition. */
-    noData: isDark ? "#475569" : "#cbd5e1",
+    noData: isDark ? "#5d6f96" : "#b9c5da",
     /* The roadway. White in light, near-black in dark: in both it separates
        the two ribbons and holds them against the base map. */
-    casing: isDark ? "#0f172a" : "#ffffff",
-    arrow: isDark ? "#e2e8f0" : "#ffffff",
-    alert: isDark ? "#f87171" : "#dc2626",
-    alertRing: isDark ? "#0b1220" : "#ffffff",
+    casing: isDark ? "#0a1630" : "#ffffff",
+    arrow: isDark ? "#e8eefb" : "#ffffff",
+    alert: isDark ? "#ff5c5c" : "#c42a2a",
+    alertRing: isDark ? "#081327" : "#ffffff",
     /* Congestion levels, banded to match how the rest of the app CLASSIFIES
        them. Brighter in dark so they hold up against the wash, deeper in light
        so they do not glow out against white.
@@ -54,12 +54,12 @@ export function mapPalette(isDark: boolean) {
 
        So: 0 is clear, 1-2 are the slow band, 3-5 are the congested band, and
        the anchor of each band is the exact colour the corridor legend uses
-       (#23a55a, #e08a2e, #e04434). The map keeps two shades inside a band, so
+       (the --signal-* tokens in globals.css: #13834a, #a65f00, #c42a2a light; #34d17f, #ffb21e, #ff5c5c dark). The map keeps two shades inside a band, so
        Standstill still reads heavier than Heavy; it simply can no longer land
        in a different band from the word the panel puts on it. */
     level: isDark
-      ? { 0: "#34d399", 1: "#fbbf24", 2: "#f59e0b", 3: "#f87171", 4: "#ef4444", 5: "#dc2626" }
-      : { 0: "#23a55a", 1: "#e8a83f", 2: "#e08a2e", 3: "#e8695a", 4: "#e04434", 5: "#b3261e" },
+      ? { 0: "#34d17f", 1: "#ffc857", 2: "#ffb21e", 3: "#ff8080", 4: "#ff5c5c", 5: "#e03a3a" }
+      : { 0: "#13834a", 1: "#c07a10", 2: "#a65f00", 3: "#d24a4a", 4: "#c42a2a", 5: "#9b1d1d" },
 
     /* The three colours the corridor is drawn in, everywhere it is drawn.
      *
@@ -73,8 +73,8 @@ export function mapPalette(isDark: boolean) {
      * two maps and the panel are now literally the same three colours rather
      * than three sets that happened to agree. */
     status: isDark
-      ? { clear: "#34d399", slow: "#f59e0b", congested: "#ef4444" }
-      : { clear: "#23a55a", slow: "#e08a2e", congested: "#e04434" },
+      ? { clear: "#34d17f", slow: "#ffb21e", congested: "#ff5c5c" }
+      : { clear: "#13834a", slow: "#a65f00", congested: "#c42a2a" },
   };
 }
 
