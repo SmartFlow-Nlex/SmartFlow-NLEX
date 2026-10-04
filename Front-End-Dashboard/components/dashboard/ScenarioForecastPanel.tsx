@@ -318,9 +318,11 @@ export default function ScenarioForecastPanel({
           {showHelp && (
             <div className="sandbox-forecast-foot" style={{ display: "block" }}>
               The <b>segment inflow</b> for the chosen hour is loaded into the simulation, on each
-              carriageway the Carriageway control at the top shows, and the incidents forecast for
-              that hour are placed on the road in focus. Both are the same hourly figures the Traffic
-              and Incident tabs show for that day; change the day or the time and the road follows.
+              carriageway the Carriageway control at the top shows. The incidents forecast for that hour are
+              for the whole corridor, so the sandbox shares them out to the stretch on screen and to each
+              carriageway, and adds what that comes to as scenario events: on a short stretch usually none
+              or one, at a place, lane and time drawn from NLEX&apos;s records for that day. Both are the same
+              hourly figures the Traffic and Incident tabs show; change the day or the time and the road follows.
               Within a week of the last observation the fleet-mix forecast sets how many cars, buses
               and trucks arrive — its daily shares, shaped by the observed hour-to-hour pattern.
               The CO₂ figure is the condition forecast for the day. The simulation&apos;s own CO₂

@@ -58,7 +58,7 @@ pin that applying one never touches the other). A **focus** direction exists onl
 that can address one road at a time — the Command prompt (its request carries no direction) and the
 "Add to" picker; everything else in Both mode shows
 both carriageways, each named. There is no separate Focus control: each of those carries **its own NB / SB
-choice** (Add to, Commands apply to), and they
+choice** (Add to, Commands apply to, and the "Exits, entries & gas stations" list's Showing), and they
 all move the same state, so choosing on one is seen on the others.
 
 ### The two carriageways are independent (modelling limitation)
@@ -173,7 +173,7 @@ happen.
 - **While dragging,** the road is outlined. A ring under the pointer names the place it would land (carriageway,
   lane and km, or the booth or pump of a plaza), and turns red where nothing can go (the median, the verge, or
   a booth for a family that happens on a lane).
-- **Placement:** a drop goes through the same `resolvePick` as "Pick on the road", including a lane lent
+- **Placement:** a drop is resolved by `resolvePick` (lane and km, or a booth or pump), including a lane lent
   under a lane reallocation.
 - **The rest of the event** comes from the form below: vehicle, cause, duration and the Start time. If that
   start has already passed, the event starts now.
@@ -182,8 +182,7 @@ happen.
 - **Refusals:** a refusal (a conflict, say) is shown in the panel and under the road, and nothing is added.
 
 The chip sets `SCENARIO_DRAG_TYPE` (`placement.ts`). The page resolves the drop, and the panel adds the
-event through `dropRef` (`ScenarioDrop`). HTML drag and drop needs a mouse; on a touch screen, use "Pick on
-the road".
+event through `dropRef` (`ScenarioDrop`). HTML drag and drop needs a mouse; on a touch screen, place the event from the form (Most frequent, At a plaza or Km). "Pick on road", a click-to-place mode, was removed on 2026-10-03 because dragging does the same.
 
 ### Reset
 
@@ -291,6 +290,26 @@ sit on the seam just past the lanes an event holds rather than on top of it.
 The scenes are illustrations of the engine's state, not measurements: the wreck's angle, the debris and the
 number of responders are decoration. Wreck *length*, lanes and duration are still the recorded assumptions.
 
+## Forecast incidents on the stretch
+
+A loaded forecast day brings the hour's predicted incidents (`scenarios/forecastIncidents.ts`). The forecast
+counts **every incident NLEX logs, on the whole corridor, both directions**: about 134 a day.
+- **The old behaviour:** until 2026-10-03, that hour's count (capped at one per lane) was placed on the
+  stretch on screen at fixed spots, all at minute 0. So every date showed the same four markers in the same
+  diagonal.
+- **How many:** expected = hourly count × the share of logged incidents that happen on the carriageway itself
+  (lanes or shoulder; about 27%, the rest are at plazas and ramps) × this stretch's share (the forecast's
+  per-exit figures, each exit owning the road nearer to it) × this carriageway's share (the records' NB/SB
+  split). 600 m at Balintawak comes to about 0.1–0.3 an hour per carriageway. The count is drawn as Poisson.
+- **Which kind, lane, place and time:** by NLEX's own counts in `calibration.json`. That covers the family,
+  a breakdown's vehicle and cause, a collision's type, and the family's recorded lane split for the
+  direction. The km is weighted by the forecast, the start is uniform within the hour, and the duration is the
+  family's sampled one.
+- **Seeding:** the draw is seeded by day, hour, carriageway and stretch, so the same day always gives the same
+  picture and another day a different one.
+- **Display:** the draws are ordinary scenario events, listed and removable. Scenario events says what was
+  expected and what was drawn. Reset clears them with the other events.
+
 ## Lanes: from the road
 
 Each carriageway's lane count follows the road under the stretch on screen. `lib/nlex-lanes.ts` holds through
@@ -308,8 +327,8 @@ Until 2026-10-03 the table was empty, and every stretch ran at the slider's 4.
 
 ## Lane reallocation
 
-In Both mode, a control in **Interventions** (after the two carriageways' own panels, since it acts on both) moves **1 or 2 lanes** from one carriageway to the other:
-`NB +1`, `NB +2`, `SB +1`, `SB +2`, or Off. It works the way NLEX opens a lane of the opposite bound: the
+In Both mode, a control in **Interventions** (after the two carriageways' own panels, since it acts on both) moves **one lane** from one carriageway to the other, as NLEX opens a single lane of the opposite bound (a two-lane option existed until 2026-10-03):
+`NB +1`, `SB +1`, or Off. It works the way NLEX opens a lane of the opposite bound: the
 recipient's traffic crosses the median at an opening at each end of the stretch and drives the other
 carriageway's innermost lanes, coned off from that carriageway's own traffic, which keeps its remaining lanes.
 The canvas draws exactly that (since 2026-10-03): both carriageways keep the lanes they are built with

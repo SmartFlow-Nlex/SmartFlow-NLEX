@@ -133,14 +133,10 @@ type Props = {
    * after warm-up (the engine's clock); this is what lets the form and the list speak in time of day.
    */
   clockStartMin: number;
-  /** Arm the canvas: the next click on the road (or a booth) is handed back here. */
-  onPickOnRoad?: (direction: Direction, done: (p: PickResult) => void) => void;
   /** Filled by the panel: what the road calls when a scenario chip is dropped on it. */
   dropRef?: { current: ScenarioDrop | null };
   /** A chip is being dragged (its family), or the drag ended (null): the road shows where it would land. */
   onDragFamily?: (family: FamilyKey | null) => void;
-  /** Disarm it again. */
-  onCancelPick?: () => void;
   /** Outline a plaza or service area on the canvas while it is the chosen place. */
   onHighlight?: (facilityId: string | null) => void;
 };
@@ -542,8 +538,6 @@ export default function ScenarioPanel(props: Props) {
      to ask of an incident, and the answer is in the corridor's own record. */
   const [placeMode, setPlaceMode] = useState<PlaceMode>("data");
   const [hotChoice, setHotChoice] = useState<string | null>(null);
-  const [pick, setPick] = useState<PickResult | null>(null);
-  const [picking, setPicking] = useState(false);
   const [siteId, setSiteId] = useState<string | null>(null);
   const [siteStations, setSiteStations] = useState<number[]>([0]);
   const [siteApproach, setSiteApproach] = useState(false);
@@ -604,7 +598,6 @@ export default function ScenarioPanel(props: Props) {
     posKm,
     candidates,
     choice: hotChoice,
-    pick: pick && pick.direction === direction ? pick : null,
     sites,
     siteId,
     siteStations,
@@ -616,28 +609,14 @@ export default function ScenarioPanel(props: Props) {
   const siteSel = sites.find((x) => x.id === siteId) ?? sites[0] ?? null;
   // The plaza or service area being aimed at is outlined on the road.
   const highlightId = site?.facilityId ?? (mode === "site" ? siteSel?.id ?? null : null);
-  const { onHighlight, onPickOnRoad, onCancelPick } = props;
+  const { onHighlight } = props;
   useEffect(() => {
     onHighlight?.(highlightId);
   }, [highlightId, onHighlight]);
   useEffect(() => () => onHighlight?.(null), [onHighlight]);
-  const armPick = () => {
-    if (!onPickOnRoad) return;
-    setPicking(true);
-    onPickOnRoad(direction, (res) => {
-      setPick(res);
-      setPicking(false);
-      setLane(null);
-    });
-  };
   const choosePlaceMode = (m: PlaceMode) => {
     setPlaceMode(m);
     setLane(null);
-    if (m === "pick") armPick();
-    else if (picking) {
-      setPicking(false);
-      onCancelPick?.();
-    }
   };
   // Lane numbers mean the same on both carriageways (lane 1 against the median), so with two targets the
   // lane list is the shorter road's and both events get the same lane.
@@ -898,12 +877,6 @@ export default function ScenarioPanel(props: Props) {
               Most frequent
             </button>
           )}
-          {!onBoth && onPickOnRoad && (
-            <button role="radio" aria-checked={mode === "pick"} className={mode === "pick" ? "active" : ""} data-scn-place="pick" onClick={() => choosePlaceMode("pick")}
-                    title="Click a lane, a toll booth or a pump on the road">
-              Pick on road
-            </button>
-          )}
           {SITE_FAMILIES.has(family) && !onBoth && (
             <button role="radio" aria-checked={mode === "site"} className={mode === "site" ? "active" : ""} data-scn-place="site" onClick={() => choosePlaceMode("site")}
                     disabled={sites.length === 0}
@@ -934,14 +907,6 @@ export default function ScenarioPanel(props: Props) {
                 {hot.data.period ? `, ${hot.data.period.from} to ${hot.data.period.to}` : ""}. Source: {hot.data.source}.{hot.data.note ? ` ${hot.data.note}` : ""}
               </span>
             )}
-          </div>
-        )}
-
-        {mode === "pick" && (
-          <div className="sandbox-btn-row" style={{ marginTop: 4 }}>
-            <button className={`btn-muted${picking ? " active" : ""}`} data-scn="pick-arm" onClick={() => (picking ? (setPicking(false), onCancelPick?.()) : armPick())}>
-              {picking ? "Cancel picking" : pick && pick.direction === direction ? "Pick again" : "Pick on road"}
-            </button>
           </div>
         )}
 
@@ -1071,32 +1036,38 @@ export default function ScenarioPanel(props: Props) {
           No NLEX record of this family exists, so there is nothing to sample from — enter the duration yourself.
         </p>
       ) : (
-        <div className="sandbox-speed-seg">
+        <div className="sandbox-speed-seg sandbox-scn-duration-seg" role="radiogroup" aria-label="How long the event lasts">
           {DURATION_CHOICES.map((c) => (
-            <button key={c.id} className={choice === c.id ? "active" : ""} data-scn-duration={c.id} onClick={() => setChoice(c.id)}>
+            <button key={c.id} role="radio" aria-checked={choice === c.id} className={choice === c.id ? "active" : ""} data-scn-duration={c.id} onClick={() => setChoice(c.id)}>
               {c.label}
             </button>
           ))}
         </div>
       )}
-      {choice === "sampled" && (
-        <button className="btn-muted" data-scn="redraw" onClick={() => setSeed(1 + Math.floor(Math.random() * 2147483000))} title="Draw again from the same calibrated distribution">
-          Redraw
-        </button>
-      )}
       {choice === "manual" && (
-        <label>
+        <label className="sandbox-scn-manual">
           Minutes
           <NumberField value={manualMin} min={0.1} max={1440} step={1} decimals={1} scn="manual-min" onCommit={setManualMin} />
         </label>
       )}
-      {preview !== null && <ResolutionBlock resolved={preview} />}
-      {previewPhases.length > 0 && (
-        <ul className="sandbox-scn-phases" data-scn="preview-phases">
-          {previewPhases.map((ph) => (
-            <li key={ph.id} className={ph.skipped ? "is-skipped" : ""}>{ph.text}</li>
-          ))}
-        </ul>
+      {(preview !== null || previewPhases.length > 0) && (
+        <div className="sandbox-scn-duration-out">
+          <div className="sandbox-scn-duration-head">
+            {preview !== null && <ResolutionBlock resolved={preview} />}
+            {choice === "sampled" && (
+              <button className="sandbox-scn-redraw" data-scn="redraw" onClick={() => setSeed(1 + Math.floor(Math.random() * 2147483000))} title="Draw again from the same calibrated distribution">
+                ↻ Redraw
+              </button>
+            )}
+          </div>
+          {previewPhases.length > 0 && (
+            <ul className="sandbox-scn-phases" data-scn="preview-phases">
+              {previewPhases.map((ph) => (
+                <li key={ph.id} className={ph.skipped ? "is-skipped" : ""}>{ph.text}</li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       {refusalNow !== null && (

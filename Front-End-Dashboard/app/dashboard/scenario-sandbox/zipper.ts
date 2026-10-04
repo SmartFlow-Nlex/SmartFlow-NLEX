@@ -6,7 +6,7 @@ import type { Direction } from "./scenarios/adapter";
  * name "zipper" from when the feature was first built as a zipper lane; the operator-facing name is
  * REALLOCATION_NAME, and the engine's own "zipper merge" is an unrelated thing.)
  *
- * Reallocation lends 1 or 2 lanes from one carriageway to the other, the way NLEX opens a lane of the
+ * Reallocation lends one lane from one carriageway to the other, the way NLEX opens a lane of the
  * opposite bound: the receiving carriageway's traffic crosses the median at a crossover, drives the other
  * carriageway's innermost lanes coned off from its traffic, and crosses back at the far end. The engine
  * cannot change a carriageway's lane count mid-run, so the two lane counts are changed together, the total
@@ -24,7 +24,7 @@ export const REALLOCATION_NAME = "Lane reallocation";
 export type ZipperState = {
   /** The carriageway that GAINED lanes. */
   readonly toward: Direction;
-  /** How many lanes moved (1 or 2). */
+  /** How many lanes moved (1; ZIPPER_LANES.maxTransfer). */
   readonly lanes: number;
   /** Each carriageway's lane count before the transfer — what "Off" restores. */
   readonly base: Readonly<Record<Direction, number>>;
@@ -41,7 +41,7 @@ export function planZipper(base: Readonly<Record<Direction, number>>, toward: Di
   const { minLanes, maxLanes, maxTransfer } = ASSUMPTIONS.ZIPPER_LANES.value;
   const donor = other(toward);
   if (!Number.isInteger(lanes) || lanes < 1 || lanes > maxTransfer) {
-    return { ok: false, reason: `Move 1 lane (zipper) or ${maxTransfer} (counterflow); got ${lanes}.` };
+    return { ok: false, reason: `One lane moves: NLEX opens a single lane of the opposite bound (got ${lanes}).` };
   }
   if (base[donor] - lanes < minLanes) {
     return { ok: false, reason: `${donor} would drop to ${base[donor] - lanes} lane${base[donor] - lanes === 1 ? "" : "s"}; a carriageway keeps at least ${minLanes}.` };

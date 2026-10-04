@@ -18,8 +18,11 @@ import calibrationJson from "./calibration.json";
 import { CLASS_META, TrafficSim, type Interventions, type Metrics } from "../simulation";
 import { combineBaselines, combineMetrics, flowWeightedSpeed } from "../bothMetrics";
 import { drawBorrowedLanes, drawScenes, drawWater, drawWeather, hasSceneArt, type SceneCtx, type SceneGeometry } from "../sceneArt";
+import { drawForecastEvents, expectedOnStretch, ON_CARRIAGEWAY_SHARE } from "./forecastIncidents";
 import { borrowedLanes, crossoverM, defaultStretch, planStretch, planZipper, REALLOCATION_NAME, zipperCounts, zipperHolds, type StretchLimits } from "../zipper";
 import { drawMotorcycle, type BikeCtx } from "../motorcycleArt";
+import { FacilityEngine, type FacilityHost, type FacilitySpec } from "../facilities";
+import { APRON_ROLES, BARRIER_ROLES, apronOutline, serviceSite, wAtU } from "../facilityArt";
 import { shapeForecastMix, type ClassShares } from "../forecastMix";
 import { getRecommendation, CLOSURE_LANE_CAPACITY_VEH_H, type Supply } from "../recommendation";
 import { BUS_PAINTS, CAB_PAINTS, CAR_PAINTS, MOTORCYCLE_PAINTS, PAINT_WHITE, TRAILER_PAINTS, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint } from "../vehiclePaint";
@@ -2069,6 +2072,33 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check("reallocation art: borrowed lanes are marked (wash, chevrons, a line of traffic cones on the edge away from the median, and the scheme's name); none borrowed paints nothing", lanesR.count("fillRect") >= 1 && lanesR.count("fillText") === 1 && lanesR.count("stroke") > 5 && lanesR.count("arc") > 30 && noLanes.calls.length === 0);
 }
 
+// --- the incident forecast on a stretch: shared out, not dumped; drawn per day, not fixed
+{
+  // The forecast's per-exit shape (Jul 10, 2026), whole corridor 134 a day; 8 at 19:00.
+  const byExit = [
+    { km: 12, perDay: 39.3 }, { km: 13.63, perDay: 6 }, { km: 15.44, perDay: 15.7 }, { km: 20.21, perDay: 17.8 }, { km: 23.73, perDay: 13.3 },
+    { km: 27.2, perDay: 9 }, { km: 33.09, perDay: 5 }, { km: 45.33, perDay: 4 }, { km: 65.78, perDay: 9 }, { km: 88.25, perDay: 5 },
+  ];
+  const whole = (["NB", "SB"] as const).reduce((a, d) => a + expectedOnStretch({ hourly: 8, byExit, fromKm: 12, toKm: 88.25, direction: d }), 0);
+  const short = expectedOnStretch({ hourly: 8, byExit, fromKm: 12, toKm: 12.6, direction: "NB" });
+  check(
+    `forecast incidents: the corridor's hourly count is shared out — the whole corridor, both ways, gets back ${whole.toFixed(2)} (= 8 x the ${(ON_CARRIAGEWAY_SHARE * 100).toFixed(0)}% on the carriageway), and 600 m at Balintawak northbound ${short.toFixed(2)}, not 8`,
+    Math.abs(whole - 8 * ON_CARRIAGEWAY_SHARE) < 1e-6 && short > 0 && short < 1 && ON_CARRIAGEWAY_SHARE > 0.2 && ON_CARRIAGEWAY_SHARE < 0.35,
+  );
+  const draw = (seed: string) => drawForecastEvents({ expected: 3, seed, direction: "NB", fromKm: 12, toKm: 12.6, laneCount: 4, startFromMin: 0, byExit });
+  const a = draw("2026-07-10|19|NB");
+  const sameAgain = JSON.stringify(draw("2026-07-10|19|NB")) === JSON.stringify(a);
+  const days = ["2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06", "2026-07-07"].map((d) => JSON.stringify(draw(`${d}|19|NB`)));
+  const all = [a, ...days.map((x) => JSON.parse(x) as ReturnType<typeof draw>)].flat();
+  check(
+    "forecast incidents: the same day draws the same events and other days different ones, each inside the stretch, the road's lanes and the hour, as an ordinary scenario event with a sampled duration",
+    sameAgain && new Set(days).size === days.length &&
+      all.every((e) => e.positionKm >= 12 && e.positionKm <= 12.6 && e.startMinutes >= 0 && e.startMinutes < 60 && e.duration.kind === "sampled" && (e.lane === null || (e.lane >= 1 && e.lane <= 4))) &&
+      new Set(all.map((e) => e.variant.family)).size > 1,
+  );
+  check("forecast incidents: nothing expected draws nothing", drawForecastEvents({ expected: 0, seed: "x", direction: "SB", fromKm: 12, toKm: 13, laneCount: 4, startFromMin: 0, byExit }).length === 0);
+}
+
 // --- lane reallocation in the engine: lent lanes are entered and left only at the crossovers
 {
   check("lane reallocation: the crossover is the recorded 150 m, or a fifth of a stretch too short for two", crossoverM(1000) === 150 && crossoverM(500) === 100 && ASSUMPTIONS.ZIPPER_LANES.value.crossoverM === 150);
@@ -2103,17 +2133,16 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
 {
   const b44 = { NB: 4, SB: 4 } as const;
   const okNB1 = planZipper(b44, "NB", 1);
-  const okNB2 = planZipper(b44, "NB", 2);
-  const okSB2 = planZipper(b44, "SB", 2);
   check("lane reallocation: from 4 + 4, one lane moves either way (5 + 3, 3 + 5) and the total stays 8", okNB1.ok && okNB1.counts.NB === 5 && okNB1.counts.SB === 3 && planZipper(b44, "SB", 1).ok && (() => { const p = planZipper(b44, "SB", 1); return p.ok && p.counts.SB === 5 && p.counts.NB === 3; })());
-  check("lane reallocation: from 4 + 4, counterflow moves two lanes (6 + 2, 2 + 6), the most the limits allow, total kept", okNB2.ok && okNB2.counts.NB === 6 && okNB2.counts.SB === 2 && okSB2.ok && okSB2.counts.SB === 6 && okSB2.counts.NB === 2);
-  const tooFew = planZipper({ NB: 3, SB: 3 }, "NB", 2);
-  const tooMany = planZipper({ NB: 5, SB: 5 }, "NB", 2);
-  const nonsense = [planZipper(b44, "NB", 0), planZipper(b44, "NB", 3), planZipper(b44, "NB", 1.5)];
+  const two = planZipper(b44, "NB", 2);
+  check("lane reallocation: only one lane moves — two is refused, saying NLEX opens a single lane of the opposite bound", !two.ok && /single lane/.test(two.reason), two.ok ? "" : two.reason);
+  const tooFew = planZipper({ NB: 2, SB: 2 }, "NB", 1);
+  const tooMany = planZipper({ NB: 6, SB: 5 }, "NB", 1);
+  const nonsense = [planZipper(b44, "NB", 0), planZipper(b44, "NB", 2), planZipper(b44, "NB", 1.5)];
   check("lane reallocation: a transfer that would leave the donor below 2 lanes is refused, saying which carriageway and how many lanes", !tooFew.ok && tooFew.reason.includes("SB") && tooFew.reason.includes("1 lane") && tooFew.reason.includes("at least 2"), tooFew.ok ? "" : tooFew.reason);
   check("lane reallocation: a transfer that would take the recipient past 6 lanes is refused, saying so", !tooMany.ok && tooMany.reason.includes("NB") && tooMany.reason.includes("7") && tooMany.reason.includes("6"), tooMany.ok ? "" : tooMany.reason);
-  check("lane reallocation: 0, 3 or a fractional number of lanes is refused", nonsense.every((p) => !p.ok));
-  check("lane reallocation: the limits are the recorded assumption (min 2, max 6, at most 2 moved), not numbers scattered in the code", ASSUMPTIONS.ZIPPER_LANES.value.minLanes === 2 && ASSUMPTIONS.ZIPPER_LANES.value.maxLanes === 6 && ASSUMPTIONS.ZIPPER_LANES.value.maxTransfer === 2);
+  check("lane reallocation: 0, 2 or a fractional number of lanes is refused", nonsense.every((p) => !p.ok));
+  check("lane reallocation: the limits are the recorded assumption (min 2, max 6, one lane moved), not numbers scattered in the code", ASSUMPTIONS.ZIPPER_LANES.value.minLanes === 2 && ASSUMPTIONS.ZIPPER_LANES.value.maxLanes === 6 && ASSUMPTIONS.ZIPPER_LANES.value.maxTransfer === 1);
   check("lane reallocation: the lane total is conserved by every accepted transfer, over every base 2..5 + 2..5, both directions, 1 and 2 lanes", (() => {
     for (let a = 2; a <= 5; a++) for (let b = 2; b <= 5; b++) for (const to of ["NB", "SB"] as const) for (const n of [1, 2]) {
       const p = planZipper({ NB: a, SB: b }, to, n);
@@ -2124,8 +2153,8 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   if (!okNB1.ok) throw new Error("fixture");
   const held = { NB: 5, SB: 3 };
   check("lane reallocation: zipperCounts reproduces what the plan set, and zipperHolds is true only while the lane counts are exactly those", zipperCounts(okNB1.state).NB === 5 && zipperCounts(okNB1.state).SB === 3 && zipperHolds(okNB1.state, held) && !zipperHolds(okNB1.state, { NB: 4, SB: 3 }) && !zipperHolds(okNB1.state, { NB: 5, SB: 4 }) && !zipperHolds(okNB1.state, b44));
-  check("lane reallocation: only the carriageway that GAINED lanes has borrowed ones (the innermost n); the donor and 'no scheme' have none", borrowedLanes(okNB1.state, "NB") === 1 && borrowedLanes(okNB1.state, "SB") === 0 && borrowedLanes(okNB2.ok ? okNB2.state : null, "NB") === 2 && borrowedLanes(null, "NB") === 0);
-  check("lane reallocation: the scheme is called 'Lane reallocation' — one name for one or two lanes", REALLOCATION_NAME === "Lane reallocation");
+  check("lane reallocation: only the carriageway that GAINED lanes has borrowed ones (the innermost n); the donor and 'no scheme' have none", borrowedLanes(okNB1.state, "NB") === 1 && borrowedLanes(okNB1.state, "SB") === 0 && borrowedLanes(null, "NB") === 0);
+  check("lane reallocation: the scheme is called 'Lane reallocation'", REALLOCATION_NAME === "Lane reallocation");
   // the engine really does run at the lane counts a scheme produces (2 and 6), fills them and stays finite
   let runs = "";
   for (const lanes of [2, 6]) {
@@ -2302,7 +2331,7 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check("lane reallocation: nothing the operator can read still calls it a zipper lane or counterflow (UI strings, canvas labels, assumption text)", !/Zipper lane|ZIPPER LANE|Counterflow|COUNTERFLOW|zipper lane|counterflow/.test(operatorText));
   check(
     "lane reallocation: the control is titled with the name and its \"i\" states the model — the other carriageway's inner lanes, entered and left at a median opening at each end — and warns what a change restarts",
-    /<InfoLabel info=\{REALLOCATION_INFO\}>\{REALLOCATION_NAME\}<\/InfoLabel>/.test(pageSource) && /Its traffic crosses the median at an opening at each end of the stretch and drives the borrowed lanes coned off from the other carriageway's traffic/.test(pageSource) &&
+    /<InfoLabel info=\{REALLOCATION_INFO\}>\{REALLOCATION_NAME\}<\/InfoLabel>/.test(pageSource) && /Its traffic crosses the median at an opening at each end of the stretch and drives the borrowed lane coned off from the other carriageway's traffic/.test(pageSource) &&
       /Changing it restarts BOTH carriageways: clocks, baselines, and hand-set closures, speed limits and incidents are cleared\. Scenario events stay and replay from their start\./.test(pageSource) &&
       /\$\{REALLOCATION_NAME\.toUpperCase\(\)\} · /.test(pageSource),
   );
@@ -2536,6 +2565,86 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
     "recommendation: CLOSURE_LANE_CAPACITY_VEH_H is what the engine's open lanes carry past a closure (at or below it, within 10%), so 'absorbed' never promises room the road does not have",
     measured >= CLOSURE_LANE_CAPACITY_VEH_H && measured <= CLOSURE_LANE_CAPACITY_VEH_H * 1.1,
     `${measured.toFixed(0)} veh/h per open lane measured vs ${CLOSURE_LANE_CAPACITY_VEH_H}`,
+  );
+}
+
+/* ───────────────────────────── plaza aprons ───────────────────────────── */
+{
+  /* A ramp plaza (and a service area's forecourt) is paved as one apron. Its lanes leaving the booths join one at
+   * a time, each holding its line until its turn; stroked one by one over the verge they were separate strips with
+   * grass between — a five-booth plaza read as five roads merging into one (the operator's report, 2026-10-03). */
+  const spec = (id: string, kind: FacilitySpec["kind"], booths: number): FacilitySpec => ({ id, kind, name: id, x: 100, booths, serviceSec: 12 });
+  const engine = new FacilityEngine(
+    [spec("entry5", "entry_ramp", 5), spec("exit7", "exit_ramp", 7), spec("entry3", "entry_ramp", 3), spec("fuel", "service_area", 4), spec("barrier24", "barrier", 24)],
+    { laneCount: 4 } as unknown as FacilityHost,
+  );
+  for (const f of engine.list) {
+    // A barrier's apron is its lanes fanning out over the carriageway to the booths and back (Bocaue's 24).
+    const roles = f.laneEntries ? BARRIER_ROLES : APRON_ROLES;
+    const o = apronOutline(f, roles);
+    // Every lane of the apron, every quarter metre, lies inside the paved outline (vehicles never drawn on grass).
+    let worst = 0;
+    let holes = 0;
+    if (o) {
+      const lanes = f.paths.filter((p) => roles.has(p.role));
+      for (const p of lanes) {
+        for (let uu = p.pts[0].u; uu <= p.pts[p.pts.length - 1].u; uu += 0.25) {
+          const w = wAtU(p, uu);
+          const i = o.u.findIndex((x) => x >= uu - 1e-9);
+          if (w === null || i < 0) { holes++; continue; }
+          const t = i === 0 ? 0 : (uu - o.u[i - 1]) / (o.u[i] - o.u[i - 1]);
+          const lo = i === 0 ? o.lo[0] : o.lo[i - 1] + (o.lo[i] - o.lo[i - 1]) * t;
+          const hi = i === 0 ? o.hi[0] : o.hi[i - 1] + (o.hi[i] - o.hi[i - 1]) * t;
+          worst = Math.max(worst, lo - (w - f.pitch / 2), w + f.pitch / 2 - hi);
+        }
+      }
+    }
+    check(
+      `plaza apron (${f.spec.id}): one paved outline from the first lane fanning out to the last joining, containing every lane along its whole length`,
+      o !== null && holes === 0 && worst <= 1e-6,
+      o === null ? "no outline" : `${holes} points outside its span, worst overhang ${(worst / f.pitch).toFixed(3)} of a lane`,
+    );
+  }
+  // A service area is paved as its whole lot: the forecourt, then the shop and car park beside the acceleration lane.
+  const fuel = engine.list.find((f) => f.spec.kind === "service_area");
+  const lot = fuel ? serviceSite(fuel) : null;
+  let lotOver = Infinity;
+  let lotLen = 0;
+  if (fuel && lot) {
+    lotOver = 0;
+    lotLen = lot.uEnd - lot.uA;
+    for (const p of fuel.paths.filter((q) => q.role === "pumpIn" || q.role === "pump" || q.role === "pumpOut")) {
+      for (let uu = p.pts[0].u; uu <= p.pts[p.pts.length - 1].u; uu += 0.25) {
+        const w = wAtU(p, uu)!;
+        const i = Math.max(1, lot.u.findIndex((x) => x >= uu - 1e-9));
+        const tt = (uu - lot.u[i - 1]) / Math.max(1e-9, lot.u[i] - lot.u[i - 1]);
+        const hi = lot.hi[i - 1] + (lot.hi[i] - lot.hi[i - 1]) * Math.max(0, Math.min(1, tt));
+        lotOver = Math.max(lotOver, w + fuel.pitch / 2 - hi, lot.wIn - (w - fuel.pitch / 2));
+      }
+    }
+  }
+  check(
+    "service area: one paved lot holding every pump lane, running on past the pumps for the shop and car park (at least 200 m in all), no deeper than the forecourt",
+    !!fuel && !!lot && lotOver <= 1e-6 && lotLen >= 200 && Math.max(...lot.hi) <= fuel.wMax + 1e-9,
+    lot ? `overhang ${lotOver.toFixed(4)} lane, lot ${lotLen.toFixed(0)} m, deepest ${Math.max(...lot.hi).toFixed(2)} vs ${fuel?.wMax.toFixed(2)}` : "no lot",
+  );
+  const artSource = readFileSync(new URL("../facilityArt.ts", import.meta.url), "utf8");
+  check(
+    "plaza apron: the ground fills the apron outline, and its lanes get no edge line each (one kerb line round the apron), so they never read as separate roads",
+    /const apron = barrier \|\| site \? null : apronOutline\(f\);/.test(artSource) && /if \(APRON_ROLES\.has\(p\.role\)\) continue;/.test(artSource),
+  );
+  check(
+    "plaza apron: a barrier's apron is filled over the whole carriageway, so its lanes fanning out to the booths are not separate strips with road between",
+    /const barrierApron = barrier \? apronOutline\(f, BARRIER_ROLES\) : null;/.test(artSource) && /c\.lineTo\(g\.xPx\(o\.u\[0\]\), g\.roadInnerY\);/.test(artSource),
+  );
+  check(
+    "exit lane: a diverge is drawn only past the road edge, at the ramp's width — not as plaza asphalt stroked over the outer lane at the road's scale",
+    /const peel = p\.role === "diverge";\s*if \(peel\) \{\s*c\.save\(\);\s*clipToGutter\(g\);/.test(artSource) && /f\.pitch \* \(peel \? g\.gutterPx : scaleAt\(g, mid\)\)/.test(artSource),
+  );
+  const rampPage = readFileSync(new URL("../page.tsx", import.meta.url), "utf8");
+  check(
+    "ramp wedges: drawn only for the engine's own point ramps (an exit or entry not laid out as a plaza), never for every interchange in view",
+    /for \(const r of sim\.cfg\.ramps \?\? \[\]\) \{/.test(rampPage) && !/for \(const ex of exits\)/.test(rampPage),
   );
 }
 

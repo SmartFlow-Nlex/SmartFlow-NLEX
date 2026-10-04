@@ -32,6 +32,7 @@ import { shapeForecastMix, type ClassShares } from "./forecastMix";
 import { corridorPlaces, movementKm, planFacilities, southboundFromBarrier, type FacilityPlan } from "./facilityLayout";
 import type { InflowFrom } from "./recommendation";
 import { borrowedLanes, crossoverM, type ZipperState } from "./zipper";
+import { drawForecastEvents, type ExitIncidents } from "./scenarios/forecastIncidents";
 import { placeFuelStations } from "../../../lib/nlex-fuel-stations";
 
 /**
@@ -116,10 +117,15 @@ export type SharedRoadInputs = {
    */
   readonly forecastInflow: number | null;
   /**
-   * Whole incidents the forecast expects at the chosen hour (the Incident tab's hourly figure), and the one
-   * carriageway they are shown on — the forecast is corridor-wide and names no direction, so it is the road in focus.
+   * The incident forecast for the loaded day and hour, put on this stretch (scenarios/forecastIncidents.ts):
+   * each carriageway's expected count here, the per-exit figures that place them, and a key naming the day and
+   * hour (the draw's seed). Null when no forecast with incidents is loaded.
    */
-  readonly forecastIncidents: { readonly count: number; readonly on: Direction | null };
+  readonly forecastIncidents: {
+    readonly key: string;
+    readonly expected: Readonly<Record<Direction, number>>;
+    readonly byExit: readonly ExitIncidents[];
+  } | null;
   /**
    * The fleet-mix forecast's Class 1 / 2 / 3 shares for the loaded day. Null when none is loaded or the day is
    * outside that model's horizon, and the observed hourly mix runs as before. It is shaped to the hour here, per
@@ -498,29 +504,6 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     rebuild();
   }, [rebuild]);
 
-  /* The incidents the forecast expects this hour, shown on the carriageway the operator is looking at.
-   *
-   * rebuild() makes a fresh engine, and the hour is one of the things that rebuilds it (the ramp flows follow it),
-   * so these are placed after EVERY rebuild rather than once. This effect is declared after the one above and so
-   * runs after it in the same commit, onto the new engine. What was placed last time is lifted out by identity
-   * before the new set goes in, so changing the hour swaps them instead of stacking them.
-   * They are ordinary incidents: they count in "Clear (n)" and the operator can remove them. The first sits in the
-   * outer lane (where a breakdown pulls over), any more stagger inwards and upstream. */
-  const forecastPlacedRef = useRef<Incident[]>([]);
-  const forecastIncidentCount = forecastIncidents.on === direction ? forecastIncidents.count : 0;
-  useEffect(() => {
-    const sim = simRef.current;
-    if (!sim) return;
-    const prev = forecastPlacedRef.current;
-    if (prev.length) sim.interventions.incidents = sim.interventions.incidents.filter((i) => !prev.includes(i));
-    const placed: Incident[] = [];
-    for (let i = 0; i < Math.min(forecastIncidentCount, laneCount); i++) {
-      sim.addIncident(laneCount - 1 - i, segLengthM * (0.6 - 0.08 * i));
-      placed.push(sim.interventions.incidents[sim.interventions.incidents.length - 1]);
-    }
-    forecastPlacedRef.current = placed;
-    setIncidentCount(scenarioBinding.operatorIncidents(sim).length);
-  }, [rebuild, forecastIncidentCount, laneCount, segLengthM, scenarioBinding]);
 
   useEffect(() => {
     if (simRef.current) simRef.current.cfg.inflowVehPerHour = inflow;
@@ -633,6 +616,42 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     scenarioEventsRef.current = removeEvent(scenarioEventsRef.current, id);
     setScenarioEvents(scenarioEventsRef.current);
   }, []);
+
+  /* The incidents the forecast expects this hour on THIS stretch and carriageway, as scenario events
+     (scenarios/forecastIncidents.ts): how many is drawn from the expected count, then each one's kind, lane,
+     place and start within the hour from NLEX's records, with the family's own sampled duration. The draw is
+     seeded by the day, hour, carriageway and stretch, so a different day gives a different picture and the
+     same day the same one. They are ordinary events: listed, numbered, removable. When any of that changes,
+     what the last draw added is lifted out first, so they are swapped rather than stacked. */
+  const forecastAddedRef = useRef<string[]>([]);
+  const [forecastAdded, setForecastAdded] = useState(0);
+  const forecastDrawKey = forecastIncidents
+    ? `${forecastIncidents.key}|${direction}|${fromKm.toFixed(3)}|${toKm.toFixed(3)}|${laneCount}|${forecastIncidents.expected[direction].toFixed(4)}`
+    : null;
+  useEffect(() => {
+    for (const id of forecastAddedRef.current) removeScenarioEvent(id);
+    forecastAddedRef.current = [];
+    setForecastAdded(0);
+    const sim = simRef.current;
+    if (!forecastIncidents || !forecastDrawKey || !sim) return;
+    const specs = drawForecastEvents({
+      expected: forecastIncidents.expected[direction],
+      seed: forecastDrawKey,
+      direction,
+      fromKm,
+      toKm,
+      laneCount,
+      startFromMin: Math.max(0, (sim.time - WARMUP_S) / 60),
+      byExit: forecastIncidents.byExit,
+    });
+    for (const spec of specs) {
+      const r = addScenarioEvent(spec);
+      if (r.ok) forecastAddedRef.current.push(r.event.id);
+    }
+    setForecastAdded(forecastAddedRef.current.length);
+    // The key carries everything the draw depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forecastDrawKey]);
 
   /**
    * Reset pressed: this carriageway back to a clean start, scenarios included. Every event is removed and the
@@ -748,7 +767,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     demand, hourOfDay, activeHour,
     closedLanes, setClosedLanes, toggleLane, lockedLanes,
     speedLimit, setSpeedLimit, shownSpeedLimit,
-    incidentCount, clearIncidents, placeIncident,
+    incidentCount, clearIncidents, placeIncident, forecastAdded,
     closureKm, setClosureKm, closureEndKm, setClosureEndKm, zoneFromKm, setZoneFromKm, zoneToKm, setZoneToKm,
     closureAtKm, closureEndAtKm, shownClosureFromKm, shownClosureToKm, shownZoneFromKm, shownZoneToKm,
     commitClosureStart, commitClosureEnd,
