@@ -37,3 +37,8 @@ All_Scripts/Predictive_Modeling/refresh_congestion.log
 # time to connect. One was committed by accident once (__c.mjs, removed in a
 # follow-up); the prefix keeps that from happening again.
 __*.mjs
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
+# Machine-local AI tooling settings (hooks, consent) and Python bytecode
+.claude/settings.local.json
+__pycache__/

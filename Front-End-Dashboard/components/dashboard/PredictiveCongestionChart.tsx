@@ -8,6 +8,7 @@ import CongestionNarrative from "./CongestionNarrative";
 import { ShieldCheck, ChevronRight } from "lucide-react";
 import { loadForecast } from "./prescriptiveTraffic.shared";
 import { REPLAY_ACTUAL, REPLAY_FORECAST, TOOLTIP_CSS, useMeasuredWidth } from "./replayViz";
+import { plazaLabel } from "../../lib/nlex-exits";
 
 type State = "Low" | "Med" | "High";
 
@@ -26,7 +27,155 @@ type RawRow = { segment: string; hours: number; state: State; probability: numbe
                 pLow?: number | string | null; pMed?: number | string | null; pHigh?: number | string | null;
                 km?: number | null; kmEstimated?: boolean;
                 /** Manila wall-clock "YYYY-MM-DD HH:MM" the horizons count from. */
-                baseTs?: string | null };
+                baseTs?: string | null;
+                /** The typical jam at this exit, hour and severity, from Waze
+                 *  history (gold.congestion_jam_profile). Null where the exit has
+                 *  too little near-plaza history to say. */
+                jamQueueM?: number | null; jamQueueP75M?: number | null;
+                jamDelayS?: number | null; jamDelayP75S?: number | null;
+                jamDistM?: number | null; jamSpeedKmh?: number | null;
+                jamBasisHours?: number | null; jamBasis?: "hour" | "exit" | "corridor" | null;
+                /** Typical vehicles per hour at this exit for the forecast hour,
+                 *  2022-2025 toll data, and that relative to the exit's median
+                 *  hour (gold.exit_volume_profile). */
+                volMedian?: number | null; volP75?: number | null; volRel?: number | null };
+
+/**
+ * The state a cell is SHOWN as.
+ *
+ * The model names the likeliest of three states, so 41% Moving beat 30% Heavy
+ * plus 29% Severe and the cell was painted blue beside a tooltip saying 59%
+ * chance of congestion -- 244 cells of one run said both. On held-out hours the
+ * model's congestion chance is calibrated above 50% (said 55% -> 51% happened,
+ * 66% -> 61%, 75% -> 71%, 85% -> 86%), so "jam or not" is decided by that
+ * chance, and the severity by whichever of Heavy and Severe is likelier. The
+ * live score (Validation evidence) measures both rules on served forecasts.
+ */
+function shownState(d: RawRow): State {
+  if (d.pMed == null || d.pHigh == null) return d.state;
+  const pMed = Number(d.pMed);
+  const pHigh = Number(d.pHigh);
+  if (pMed + pHigh < 0.5) return "Low";
+  return pHigh >= pMed ? "High" : "Med";
+}
+
+/**
+ * A chance, as the card prints it. The model's calibration occasionally lands
+ * on exactly 0 or 1, and "100%" is a promise: scored against what happened,
+ * the cells it printed as 100% jammed 86% of the time (and its 80-99% cells
+ * 92%). Past 95% and under 5% it now says so rather than claiming certainty.
+ */
+export function fmtChance(p: number): string {
+  if (p >= 0.95) return ">95%";
+  if (p <= 0.05) return "<5%";
+  return `${Math.round(p * 100)}%`;
+}
+
+/** "1,880 veh/h" plus how busy that is for this exit. */
+const volText = (v: number) => `${Math.round(v / 10) * 10 >= 1000 ? (Math.round(v / 10) * 10).toLocaleString() : Math.round(v / 10) * 10} veh/h`;
+const volBusy = (rel: number) =>
+  rel >= 1.5 ? "a peak hour here" : rel >= 1.15 ? "busier than usual here" : rel >= 0.85 ? "a usual hour here" : rel >= 0.5 ? "quieter than usual here" : "a quiet hour here";
+
+/** What a jam here typically looks like, in the live map's own terms. */
+type Jam = {
+  queueM: number; queueP75M: number | null;
+  delayS: number; delayP75S: number | null;
+  distM: number | null; speedKmh: number | null;
+  /** How many past jam-hours the figures rest on. */
+  basisHours: number;
+  /** "hour": this exit at this hour and day type. "exit": this exit at any
+   *  hour, used where that hour has too few past jams to stand alone.
+   *  "corridor": the whole corridor, for an exit with no near-plaza history. */
+  basis: "hour" | "exit" | "corridor";
+};
+
+function jamOf(r: RawRow): Jam | null {
+  if (r.jamQueueM == null || r.jamDelayS == null) return null;
+  return {
+    queueM: Number(r.jamQueueM),
+    queueP75M: r.jamQueueP75M == null ? null : Number(r.jamQueueP75M),
+    delayS: Number(r.jamDelayS),
+    delayP75S: r.jamDelayP75S == null ? null : Number(r.jamDelayP75S),
+    distM: r.jamDistM == null ? null : Number(r.jamDistM),
+    speedKmh: r.jamSpeedKmh == null ? null : Number(r.jamSpeedKmh),
+    basisHours: Number(r.jamBasisHours ?? 0),
+    basis: r.jamBasis === "exit" || r.jamBasis === "corridor" ? r.jamBasis : "hour",
+  };
+}
+
+/* Distances and delays are worded exactly as the live map words them, so a
+   forecast jam and a real one read the same: "280 m", "1.2 km", "2 min". The
+   tilde marks them as typical rather than measured. */
+const fmtM = (m: number) => (m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`);
+const fmtDelay = (s: number) => {
+  const m = Math.round(s / 60);
+  return m < 1 ? "under 1 min" : `${m} min`;
+};
+/** Where the queue sits relative to the plaza. History records how far a jam
+ *  was from the exit but not which carriageway it was on, so it cannot say
+ *  "before" or "past" the way the live map can; "from" is what it knows. */
+const jamWhere = (exit: string, j: Jam) =>
+  j.distM == null ? `near ${plazaLabel(exit)}`
+  : j.distM < 80 ? `at ${plazaLabel(exit)}`
+  : `~${fmtM(j.distM)} from ${plazaLabel(exit)}`;
+/** One line, for the episode rows and the headline. */
+const jamSummary = (exit: string, j: Jam) =>
+  `~${fmtM(j.queueM)} queue ${jamWhere(exit, j)} · ~${fmtDelay(j.delayS)} delay`;
+
+/** Traffic volume for the cell's hour, and what it says about a predicted
+ *  jam: a jam in a peak hour is demand; one in a quiet hour is the kind an
+ *  incident or roadworks causes, worth checking before planning around. */
+function volTooltip(state: State | "Pending", volMedian?: number | null, volRel?: number | null): string {
+  if (volMedian == null || volRel == null || state === "Pending") return "";
+  const note =
+    state !== "Low" && volRel < 0.7
+      ? `<div style="margin-top:4px; color:#b45309; font-size:0.8em; line-height:1.4; max-width:250px; white-space:normal;">A jam in a quiet hour is usually an incident or roadworks rather than demand.</div>`
+      : state !== "Low" && volRel >= 1.3
+      ? `<div style="margin-top:4px; color:#64748b; font-size:0.8em; line-height:1.4; max-width:250px; white-space:normal;">Fits the traffic: this is one of the exit's busiest hours.</div>`
+      : "";
+  return `
+    <div style="margin-top:9px; display:flex; justify-content:space-between; gap:12px; align-items:baseline; font-size:0.88em;">
+      <span style="color:#64748b;">Typical traffic</span>
+      <span style="white-space:nowrap;"><b style="color:#0f172a;">~${volText(volMedian)}</b>
+        <span style="color:#94a3b8;"> · ${volRel.toFixed(1)}× · ${volBusy(volRel)}</span></span>
+    </div>${note}`;
+}
+
+/** The jam block in a cell's tooltip, laid out like the live map's jam card:
+ *  where it sits, then queue length, delay and speed. A cell the model expects
+ *  to keep moving still shows it, muted and headed "If a jam forms", because
+ *  "what would it look like" is the next question about a 40% hour. */
+function jamTooltip(exit: string, state: State, j: Jam | null | undefined): string {
+  if (!j) return "";
+  const expected = state !== "Low";
+  const ink = expected ? "#0f172a" : "#475569";
+  const row = (label: string, value: string, extra = "") =>
+    `<span style="color:#64748b;">${label}</span>
+     <span style="font-weight:700; color:${ink}; text-align:right; white-space:nowrap;">${value}${
+       extra ? `<span style="font-weight:500; color:#94a3b8;"> · ${extra}</span>` : ""}</span>`;
+  // The 75th percentile is only worth a mention when it says something the
+  // median does not: a queue that is usually 300 m but often 900 m.
+  const queueTail = j.queueP75M != null && j.queueP75M > j.queueM * 1.25 ? `3 in 4 under ${fmtM(j.queueP75M)}` : "";
+  const delayTail = j.delayP75S != null && j.delayP75S > j.delayS * 1.25 ? `3 in 4 under ${fmtDelay(j.delayP75S)}` : "";
+  const basis = j.basis === "hour"
+    ? `Typical for ${exit} at this hour on this kind of day · ${j.basisHours.toLocaleString()} past jam-hours, Waze 2022–2026`
+    : j.basis === "exit"
+    ? `Typical for ${exit} at any hour; too few past jams at this hour to be specific · ${j.basisHours.toLocaleString()} jam-hours`
+    : `Corridor-wide typical: ${exit} has too few past jams near its plaza to describe on its own`;
+  return `
+    <div style="margin-top:10px; padding-top:8px; border-top:1px solid #eef2f7;">
+      <div style="display:flex; justify-content:space-between; gap:10px; align-items:baseline;">
+        <span style="font-size:0.78em; font-weight:800; letter-spacing:0.05em; text-transform:uppercase; color:${expected ? "#b45309" : "#94a3b8"};">${expected ? "Expected jam" : "If a jam forms"}</span>
+      </div>
+      <div style="margin-top:3px; font-weight:700; color:${ink};">${jamWhere(exit, j)}</div>
+      <div style="margin-top:6px; display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:0.88em; align-items:baseline;">
+        ${row("Queue length", `~${fmtM(j.queueM)}`, queueTail)}
+        ${row("Est. delay", `~${fmtDelay(j.delayS)}`, delayTail)}
+        ${j.speedKmh != null ? row("Speed in the queue", `~${Math.round(j.speedKmh)} km/h`) : ""}
+      </div>
+      <div style="margin-top:7px; color:#94a3b8; font-size:0.78em; line-height:1.45; max-width:250px; white-space:normal;">${basis}</div>
+    </div>`;
+}
 
 // Corridor position now arrives per row from the API (gold.exit_km_post), which
 // carries all 20 exits. The hardcoded table here held only 10, so half the
@@ -264,9 +413,42 @@ type CellItem = {
   conf: number;
   /** First cell of a contiguous run of this state — the only one that is labelled. */
   label: { color: string };
+  jam?: Jam | null;
+  volMedian?: number | null;
+  volRel?: number | null;
 };
 
-type Alert = { segment: string; state: State; from: number; to: number; conf: number };
+/** `jam` is the typical jam at the run's most confident hour: the one hour of
+ *  the episode the model is surest about is the one to describe. */
+type Alert = { segment: string; state: State; from: number; to: number; conf: number; jam: Jam | null;
+                /** Typical volume relative to the exit's usual hour, at the same hour as `jam`. */
+                volRel: number | null };
+
+/** How often a near-plaza jam was reported, by how busy the hour was for the
+ *  exit, 2022-2025 (gold.exit_volume_jam_eval). */
+type VolumeEval = {
+  from: string; to: string;
+  bands: { band: number; label: string; exit_hours: number; jam_rate: number; severe_share: number }[];
+};
+
+/** Served forecasts scored against what happened (gold.v_congestion_forecast_score). */
+type LiveScore = {
+  buckets: {
+    bucket: string; n: number; runs: number;
+    argmax_state_acc: number; argmax_jam_acc: number; shown_jam_acc: number;
+    brier: number; jam_rate: number; first_hour: string; last_hour: string;
+  }[];
+};
+
+/** How the per-cell queue and delay figures held up against live jams the
+ *  history never saw. Written by 11-gold-congestion-jam-profile.sql. */
+type JamEval = {
+  history_from: string; history_to: string; history_exit_hours: number | null;
+  test_from: string; test_to: string; test_exit_hours: number; test_exit_hours_total: number;
+  actual_queue_median_m: number; actual_delay_median_s: number;
+  queue: { profile_median_err_m: number; corridor_median_err_m: number };
+  delay: { profile_median_err_s: number; corridor_median_err_s: number };
+};
 
 /** Accuracy at each forecast horizon, with the "nothing changes" benchmark. */
 /** One exit-day in the week view: how many of that day's forecast hours are
@@ -325,6 +507,9 @@ export default function PredictiveCongestionChart() {
   const [hzAcc, setHzAcc] = useState<HzAcc[]>([]);
   const [range, setRange] = useState<RangeKey>("12h");
   const [evalInfo, setEvalInfo] = useState<CongestionEval | null>(null);
+  const [jamEval, setJamEval] = useState<JamEval | null>(null);
+  const [volEval, setVolEval] = useState<VolumeEval | null>(null);
+  const [liveScore, setLiveScore] = useState<LiveScore | null>(null);
 
   // One km lookup for the whole component: the heatmap, the alert list and the
   // detail drawer all order by corridor position and must agree on it.
@@ -348,6 +533,9 @@ export default function PredictiveCongestionChart() {
             setRaw(fc.congestion as unknown as RawRow[]);
             setModelInfo((fc.extras.congestionModel as ModelInfo | undefined) ?? null);
             setEvalInfo((fc.extras.congestionEval as CongestionEval | null | undefined) ?? null);
+            setJamEval((fc.extras.congestionJamEval as JamEval | null | undefined) ?? null);
+            setVolEval((fc.extras.congestionVolumeEval as VolumeEval | null | undefined) ?? null);
+            setLiveScore((fc.extras.congestionLiveScore as LiveScore | null | undefined) ?? null);
             if (Array.isArray(fc.extras.congestionHorizonAccuracy)) {
               setHzAcc(fc.extras.congestionHorizonAccuracy as HzAcc[]);
             }
@@ -478,6 +666,8 @@ export default function PredictiveCongestionChart() {
     // The calibrated chance of congestion per cell, kept beside the label
     // because the week view has to add chances rather than count labels.
     const probs: (number | null)[][] = segments.map(() => Array(maxHour).fill(null));
+    const jams: (Jam | null)[][] = segments.map(() => Array(maxHour).fill(null));
+    const vols: (number | null)[][] = segments.map(() => Array(maxHour).fill(null));
     const cells: CellItem[] = [];
 
     raw.forEach((d) => {
@@ -485,16 +675,26 @@ export default function PredictiveCongestionChart() {
       // Shift into now-relative columns; anything before column 0 has passed.
       const x = d.hours - 1 - skippedHours;
       if (y < 0 || x < 0 || x >= maxHour) return;
-      const conf = Number(d.probability);
-      states[y][x] = d.state;
-      confs[y][x] = conf;
-      const meta = STATE_META[d.state] ?? STATE_META.Low;
+      const st = shownState(d);
       const pMed = d.pMed == null ? null : Number(d.pMed);
       const pHigh = d.pHigh == null ? null : Number(d.pHigh);
       const pCong = pMed != null && pHigh != null ? pMed + pHigh : null;
+      // Confidence in what the cell SHOWS: the chance of a jam for a
+      // congested cell, the chance of none for a moving one.
+      const conf = pCong == null ? Number(d.probability) : st === "Low" ? 1 - pCong : pCong;
+      states[y][x] = st;
+      confs[y][x] = conf;
+      const meta = STATE_META[st] ?? STATE_META.Low;
       probs[y][x] = pCong;
       const pLow = d.pLow == null ? null : Number(d.pLow);
-      cells.push({ value: [x, y, meta.rank], state: d.state, conf, pCong, pLow, pMed, pHigh, label: { color: meta.text } });
+      const jam = jamOf(d);
+      jams[y][x] = jam;
+      vols[y][x] = d.volRel == null ? null : Number(d.volRel);
+      cells.push({
+        value: [x, y, meta.rank], state: st, conf, pCong, pLow, pMed, pHigh, label: { color: meta.text }, jam,
+        volMedian: d.volMedian == null ? null : Number(d.volMedian),
+        volRel: d.volRel == null ? null : Number(d.volRel),
+      });
     });
 
     // Blank cells for the hours the stored forecast does not reach.
@@ -601,10 +801,14 @@ export default function PredictiveCongestionChart() {
         const on = st !== null && st !== "Low";
         if (on && run && run.state === st && run.to === x) {
           run.to = x + 1;
-          run.conf = Math.max(run.conf, confs[y][x]);
+          if (confs[y][x] > run.conf) {
+            run.conf = confs[y][x];
+            run.jam = jams[y][x] ?? run.jam;
+            run.volRel = vols[y][x] ?? run.volRel;
+          }
         } else {
           if (run) alerts.push(run);
-          run = on ? { segment: segments[y], state: st as State, from: x + 1, to: x + 1, conf: confs[y][x] } : null;
+          run = on ? { segment: segments[y], state: st as State, from: x + 1, to: x + 1, conf: confs[y][x], jam: jams[y][x], volRel: vols[y][x] } : null;
         }
       });
       if (run) alerts.push(run);
@@ -716,7 +920,7 @@ export default function PredictiveCongestionChart() {
           <>
             <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
               Predictive Congestion State Map
-              <InfoTooltip text="Predicted jam state at each exit for the next 12 hours, from Waze jam reports. Red = crawling under 10 km/h, amber = heavy at 10-20 km/h, blue = moving freely or no jam reported. The cuts are this corridor's own: a generic 30 km/h threshold put every reported jam in one class." />
+              <InfoTooltip text="Predicted jam state at each exit for the next 12 hours, from Waze jam reports. Red = crawling under 10 km/h, amber = heavy at 10-20 km/h, blue = moving freely or no jam reported. The cuts are this corridor's own: a generic 30 km/h threshold put every reported jam in one class. Hover a cell for the typical queue length, its distance from the toll plaza and the delay, from four years of Waze jam history at that exit and hour." />
             </h3>
             <div style={{ color: "var(--color-danger, #ef4444)", fontSize: "0.88rem" }}>{loadError}</div>
             <div>
@@ -968,7 +1172,7 @@ export default function PredictiveCongestionChart() {
               <div style="margin-top:9px; display:flex; align-items:baseline; justify-content:space-between; gap:14px;
                           padding-bottom:6px; border-bottom:1px solid #eef2f7;">
                 <span style="color:#64748b;">Chance of congestion</span>
-                <b style="font-size:1.2em; color:${d.pCong >= 0.5 ? "#b91c1c" : "#334155"};">${Math.round(d.pCong * 100)}%</b>
+                <b style="font-size:1.2em; color:${d.pCong >= 0.5 ? "#b91c1c" : "#334155"};">${fmtChance(d.pCong)}</b>
               </div>
               <div style="margin-top:7px; display:grid; grid-template-columns:auto 1fr auto; gap:5px 10px; font-size:0.88em; align-items:baseline;">
                 ${([["High", d.pHigh], ["Med", d.pMed], ["Low", d.pLow]] as [State, number | null | undefined][])
@@ -983,7 +1187,7 @@ export default function PredictiveCongestionChart() {
                               <span style="width:9px; height:9px; border-radius:2px; background:${m.color}; display:inline-block; margin-right:6px;"></span>${m.label}
                             </span>
                             <span style="${sep} color:#94a3b8; white-space:nowrap;">${m.speed}</span>
-                            <span style="${sep} font-weight:${w}; color:#334155; text-align:right;">${Math.round((e[1] as number) * 100)}%</span>`;
+                            <span style="${sep} font-weight:${w}; color:#334155; text-align:right;">${fmtChance(e[1] as number)}</span>`;
                   }).join("")}
               </div>
               ${(() => {
@@ -1011,6 +1215,8 @@ export default function PredictiveCongestionChart() {
                 <span style="color:#64748b;">Confidence</span><span style="font-weight:600; color:${low ? "#b45309" : "#334155"};">${(d.conf * 100).toFixed(0)}%${low ? " · indicative" : ""}</span>
               </div>
             `}
+            ${volTooltip(d.state, d.volMedian, d.volRel)}
+            ${jamTooltip(shownSegments[y], d.state, d.jam)}
           </div>`;
       },
     },
@@ -1176,8 +1382,23 @@ export default function PredictiveCongestionChart() {
         <span style={{ padding: "2px 7px", borderRadius: 999, textAlign: "center", background: severe ? STATE_META.High.color : STATE_META.Med.color, color: severe ? "#fff" : STATE_META.Med.text, fontSize: "0.62rem", fontWeight: 800, letterSpacing: "0.04em" }}>
           {severe ? "SEVERE" : "HEAVY"}
         </span>
-        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          <b style={{ color: "#0f172a" }}>{a.segment}</b> <span style={{ color: "#94a3b8" }}>km {kmLabel(KMI.get(a.segment))}</span>
+        <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <b style={{ color: "#0f172a" }}>{a.segment}</b> <span style={{ color: "#94a3b8" }}>km {kmLabel(KMI.get(a.segment))}</span>
+          </span>
+          {/* The same three things the live map's jam card leads with, as
+              typical figures for this exit at the episode's surest hour. */}
+          {a.jam && (
+            <span title="Typical for this exit at this hour, from four years of Waze jam history"
+                  style={{ fontSize: "0.72rem", color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {jamSummary(a.segment, a.jam)}
+              {a.volRel != null && (
+                <span style={{ color: a.volRel < 0.7 ? "#b45309" : "#94a3b8" }}>
+                  {" · "}{a.volRel < 0.7 ? "quiet hour, check for incidents" : `${a.volRel.toFixed(1)}× usual traffic`}
+                </span>
+              )}
+            </span>
+          )}
         </span>
         <span style={{ color: "#475569", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
           {/* Columns are now-relative: column 1 is the hour in progress, so it
@@ -1228,6 +1449,19 @@ export default function PredictiveCongestionChart() {
     ? `Congestion builds: ${firstCount} of ${segments.length} exit${firstCount === 1 ? "" : "s"} congested at +1h, rising to ${peakCount} by +${peakAt}h. By the peak it is ${whoText}${nSevere > 0 ? `, with ${nSevere} crawling under 10 km/h` : ""}.`
     : `${whoText.charAt(0).toUpperCase()}${whoText.slice(1)} — congested from the first hour${model.allHours ? ` and holding for the whole ${model.maxHour}-hour window` : ""}${nSevere > 0 ? `, ${nSevere} of them crawling under 10 km/h at some point` : ", none of it severe"}.`;
 
+  /* The worst episode, said the way the live map says a real jam: which
+     plaza, how long a queue, how many minutes. Alerts are already ranked
+     severe-first, then longest, then surest, so the first with a profile is
+     the one to name. */
+  const lead = alerts.find((a) => a.jam) ?? null;
+  const leadText = (() => {
+    if (!lead?.jam) return null;
+    const n = model.relHours[lead.from - 1];
+    const clock = hourClock(model.baseTs, model.skippedHours + lead.from);
+    const when = n != null && n <= 0 ? "from now" : clock ? `from ${clock}` : `from +${n ?? lead.from}h`;
+    return `${lead.state === "High" ? "Worst" : "Heaviest"}: ${lead.segment} ${when}, typically a ${jamSummary(lead.segment, lead.jam)}.`;
+  })();
+
   const stat = (value: string, label: string, tone?: string, title?: string) => (
     <div title={title} style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
       <span style={{ fontSize: "1.02rem", fontWeight: 800, color: tone ?? "#0f172a", letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums", lineHeight: 1.1, whiteSpace: "nowrap" }}>{value}</span>
@@ -1255,7 +1489,7 @@ export default function PredictiveCongestionChart() {
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <h3 style={{ fontSize: "1.05rem", color: "#0f172a", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
             Predictive Congestion State Map
-            <InfoTooltip text="Predicted jam state at each exit for the next 12 hours, from Waze jam reports. Red = crawling under 10 km/h, amber = heavy at 10-20 km/h, blue = moving freely or no jam reported. The cuts are this corridor's own: a generic 30 km/h threshold put every reported jam in one class." />
+            <InfoTooltip text="Predicted jam state at each exit for the next 12 hours, from Waze jam reports. Red = crawling under 10 km/h, amber = heavy at 10-20 km/h, blue = moving freely or no jam reported. The cuts are this corridor's own: a generic 30 km/h threshold put every reported jam in one class. Hover a cell for the typical queue length, its distance from the toll plaza and the delay, from four years of Waze jam history at that exit and hour." />
           </h3>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <span
@@ -1344,6 +1578,9 @@ export default function PredictiveCongestionChart() {
         color: nSevere > 0 ? "#991b1b" : model.firstAlert ? "#92400e" : "#166534",
       }}>
         {headline}
+        {leadText && !isWeek && (
+          <div style={{ marginTop: 4, fontWeight: 600 }}>{leadText}</div>
+        )}
       </div>
 
       {/* Row 3: how many, where, how long, how sure — once each.
@@ -1737,6 +1974,157 @@ export default function PredictiveCongestionChart() {
                   {pct(hzFirst.accuracy)} at +1h → {pct(hzLast.accuracy)} at +{hzLast.horizon}h · green where it beats assuming nothing changes
                   {hzLast.persistenceAccuracy != null && <>, which falls to {pct(hzLast.persistenceAccuracy)} by +{hzLast.horizon}h</>}
               </p>
+            </EvBlock>
+
+            {/* 6. The queue, distance and delay figures are a second model on
+                   top of the state, so they get their own check. */}
+            {jamEval && (
+              <EvBlock n={(evalInfo ? (evalInfo.replay ? 6 : 5) : 3) + 1} title="How exact are the queue and delay figures?">
+                <p style={{ margin: "0 0 8px" }}>
+                  They are what jams at that exit, hour and day type typically looked like over{" "}
+                  <b>{jamEval.history_exit_hours != null ? `${jamEval.history_exit_hours.toLocaleString()} past jam-hours` : "four years of Waze history"}</b>{" "}
+                  ({new Date(jamEval.history_from).getFullYear()}–{new Date(jamEval.history_to).toLocaleDateString(undefined, { month: "short", year: "numeric" })}).
+                  Checked against <b>{jamEval.test_exit_hours.toLocaleString()} live jam-hours</b> since{" "}
+                  {new Date(jamEval.test_from).toLocaleDateString(undefined, { month: "short", day: "numeric" })} that the history never saw:
+                </p>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.74rem", fontVariantNumeric: "tabular-nums" }}>
+                    <thead>
+                      <tr style={{ color: "#64748b", textAlign: "left" }}>
+                        <th style={{ padding: "4px 6px 6px 0", fontWeight: 600 }}>Typical error</th>
+                        <th style={{ padding: "4px 6px 6px", fontWeight: 600 }}>This card</th>
+                        <th style={{ padding: "4px 0 6px 6px", fontWeight: 600 }}>One corridor-wide figure</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr style={{ borderTop: "1px solid #eef2f7" }}>
+                        <td style={{ padding: "6px 6px 6px 0" }}>Queue length <span style={{ color: "#94a3b8" }}>· real median {fmtM(jamEval.actual_queue_median_m)}</span></td>
+                        <td style={{ padding: "6px", fontWeight: 700, color: "#15803d" }}>{fmtM(jamEval.queue.profile_median_err_m)}</td>
+                        <td style={{ padding: "6px 0 6px 6px", color: "#64748b" }}>{fmtM(jamEval.queue.corridor_median_err_m)}</td>
+                      </tr>
+                      <tr style={{ borderTop: "1px solid #eef2f7" }}>
+                        <td style={{ padding: "6px 6px 6px 0" }}>Delay <span style={{ color: "#94a3b8" }}>· real median {Math.round(jamEval.actual_delay_median_s)} s</span></td>
+                        <td style={{ padding: "6px", fontWeight: 700, color: "#334155" }}>{Math.round(jamEval.delay.profile_median_err_s)} s</td>
+                        <td style={{ padding: "6px 0 6px 6px", color: "#64748b" }}>{Math.round(jamEval.delay.corridor_median_err_s)} s</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p style={{ margin: "8px 0 0", fontSize: "0.72rem", color: "#64748b" }}>
+                  The queue length is specific to the exit and hour, and that detail more than halves the error. The delay is
+                  not: jams on this corridor cost about two minutes almost everywhere, so read it as &ldquo;about 2 min&rdquo; rather
+                  than to the second.
+                  {jamEval.test_exit_hours < jamEval.test_exit_hours_total && <>
+                    {" "}{(jamEval.test_exit_hours_total - jamEval.test_exit_hours).toLocaleString()} live hours fall at exits with too few
+                    near-plaza jams in the history and were left out of this check; those cells show the corridor-wide typical, labelled as such.
+                  </>}
+                </p>
+              </EvBlock>
+            )}
+
+            {/* 7. Coordination with traffic volume. The model has never seen
+                   a vehicle count, so whether its jams fall in the busy hours is
+                   an independent check, not something it was fitted to. */}
+            {volEval && volEval.bands.length > 0 && (() => {
+              const live = cells.filter((c) => c.state !== "Pending" && c.pCong != null && c.volRel != null);
+              const grp = (lo: number, hi: number) => {
+                const g = live.filter((c) => (c.volRel as number) >= lo && (c.volRel as number) < hi);
+                return g.length ? { n: g.length, p: g.reduce((t, c) => t + (c.pCong as number), 0) / g.length } : null;
+              };
+              const rows = [
+                { label: "Quiet hours (under 0.7×)", g: grp(0, 0.7) },
+                { label: "Usual hours (0.7–1.3×)", g: grp(0.7, 1.3) },
+                { label: "Busy hours (1.3× and over)", g: grp(1.3, 99) },
+              ];
+              const peak = Math.max(...volEval.bands.map((b) => b.jam_rate));
+              return (
+                <EvBlock n={(evalInfo ? (evalInfo.replay ? 6 : 5) : 3) + (jamEval ? 2 : 1)} title="Does it line up with traffic volume?">
+                  <p style={{ margin: "0 0 8px" }}>
+                    The model only sees Waze jam reports, never a vehicle count, so this is an outside check. In the toll data
+                    ({new Date(volEval.from).getFullYear()}–{new Date(volEval.to).getFullYear()}), jams get more common as an exit gets busier:
+                  </p>
+                  <div style={{ display: "grid", gap: 5 }}>
+                    {volEval.bands.map((b) => (
+                      <div key={b.band} style={{ display: "grid", gridTemplateColumns: "150px minmax(0,1fr) 44px", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: "0.72rem", color: "#64748b", whiteSpace: "nowrap" }}>{b.label} usual volume</span>
+                        <div style={{ height: 6, borderRadius: 3, background: "#eef2f7", overflow: "hidden" }}>
+                          <div style={{ width: `${(b.jam_rate / peak) * 100}%`, height: "100%", background: "#64748b", borderRadius: 3 }} />
+                        </div>
+                        <span style={{ fontWeight: 700, color: "#334155", fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{pct(b.jam_rate)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ margin: "6px 0 10px", fontSize: "0.72rem", color: "#64748b" }}>
+                    Share of exit-hours with a jam at the plaza. It peaks at 1.5–2× and eases at the very busiest hours, which
+                    usually run heavy but moving.
+                  </p>
+                  {live.length > 0 && (
+                    <>
+                      <p style={{ margin: "0 0 6px" }}>This forecast, by the same measure — average chance of a jam it gives:</p>
+                      <div style={{ display: "grid", gap: 4, fontSize: "0.74rem" }}>
+                        {rows.filter((r) => r.g).map((r) => (
+                          <div key={r.label} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                            <span style={{ color: "#64748b" }}>{r.label} <span style={{ color: "#94a3b8" }}>· {r.g!.n} cells</span></span>
+                            <b style={{ color: "#0f172a", fontVariantNumeric: "tabular-nums" }}>{pct(r.g!.p)}</b>
+                          </div>
+                        ))}
+                      </div>
+                      <p style={{ margin: "6px 0 0", fontSize: "0.72rem", color: "#64748b" }}>
+                        Rising from quiet to busy hours is what the traffic says should happen. A forecast that put its jams in
+                        the quiet hours would be one to doubt. Hover a cell for its typical volume.
+                      </p>
+                    </>
+                  )}
+                </EvBlock>
+              );
+            })()}
+
+            {/* 8. The map as served, scored. The figures above come from tests
+                   inside training; this is the forecasts people actually saw. */}
+            <EvBlock
+              n={(evalInfo ? (evalInfo.replay ? 6 : 5) : 3) + (jamEval ? 1 : 0) + (volEval ? 1 : 0) + 1}
+              title="Checked against what happened"
+            >
+              {liveScore && liveScore.buckets.length > 0 ? (
+                <>
+                  <p style={{ margin: "0 0 8px" }}>
+                    Every forecast this card serves is now kept and scored once its hours have passed. So far{" "}
+                    <b>{liveScore.buckets.reduce((t, b) => t + b.n, 0).toLocaleString()} exit-hours</b> from{" "}
+                    {Math.max(...liveScore.buckets.map((b) => b.runs))} hourly runs:
+                  </p>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.74rem", fontVariantNumeric: "tabular-nums" }}>
+                      <thead>
+                        <tr style={{ color: "#64748b", textAlign: "left" }}>
+                          <th style={{ padding: "4px 6px 6px 0", fontWeight: 600 }}>Hours ahead</th>
+                          <th style={{ padding: "4px 6px 6px", fontWeight: 600 }}>Jam / no jam right</th>
+                          <th style={{ padding: "4px 6px 6px", fontWeight: 600 }}>Old colouring</th>
+                          <th style={{ padding: "4px 0 6px 6px", fontWeight: 600 }}>Exact state right</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {liveScore.buckets.map((b) => (
+                          <tr key={b.bucket} style={{ borderTop: "1px solid #eef2f7" }}>
+                            <td style={{ padding: "6px 6px 6px 0" }}>{b.bucket} <span style={{ color: "#94a3b8" }}>· {b.n.toLocaleString()}</span></td>
+                            <td style={{ padding: "6px", fontWeight: 700, color: "#0f172a" }}>{pct(b.shown_jam_acc)}</td>
+                            <td style={{ padding: "6px", color: "#64748b" }}>{pct(b.argmax_jam_acc)}</td>
+                            <td style={{ padding: "6px 0 6px 6px", color: "#64748b" }}>{pct(b.argmax_state_acc)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p style={{ margin: "8px 0 0", fontSize: "0.72rem", color: "#64748b" }}>
+                    &ldquo;Old colouring&rdquo; is the likeliest-of-three rule this card used before; the current one colours a cell
+                    congested when the chance of a jam is 50% or more. Early figures rest on few hours and will steady as runs accumulate.
+                  </p>
+                </>
+              ) : (
+                <p style={{ margin: 0 }}>
+                  Every forecast this card serves is now kept (next 24 hours of each hourly run) and will be scored against the jams
+                  Waze reports once those hours pass. The first scores appear here within a few hours.
+                </p>
+              )}
             </EvBlock>
 
             <p style={{ margin: 0, fontSize: "0.72rem", color: "#94a3b8" }}>

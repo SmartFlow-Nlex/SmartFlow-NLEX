@@ -13,7 +13,14 @@ import { useNlexExits, exitNearestKm, displayExitName, CORRIDOR_KM, type NlexExi
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
 
-const DIRECTIONS = ["Both", "NB", "SB"] as const;
+/* A closure is on one carriageway, so the form asks for one. "Both" is no
+   longer offered for new work; rows saved with it before still display as
+   such (see Schedule.direction), and editing one asks for a side. */
+const DIRECTIONS = ["NB", "SB"] as const;
+const DIRECTION_LABEL: Record<(typeof DIRECTIONS)[number], string> = {
+  NB: "Northbound",
+  SB: "Southbound",
+};
 const LANE_CLOSURES = ["None", "Shoulder only", "1 lane", "2 lanes", "Full closure"] as const;
 
 type Status = "scheduled" | "in_progress" | "completed" | "cancelled";
@@ -229,7 +236,7 @@ const emptyForm = {
   description: "",
   startKm: "",
   endKm: "",
-  direction: "Both" as (typeof DIRECTIONS)[number],
+  direction: "NB" as (typeof DIRECTIONS)[number],
   laneClosure: "Shoulder only" as (typeof LANE_CLOSURES)[number],
   startDate: "",
   startTime: "08:00",
@@ -264,6 +271,19 @@ export default function MaintenancePage() {
   }, []);
   const [cancelTarget, setCancelTarget] = useState<Schedule | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  /*
+   * Deleting is deliberately separate from cancelling, and both are offered.
+   *
+   * Cancelling keeps the row and writes a reason, which is what a schedule that
+   * was called off should leave behind — the corridor record still shows work
+   * was planned for that window. Deleting erases it, which is only right for a
+   * row that should never have existed, such as a duplicate or a typo.
+   *
+   * The API has supported DELETE since the endpoint was written; the page never
+   * called it, so a mistaken entry could be cancelled but not removed and sat in
+   * the list permanently.
+   */
+  const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null);
   const [mutating, setMutating] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -368,6 +388,35 @@ export default function MaintenancePage() {
     }
   };
 
+  const removeSchedule = async (s: Schedule) => {
+    if (mutating) return; // ignore double-fires while a request is in flight
+    setMutating(true);
+    setActionError(null);
+    try {
+      const r = await fetch(`${BACKEND}/api/maintenance/${s.id}`, {
+        method: "DELETE",
+        headers: { "x-user": actor },
+      });
+      const json = await r.json();
+      // A 404 here means someone else removed it first. The row is gone either
+      // way, so the list is refreshed rather than an error raised over a state
+      // the operator already wanted.
+      if (!json.success && r.status !== 404) throw new Error(json.message ?? "Delete failed");
+      await refresh();
+      setDeleteTarget(null);
+      setDetail(null);
+      toast.success(`"${s.title}" was deleted.`);
+    } catch (e) {
+      await refresh();
+      const msg = e instanceof Error ? e.message : "Delete failed";
+      setActionError(msg);
+      setTimeout(() => setActionError(null), 5000);
+      toast.error(`Could not delete "${s.title}".`, msg);
+    } finally {
+      setMutating(false);
+    }
+  };
+
   const openEdit = (s: Schedule) => {
     const starts = new Date(s.starts_at);
     const ends = new Date(s.ends_at);
@@ -379,7 +428,9 @@ export default function MaintenancePage() {
       description: s.description ?? "",
       startKm: String(s.start_km),
       endKm: String(s.end_km),
-      direction: s.direction,
+      // Older rows may say "Both", which the form no longer offers. They open
+      // as northbound if they run up the km posts, southbound if down.
+      direction: s.direction === "Both" ? (s.end_km >= s.start_km ? "NB" : "SB") : s.direction,
       laneClosure: s.lane_closure as (typeof LANE_CLOSURES)[number],
       startDate: dateOf(starts),
       startTime: timeOf(starts),
@@ -397,9 +448,17 @@ export default function MaintenancePage() {
     const endKm = Number(form.endKm);
     if (form.title.trim().length < 3) return setFormError("Give the work a short title (at least 3 characters).");
     if (form.startKm === "" || form.endKm === "" || Number.isNaN(startKm) || Number.isNaN(endKm))
-      return setFormError("Both Km markers are required.");
-    if (startKm < 0 || startKm > 100 || endKm < 0 || endKm > 100)
-      return setFormError("Km markers must be between 0 and 100.");
+      return setFormError("Pick a start exit and an end exit.");
+    if (startKm < KM_MIN || startKm > KM_MAX || endKm < KM_MIN || endKm > KM_MAX)
+      return setFormError(`Km posts on this corridor run from ${KM_MIN} (${displayExitName(byKm[0]?.exit_name ?? "")}) to ${KM_MAX} (${displayExitName(byKm[byKm.length - 1]?.exit_name ?? "")}).`);
+    // Start is where traffic reaches the works first: northbound runs up the
+    // km posts, southbound down them.
+    if (form.direction === "NB" ? endKm < startKm : endKm > startKm)
+      return setFormError(
+        form.direction === "NB"
+          ? "Northbound runs up the km posts, so the end must be at a higher km than the start."
+          : "Southbound runs down the km posts, so the end must be at a lower km than the start.",
+      );
     if (!form.startDate || !form.endDate) return setFormError("Start and end date are required.");
     const startsAt = new Date(`${form.startDate}T${form.startTime || "00:00"}`);
     const endsAt = new Date(`${form.endDate}T${form.endTime || "00:00"}`);
@@ -446,6 +505,41 @@ export default function MaintenancePage() {
 
   const set = <K extends keyof typeof emptyForm>(k: K, v: (typeof emptyForm)[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
+
+  /* Exits along the corridor by km post, and the corridor's ends. The km of
+     each exit is the NLEX km post (Balintawak 12 -> Sta. Ines 88.25; see
+     lib/nlex-exits), so picking an exit fills its km and nobody has to type
+     one. The box stays editable for works that start between two exits. */
+  const byKm = useMemo(() => [...NLEX_EXITS].sort((a, b) => a.km - b.km), [NLEX_EXITS]);
+  const KM_MIN = byKm[0]?.km ?? 0;
+  const KM_MAX = byKm[byKm.length - 1]?.km ?? CORRIDOR_KM;
+
+  /* In the order a driver meets them: northbound up the km posts, southbound
+     down. The end list starts after the start exit, so an end the traffic
+     reaches BEFORE the start cannot be picked. */
+  const inTravelOrder = form.direction === "NB" ? byKm : [...byKm].reverse();
+  const exitOption = (x: NlexExit) => ({ label: `${displayExitName(x.exit_name)} · Km ${x.km}`, value: String(x.km) });
+  const startOptions = inTravelOrder.map(exitOption);
+  const startKmNum = form.startKm === "" ? null : Number(form.startKm);
+  const endOptions = inTravelOrder
+    .filter((x) => startKmNum == null || (form.direction === "NB" ? x.km >= startKmNum : x.km <= startKmNum))
+    .map(exitOption);
+
+  const pickStart = (v: string) =>
+    setForm((f) => {
+      const s = Number(v);
+      const e = f.endKm === "" ? null : Number(f.endKm);
+      // An end now behind the start, in travel order, is cleared rather than
+      // left contradicting it.
+      const endStillAhead = e == null || (f.direction === "NB" ? e >= s : e <= s);
+      return { ...f, startKm: v, endKm: endStillAhead ? f.endKm : "" };
+    });
+
+  /* Switching direction reverses the stretch: the end becomes where traffic
+     now arrives first. Picked Meycauayan -> Bocaue northbound, toggle to SB and
+     it reads Bocaue -> Meycauayan. */
+  const setDirection = (d: (typeof DIRECTIONS)[number]) =>
+    setForm((f) => (f.direction === d ? f : { ...f, direction: d, startKm: f.endKm, endKm: f.startKm }));
 
   const segmentNote =
     form.startKm !== "" && form.endKm !== "" && !Number.isNaN(Number(form.startKm)) && !Number.isNaN(Number(form.endKm))
@@ -572,7 +666,7 @@ export default function MaintenancePage() {
             </table>
           </div>
         )}
-        {actionError && !detail && !cancelTarget && (
+        {actionError && !detail && !cancelTarget && !deleteTarget && (
           <p style={{ color: "var(--color-danger)", fontSize: "0.8rem", padding: "8px 18px" }}>{actionError}</p>
         )}
       </article>
@@ -609,16 +703,22 @@ export default function MaintenancePage() {
               ))}
             </div>
             {actionError && <p style={{ color: "var(--color-danger)", fontSize: "0.8rem", padding: "0 18px 8px" }}>{actionError}</p>}
-            {(NEXT_ACTIONS[detail.status].length > 0 || detail.status === "scheduled" || detail.status === "in_progress") && (
-              <div className="ms-form-actions" style={{ padding: "0 18px 16px", flexWrap: "wrap" }}>
+            {/* Always rendered, because Delete applies to every status. The
+                live-only actions are gated individually inside: a completed or
+                already-cancelled schedule has nothing to advance or call off,
+                and the API answers 409 if asked, but it can still be removed. */}
+            <div className="ms-form-actions" style={{ padding: "0 18px 16px", flexWrap: "wrap" }}>
+              {(detail.status === "scheduled" || detail.status === "in_progress") && (
                 <button className="ms-btn-cancel" disabled={mutating} onClick={() => openEdit(detail)}>
                   Edit details
                 </button>
-                {NEXT_ACTIONS[detail.status].map((a) => (
-                  <button key={a.to} className="ms-btn-submit" disabled={mutating} onClick={() => changeStatus(detail, a.to)}>
-                    {mutating ? "Saving…" : a.label}
-                  </button>
-                ))}
+              )}
+              {NEXT_ACTIONS[detail.status].map((a) => (
+                <button key={a.to} className="ms-btn-submit" disabled={mutating} onClick={() => changeStatus(detail, a.to)}>
+                  {mutating ? "Saving…" : a.label}
+                </button>
+              ))}
+              {(detail.status === "scheduled" || detail.status === "in_progress") && (
                 <button
                   className="ms-btn-cancel"
                   disabled={mutating}
@@ -626,8 +726,64 @@ export default function MaintenancePage() {
                 >
                   Cancel schedule
                 </button>
+              )}
+              <button
+                className="ms-btn-cancel"
+                disabled={mutating}
+                style={{ marginLeft: "auto", color: "var(--color-danger)" }}
+                onClick={() => { setDeleteTarget(detail); setDetail(null); }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete-confirmation modal.
+          No reason field: a reason is for a schedule that is being called off and
+          kept, which is what Cancel does. This erases the row, so the only thing
+          worth asking is whether the operator means it. The copy spells out the
+          difference, because "cancel" and "delete" sitting side by side is
+          otherwise a guess. */}
+      {deleteTarget && (
+        <div className={styles.detailBackdrop} role="dialog" aria-modal="true" aria-label="Delete schedule" onClick={() => setDeleteTarget(null)}>
+          <div className={styles.detailModal} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.detailAccent} />
+            <div className={styles.detailHeader}>
+              <div className={styles.detailIcon}>🗑️</div>
+              <div className={styles.detailTitles}>
+                <h3>Delete this schedule?</h3>
+                <p>{deleteTarget.title} · {kmRange(deleteTarget)}</p>
               </div>
-            )}
+              <button className={styles.detailClose} onClick={() => setDeleteTarget(null)} aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: "4px 18px 0" }}>
+              <p style={{ fontSize: "0.84rem", color: "var(--text-secondary)", margin: 0, lineHeight: 1.55 }}>
+                This removes the record entirely. If the work was planned and then called
+                off, use <strong>Cancel schedule</strong> instead — that keeps the entry and
+                its reason on the corridor record.
+              </p>
+              {actionError && <p style={{ color: "var(--color-danger)", fontSize: "0.8rem", marginTop: 8 }}>{actionError}</p>}
+            </div>
+            <div className="ms-form-actions" style={{ padding: "12px 18px 16px" }}>
+              <button
+                className="ms-btn-submit ms-btn-danger-action"
+                disabled={mutating}
+                onClick={() => removeSchedule(deleteTarget)}
+              >
+                {mutating ? "Deleting…" : "Delete permanently"}
+              </button>
+              <button className="ms-btn-cancel" disabled={mutating} onClick={() => setDeleteTarget(null)}>
+                Keep it
+              </button>
+            </div>
+            <div className={styles.detailFooter}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.4" /><path d="M8 7v4M8 5.2v.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+              <p>This cannot be undone.</p>
+            </div>
           </div>
         </div>
       )}
@@ -708,59 +864,73 @@ export default function MaintenancePage() {
               </div>
 
               <p className="ms-section-label" style={{ ...SECTION_STYLE, marginTop: 8 }}>Location</p>
-              <div style={{ display: "grid", gridTemplateColumns: "0.65fr 1.35fr 0.65fr 1.35fr", gap: 12 }}>
-                <div className="ms-input-group">
-                  <label>Start Km <span className="ms-req">*</span></label>
-                  <input type="number" min={0} max={100} className="ms-input" placeholder={`0–${CORRIDOR_KM}`} value={form.startKm} onChange={(e) => set("startKm", e.target.value)} />
+              {/* Direction first: it decides which way the stretch runs, so the
+                  exit lists below follow it. */}
+              <div className="ms-input-group">
+                <label>Direction <span className="ms-req">*</span></label>
+                <div className={styles.segmentedSmall} style={{ width: "100%" }}>
+                  {DIRECTIONS.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      className={form.direction === d ? "active" : ""}
+                      style={{ flex: 1, padding: "9px 12px", fontSize: "0.88rem" }}
+                      onClick={() => setDirection(d)}
+                      aria-pressed={form.direction === d}
+                    >
+                      {form.direction === d && check}
+                      {d} <span style={{ fontWeight: 500, opacity: 0.75, marginLeft: 4 }}>{DIRECTION_LABEL[d]}</span>
+                    </button>
+                  ))}
                 </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.6fr 1.5fr 0.6fr", gap: 12 }}>
                 <div className="ms-input-group">
-                  <label>Start exit</label>
+                  <label>Start exit <span className="ms-req">*</span></label>
                   <Select
                     value={form.startKm}
-                    placeholder="Pick an exit…"
-                    options={NLEX_EXITS.map((x) => ({ label: `${displayExitName(x.exit_name)} (Km ${x.km})`, value: String(x.km) }))}
-                    onChange={(v) => set("startKm", v)}
+                    placeholder={form.direction === "NB" ? "Where it begins, going north…" : "Where it begins, going south…"}
+                    options={startOptions}
+                    onChange={pickStart}
                   />
                 </div>
                 <div className="ms-input-group">
-                  <label>End Km <span className="ms-req">*</span></label>
-                  <input type="number" min={0} max={100} className="ms-input" placeholder={`0–${CORRIDOR_KM}`} value={form.endKm} onChange={(e) => set("endKm", e.target.value)} />
+                  <label>Start Km</label>
+                  <input
+                    type="number" step={0.01} min={KM_MIN} max={KM_MAX} className="ms-input"
+                    placeholder="auto" value={form.startKm}
+                    title="Filled from the exit. Adjust only if the works start between two exits."
+                    onChange={(e) => set("startKm", e.target.value)}
+                  />
                 </div>
                 <div className="ms-input-group">
-                  <label>End exit</label>
+                  <label>End exit <span className="ms-req">*</span></label>
                   <Select
                     value={form.endKm}
-                    placeholder="Pick an exit…"
-                    options={NLEX_EXITS.map((x) => ({ label: `${displayExitName(x.exit_name)} (Km ${x.km})`, value: String(x.km) }))}
+                    placeholder={form.startKm === "" ? "Pick the start first…" : "Where it ends…"}
+                    options={endOptions}
                     onChange={(v) => set("endKm", v)}
+                  />
+                </div>
+                <div className="ms-input-group">
+                  <label>End Km</label>
+                  <input
+                    type="number" step={0.01} min={KM_MIN} max={KM_MAX} className="ms-input"
+                    placeholder="auto" value={form.endKm}
+                    title="Filled from the exit. Adjust only if the works end between two exits."
+                    onChange={(e) => set("endKm", e.target.value)}
                   />
                 </div>
               </div>
 
               {segmentNote && (
                 <p style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: "var(--text-secondary)", margin: "-4px 0 0" }}>
-                  <MapPin size={13} /> {segmentNote}
+                  <MapPin size={13} /> {DIRECTION_LABEL[form.direction]} · {segmentNote}
                 </p>
               )}
 
               <div className="ms-form-row">
-                <div className="ms-input-group">
-                  <label>Direction</label>
-                  <div className={styles.segmentedSmall} style={{ width: "100%" }}>
-                    {DIRECTIONS.map((d) => (
-                      <button
-                        key={d}
-                        type="button"
-                        className={form.direction === d ? "active" : ""}
-                        style={{ flex: 1, padding: "9px 12px", fontSize: "0.88rem" }}
-                        onClick={() => set("direction", d)}
-                      >
-                        {form.direction === d && check}
-                        {d}
-                      </button>
-                    ))}
-                  </div>
-                </div>
                 <div className="ms-input-group">
                   <label>Lane closure</label>
                   <Select

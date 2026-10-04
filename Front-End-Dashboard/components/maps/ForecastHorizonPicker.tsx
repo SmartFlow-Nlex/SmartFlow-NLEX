@@ -144,11 +144,21 @@ export default function ForecastHorizonPicker({
     return byDay;
   }, [options]);
 
+  /* The hours the dropdown actually offers. In the week view those are each
+     day's peak hour, not the six-hourly steps -- and checking the choice
+     against the steps snapped every pick back to +1 h, because a peak at
+     +42 h is never one of 1, 7, 13 ... The week view looked dead: whatever day
+     was chosen, the map stayed on the next hour. */
+  const offered = useMemo(
+    () => (usePeaks ? peaks!.map((p) => p.hoursAhead) : options),
+    [usePeaks, peaks, options],
+  );
+
   // If the range or the data no longer covers the chosen hour, fall back to
   // one that exists rather than requesting a gap.
   useEffect(() => {
-    if (options.length > 0 && !options.includes(horizon)) setHorizon(options[0]);
-  }, [options, horizon, setHorizon]);
+    if (offered.length > 0 && !offered.includes(horizon)) setHorizon(offered[0]);
+  }, [offered, horizon, setHorizon]);
 
   const chosen = hourOf(horizon);
 

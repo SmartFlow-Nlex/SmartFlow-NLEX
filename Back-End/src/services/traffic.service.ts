@@ -1,5 +1,6 @@
 import { db } from "../config/db.js";
 import { forecastTable } from "./forecast-source.js";
+import { jamProfileAvailable, jamProfileSql, volumeProfileSql } from "./jam-profile.js";
 
 // Hourly columns of nlex_traffic_volume (h00..h23)
 const HOUR_COLS = Array.from({ length: 24 }, (_, i) => `h${String(i).padStart(2, "0")}`);
@@ -721,6 +722,17 @@ export async function getMLPredictiveCongestion() {
     // from the NLEX reference, so the UI can be honest about which is which.
     // Prefer the table only this pipeline writes; see forecast-source.
     const src = await forecastTable(db);
+
+    /* What a jam at this exit and hour typically looks like, so the card can
+       describe a predicted jam the way the live map describes a real one. See
+       jam-profile.ts; the forecast map uses the same lookup. */
+    const withProfile = await jamProfileAvailable(db);
+    const jp = jamProfileSql();
+    // Volume reads jt (the target hour), which the jam-profile join defines.
+    const vp = withProfile ? await volumeProfileSql(db) : { cols: "", join: "" };
+    const jamCols = withProfile ? jp.cols + vp.cols : "";
+    const jamJoin = withProfile ? jp.join + "\n" + vp.join : "";
+
     const { rows } = await db.query(`
       SELECT c.segment_name AS "segment", c.hours_ahead AS "hours",
              c.congestion_state AS "state", c.probability,
@@ -737,8 +749,10 @@ export async function getMLPredictiveCongestion() {
              -- formatted it in a non-Manila zone would show the wrong hour.
              to_char(c.base_ts, 'YYYY-MM-DD HH24:MI') AS "baseTs",
              k.km_post::float AS "km", COALESCE(k.estimated, false) AS "kmEstimated"
+             ${jamCols}
       FROM ${src} c
       LEFT JOIN gold.exit_km_post k ON k.exit_name = c.segment_name
+      ${jamJoin}
       ORDER BY k.km_post NULLS LAST, c.segment_name ASC, c.hours_ahead ASC`);
     return rows;
   } catch (error) {
@@ -1639,6 +1653,68 @@ export async function getCongestionEval(): Promise<CongestionEval | null> {
     // Absent until the first run that writes it; the card simply omits the
     // section rather than the whole forecast failing.
     console.error("Database query failed for congestion eval:", error);
+    return null;
+  }
+}
+
+/** How the jam profile scored against live jams it never saw; one row,
+ *  written by scripts/medallion/11-gold-congestion-jam-profile.sql. */
+export async function getCongestionJamEval(): Promise<Record<string, unknown> | null> {
+  if (!db) return null;
+  try {
+    const { rows } = await db.query(
+      `SELECT payload FROM gold.congestion_jam_profile_eval WHERE id = 1`);
+    return (rows[0]?.payload as Record<string, unknown>) ?? null;
+  } catch {
+    // Absent until the script has run; the card leaves the section out.
+    return null;
+  }
+}
+
+/** How jam frequency rises with traffic volume, 2022-2025; one row written by
+ *  scripts/medallion/12-gold-exit-volume-profile.sql. */
+export async function getCongestionVolumeEval(): Promise<Record<string, unknown> | null> {
+  if (!db) return null;
+  try {
+    const { rows } = await db.query(`SELECT payload FROM gold.exit_volume_jam_eval WHERE id = 1`);
+    return (rows[0]?.payload as Record<string, unknown>) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The served forecasts, scored against what happened afterwards.
+ *
+ * Reads gold.v_congestion_forecast_score, which pairs every logged forecast
+ * (next 24 hours of each hourly run) with the state Waze reported once the
+ * hour was complete. Both colouring rules are scored: the likeliest of three
+ * states, and "congested when the chance is 50% or more", which is what the
+ * card shows. Null until the log exists; zero rows until the first forecast
+ * hours have finished.
+ */
+export async function getCongestionLiveScore(): Promise<Record<string, unknown> | null> {
+  if (!db) return null;
+  try {
+    const { rows } = await db.query(`
+      WITH s AS (
+        SELECT *, CASE WHEN hours_ahead <= 3 THEN '1-3h' WHEN hours_ahead <= 12 THEN '4-12h' ELSE '13-24h' END AS bucket,
+               (actual_state <> 'Low') AS jammed
+        FROM gold.v_congestion_forecast_score
+      )
+      SELECT bucket,
+             COUNT(*)::int AS n,
+             COUNT(DISTINCT base_ts)::int AS runs,
+             AVG((argmax_state = actual_state)::int)::float AS argmax_state_acc,
+             AVG(((argmax_state <> 'Low') = jammed)::int)::float AS argmax_jam_acc,
+             AVG(((shown_state <> 'Low') = jammed)::int)::float AS shown_jam_acc,
+             AVG(POWER(p_cong - jammed::int, 2))::float AS brier,
+             AVG(jammed::int)::float AS jam_rate,
+             MIN(target_ts) AS first_hour, MAX(target_ts) AS last_hour
+      FROM s GROUP BY bucket
+      ORDER BY MIN(hours_ahead)`);
+    return { buckets: rows };
+  } catch {
     return null;
   }
 }

@@ -10,6 +10,7 @@ import {
   MaintenanceScheduleSchema,
   MaintenanceStatusSchema,
   MaintenanceListQuerySchema,
+  MaintenanceIdSchema,
 } from "../validators/maintenance.validator.js";
 import { audit as record, type AuditEvent } from "../services/audit.js";
 
@@ -62,6 +63,14 @@ export const listSchedules = async (req: Request, res: Response) => {
 
 // PUT /api/maintenance/:id — edit a schedule's details (full replace)
 export const updateSchedule = async (req: Request, res: Response) => {
+  // A malformed id names no schedule. Answered before the database is touched,
+  // so a client typo cannot surface as "database not reachable" (see the
+  // validator). 404 keeps it indistinguishable from an id that simply is not
+  // there, which is what a caller needs to handle either way.
+  if (!MaintenanceIdSchema.safeParse(req.params.id).success) {
+    return res.status(404).json({ success: false, message: "Schedule not found" });
+  }
+
   const parsed = MaintenanceScheduleSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ success: false, message: parsed.error.issues[0]?.message ?? "Invalid parameters" });
@@ -86,6 +95,14 @@ export const updateSchedule = async (req: Request, res: Response) => {
 
 // PATCH /api/maintenance/:id/status
 export const updateScheduleStatus = async (req: Request, res: Response) => {
+  // A malformed id names no schedule. Answered before the database is touched,
+  // so a client typo cannot surface as "database not reachable" (see the
+  // validator). 404 keeps it indistinguishable from an id that simply is not
+  // there, which is what a caller needs to handle either way.
+  if (!MaintenanceIdSchema.safeParse(req.params.id).success) {
+    return res.status(404).json({ success: false, message: "Schedule not found" });
+  }
+
   const parsed = MaintenanceStatusSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ success: false, message: parsed.error.issues[0]?.message ?? "Invalid parameters" });
@@ -125,14 +142,30 @@ export const updateScheduleStatus = async (req: Request, res: Response) => {
 
 // DELETE /api/maintenance/:id
 export const deleteSchedule = async (req: Request, res: Response) => {
+  // A malformed id names no schedule. Answered before the database is touched,
+  // so a client typo cannot surface as "database not reachable" (see the
+  // validator). 404 keeps it indistinguishable from an id that simply is not
+  // there, which is what a caller needs to handle either way.
+  if (!MaintenanceIdSchema.safeParse(req.params.id).success) {
+    return res.status(404).json({ success: false, message: "Schedule not found" });
+  }
+
   const result = await deleteMaintenanceScheduleInDb(req.params.id);
   if (!result) {
     return res.status(503).json({ success: false, message: "Could not delete schedule: database not reachable" });
   }
+  // The attempt is audited either way, with an outcome that says what really
+  // happened, so the log never records a deletion the database did not make.
   audit(req, "maintenance.schedule_deleted", req.params.id, result.deleted ? { title: result.deleted.title } : {}, {
     fromStatus: result.deleted?.status ?? null,
     toStatus: "deleted",
     outcome: result.deleted ? "success" : "not found",
   });
+  // A missing row is 404, matching the update path. Reporting "Deleted" for an
+  // id that was never there tells the operator the list is now correct when
+  // nothing happened.
+  if (!result.deleted) {
+    return res.status(404).json({ success: false, message: "Schedule not found" });
+  }
   res.json({ success: true, source: "database", message: "Deleted" });
 };

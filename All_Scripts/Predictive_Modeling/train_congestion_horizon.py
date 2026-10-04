@@ -51,6 +51,22 @@ DRY_RUN = "--dry-run" in sys.argv
 # run takes about two. Leave it on for a full leaderboard, off for a refresh.
 FAST = "--fast" in sys.argv
 
+# --with-history: train on silver.waze_jam_hourly_exit (Jan 2022 - Apr 2026,
+# rolled up from the Partner Hub export) as well as the live feed, which only
+# starts 4 Aug 2026. Ported from Hans's 249c25e (reverted in e6c1e43) with two
+# fixes, both of which bore on why history scored worse there:
+#   1. Targets are looked up by TIMESTAMP, not by shifting rows. The two eras
+#      are not contiguous (nobody collected 20 Apr - 3 Aug 2026), and a
+#      positional shift paired an April hour with an August answer.
+#   2. History counts distinct jams per exit-hour, the live feed counts jam
+#      rows, and the scales differ (about 13.6 vs 6.4 a jam-hour). History
+#      counts are rescaled to the live scale so the count features mean the
+#      same thing in both eras.
+# History rows enter the fit with ONE randomly drawn horizon each rather than
+# every horizon (four years x every horizon is tens of millions of rows); the
+# live weeks keep every horizon, and every horizon is still predicted.
+WITH_HISTORY = "--with-history" in sys.argv
+
 import numpy as np
 import pandas as pd
 import psycopg2
@@ -168,6 +184,40 @@ cell = (jams.groupby(["d", "h", "exit_name"])
         .agg(sp_w=("sp_w", "sum"), wlen=("wlen", "sum"), n_jams=("speed", "size")).reset_index())
 cell["speed"] = cell.sp_w / cell.wlen
 cell = cell[["d", "h", "exit_name", "speed", "n_jams"]]
+LIVE_FROM = cell.d.min()
+
+hist_cell = None
+if WITH_HISTORY:
+    # The stored summary splits each exit-hour by on_corridor / at_exit, so the
+    # length-weighted speed is rebuilt from its parts rather than averaged again:
+    # sum(len) = length_m_avg * jam_snapshots, sum(speed*len) = wavg * sum(len).
+    # All rows, whatever their distance, because the live branch above takes
+    # every jam assigned to the exit too; the two labels must mean one thing.
+    # Summed in the database, one row per exit-hour, so a quarter fewer rows
+    # cross the network -- a million-row pull is the slow part of this run.
+    hist = pd.read_sql_query("""
+        SELECT h.date_day::date AS d, h.hour_of_day::int AS h,
+               COALESCE(e.exit_name,'id_'||h.nlex_exit_id::text) AS exit_name,
+               SUM(h.length_m_avg * h.jam_snapshots)::real                    AS wlen,
+               SUM(h.speed_kmh_wavg * h.length_m_avg * h.jam_snapshots)::real AS sp_w,
+               SUM(h.jams_distinct)::real                                     AS n_jams
+          FROM silver.waze_jam_hourly_exit h
+          LEFT JOIN bronze.nlex_exits e ON e.id = h.nlex_exit_id
+         WHERE h.speed_kmh_wavg IS NOT NULL
+         GROUP BY 1, 2, 3
+    """, conn)
+    hist_cell = (hist.groupby(["d", "h", "exit_name"])
+                 .agg(sp_w=("sp_w", "sum"), wlen=("wlen", "sum"), n_jams=("n_jams", "sum")).reset_index())
+    hist_cell["speed"] = hist_cell.sp_w / hist_cell.wlen
+    hist_cell = hist_cell[["d", "h", "exit_name", "speed", "n_jams"]]
+    # Live wins on any overlapping day: it is the finer record.
+    hist_cell = hist_cell[~hist_cell.d.isin(set(cell.d))]
+    _scale = cell.n_jams.mean() / max(hist_cell.n_jams.mean(), 1e-9)
+    print(f"  history jam counts rescaled x{_scale:.3f} "
+          f"(mean {hist_cell.n_jams.mean():.2f} -> live mean {cell.n_jams.mean():.2f} a jam-hour)")
+    hist_cell["n_jams"] = hist_cell.n_jams * _scale
+    print(f"  history: {len(hist_cell):,} exit-hours, {hist_cell.d.min()} .. {hist_cell.d.max()}")
+    print(f"  live   : {len(cell):,} exit-hours, {cell.d.min()} .. {cell.d.max()}")
 
 # Trim the trailing INGESTION GAP before building the grid.
 #
@@ -199,14 +249,32 @@ if len(_ok):
               f"hour-of-day norm; last complete hour {_last_good}")
     jams = jams[pd.to_datetime(jams.d.astype(str)) + pd.to_timedelta(jams.h, unit="h") <= _last_good]
 
-days = pd.date_range(jams.d.min(), jams.d.max(), freq="D").date
 exits = sorted(jams.exit_name.unique())
+if hist_cell is not None and len(hist_cell):
+    # Only exits the live feed knows: the forecast is served for those.
+    hist_cell = hist_cell[hist_cell.exit_name.isin(set(exits))]
+    cell = pd.concat([hist_cell, cell], ignore_index=True)
+
+# Days on which SOMETHING was collected. "No jam reported" means free flow on a
+# collected day and means nothing at all on a day nobody was watching -- and
+# between the export (ends 19 Apr 2026) and the live collector (4 Aug 2026)
+# there are over a hundred such days. Filling those with free flow would invent
+# a clear corridor for three and a half months.
+collected = set(cell.d.unique())
+days = pd.date_range(min(cell.d), jams.d.max(), freq="D").date
 df = (pd.MultiIndex.from_product([days, range(24), exits], names=["d", "h", "exit_name"])
       .to_frame(index=False).merge(cell, on=["d", "h", "exit_name"], how="left"))
-df["y"] = np.where(df.speed.isna(), 0,
-                   np.where(df.speed < SEVERE_KMH, 2, np.where(df.speed < HEAVY_KMH, 1, 0)))
+df["y"] = np.where(df.speed.isna(), 0.0,
+                   np.where(df.speed < SEVERE_KMH, 2.0, np.where(df.speed < HEAVY_KMH, 1.0, 0.0)))
 df["n_jams"] = df.n_jams.fillna(0)
 df["speed_filled"] = df.speed.fillna(65.0)
+# Uncollected days carry NaN, not zero, so every lag or rolling feature that
+# reaches into the hole is NaN too and the row is dropped below rather than
+# trained on a fiction.
+_uncollected = ~df.d.isin(collected)
+if _uncollected.any():
+    df.loc[_uncollected, ["y", "n_jams", "speed_filled"]] = np.nan
+    print(f"  {_uncollected.sum() // (24 * max(1, len(exits))):,} uncollected day(s) held out of the grid")
 df["ts"] = pd.to_datetime(df.d.astype(str)) + pd.to_timedelta(df.h, unit="h")
 # The MultiIndex spans whole days, so the final day's uncollected hours would
 # reappear here as free flow even after trimming the raw jams above.
@@ -254,7 +322,13 @@ for _name, _src, _map in (("nb_prev_lag1", _lag1_p, _prev), ("nb_next_lag1", _la
     _t = _nb(_src, _map).rename(columns={"v": _name})
     df = df.merge(_t, on=["ts", "exit_name"], how="left")
 
-df = df.dropna(subset=["lag24", "lag48", "lag6"]).reset_index(drop=True)
+# Every known state, by timestamp, for the target lookup in step 2. Taken
+# before the lag-based drop below, so an hour whose own lags are missing can
+# still be the ANSWER for an earlier row.
+_yref = df.loc[df.y.notna(), ["exit_name", "ts", "y"]].rename(columns={"ts": "target_ts", "y": "y_target"})
+
+df = df.dropna(subset=["y", "lag24", "lag48", "lag6"]).reset_index(drop=True)
+df["y"] = df.y.astype(int)
 df["exit_code"] = pd.Categorical(df.exit_name, categories=exits).codes
 
 cut = df.ts.max().normalize() - pd.Timedelta(days=TEST_DAYS - 1)
@@ -278,19 +352,28 @@ print(f"  test window starts {cut}")
 
 # ── 2. Horizon-expanded frame, with the target ACTUALLY shifted ─────────────
 banner("STEP 2: Building horizon targets")
-gy = df.groupby("exit_name", sort=False).y
+_cols = ["ts", "exit_name", "exit_code", "h", "dow", "is_weekend",
+         "lag24", "lag48", "lag24_jams",
+         "lag1", "lag2", "lag3", "lag6", "roll6_y", "roll6_jams", "roll24_y",
+         "nb_prev_lag1", "nb_next_lag1", "nb_prev_roll6", "nb_next_roll6",
+         "prof_mean", "prof_sev", "y"]
+# History rows (before the live feed starts) each get ONE horizon, drawn at
+# random but reproducibly; live rows get every horizon. See WITH_HISTORY.
+_is_hist = (df.ts < pd.Timestamp(LIVE_FROM)).values
+_rng = np.random.default_rng(20261002)
+_hist_hz = np.where(_is_hist, _rng.choice(HORIZONS, size=len(df)), -1)
+if _is_hist.any():
+    print(f"  history origins: {_is_hist.sum():,} (one horizon each) | live origins: {(~_is_hist).sum():,}")
 frames = []
 for hz in HORIZONS:
-    f = df[["ts", "exit_name", "exit_code", "h", "dow", "is_weekend",
-            "lag24", "lag48", "lag24_jams",
-            "lag1", "lag2", "lag3", "lag6", "roll6_y", "roll6_jams", "roll24_y",
-            "nb_prev_lag1", "nb_next_lag1", "nb_prev_roll6", "nb_next_roll6",
-            "prof_mean", "prof_sev", "y"]].copy()
+    f = df.loc[(~_is_hist) | (_hist_hz == hz), _cols].copy()
     f["horizon"] = hz
-    f["y_target"] = gy.shift(-hz).values      # state hz hours LATER — the fix
     f["target_ts"] = f.ts + pd.Timedelta(hours=hz)
     frames.append(f)
-full = pd.concat(frames, ignore_index=True).dropna(subset=["y_target"])
+full = pd.concat(frames, ignore_index=True)
+# The state hz hours LATER, looked up by its timestamp -- never by shifting
+# rows, which across a gap in collection pairs an hour with the wrong answer.
+full = full.merge(_yref, on=["exit_name", "target_ts"], how="inner")
 full["y_target"] = full.y_target.astype(int)
 
 FEATS = ["exit_code", "h", "dow", "is_weekend", "lag24", "lag48", "lag24_jams",
@@ -401,8 +484,12 @@ print("  done.")
 # ── 5. GRU — one pass, twelve outputs ───────────────────────────────────────
 banner("STEP 6: GRU (multi-horizon head)")
 gru = None
-piv = df.pivot_table(index="ts", columns="exit_code", values="y").sort_index()
-jm = df.pivot_table(index="ts", columns="exit_code", values="n_jams").sort_index()
+# Live weeks only, with or without --with-history: four years of sliding
+# windows is several million sequences, and the history era is separated from
+# the live one by an uncollected gap no window may span.
+_gdf = df[df.ts >= pd.Timestamp(LIVE_FROM)]
+piv = _gdf.pivot_table(index="ts", columns="exit_code", values="y").sort_index()
+jm = _gdf.pivot_table(index="ts", columns="exit_code", values="n_jams").sort_index()
 try:
     import tensorflow as tf
     from tensorflow.keras import layers, Sequential
@@ -792,6 +879,15 @@ _eval = {
     "replay": _replay,
     "thresholds_kmh": {"severe_below": SEVERE_KMH, "heavy_below": HEAVY_KMH},
     "features": FEATS,
+    # What the model learned from and what it was scored on, so the card can
+    # say so instead of leaving the training range to be inferred.
+    "with_history": bool(WITH_HISTORY),
+    "train_from": str(tr.ts.min()),
+    "train_to": str(tr.target_ts.max()),
+    "train_rows": int(len(tr)),
+    "test_from": str(te.ts.min()),
+    "test_to": str(te.target_ts.max()),
+    "live_from": str(LIVE_FROM),
 }
 cur.execute("""INSERT INTO gold.ml_congestion_eval (id, payload, updated_at) VALUES (1, %s, now())
                ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()""",

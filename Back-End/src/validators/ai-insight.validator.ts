@@ -259,31 +259,32 @@ export const ClearanceNarrativeSchema = z.object({
 });
 
 /**
- * POST /api/ai-insight/incident-priority-narrative
+ * POST /api/ai-insight/breakdown-response-narrative
  *
- * The prescriptive cross: each incident type's measured median clearance time
- * against how many of that type are forecast, giving expected lane-minutes lost.
- * The dispatch package per tier is operational doctrine, not a model output, and
- * is labelled as such in the prompt so the reader is never told the system
- * predicted it.
+ * The Predictive tab's Response Time Breakdown card -- a trained model's
+ * PREDICTED dispatch response time, by cause or by service (never a
+ * corridor position), which is why this doesn't reuse
+ * RankingNarrativeSchema: that one's groupBy is "exit"/"segment" and its
+ * whole prompt frames rows as corridor LOCATIONS, which a breakdown cause
+ * like "Engine" or a service like "AAP" is not. dimension is free text
+ * (mirrors ClearanceNarrativeSchema's own choice, not an enum) so the
+ * client can send "cause" or "service" without a schema change either way.
  */
-export const IncidentPriorityNarrativeSchema = z.object({
-  horizonDays: z.number().int().min(1).max(365),
-  totalPredicted: z.number().min(0).max(1000000).nullable().optional(),
-  forecastModel: z.string().max(80).nullable().optional(),
-  types: z
+export const BreakdownResponseNarrativeSchema = z.object({
+  dimension: z.string().min(1).max(40),
+  championModel: z.string().max(40).nullable().optional(),
+  maeMinutes: z.number().min(0).max(100000).nullable().optional(),
+  groups: z
     .array(
       z.object({
-        label: z.string().min(1).max(80),
-        medianClearanceMin: z.number().min(0).max(100000).nullable().optional(),
-        predictedCount: z.number().min(0).max(1000000).nullable().optional(),
-        expectedLaneMinutes: z.number().min(0).max(100000000).nullable().optional(),
-        sharePct: z.number().min(0).max(100).nullable().optional(),
-        dispatch: z.string().max(200).nullable().optional(),
+        group: z.string().min(1).max(80),
+        n: z.number().int().nonnegative().nullable().optional(),
+        predictedMedianMin: z.number().min(0).max(100000).nullable().optional(),
       }),
     )
     .min(1)
     .max(10),
+  trainedAt: z.string().max(40).nullable().optional(),
 });
 
 /**

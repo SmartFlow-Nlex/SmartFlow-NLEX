@@ -118,6 +118,19 @@ export async function updateMaintenanceStatusInDb(id: string, status: Maintenanc
   }
 }
 
+/**
+ * Delete one schedule.
+ *
+ * Returns null when the database is unreachable, otherwise `{ deleted }`:
+ * the removed row's status and title, or undefined when the id matched no
+ * row. The caller answers each case differently and audits what was removed.
+ *
+ * This previously discarded rowCount and returned true unconditionally, so a
+ * DELETE against an id that did not exist answered 200 "Deleted" and wrote an
+ * audit entry for a deletion that never happened — the audit log recording an
+ * event the database never saw. The update path already distinguished
+ * not-found; this one did not.
+ */
 export async function deleteMaintenanceScheduleInDb(id: string) {
   if (!db) return null;
   try {

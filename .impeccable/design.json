@@ -1,0 +1,794 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-03T14:11:41.017Z",
+  "title": "Design System: SmartFlow NLEX",
+  "extensions": {
+    "colorMeta": {
+      "expressway-blue": {
+        "role": "primary",
+        "displayName": "Expressway Blue",
+        "canonical": "oklch(56.3% 0.240 266.7)",
+        "tonalRamp": [
+          "#010035",
+          "#080179",
+          "#1315be",
+          "#2647e6",
+          "#4874ff",
+          "#7ca1ff",
+          "#b1c8fe",
+          "#e8eefe"
+        ]
+      },
+      "expressway-blue-light": {
+        "role": "primary",
+        "displayName": "Expressway Blue Light",
+        "canonical": "oklch(62.8% 0.200 270.1)",
+        "tonalRamp": [
+          "#030033",
+          "#110176",
+          "#2227a9",
+          "#3a4fd0",
+          "#5673f8",
+          "#839fff",
+          "#b5c7fe",
+          "#e9eefe"
+        ]
+      },
+      "expressway-blue-deep": {
+        "role": "primary",
+        "displayName": "Expressway Blue Deep",
+        "canonical": "oklch(49.7% 0.217 266.6)",
+        "tonalRamp": [
+          "#010034",
+          "#08007a",
+          "#1324b2",
+          "#2a4eda",
+          "#4974fe",
+          "#7ca1fe",
+          "#b1c8ff",
+          "#e7effe"
+        ]
+      },
+      "signal-violet": {
+        "role": "primary",
+        "displayName": "Signal Violet",
+        "canonical": "oklch(59.9% 0.230 286.2)",
+        "tonalRamp": [
+          "#0c002d",
+          "#260169",
+          "#4402ac",
+          "#6036da",
+          "#7e61ff",
+          "#9e94ff",
+          "#c4c2fe",
+          "#ededfe"
+        ]
+      },
+      "toll-amber": {
+        "role": "secondary",
+        "displayName": "Toll Amber",
+        "canonical": "oklch(72.2% 0.162 63.4)",
+        "tonalRamp": [
+          "#150800",
+          "#391d00",
+          "#613601",
+          "#8c5101",
+          "#ba6d02",
+          "#ea8b0c",
+          "#feb977",
+          "#feebd9"
+        ]
+      },
+      "night-corridor-navy": {
+        "role": "neutral",
+        "displayName": "Night Corridor Navy",
+        "canonical": "oklch(25.2% 0.064 255.6)",
+        "tonalRamp": [
+          "#000a20",
+          "#0d2543",
+          "#2a4364",
+          "#486385",
+          "#6984a9",
+          "#8ba7cd",
+          "#aeccf3",
+          "#e5f0fe"
+        ]
+      },
+      "night-corridor-lit": {
+        "role": "neutral",
+        "displayName": "Night Corridor Lit",
+        "canonical": "oklch(35.2% 0.095 254.8)",
+        "tonalRamp": [
+          "#000b20",
+          "#00244e",
+          "#1a4273",
+          "#3a6396",
+          "#5a85ba",
+          "#7ca8e0",
+          "#a5ccff",
+          "#e4f0fe"
+        ]
+      },
+      "page-ground": {
+        "role": "neutral",
+        "displayName": "Page Ground",
+        "canonical": "oklch(97.0% 0.006 264.5)",
+        "tonalRamp": [
+          "#0a0b0e",
+          "#242528",
+          "#404245",
+          "#5f6165",
+          "#808286",
+          "#a3a5a9",
+          "#c7c9cd",
+          "#eceef2"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ]
+      },
+      "surface-hover": {
+        "role": "neutral",
+        "displayName": "Surface Hover",
+        "canonical": "oklch(98.2% 0.004 271.4)",
+        "tonalRamp": [
+          "#0a0b0d",
+          "#242527",
+          "#414244",
+          "#606164",
+          "#818285",
+          "#a4a5a8",
+          "#c8c9cc",
+          "#edeef1"
+        ]
+      },
+      "border-default": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "oklch(94.0% 0.013 266.7)",
+        "tonalRamp": [
+          "#090b11",
+          "#22252c",
+          "#3f4249",
+          "#5e6169",
+          "#7f828a",
+          "#a1a5ad",
+          "#c5c9d2",
+          "#eaeef7"
+        ]
+      },
+      "border-strong": {
+        "role": "neutral",
+        "displayName": "Hairline Strong",
+        "canonical": "oklch(89.1% 0.022 265.8)",
+        "tonalRamp": [
+          "#070b14",
+          "#202530",
+          "#3c424e",
+          "#5b616e",
+          "#7c8290",
+          "#9ea5b3",
+          "#c2c9d8",
+          "#e7effe"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "oklch(23.3% 0.083 263.0)",
+        "tonalRamp": [
+          "#00052c",
+          "#0e224d",
+          "#2a406e",
+          "#486091",
+          "#6882b5",
+          "#89a5da",
+          "#aecafe",
+          "#e6efff"
+        ]
+      },
+      "ink-secondary": {
+        "role": "neutral",
+        "displayName": "Ink Secondary",
+        "canonical": "oklch(47.9% 0.056 260.0)",
+        "tonalRamp": [
+          "#010922",
+          "#142540",
+          "#304260",
+          "#4f6281",
+          "#6f83a4",
+          "#91a6c8",
+          "#b4caee",
+          "#e5efff"
+        ]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Ink Muted",
+        "canonical": "oklch(54.5% 0.040 258.8)",
+        "tonalRamp": [
+          "#030b1c",
+          "#192539",
+          "#354358",
+          "#536279",
+          "#74839b",
+          "#96a6bf",
+          "#bacae4",
+          "#e6effe"
+        ]
+      },
+      "muted-fill": {
+        "role": "neutral",
+        "displayName": "Muted Fill",
+        "canonical": "oklch(94.2% 0.013 262.4)",
+        "tonalRamp": [
+          "#080b11",
+          "#22252c",
+          "#3e4249",
+          "#5d6169",
+          "#7e828b",
+          "#a1a5ae",
+          "#c4c9d2",
+          "#eaeff8"
+        ]
+      },
+      "muted-ink": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "canonical": "oklch(42.3% 0.053 256.9)",
+        "tonalRamp": [
+          "#000a21",
+          "#13253e",
+          "#2f435e",
+          "#4e6380",
+          "#6e84a2",
+          "#90a7c7",
+          "#b3cbec",
+          "#e5effe"
+        ]
+      },
+      "success": {
+        "role": "semantic",
+        "displayName": "Success",
+        "canonical": "oklch(53.0% 0.152 147.3)",
+        "tonalRamp": [
+          "#001002",
+          "#002f0b",
+          "#02511b",
+          "#03762a",
+          "#329a48",
+          "#5abe6b",
+          "#7fe48e",
+          "#caffce"
+        ]
+      },
+      "success-bg": {
+        "role": "semantic",
+        "displayName": "Success Tint",
+        "canonical": "oklch(96.4% 0.023 153.5)",
+        "tonalRamp": [
+          "#040e07",
+          "#1c2820",
+          "#39463c",
+          "#58655b",
+          "#78877c",
+          "#9baa9e",
+          "#becec2",
+          "#e3f3e7"
+        ]
+      },
+      "warning": {
+        "role": "semantic",
+        "displayName": "Warning",
+        "canonical": "oklch(56.3% 0.167 41.5)",
+        "tonalRamp": [
+          "#1b0400",
+          "#431301",
+          "#722600",
+          "#a33a01",
+          "#d15721",
+          "#f97b49",
+          "#feb59a",
+          "#fee9e2"
+        ]
+      },
+      "warning-bg": {
+        "role": "semantic",
+        "displayName": "Warning Tint",
+        "canonical": "oklch(97.1% 0.034 88.8)",
+        "tonalRamp": [
+          "#100a00",
+          "#2c2410",
+          "#49412d",
+          "#69614b",
+          "#8b826b",
+          "#aea48d",
+          "#d2c8b0",
+          "#f8eed5"
+        ]
+      },
+      "danger": {
+        "role": "semantic",
+        "displayName": "Danger",
+        "canonical": "oklch(57.7% 0.215 27.3)",
+        "tonalRamp": [
+          "#1f0000",
+          "#4d0003",
+          "#800209",
+          "#b80010",
+          "#e73430",
+          "#ff7367",
+          "#feb3aa",
+          "#fee9e6"
+        ]
+      },
+      "danger-bg": {
+        "role": "semantic",
+        "displayName": "Danger Tint",
+        "canonical": "oklch(96.6% 0.015 17.4)",
+        "tonalRamp": [
+          "#110909",
+          "#2c2222",
+          "#4a3f3f",
+          "#6a5e5e",
+          "#8b7f7f",
+          "#aea1a1",
+          "#d3c5c5",
+          "#f9ebeb"
+        ]
+      },
+      "info": {
+        "role": "semantic",
+        "displayName": "Info",
+        "canonical": "oklch(52.6% 0.226 266.4)",
+        "tonalRamp": [
+          "#010035",
+          "#070179",
+          "#121fb7",
+          "#274cde",
+          "#4775ff",
+          "#7ba1ff",
+          "#b1c9fe",
+          "#e7efff"
+        ]
+      },
+      "info-bg": {
+        "role": "semantic",
+        "displayName": "Info Tint",
+        "canonical": "oklch(96.3% 0.017 264.5)",
+        "tonalRamp": [
+          "#080b13",
+          "#21252e",
+          "#3d424c",
+          "#5c616b",
+          "#7d828d",
+          "#a0a5b0",
+          "#c3c9d5",
+          "#e9effb"
+        ]
+      },
+      "model-purple": {
+        "role": "semantic",
+        "displayName": "Model Purple",
+        "canonical": "oklch(54.1% 0.247 293.0)",
+        "tonalRamp": [
+          "#0f002a",
+          "#2d0063",
+          "#4e02a3",
+          "#6f25dc",
+          "#8d57fe",
+          "#aa8ffe",
+          "#cbbffe",
+          "#efecfe"
+        ]
+      },
+      "model-purple-bg": {
+        "role": "semantic",
+        "displayName": "Model Purple Tint",
+        "canonical": "oklch(92.6% 0.043 303.1)",
+        "tonalRamp": [
+          "#0f061a",
+          "#292036",
+          "#473c55",
+          "#665b76",
+          "#877c98",
+          "#aa9fbc",
+          "#cfc3e1",
+          "#f2eafe"
+        ]
+      },
+      "accent-traffic": {
+        "role": "tertiary",
+        "displayName": "Traffic Blue",
+        "canonical": "oklch(57.5% 0.163 255.5)",
+        "tonalRamp": [
+          "#000a20",
+          "#00244f",
+          "#004083",
+          "#055fba",
+          "#3582e1",
+          "#63a7ff",
+          "#a6ccff",
+          "#e5f0fe"
+        ]
+      },
+      "accent-incident": {
+        "role": "tertiary",
+        "displayName": "Incident Amber",
+        "canonical": "oklch(62.1% 0.132 70.2)",
+        "tonalRamp": [
+          "#140800",
+          "#361f01",
+          "#5d3900",
+          "#875502",
+          "#b37206",
+          "#d9953a",
+          "#ffba64",
+          "#ffebd5"
+        ]
+      },
+      "accent-emissions": {
+        "role": "tertiary",
+        "displayName": "Emissions Green",
+        "canonical": "oklch(55.7% 0.139 153.0)",
+        "tonalRamp": [
+          "#001004",
+          "#012e14",
+          "#005027",
+          "#05753d",
+          "#2a9a58",
+          "#55be7a",
+          "#7be39d",
+          "#c7ffd6"
+        ]
+      },
+      "status-clear": {
+        "role": "semantic",
+        "displayName": "Corridor Clear",
+        "canonical": "oklch(63.7% 0.155 152.3)",
+        "tonalRamp": [
+          "#001004",
+          "#002e13",
+          "#005026",
+          "#05753b",
+          "#0f9c51",
+          "#47c073",
+          "#70e696",
+          "#c6ffd4"
+        ]
+      },
+      "status-slow": {
+        "role": "semantic",
+        "displayName": "Corridor Slow",
+        "canonical": "oklch(70.9% 0.145 62.5)",
+        "tonalRamp": [
+          "#150700",
+          "#391d01",
+          "#613602",
+          "#8d5004",
+          "#bc6c00",
+          "#e48e33",
+          "#ffb878",
+          "#feeada"
+        ]
+      },
+      "status-congested": {
+        "role": "semantic",
+        "displayName": "Corridor Congested",
+        "canonical": "oklch(61.0% 0.195 29.7)",
+        "tonalRamp": [
+          "#1f0000",
+          "#4d0100",
+          "#800300",
+          "#b61006",
+          "#df4333",
+          "#ff7461",
+          "#feb4a7",
+          "#fee9e5"
+        ]
+      },
+      "status-no-data": {
+        "role": "semantic",
+        "displayName": "Corridor No Data",
+        "canonical": "oklch(86.9% 0.020 252.9)",
+        "tonalRamp": [
+          "#060c13",
+          "#1e262f",
+          "#3b434d",
+          "#59626d",
+          "#7a838e",
+          "#9da6b2",
+          "#c0cad6",
+          "#e5f0fc"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Login wordmark only."
+      },
+      "numeral": {
+        "displayName": "Numeral",
+        "purpose": "KPI values and hero stats; always tabular."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page title in PageHeader."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Card and chart headings."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Card copy, narratives, table cells."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Subtitles, footnotes, model notes, timestamps."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase table headers, kickers, eyebrows."
+      }
+    },
+    "shadows": [
+      {
+        "name": "card-rest",
+        "value": "0 2px 8px rgba(15, 23, 42, 0.06)",
+        "purpose": "Chart cards and panels at rest."
+      },
+      {
+        "name": "stat-rest",
+        "value": "0 1px 2px rgba(15, 28, 58, 0.04), 0 8px 24px rgba(15, 28, 58, 0.05)",
+        "purpose": "KPI tiles at rest."
+      },
+      {
+        "name": "hover-lift",
+        "value": "0 4px 12px rgba(15, 23, 42, 0.08)",
+        "purpose": "Any card under the cursor."
+      },
+      {
+        "name": "accent-lift",
+        "value": "0 14px 30px color-mix(in srgb, var(--page-accent) 16%, transparent), 0 2px 6px rgba(15, 28, 58, 0.06)",
+        "purpose": "Stat cards on hover, with translateY(-3px)."
+      },
+      {
+        "name": "action-throw",
+        "value": "0 4px 14px color-mix(in srgb, var(--brand-primary) 30%, transparent)",
+        "purpose": "Gradient primary buttons."
+      },
+      {
+        "name": "icon-throw",
+        "value": "0 6px 18px color-mix(in srgb, var(--page-accent) 34%, transparent)",
+        "purpose": "Page-header icon tile."
+      },
+      {
+        "name": "modal",
+        "value": "0 10px 24px rgba(15, 23, 42, 0.10)",
+        "purpose": "Dialogs and popovers."
+      }
+    ],
+    "motion": [
+      {
+        "name": "transition-fast",
+        "value": "150ms ease",
+        "purpose": "Hover, fill, border and shadow changes."
+      },
+      {
+        "name": "transition-base",
+        "value": "220ms ease",
+        "purpose": "Sidebar collapse and larger state changes."
+      },
+      {
+        "name": "ease-nav-mark",
+        "value": "260ms cubic-bezier(0.22, 0.61, 0.36, 1)",
+        "purpose": "Active nav edge scaling in."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "prefers-reduced-motion: reduce",
+        "purpose": "All transitions and lifts collapse to none."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact",
+        "value": "1300px"
+      },
+      {
+        "name": "narrow",
+        "value": "1100px"
+      },
+      {
+        "name": "tablet",
+        "value": "980px"
+      },
+      {
+        "name": "mobile",
+        "value": "640px"
+      }
+    ],
+    "darkTheme": {
+      "page-ground": "#0d1117",
+      "surface": "#161b22",
+      "surface-hover": "#1c2230",
+      "night-corridor-navy": "#0a0e14",
+      "night-corridor-lit": "#1a2942",
+      "ink": "#e6edf3",
+      "ink-secondary": "#9aa8bd",
+      "ink-muted": "#7d8b9e",
+      "expressway-blue": "#5c7aff",
+      "border-default": "#262c36",
+      "border-strong": "#363d49",
+      "success": "#3fb950",
+      "warning": "#f0883e",
+      "danger": "#f85149",
+      "info": "#6e9bff",
+      "model-purple": "#a371f7",
+      "status-clear": "#34d399",
+      "status-slow": "#f59e0b",
+      "status-congested": "#ef4444",
+      "status-no-data": "#475569"
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one main action in a region: blue-to-violet gradient with a tinted throw.",
+      "html": "<button class=\"ds-btn-primary\">Export forecast</button>",
+      "css": ".ds-btn-primary{font-family:Inter,ui-sans-serif,system-ui,sans-serif;border:1px solid transparent;border-radius:10px;padding:8px 14px;font-size:.88rem;font-weight:700;color:#fff;cursor:pointer;background:linear-gradient(135deg,#3660ff,color-mix(in srgb,#3660ff 62%,#7c5cff));box-shadow:0 4px 14px color-mix(in srgb,#3660ff 30%,transparent);transition:transform 150ms ease,box-shadow 150ms ease,filter 150ms ease}.ds-btn-primary:hover{transform:translateY(-1px);filter:brightness(1.04)}.ds-btn-primary:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,#3660ff 22%,transparent),0 4px 14px color-mix(in srgb,#3660ff 30%,transparent)}.ds-btn-primary:active{transform:none}"
+    },
+    {
+      "name": "Muted Button",
+      "kind": "button",
+      "refersTo": "button-muted",
+      "description": "Secondary actions beside a primary.",
+      "html": "<button class=\"ds-btn-muted\">Reset</button>",
+      "css": ".ds-btn-muted{font-family:Inter,ui-sans-serif,system-ui,sans-serif;border:0;border-radius:10px;padding:8px 14px;font-size:.88rem;font-weight:700;background:#e7ecf5;color:#3b4f6b;cursor:pointer;transition:background-color 150ms ease,transform 150ms ease}.ds-btn-muted:hover{background:#dce3f0;transform:translateY(-1px)}.ds-btn-muted:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,#3660ff 22%,transparent)}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive actions: red gradient with a red throw.",
+      "html": "<button class=\"ds-btn-danger\">Delete schedule</button>",
+      "css": ".ds-btn-danger{font-family:Inter,ui-sans-serif,system-ui,sans-serif;border:1px solid transparent;border-radius:10px;padding:8px 14px;font-size:.88rem;font-weight:700;color:#fff;cursor:pointer;background:linear-gradient(135deg,#dc2626,color-mix(in srgb,#dc2626 70%,#7a1020));box-shadow:0 4px 14px color-mix(in srgb,#dc2626 26%,transparent);transition:transform 150ms ease,filter 150ms ease}.ds-btn-danger:hover{transform:translateY(-1px);filter:brightness(1.04)}.ds-btn-danger:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,#dc2626 22%,transparent)}"
+    },
+    {
+      "name": "Mode Tabs",
+      "kind": "nav",
+      "refersTo": "mode-tab-active",
+      "description": "Descriptive / Predictive / Prescriptive switch on analytics pages.",
+      "html": "<div class=\"ds-mode-tabs\" role=\"tablist\"><button class=\"is-active\" role=\"tab\" aria-selected=\"true\">Descriptive</button><button role=\"tab\">Predictive</button><button role=\"tab\">Prescriptive</button></div>",
+      "css": ".ds-mode-tabs{font-family:Inter,ui-sans-serif,system-ui,sans-serif;display:inline-flex;gap:4px;background:#fff;border:1px solid #e7ebf4;border-radius:999px;padding:4px;box-shadow:0 1px 3px rgba(15,23,42,.06)}.ds-mode-tabs button{border:0;background:transparent;padding:8px 16px;border-radius:999px;font:inherit;font-size:.9rem;font-weight:600;color:#4b5e7d;cursor:pointer;transition:background-color 150ms ease,color 150ms ease}.ds-mode-tabs button:hover:not(.is-active){background:#f0f3f8}.ds-mode-tabs button:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,#3660ff 22%,transparent)}.ds-mode-tabs .is-active{background:#3660ff;color:#fff;font-weight:700;box-shadow:0 1px 3px rgba(15,23,42,.06)}"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-tab-active",
+      "description": "Navy shell nav with a lit active edge.",
+      "html": "<nav class=\"ds-side\"><p class=\"ds-side-kicker\">Analytics</p><a class=\"ds-side-tab\" href=\"#\">Overview</a><a class=\"ds-side-tab is-active\" href=\"#\">Traffic</a><a class=\"ds-side-tab\" href=\"#\">Incidents</a></nav>",
+      "css": ".ds-side{font-family:Inter,ui-sans-serif,system-ui,sans-serif;width:240px;padding:18px 12px;display:flex;flex-direction:column;gap:4px;border-radius:12px;background:radial-gradient(120% 60% at 0% 0%,rgba(96,148,255,.16) 0%,transparent 60%),linear-gradient(180deg,#0a2240 0%,color-mix(in srgb,#0a2240 86%,#000) 100%)}.ds-side-kicker{margin:0 0 6px 10px;font-size:.68rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#fff;opacity:.55}.ds-side-tab{position:relative;display:block;padding:10px 12px;border-radius:10px;color:rgba(255,255,255,.82);font-size:.9rem;font-weight:600;text-decoration:none;transition:background-color 150ms ease,color 150ms ease,transform 150ms ease}.ds-side-tab:hover{background:rgba(255,255,255,.08);color:#fff;transform:translateX(2px)}.ds-side-tab:focus-visible{outline:2px solid #7fb0ff;outline-offset:2px}.ds-side-tab.is-active{color:#fff;background:linear-gradient(90deg,color-mix(in srgb,#3660ff 42%,transparent) 0%,color-mix(in srgb,#3660ff 16%,transparent) 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.07)}.ds-side-tab.is-active::before{content:\"\";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:linear-gradient(180deg,#7fb0ff,#3660ff);box-shadow:0 0 10px color-mix(in srgb,#3660ff 70%,transparent)}"
+    },
+    {
+      "name": "Stat Card",
+      "kind": "card",
+      "refersTo": "stat-card",
+      "description": "Signature KPI tile: accent leading bar, corner wash, accent lift on hover.",
+      "html": "<div class=\"ds-stat\" style=\"--page-accent:#2a78d6\"><h3>Congested exits now</h3><div class=\"ds-stat-value\">4</div><p>of 27 exits, both directions</p></div>",
+      "css": ".ds-stat{font-family:Inter,ui-sans-serif,system-ui,sans-serif;position:relative;overflow:hidden;width:240px;padding:16px 16px 16px 20px;border-radius:16px;background:#fff;border:1px solid color-mix(in srgb,#e7ebf4 70%,transparent);box-shadow:0 1px 2px rgba(15,28,58,.04),0 8px 24px rgba(15,28,58,.05);background-image:radial-gradient(120% 100% at 100% 0%,color-mix(in srgb,var(--page-accent,#3660ff) 10%,transparent) 0%,transparent 68%);transition:box-shadow 150ms ease,transform 150ms ease}.ds-stat::before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(180deg,var(--page-accent,#3660ff) 0%,color-mix(in srgb,var(--page-accent,#3660ff) 35%,transparent) 100%)}.ds-stat:hover{transform:translateY(-3px);box-shadow:0 14px 30px color-mix(in srgb,var(--page-accent,#3660ff) 16%,transparent),0 2px 6px rgba(15,28,58,.06)}.ds-stat h3{margin:0 0 6px;font-size:.88rem;font-weight:600;color:#4b5e7d}.ds-stat-value{font-size:2rem;font-weight:900;letter-spacing:-.03em;line-height:1;color:#071a44;font-variant-numeric:tabular-nums}.ds-stat p{margin:6px 0 0;font-size:.85rem;color:#4b5e7d}"
+    },
+    {
+      "name": "Chart Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Container for charts and panels: title left, pills or controls right.",
+      "html": "<section class=\"ds-card\"><header class=\"ds-card-head\"><h3>Hourly volume, Balintawak NB</h3><span class=\"ds-card-pill\">HoltWinters</span></header><div class=\"ds-card-body\">Chart area</div></section>",
+      "css": ".ds-card{font-family:Inter,ui-sans-serif,system-ui,sans-serif;width:420px;min-height:200px;padding:16px;border-radius:16px;background:#fff;border:1px solid #e7ebf4;box-shadow:0 2px 8px rgba(15,23,42,.06);transition:box-shadow 150ms ease}.ds-card:hover{box-shadow:0 4px 12px rgba(15,23,42,.08)}.ds-card-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}.ds-card-head h3{margin:0;font-size:.95rem;font-weight:700;color:#071a44}.ds-card-pill{padding:4px 10px;border-radius:999px;font-size:.78rem;font-weight:700;white-space:nowrap;background:#ece0ff;color:#7c3aed}.ds-card-body{height:140px;border-radius:12px;background:#f8f9fc;display:grid;place-items:center;color:#627188;font-size:.78rem}"
+    },
+    {
+      "name": "Status Pills",
+      "kind": "chip",
+      "refersTo": "pill-success",
+      "description": "Facts, not buttons: status, confidence and model labels.",
+      "html": "<div class=\"ds-pills\"><span class=\"ds-chip ds-chip-ok\">Clear</span><span class=\"ds-chip ds-chip-warn\">Slow</span><span class=\"ds-chip ds-chip-bad\">Congested</span><span class=\"ds-chip ds-chip-model\">Model</span></div>",
+      "css": ".ds-pills{font-family:Inter,ui-sans-serif,system-ui,sans-serif;display:flex;gap:8px;flex-wrap:wrap}.ds-chip{padding:4px 10px;border-radius:999px;font-size:.78rem;font-weight:700;white-space:nowrap}.ds-chip-ok{background:#e8f8ec;color:#0c8231}.ds-chip-warn{background:#fff5dc;color:#c2490a}.ds-chip-bad{background:#fef0f0;color:#dc2626}.ds-chip-model{background:#ece0ff;color:#7c3aed}"
+    },
+    {
+      "name": "Select",
+      "kind": "input",
+      "refersTo": "select",
+      "description": "Native select with a drawn chevron and an accent focus ring.",
+      "html": "<select class=\"ds-select\"><option>Northbound</option><option>Southbound</option></select>",
+      "css": ".ds-select{font-family:Inter,ui-sans-serif,system-ui,sans-serif;appearance:none;-webkit-appearance:none;padding:8px 34px 8px 12px;border:1px solid #e7ebf4;border-radius:10px;background-color:#fff;color:#071a44;font-size:.82rem;font-weight:600;line-height:1.2;cursor:pointer;background-image:url(\"data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6.5L8 10.5L12 6.5' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 11px center;transition:border-color 150ms ease,box-shadow 150ms ease}.ds-select:hover{border-color:#d4dbea}.ds-select:focus-visible{outline:none;border-color:var(--page-accent,#3660ff);box-shadow:0 0 0 3px color-mix(in srgb,var(--page-accent,#3660ff) 22%,transparent)}"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Form field with an accent focus ring.",
+      "html": "<input class=\"ds-input\" placeholder=\"Km post, e.g. 42.5\" />",
+      "css": ".ds-input{font-family:Inter,ui-sans-serif,system-ui,sans-serif;width:260px;border:1px solid #d4dbea;border-radius:8px;padding:10px 14px;font-size:.95rem;color:#071a44;background:#fff;outline:none;transition:border-color 150ms ease,box-shadow 150ms ease}.ds-input::placeholder{color:#627188}.ds-input:focus-visible{border-color:#3660ff;box-shadow:0 0 0 3px rgba(54,96,255,.15)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Corridor Control Room",
+    "overview": "SmartFlow is the room a TCC operator sits in: a dark navy wall of navigation on the left, bright work surfaces in front, and a road that changes colour as it fills. The shell stays steady and the data moves. Colour does two jobs only. It names the analytics domain you are in (Traffic blue, Incidents amber, Emissions green) and it reports the state of the corridor (clear, slow, congested, no data). Everything else is ink on white or ink on navy.\n\nThe surfaces have physical presence. Cards sit on a page ground washed with faint blue and violet light. They carry a soft shadow and rise under the cursor. The active nav item gets a lit edge, the topbar is frosted glass that content scrolls beneath, and primary actions use a blue-to-violet gradient with a coloured shadow. That depth is spent on hierarchy, to mark what is selected, what can be pressed and what to read first. It is never spread evenly across the page.\n\nThe interface is dense and built for operators who return to it all day. Pages pack KPI tiles, chart grids, maps and tables into one scroll. Type is Inter throughout, weighted heavily (700 is the default for anything that is not running text), with big tabular numerals for the readings that matter. Light and dark themes are both first-class. Only tokens change between them, and no component rule needs to know which theme is active.",
+    "keyCharacteristics": [
+      "Navy shell, bright work surface, with colour reserved for domain identity and corridor state.",
+      "Tactile depth: layered shadows, hover lift, a lit active edge, glass topbar, gradient primary actions.",
+      "Inter at heavy weights, with oversized tabular numerals for KPIs.",
+      "One accent per page, `--page-accent`, inherited from the page header down to every card, tab and focus ring.",
+      "Light and dark are token swaps; series hues keep their meaning in both."
+    ],
+    "rules": [
+      {
+        "name": "The Three Words Rule",
+        "body": "The road is clear, slow or congested, plus grey for no data. No fourth colour, no in-band shading on a map read at a glance, and the map, the panel and the mobile app paint the same three values.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Accent Rule",
+        "body": "A page carries exactly one domain accent, read from `--page-accent`. A component that wants colour reads the variable with a fallback to Expressway Blue. It never hardcodes a domain hue.",
+        "section": "colors"
+      },
+      {
+        "name": "The Themed Furniture Rule",
+        "body": "Chart text, axes, gridlines and tooltips follow the theme through `useChartTheme()`. Series hues do not change between themes, because they are categorical identity. ECharts options take literal values, never `var()`.",
+        "section": "colors"
+      },
+      {
+        "name": "The Snap Rule",
+        "body": "The stylesheet holds more than 25 distinct sizes between 0.6rem and 1.3rem. New work snaps to the seven roles above. Nothing below 0.68rem carries information an operator must read.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Any number that sits in a column, ticks in place or is compared with a neighbour uses `font-variant-numeric: tabular-nums`.",
+        "section": "typography"
+      },
+      {
+        "name": "The Earned Lift Rule",
+        "body": "Things that can be pressed or opened rise on hover: stat cards by 3px, buttons by 1px, nav items by 2px toward the content. Things that cannot be pressed do not move. Every lift is cancelled under `prefers-reduced-motion`.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Tinted Shadow Rule",
+        "body": "Interactive shadows take the colour of what cast them (page accent, brand blue or danger red). Rest shadows stay a cool neutral navy and never go pure black in light mode.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do read `--page-accent` (falling back to `--brand-primary`) for any domain colour on a card, tab, focus ring or row hover.",
+      "Do use the gradient primary button with its tinted throw for the one main action in a region, and muted buttons for the rest.",
+      "Do give anything clickable a hover response: lift, tinted shadow or fill. Cancel the motion under `prefers-reduced-motion`.",
+      "Do colour road state only with the clear, slow, congested and no-data tokens from `lib/map-palette.ts`, the same values in every view.",
+      "Do set KPI values in the Numeral role with tabular figures, and label them with the caption or title role, not with a second number.",
+      "Do define any new colour as a token in both dark blocks of `globals.css`, then read it in ECharts through `useChartTheme()`."
+    ],
+    "donts": [
+      "Don't hardcode a hex in a component rule. The pre-token borders (`#dce2ef`, `#e7ecf5`) and pill tints are drift to migrate, not precedent.",
+      "Don't introduce a fourth congestion colour or shade within a band on the map.",
+      "Don't use Toll Amber or Signal Violet as status colours or as flat fills.",
+      "Don't add a new font size. Snap to the seven typography roles.",
+      "Don't make a non-interactive surface lift or glow on hover.",
+      "Don't pass `var(--…)` into an ECharts option, because ECharts cannot resolve it."
+    ]
+  }
+}

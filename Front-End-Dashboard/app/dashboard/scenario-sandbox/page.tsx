@@ -2098,20 +2098,18 @@ export default function AiSandboxPage() {
               >
                 <span className="sandbox-live-clock-label">Simulation time</span>
                 {liveDateText && <span className="sandbox-live-clock-date">{liveDateText}</span>}
-                <span style={{ display: "inline-block", width: 118 }}>
-                  <TimeField
-                    valueS={liveMin * 60}
-                    minS={0}
-                    maxS={1439 * 60 + 59}
-                    step={1}
-                    scn="sim-time"
-                    onCommit={(totalS) => {
-                      const totalMin = totalS / 60;
-                      setHourOfDay(Math.floor(totalMin / 60));
-                      setClockMinuteOffset(totalMin % 60);
-                    }}
-                  />
-                </span>
+                <TimeField
+                  valueS={liveMin * 60}
+                  minS={0}
+                  maxS={1439 * 60 + 59}
+                  step={1}
+                  scn="sim-time"
+                  onCommit={(totalS) => {
+                    const totalMin = totalS / 60;
+                    setHourOfDay(Math.floor(totalMin / 60));
+                    setClockMinuteOffset(totalMin % 60);
+                  }}
+                />
               </div>
             )}
             <div>
@@ -3475,6 +3473,13 @@ function CompareBlock({ d, direction }: { d: DirectionApi; direction: Direction 
         </span>
       </div>
       <div className="sandbox-compare-rows">
+        <div className="sandbox-compare-row sandbox-compare-labels" aria-hidden>
+          <span className="l" />
+          <span className="was">Before</span>
+          <span className="arrow" />
+          <span className="now">After</span>
+          <span className="d" />
+        </div>
         {compareRows.map(
           ([label, was, now, unit, higherIsBetter]) => {
             const pct = was === 0 ? null : ((now - was) / was) * 100;

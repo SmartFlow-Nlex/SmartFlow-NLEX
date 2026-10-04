@@ -70,15 +70,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [isMobile, setIsMobile] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-
-  // Log out for real: the audit entry first (it needs the session to name the user), then end the
-  // Supabase session. Going back to the sign-in page alone left the session signed in.
-  async function logOut() {
-    setLoggingOut(true);
-    await logActivity({ type: "session.logout" });
-    await supabase.auth.signOut().catch(() => {});
-    router.push("/");
-  }
+  const logoutCancelRef = useRef<HTMLButtonElement | null>(null);
 
   /*
    * Whether a session exists. "checking" is a distinct state rather than an
@@ -146,6 +138,39 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     if (authState === "anon") router.replace(LOGIN_ROUTE);
   }, [authState, router]);
+
+  /*
+   * Log out means ending the session. The button used to only navigate to the
+   * login page, which left the Supabase session alive: the next visit to
+   * /dashboard walked straight back in, and on a shared operator PC that is
+   * the one thing a log-out button exists to prevent. signOut clears the
+   * stored tokens; the auth listener above then sees no session as well.
+   * Navigation happens whether or not the network call succeeds, because the
+   * local session is cleared either way and the user asked to leave.
+   */
+  const confirmLogout = useCallback(async () => {
+    setLoggingOut(true);
+    // The audit entry goes first: it needs the session to name the user.
+    await logActivity({ type: "session.logout" });
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Local tokens are cleared even when the revoke request fails.
+    }
+    router.replace(LOGIN_ROUTE);
+  }, [router]);
+
+  // Esc closes the dialog, and focus starts on Cancel: the safe choice is the
+  // one a stray Enter should land on.
+  useEffect(() => {
+    if (!showLogoutConfirm) return;
+    logoutCancelRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !loggingOut) setShowLogoutConfirm(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [showLogoutConfirm, loggingOut]);
 
   // Filter tabs by role. Both this and the guard below read one rule set in
   // lib/auth-access.ts, so a hidden link and an allowed route cannot disagree.
@@ -378,16 +403,55 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </main>
 
       {showLogoutConfirm && (
-        <div className="ds-modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm logout">
-          <div className="ds-modal">
-            <h3>Confirm Logout</h3>
-            <p>Are you sure you want to log out?</p>
-            <div className="ds-modal-actions">
-              <button className="ds-button ds-button-ghost" onClick={() => setShowLogoutConfirm(false)}>
+        <div
+          className="ds-modal-backdrop"
+          onClick={() => { if (!loggingOut) setShowLogoutConfirm(false); }}
+        >
+          <div
+            className="ds-modal ds-confirm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="logout-title"
+            aria-describedby="logout-desc"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="ds-confirm-body">
+              <span className="ds-confirm-icon" aria-hidden="true">
+                <LogOut size={20} strokeWidth={2.4} />
+              </span>
+              <div className="ds-confirm-text">
+                <h3 id="logout-title">Log out of SmartFlow?</h3>
+                <p id="logout-desc">You&apos;ll need to sign in again to open the dashboard.</p>
+                {userEmail && (
+                  <div className="ds-confirm-account">
+                    <span className="ds-avatar-circle" aria-hidden="true">{avatarChar}</span>
+                    <span className="ds-confirm-account-text">
+                      <span className="ds-confirm-account-email">{userEmail}</span>
+                      <span className="ds-confirm-account-role">{displayRoleName}</span>
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="ds-confirm-actions">
+              <button
+                ref={logoutCancelRef}
+                type="button"
+                className="ds-confirm-btn is-secondary"
+                onClick={() => setShowLogoutConfirm(false)}
+                disabled={loggingOut}
+              >
                 Cancel
               </button>
-              <button className="ds-button ds-button-danger" disabled={loggingOut} onClick={() => void logOut()}>
-                {loggingOut ? "Logging out…" : "Log Out"}
+              <button
+                type="button"
+                className="ds-confirm-btn is-danger"
+                onClick={confirmLogout}
+                disabled={loggingOut}
+                aria-busy={loggingOut}
+              >
+                <LogOut size={15} strokeWidth={2.4} aria-hidden="true" />
+                {loggingOut ? "Logging out…" : "Log out"}
               </button>
             </div>
           </div>

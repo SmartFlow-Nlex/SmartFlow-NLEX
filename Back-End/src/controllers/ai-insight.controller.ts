@@ -17,14 +17,14 @@ import { isGlmConfigured, providerInfo, GlmError } from "../lib/glm.client.js";
 import {
   generateIncidentModelsInsight,
   generateClearanceInsight,
-  generateIncidentPriorityInsight,
+  generateBreakdownResponseInsight,
   generateCorridorRiskInsight,
   generateHighIncidentDayInsight,
 } from "../services/ai-insight.incident.service.js";
 import {
   IncidentModelsNarrativeSchema,
   ClearanceNarrativeSchema,
-  IncidentPriorityNarrativeSchema,
+  BreakdownResponseNarrativeSchema,
   CorridorRiskNarrativeSchema,
   HighIncidentDayNarrativeSchema,
 } from "../validators/ai-insight.validator.js";
@@ -244,11 +244,11 @@ export const clearanceNarrative = narrativeHandler(
   "Clearance",
 );
 
-/** POST /api/ai-insight/incident-priority-narrative */
-export const incidentPriorityNarrative = narrativeHandler(
-  IncidentPriorityNarrativeSchema,
-  generateIncidentPriorityInsight,
-  "Incident priority",
+/** POST /api/ai-insight/breakdown-response-narrative */
+export const breakdownResponseNarrative = narrativeHandler(
+  BreakdownResponseNarrativeSchema,
+  generateBreakdownResponseInsight,
+  "Breakdown response time",
 );
 
 /** POST /api/ai-insight/corridor-risk-narrative */
