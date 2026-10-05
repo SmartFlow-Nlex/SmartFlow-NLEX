@@ -43,6 +43,27 @@ export interface AuthenticatedRequest extends Request {
   userRole?: string;
 }
 
+/* Tokens Supabase has already accepted, remembered for up to a minute.
+ *
+ * Every protected request used to wait on a round trip to Supabase (measured
+ * 0.2-0.6 s) before its handler ran, even for the same token a moment apart.
+ * A minute is short against a token's hour of life: a sign-out elsewhere, or a
+ * role change, takes effect within it. An entry never outlives the token's own
+ * expiry, and only acceptances are kept, so a rejected token is always asked
+ * about again. (7 Oct 2026, latency pass.) */
+const ACCEPTED_TTL_MS = 60_000;
+const accepted = new Map<string, { until: number; user: any; role: string }>();
+
+/** The token's own expiry in ms (the JWT's exp claim), or 0 when it cannot be read. */
+function expiryOf(token: string): number {
+  try {
+    const exp = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")).exp;
+    return typeof exp === "number" ? exp * 1000 : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Verify the bearer token and attach the caller's identity and role.
  *
@@ -51,6 +72,9 @@ export interface AuthenticatedRequest extends Request {
  * attempt, the others are not.
  */
 export async function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  // What a protected route answers depends on who asked, so the route cache
+  // must never store it (routeCache reads this flag).
+  res.locals.authRequired = true;
   const supabase = getSupabase();
   if (!supabase) {
     // Fail closed. An endpoint that cannot verify a token must not serve the
@@ -73,6 +97,13 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
     });
   }
 
+  const known = accepted.get(token);
+  if (known && Date.now() < known.until) {
+    req.user = known.user;
+    req.userRole = known.role;
+    return next();
+  }
+
   try {
     const { data: { user }, error } = await supabase.auth.getUser(token);
 
@@ -87,6 +118,11 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
 
     req.user = user;
     req.userRole = user.user_metadata?.role || FALLBACK_ROLE;
+    const until = Math.min(Date.now() + ACCEPTED_TTL_MS, expiryOf(token));
+    if (until > Date.now()) {
+      if (accepted.size > 500) accepted.clear(); // bounded: a burst of new tokens simply starts over
+      accepted.set(token, { until, user, role: req.userRole ?? FALLBACK_ROLE });
+    }
     next();
   } catch (err) {
     return res.status(500).json({

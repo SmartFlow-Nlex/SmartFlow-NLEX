@@ -312,13 +312,24 @@ export function createMascot3D(
   import("./mascot/createNlexMascotModel")
     .then(async ({ createNlexMascotModel }) => {
       if (disposed) return;
-      // Build when the browser is idle, so the geometry, decals and shader
-      // compiles do not land on top of the page's own first second (the title
-      // reveal, the first data read).
+      // Build after the page's title has revealed, then when the browser is idle. Building blocks
+      // the main thread for a moment, and a title reveal that had not started yet then jumped
+      // straight to its end ("it just popped out", user, 7 Oct 2026). The car drives in after.
+      await new Promise<void>((resolve) => {
+        const t0 = performance.now();
+        const check = () => {
+          if (disposed) return resolve();
+          const title = document.querySelector(".tr-title");
+          if (title?.classList.contains("tr-ready")) return void setTimeout(resolve, 1200); // every letter has landed
+          if (performance.now() - t0 > 3000) return resolve(); // no title on this page, or a slow one
+          setTimeout(check, 60);
+        };
+        check();
+      });
       await new Promise<void>((resolve) => {
         const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
-        if (ric) ric(() => resolve(), { timeout: 1200 });
-        else setTimeout(resolve, 300);
+        if (ric) ric(() => resolve(), { timeout: 600 });
+        else setTimeout(resolve, 100);
       });
       if (disposed) return;
       const m = createNlexMascotModel({ assetBase: "/brand/mascot/", anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()) });
@@ -363,6 +374,18 @@ export function createMascot3D(
       contact.position.y = contactRestY;
       contactScale.set(size.x * 1.05, size.z * 0.9);
       contact.scale.set(contactScale.x, contactScale.y, 1);
+      // Compile the car's shaders in parallel before its first frame, instead of the first render
+      // stalling the main thread while they compile (it was ~0.7 s). The whole stage scene, once:
+      // passing the car with its scene as the target counted its lights twice, so the programs
+      // compiled ahead did not match the ones the first frame needed.
+      const stage = root.parent as THREE.Scene | null;
+      if (stage) {
+        root.visible = true;
+        const compiling = renderer.compileAsync(stage, new THREE.PerspectiveCamera(50, 1, 0.1, 100));
+        root.visible = false;
+        await compiling.catch(() => undefined);
+        if (disposed) return;
+      }
       root.visible = true;
       onReady();
     })

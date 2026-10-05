@@ -1,4 +1,5 @@
 import { db } from "../config/db.js";
+import { cached } from "../utils/ttl-cache.js";
 import {
   getMLPredictiveVolume,
   getMLPredictiveVolumeHourly,
@@ -191,17 +192,25 @@ async function getFleetMixForDate(date: string): Promise<ScenarioContext["fleet"
   }
 }
 
+/* The five inputs below are the same whichever date is asked for, and together they took 7-8 s to
+ * read. Every date the operator picks is a new URL to the route cache, so each pick read all five
+ * again. They are now kept for ten minutes, like the routes that serve them elsewhere (the tables
+ * change only when a pipeline re-runs); only the per-date work further down runs for each pick. */
+const SCENARIO_INPUT_TTL_MS = 10 * 60_000;
+
 export async function getScenarioContext(date?: string): Promise<ScenarioContext | null> {
-  const anchors = await getIncidentPredictiveAnchors();
+  const anchors = await cached("incident:anchors", SCENARIO_INPUT_TTL_MS, getIncidentPredictiveAnchors);
 
   const [volumes, metrics, emissions, incidents, analytics] = await Promise.all([
-    getMLPredictiveVolume({ months: "all" }),
-    getMLModelMetrics("80_20"),
-    getEmissionForecast(),
+    cached("scenario:volume", SCENARIO_INPUT_TTL_MS, () => getMLPredictiveVolume({ months: "all" })),
+    cached("scenario:metrics", SCENARIO_INPUT_TTL_MS, () => getMLModelMetrics("80_20")),
+    cached("scenario:emissions", SCENARIO_INPUT_TTL_MS, () => getEmissionForecast()),
     // "all" weather: the scenario picker does not filter by weather, so the
     // unfiltered forecast is the right one to seed from.
-    anchors ? getIncidentPredictiveFromDb({ weather: "all" }, anchors) : Promise.resolve(null),
-    getTrafficAnalyticsFromDb({ months: "12" }),
+    anchors
+      ? cached(`scenario:incidents:${JSON.stringify(anchors)}`, SCENARIO_INPUT_TTL_MS, () => getIncidentPredictiveFromDb({ weather: "all" }, anchors))
+      : Promise.resolve(null),
+    cached("scenario:analytics", SCENARIO_INPUT_TTL_MS, () => getTrafficAnalyticsFromDb({ months: "12" })),
   ]);
 
   // Volume seeds the simulation and emissions define the offered range, so

@@ -385,16 +385,42 @@ function buildBodyGeometry(loft: BodyLoft): THREE.BufferGeometry {
   const uvs: number[] = [];
   const index: number[] = [];
   const p = new THREE.Vector3();
-  const nrm = new THREE.Vector3();
   for (let j = 0; j < ringCount; j++) {
     const s = sOf[j];
     for (let i = 0; i <= cols; i++) {
-      const t = tOf[i];
-      loft.point(t, s, p);
-      loft.normal(t, s, nrm);
+      loft.point(tOf[i], s, p);
       positions.push(p.x, p.y, p.z);
-      normals.push(nrm.x, nrm.y, nrm.z);
       uvs.push(i / cols, j / (ringCount - 1));
+    }
+  }
+  // Normals from the grid's own neighbours (central differences, wrapping round the body), the
+  // same cross product loft.normal takes but without four extra loft evaluations per vertex: the
+  // build was the Overview's main-thread freeze on load (7 Oct 2026).
+  const row = cols + 1;
+  const P = (j: number, i: number, k: number) => positions[(j * row + i) * 3 + k];
+  for (let j = 0; j < ringCount; j++) {
+    const j0 = Math.max(0, j - 1);
+    const j1 = Math.min(ringCount - 1, j + 1);
+    for (let i = 0; i <= cols; i++) {
+      const ic = i === cols ? 0 : i; // the seam column repeats column 0
+      const i0 = (ic - 1 + cols) % cols;
+      const i1 = (ic + 1) % cols;
+      const dsx = P(j1, ic, 0) - P(j0, ic, 0), dsy = P(j1, ic, 1) - P(j0, ic, 1), dsz = P(j1, ic, 2) - P(j0, ic, 2);
+      const dtx = P(j, i1, 0) - P(j, i0, 0), dty = P(j, i1, 1) - P(j, i0, 1), dtz = P(j, i1, 2) - P(j, i0, 2);
+      let nx = dsy * dtz - dsz * dty;
+      let ny = dsz * dtx - dsx * dtz;
+      let nz = dsx * dty - dsy * dtx;
+      const len = Math.hypot(nx, ny, nz);
+      if (len < 1e-12) {
+        nx = 0;
+        ny = j > ringCount / 2 ? 1 : -1;
+        nz = 0;
+      } else {
+        nx /= len;
+        ny /= len;
+        nz /= len;
+      }
+      normals.push(nx, ny, nz);
     }
   }
   for (let j = 0; j < ringCount - 1; j++) {
@@ -1239,6 +1265,42 @@ function buildLensGeometry(): THREE.BufferGeometry {
   return g;
 }
 
+/** A stand-in for `host` holding only the triangles near a decal projector box, so DecalGeometry
+ *  clips a few thousand triangles instead of the whole 250k-triangle body (it was ~250 ms of the
+ *  build). Shares the host's attributes; DecalGeometry reads only geometry and matrixWorld. */
+function decalHostNear(host: THREE.Mesh, center: THREE.Vector3, orientation: THREE.Euler, size: THREE.Vector3): { mesh: THREE.Mesh; dispose(): void } {
+  const g = host.geometry;
+  const pos = g.getAttribute("position");
+  const idx = g.getIndex();
+  if (!idx) return { mesh: host, dispose: () => undefined };
+  const toBox = new THREE.Matrix4().makeRotationFromEuler(orientation).setPosition(center).invert().multiply(host.matrixWorld);
+  const m = 1.2; // margin, so a triangle straddling the box edge is never dropped
+  const hx = (size.x / 2) * m;
+  const hy = (size.y / 2) * m;
+  const hz = (size.z / 2) * m;
+  const inside = new Uint8Array(pos.count);
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(toBox);
+    inside[i] = Math.abs(v.x) <= hx && Math.abs(v.y) <= hy && Math.abs(v.z) <= hz ? 1 : 0;
+  }
+  const keep: number[] = [];
+  for (let t = 0; t < idx.count; t += 3) {
+    const a = idx.getX(t);
+    const b = idx.getX(t + 1);
+    const c = idx.getX(t + 2);
+    if (inside[a] || inside[b] || inside[c]) keep.push(a, b, c);
+  }
+  const sub = new THREE.BufferGeometry();
+  sub.setAttribute("position", pos);
+  const n = g.getAttribute("normal");
+  if (n) sub.setAttribute("normal", n);
+  sub.setIndex(keep);
+  const mesh = new THREE.Mesh(sub);
+  mesh.matrixWorld.copy(host.matrixWorld);
+  return { mesh, dispose: () => sub.dispose() };
+}
+
 /** Point on an ellipsoid (centre c, radii r) along direction u. */
 function ellipsoidPoint(c: THREE.Vector3, r: readonly [number, number, number], u: THREE.Vector3): THREE.Vector3 {
   const k = 1 / Math.sqrt((u.x / r[0]) ** 2 + (u.y / r[1]) ** 2 + (u.z / r[2]) ** 2);
@@ -1566,7 +1628,10 @@ export function createNlexMascotModel(options: CreateNlexMascotOptions = {}): TH
     if (hit) center.copy(hit.point);
     d.targets.forEach((target, i) => {
       const host = hosts[target];
-      const g = new DecalGeometry(host, center, orientation, new THREE.Vector3(d.size[0], d.size[1], d.depth));
+      const box = new THREE.Vector3(d.size[0], d.size[1], d.depth);
+      const near = decalHostNear(host, center, orientation, box);
+      const g = new DecalGeometry(near.mesh, center, orientation, box);
+      near.dispose();
       g.applyMatrix4(host.matrixWorld.clone().invert()); // into the host's local space so it rides the host
       const decal = mesh(d.targets.length > 1 ? d.name + (i ? "-bonnet" : "-panel") : d.name, g, material);
       decal.renderOrder = 2;

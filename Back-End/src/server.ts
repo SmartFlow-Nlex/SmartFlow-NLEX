@@ -65,6 +65,33 @@ function startCacheWarmer(): void {
     ["/traffic/weather-evidence", 9 * 60_000],
     ["/emissions/forecast", 9 * 60_000],
     ["/dashboard/overview", 9 * 60_000],
+    /* Added 7 Oct 2026, from timing every page signed in: the URLs the pages
+       actually request. The Incidents page asks for event-breakdown WITH
+       ?months=12, a different cache key from the one above. */
+    ["/incident/event-breakdown?months=12", 9 * 60_000],
+    ["/traffic/analytics?months=12", 9 * 60_000],
+    ["/incident/analytics?months=12", 9 * 60_000],
+    ["/emissions/analytics?months=12", 9 * 60_000],
+    ["/map-comparison/exits", 9 * 60_000],
+    ["/emissions/fleet-profile", 9 * 60_000],
+    ["/audit-log/list?limit=500", 9 * 60_000],
+    ["/audit-log/summary?days=30", 9 * 60_000],
+  ];
+  /* The sandbox's first load (7 Oct 2026): 20-30 s of reads, every visit,
+     because they were never warmed. Each is seconds of full-table scans and
+     plaza-flows alone runs five queries at once, so staggered like the jobs
+     above they would overlap and fill the pool of ten. They are warmed one
+     after another instead, once the staggered group is under way, and the
+     round repeats on the same nine minutes. (The two plaza-flow directions
+     share one build. Balintawak southbound is not here: it has no observed
+     demand, answers 404, and only a 200 is ever cached.) */
+  const sandboxJobs = [
+    "/ai-sandbox/plaza-flows?direction=NB",
+    "/ai-sandbox/plaza-flows?direction=SB",
+    "/ai-sandbox/scenario",
+    "/ai-sandbox/demand-profile?exit=Balintawak&direction=NB",
+    "/traffic/analytics?months=12&direction=NB",
+    "/traffic/analytics?months=12&direction=SB",
   ];
   /* Stagger them.
    *
@@ -87,4 +114,17 @@ function startCacheWarmer(): void {
     }, i * STAGGER_MS);
     start.unref();
   });
+
+  let sandboxBusy = false;
+  const warmSandbox = async () => {
+    if (sandboxBusy) return; // a slow round is never doubled up by the next one
+    sandboxBusy = true;
+    try { for (const path of sandboxJobs) await warm(path); } finally { sandboxBusy = false; }
+  };
+  const sandboxStart = setTimeout(() => {
+    void warmSandbox();
+    const t = setInterval(() => void warmSandbox(), 9 * 60_000);
+    t.unref();
+  }, jobs.length * STAGGER_MS);
+  sandboxStart.unref();
 }

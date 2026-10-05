@@ -280,13 +280,21 @@ async function buildPlazaFlows(): Promise<{ at: number; byDir: Record<Dir, Plaza
       FROM gold.fact_traffic_hourly_origin
      WHERE total IS NOT NULL AND ${inDir}
      GROUP BY 1, 2`;
-  const openRows = await db!.query(
-    `SELECT DISTINCT exit_canonical AS plaza FROM gold.fact_traffic_hourly WHERE role = 'Entry' AND toll_system = 'OS'`,
-  );
+  /* The five reads are independent, so they run together (7 Oct 2026): one after another they held
+     the sandbox's first load for 20-26 s; in parallel they take about 10 s, measured on the same
+     database. A combined single-scan version was tried and measured slower (~42 s): Postgres sorts
+     once per COUNT(DISTINCT ...) FILTER, so folding the directions together cost more than it saved. */
+  const [openRows, paidNB, paidSB, originNB, originSB] = await Promise.all([
+    db!.query(`SELECT DISTINCT exit_canonical AS plaza FROM gold.fact_traffic_hourly WHERE role = 'Entry' AND toll_system = 'OS'`),
+    hourlyBy(paidSql, "NB"),
+    hourlyBy(paidSql, "SB"),
+    hourlyBy(originSql, "NB"),
+    hourlyBy(originSql, "SB"),
+  ]);
   const openSystem = new Set((openRows.rows as any[]).map((r) => String(r.plaza)));
 
-  const paid = { NB: await hourlyBy(paidSql, "NB"), SB: await hourlyBy(paidSql, "SB") };
-  const origin = { NB: await hourlyBy(originSql, "NB"), SB: await hourlyBy(originSql, "SB") };
+  const paid = { NB: paidNB, SB: paidSB };
+  const origin = { NB: originNB, SB: originSB };
 
   const entries: Record<Dir, Map<string, { h: Hours; src: PlazaFlow["entriesSource"] }>> = { NB: new Map(), SB: new Map() };
   const exits: Record<Dir, Map<string, { h: Hours; src: PlazaFlow["exitsSource"] }>> = { NB: new Map(), SB: new Map() };

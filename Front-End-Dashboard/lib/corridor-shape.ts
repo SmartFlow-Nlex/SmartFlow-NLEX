@@ -96,10 +96,43 @@ function measured(line: LngLat[]) {
   for (let i = 1; i < xy.length; i++) {
     cum.push(cum[i - 1] + Math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1]));
   }
-  return { xy, cum };
+  return { xy, cum, grids: new Map<number, SegmentGrid>() };
 }
 
 type Measured = ReturnType<typeof measured>;
+
+/**
+ * The reference's segments bucketed on a square grid, each listed in every cell its bounding box
+ * (grown by `radius`) touches. Any segment within `radius` of a point is then in that point's own
+ * cell, so a search capped at `radius` checks a handful of segments instead of all of them -- the
+ * full scan was ~0.9 s of main-thread time on every page that draws the corridor (7 Oct 2026).
+ */
+type SegmentGrid = { cell: number; buckets: Map<string, number[]> };
+function gridFor(ref: Measured, radius: number): SegmentGrid {
+  const hit = ref.grids.get(radius);
+  if (hit) return hit;
+  const cell = Math.max(radius * 2, 200);
+  const buckets = new Map<string, number[]>();
+  for (let i = 1; i < ref.xy.length; i++) {
+    const [ax, ay] = ref.xy[i - 1];
+    const [bx, by] = ref.xy[i];
+    const x0 = Math.floor((Math.min(ax, bx) - radius) / cell);
+    const x1 = Math.floor((Math.max(ax, bx) + radius) / cell);
+    const y0 = Math.floor((Math.min(ay, by) - radius) / cell);
+    const y1 = Math.floor((Math.max(ay, by) + radius) / cell);
+    for (let gx = x0; gx <= x1; gx++) {
+      for (let gy = y0; gy <= y1; gy++) {
+        const key = gx + ":" + gy;
+        const list = buckets.get(key);
+        if (list) list.push(i);
+        else buckets.set(key, [i]);
+      }
+    }
+  }
+  const grid = { cell, buckets };
+  ref.grids.set(radius, grid);
+  return grid;
+}
 
 /**
  * Distance along the reference of the closest point to `p`, how far off it is,
@@ -109,10 +142,19 @@ type Measured = ReturnType<typeof measured>;
  * way to summarise a bin is to average its coordinates, and a coordinate
  * average has no idea that the points came from two separate carriageways.
  */
-function projectOn(ref: Measured, p: LngLat): { s: number; off: number; side: number } {
+function projectOn(ref: Measured, p: LngLat, maxOff?: number): { s: number; off: number; side: number } {
   const [qx, qy] = toXY(p);
   let best = { s: 0, off: Infinity, side: 0 };
-  for (let i = 1; i < ref.xy.length; i++) {
+  // With a cap, only the segments that can lie within it (ascending order, so ties resolve exactly
+  // as the full scan does); a point farther than the cap from every segment gets off = Infinity.
+  let candidates: number[] | null = null;
+  if (maxOff != null) {
+    const g = gridFor(ref, maxOff);
+    candidates = g.buckets.get(Math.floor(qx / g.cell) + ":" + Math.floor(qy / g.cell)) ?? [];
+  }
+  const count = candidates ? candidates.length : ref.xy.length - 1;
+  for (let k = 0; k < count; k++) {
+    const i = candidates ? candidates[k] : k + 1;
     const [ax, ay] = ref.xy[i - 1];
     const vx = ref.xy[i][0] - ax;
     const vy = ref.xy[i][1] - ay;
@@ -251,7 +293,7 @@ function resample(raw: LngLat[], reference: LngLat[], pass: (typeof PASSES)[numb
   const bins = new Map<number, number[]>();
 
   for (const p of raw) {
-    const { s, off, side } = projectOn(ref, p);
+    const { s, off, side } = projectOn(ref, p, pass.halfWidth);
     if (off > pass.halfWidth) continue; // ramp, frontage road, service loop
     const key = Math.round(s / pass.bin);
     const bucket = bins.get(key);
@@ -287,7 +329,21 @@ function resample(raw: LngLat[], reference: LngLat[], pass: (typeof PASSES)[numb
  * One ordered centreline for the whole corridor, plus the vertex each exit sits
  * on. `exits` must be in corridor order.
  */
+/* The centreline is pure in (raw, exits) and five modules build it from the same static road
+   geometry, some at import time, so it is built once per input and shared. */
+const centrelines = new WeakMap<LngLat[], Map<string, { line: LngLat[]; cuts: number[] }>>();
 function buildCentreline(raw: LngLat[], exits: LngLat[]) {
+  const key = exits.map((e) => e[0] + "," + e[1]).join(";");
+  let byExits = centrelines.get(raw);
+  const hit = byExits?.get(key);
+  if (hit) return hit;
+  const built = buildCentrelineUncached(raw, exits);
+  if (!byExits) centrelines.set(raw, (byExits = new Map()));
+  byExits.set(key, built);
+  return built;
+}
+
+function buildCentrelineUncached(raw: LngLat[], exits: LngLat[]) {
   let line = exits;
   for (const pass of PASSES) {
     const next = resample(raw, line, pass);

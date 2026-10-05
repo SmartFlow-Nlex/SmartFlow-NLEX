@@ -9,7 +9,6 @@ import { displayExitName, type NlexExit } from "../../lib/nlex-exits";
 import SignalGlyph from "../dashboard/SignalGlyph";
 import InfoTooltip from "../dashboard/InfoTooltip";
 import StateNote from "../stage/StateNote";
-import Mascot from "../stage/Mascot";
 import TitleReveal from "../stage/TitleReveal";
 import PageGroupName from "../dashboard/PageGroupName";
 import EvidenceModal from "../dashboard/EvidenceModal";
@@ -136,11 +135,9 @@ export default function OverviewLive() {
   return (
     <>
     <section className="ov-hero" data-section="Overview" aria-labelledby="ov-title">
-      {/* The stage draws the 3D car over this box; the picture inside shows
-          until the stage's car is ready, and stays if WebGL is missing. */}
-      <div className="ov-hero-mascot" data-stage-anchor="mascot">
-        <Mascot size={520} className="ov-hero-fallback" />
-      </div>
+      {/* The stage draws the 3D car over this box. No flat picture stands in while it loads (user
+          request, 7 Oct 2026: it popped up on slow loads); the car simply drives in when ready. */}
+      <div className="ov-hero-mascot" data-stage-anchor="mascot" />
 
       <div className="ov-hero-copy">
         <p className="ds-page-eyebrow">

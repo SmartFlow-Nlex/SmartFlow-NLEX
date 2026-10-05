@@ -17,6 +17,7 @@ import { randomUUID } from "crypto";
 import type { Request } from "express";
 import { db } from "../config/db.js";
 import { verifiedUser } from "../middleware/auth.middleware.js";
+import { invalidatePrefix } from "../middleware/route-cache.js";
 
 /** The part of the system an entry belongs to. */
 export type AuditModule =
@@ -111,6 +112,11 @@ export async function writeAudit(actor: Actor, e: AuditEvent, requestId?: string
       actor.role, requestId ?? null,
     ],
   );
+  /* The audit log's list and summary are served from the route cache. An action is cleared from it
+     here, once its entry exists, so the next look at the log shows it. Page views are not: every
+     page opened writes one, and clearing on each would mean the log is never served from the cache;
+     they show up once the 15-second entry has been refreshed. (7 Oct 2026, latency pass.) */
+  if (e.action !== "page.viewed") invalidatePrefix("/api/audit-log");
   return rows[0];
 }
 

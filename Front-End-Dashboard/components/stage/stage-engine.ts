@@ -336,6 +336,12 @@ export function createStage(canvas: HTMLCanvasElement, initial: StageConfig): St
   let clock = 0;
   let disposed = false;
   let layoutTimer = 0;
+  // Re-measure the car's anchor only when something can have moved it (7 Oct 2026): reading its
+  // box every frame forced a full layout on each frame while the page was still rendering.
+  let layoutDirty = true;
+  const markLayoutDirty = () => {
+    layoutDirty = true;
+  };
 
   const drawing = () => !cfg.off && !!cfg.mascot;
 
@@ -406,8 +412,12 @@ export function createStage(canvas: HTMLCanvasElement, initial: StageConfig): St
     clock += dt;
     pointer.x += (pointerTarget.x - pointer.x) * 0.05;
     pointer.y += (pointerTarget.y - pointer.y) * 0.05;
-    // The Overview's car stands in the hero, which scrolls inside <main>.
-    relayout();
+    // The Overview's car stands in the hero, which scrolls inside <main>: scrolling, resizing and
+    // the periodic check below mark the layout dirty, and only then is the anchor measured again.
+    if (layoutDirty) {
+      layoutDirty = false;
+      relayout();
+    }
     mascot?.update(dt, clock, pointer, still, pointerTarget);
   };
 
@@ -528,6 +538,8 @@ export function createStage(canvas: HTMLCanvasElement, initial: StageConfig): St
   };
   window.addEventListener("resize", resize);
   window.addEventListener("scroll", onScroll, { passive: true });
+  // <main> scrolls, not the window, and scroll does not bubble: listen in the capture phase.
+  document.addEventListener("scroll", markLayoutDirty, { capture: true, passive: true });
   window.addEventListener("pointermove", onPointer, { passive: true });
   window.addEventListener("pointermove", onHeldMove, { passive: true });
   window.addEventListener("pointerdown", onPress, { passive: false });
@@ -535,11 +547,16 @@ export function createStage(canvas: HTMLCanvasElement, initial: StageConfig): St
   window.addEventListener("pointercancel", onRelease, { passive: true });
   document.addEventListener("visibilitychange", onVisibility);
   canvas.addEventListener("webglcontextlost", onContextLost);
-  // The mascot anchor moves with layout (fonts, cards loading in).
+  // The mascot anchor also moves with layout (fonts, cards loading in): check four times a second.
+  // While the frame loop runs it measures on its next frame; when idle, measure and draw here.
   layoutTimer = window.setInterval(() => {
+    if (running) {
+      layoutDirty = true;
+      return;
+    }
     relayout();
-    if (!running && mascot) renderOnce();
-  }, 600);
+    if (mascot) renderOnce();
+  }, 250);
 
   applyConfig();
 
@@ -555,6 +572,7 @@ export function createStage(canvas: HTMLCanvasElement, initial: StageConfig): St
       window.clearInterval(layoutTimer);
       window.removeEventListener("resize", resize);
       window.removeEventListener("scroll", onScroll);
+      document.removeEventListener("scroll", markLayoutDirty, { capture: true });
       window.removeEventListener("pointermove", onPointer);
       window.removeEventListener("pointerdown", onPress);
       window.removeEventListener("pointermove", onHeldMove);

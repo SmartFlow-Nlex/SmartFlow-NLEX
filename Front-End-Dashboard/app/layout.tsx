@@ -15,7 +15,6 @@ import './styles/nlex-daylight.css';
 import { ThemeProvider, THEME_INIT_SCRIPT } from '../lib/theme';
 
 const EFFECTS_INIT_SCRIPT = `(function(){try{if(localStorage.getItem('smartflow-effects')==='off')document.documentElement.setAttribute('data-effects','off');}catch(e){}})();`;
-const MASCOT_INIT_SCRIPT = `(function(){try{var p=location.pathname;if(p.slice(-10)==='index.html')p=p.slice(0,-10);if(p.length>1&&p.charAt(p.length-1)==='/')p=p.slice(0,-1);if(window.WebGLRenderingContext&&p.slice(-10)==='/dashboard'){document.documentElement.setAttribute('data-stage-mascot','pending');}}catch(e){}})();`;
 import { ToastProvider } from '../lib/toast';
 
 // The type (Inter for the interface, wide Saira for brand moments) is
@@ -44,12 +43,6 @@ export default function RootLayout({
         {/* Stamps the stored theme before first paint so a dark-theme reload
             never flashes the light palette. Must stay ahead of the stylesheet. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
-        {/* On the page with the 3D car (the Overview), keeps the
-            flat stand-in picture hidden from the first paint while the car
-            loads, so the page does not show one mascot and then swap it for
-            another. CSS shows the picture anyway after 6 s, and the stage
-            clears the mark if it never starts. */}
-        <script dangerouslySetInnerHTML={{ __html: MASCOT_INIT_SCRIPT }} />
         {/* The reader's "background effects" switch, before first paint (lib/effects.ts). */}
         <script dangerouslySetInnerHTML={{ __html: EFFECTS_INIT_SCRIPT }} />
       </head>

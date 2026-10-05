@@ -18,7 +18,8 @@ import { bypassScope } from "../utils/ttl-cache.js";
  *     waits on a slow query.
  *   - Writes invalidate: any non-GET under a prefix clears that prefix, so a
  *     PATCH to /maintenance/:id/status is followed by a fresh list.
- *   - Only 200 JSON bodies are stored; errors and 401s pass through untouched.
+ *   - Only 200 JSON bodies are stored; errors and 401s pass through untouched,
+ *     and so does anything a route behind authenticateToken answers.
  *   - x-cache-bypass: 1 skips the cache and refills it (the refresher and the
  *     warmer use it).
  */
@@ -116,23 +117,36 @@ export function routeCache(req: Request, res: Response, next: NextFunction): voi
   const url = req.originalUrl;
 
   /*
-   * Two independent reasons to hold nothing, either of which is sufficient.
+   * What may be stored, and who may be served from the store.
    *
-   * The path list is the primary guard. The Authorization test is defence in
-   * depth: it means a protected endpoint added later, and forgotten here, still
-   * cannot have an authenticated response stored under a URL that an anonymous
-   * caller could then request. The cost is that a signed-in caller gets no
-   * caching on public analytics routes -- which today is nobody, because the
-   * dashboard sends tokens only through lib/api.ts and reads public data with
-   * plain fetch.
+   * The path list is the first guard: those routes never touch the store.
+   *
+   * The second guard used to skip the cache for any request carrying an
+   * Authorization header. That stopped being cheap when the dashboard began
+   * attaching the user's token to every backend request (lib/backend-auth.ts):
+   * from then on no signed-in reader was ever served from here, and each page
+   * waited out its slow reads in full -- the sandbox 20-30 s, the audit log
+   * 3-4 s -- while the warmer refilled entries nobody read.
+   *
+   * Since 7 Oct 2026 that guard sits on the STORE side instead.
+   * authenticateToken marks every response it lets through
+   * (res.locals.authRequired) and a marked response is never stored, so the
+   * store holds only answers given without asking who was calling -- the same
+   * for everybody -- and anyone may be served from it. A protected endpoint
+   * added later and forgotten in the list above is still never stored.
    */
-  if (isProtected(url) || req.headers.authorization) {
+  if (isProtected(url)) {
     return next();
   }
 
   if (req.method !== "GET") {
-    // A write under a prefix makes every cached read under it suspect.
-    res.on("finish", () => { if (res.statusCode < 400) invalidatePrefix(prefixOf(url)); });
+    // A write under a prefix makes every cached read under it suspect. Not the
+    // page-view beacon: every page opened posts to /audit-log/activity, so the
+    // audit log's entries were cleared on each navigation and never served.
+    // Audited actions clear them instead (writeAudit, services/audit.ts).
+    if (!url.startsWith("/api/audit-log/activity")) {
+      res.on("finish", () => { if (res.statusCode < 400) invalidatePrefix(prefixOf(url)); });
+    }
     return next();
   }
 
@@ -157,13 +171,16 @@ export function routeCache(req: Request, res: Response, next: NextFunction): voi
   // this caller waits for a real answer instead of being told there is none.
 
   // Miss (or bypass). Coalesce concurrent misses for this URL: later callers
-  // wait for the first run, then answer from the store.
+  // wait for the first run, then answer from the store. A caller that finds
+  // nothing there -- the run failed, answered with something other than JSON,
+  // or was a protected route, which is never stored -- runs the handler itself
+  // and gets its own answer (this used to be a 503 for everyone waiting).
   const running = inflight.get(url);
   if (running && !bypass) {
     running.then(() => {
       const e = store.get(url);
       if (e) { res.setHeader("X-Cache", "HIT"); res.status(e.status).json(e.body); }
-      else res.status(503).json({ success: false, message: "Upstream produced no cacheable response" });
+      else runHandler(res, next, url, false);
     });
     return;
   }
@@ -171,15 +188,21 @@ export function routeCache(req: Request, res: Response, next: NextFunction): voi
   let settle!: () => void;
   const p = new Promise<void>((r) => { settle = r; });
   inflight.set(url, p);
+  const done = () => { if (inflight.get(url) === p) inflight.delete(url); settle(); };
+  res.on("finish", done);
+  res.on("close", done);
+  runHandler(res, next, url, bypass);
+}
 
+/** Run the route's own handler, keeping its answer when it is the same for everybody. */
+function runHandler(res: Response, next: NextFunction, url: string, bypass: boolean): void {
   const originalJson = res.json.bind(res);
   res.json = ((body: unknown) => {
-    if (res.statusCode === 200) store.set(url, { at: Date.now(), status: 200, body });
+    // authRequired: authenticateToken let this through, so the answer depends on who asked.
+    if (res.statusCode === 200 && !res.locals.authRequired) store.set(url, { at: Date.now(), status: 200, body });
     res.setHeader("X-Cache", bypass ? "REFRESH" : "MISS");
     return originalJson(body);
   }) as typeof res.json;
-  res.on("finish", () => { inflight.delete(url); settle(); });
-  res.on("close", () => { inflight.delete(url); settle(); });
   // A bypass reaches past this layer to the controllers' own TTL cache; see
   // bypassScope in utils/ttl-cache.
   if (bypass) bypassScope.run({ bypass: true }, () => next());
