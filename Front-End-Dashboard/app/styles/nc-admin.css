@@ -207,10 +207,11 @@
 .ds-main .dm-page .mini-stat strong {
   margin-top: 10px;
   font-size: var(--fs-numeral);
-  font-weight: 300;
+  font-weight: var(--numeral-weight);
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
+  letter-spacing: var(--numeral-tracking);
 }
 .ds-main .dm-page .mini-stat strong.ok { color: var(--color-success); }
 .ds-main .dm-page .mini-stat strong.bad { color: var(--color-danger); }

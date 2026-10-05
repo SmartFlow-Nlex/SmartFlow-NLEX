@@ -30,7 +30,8 @@ import EffectsToggle from "../../components/dashboard/EffectsToggle";
 import { NAV_TABS as tabs, NAV_GROUPS, navEntryFor, accentFor } from "../../lib/nav";
 import EditorialGrid from "../../components/stage/EditorialGrid";
 import SectionProgress from "../../components/stage/SectionProgress";
-import Mascot, { MascotFace } from "../../components/stage/Mascot";
+import Mascot from "../../components/stage/Mascot";
+import NlexEnvironment from "../../components/environment/NlexEnvironment";
 
 // The Night Corridor stage: one WebGL canvas behind the shell, client-only, and
 // mounted here once so it survives every navigation inside the dashboard.
@@ -47,7 +48,8 @@ const MOBILE_BREAKPOINT = 980;
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Collapsed to the icon rail by default (user request, 7 Oct 2026); the menu button opens it.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -177,9 +179,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     function handleResize() {
       const mobile = window.innerWidth <= MOBILE_BREAKPOINT;
       setIsMobile(mobile);
-      if (!mobile) {
-        setSidebarOpen(true);
-      }
     }
 
     handleResize();
@@ -212,12 +211,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const bar = topbarRef.current;
     const main = bar?.parentElement;
     if (!bar || !main || typeof ResizeObserver === "undefined") return;
-    const apply = () => main.style.setProperty("--ds-topbar-h", `${Math.round(bar.getBoundingClientRect().height)}px`);
-    apply();
+    // The analytics pages' filter row too (--ds-shelf-h): the strip behind the page scrollbar grows
+    // to cover it once it pins, so no sliver of background shows beside it.
+    let shelf: Element | null = null;
+    const apply = () => {
+      main.style.setProperty("--ds-topbar-h", `${Math.round(bar.getBoundingClientRect().height)}px`);
+      if (shelf) main.style.setProperty("--ds-shelf-h", `${Math.round(shelf.getBoundingClientRect().height)}px`);
+    };
     const ro = new ResizeObserver(apply);
     ro.observe(bar);
-    return () => ro.disconnect();
-  }, []);
+    // The page renders after this layout, so look for its filter row for a moment.
+    const find = () => {
+      const row = main.querySelector('[class*="_filterRow_"]');
+      if (row && row !== shelf) {
+        shelf = row;
+        ro.observe(row);
+      }
+      apply();
+    };
+    find();
+    const timers = [200, 800, 2000].map((ms) => window.setTimeout(find, ms));
+    return () => {
+      ro.disconnect();
+      timers.forEach((t) => window.clearTimeout(t));
+    };
+    // Re-run once the shell is shown (the bar does not exist behind the session check) and per page.
+  }, [authState, pathname]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
@@ -275,6 +294,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           : "You do not have access to that page. Returning to the overview…";
     return (
       <>
+        <NlexEnvironment scene="page" />
         <NightCorridorStage variant="dashboard" />
         <div className="ds-auth-gate" role="status" aria-live="polite">
           {/* The loader is the mascot's headlights, not a spinner. */}
@@ -287,6 +307,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <>
+    {/* The NLEX environment behind every page, tab and sub-tab. */}
+    <NlexEnvironment scene={pathname === "/dashboard" ? "hero" : "page"} />
     <NightCorridorStage variant="dashboard" />
     <div className={shellClass} data-accent={accentFor(pathname)}>
       {isMobile && sidebarOpen && (
@@ -298,11 +320,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       )}
 
       <aside className="ds-sidebar">
-        {/* Brand mark: the wordmark when expanded, a crop of the mascot's face
-            and cap when the rail is collapsed to icons. */}
+        {/* Brand mark: the wordmark when expanded; nothing when the rail is
+            collapsed to icons (the mascot face there was removed, user request). */}
         <div className="ds-sidebar-brand" aria-hidden="true">
           <span className="ds-sidebar-wordmark">SmartFlow <b>NLEX</b></span>
-          <MascotFace size={28} />
         </div>
 
         <nav className="ds-sidebar-nav">

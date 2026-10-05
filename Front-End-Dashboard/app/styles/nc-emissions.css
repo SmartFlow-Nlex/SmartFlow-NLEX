@@ -60,9 +60,9 @@
 }
 .viz-emissions .nc-em-answer b {
   font-size: var(--fs-numeral);
-  font-weight: 400;
+  font-weight: var(--numeral-weight);
   line-height: 1.05;
-  letter-spacing: 0;
+  letter-spacing: var(--numeral-tracking);
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

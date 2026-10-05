@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 
 /**
- * The "background effects" preference: the stage's moving wave and light
- * trails, the editorial grid lines and the sign-in page's custom cursor. On by
+ * The "background effects" preference: the stage's carbon ground, race circuit
+ * and speed streaks, the editorial grid lines and the sign-in page's custom cursor. On by
  * default; switched off it leaves a plain background (the 3D car stays, since
  * it is content, not background).
  *

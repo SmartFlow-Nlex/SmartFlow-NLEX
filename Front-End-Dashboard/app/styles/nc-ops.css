@@ -13,7 +13,7 @@
    =========================================================================== */
 .nc-ops .nc-ops-num { font-variant-numeric: tabular-nums; }
 
-/* Dialogs and menus on these pages sit over an Italiana title and the grid
+/* Dialogs and menus on these pages sit over a display title and the grid
    furniture; the raised tint is laid over the stage colour so nothing ghosts
    through it. Same colour as --bg-raised, fully opaque. */
 .nc-ops-maint .nc-ops-modal,

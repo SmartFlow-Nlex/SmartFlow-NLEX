@@ -161,10 +161,11 @@
 .lm-page .lm-panel .mc-stat-value.purple,
 .lm-page .lm-panel .mc-stat-value.green {
   font-size: var(--fs-numeral);
-  font-weight: 400;
+  font-weight: var(--numeral-weight);
   line-height: 1.05;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
+  letter-spacing: var(--numeral-tracking);
 }
 
 /* --- Header actions: exit picker and the 3D toggle ------------------------ */
@@ -350,11 +351,12 @@
 .lm-page .lm-when .lm-age { position: static; padding: 0; border: 0; background: none; color: var(--color-purple); }
 .lm-page .lm-when-time {
   font-size: var(--fs-numeral);
-  font-weight: 400;
+  font-weight: var(--numeral-weight);
   line-height: 1.05;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  letter-spacing: var(--numeral-tracking);
 }
 .lm-page .lm-when-day {
   font-size: var(--fs-label);
@@ -1176,7 +1178,7 @@
 .lm-page .fc-head .mc-horizon-pick option,
 .lm-page .fc-head .mc-horizon-pick optgroup { color: var(--text-primary); background: var(--bg-surface-solid); }
 .lm-page .fc-tally-item { border-color: var(--border-default); border-radius: var(--radius-md); font-size: var(--fs-label); letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary); }
-.lm-page .fc-tally-item b { font-size: var(--fs-numeral); font-weight: 400; font-variant-numeric: tabular-nums; }
+.lm-page .fc-tally-item b { font-size: var(--fs-numeral); font-weight: var(--numeral-weight); font-variant-numeric: tabular-nums; letter-spacing: var(--numeral-tracking); }
 .lm-page .fc-tally-item.is-high b { color: var(--signal-congested); }
 .lm-page .fc-tally-item.is-med b { color: var(--signal-slow); }
 .lm-page .fc-tally-item.is-low b { color: var(--signal-clear); }
@@ -1488,7 +1490,7 @@
   .lm-page .lm-panel .map-canvas-container > .lm-age { display: flex; width: 100%; }
   .lm-page .lm-panel .map-canvas-container > .lm-when { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
   .lm-page .lm-panel .map-canvas-container > .lm-when .lm-age { flex-basis: 100%; }
-  .lm-page .lm-when-time { font-size: var(--fs-numeral); }
+  .lm-page .lm-when-time { font-size: var(--fs-numeral); font-weight: var(--numeral-weight); letter-spacing: var(--numeral-tracking); }
   .lm-page .lm-panel .map-canvas-container > .mc-forecast-controls {
     order: 2;
     flex-wrap: wrap;

@@ -4,8 +4,8 @@ import { Sparkles } from "lucide-react";
 import { useEffectsOn } from "../../lib/effects";
 
 /**
- * Turns the background effects (moving wave, light trails, grid lines, the
- * sign-in cursor) on or off. One switch, in the same pill as the theme control.
+ * Turns the background effects (carbon ground, race circuit, speed streaks,
+ * grid lines, the sign-in cursor) on or off. One switch, in the same pill as the theme control.
  */
 export default function EffectsToggle() {
   const [on, setOn] = useEffectsOn();

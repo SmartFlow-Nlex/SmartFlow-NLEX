@@ -26,10 +26,11 @@
   flex-wrap: wrap;
   gap: 4px 10px;
   font-size: var(--fs-numeral);
-  font-weight: 400;
+  font-weight: var(--numeral-weight);
   line-height: 1.1;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
+  letter-spacing: var(--numeral-tracking);
 }
 .fc-answer-unit { font-size: var(--fs-body); font-weight: 300; color: var(--text-secondary); }
 .fc-answer-context { font-size: var(--fs-body); font-weight: 300; line-height: 1.5; color: var(--text-secondary); }

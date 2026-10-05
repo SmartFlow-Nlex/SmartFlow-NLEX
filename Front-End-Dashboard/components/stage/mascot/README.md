@@ -1,5 +1,14 @@
 # NLEX mascot, 3D
 
+> **Current design: v2, made cuter (6 Oct 2026).** The v2 body and "NLEX" cap, with: the drawn,
+> animated face (`face.ts`, eyes redrawn in the reference sheet's style: a heavy lash line, a deep
+> glossy blue iris, sparkle highlights, no full outline); a 1.12x widening for chubbier
+> proportions; the cap down on the roof with the brim over the windscreen; short-stalked mirrors;
+> thin-rimmed headlights clear of the tyres and a fuller bumper; and the sheet's sides and back
+> (framed front and rear side windows, door handles, rear window, red-and-amber taillights, an "N"
+> plate, the cap's strap). Shown a little from above. Overview only: sign-in shows the flat PNG.
+> The v3-v7 notes below describe designs that were tried and set aside.
+
 A procedural Three.js model of the NLEX mascot car, built from
 `public/brand/nlex-mascot.png` with the img2threejs skill's core pipeline (local,
 pure-Python tooling; no vision adapter, nothing uploaded). It is the hero on the
@@ -116,6 +125,41 @@ close-ups, palette, expressions; kept locally as
   less self-glow on the face and decals, a light clearcoat on the face so the eyes stay blue;
   paint `#2484FF`; irises lean cyan because ACES turns pure blue violet.
 
+## v6: cute, not just accurate (5 Oct 2026)
+
+The v5 car matched the sheet part by part but read tall, narrow and long-nosed. v6 goes after the
+proportions and the face style that make the mascot cute:
+
+- Built as before, then widened 1.2× (`WIDTH_SCALE`): squat and wide, about as wide as it is tall
+  with its cap on. Decals project after the widening, so the face, logo and plate keep their shape.
+- A shorter nose and the cabin brought forward over the middle (no lean back); the cap raised so
+  white windscreen shows above the brows; mirrors tucked in close.
+- The face redrawn in the sheet's style: tall eyes with a heavy navy outline and a pointed outer
+  corner, an iris that fills the eye, a big pupil, two clean highlights; short thick brows; a
+  bigger open smile on the blue bonnet between the cheeks.
+- Flush headlights with a hairline ring, a slimmer bumper band.
+- On the page the car is tipped 0.17 rad toward the camera (`BASE_PITCH` in `../mascot3d.ts`),
+  so it is seen a little from above, as on the sheet.
+
+## v7: the animated reference (6 Oct 2026)
+
+Matched to `Downloads/Mascot/Reference.mp4` (frames pulled locally in headless Edge; nothing
+uploaded):
+
+- Cap: lower, so the crown hugs the roof like a cap on a head, the brim angled down over the
+  windscreen and curving at its sides, turned a touch to the car's left; the logo is now the
+  reference's round "N" badge (drawn, `buildCapBadgeTexture`) instead of the "NLEX" wordmark.
+- Front, top to bottom as in the video: eyes on the white windscreen; pink cheeks just under it;
+  the chrome "N" emblem between them; a bigger open smile under the emblem; warm ivory headlights
+  (round, though the body is widened) beside the smile; a thicker bumper band.
+- The face canvas grew to 1024x800 at the same scale, so the smile can sit lower.
+- Paint `#3590EE` (the video reads `#3B86CA` on screen).
+- Motion (`../mascot3d.ts`): rocks up onto two wheels and back with a laugh (its signature move,
+  a fidget and on hover), twinkling four-point sparkles (warm white in dark, gold in light) in
+  bursts and now and then on their own, and the mouth chatters while it laughs (`face.talk`).
+- The bounce spring now runs in fixed 1/120 s steps: a long frame used to let it lock into
+  flicking between squashed and stretched.
+
 ## What is approximate
 
 - Only the front is in the reference. The rear and sides are inferred and stylised (the side
@@ -129,3 +173,28 @@ close-ups, palette, expressions; kept locally as
 - The key light's "soft shadows" are drawn as a soft contact ellipse under the wheels:
   a real-time shadow map left a hard edge where its frustum ended and cost a second render
   of the car per frame.
+
+## v8 (7 Oct 2026): rebuilt to the user's two reference sheets
+
+The sheets ("3D template / reference" and "3D model reference, three.js / img2threejs ready") are the
+source of truth; v8 was tuned by rendering front, three-quarter, side, back and top views beside crops of
+them. Same structure and mesh names as before, so `../mascot3d.ts` drives it unchanged.
+
+- Body: longer and lower (a hatchback about 1.5x as long as it is tall), a tall upright front fascia,
+  a short bonnet rolling into a steep windscreen, a thick full-width bumper band front and rear.
+- Wheels straight (no toe-in), chunky, at the corners. Headlights bigger, chrome-ringed, lower and wider apart.
+- Mirrors: big round housings at eye height with the white strip. Side glass deeper blue.
+- Face panel wide, with the two brow humps; the drawn face (`face.ts`) re-laid out for it: round eyes
+  that peek over the blue fascia (clipped at the windscreen's edge), one thick navy upper lid, deep blue
+  glossy irises, big top-left highlights and a sparkle; short thick brows; a small rounded "D" smile with
+  a pink tongue (made smaller at the user's request); pink cheeks.
+- Cap: level on the roof, the visor joined to the crown (its inner edge runs along the crown's base;
+  the sides bend down only as they reach out) and closed all round; the crown carries a short band
+  below its equator so no gap shows. The badge is a blue ring round a bold blue "N" drawn on a canvas
+  (`buildCapNTexture`), replacing the NLEX wordmark at the user's request.
+- Later the same day (user requests): the cap badge redrawn crisp (1024 px canvas), deep blue, a thick
+  ring and a bold "N", on a wider white front panel so the ring sits wholly on white; the smile made
+  small (156 x 76 canvas px); and fine surface relief with no change of shape or colour: an orange-peel
+  normal map (and roughness variation) on the paint, a woven-fabric normal map on the cap, a rubber grain
+  on the tyres (tileable canvas maps from `tileNoise` / `weaveHeight`; UVs added to the body, bumpers,
+  visor and cap panel). The body loft is denser (220 x 8 per key) so the wheel-arch pinch stays smooth.

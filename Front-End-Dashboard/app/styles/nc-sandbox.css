@@ -491,10 +491,11 @@
 }
 .ds-main .sandbox-page .sandbox-forecast-tile .v {
   font-size: var(--fs-numeral);
-  font-weight: 300;
+  font-weight: var(--numeral-weight);
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
+  letter-spacing: var(--numeral-tracking);
 }
 .ds-main .sandbox-page .sandbox-forecast-tile .s {
   font-size: var(--fs-label);
@@ -571,9 +572,9 @@
 .ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric-val {
   margin-top: 10px;
   font-size: var(--fs-numeral);
-  font-weight: 300;
+  font-weight: var(--numeral-weight);
   line-height: 1.05;
-  letter-spacing: -0.01em;
+  letter-spacing: var(--numeral-tracking);
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
   white-space: nowrap;

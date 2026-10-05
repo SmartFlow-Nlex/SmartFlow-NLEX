@@ -148,11 +148,12 @@ html:root .viz-incident.viz-incident { --kpi-1: var(--page-accent); }
 }
 .inc-answer-value {
   font-size: var(--fs-numeral);
-  font-weight: 400;
+  font-weight: var(--numeral-weight);
   line-height: 1.05;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  letter-spacing: var(--numeral-tracking);
 }
 .inc-answer-label {
   font-size: var(--fs-body);
@@ -469,10 +470,11 @@ html:root .viz-incident.viz-incident { --kpi-1: var(--page-accent); }
 }
 .inc-stat-value {
   font-size: var(--fs-numeral);
-  font-weight: 400;
+  font-weight: var(--numeral-weight);
   line-height: 1.05;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
+  letter-spacing: var(--numeral-tracking);
 }
 .inc-stat-value.is-text { font-size: var(--fs-title); font-weight: 600; line-height: 1.25; }
 .inc-stats { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }

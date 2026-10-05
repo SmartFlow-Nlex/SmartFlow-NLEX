@@ -10,9 +10,10 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
  * night gets the same behaviour here once they choose it. Choosing Light or
  * Dark explicitly overrides the OS in either direction.
  *
- * Dark is the default (Night Corridor redesign, 4 Oct 2026): with nothing
- * stored, the dashboard opens dark whatever the OS says. A stored choice,
- * including "system", is always respected.
+ * Light is the default (NLEX daylight redesign, 7 Oct 2026, after the
+ * user's brief: "avoid dark mode as the primary design"): with nothing stored,
+ * the dashboard opens light whatever the OS says. A stored choice, including
+ * "system", is always respected. (Dark was the default from 4 Oct 2026.)
  *
  * The choice is written to <html data-theme> and to localStorage. It is applied
  * before paint by the inline script in layout.tsx, so the page never flashes the
@@ -58,12 +59,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   // Read the stored choice once mounted.
   useEffect(() => {
-    let stored: ThemeChoice = "dark";
+    let stored: ThemeChoice = "light";
     try {
       const raw = localStorage.getItem(THEME_STORAGE_KEY);
       if (raw === "light" || raw === "dark" || raw === "system") stored = raw;
     } catch {
-      /* private mode: fall back to the dark default */
+      /* private mode: fall back to the light default */
     }
     setChoiceState(stored);
     applyChoice(stored);
@@ -123,5 +124,5 @@ var c=localStorage.getItem('${THEME_STORAGE_KEY}');
 var d=document.documentElement;
 if(c==='light'||c==='dark'){d.setAttribute('data-theme',c);d.style.colorScheme=c;}
 else if(c==='system'){d.style.colorScheme='light dark';}
-else{d.setAttribute('data-theme','dark');d.style.colorScheme='dark';}
-}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`;
+else{d.setAttribute('data-theme','light');d.style.colorScheme='light';}
+}catch(e){document.documentElement.setAttribute('data-theme','light');}})();`;

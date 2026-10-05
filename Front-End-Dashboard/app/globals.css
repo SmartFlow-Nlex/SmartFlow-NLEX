@@ -3,33 +3,54 @@
    ============================================================ */
 
 /* ---------- Faces ----------
-   Night Corridor type, self-hosted from app/fonts (bundled by Next as hashed
-   assets, so it resolves under the production assetPrefix the Electron build
-   needs, and makes no request to Google at runtime). Italiana is display only;
-   Outfit is one variable file per subset covering 300-600. SIL Open Font
-   Licence; sources in app/fonts/README.md. */
+   Motorsport type, matched to the user's Formula 1 references (6 Oct 2026),
+   self-hosted from app/fonts (bundled by Next as hashed assets, so it resolves
+   under the production assetPrefix the Electron build needs, and makes no
+   request to Google at runtime). SIL Open Font Licence; sources in
+   app/fonts/README.md.
+   - Inter (variable, weight and optical size): headlines and every interface
+     word. Its display cut, which the optical-size axis picks at large sizes, is
+     the tight neo-grotesk of "Silverstone England" and "1m 11.160s". Drawn at
+     93% (size-adjust) so a line sets to the same length as the old Outfit and
+     no layout moves; its taller lowercase keeps it reading at the same size.
+   - Saira (variable, weight and width): only for brand moments, expanded and
+     bold like "Formula 1": the wordmarks and the Overview hero.
+   (Space Mono, the telemetry face, was retired on 7 Oct 2026: the NLEX daylight
+   theme sets every readout in Inter; styles/nlex-daylight.css.) */
 @font-face {
-  font-family: "Italiana";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("./fonts/italiana-400-latin.woff2") format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: "Outfit";
+  font-family: "Inter";
   font-style: normal;
   font-weight: 100 900;
+  size-adjust: 93%;
   font-display: swap;
-  src: url("./fonts/outfit-var-latin-ext.woff2") format("woff2");
+  src: url("./fonts/inter-var-latin-ext.woff2") format("woff2");
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 @font-face {
-  font-family: "Outfit";
+  font-family: "Inter";
   font-style: normal;
   font-weight: 100 900;
+  size-adjust: 93%;
   font-display: swap;
-  src: url("./fonts/outfit-var-latin.woff2") format("woff2");
+  src: url("./fonts/inter-var-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Saira";
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 50% 125%;
+  font-display: swap;
+  src: url("./fonts/saira-var-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Saira";
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 50% 125%;
+  font-display: swap;
+  src: url("./fonts/saira-var-latin.woff2") format("woff2");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
@@ -38,20 +59,27 @@
   /* ----------------------------------------------------------------------
      Night Corridor. The expressway at night: a deep-black WebGL stage
      (components/stage/NightCorridorStage.tsx) behind near-opaque hairline
-     panels, warm-white ink, Italiana titles over an Outfit interface. Dark is
+     panels, warm-white ink, tight Inter titles over an Inter interface. Dark is
      the default (lib/theme.tsx); this :root block is the Light variant, the
      same structure on a paper ground. Token names are unchanged from the
      earlier systems, so every rule that reads them moved with this block.
      DESIGN.md documents the world.
      ---------------------------------------------------------------------- */
 
-  /* Type. Italiana is display only (32px and up, never a number); Outfit
-     carries every interface word. Both are self-hosted (Faces, above). */
-  --font-display: "Italiana", "Times New Roman", serif;
-  --font-ui: "Outfit", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  /* Type, matched to the Formula 1 references (6 Oct 2026). Headlines and
+     the interface: Inter (its display cut at large sizes, tracked tight).
+     Brand moments: Saira expanded and bold. Readouts: Inter (7 Oct 2026). */
+  --font-display: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --display-tracking: -0.035em;
+  --font-brand: "Saira", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --brand-stretch: 125%;
+  --font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: var(--font-ui); /* readouts share the interface face (NLEX daylight, 7 Oct 2026) */
   --font-sans: var(--font-ui);
-  /* Outfit has no width axis; kept at 100% so older rules still resolve. */
   --font-cond-stretch: 100%;
+  /* Big numbers are set bold and tight, like "360.5 km/h" and "12 PTS". */
+  --numeral-weight: 650;
+  --numeral-tracking: -0.02em;
 
   /* Type scale (the brief's, and nothing else): */
   --fs-micro: 10px;                          /* breadcrumb, nav group labels */
@@ -60,8 +88,9 @@
   --fs-body: 15px;                           /* body, table cells, fields */
   --fs-title: 20px;                          /* section and card headlines */
   --fs-numeral: 32px;                        /* stat values */
-  --fs-headline: clamp(40px, 4.6vw, 72px);   /* page titles (Italiana) */
-  --fs-display: clamp(56px, 7.5vw, 116px);   /* sign-in story titles (Italiana) */
+  --fs-headline: clamp(34px, 3.8vw, 58px);   /* page titles (Inter display, tight) */
+  --fs-display: clamp(50px, 6.4vw, 100px);   /* sign-in story titles (Inter display, tight) */
+  --fs-brand-display: clamp(44px, 5.9vw, 88px); /* the Overview hero (Saira expanded) */
 
   /* Ground and surfaces (Light). */
   --stage: #eceff5;
@@ -11481,7 +11510,7 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
    The redesign's shared layer (4 Oct 2026), appended last so it wins over the
    earlier rules. It replaces the Lane Signal layer and the old login page.
    The world (DESIGN.md): a deep-black WebGL stage behind near-opaque hairline
-   panels, warm-white ink, Italiana titles over an Outfit interface, one white
+   panels, warm-white ink, tight Inter titles over an Inter interface, one white
    pill per view, three road states plus no data, one accent per page.
    =========================================================================== */
 
@@ -11521,26 +11550,32 @@ b, strong { font-weight: 600; }
 
 /* --- The stage -------------------------------------------------------------
    One fixed canvas behind everything (components/stage/NightCorridorStage).
-   Without WebGL it falls back to a still gradient in the same colours. */
+   Without WebGL it falls back to a still version of the ground: the racing-red
+   and teal colour pools of the carbon surface, without the weave or the circuit
+   (stage-engine.ts, GROUND_FRAG). Literal colours: they are the shader's. */
 .nc-stage {
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: var(--stage);
+  /* Transparent since 7 Oct 2026: it only draws the mascot, over the NLEX environment. */
+  background: transparent;
 }
 .nc-stage-canvas { display: block; width: 100%; height: 100%; }
 .nc-stage.is-off { display: none; }
 .nc-stage.is-fallback {
   background:
-    radial-gradient(110% 70% at 72% 18%, color-mix(in srgb, var(--expressway-blue) 22%, transparent), transparent 62%),
-    radial-gradient(80% 55% at 18% 92%, color-mix(in srgb, var(--expressway-blue-deep) 16%, transparent), transparent 64%),
+    radial-gradient(70% 60% at 10% 8%, color-mix(in srgb, #b0101c 20%, transparent), transparent 66%),
+    radial-gradient(75% 65% at 92% 96%, color-mix(in srgb, #0e9e9a 16%, transparent), transparent 66%),
+    radial-gradient(40% 36% at 62% 44%, color-mix(in srgb, var(--expressway-blue) 8%, transparent), transparent 70%),
     var(--stage);
 }
+/* Sign-in opens warm (the story's first slide), so the red pool leads. */
 .nc-stage.is-fallback[data-variant="signin"] {
   background:
-    radial-gradient(90% 60% at 30% 30%, color-mix(in srgb, var(--toll-amber) 10%, transparent), transparent 62%),
-    radial-gradient(110% 70% at 75% 75%, color-mix(in srgb, var(--expressway-blue) 22%, transparent), transparent 64%),
+    radial-gradient(80% 66% at 10% 8%, color-mix(in srgb, #b0101c 26%, transparent), transparent 66%),
+    radial-gradient(70% 60% at 92% 96%, color-mix(in srgb, #0e9e9a 12%, transparent), transparent 66%),
+    radial-gradient(40% 36% at 62% 44%, color-mix(in srgb, var(--expressway-blue) 8%, transparent), transparent 70%),
     var(--stage);
 }
 
@@ -11795,7 +11830,6 @@ b, strong { font-weight: 600; }
   background: transparent;
 }
 .si-shell > .si-topbar,
-.si-shell > .si-mascot,
 .si-shell > .si-story,
 .si-shell > .login-panel { position: relative; z-index: 2; }
 
@@ -11860,24 +11894,9 @@ b, strong { font-weight: 600; }
 }
 .si-story-nav button:hover,
 .si-story-nav button.is-current { color: var(--text-primary); }
-.si-topbar-end { justify-self: end; }
+.si-topbar-end { justify-self: end; display: inline-flex; align-items: center; gap: 10px; }
 
-/* The stage draws the mascot over this box. The picture inside it shows until
-   the stage's mascot is ready, and stays if WebGL is unavailable. */
-.si-mascot {
-  grid-column: 2 / 4;
-  grid-row: 2;
-  min-height: 0;
-  display: grid;
-  place-items: end center;
-  translate: -4% 0;
-  margin-top: 12px;
-}
-/* Fit exactly as the stage fits its car: contained in this box, standing on
-   its bottom edge, so the hand-over from picture to stage does not jump. */
-.si-mascot { container-type: size; }
-.si-mascot .mc { height: min(100cqh, 100cqw * 1161 / 1107); }
-html[data-stage-mascot="ready"] .si-mascot-fallback { visibility: hidden; }
+/* (The sign-in mascot was removed on 6 Oct 2026, at the user's request.) */
 
 .si-story {
   grid-column: 1 / 3;
@@ -12160,11 +12179,12 @@ html.si-cursor-native .si-cursor-ring { opacity: 0; }
   .eg-grid[data-variant="signin"] .eg-line:nth-child(2),
   .eg-grid[data-variant="signin"] .eg-line:nth-child(4) { display: none; }
   .si-topbar { grid-template-columns: minmax(0, 1fr); height: auto; padding: 18px 0 8px; }
-  .si-story-nav, .si-topbar-end { display: none; }
+  .si-story-nav { display: none; }
+  /* The toggles stay on phones (icons only), under the brand. */
+  .si-topbar-end { justify-self: start; margin-top: 4px; }
   .si-brand .brand-copy { flex-direction: column; gap: 4px; }
-  .si-mascot { grid-column: 1; grid-row: auto; height: 45vh; height: 45svh; translate: none; padding-top: 0; }
-  .si-story { grid-column: 1; grid-row: auto; padding-top: 14px; max-width: none; }
-  .si-story-title { font-size: 56px; }
+  .si-story { grid-column: 1; grid-row: auto; padding-top: 30px; max-width: none; }
+  .si-story-title { font-size: 46px; }
   .login-panel { grid-column: 1; grid-row: auto; justify-self: stretch; align-self: start; width: 100%; margin-top: 28px; }
   .login-card { padding: 24px 20px 22px; }
   .copyright { text-align: center; }
@@ -12658,9 +12678,9 @@ html.si-cursor-native .si-cursor-ring { opacity: 0; }
 .tab-stat-card .value,
 .sandbox-metric .value {
   font-size: var(--fs-numeral);
-  font-weight: 400;
+  font-weight: var(--numeral-weight);
   font-stretch: 100%;
-  letter-spacing: 0;
+  letter-spacing: var(--numeral-tracking);
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }
@@ -13137,7 +13157,7 @@ button.chart-card:hover {
 /* ===========================================================================
    OVERVIEW (Night Corridor, hero version, 5 Oct 2026)
    A full-height hero after the user's reference (the 3D car centre-stage on
-   the stage, an oversized Italiana title bottom-left over two short columns
+   the stage, an oversized wide Saira title bottom-left over two short columns
    of live status), then the counts, the hotspots and the corridor at true
    scale, then Live Corridor Status. components/overview/OverviewLive.tsx
    =========================================================================== */
@@ -13217,15 +13237,16 @@ html[data-stage-mascot="ready"] .ov-hero-fallback { visibility: hidden; }
 .ov-fresh b { font-weight: 600; color: var(--text-primary); }
 .ov-fresh .ds-signal { margin-top: 1px; }
 
-/* The answer, computed from the tally. Outfit, because it carries a number. */
+/* The answer, computed from the tally. */
 .ov-headline {
   margin: 0;
   font-size: var(--fs-numeral);
-  font-weight: 600;
+  font-weight: var(--numeral-weight);
   line-height: 1.12;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   text-wrap: balance;
+  letter-spacing: var(--numeral-tracking);
 }
 .ov-headline.is-congested { color: var(--signal-congested); }
 .ov-headline.is-slow { color: var(--signal-slow); }
@@ -13289,7 +13310,7 @@ html[data-stage-mascot="ready"] .ov-hero-fallback { visibility: hidden; }
 .ov-count:nth-child(2) { animation-delay: 40ms; }
 .ov-count:nth-child(3) { animation-delay: 80ms; }
 .ov-count .ds-signal { border-radius: var(--radius-md); flex: none; }
-.ov-count-value { font-size: var(--fs-numeral); font-weight: 400; line-height: 1; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.ov-count-value { font-size: var(--fs-numeral); font-weight: var(--numeral-weight); line-height: 1; color: var(--text-primary); font-variant-numeric: tabular-nums; letter-spacing: var(--numeral-tracking); }
 .ov-count.is-congested .ov-count-value { color: var(--signal-congested); }
 .ov-count.is-slow .ov-count-value { color: var(--signal-slow); }
 .ov-count.is-clear .ov-count-value { color: var(--signal-clear); }
@@ -13447,7 +13468,7 @@ html[data-stage-mascot="ready"] .ov-hero-fallback { visibility: hidden; }
   .ov-hero { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; min-height: 0; padding-bottom: 28px; }
   .ov-hero-mascot { grid-column: 1; grid-row: 1; height: 42vh; height: 42svh; margin: 8px 0 4px; }
   .ov-hero-copy { grid-column: 1; grid-row: 2; }
-  .ov-hero-title { font-size: 56px; }
+  .ov-hero-title { font-size: 44px; }
   .ov-hero-cols { grid-template-columns: minmax(0, 1fr); margin-top: 22px; }
   .ov-scroll-cue { display: none; }
 }
@@ -13642,11 +13663,6 @@ html[data-stage-mascot="pending"] .ov-hero-fallback {
 }
 @keyframes ov-fallback-late { to { opacity: 1; } }
 html[data-stage-mascot="ready"] .ov-hero-fallback { animation: none; }
-html[data-stage-mascot="pending"] .si-mascot-fallback {
-  opacity: 0;
-  animation: ov-fallback-late 0.4s ease 6s forwards;
-}
-html[data-stage-mascot="ready"] .si-mascot-fallback { animation: none; }
 .ev-modal .ev-body .nc-em-validation { border-top: 0; padding-top: 0; }
 .ds-modal-backdrop.ev-backdrop { background: rgba(3, 6, 13, 0.62); backdrop-filter: none; -webkit-backdrop-filter: none; }
 
@@ -13774,5 +13790,69 @@ html[data-effects="off"] .eg-grid { display: none; }
   box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 .ds-effects-toggle .ds-theme-option.active .ds-effects-state { color: var(--page-accent, var(--brand-primary)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page-accent, var(--brand-primary)) 50%, transparent); }
-.si-topbar-end .ds-effects-toggle { pointer-events: auto; }
+.si-topbar-end .ds-effects-toggle,
+.si-topbar-end .ds-theme-toggle { pointer-events: auto; }
 @media (max-width: 640px) { .ds-effects-state { display: none; } }
+
+/* ===========================================================================
+   Motorsport type (6 Oct 2026, matched to the user's Formula 1 references)
+   =========================================================================== */
+/* Headlines: Inter's display cut, tracked tight, like "Silverstone England",
+   "F1 Racing" and "Circuit (BIC)". */
+.si-story-title,
+.ds-page-title {
+  font-family: var(--font-display);
+  font-stretch: 100%;
+  letter-spacing: var(--display-tracking);
+}
+.si-story-title { font-weight: 560; line-height: 0.98; }
+.ds-page-title { font-weight: 700; line-height: 1; }
+h1, h2, h3, h4, h5 { letter-spacing: -0.01em; }
+/* Brand moments: wide and bold, like "Formula 1". */
+.ov-hero-title,
+.si-brand .brand-copy h1,
+.ds-sidebar-wordmark {
+  font-family: var(--font-brand);
+  font-stretch: var(--brand-stretch);
+}
+.ov-hero-title { font-size: var(--fs-brand-display); font-weight: 700; letter-spacing: 0; line-height: 0.95; }
+.si-brand .brand-copy h1 { font-weight: 700; letter-spacing: 3px; }
+.ds-sidebar-wordmark { font-weight: 700; letter-spacing: 2px; }
+.ds-sidebar-wordmark b { font-weight: 700; }
+/* Readouts (eyebrows, the clock, data-age badges): --font-mono, which is Inter since 7 Oct 2026. */
+.ds-page-eyebrow,
+.ds-datetime-block,
+.lm-page .lm-age,
+.ov-fresh {
+  font-family: var(--font-mono);
+  font-stretch: 100%;
+}
+.ds-page-eyebrow { font-weight: 700; letter-spacing: 1px; }
+.ds-datetime-block strong { font-weight: 700; letter-spacing: 0; }
+.lm-page .lm-age { font-weight: 700; letter-spacing: 0.5px; }
+.ov-fresh { letter-spacing: 0; }
+/* The top bar with the new type: the wordmark in the brand face, like the sign-in
+   one; the date on one line; and the page name gives way (ellipsis) before it can
+   run into the controls on the right. */
+.ds-top-brand { font-family: var(--font-brand); font-stretch: var(--brand-stretch); font-weight: 700; font-size: 13px; letter-spacing: 1.5px; }
+.ds-topbar-left { flex: 1 1 auto; min-width: 0; }
+.ds-topbar-right { flex: none; margin-left: 20px; }
+.ds-crumbs { overflow: hidden; }
+.ds-crumbs > span { white-space: nowrap; flex: none; }
+.ds-crumbs [aria-current="page"] { flex: 0 1 auto; }
+/* Narrower windows keep the page name and drop its group. */
+@media (max-width: 1360px) {
+  .ds-crumbs > span:first-child,
+  .ds-crumbs .ds-crumbs-dot { display: none; }
+}
+.ds-crumbs [aria-current="page"] { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ds-datetime-block { white-space: nowrap; letter-spacing: 0.5px; }
+@media (max-width: 1560px) {
+  .ds-topbar-right .ds-theme-toggle:not(.ds-effects-toggle) .ds-theme-option-label { display: none; }
+  .ds-topbar-right .ds-theme-toggle:not(.ds-effects-toggle) .ds-theme-option { padding: 0 9px; }
+}
+/* Mapbox sets its own "Helvetica Neue" on the map, its popups and controls: the
+   Live Map's hover cards and pin labels follow the system type instead. */
+.ds-shell .mapboxgl-map,
+.ds-shell .mapboxgl-popup-content,
+.ds-shell .mapboxgl-ctrl { font-family: var(--font-ui); }

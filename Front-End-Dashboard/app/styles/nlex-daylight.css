@@ -1,0 +1,728 @@
+/* ===========================================================================
+   NLEX DAYLIGHT (7 Oct 2026, the user's brief and mascot reference)
+   "Smart traffic intelligence, but friendly": NLEX blue, white and sky blue,
+   white cards with soft blue shadows, a blue navigation rail, a white header,
+   coral kept for congestion and alerts. Light is the default theme
+   (lib/theme.tsx); dark is the same system at night, on navy, never black.
+
+   This layer loads last (app/layout.tsx) and works mostly through the tokens
+   every rule already reads, so pages change without their logic or markup
+   changing. The environment behind it is styles/nlex-environment.css.
+   =========================================================================== */
+
+/* --- Tokens: day ------------------------------------------------------------ */
+:root {
+  --nlex-blue: #1f5fe0;
+  --nlex-blue-bright: #2f74f5;
+  --nlex-blue-deep: #1746b8;
+  --nlex-sky: #e8f2ff;
+  --nlex-gold: #ffc531;
+  --nlex-coral: #f0506e;
+
+  --stage: #eef5fd;
+  --bg-body: #eef5fd;
+  --bg-surface: rgba(255, 255, 255, 0.92);
+  --bg-surface-solid: #ffffff;
+  --bg-surface-hover: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-sidebar: var(--nlex-blue);
+  --bg-sidebar-active: rgba(255, 255, 255, 0.18);
+  --bg-sidebar-hover: rgba(255, 255, 255, 0.1);
+  /* Solid, so the strip carried on behind the page scrollbar matches it exactly. */
+  --bg-topbar: #fbfdff;
+  --bg-login: #eef5fd;
+  --bg-input: #f6f9ff;
+
+  --border-default: rgba(31, 95, 224, 0.12);
+  --border-strong: rgba(31, 95, 224, 0.22);
+  --hairline-hover: rgba(31, 95, 224, 0.38);
+  --rule-topbar: rgba(31, 95, 224, 0.1);
+  --grid-line: rgba(31, 95, 224, 0.06);
+
+  /* Ink: blue-greys, not black. */
+  --text-primary: #10275a;
+  --text-secondary: #3e5683;
+  --text-muted: #61769f;
+
+  --expressway-blue: var(--nlex-blue);
+  --expressway-blue-light: #4d86f2;
+  --expressway-blue-deep: var(--nlex-blue-deep);
+  --action: var(--nlex-blue);
+  --action-ink: #ffffff;
+  --brand-primary-light: #4d86f2;
+  --brand-primary-dark: var(--nlex-blue-deep);
+  --pill-bg: var(--nlex-blue);
+  --pill-ink: #ffffff;
+
+  /* Road state: softer, friendlier, still clearly apart. */
+  --signal-clear: #15935b;
+  --signal-slow: #b7730d;
+  --signal-congested: #e0405e;
+  --signal-none: #8090ad;
+
+  --accent-traffic: var(--nlex-blue);
+  --accent-incident: #c4620f;
+  --accent-emissions: #0f8a63;
+
+  --color-success-bg: rgba(21, 147, 91, 0.09);
+  --color-success-border: rgba(21, 147, 91, 0.28);
+  --color-warning-bg: rgba(183, 115, 13, 0.09);
+  --color-warning-border: rgba(183, 115, 13, 0.28);
+  --color-danger-bg: rgba(240, 80, 110, 0.09);
+  --color-danger-border: rgba(224, 64, 94, 0.3);
+  --color-info-bg: rgba(31, 95, 224, 0.08);
+  --color-info-border: rgba(31, 95, 224, 0.26);
+
+  /* Radii: rounded, friendly. */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+
+  /* Elevation: soft blue shadows; cards float a little over the sky. */
+  --shadow-sm: 0 1px 2px rgba(16, 39, 90, 0.06);
+  --shadow-md: 0 8px 22px -12px rgba(31, 95, 224, 0.3);
+  --shadow-card: 0 1px 2px rgba(16, 39, 90, 0.04), 0 12px 30px -16px rgba(31, 95, 224, 0.28);
+  --shadow-card-hover: 0 2px 4px rgba(16, 39, 90, 0.05), 0 18px 40px -16px rgba(31, 95, 224, 0.36);
+  --shadow-lg: 0 28px 70px -18px rgba(16, 39, 90, 0.3);
+  --shadow-btn: 0 8px 18px -8px rgba(31, 95, 224, 0.6);
+
+  --chart-text: #5b6f99;
+  --chart-split: rgba(31, 95, 224, 0.08);
+  --chart-tooltip-bg: #ffffff;
+  --chart-tooltip-text: #10275a;
+  --chart-tooltip-border: rgba(31, 95, 224, 0.16);
+  --chart-seq-lightest: #eef5ff;
+
+  /* One clean sans everywhere; Saira stays for the brand and the Overview title. */
+  --font-mono: var(--font-ui);
+  --numeral-weight: 700;
+
+  --sidebar-grad: linear-gradient(180deg, #2a6cf0 0%, #1f5fe0 46%, #1749bd 100%);
+  --sidebar-ink: rgba(255, 255, 255, 0.84);
+  --sidebar-ink-muted: rgba(255, 255, 255, 0.58);
+  --sidebar-rule: rgba(255, 255, 255, 0.16);
+}
+
+/* --- Tokens: night (two identical blocks, as in globals.css) ---------------- */
+:root[data-theme="dark"] {
+  --stage: #0a1838;
+  --bg-body: #0a1838;
+  --bg-surface: rgba(13, 29, 64, 0.9);
+  --bg-surface-solid: #0e1f45;
+  --bg-surface-hover: rgba(17, 36, 78, 0.94);
+  --bg-raised: #10234d;
+  --bg-topbar: #0b1a3d;
+  --bg-input: rgba(255, 255, 255, 0.04);
+  --border-default: rgba(147, 182, 255, 0.12);
+  --border-strong: rgba(147, 182, 255, 0.2);
+  --hairline-hover: rgba(147, 182, 255, 0.34);
+  --rule-topbar: rgba(147, 182, 255, 0.12);
+  --text-primary: #eef3ff;
+  --text-secondary: #b8c7e6;
+  --text-muted: #8a9dc4;
+  --action: #5b8dff;
+  --pill-bg: #5b8dff;
+  --pill-ink: #ffffff;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 14px 32px -18px rgba(0, 0, 0, 0.6);
+  --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.25), 0 20px 42px -18px rgba(0, 0, 0, 0.7);
+  --shadow-btn: 0 8px 20px -8px rgba(60, 120, 255, 0.55);
+  --chart-tooltip-bg: #10234d;
+  --chart-tooltip-text: #eef3ff;
+  --chart-tooltip-border: rgba(147, 182, 255, 0.2);
+  --chart-seq-lightest: #11244d;
+  --sidebar-grad: linear-gradient(180deg, #132c66 0%, #0f2456 50%, #0b1b42 100%);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --stage: #0a1838;
+    --bg-body: #0a1838;
+    --bg-surface: rgba(13, 29, 64, 0.9);
+    --bg-surface-solid: #0e1f45;
+    --bg-surface-hover: rgba(17, 36, 78, 0.94);
+    --bg-raised: #10234d;
+    --bg-topbar: #0b1a3d;
+    --bg-input: rgba(255, 255, 255, 0.04);
+    --border-default: rgba(147, 182, 255, 0.12);
+    --border-strong: rgba(147, 182, 255, 0.2);
+    --hairline-hover: rgba(147, 182, 255, 0.34);
+    --rule-topbar: rgba(147, 182, 255, 0.12);
+    --text-primary: #eef3ff;
+    --text-secondary: #b8c7e6;
+    --text-muted: #8a9dc4;
+    --action: #5b8dff;
+    --pill-bg: #5b8dff;
+    --pill-ink: #ffffff;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 14px 32px -18px rgba(0, 0, 0, 0.6);
+    --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.25), 0 20px 42px -18px rgba(0, 0, 0, 0.7);
+    --shadow-btn: 0 8px 20px -8px rgba(60, 120, 255, 0.55);
+    --chart-tooltip-bg: #10234d;
+    --chart-tooltip-text: #eef3ff;
+    --chart-tooltip-border: rgba(147, 182, 255, 0.2);
+    --chart-seq-lightest: #11244d;
+    --sidebar-grad: linear-gradient(180deg, #132c66 0%, #0f2456 50%, #0b1b42 100%);
+  }
+}
+
+/* The old editorial hairlines belonged to the night corridor; the sky is calmer without them. */
+.eg-grid { display: none !important; }
+
+/* --- Type --------------------------------------------------------------------- */
+.ds-page-title { color: var(--text-primary); }
+.ds-page-eyebrow { font-weight: 700; letter-spacing: 1.6px; }
+.ds-datetime-block { font-weight: 600; letter-spacing: 1px; color: var(--text-muted); }
+.ds-datetime-block strong { font-size: 17px; font-weight: 700; letter-spacing: 0; color: var(--text-primary); }
+.ov-fresh { letter-spacing: 0; }
+
+/* --- Header ------------------------------------------------------------------- */
+.ds-topbar {
+  background: var(--bg-topbar);
+  border-bottom: 1px solid var(--rule-topbar);
+  box-shadow: 0 10px 30px -22px rgba(31, 95, 224, 0.45);
+}
+.ds-top-brand { color: var(--nlex-blue); }
+:root[data-theme="dark"] .ds-top-brand { color: #ffffff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ds-top-brand { color: #ffffff; } }
+.ds-menu-button { background: var(--bg-raised); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.ds-menu-button:hover { background: var(--nlex-sky); border-color: var(--hairline-hover); }
+:root[data-theme="dark"] .ds-menu-button:hover { background: rgba(147, 182, 255, 0.1); }
+.ds-crumbs [aria-current="page"] { color: var(--text-primary); }
+
+/* Theme and Effects controls: white pills, the active option a sky-blue chip. */
+.ds-theme-toggle {
+  background: var(--bg-raised);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+.ds-theme-option { transition: color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast); }
+.ds-theme-option:active { transform: scale(0.96); }
+.ds-theme-option.active {
+  background: var(--nlex-sky);
+  color: var(--nlex-blue);
+  box-shadow: none;
+}
+:root[data-theme="dark"] .ds-theme-option.active { background: rgba(91, 141, 255, 0.18); color: #cfe0ff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ds-theme-option.active { background: rgba(91, 141, 255, 0.18); color: #cfe0ff; } }
+.ds-effects-toggle .ds-theme-option.active .ds-effects-state {
+  background: var(--action);
+  color: #ffffff;
+  box-shadow: none;
+}
+
+/* --- Navigation rail ---------------------------------------------------------- */
+.ds-sidebar,
+.ds-shell-collapsed .ds-sidebar {
+  background: var(--sidebar-grad);
+  border-right: 0;
+  box-shadow: 8px 0 30px -18px rgba(23, 73, 189, 0.55);
+  color: #ffffff;
+}
+.ds-sidebar-wordmark { color: #ffffff; }
+.ds-sidebar-wordmark b { color: var(--nlex-gold); }
+.ds-sidebar-nav { scrollbar-color: rgba(255, 255, 255, 0.28) transparent; }
+.ds-nav-group-label,
+.ds-sidebar-nav > p { color: var(--sidebar-ink-muted); }
+.ds-nav-group-admin,
+.ds-sidebar-footer,
+.ds-shell-collapsed .ds-nav-group + .ds-nav-group { border-color: var(--sidebar-rule); }
+.ds-sidebar-tab {
+  color: var(--sidebar-ink);
+  border-radius: 14px;
+  transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-base), transform var(--transition-fast);
+}
+.ds-sidebar-tab svg { color: rgba(255, 255, 255, 0.86); }
+.ds-sidebar-tab:hover { background: var(--bg-sidebar-hover); color: #ffffff; }
+.ds-sidebar-tab:hover svg { color: #ffffff; transform: translateX(1px); }
+.ds-sidebar-tab:active { transform: scale(0.98); }
+.ds-sidebar-tab.active,
+.ds-sidebar-tab.active:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.55), 0 8px 22px -10px rgba(5, 25, 80, 0.7), 0 0 18px -4px rgba(140, 190, 255, 0.55);
+}
+.ds-sidebar-tab.active svg { color: #ffffff; }
+.ds-sidebar-tab svg { transition: color var(--transition-fast), transform var(--transition-fast); }
+.ds-sidebar-footer .ds-user-email { color: #ffffff; }
+.ds-sidebar-footer .ds-user-role { color: var(--sidebar-ink-muted); }
+.ds-sidebar-footer .ds-avatar-circle {
+  background: #ffffff;
+  color: var(--nlex-blue);
+  box-shadow: 0 4px 12px -4px rgba(5, 25, 80, 0.5);
+}
+.ds-logout-button {
+  border-color: rgba(255, 255, 255, 0.34);
+  color: #ffffff;
+}
+.ds-logout-button:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.6); }
+@media (max-width: 980px) {
+  .ds-sidebar { background: var(--sidebar-grad); }
+}
+
+/* --- Cards: white over the sky, rounded, a soft blue shadow --------------------- */
+.chart-card,
+.tab-stat-card,
+.sandbox-metric,
+.table-card,
+.ds-overview-card,
+.ds-feature-card,
+.panel-card,
+.panel,
+.ov-count,
+.ms-card,
+.ms-form-card,
+.mini-stat,
+.mc-model-card,
+.sandbox-side,
+.sandbox-main,
+.sandbox-forecast {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--transition-base), border-color var(--transition-base), transform var(--transition-base);
+}
+.chart-card:hover,
+.tab-stat-card:hover,
+.sandbox-metric:hover,
+.table-card:hover,
+.panel-card:hover,
+.ov-count:hover,
+.mini-stat:hover {
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--border-strong);
+}
+.nc-interactive:hover,
+a.chart-card:hover,
+button.chart-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card-hover), 0 0 0 1px color-mix(in srgb, var(--page-accent) 22%, transparent);
+}
+.ds-modal { border-radius: var(--radius-xl); border-color: var(--border-default); }
+
+/* --- Buttons -------------------------------------------------------------------- */
+.btn-primary,
+.btn-muted,
+.btn-danger,
+.ds-btn-primary,
+.ds-btn-secondary {
+  min-height: 38px;
+  padding: 0 18px;
+  transition: background-color 240ms var(--ease-out), border-color 240ms var(--ease-out), color 240ms var(--ease-out), box-shadow 240ms var(--ease-out), transform 240ms var(--ease-out), filter 240ms var(--ease-out);
+}
+/* Primary: NLEX blue, white text. */
+.btn-primary,
+.ds-btn-primary,
+.table-toolbar .btn-primary,
+.tab-toolbar .btn-primary {
+  border-color: transparent;
+  background: linear-gradient(180deg, var(--nlex-blue-bright), var(--nlex-blue));
+  color: #ffffff;
+  box-shadow: var(--shadow-btn);
+}
+.btn-primary:hover:not(:disabled),
+.ds-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--nlex-blue-bright), var(--nlex-blue));
+  border-color: transparent;
+  filter: brightness(1.06);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px -10px rgba(31, 95, 224, 0.65);
+}
+/* Secondary: white, blue border and text. */
+.btn-muted,
+.ds-btn-secondary {
+  border-color: color-mix(in srgb, var(--nlex-blue) 32%, transparent);
+  background: var(--bg-raised);
+  color: var(--nlex-blue);
+  box-shadow: var(--shadow-sm);
+}
+.btn-muted:hover:not(:disabled),
+.ds-btn-secondary:hover:not(:disabled) {
+  background: var(--nlex-sky);
+  border-color: color-mix(in srgb, var(--nlex-blue) 55%, transparent);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+.btn-muted.active {
+  background: var(--action);
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: var(--shadow-btn);
+}
+:root[data-theme="dark"] :is(.btn-muted, .ds-btn-secondary) { background: rgba(147, 182, 255, 0.06); color: #cfe0ff; border-color: rgba(147, 182, 255, 0.3); }
+:root[data-theme="dark"] :is(.btn-muted, .ds-btn-secondary):hover:not(:disabled) { background: rgba(147, 182, 255, 0.14); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) :is(.btn-muted, .ds-btn-secondary) { background: rgba(147, 182, 255, 0.06); color: #cfe0ff; border-color: rgba(147, 182, 255, 0.3); }
+  :root:not([data-theme="light"]) :is(.btn-muted, .ds-btn-secondary):hover:not(:disabled) { background: rgba(147, 182, 255, 0.14); }
+}
+/* Pressed: a little compressed. */
+:is(.btn-primary, .btn-muted, .btn-danger, .ds-btn-primary, .ds-btn-secondary, .ds-confirm-btn, .ds-logout-button, .ds-menu-button):active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+  transition-duration: 90ms;
+}
+:is(.btn-primary, .btn-muted, .btn-danger, .ds-btn-primary, .ds-btn-secondary):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--nlex-blue) 70%, transparent);
+  outline-offset: 2px;
+}
+.ds-confirm-btn.is-secondary { background: var(--bg-raised); }
+
+/* --- Fields --------------------------------------------------------------------- */
+.ds-main select,
+.ds-content select,
+.table-toolbar select,
+.tab-toolbar select,
+.ds-main input[type="text"],
+.ds-main input[type="search"],
+.ds-main input[type="number"],
+.ds-main input[type="date"] {
+  background-color: var(--bg-input);
+  border-color: var(--border-strong);
+}
+.ds-main select:focus,
+.ds-main input:focus { border-color: var(--nlex-blue); box-shadow: 0 0 0 3px rgba(31, 95, 224, 0.14); outline: none; }
+
+/* --- Pills: a soft fill for every meaning ----------------------------------------- */
+.pill,
+.badge { border-radius: var(--radius-full); }
+
+/* ===========================================================================
+   OVERVIEW HERO (components/overview/OverviewLive.tsx)
+   Left: the title and the live answers as cards. Right: the 3D mascot on the
+   environment's highway.
+   =========================================================================== */
+.ov-hero-copy {
+  grid-row: 1 / 3;
+  align-self: center;
+  padding-bottom: 6vh;
+}
+.ov-hero-title {
+  position: relative;
+  width: fit-content;
+  margin: 6px 0 12px;
+  color: var(--nlex-blue);
+  font-weight: 800;
+  text-shadow: 0 10px 30px rgba(31, 95, 224, 0.18);
+}
+:root[data-theme="dark"] .ov-hero-title { color: #ffffff; text-shadow: 0 10px 40px rgba(60, 120, 255, 0.45); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ov-hero-title { color: #ffffff; text-shadow: 0 10px 40px rgba(60, 120, 255, 0.45); } }
+/* The mascot's little gold accent strokes, by the title. */
+.ov-hero-title::after {
+  content: "";
+  position: absolute;
+  top: -0.1em;
+  right: -0.62em;
+  width: 0.5em;
+  height: 0.5em;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cg stroke='%23ffc531' stroke-width='5' stroke-linecap='round' fill='none'%3E%3Cpath d='M8 20 L14 6'/%3E%3Cpath d='M20 24 L32 14'/%3E%3Cpath d='M22 34 L36 33'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat;
+  animation: ov-spark 3.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes ov-spark { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.75; transform: scale(0.9) rotate(-4deg); } }
+.ov-hero-span { color: var(--text-secondary); font-weight: 400; }
+.ov-hero-span b { color: var(--text-primary); font-weight: 700; }
+
+.ov-hero-mascot { grid-column: 8 / 13; }
+.ov-hero-cols {
+  grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
+  max-width: 640px;
+  gap: 14px 16px;
+  margin-top: 26px;
+  align-items: start;
+}
+.ov-answer,
+.ov-answer-side { gap: 14px; }
+
+/* Live: a soft blue card with a pulsing green dot. */
+.ov-fresh {
+  align-items: center;
+  min-height: 64px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-surface) 82%, var(--nlex-sky));
+  box-shadow: var(--shadow-card);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+.ov-fresh b { color: var(--signal-clear); font-weight: 700; }
+.ov-live-dot {
+  position: relative;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22c27a;
+  box-shadow: 0 0 0 0 rgba(34, 194, 122, 0.45);
+  animation: ov-live 2.4s ease-out infinite;
+}
+.ov-live-dot.is-small { width: 8px; height: 8px; }
+@keyframes ov-live {
+  0% { box-shadow: 0 0 0 0 rgba(34, 194, 122, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(34, 194, 122, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(34, 194, 122, 0); }
+}
+
+/* The answer, in a card tinted by its state: soft coral when congested. */
+.ov-headline-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 92px;
+  padding: 16px 44px 16px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 18px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--transition-base), transform var(--transition-base);
+}
+.ov-headline-card .ov-headline { font-size: 23px; line-height: 1.15; font-weight: 700; letter-spacing: -0.01em; }
+.ov-headline-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--signal-none);
+  color: #ffffff;
+  box-shadow: 0 8px 18px -8px currentColor;
+}
+.ov-headline-card.is-congested {
+  border-color: rgba(240, 80, 110, 0.22);
+  background: linear-gradient(135deg, #fff3f5 0%, #ffe6eb 100%);
+}
+.ov-headline-card.is-congested .ov-headline-icon { background: linear-gradient(180deg, #ff6b86, var(--nlex-coral)); box-shadow: 0 10px 20px -8px rgba(240, 80, 110, 0.7); }
+.ov-headline-card.is-slow {
+  border-color: rgba(183, 115, 13, 0.2);
+  background: linear-gradient(135deg, #fffaf0 0%, #fff1d6 100%);
+}
+.ov-headline-card.is-slow .ov-headline-icon { background: linear-gradient(180deg, #ffc04d, #e59a14); box-shadow: 0 10px 20px -8px rgba(229, 154, 20, 0.7); }
+.ov-headline-card.is-clear {
+  border-color: rgba(21, 147, 91, 0.2);
+  background: linear-gradient(135deg, #f2fcf7 0%, #e1f6eb 100%);
+}
+.ov-headline-card.is-clear .ov-headline-icon { background: linear-gradient(180deg, #35d08a, #15935b); box-shadow: 0 10px 20px -8px rgba(21, 147, 91, 0.7); }
+:root[data-theme="dark"] .ov-headline-card.is-congested { background: linear-gradient(135deg, rgba(240, 80, 110, 0.16), rgba(240, 80, 110, 0.08)); }
+:root[data-theme="dark"] .ov-headline-card.is-slow { background: linear-gradient(135deg, rgba(229, 154, 20, 0.16), rgba(229, 154, 20, 0.08)); }
+:root[data-theme="dark"] .ov-headline-card.is-clear { background: linear-gradient(135deg, rgba(53, 208, 138, 0.14), rgba(53, 208, 138, 0.06)); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ov-headline-card.is-congested { background: linear-gradient(135deg, rgba(240, 80, 110, 0.16), rgba(240, 80, 110, 0.08)); }
+  :root:not([data-theme="light"]) .ov-headline-card.is-slow { background: linear-gradient(135deg, rgba(229, 154, 20, 0.16), rgba(229, 154, 20, 0.08)); }
+  :root:not([data-theme="light"]) .ov-headline-card.is-clear { background: linear-gradient(135deg, rgba(53, 208, 138, 0.14), rgba(53, 208, 138, 0.06)); }
+}
+
+/* The slowest reading: a white card. */
+.ov-worst {
+  position: relative;
+  gap: 6px;
+  min-height: 92px;
+  padding: 14px 44px 14px 18px;
+  border: 1px solid var(--border-default);
+  border-radius: 18px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--transition-base), transform var(--transition-base);
+}
+.ov-worst-label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 10.5px; letter-spacing: 1.1px; white-space: nowrap; }
+.ov-worst-label svg { color: var(--nlex-blue); }
+.ov-worst-value { font-size: 19px; font-weight: 700; color: var(--text-primary); }
+
+/* A chevron that makes the whole card a way into the hotspot list. */
+.ov-card-go {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-top: -14px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast);
+}
+.ov-card-go::after { content: ""; position: absolute; inset: -200px -200px; }
+.ov-headline-card:has(.ov-card-go):hover,
+.ov-worst:has(.ov-card-go):hover { transform: translateY(-2px); box-shadow: var(--shadow-card-hover); }
+.ov-headline-card:hover .ov-card-go,
+.ov-worst:hover .ov-card-go { color: var(--nlex-blue); background: color-mix(in srgb, var(--nlex-blue) 10%, transparent); transform: translateX(2px); }
+.ov-headline-card.is-congested .ov-card-go { color: var(--signal-congested); }
+.ov-card-go:focus-visible { outline: 2px solid var(--nlex-blue); outline-offset: 2px; }
+.ov-headline-card,
+.ov-worst { overflow: hidden; }
+
+.ov-actions { flex-direction: column; align-items: flex-start; gap: 10px; }
+.ov-actions .btn-muted { min-height: 40px; padding: 0 16px 0 14px; }
+
+/* The scroll cue: an NLEX blue pill with the live dot. */
+.ov-scroll-cue {
+  border-color: transparent;
+  background: linear-gradient(180deg, var(--nlex-blue-bright), var(--nlex-blue));
+  color: #ffffff;
+  box-shadow: var(--shadow-btn);
+}
+.ov-scroll-cue:hover { color: #ffffff; border-color: transparent; transform: translateY(-2px); }
+:root[data-theme="light"] .ov-scroll-cue { background: linear-gradient(180deg, var(--nlex-blue-bright), var(--nlex-blue)); }
+
+/* The car sits on the environment's road; mascot3d.ts draws its contact shadow. */
+
+/* The counts below the hero, as cards with their state colour. */
+.ov-count { border-radius: var(--radius-lg); }
+
+@media (max-width: 1180px) {
+  .ov-hero-mascot { grid-column: 7 / 13; }
+}
+@media (max-width: 760px) {
+  .ov-hero-mascot { grid-column: 1; }
+  .ov-hero-copy { grid-row: 2; padding-bottom: 0; }
+  .ov-hero-cols { grid-template-columns: minmax(0, 1fr); }
+  .ov-worst-label { white-space: normal; }
+  .ov-hero-title::after { right: -0.5em; }
+  .ov-headline-card .ov-headline { font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ov-live-dot,
+  .ov-hero-title::after { animation: none; }
+}
+
+/* ===========================================================================
+   SIGN-IN, in daylight
+   =========================================================================== */
+.si-story-title { color: var(--text-primary); }
+:root[data-theme="light"] .si-brand .brand-copy h1,
+:root[data-theme="light"] .si-brand h1 { color: var(--nlex-blue); }
+
+/* ===========================================================================
+   Microinteractions shared across pages
+   =========================================================================== */
+/* The analytics pages' KPI tiles and filter dropdowns live in a CSS module
+   (app/dashboard/traffic/traffic.module.css); its hashed names all keep the
+   original class name, so they are matched by substring. */
+[class*="_kpiTile_"] {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--transition-base), border-color var(--transition-base);
+}
+[class*="_kpiTile_"]:hover { box-shadow: var(--shadow-card-hover); border-color: var(--border-strong); }
+/* Dropdowns open with a small spring. */
+[class*="_customSelectMenu_"] {
+  border-color: var(--border-default);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  transform-origin: top center;
+  animation: nlex-pop 260ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+[class*="_customSelectOptionActive_"] { background: var(--nlex-sky); color: var(--nlex-blue); }
+:root[data-theme="dark"] [class*="_customSelectOptionActive_"] { background: rgba(91, 141, 255, 0.18); color: #cfe0ff; }
+@keyframes nlex-pop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  [class*="_customSelectMenu_"] { animation: none; }
+}
+
+/* --- The page scrollbar ----------------------------------------------------------
+   The dashboard scrolls inside <main>; the default Windows scrollbar drew a grey
+   15 px track down the right edge, over the sky. Slim, with a transparent track
+   and a soft blue thumb, and the white header carried on behind it so the bar
+   runs edge to edge. */
+main.ds-main {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--nlex-blue) 38%, transparent) transparent;
+}
+:root[data-theme="dark"] main.ds-main { scrollbar-color: rgba(147, 182, 255, 0.32) transparent; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) main.ds-main { scrollbar-color: rgba(147, 182, 255, 0.32) transparent; } }
+main.ds-main::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: -1;
+  width: 24px;
+  height: var(--ds-topbar-h, 64px);
+  background: var(--bg-topbar);
+  border-bottom: 1px solid var(--rule-topbar);
+  pointer-events: none;
+}
+
+/* --- Sticky filter bars ----------------------------------------------------------
+   The analytics pages' filter row (Range, Weather, …) used to paint a solid
+   full-width band of page colour over the background. It is clear while it
+   sits in place, and fades to the header's colour only as it pins under the
+   header and cards begin to scroll beneath it. */
+@supports (animation-timeline: scroll()) {
+  [class*="_filterRow_"] {
+    background: transparent;
+    animation: nlex-shelf linear both;
+    animation-timeline: scroll(nearest block);
+    animation-range: 190px 245px; /* it pins at about 250 px on every analytics page */
+  }
+  [class*="_filterRow_"]::after { opacity: 0; animation: nlex-shelf-rule linear both; animation-timeline: scroll(nearest block); animation-range: 190px 245px; }
+  /* As the bar pins, the header gives up its own shadow and hairline, so the two read as one
+     header with a single shadow under the bar, with no band where they meet (user request). */
+  .ds-main:has([class*="_filterRow_"]) > .ds-topbar {
+    animation: nlex-join linear both;
+    animation-timeline: scroll(nearest block);
+    animation-range: 190px 245px;
+  }
+}
+/* The strip behind the page scrollbar grows down past the pinned filter bar, in step with it,
+   so the joined header reaches the window edge with no sliver of background showing. */
+@supports (animation-timeline: scroll()) {
+  main.ds-main { scroll-timeline: --ds-main block; }
+  main.ds-main:has([class*="_filterRow_"])::before {
+    animation: nlex-gutter linear both;
+    animation-timeline: --ds-main;
+    animation-range: 190px 245px;
+  }
+}
+@keyframes nlex-gutter {
+  from { height: var(--ds-topbar-h, 64px); }
+  to { height: calc(var(--ds-topbar-h, 64px) + var(--ds-shelf-h, 54px)); }
+}
+@keyframes nlex-join {
+  from { box-shadow: 0 10px 30px -22px rgba(31, 95, 224, 0.45); border-bottom-color: var(--rule-topbar); }
+  to { box-shadow: 0 10px 30px -22px rgba(31, 95, 224, 0); border-bottom-color: transparent; }
+}
+@keyframes nlex-shelf {
+  from { background-color: transparent; box-shadow: none; }
+  to { background-color: var(--bg-topbar); box-shadow: 0 10px 30px -22px rgba(31, 95, 224, 0.45); }
+}
+@keyframes nlex-shelf-rule { from { opacity: 0; } to { opacity: 1; } }
+
+/* --- "Slow and congested now" (Overview) -------------------------------------
+   The card still matches the counts column's height, but its rows keep their
+   natural height and stack from the top: one or two entries sit under the
+   title instead of stretching to fill the card and floating in the middle.
+   "See all" stays pinned to the bottom when there are more than three. */
+.ov-hot > .ov-hot-list:not(.is-all) { flex: 0 0 auto; justify-content: flex-start; }
+.ov-hot > .ov-hot-list:not(.is-all) > .ov-hot-row { flex: none; }
+
+/* --- Sign-in card (user request, 7 Oct 2026) --------------------------------------
+   A little bigger, and the copyright line centred under it. */
+.login-panel { width: min(440px, calc(25vw + 72px)); }
+.login-card { padding: 36px 34px 32px; }
+.login-card h2 { font-size: 24px; margin-bottom: 26px; }
+.copyright { text-align: center; }
+@media (max-width: 760px) {
+  .login-panel { width: 100%; }
+  .login-card { padding: 26px 22px 24px; }
+}
+
+/* --- Collapsed rail: no brand mark (the mascot face was removed, user request) ---- */
+.ds-shell-collapsed .ds-sidebar-brand { display: none; }
+
+/* --- Showcase: the 3D car can be held and turned (stage-engine.ts) ----------------
+   A grab hand over it, a closed hand while it is held (anywhere, as the drag leaves the car),
+   no text selection mid-drag. On touch, a vertical swipe still scrolls the page; a sideways
+   one turns the car. */
+[data-stage-anchor="mascot"][data-stage-hover="1"] { cursor: grab; }
+[data-stage-anchor="mascot"] { touch-action: pan-y; }
+html[data-stage-drag="1"],
+html[data-stage-drag="1"] * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }

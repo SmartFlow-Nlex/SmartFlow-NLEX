@@ -1552,9 +1552,9 @@
 }
 .kpiValue {
   font-size: var(--fs-numeral);
-  font-weight: 400;
+  font-weight: var(--numeral-weight);
   font-stretch: 100%;
-  letter-spacing: 0;
+  letter-spacing: var(--numeral-tracking);
   line-height: 1.05;
   color: var(--text-primary);
 }

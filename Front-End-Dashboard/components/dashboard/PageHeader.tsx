@@ -8,7 +8,7 @@ import PageGroupName from "./PageGroupName";
     and the plain `.ds-content` pages — render an identical header.
 
     Night Corridor pattern: an eyebrow naming the page's group (with the page's
-    icon), the Italiana title that blurs up letter by letter on arrival, a
+    icon), the display title that blurs up letter by letter on arrival, a
     one-line description of what the page answers, and the page's own controls
     on the same baseline (wrapping below on narrow screens). */
 export default function PageHeader({

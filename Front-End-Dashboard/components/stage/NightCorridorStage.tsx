@@ -4,50 +4,22 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { createStage, type StageConfig, type StageHandle } from "./stage-engine";
 import { useTheme } from "../../lib/theme";
-import { effectsOnNow, useEffectsOn } from "../../lib/effects";
 
 /**
- * The one WebGL canvas behind the app. Mounted once by app/page.tsx (sign-in)
- * and once by app/dashboard/layout.tsx, both through next/dynamic with
- * ssr: false, so three.js never runs on the server and the canvas survives
- * every navigation inside the dashboard.
+ * The transparent WebGL canvas that draws the 3D mascot. Mounted once by
+ * app/page.tsx (sign-in) and once by app/dashboard/layout.tsx, both through
+ * next/dynamic with ssr: false, so three.js never runs on the server and the
+ * canvas survives every navigation inside the dashboard.
  *
- * Per route it only changes config: the Live Map turns it off (the map is the
- * stage there), the dense admin tables dim it, and each analytics page tints
- * the wave sheen with its accent. Literal hexes, because the shader cannot read
- * CSS variables.
+ * Since 7 Oct 2026 the background is the NLEX environment (CSS and SVG,
+ * components/environment); this canvas only draws the car, and only on the
+ * Overview. Every other route switches it off, so data pages run no WebGL.
  */
 
-const ACCENTS = {
-  brand: "#5c7aff",
-  traffic: "#4f8dff",
-  incident: "#f7a86b",
-  emissions: "#4fd1a5",
-} as const;
-
-function configFor(variant: "signin" | "dashboard", path: string): Pick<StageConfig, "off" | "intensity" | "accent" | "particles" | "mascot" | "scrollRange"> {
-  if (variant === "signin") {
-    return { off: false, intensity: 1, accent: ACCENTS.brand, particles: 450, mascot: "3d" };
-  }
-  // The Overview opens on a hero: the 3D car centre-stage on a warmer wave
-  // that turns expressway blue as the reader scrolls down to the corridor.
-  if (path === "/dashboard") {
-    // Amber sheen, after the reference the user chose for this hero.
-    return { off: false, intensity: 0.8, accent: "#ea8b0d", particles: 300, mascot: "3d", scrollRange: [0.12, 1] };
-  }
-  const under = (p: string) => path === p || path.startsWith(p + "/");
-  if (under("/dashboard/map-comparison")) {
-    return { off: true, intensity: 0, accent: ACCENTS.brand, particles: 0, mascot: false, scrollRange: undefined };
-  }
-  const dense = under("/dashboard/data-management") || under("/dashboard/audit-log");
-  const accent = under("/dashboard/traffic")
-    ? ACCENTS.traffic
-    : under("/dashboard/incident")
-      ? ACCENTS.incident
-      : under("/dashboard/sustainability")
-        ? ACCENTS.emissions
-        : ACCENTS.brand;
-  return { off: false, intensity: dense ? 0.35 : 0.55, accent, particles: 140, mascot: false, scrollRange: undefined };
+function configFor(variant: "signin" | "dashboard", path: string): Pick<StageConfig, "off" | "mascot"> {
+  // The car lives in the Overview hero; sign-in shows no mascot (user request, 6 Oct 2026).
+  if (variant === "dashboard" && path === "/dashboard") return { off: false, mascot: "3d" };
+  return { off: true, mascot: false };
 }
 
 /** Read from the DOM, which the head script stamps before paint, rather than
@@ -68,7 +40,6 @@ export default function NightCorridorStage({ variant }: { variant: "signin" | "d
   const { resolved } = useTheme();
   const [failed, setFailed] = useState(false);
   const [reduced, setReduced] = useState(false);
-  const [effects] = useEffectsOn();
 
   const route = configFor(variant, pathname);
 
@@ -90,7 +61,6 @@ export default function NightCorridorStage({ variant }: { variant: "signin" | "d
       ...configFor(variant, window.location.pathname),
       light: lightThemeNow(),
       reducedMotion: prefersReducedMotion(),
-      effects: effectsOnNow(),
     };
     const handle = createStage(canvas, initial);
     if (!handle) {
@@ -110,15 +80,11 @@ export default function NightCorridorStage({ variant }: { variant: "signin" | "d
   }, []);
 
   useEffect(() => {
-    stageRef.current?.setConfig({ ...route, light: lightThemeNow(), reducedMotion: reduced, effects });
-  }, [route.off, route.intensity, route.accent, route.particles, route.mascot, route.scrollRange?.[0], resolved, reduced, effects]); // eslint-disable-line react-hooks/exhaustive-deps
+    stageRef.current?.setConfig({ ...route, light: lightThemeNow(), reducedMotion: reduced });
+  }, [route.off, route.mascot, resolved, reduced]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div
-      className={`nc-stage${failed ? " is-fallback" : ""}${route.off ? " is-off" : ""}`}
-      data-variant={variant}
-      aria-hidden="true"
-    >
+    <div className={`nc-stage${failed ? " is-fallback" : ""}${route.off ? " is-off" : ""}`} data-variant={variant} aria-hidden="true">
       {!failed && <canvas ref={canvasRef} className="nc-stage-canvas" />}
     </div>
   );

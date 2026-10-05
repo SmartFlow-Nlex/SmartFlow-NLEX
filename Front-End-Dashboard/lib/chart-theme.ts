@@ -41,7 +41,7 @@ const FALLBACK: ChartTheme = {
   tooltipText: "#f4f1ea",
   tooltipBorder: "rgba(255, 255, 255, 0.12)",
   seqLightest: "#0e1628",
-  fontFamily: "Outfit, ui-sans-serif, system-ui, sans-serif",
+  fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
   ink: "#f4f1ea",
   isDark: true,
 };

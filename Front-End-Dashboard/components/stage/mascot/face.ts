@@ -25,6 +25,8 @@ export interface MascotFace {
   play(e: FaceExpression, seconds?: number): void;
   /** Blink now (both eyes). */
   blink(): void;
+  /** Chatter the mouth (a laugh, a little talk) for `seconds`. */
+  talk(seconds: number): void;
   /** Where the pupils look: x, y in -1..1 (right, down are positive). */
   look(x: number, y: number): void;
   /** Advance the face by dt seconds; `still` freezes blinking. Returns true if redrawn. */
@@ -32,35 +34,44 @@ export interface MascotFace {
   dispose(): void;
 }
 
-/* Canvas space: the projector box is 1.001 x 0.6747 model units. */
+/* Canvas space: the projector box is 1.26 x 0.984 model units (v8). */
 const W = 1024;
-const H = 690;
+const H = 800;
 
-/** Layout traced from the PNG's face (decal-face.png), in canvas px. */
+/** Layout in canvas px: eyes and brows on the white windscreen, cheeks on its lower corners, the
+ *  mouth on the blue bonnet below it (as on the character sheet). */
 const L = {
-  eyeX: 274,
-  eyeY: 312,
-  eyeRx: 160,
-  eyeRy: 174,
-  browY: 88,
-  browHalf: 94,
-  cheekX: 168,
-  cheekY: 528,
-  cheekRx: 98,
-  cheekRy: 44,
-  mouthY: 508,
-  mouthW: 378,
-  mouthDepth: 180,
+  // v8 (7 Oct 2026), measured off the reference sheet's close-ups. The eyes are round and tall and
+  // peek over the blue fascia: their lower part is hidden below the white windscreen's bottom edge
+  // (canvas y 497). Short thick brows sit high on the windscreen; the cheeks and the small open
+  // smile sit on the blue just below its edge.
+  panelBottom: 494,
+  eyeX: 292,
+  eyeY: 392,
+  eyeRx: 132,
+  eyeRy: 146,
+  browX: 286,
+  browY: 214,
+  browHalf: 66,
+  // The mouth and cheeks land on the sloping bonnet, which the Overview sees from a little above, so
+  // they are drawn flatter here to read round there (user: "not stretched vertically", 7 Oct 2026),
+  // and the cheeks sit a little inward, off the body's curving corners.
+  cheekX: 196,
+  cheekY: 532,
+  cheekRx: 72,
+  cheekRy: 25,
+  mouthY: 520,
+  mouthW: 200,
+  mouthDepth: 60, // small and cute, a little wider (user requests, 7 Oct 2026)
 };
 
 /* The character sheet's palette. */
-const NAVY = "#0b2a66";
-const LID = "#0a2456";
-const PINK = "255, 150, 172";
-const MOUTH_DARK = "#9a1426";
-const MOUTH_MID = "#e8343f";
-const TONGUE = "#ff7f98";
-const TONGUE_LIGHT = "#ffadbd";
+const NAVY = "#0a1638";
+const PINK = "255, 122, 150";
+const MOUTH_DARK = "#7c0f26";
+const MOUTH_LINE = "#5e0b1d";
+const TONGUE = "#f4637d";
+const TONGUE_LIGHT = "#ff9aac";
 
 type Params = {
   openL: number; // 0 closed .. 1 open
@@ -82,7 +93,7 @@ type Params = {
 };
 
 const PRESETS: Record<FaceExpression, Params> = {
-  happy: { openL: 1, openR: 1, happyL: 0, happyR: 0, eyeScale: 1, pupil: 1, browL: 0, browR: 0, browTilt: 0, mouthW: 1, mouthOpen: 0.78, mouthRound: 0, mouthSmile: 1, blush: 0.75, lookX: 0, lookY: 0 },
+  happy: { openL: 1, openR: 1, happyL: 0, happyR: 0, eyeScale: 1, pupil: 1, browL: 0, browR: 0, browTilt: 0, mouthW: 1, mouthOpen: 0.82, mouthRound: 0, mouthSmile: 1, blush: 1, lookX: 0, lookY: 0 },
   excited: { openL: 1, openR: 1, happyL: 1, happyR: 1, eyeScale: 1, pupil: 1, browL: 18, browR: 18, browTilt: -4, mouthW: 1.12, mouthOpen: 1, mouthRound: 0, mouthSmile: 1, blush: 0.8, lookX: 0, lookY: 0 },
   wink: { openL: 1, openR: 1, happyL: 0, happyR: 1, eyeScale: 1, pupil: 1, browL: 6, browR: -2, browTilt: 0, mouthW: 1, mouthOpen: 0.62, mouthRound: 0, mouthSmile: 1, blush: 0.68, lookX: 0, lookY: 0 },
   surprised: { openL: 1, openR: 1, happyL: 0, happyR: 0, eyeScale: 1.07, pupil: 0.74, browL: 30, browR: 30, browTilt: -6, mouthW: 0.42, mouthOpen: 0.75, mouthRound: 1, mouthSmile: 0, blush: 0.35, lookX: 0, lookY: 0 },
@@ -114,163 +125,185 @@ export function createMascotFace(): MascotFace | null {
   let nextBlink = 1.8 + Math.random() * 2.5;
   let doubleBlink = false;
   let drawn = "";
+  let talkLeft = 0;
+  let talkT = 0;
+  let chat = 1;
 
   const target = (): Params => PRESETS[playing ?? base];
 
   /* ---------------------------------------------------------------- drawing */
+  /* Drawn in the reference sheet's style (v8): big round eyes with a thick, clean upper lid,
+     an iris that fills most of the eye, a big pupil and clean highlights; short, thick, rounded
+     brows; a small open "D" smile with a pink tongue. */
+  const ellipse = (x: number, y: number, rx: number, ry: number) => {
+    ctx.beginPath();
+    ctx.ellipse(x, y, Math.max(0.5, rx), Math.max(0.5, ry), 0, 0, Math.PI * 2);
+  };
+
   const drawEye = (cx: number, cy: number, open: number, happy: number, scale: number, pupil: number, lx: number, ly: number, side: 1 | -1) => {
     const rx = L.eyeRx * scale;
     const ry = L.eyeRy * scale;
     const o = open * (1 - happy);
-    if (o > 0.035) {
-      // The lid closes toward a line a little below centre, as a real lid does.
-      const lidCy = cy + ry * (1 - o) * 0.28;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    if (o > 0.04) {
+      // As on the sheet's close-ups: the white is the windscreen itself; a big glossy iris (deep
+      // blue above, bright sky blue pooling below) fills most of the eye; a large dark pupil; a big
+      // round highlight up and to the left, a small dot beside it and a little sparkle low on the
+      // outer side; one thick, clean navy line along the upper lid. The lower part of the eye is
+      // tucked behind the blue fascia (clipped at the windscreen's edge), which is what makes it
+      // read as peeking out, and cute.
+      const lidCy = cy + ry * (1 - o) * 0.3;
       const lidRy = ry * o;
       ctx.save();
       ctx.beginPath();
-      ctx.ellipse(cx, lidCy, rx, lidRy, 0, 0, Math.PI * 2);
+      ctx.rect(0, 0, W, L.panelBottom);
       ctx.clip();
-      // Sclera with a soft shade under the upper lid.
-      const sg = ctx.createRadialGradient(cx, cy + ry * 0.2, ry * 0.2, cx, cy, ry * 1.05);
-      sg.addColorStop(0, "#ffffff");
-      sg.addColorStop(0.75, "#f4f8ff");
-      sg.addColorStop(1, "#d7e4fb");
-      ctx.fillStyle = sg;
-      ctx.fillRect(cx - rx, cy - ry, rx * 2, ry * 2);
-      // Iris: deep blue rim, bright mid, a pale crescent along the bottom.
-      const ir = rx * 0.76;
-      const icx = cx + lx * rx * 0.22;
-      const icy = cy + ry * 0.1 + ly * ry * 0.13;
-      const ig = ctx.createRadialGradient(icx, icy - ir * 0.15, ir * 0.1, icx, icy, ir);
-      // Toward cyan: ACES turns a pure blue violet on screen.
-      ig.addColorStop(0, "#04224f");
-      ig.addColorStop(0.45, "#0752b8");
-      ig.addColorStop(0.8, "#0f7ae6");
-      ig.addColorStop(0.94, "#0a4fa8");
-      ig.addColorStop(1, "#052a64");
+      ctx.save();
+      ellipse(cx, lidCy, rx, lidRy);
+      ctx.clip();
+      const irx = rx * 0.82;
+      const iry = ry * 0.9;
+      const icx = cx + lx * rx * 0.14 - side * rx * 0.03;
+      const icy = cy + ry * 0.07 + ly * ry * 0.06;
+      const ig = ctx.createLinearGradient(0, icy - iry, 0, icy + iry);
+      ig.addColorStop(0, "#041452");
+      ig.addColorStop(0.45, "#0a37a6");
+      ig.addColorStop(0.8, "#1d70e6");
+      ig.addColorStop(1, "#4fb6ff");
       ctx.fillStyle = ig;
-      ctx.beginPath();
-      ctx.arc(icx, icy, ir, 0, Math.PI * 2);
+      ellipse(icx, icy, irx, iry);
       ctx.fill();
-      const cg = ctx.createLinearGradient(0, icy + ir, 0, icy);
-      cg.addColorStop(0, "rgba(90, 210, 255, 0.85)");
-      cg.addColorStop(0.55, "rgba(120, 205, 255, 0)");
-      ctx.fillStyle = cg;
-      ctx.beginPath();
-      ctx.arc(icx, icy, ir * 0.94, 0, Math.PI * 2);
+      // A brighter ring of light in the lower iris.
+      const ring = ctx.createRadialGradient(icx, icy + iry * 0.45, iry * 0.1, icx, icy + iry * 0.35, iry * 0.75);
+      ring.addColorStop(0, "rgba(150, 225, 255, 0.7)");
+      ring.addColorStop(0.6, "rgba(90, 185, 255, 0.3)");
+      ring.addColorStop(1, "rgba(90, 185, 255, 0)");
+      ctx.fillStyle = ring;
+      ellipse(icx, icy, irx, iry);
       ctx.fill();
-      // Fine radial streaks give the iris depth.
-      ctx.strokeStyle = "rgba(10, 40, 110, 0.18)";
-      ctx.lineWidth = 3;
-      for (let a = 0; a < 24; a++) {
-        const t = (a / 24) * Math.PI * 2;
-        ctx.beginPath();
-        ctx.moveTo(icx + Math.cos(t) * ir * 0.55, icy + Math.sin(t) * ir * 0.55);
-        ctx.lineTo(icx + Math.cos(t) * ir * 0.9, icy + Math.sin(t) * ir * 0.9);
-        ctx.stroke();
-      }
+      ctx.strokeStyle = "#061a50";
       ctx.lineWidth = 7;
-      ctx.strokeStyle = "rgba(8, 30, 80, 0.85)";
-      ctx.beginPath();
-      ctx.arc(icx, icy, ir - 3, 0, Math.PI * 2);
+      ellipse(icx, icy, irx - 3, iry - 3);
       ctx.stroke();
       // Pupil.
-      ctx.fillStyle = "#06153a";
-      ctx.beginPath();
-      ctx.arc(icx, icy + ir * 0.04, ir * 0.52 * pupil, 0, Math.PI * 2);
+      ctx.fillStyle = "#03102e";
+      ellipse(icx, icy - iry * 0.06, irx * 0.5 * pupil, iry * 0.52 * pupil);
       ctx.fill();
-      // Highlights: one big, two small, mirrored a touch between the eyes.
+      // Highlights: the light comes from the upper left on both eyes; the sparkle sits outward.
       ctx.fillStyle = "#ffffff";
-      const hl = (dx: number, dy: number, r: number) => {
-        ctx.beginPath();
-        ctx.arc(icx + dx * ir, icy + dy * ir, r * ir, 0, Math.PI * 2);
-        ctx.fill();
-      };
-      hl(-0.3 - side * 0.02, -0.4, 0.25);
-      hl(0.36, 0.26, 0.12);
-      hl(0.04, -0.04, 0.075);
-      // Lid shadow.
-      const lg = ctx.createLinearGradient(0, lidCy - lidRy, 0, lidCy - lidRy + ry * 0.45);
-      lg.addColorStop(0, "rgba(20, 50, 120, 0.32)");
-      lg.addColorStop(1, "rgba(20, 50, 120, 0)");
-      ctx.fillStyle = lg;
-      ctx.fillRect(cx - rx, lidCy - lidRy, rx * 2, ry * 0.5);
+      ellipse(icx - irx * 0.22, icy - iry * 0.42, irx * 0.27, irx * 0.27);
+      ctx.fill();
+      ellipse(icx + irx * 0.2, icy - iry * 0.16, irx * 0.1, irx * 0.1);
+      ctx.fill();
+      const sx = icx + side * irx * 0.55;
+      const sy = icy + iry * 0.24;
+      const sr = irx * 0.13;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy - sr);
+      ctx.quadraticCurveTo(sx, sy, sx + sr, sy);
+      ctx.quadraticCurveTo(sx, sy, sx, sy + sr);
+      ctx.quadraticCurveTo(sx, sy, sx - sr, sy);
+      ctx.quadraticCurveTo(sx, sy, sx, sy - sr);
+      ctx.fill();
+      // A soft shade under the upper lid.
+      const shade = ctx.createLinearGradient(0, lidCy - lidRy, 0, lidCy - lidRy + ry * 0.3);
+      shade.addColorStop(0, "rgba(8, 26, 80, 0.2)");
+      shade.addColorStop(1, "rgba(8, 26, 80, 0)");
+      ctx.fillStyle = shade;
+      ctx.fillRect(cx - rx, lidCy - lidRy, rx * 2, ry * 0.32);
       ctx.restore();
-      // Outline: a thin rim all round, a heavy lash line on top with an outer flick.
-      ctx.lineCap = "round";
-      ctx.strokeStyle = "rgba(14, 40, 100, 0.6)";
-      ctx.lineWidth = 6;
+      // The upper lid: one thick navy line from low on the inner side, over the top, down the
+      // outer side; thickest over the top, tapering to points at both ends.
+      ctx.fillStyle = NAVY;
       ctx.beginPath();
-      ctx.ellipse(cx, lidCy, rx, lidRy, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.strokeStyle = LID;
-      ctx.lineWidth = 22;
-      ctx.beginPath();
-      ctx.ellipse(cx, lidCy, rx, lidRy, 0, Math.PI * 1.06, Math.PI * 1.94);
-      ctx.stroke();
-      const fx = cx + side * rx * 0.96;
-      const fy = lidCy - lidRy * 0.3;
-      ctx.lineWidth = 15;
-      ctx.beginPath();
-      ctx.moveTo(fx, fy);
-      ctx.quadraticCurveTo(fx + side * 18, fy - 8, fx + side * 30, fy - 28);
-      ctx.stroke();
+      const steps = 32;
+      const a0 = side > 0 ? Math.PI * 0.98 : Math.PI * 1.1;
+      const a1 = side > 0 ? Math.PI * 1.9 : Math.PI * 2.02;
+      const ptAt = (a: number, grow: number) => {
+        const nx = Math.cos(a);
+        const ny = Math.sin(a);
+        return [cx + nx * (rx + grow), lidCy + ny * (lidRy + grow)];
+      };
+      for (let k = 0; k <= steps; k++) {
+        const [x, y] = ptAt(a0 + ((a1 - a0) * k) / steps, -9);
+        ctx.lineTo(x, y);
+      }
+      for (let k = steps; k >= 0; k--) {
+        const u = k / steps;
+        const w = 2 + 15 * Math.pow(Math.sin(Math.PI * u), 0.7);
+        const [x, y] = ptAt(a0 + (a1 - a0) * u, w);
+        ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
     } else if (happy < 0.5) {
-      // Shut mid-blink: a soft lid line.
-      ctx.strokeStyle = LID;
-      ctx.lineCap = "round";
-      ctx.lineWidth = 20;
+      // Shut mid-blink: the lash line, curved down.
+      ctx.strokeStyle = NAVY;
+      ctx.lineWidth = 16;
       ctx.beginPath();
-      ctx.ellipse(cx, cy + ry * 0.2, rx * 0.86, ry * 0.16, 0, Math.PI * 0.08, Math.PI * 0.92);
+      ctx.ellipse(cx, cy + ry * 0.22, rx * 0.84, ry * 0.18, 0, Math.PI * 0.1, Math.PI * 0.9);
       ctx.stroke();
     }
     if (happy > 0.02) {
-      // The closed, smiling eye of the sheet's Excited and Blush faces.
+      // The closed, smiling eye of the sheet's Excited and Blush faces: a thick upturned arch.
       ctx.save();
-      ctx.globalAlpha = Math.min(1, happy * 1.25);
-      ctx.strokeStyle = LID;
-      ctx.lineCap = "round";
-      ctx.lineWidth = 24;
+      ctx.globalAlpha = Math.min(1, happy * 1.3);
+      ctx.strokeStyle = NAVY;
+      ctx.lineWidth = 20;
       ctx.beginPath();
-      ctx.ellipse(cx, cy + ry * 0.28, rx * 0.78, ry * 0.5, 0, Math.PI * 1.06, Math.PI * 1.94);
+      ctx.ellipse(cx, cy + ry * 0.3, rx * 0.72, ry * 0.46, 0, Math.PI * 1.08, Math.PI * 1.92);
       ctx.stroke();
       ctx.restore();
     }
   };
 
   const drawBrow = (cx: number, lift: number, tilt: number, side: 1 | -1) => {
+    // Short, thick, rounded arcs high on the windscreen, thickest in the middle.
     const y = L.browY - lift;
     const w = L.browHalf;
     const inner = cx - side * w;
     const outer = cx + side * w;
-    const g = ctx.createLinearGradient(cx - w, 0, cx + w, 0);
-    g.addColorStop(0, "#1549b8");
-    g.addColorStop(0.5, "#0c3592");
-    g.addColorStop(1, "#1549b8");
-    ctx.strokeStyle = g;
-    ctx.lineCap = "round";
-    ctx.lineWidth = 36;
+    const steps = 20;
+    const pt = (u: number, off: number) => {
+      // quadratic from inner (dropped by tilt) through the peak to outer
+      const x0 = inner, y0 = y + 12 + tilt;
+      const x1 = cx, y1 = y - 22;
+      const x2 = outer, y2 = y + 8;
+      const a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, c = u * u;
+      return [a * x0 + b * x1 + c * x2, a * y0 + b * y1 + c * y2 + off];
+    };
+    ctx.fillStyle = "#1a43a6";
     ctx.beginPath();
-    ctx.moveTo(inner, y + 16 + tilt);
-    ctx.quadraticCurveTo(cx, y - 26, outer, y + 12);
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(10, 36, 100, 0.55)";
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.moveTo(inner, y + 24 + tilt);
-    ctx.quadraticCurveTo(cx, y - 16, outer, y + 20);
-    ctx.stroke();
+    for (let k = 0; k <= steps; k++) {
+      const u = k / steps;
+      const [x, yy] = pt(u, -(5 + 9 * Math.sin(Math.PI * u)));
+      ctx.lineTo(x, yy);
+    }
+    for (let k = steps; k >= 0; k--) {
+      const u = k / steps;
+      const [x, yy] = pt(u, 5 + 9 * Math.sin(Math.PI * u));
+      ctx.lineTo(x, yy);
+    }
+    ctx.closePath();
+    ctx.fill();
+    // round the ends
+    for (const u of [0, 1]) {
+      const [x, yy] = pt(u, 0);
+      ellipse(x, yy, 6, 6);
+      ctx.fill();
+    }
   };
 
   const drawCheek = (cx: number, alpha: number) => {
     if (alpha <= 0.01) return;
-    const g = ctx.createRadialGradient(cx, L.cheekY, 4, cx, L.cheekY, L.cheekRx);
-    g.addColorStop(0, `rgba(${PINK}, ${alpha})`);
-    g.addColorStop(0.65, `rgba(${PINK}, ${0.85 * alpha})`);
+    const g = ctx.createRadialGradient(cx, L.cheekY - 4, 2, cx, L.cheekY, L.cheekRx);
+    g.addColorStop(0, `rgba(255, 160, 182, ${alpha})`);
+    g.addColorStop(0.6, `rgba(${PINK}, ${0.95 * alpha})`);
     g.addColorStop(1, `rgba(${PINK}, 0)`);
     ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.ellipse(cx, L.cheekY, L.cheekRx, L.cheekRy, 0, 0, Math.PI * 2);
+    ellipse(cx, L.cheekY, L.cheekRx, L.cheekRy);
     ctx.fill();
   };
 
@@ -282,63 +315,60 @@ export function createMascotFace(): MascotFace | null {
     ctx.lineJoin = "round";
     if (round > 0.5) {
       // "o"
-      const rx = Math.max(26, w * 0.5);
-      const ry = 34 + open * 46;
+      const rx = Math.max(24, w * 0.5);
+      const ry = 30 + open * 40;
       const cy = top + ry;
-      const g = ctx.createLinearGradient(0, cy - ry, 0, cy + ry);
-      g.addColorStop(0, MOUTH_DARK);
-      g.addColorStop(1, MOUTH_MID);
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fillStyle = MOUTH_DARK;
+      ellipse(cx, cy, rx, ry);
       ctx.fill();
       ctx.fillStyle = TONGUE;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy + ry * 0.5, rx * 0.62, ry * 0.36, 0, 0, Math.PI * 2);
+      ellipse(cx, cy + ry * 0.5, rx * 0.6, ry * 0.36);
       ctx.fill();
-      ctx.strokeStyle = "#7a0f1e";
-      ctx.lineWidth = 7;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = MOUTH_LINE;
+      ctx.lineWidth = 8;
+      ellipse(cx, cy, rx, ry);
       ctx.stroke();
       return;
     }
     if (open < 0.08) {
-      ctx.strokeStyle = "#5a1222";
-      ctx.lineWidth = 13;
+      ctx.strokeStyle = MOUTH_LINE;
+      ctx.lineWidth = 12;
       ctx.beginPath();
-      ctx.moveTo(cx - w / 2, top + 6);
-      ctx.quadraticCurveTo(cx, top + 6 + 70 * smile, cx + w / 2, top + 6);
+      ctx.moveTo(cx - w / 2, top + 4);
+      ctx.quadraticCurveTo(cx, top + 4 + 60 * smile, cx + w / 2, top + 4);
       ctx.stroke();
       return;
     }
+    // Open "D", as on the sheet: a gently smiling top edge, rounded corners, a deep round bowl,
+    // a rich maroon inside and a big pink tongue filling the bottom.
     const depth = L.mouthDepth * open;
+    const sag = w * 0.1; // a smilier top edge
     const path = () => {
       ctx.beginPath();
       ctx.moveTo(cx - w / 2, top);
-      ctx.quadraticCurveTo(cx, top + 16 * open, cx + w / 2, top);
-      ctx.bezierCurveTo(cx + w / 2, top + depth * 1.18, cx - w / 2, top + depth * 1.18, cx - w / 2, top);
+      ctx.quadraticCurveTo(cx, top + sag * 2, cx + w / 2, top);
+      ctx.bezierCurveTo(cx + w * 0.53, top + depth * 0.62, cx + w * 0.3, top + depth, cx, top + depth);
+      ctx.bezierCurveTo(cx - w * 0.3, top + depth, cx - w * 0.53, top + depth * 0.62, cx - w / 2, top);
       ctx.closePath();
     };
-    const g = ctx.createLinearGradient(0, top, 0, top + depth);
-    g.addColorStop(0, MOUTH_DARK);
-    g.addColorStop(1, MOUTH_MID);
-    ctx.fillStyle = g;
+    const inside = ctx.createLinearGradient(0, top, 0, top + depth);
+    inside.addColorStop(0, "#5a0a1c");
+    inside.addColorStop(1, MOUTH_DARK);
+    ctx.fillStyle = inside;
     path();
     ctx.fill();
     ctx.save();
     path();
     ctx.clip();
-    const tg = ctx.createRadialGradient(cx, top + depth * 0.95, 6, cx, top + depth, w * 0.34);
+    const tg = ctx.createRadialGradient(cx, top + depth * 0.78, 4, cx, top + depth * 0.95, w * 0.34);
     tg.addColorStop(0, TONGUE_LIGHT);
     tg.addColorStop(1, TONGUE);
     ctx.fillStyle = tg;
-    ctx.beginPath();
-    ctx.ellipse(cx, top + depth * 1.0, w * 0.32, depth * 0.48, 0, 0, Math.PI * 2);
+    ellipse(cx, top + depth * 0.98, w * 0.34, depth * 0.48);
     ctx.fill();
     ctx.restore();
-    ctx.strokeStyle = "#7a0f1e";
-    ctx.lineWidth = 7;
+    ctx.strokeStyle = "rgba(70, 6, 22, 0.55)";
+    ctx.lineWidth = 4;
     path();
     ctx.stroke();
   };
@@ -351,9 +381,9 @@ export function createMascotFace(): MascotFace | null {
     drawCheek(W - L.cheekX, cur.blush);
     drawEye(L.eyeX, L.eyeY, open[0], cur.happyL, cur.eyeScale, cur.pupil, lx, ly, -1);
     drawEye(W - L.eyeX, L.eyeY, open[1], cur.happyR, cur.eyeScale, cur.pupil, lx, ly, 1);
-    drawBrow(L.eyeX + 8, cur.browL, cur.browTilt, -1);
-    drawBrow(W - L.eyeX - 8, cur.browR, cur.browTilt, 1);
-    drawMouth(cur.mouthW, cur.mouthOpen, cur.mouthRound, cur.mouthSmile);
+    drawBrow(L.browX, cur.browL, cur.browTilt, -1);
+    drawBrow(W - L.browX, cur.browR, cur.browTilt, 1);
+    drawMouth(cur.mouthW, cur.mouthOpen * chat, cur.mouthRound, cur.mouthSmile);
     texture.needsUpdate = true;
   };
 
@@ -375,6 +405,9 @@ export function createMascotFace(): MascotFace | null {
     },
     blink() {
       if (blinkT < 0) blinkT = 0;
+    },
+    talk(seconds) {
+      talkLeft = Math.max(talkLeft, seconds);
     },
     look(x, y) {
       look.tx = clamp(x, -1, 1);
@@ -416,9 +449,18 @@ export function createMascotFace(): MascotFace | null {
           }
         }
       }
+      if (talkLeft > 0 && !still) {
+        talkLeft -= dt;
+        talkT += dt;
+        // Open-close a few times a second, easing out as the laugh ends.
+        const fade = Math.min(1, talkLeft / 0.25);
+        chat = 1 - fade * 0.42 * (1 - Math.abs(Math.sin(talkT * 10.5)));
+      } else {
+        chat = 1;
+      }
       const b = blinkOpen();
       const open: [number, number] = [cur.openL * b, cur.openR * b];
-      const sig = [open[0], open[1], ...KEYS.map((key) => cur[key]), look.x, look.y].map((v) => Math.round(v * 200)).join(",");
+      const sig = [open[0], open[1], ...KEYS.map((key) => cur[key]), look.x, look.y, chat].map((v) => Math.round(v * 200)).join(",");
       if (sig === drawn) return false;
       drawn = sig;
       draw(open);

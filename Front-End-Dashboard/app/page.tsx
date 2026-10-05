@@ -1,7 +1,6 @@
 "use client";
 
 import Image from 'next/image';
-import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { User, Lock, Eye, EyeOff, Activity, TrendingUp, TriangleAlert, Pause, Play } from "lucide-react";
 import { supabase } from '../lib/supabase';
@@ -9,12 +8,13 @@ import { logActivity } from "../lib/backend-auth";
 import { emitStage } from '../components/stage/stage-bus';
 import EditorialGrid from '../components/stage/EditorialGrid';
 import TitleReveal from '../components/stage/TitleReveal';
-import Mascot from '../components/stage/Mascot';
 import SigninCursor from '../components/stage/SigninCursor';
 import EffectsToggle from '../components/dashboard/EffectsToggle';
+import ThemeToggle from '../components/dashboard/ThemeToggle';
+import NlexEnvironment from '../components/environment/NlexEnvironment';
 
-// The WebGL stage is client-only: three.js never runs during the static export.
-const NightCorridorStage = dynamic(() => import('../components/stage/NightCorridorStage'), { ssr: false });
+// Sign-in has no mascot (user request, 6 Oct 2026), so it needs no WebGL stage: the
+// background is the NLEX environment, drawn in CSS and SVG.
 
 /* The four sign-in stories. Copy is taken from PRODUCT.md, verbatim from the
    redesign brief; it makes no claim the product does not. */
@@ -155,7 +155,7 @@ export default function Home() {
 
   return (
     <main className="si-shell">
-      <NightCorridorStage variant="signin" />
+      <NlexEnvironment scene="hero" />
       <EditorialGrid variant="signin" />
       <SigninCursor />
 
@@ -198,14 +198,15 @@ export default function Home() {
             </button>
           ))}
         </nav>
-        <span className="si-topbar-end"><EffectsToggle /></span>
+        {/* The same theme control and effects switch as the dashboard's top bar. */}
+        <div className="si-topbar-end">
+          <EffectsToggle />
+          <ThemeToggle />
+        </div>
       </header>
 
-      {/* The stage draws the mascot over this box; the picture inside shows
-          until the stage's own mascot is ready, and stays if WebGL is missing. */}
-      <div className="si-mascot" data-stage-anchor="mascot">
-        <Mascot size={420} className="si-mascot-fallback" />
-      </div>
+      {/* No mascot on sign-in (6 Oct 2026, user request): the middle row of the grid is open
+          space, so the story and the card keep their places. */}
 
       <section className="si-story" aria-label="About SmartFlow">
         <div className="si-story-text" key={story}>

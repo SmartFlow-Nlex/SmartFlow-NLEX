@@ -1,0 +1,126 @@
+/* ===========================================================================
+   NLEX environment (components/environment/NlexEnvironment.tsx)
+   The user's expressway artwork (public/light_bg, public/dark_bg) behind the
+   app, with drifting clouds over it. Motion is transform and opacity only.
+   =========================================================================== */
+
+.nlex-env {
+  /* Day. */
+  --env-art: url("/light_bg.webp");
+  /* The sky above the art, matched to its top edge (#5fb4fc, a touch lighter on the left). */
+  --env-base: linear-gradient(90deg, #69bbfd, #55b0fc);
+  --env-sun: rgba(255, 255, 255, 0.7);
+  --env-cloud-opacity: 1;
+  --env-veil: rgba(244, 249, 255, 0.6);
+
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--env-base);
+  --cloud-scale: 1;
+}
+
+/* Night: the same scene after dark. Two identical blocks, as in globals.css:
+   the explicit choice and "System" on a dark OS. */
+:root[data-theme="dark"] .nlex-env {
+  --env-art: url("/dark_bg.webp");
+  --env-base: linear-gradient(90deg, #04183f, #03215c);
+  --env-sun: rgba(90, 140, 255, 0.16);
+  --env-cloud-opacity: 0.2;
+  --env-veil: rgba(6, 18, 52, 0.55);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .nlex-env {
+    --env-art: url("/dark_bg.webp");
+    --env-base: linear-gradient(90deg, #04183f, #03215c);
+    --env-sun: rgba(90, 140, 255, 0.16);
+    --env-cloud-opacity: 0.2;
+    --env-veil: rgba(6, 18, 52, 0.55);
+  }
+}
+
+.env-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* --- The artwork ------------------------------------------------------------
+   Anchored bottom right and at least 170vh wide, so on a laptop the skyline
+   starts to the right of the page title rather than behind it; above it, the
+   sky colour carries on, and the art's top edge fades into it. It stays put:
+   only the clouds move. */
+.env-bg {
+  inset: auto 0 0 auto;
+  width: max(100%, 170vh);
+  height: auto;
+  aspect-ratio: 1798 / 875;
+  background: var(--env-art) center / 100% 100% no-repeat;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 9%);
+  mask-image: linear-gradient(to bottom, transparent, #000 9%);
+}
+
+/* The light moves: a broad, soft glow that drifts and breathes on two
+   unrelated periods, so it never visibly loops. */
+.env-sun {
+  inset: -10%;
+  width: 120%;
+  height: 120%;
+  background: radial-gradient(38% 34% at 24% 20%, var(--env-sun), transparent 70%);
+  animation: env-sun-drift 47s ease-in-out infinite alternate, env-sun-breathe 31s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+@keyframes env-sun-drift { from { transform: translate3d(-2%, -1%, 0); } to { transform: translate3d(3%, 2%, 0); } }
+@keyframes env-sun-breathe { from { opacity: 0.7; } to { opacity: 1; } }
+
+/* --- Clouds -------------------------------------------------------------------
+   Three depths, each slower the further away, which reads as depth. */
+.env-clouds {
+  overflow: hidden;
+  opacity: var(--env-cloud-opacity);
+}
+.env-clouds.is-far { --cloud-dur: 520s; }
+.env-clouds.is-mid { --cloud-dur: 330s; }
+.env-clouds.is-near { --cloud-dur: 210s; }
+/* Each cloud is its own small layer sliding one screen width per cycle; its
+   copy one screen to the right takes its place, so the loop never jumps. */
+.env-cloud {
+  position: absolute;
+  height: auto;
+  user-select: none;
+  -webkit-user-drag: none;
+  animation: env-cloud-drift var(--cloud-dur) linear infinite;
+  will-change: transform;
+}
+@keyframes env-cloud-drift { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(-100vw, 0, 0); } }
+
+/* --- Readability veil -------------------------------------------------------
+   A soft wash on the left, where every page's title and copy sit; the same on
+   every page, so the scene looks the same on every tab and sub-tab. */
+.env-veil {
+  background: linear-gradient(90deg, var(--env-veil) 0%, color-mix(in srgb, var(--env-veil) 45%, transparent) 32%, transparent 56%);
+}
+
+/* --- Motion off: reduced motion, or the reader's Effects switch ------------- */
+.nlex-env[data-motion="off"] .env-cloud,
+.nlex-env[data-motion="off"] .env-sun { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .env-cloud,
+  .env-sun { animation: none; }
+}
+
+/* --- Smaller screens: bigger, fewer clouds; no far layer; the art centred on the road. */
+@media (max-width: 980px) {
+  .nlex-env { --cloud-scale: 1.6; }
+  .env-clouds.is-far { display: none; }
+  /* Tall screens: the art fills the height and centres on the road. */
+  .env-bg { right: auto; left: 50%; width: max(100%, 205vh); translate: -70% 0; }
+}
+@media (max-width: 640px) {
+  .nlex-env { --cloud-scale: 2.2; }
+  .env-clouds.is-mid .env-cloud:nth-child(3n) { display: none; }
+  .env-veil { background: color-mix(in srgb, var(--env-veil) 70%, transparent); }
+}

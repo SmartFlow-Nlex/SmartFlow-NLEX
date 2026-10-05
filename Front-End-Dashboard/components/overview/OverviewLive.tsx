@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ArrowUpRight, ChevronDown, Home } from "lucide-react";
+import { ArrowUpRight, BarChart3, Car, CheckCircle2, ChevronDown, ChevronRight, Gauge, Home, Map as MapIcon } from "lucide-react";
 import { useCorridorLive } from "../../lib/use-corridor-live";
 import type { ExitStatus } from "../../lib/corridor-status";
 import { displayExitName, type NlexExit } from "../../lib/nlex-exits";
@@ -23,11 +23,17 @@ import EvidenceModal from "../dashboard/EvidenceModal";
  * The page opens on a hero (5 Oct 2026, at the user's request, after the
  * reference they supplied): the 3D mascot centre-stage on the WebGL stage,
  * which draws it over the hero's [data-stage-anchor="mascot"] box, an
- * oversized Italiana title and two short columns of live status. Scrolling
+ * oversized wide Saira title and two short columns of live status. Scrolling
  * down brings the counts, the hotspots (the three worst, "See all" for the
  * rest) and then Live Corridor Status. The "corridor at true scale" ribbon was
  * removed at the user's request (5 Oct 2026); Live Corridor Status carries the
  * same per-exit queues.
+ *
+ * NLEX daylight (7 Oct 2026, the user's mascot brief): the same live block as
+ * cards. A pulsing dot marks a live feed; the headline sits in a card tinted by
+ * its state (soft coral when congested) whose chevron, like the slowest
+ * reading's, jumps to the hotspot list below; the two links carry icons.
+ * Nothing here changed what is computed or shown.
  *
  * Redesigned 4 Oct 2026 at the user's request: the 3D corridor and its km
  * ruler are gone. Their per-exit reading lives on in the hotspot list (every
@@ -157,7 +163,7 @@ export default function OverviewLive() {
                 <><span className="ov-skel ov-skel-dot" aria-hidden="true" /><span className="ov-skel ov-skel-line" aria-hidden="true" /><span className="sr-only">Reading the live feed…</span></>
               ) : (
                 <>
-                  <SignalGlyph state={stale ? "slow" : "clear"} size={20} title="" />
+                  {stale ? <SignalGlyph state="slow" size={20} title="" /> : <span className="ov-live-dot" aria-hidden="true" />}
                   <span>
                     <b>{stale ? "Feed stale" : "Live"}</b> · Waze jam reports · {ageText(live.ageMinutes)}
                     {live.windowMinutes ? ` · ${live.windowMinutes}-minute window` : ""}
@@ -172,17 +178,35 @@ export default function OverviewLive() {
                 <span className="sr-only">{headline}</span>
               </h2>
             ) : (
-              <h2 className={`ov-headline is-${headState}`}>{headline}</h2>
+              <div className={`ov-headline-card is-${headState}`}>
+                <span className="ov-headline-icon" aria-hidden="true">
+                  {headState === "clear" ? <CheckCircle2 size={22} strokeWidth={2.2} /> : <Car size={22} strokeWidth={2.2} />}
+                </span>
+                <h2 className={`ov-headline is-${headState}`}>{headline}</h2>
+                {!failed && hot.length > 0 && (
+                  <button type="button" className="ov-card-go" onClick={toNow} aria-label="Show the slow and congested exit-directions">
+                    <ChevronRight size={18} strokeWidth={2.2} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
           <div className="ov-answer-side">
             <div className="ov-worst">
-              <div className="ov-worst-label">Slowest reading on the corridor</div>
+              <div className="ov-worst-label">
+                <Gauge size={13} strokeWidth={2.2} aria-hidden="true" />
+                Slowest reading on the corridor
+              </div>
               {slowest ? (
-                <div className="ov-worst-value">
-                  {displayExitName(slowest.exit)} · <span>{Math.round(slowest.speedKmh)} km/h</span>
-                </div>
+                <>
+                  <div className="ov-worst-value">
+                    {displayExitName(slowest.exit)} · <span>{Math.round(slowest.speedKmh)} km/h</span>
+                  </div>
+                  <button type="button" className="ov-card-go" onClick={toNow} aria-label="Show where the corridor is slow">
+                    <ChevronRight size={18} strokeWidth={2.2} aria-hidden="true" />
+                  </button>
+                </>
               ) : (
                 loading ? (
                   <div className="ov-worst-value is-none" aria-busy="true">
@@ -196,10 +220,10 @@ export default function OverviewLive() {
             </div>
             <div className="ov-actions">
               <Link href="/dashboard/map-comparison" className="btn-muted">
-                Open Live Map <ArrowUpRight size={14} aria-hidden="true" />
+                <MapIcon size={15} strokeWidth={2.2} aria-hidden="true" /> Open Live Map <ArrowUpRight size={14} aria-hidden="true" />
               </Link>
               <Link href="/dashboard/traffic" className="btn-muted">
-                Traffic forecast <ArrowUpRight size={14} aria-hidden="true" />
+                <BarChart3 size={15} strokeWidth={2.2} aria-hidden="true" /> Traffic forecast <ArrowUpRight size={14} aria-hidden="true" />
               </Link>
             </div>
           </div>
@@ -207,6 +231,7 @@ export default function OverviewLive() {
       </div>
 
       <button type="button" className="ov-scroll-cue" onClick={toNow}>
+        <span className="ov-live-dot is-small" aria-hidden="true" />
         Live corridor <ChevronDown size={14} aria-hidden="true" />
       </button>
     </section>

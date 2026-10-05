@@ -4,6 +4,12 @@ import { createMascotFace, type MascotFace } from "./face";
 
 /**
  * NLEX mascot car: procedural Three.js model built with the img2threejs pipeline.
+ * v8 (7 Oct 2026): rebuilt to the user's two reference sheets ("3D template / reference" and
+ * "3D model reference, three.js / img2threejs ready"): a longer, lower hatchback body; straight,
+ * chunky wheels at the corners; big chrome-ringed headlights; a thick full-width bumper; big round
+ * mirrors at eye height; and the cap sitting level on the roof with its visor forward. The face is
+ * drawn and animated (./face.ts). Mesh names and handles are unchanged, so the animation code in
+ * ../mascot3d.ts drives it as before.
  * Reconstruction data lives in ./nlex-mascot.sculpt-spec.json; the constants below mirror it.
  * Forward is +Z, Y up, the car's own left is +X. Origin on the ground between the axles.
  */
@@ -30,97 +36,124 @@ type BodyKey = readonly [y: number, a: number, b: number, cz: number, n: number]
 /**
  * Superellipse loft keys: height, half-width, half-depth, depth centre, exponent.
  * v2 (5 Oct 2026, hand-tuned past the pipeline's proportion-lock): a wide bumper the wheels
- * tuck behind, a bonnet that rolls into the windscreen, and a rounded roof and tail, so the car
- * reads as a car from the side instead of a box. v3 (the character sheet, 5 Oct 2026): the
- * windscreen stands more upright, as the sheet's side view draws it, so the face looks ahead.
+ * tuck behind, a bonnet that rolls into a raked windscreen (about 25°), and a rounded roof and
+ * tail, so the car reads as a car from the side instead of a box.
  */
 const BODY_KEYS: readonly BodyKey[] = [
-  [0.2, 0.5, 0.66, 0.0, 3.0],
-  [0.25, 0.615, 0.8, 0.02, 3.4],
-  [0.31, 0.66, 0.845, 0.03, 3.8],
-  [0.37, 0.665, 0.845, 0.025, 3.9],
-  [0.43, 0.658, 0.8275, 0.0125, 3.8],
-  [0.5, 0.648, 0.8075, 0.0075, 3.6],
-  [0.59, 0.635, 0.785, 0.0, 3.4],
-  [0.68, 0.62, 0.75, -0.015, 3.3],
-  [0.76, 0.6, 0.705, -0.04, 3.2],
-  [0.82, 0.585, 0.655, -0.07, 3.1],
-  [0.9, 0.572, 0.62, -0.085, 3.0],
-  [1.0, 0.562, 0.59, -0.09, 2.9],
-  [1.1, 0.55, 0.555, -0.095, 2.85],
-  [1.18, 0.535, 0.515, -0.1, 2.8],
-  [1.25, 0.505, 0.455, -0.105, 2.7],
-  [1.31, 0.45, 0.375, -0.105, 2.6],
-  [1.355, 0.33, 0.27, -0.1, 2.4],
-  [1.38, 0.004, 0.004, -0.1, 2.2],
+  // v8: proportions measured off the reference sheet (length about 1.5x the body height, width
+  // about 1.2x): a low skirt, a tall upright front fascia, a short rounded bonnet rolling into a
+  // steep windscreen, and a cabin that runs back to a rounded hatch.
+  [0.15, 0.5, 0.78, 0.0, 3.0],
+  // The lower body has full, squarish corners (higher exponents), so from the front the blue
+  // fascia covers the tyres' inner shoulders beside the headlights (user request: no black there).
+  [0.2, 0.62, 0.93, 0.0, 4.6],
+  [0.27, 0.668, 0.97, 0.0, 6.0],
+  [0.36, 0.678, 0.985, 0.0, 6.5],
+  [0.46, 0.676, 0.985, 0.0, 6.2],
+  [0.56, 0.67, 0.975, -0.005, 5.4],
+  [0.66, 0.66, 0.95, -0.015, 4.4],
+  [0.74, 0.648, 0.875, -0.06, 3.5],
+  [0.8, 0.636, 0.76, -0.12, 3.3],
+  [0.88, 0.624, 0.71, -0.15, 3.2],
+  [0.98, 0.612, 0.68, -0.165, 3.1],
+  [1.08, 0.596, 0.65, -0.175, 3.0],
+  [1.16, 0.572, 0.615, -0.185, 2.9],
+  [1.23, 0.53, 0.56, -0.195, 2.75],
+  [1.285, 0.45, 0.475, -0.2, 2.55],
+  [1.32, 0.32, 0.335, -0.2, 2.35],
+  [1.34, 0.004, 0.004, -0.2, 2.2],
 ];
-const BODY_SEGMENTS = 168;
-const BODY_RINGS_PER_KEY = 7;
+// The body mesh: columns round the body and rings up it, spent where the surface turns sharply (the
+// fender flares rolling into the wheel wells) rather than evenly, so those edges stay smooth and the
+// flat front and back faces do not cost the same density.
+const BODY_SEGMENTS = 440;
+const BODY_RINGS = 210;
 
 const WHEEL = {
-  radius: 0.31,
+  // v8: straight (no toe-in), chunky, at the corners, standing a little proud of the body sides.
+  radius: 0.26,
   width: 0.3,
-  trackHalf: 0.53,
-  axleZ: 0.47,
-  frontToeIn: 0.2, // pigeon-toed cartoon stance: front wheels turned in so their hubs face forward
-  hubOffset: 0.134,
+  trackHalf: 0.605,
+  axleZ: 0.62,
+  frontToeIn: 0,
+  hubOffset: 0.135,
   tyreProfile: [
-    [0.1949, -0.1361], [0.2458, -0.1500], [0.2834, -0.1446], [0.3022, -0.1221], [0.3089, -0.0729], [0.3100, 0.0000],
-    [0.3089, 0.0729], [0.3022, 0.1221], [0.2834, 0.1446], [0.2458, 0.1500], [0.1949, 0.1361], [0.1882, 0.0643], [0.1882, -0.0643], [0.1949, -0.1361],
+    [0.163, -0.136], [0.206, -0.15], [0.238, -0.145], [0.254, -0.122], [0.259, -0.073], [0.26, 0.0],
+    [0.259, 0.073], [0.254, 0.122], [0.238, 0.145], [0.206, 0.15], [0.163, 0.136], [0.158, 0.064], [0.158, -0.064], [0.163, -0.136],
   ] as const,
-  hubProfile: [[0.2015, 0.0000], [0.1949, 0.0407], [0.1805, 0.0568], [0.1572, 0.0525], [0.1450, 0.0321], [0.1240, 0.0364], [0.0000, 0.0407]] as const,
+  hubProfile: [[0.17, 0.0], [0.164, 0.04], [0.152, 0.056], [0.132, 0.052], [0.122, 0.032], [0.104, 0.036], [0.0, 0.04]] as const,
 };
-const WELLS = { pad: 0.035, blend: 0.06, innerWallX: 0.35 };
-/**
- * Fenders, moulded into the body: around the upper half of each wheel the flank swells out to
- * `outer` over a ring `band` wide outside the wheel well, rising fast at the well's edge (`rise`,
- * as a fraction of the band) and easing back into the flank from `fall`. The tyre stands a touch
- * proud of it, as on the sheet.
- */
-const FENDER = { band: 0.15, rise: 0.22, fall: 0.55, outer: 0.7, fromX: 0.36, fullX: 0.5 };
+// The well: fully cut (to the wall at innerWallX, just inside the tyres' inner faces at 0.455) wherever
+// the tyre is, and curving smoothly out to the body over `blend` above it.
+const WELLS = { pad: 0.075, blend: 0.08, innerWallX: 0.44 };
+/** Fender flares (user request, 7 Oct 2026, after a photo of a flared arch): round each well the body
+ *  swells out by `out`, fading over `width`, and rolls in over the well's edge; side walls only. */
+const FLARE = { out: 0.05, hold: 0.025, width: 0.17 };
 
 const FACE_PANEL = {
-  halfWidth: 0.48, yBottom: 0.82, yTopCentre: 1.238, humpX: 0.22, humpRise: 0.05, humpWidth: 0.12,
-  topCornerRx: 0.15, topCornerRy: 0.22, bottomCornerRadius: 0.03, offset: 0.006, columns: 64, rows: 24,
+  // v8: wide (nearly the whole cabin, as on the sheet), the two brow humps with the blue dip between.
+  halfWidth: 0.51, yBottom: 0.83, yTopCentre: 1.235, humpX: 0.23, humpRise: 0.035, humpWidth: 0.13,
+  topCornerRx: 0.2, topCornerRy: 0.24, bottomCornerRadius: 0.07, offset: 0.006, columns: 64, rows: 24,
 };
 
 /** Mirrors: rooted on the A-pillar (polar angle `rootT` on the loft at `rootY`), an egg-shaped
  *  housing a short stalk away, long axis outward and a little forward. */
-const MIRROR = { rootY: 0.86, rootT: 0.62, reach: [0.115, 0.045, 0.02], headRadii: [0.175, 0.13, 0.105], yaw: 0.35, stalkRadius: 0.036 } as const;
-type WindowSpec = { zRear: number; zFront: number; yCentre: number; halfHeight: number; rake: number; round: number; offset: number; columns: number; rows: number };
-/** Side glass: a front pane behind the face and a rear quarter pane, split by a B-pillar. */
+const MIRROR = { rootY: 0.93, rootT: 0.62, reach: [0.06, 0.0, 0.02], headRadii: [0.165, 0.145, 0.135], yaw: 0.2, stalkRadius: 0.05 } as const;
+type WindowSpec = {
+  zRear: number;
+  zFront: number;
+  yBottom: number;
+  yTop: number;
+  /** How far back the top of the front edge sits (a raked A- or C-pillar line). */
+  rake: number;
+  /** Corner radius; the top-rear corner takes `rearTop`. */
+  radius: number;
+  rearTop: number;
+  offset: number;
+  columns: number;
+  rows: number;
+};
+/** Side glass, as on the reference sheet's side view: a big front pane with its front edge raked
+ *  along the A-pillar, and a rear quarter pane rounded at the back, on one straight belt line; the
+ *  B-pillar between them is little more than their two seals. */
 const SIDE_WINDOWS: readonly WindowSpec[] = [
-  { zRear: -0.07, zFront: 0.27, yCentre: 1.045, halfHeight: 0.15, rake: 0.13, round: 4, offset: 0.006, columns: 32, rows: 12 },
-  { zRear: -0.47, zFront: -0.14, yCentre: 1.045, halfHeight: 0.14, rake: -0.04, round: 4, offset: 0.006, columns: 32, rows: 12 },
+  { zRear: -0.1, zFront: 0.36, yBottom: 0.85, yTop: 1.15, rake: 0.17, radius: 0.045, rearTop: 0.05, offset: 0.007, columns: 40, rows: 14 },
+  { zRear: -0.66, zFront: -0.16, yBottom: 0.85, yTop: 1.14, rake: 0.0, radius: 0.045, rearTop: 0.12, offset: 0.007, columns: 40, rows: 14 },
 ];
-/** The dark-blue frame round each pane: the same shape, this much bigger, just behind it. */
-const WINDOW_FRAME = 0.024;
-/** Rounded bumper lips swept along the loft, in front of and behind the wheels. */
-const BUMPER = { front: { y: 0.37, radius: 0.064 }, rear: { y: 0.37, radius: 0.058 }, samples: 72, rings: 18 };
-/** Rounded-rectangle taillights, red with an amber inner end, as in the sheet's rear detail. */
-const TAILLIGHT = { x: 0.4, y: 0.6, w: 0.21, h: 0.1, r: 0.045, depth: 0.026 } as const;
-/** The rear window under the cap, and the door handles. */
-const REAR_WINDOW = { halfWidth: 0.33, yBottom: 0.88, yTop: 1.12, corner: 0.085, offset: 0.006, columns: 40, rows: 14 };
-const HANDLE = { z: -0.1, y: 0.79, radius: 0.013, length: 0.075 };
+/** The dark-blue seal round each pane: the same shape, this much bigger, just behind it. */
+const WINDOW_FRAME = 0.02;
+/** Door panel lines (z, y points), thin dark grooves under the windows. */
+const DOOR_SEAMS: readonly (readonly [number, number])[][] = [
+  [[0.36, 0.83], [0.365, 0.74], [0.37, 0.67]],
+  [[-0.13, 0.83], [-0.13, 0.55], [-0.12, 0.25]],
+];
+/** The bumpers are a soft swell of the body itself (not a separate tube), so they blend into the
+ *  paint with no crease: a band `half` high either side of `y`, rounded over `soft`, standing `out`
+ *  proud on the front and back faces and fading out toward the wheel arches. */
+const BUMPER = { y: 0.27, half: 0.045, soft: 0.07, outFront: 0.042, outRear: 0.034 };
+/** Rounded-rectangle taillights, red with an amber inner end; the rear window; the door handles. */
+const TAILLIGHT = { x: 0.46, y: 0.58, w: 0.23, h: 0.115, r: 0.05, depth: 0.028 } as const;
+const REAR_WINDOW = { halfWidth: 0.42, yBottom: 0.8, yTop: 1.13, corner: 0.1, offset: 0.006, columns: 40, rows: 14 };
+const HANDLE = { z: -0.02, y: 0.76, radius: 0.014, length: 0.085 };
 
 const CAP = {
-  position: [0.0, 1.31, -0.07], rotation: [-0.1, 0.0, 0.0], crownRadii: [0.62, 0.6, 0.56],
-  brim: { halfWidth: 0.5, reach: 0.38, droop: 0.6, tilt: 0.26, thickness: 0.05, sweepDeg: 26 },
+  // v8: level on the roof, the crown standing well above the face, the visor straight out over the windscreen.
+  position: [0.0, 1.28, -0.19], rotation: [-0.15, 0.0, 0.0], crownRadii: [0.58, 0.56, 0.64],
+  brim: { halfWidth: 0.52, reach: 0.34, droop: 0.9, tilt: 0.3, thickness: 0.08, sweepDeg: 20 },
 } as const;
 
-/* The character sheet's palette: Primary Blue #0B6FFF, Light Blue #63B3FF, Dark Gray #2D3748. */
-// Lifted a step toward cyan from the sheet's #0B6FFF: the renderer's ACES curve pushes a pure
-// blue toward violet, and this lands on the sheet's on-screen azure.
-const PAINT_HEX = 0x2484ff;
-const CAP_BLUE_HEX = 0x1777f2;
-const UNDERBODY_HEX = 0x2d3748;
+const PAINT_HEX = 0x1280ee; // median of 392k saturated paint pixels in the PNG
+/** Built to these numbers, then widened this much: chubby, as on the reference sheet. Decals project
+ *  after the widening, so the face, the logo and the plate keep their own proportions. */
+const WIDTH_SCALE = 1.1;
+const CAP_BLUE_HEX = 0x1560d6;
 
-// The white front panel sits in the middle of the crown, blue showing either side, as on the sheet.
-const CAP_FRONT_PANEL = { halfSpan: 0.9, elevationTop: 1.18, offset: 0.006 };
-const HEADLIGHT = { x: 0.37, y: 0.565, lensRadius: 0.114, domeDepth: 0.044, bezelRadius: 0.124, bezelTube: 0.02, emissive: 0.38, halo: 2.1, haloOpacity: 0.16 };
-const STRIPE = { dir: [0.6, -0.2, 0.78], radius: 0.026, length: 0.13 } as const;
-const TREAD = { count: 26, angleDeg: 32, axial: 0.064, block: [0.037, 0.014, 0.06] } as const;
-const LOOK = { faceEmissive: 0.12, capWhiteEmissive: 0.08, decalEmissive: 0.26 };
+const CAP_FRONT_PANEL = { halfSpan: 0.78, elevationTop: 1.08, offset: 0.006 };
+const HEADLIGHT = { x: 0.39, y: 0.54, lensRadius: 0.122, domeDepth: 0.034, bezelRadius: 0.129, bezelTube: 0.016, emissive: 0.5, halo: 2.2, haloOpacity: 0.28 };
+const STRIPE = { dir: [0.5, -0.32, 0.8], radius: 0.018, length: 0.085 } as const;
+/** Chevron tread pressed into the tyre's crown (a normal map: the tyre's outline stays smooth). */
+const TREAD = { count: 24, slant: 0.55, groove: 0.24 } as const;
+const LOOK = { faceEmissive: 0.22, capWhiteEmissive: 0.12, decalEmissive: 0.38 };
 
 /**
  * Decal projectors (model space). Each projects a cut of the PNG along `dir` (into the surface)
@@ -129,7 +162,6 @@ const LOOK = { faceEmissive: 0.12, capWhiteEmissive: 0.08, decalEmissive: 0.26 }
  */
 interface DecalSpec {
   name: string;
-  /** A file in assetBase, or "procedural:<name>" for a texture drawn here. */
   texture: string;
   targets: readonly ("windscreen-face-panel" | "body-shell" | "cap-front-panel" | "cap-crown")[];
   center: readonly [number, number, number];
@@ -138,15 +170,20 @@ interface DecalSpec {
   depth: number;
 }
 const DECALS: readonly DecalSpec[] = [
-  // The face is drawn (./face.ts) in the same projector box the PNG cut used, so it can blink and emote.
-  { name: "face-decal", texture: "procedural:face", targets: ["windscreen-face-panel", "body-shell"], center: [0.0, 0.945, 0.3945], dir: [0.0, 0.064, -0.998], size: [1.08, 0.728], depth: 0.8 },
-  { name: "cap-logo", texture: "decal-cap-logo.png", targets: ["cap-front-panel"], center: [0.0, 1.64, 0.3198], dir: [0.0, 0.2, -0.98], size: [0.62, 0.206], depth: 0.4 },
-  { name: "bonnet-badge-n", texture: "decal-badge-n.png", targets: ["body-shell"], center: [0.0, 0.53, 0.7767], dir: [0.0, -0.03, -0.9996], size: [0.14, 0.1173], depth: 0.2 },
+  // The drawn face: eyes and brows on the white windscreen, cheeks at its lower corners, the smile on
+  // the bonnet below it. Drawn big, as on the reference sheet (canvas 1024x800 at 0.00115 / px).
+  { name: "face-decal", texture: "procedural:face", targets: ["windscreen-face-panel", "body-shell"], center: [0.0, 0.95, 0.5], dir: [0.0, 0.06, -0.998], size: [1.26, 0.984], depth: 0.9 },
+  // The cap badge: a blue ring round a bold blue "N" on the white front panel (user request,
+  // 7 Oct 2026, replacing the NLEX wordmark). Projected along the usual viewing direction through a
+  // square box, so it reads as a perfect circle from the front; the box is deep enough that the
+  // curving crown never clips the ring.
+  { name: "cap-logo", texture: "procedural:cap-n", targets: ["cap-front-panel"], center: [0.0, 1.6, 0.4], dir: [0.0, 0.14, -0.99], size: [0.29, 0.29], depth: 1.2 }, // centred on the white panel, clear of the visor
   // Rear: the "N" plate between the taillights, and the strap opening at the back of the cap.
-  { name: "rear-plate", texture: "procedural:plate", targets: ["body-shell"], center: [0.0, 0.48, -0.8], dir: [0.0, 0.0, 1.0], size: [0.3, 0.14], depth: 0.25 },
-  { name: "cap-back", texture: "procedural:cap-back", targets: ["cap-crown"], center: [0.0, 1.45, -0.62], dir: [0.0, -0.1, 0.995], size: [0.44, 0.28], depth: 0.35 },
+  { name: "rear-plate", texture: "procedural:plate", targets: ["body-shell"], center: [0.0, 0.56, -1.0], dir: [0.0, 0.0, 1.0], size: [0.3, 0.14], depth: 0.25 },
+  { name: "cap-back", texture: "procedural:cap-back", targets: ["cap-crown"], center: [0.0, 1.4, -0.9], dir: [0.0, -0.1, 0.995], size: [0.44, 0.28], depth: 0.35 },
+  { name: "bonnet-badge-n", texture: "decal-badge-n.png", targets: ["body-shell"], center: [0.0, 0.52, 1.0], dir: [0.0, -0.03, -0.9996], size: [0.14, 0.117], depth: 0.2 },
 ];
-const HUB_N = { texture: "decal-hub-n.png", width: 0.15, aspect: 368 / 508, lift: 0.003 };
+const HUB_N = { texture: "decal-hub-n.png", width: 0.135, aspect: 368 / 508, lift: 0.003 };
 
 // ------------------------------------------------------------------ math helpers
 /** Fritsch-Carlson monotone cubic through uniformly spaced samples; s in [0, n-1]. */
@@ -207,28 +244,31 @@ class BodyLoft {
     const n = this.N(s);
     const c = Math.cos(t);
     const si = Math.sin(t);
-    const r = Math.pow(Math.pow(Math.abs(c / a), n) + Math.pow(Math.abs(si / b), n), -1 / n);
+    let r = Math.pow(Math.pow(Math.abs(c / a), n) + Math.pow(Math.abs(si / b), n), -1 / n);
+    // the bumper swell, front and back
+    const zb = Math.abs(this.CZ(s) + r * si);
+    const band = smoothstep(BUMPER.y - BUMPER.half - BUMPER.soft, BUMPER.y - BUMPER.half, y) * (1 - smoothstep(BUMPER.y + BUMPER.half, BUMPER.y + BUMPER.half + BUMPER.soft, y));
+    if (band > 0) {
+      const clear = WHEEL.axleZ + WHEEL.radius + WELLS.pad;
+      const reach = smoothstep(clear - 0.04, clear + 0.06, zb);
+      r += band * reach * (si > 0 ? BUMPER.outFront : BUMPER.outRear);
+    }
     let x = r * c;
     const z = this.CZ(s) + r * si;
-    // wheel wells: pull |x| in to the well wall inside each wheel's radius
+    // wheel wells: a flared fender round each wheel, rolling in to the well wall inside its radius
+    const sideness = smoothstep(0.25, 0.6, Math.abs(c)); // flares belong to the side walls, not the front face
     for (const az of [WHEEL.axleZ, -WHEEL.axleZ]) {
-      const dz = z - az;
-      const dy = y - WHEEL.radius;
-      const d = Math.hypot(dz, dy);
+      const d = Math.hypot(z - az, y - WHEEL.radius);
       const r = WHEEL.radius + WELLS.pad;
-      const ax = Math.abs(x);
+      if (d > r + FLARE.width) continue;
+      // the swell, strongest at the arch's edge and fading smoothly into the body
+      let ax = Math.abs(x) + FLARE.out * sideness * (1 - smoothstep(r + FLARE.hold, r + FLARE.width, d));
       if (d < r) {
-        const w = smoothstep(r, r - WELLS.blend, d);
-        if (ax > WELLS.innerWallX) x = Math.sign(x) * (ax - w * (ax - WELLS.innerWallX));
-      } else {
-        // the fender: only over the upper part of the wheel, and only on the flanks
-        const u = (d - r) / FENDER.band;
-        if (u < 1 && ax < FENDER.outer) {
-          const push = smoothstep(0, FENDER.rise, u) * (1 - smoothstep(FENDER.fall, 1, u));
-          const k = push * smoothstep(-0.03, 0.09, dy) * smoothstep(FENDER.fromX, FENDER.fullX, ax);
-          if (k > 0) x = Math.sign(x) * (ax + k * (FENDER.outer - ax));
-        }
+        const k = Math.min(1, Math.max(0, (r - d) / WELLS.blend));
+        const w = k * k * k * (k * (k * 6 - 15) + 10); // smootherstep: the edge rolls over with no crease
+        if (ax > WELLS.innerWallX) ax -= w * (ax - WELLS.innerWallX);
       }
+      x = Math.sign(x) * ax;
     }
     return out.set(x, y, z);
   }
@@ -300,32 +340,61 @@ class BodyLoft {
 }
 
 // ------------------------------------------------------------------ geometry builders
-/** The body, with vertex colours: the paint above, the sheet's dark-gray underbody along the sill. */
+/** n + 1 parameter values from x0 to x1, spaced so each step holds an equal share of `weight`. */
+function warpedSamples(n: number, x0: number, x1: number, weight: (x: number) => number): number[] {
+  const M = 4096;
+  const cum = [0];
+  for (let k = 1; k <= M; k++) {
+    const xa = x0 + ((x1 - x0) * (k - 1)) / M;
+    const xb = x0 + ((x1 - x0) * k) / M;
+    cum.push(cum[k - 1] + (weight(xa) + weight(xb)) / 2);
+  }
+  const total = cum[M];
+  const out: number[] = [];
+  let k = 1;
+  for (let i = 0; i <= n; i++) {
+    const target = (i / n) * total;
+    while (k < M && cum[k] < target) k++;
+    const f = (target - cum[k - 1]) / Math.max(1e-12, cum[k] - cum[k - 1]);
+    out.push(x0 + ((x1 - x0) * (k - 1 + Math.min(1, Math.max(0, f)))) / M);
+  }
+  out[0] = x0;
+  out[n] = x1;
+  return out;
+}
+
 function buildBodyGeometry(loft: BodyLoft): THREE.BufferGeometry {
-  const ringCount = loft.sMax * BODY_RINGS_PER_KEY + 1;
+  const ringCount = BODY_RINGS + 1;
   const cols = BODY_SEGMENTS;
+  // Rings: about 2.5x as dense from the sills to the top of the arches.
+  const sOf = warpedSamples(BODY_RINGS, 0, loft.sMax, (sv) => {
+    const yv = loft.point(0, sv).y;
+    return 1 + 1.5 * Math.exp(-Math.pow((yv - 0.32) / 0.36, 4));
+  });
+  // Columns: about 3x as dense along the side walls where the wheels are, sparser across the faces.
+  const sRef = loft.sAtHeight(0.4);
+  const ref = new THREE.Vector3();
+  const tOf = warpedSamples(cols, 0, Math.PI * 2, (tv) => {
+    loft.point(tv, sRef, ref);
+    const side = smoothstep(0.35, 0.75, Math.abs(Math.cos(tv)));
+    const zone = Math.exp(-Math.pow((Math.abs(ref.z) - WHEEL.axleZ) / 0.38, 4));
+    return 0.65 + 3.2 * side * zone;
+  });
   const positions: number[] = [];
   const normals: number[] = [];
-  const colors: number[] = [];
+  const uvs: number[] = [];
   const index: number[] = [];
-  const paintC = new THREE.Color(PAINT_HEX);
-  const underC = new THREE.Color(UNDERBODY_HEX);
-  const tint = new THREE.Color();
-  const shade = (y: number) => {
-    tint.copy(paintC).lerp(underC, smoothstep(0.245, 0.215, y));
-    colors.push(tint.r, tint.g, tint.b);
-  };
   const p = new THREE.Vector3();
   const nrm = new THREE.Vector3();
   for (let j = 0; j < ringCount; j++) {
-    const s = (j / (ringCount - 1)) * loft.sMax;
+    const s = sOf[j];
     for (let i = 0; i <= cols; i++) {
-      const t = (i / cols) * Math.PI * 2;
+      const t = tOf[i];
       loft.point(t, s, p);
       loft.normal(t, s, nrm);
       positions.push(p.x, p.y, p.z);
       normals.push(nrm.x, nrm.y, nrm.z);
-      shade(p.y);
+      uvs.push(i / cols, j / (ringCount - 1));
     }
   }
   for (let j = 0; j < ringCount - 1; j++) {
@@ -342,19 +411,19 @@ function buildBodyGeometry(loft: BodyLoft): THREE.BufferGeometry {
   const b0 = loft.point(0, 0);
   positions.push(0, b0.y - 0.004, 0);
   normals.push(0, -1, 0);
-  shade(b0.y - 0.004);
+  uvs.push(0.5, 0);
   for (let i = 0; i < cols; i++) index.push(bottom, i, i + 1);
   const top = positions.length / 3;
   const lastRing = (ringCount - 1) * (cols + 1);
   const t0 = loft.point(Math.PI / 2, loft.sMax);
   positions.push(0, t0.y + 0.002, BODY_KEYS[BODY_KEYS.length - 1][3]);
   normals.push(0, 1, 0);
-  shade(t0.y);
+  uvs.push(0.5, 1);
   for (let i = 0; i < cols; i++) index.push(top, lastRing + i + 1, lastRing + i);
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   g.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
-  g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   g.setIndex(index);
   return g;
 }
@@ -423,22 +492,38 @@ function buildFacePanelGeometry(loft: BodyLoft): THREE.BufferGeometry {
   return g;
 }
 
-/** Tinted side window on the cabin wall: rounded at both ends, its front edge raked back like the windscreen. */
+/** A side pane lying on the cabin wall: a rounded rectangle in (z, y) with a straight belt line, its
+ *  front edge sheared back by `rake`; u runs rear to front, v bottom to top. */
 function buildSideWindowGeometry(loft: BodyLoft, side: 1 | -1, W: WindowSpec): THREE.BufferGeometry {
   const positions: number[] = [];
   const normals: number[] = [];
+  const uvs: number[] = [];
   const index: number[] = [];
+  const inset = (z: number, rRear: number, rFront: number) => {
+    if (z < W.zRear + rRear) {
+      const d = W.zRear + rRear - z;
+      return rRear - Math.sqrt(Math.max(0, rRear * rRear - d * d));
+    }
+    if (z > W.zFront - rFront) {
+      const d = z - (W.zFront - rFront);
+      return rFront - Math.sqrt(Math.max(0, rFront * rFront - d * d));
+    }
+    return 0;
+  };
   for (let i = 0; i <= W.columns; i++) {
-    const u = i / W.columns; // rear -> front
-    const half = W.halfHeight * Math.pow(Math.max(0, 1 - Math.pow(Math.abs(u * 2 - 1), W.round)), 1 / W.round);
+    const u = (1 - Math.cos((Math.PI * i) / W.columns)) / 2; // denser toward the rounded ends
+    const z0 = W.zRear + (W.zFront - W.zRear) * u;
+    const yb = W.yBottom + inset(z0, W.radius, W.radius);
+    const yt = W.yTop - inset(z0, W.rearTop, W.radius);
     for (let j = 0; j <= W.rows; j++) {
-      const k = (j / W.rows) * 2 - 1; // bottom -> top
-      const y = W.yCentre + k * half;
-      const z = W.zRear + (W.zFront - W.zRear) * u - W.rake * k * u;
+      const v = j / W.rows;
+      const y = yb + (yt - yb) * v;
+      const z = z0 - W.rake * ((y - W.yBottom) / (W.yTop - W.yBottom)) * u;
       const f = loft.sideFrame(z, y, side);
-      const p = f.point.addScaledVector(f.normal, W.offset);
-      positions.push(p.x, p.y, p.z);
+      const pt = f.point.addScaledVector(f.normal, W.offset);
+      positions.push(pt.x, pt.y, pt.z);
       normals.push(f.normal.x, f.normal.y, f.normal.z);
+      uvs.push(u, v);
     }
   }
   const stride = W.rows + 1;
@@ -455,8 +540,77 @@ function buildSideWindowGeometry(loft: BodyLoft, side: 1 | -1, W: WindowSpec): T
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   g.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   g.setIndex(index);
   return g;
+}
+
+/** A thin strip lying on the side wall along a (z, y) polyline: a door panel line. */
+function buildSideStripGeometry(loft: BodyLoft, side: 1 | -1, pts: readonly (readonly [number, number])[], width: number): THREE.BufferGeometry {
+  const curve = new THREE.CatmullRomCurve3(pts.map(([z, y]) => new THREE.Vector3(0, y, z)));
+  const N = 24;
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const index: number[] = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const c = curve.getPoint(t);
+    const tan = curve.getTangent(t);
+    // perpendicular in the (z, y) plane
+    const pz = -tan.y;
+    const py = tan.z;
+    const len = Math.hypot(pz, py) || 1;
+    for (const k of [-1, 1]) {
+      const z = c.z + (pz / len) * (width / 2) * k;
+      const y = c.y + (py / len) * (width / 2) * k;
+      const f = loft.sideFrame(z, y, side);
+      const pt = f.point.addScaledVector(f.normal, 0.004);
+      positions.push(pt.x, pt.y, pt.z);
+      normals.push(f.normal.x, f.normal.y, f.normal.z);
+    }
+  }
+  for (let i = 0; i < N; i++) {
+    const a = i * 2;
+    if (side > 0) index.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+    else index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  g.setIndex(index);
+  return g;
+}
+
+/** The side glass's look: a soft sky gradient (lighter where it faces the sky), a pale highlight band
+ *  across it and a slightly darker lower edge, so it reads as glass rather than a dark blob. */
+function buildGlassTexture(): THREE.Texture | null {
+  if (typeof document === "undefined") return null;
+  const c = document.createElement("canvas");
+  c.width = 256;
+  c.height = 128;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const bg = g.createLinearGradient(0, 0, 0, 128);
+  bg.addColorStop(0, "#6c9ce0");
+  bg.addColorStop(0.45, "#3a6fc4");
+  bg.addColorStop(1, "#22509f");
+  g.fillStyle = bg;
+  g.fillRect(0, 0, 256, 128);
+  g.save();
+  g.translate(150, 0);
+  g.rotate(0.55);
+  const band = g.createLinearGradient(-40, 0, 40, 0);
+  band.addColorStop(0, "rgba(255,255,255,0)");
+  band.addColorStop(0.5, "rgba(255,255,255,0.22)");
+  band.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = band;
+  g.fillRect(-40, -80, 80, 320);
+  g.fillStyle = "rgba(255,255,255,0.1)";
+  g.fillRect(52, -80, 16, 320);
+  g.restore();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
 
 /** Headlight lens face: a hot white core falling off to the PNG's pale blue rim, with two faint reflector rings. */
@@ -519,71 +673,13 @@ function buildHaloTexture(): THREE.Texture | null {
   return t;
 }
 
-/**
- * A rounded lip swept across one end of the body at height y: half sunk into the paint, tapering
- * shut where it meets the wheel arches. end = 1 is the front bumper, -1 the rear.
- */
-function buildBumperGeometry(loft: BodyLoft, y: number, radius: number, end: 1 | -1): THREE.BufferGeometry {
-  const s = loft.sAtHeight(y);
-  const clear = WHEEL.axleZ + WHEEL.radius + 0.015; // stay just ahead of (or behind) the tyres
-  // the stretch of the section that clears the arches, centred on t = ±π/2
-  const mid = end > 0 ? Math.PI / 2 : -Math.PI / 2;
-  let span = 0;
-  const p = new THREE.Vector3();
-  for (let k = 1; k <= 400; k++) {
-    const dt = (k / 400) * (Math.PI / 2);
-    loft.point(mid + dt, s, p);
-    if (p.z * end < clear) break;
-    span = dt;
-  }
-  const S = BUMPER.samples;
-  const R = BUMPER.rings;
-  const positions: number[] = [];
-  const index: number[] = [];
-  const nrm = new THREE.Vector3();
-  const tan = new THREE.Vector3();
-  const bin = new THREE.Vector3();
-  const a = new THREE.Vector3();
-  const b = new THREE.Vector3();
-  for (let i = 0; i <= S; i++) {
-    const u = i / S;
-    const t = mid - span + 2 * span * u;
-    loft.point(t, s, p);
-    loft.normal(t, s, nrm);
-    loft.point(t - 1e-3, s, a);
-    loft.point(t + 1e-3, s, b);
-    tan.subVectors(b, a).normalize();
-    bin.crossVectors(tan, nrm).normalize();
-    const r = radius * Math.pow(Math.sin(Math.PI * u), 0.22);
-    const c = p.clone().addScaledVector(nrm, r * 0.35);
-    for (let j = 0; j <= R; j++) {
-      const th = (j / R) * Math.PI * 2;
-      positions.push(
-        c.x + r * (Math.cos(th) * nrm.x + Math.sin(th) * bin.x),
-        c.y + r * (Math.cos(th) * nrm.y + Math.sin(th) * bin.y),
-        c.z + r * (Math.cos(th) * nrm.z + Math.sin(th) * bin.z),
-      );
-    }
-  }
-  for (let i = 0; i < S; i++) {
-    for (let j = 0; j < R; j++) {
-      const q = i * (R + 1) + j;
-      const w = q + R + 1;
-      index.push(q, q + 1, w, q + 1, w + 1, w);
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  g.setIndex(index);
-  g.computeVertexNormals();
-  return g;
-}
-
-/** Light-blue rear window: a rounded rectangle lying on the back of the body, under the cap. */
-function buildRearWindowGeometry(loft: BodyLoft): THREE.BufferGeometry {
-  const R = REAR_WINDOW;
+/** The rear window: a rounded rectangle lying on the back of the body, under the cap. `grow` builds
+ *  its seal (the same shape, that much bigger, `lift` closer to the paint). */
+function buildRearWindowGeometry(loft: BodyLoft, grow = 0, lift = 0): THREE.BufferGeometry {
+  const R = { ...REAR_WINDOW, halfWidth: REAR_WINDOW.halfWidth + grow, yBottom: REAR_WINDOW.yBottom - grow, yTop: REAR_WINDOW.yTop + grow, corner: REAR_WINDOW.corner + grow, offset: REAR_WINDOW.offset + lift };
   const positions: number[] = [];
   const normals: number[] = [];
+  const uvs: number[] = [];
   const index: number[] = [];
   for (let i = 0; i <= R.columns; i++) {
     const x = -R.halfWidth + (2 * R.halfWidth * i) / R.columns;
@@ -597,6 +693,7 @@ function buildRearWindowGeometry(loft: BodyLoft): THREE.BufferGeometry {
       const p = f.point.addScaledVector(f.normal, R.offset);
       positions.push(p.x, p.y, p.z);
       normals.push(f.normal.x, f.normal.y, f.normal.z);
+      uvs.push(1 - i / R.columns, j / R.rows); // the glass map reads the same way round as the side panes
     }
   }
   const stride = R.rows + 1;
@@ -612,6 +709,7 @@ function buildRearWindowGeometry(loft: BodyLoft): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   g.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   g.setIndex(index);
   return g;
 }
@@ -680,6 +778,230 @@ function buildPlateTexture(): THREE.Texture | null {
   return t;
 }
 
+/** The cap badge: a thick blue ring round a bold blue "N" with softly rounded corners, crisp at
+ *  1024 px, on transparency (user request, 7 Oct 2026). */
+function buildCapNTexture(): THREE.Texture | null {
+  if (typeof document === "undefined") return null;
+  const S = 1024;
+  const c = document.createElement("canvas");
+  c.width = c.height = S;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const blue = "#0a39ad";
+  g.strokeStyle = blue;
+  g.lineWidth = 82;
+  g.beginPath();
+  g.arc(S / 2, S / 2, S / 2 - 70, 0, Math.PI * 2);
+  g.stroke();
+  // The N: two upright stems joined by a thick diagonal, its outer corners softly rounded.
+  const L = 318;
+  const R = 706;
+  const T = 286;
+  const B = 738;
+  const stem = 124;
+  g.fillStyle = blue;
+  g.strokeStyle = blue;
+  g.lineJoin = "round";
+  g.lineWidth = 30;
+  g.beginPath();
+  g.moveTo(L, B);
+  g.lineTo(L, T);
+  g.lineTo(L + stem, T);
+  g.lineTo(R - stem, B - 210);
+  g.lineTo(R - stem, T);
+  g.lineTo(R, T);
+  g.lineTo(R, B);
+  g.lineTo(R - stem, B);
+  g.lineTo(L + stem, T + 210);
+  g.lineTo(L + stem, B);
+  g.closePath();
+  g.fill();
+  g.stroke();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/* ------------------------------------------------------------------ surface texture
+   Fine, tileable relief so the toy does not read as plainly smooth (user request, 7 Oct 2026):
+   a soft orange-peel on the paint, a woven fabric on the cap, a rubber grain on the tyres. Shapes
+   and colours are unchanged; these only perturb the lighting a little. */
+
+/** Periodic value noise on a size x size tile: `cells` lattice cells per side, summed octaves. */
+function tileNoise(size: number, cells: number, octaves: number, seed: number): Float32Array {
+  const out = new Float32Array(size * size);
+  let amp = 1;
+  let norm = 0;
+  for (let o = 0; o < octaves; o++) {
+    const cn = cells << o;
+    const lat = new Float32Array(cn * cn);
+    let a = (seed + o * 1013) >>> 0;
+    for (let k = 0; k < lat.length; k++) {
+      a = (Math.imul(a, 1664525) + 1013904223) >>> 0;
+      lat[k] = a / 4294967296;
+    }
+    for (let y = 0; y < size; y++) {
+      const fy = (y / size) * cn;
+      const y0 = Math.floor(fy);
+      const ty = fy - y0;
+      const sy = ty * ty * (3 - 2 * ty);
+      const y1 = (y0 + 1) % cn;
+      for (let x = 0; x < size; x++) {
+        const fx = (x / size) * cn;
+        const x0 = Math.floor(fx);
+        const tx = fx - x0;
+        const sx = tx * tx * (3 - 2 * tx);
+        const x1 = (x0 + 1) % cn;
+        const top = lat[y0 * cn + x0] * (1 - sx) + lat[y0 * cn + x1] * sx;
+        const bot = lat[y1 * cn + x0] * (1 - sx) + lat[y1 * cn + x1] * sx;
+        out[y * size + x] += (top * (1 - sy) + bot * sy) * amp;
+      }
+    }
+    norm += amp;
+    amp *= 0.5;
+  }
+  for (let k = 0; k < out.length; k++) out[k] /= norm;
+  return out;
+}
+
+/** A plain basket weave: threads alternate over and under, each a rounded ridge. */
+function weaveHeight(size: number, threads: number): Float32Array {
+  const out = new Float32Array(size * size);
+  const fuzz = tileNoise(size, 32, 2, 77);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = (x / size) * threads;
+      const v = (y / size) * threads;
+      const iu = Math.floor(u);
+      const iv = Math.floor(v);
+      const fu = u - iu;
+      const fv = v - iv;
+      const alongU = (iu + iv) % 2 === 0;
+      const h = alongU ? Math.sin(Math.PI * fv) * (0.75 + 0.25 * Math.sin(Math.PI * fu)) : Math.sin(Math.PI * fu) * (0.75 + 0.25 * Math.sin(Math.PI * fv));
+      out[y * size + x] = h * 0.85 + fuzz[y * size + x] * 0.15;
+    }
+  }
+  return out;
+}
+
+/** A tangent-space normal map from a periodic height field (wraps seamlessly). */
+function normalMapFromHeight(h: Float32Array, size: number, strength: number): THREE.Texture | null {
+  if (typeof document === "undefined") return null;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const img = g.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const hl = h[y * size + ((x - 1 + size) % size)];
+      const hr = h[y * size + ((x + 1) % size)];
+      const hu = h[((y - 1 + size) % size) * size + x];
+      const hd = h[((y + 1) % size) * size + x];
+      let nx = (hl - hr) * strength;
+      let ny = (hd - hu) * strength;
+      let nz = 1;
+      const l = Math.hypot(nx, ny, nz);
+      nx /= l;
+      ny /= l;
+      nz /= l;
+      const k = (y * size + x) * 4;
+      img.data[k] = (nx * 0.5 + 0.5) * 255;
+      img.data[k + 1] = (ny * 0.5 + 0.5) * 255;
+      img.data[k + 2] = (nz * 0.5 + 0.5) * 255;
+      img.data[k + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.NoColorSpace;
+  return t;
+}
+
+/** The tyre's tread: chevron grooves round the crown, on fine rubber grain, as a normal map laid on
+ *  the tyre's lathe UVs (u round the tyre, v along its profile; the crown is v 0.23..0.54). */
+function buildTreadNormal(): THREE.Texture | null {
+  if (typeof document === "undefined") return null;
+  const W = 1024;
+  const H = 128;
+  const grain = tileNoise(128, 24, 2, 1313);
+  const h = new Float32Array(W * H);
+  const v0 = 0.23 * H;
+  const v1 = 0.54 * H;
+  const vc = (v0 + v1) / 2;
+  const half = (v1 - v0) / 2;
+  const period = W / TREAD.count;
+  for (let y = 0; y < H; y++) {
+    const a = (y - vc) / half; // -1..1 across the crown
+    const inBand = Math.abs(a) < 1;
+    for (let x = 0; x < W; x++) {
+      let v = 1;
+      if (inBand) {
+        const phase = (((x / period + Math.abs(a) * TREAD.slant) % 1) + 1) % 1;
+        // a groove with softly rounded walls
+        const e = Math.min(phase, TREAD.groove) / TREAD.groove;
+        v = phase < TREAD.groove ? 1 - Math.sin(Math.PI * e) : 1;
+        // a centre rib
+        if (Math.abs(a) < 0.08) v = 1;
+      }
+      h[y * W + x] = v * 0.85 + grain[(y % 128) * 128 + (x % 128)] * 0.15;
+    }
+  }
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const img = g.createImageData(W, H);
+  const strength = 3.5;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const hl = h[y * W + ((x - 1 + W) % W)];
+      const hr = h[y * W + ((x + 1) % W)];
+      const hu = h[Math.max(0, y - 1) * W + x];
+      const hd = h[Math.min(H - 1, y + 1) * W + x];
+      let nx = (hl - hr) * strength;
+      let ny = (hd - hu) * strength;
+      let nz = 1;
+      const l = Math.hypot(nx, ny, nz);
+      nx /= l;
+      ny /= l;
+      nz /= l;
+      const k = (y * W + x) * 4;
+      img.data[k] = (nx * 0.5 + 0.5) * 255;
+      img.data[k + 1] = (ny * 0.5 + 0.5) * 255;
+      img.data[k + 2] = (nz * 0.5 + 0.5) * 255;
+      img.data[k + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = THREE.RepeatWrapping;
+  t.colorSpace = THREE.NoColorSpace;
+  return t;
+}
+
+/** A greyscale map (for roughness) from a height field, mapped into [lo, hi]. */
+function greyMapFromHeight(h: Float32Array, size: number, lo: number, hi: number): THREE.Texture | null {
+  if (typeof document === "undefined") return null;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const img = g.createImageData(size, size);
+  for (let k = 0; k < h.length; k++) {
+    const v = (lo + (hi - lo) * h[k]) * 255;
+    img.data[k * 4] = img.data[k * 4 + 1] = img.data[k * 4 + 2] = v;
+    img.data[k * 4 + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.NoColorSpace;
+  return t;
+}
+
 /** The back of the cap: the strap opening (a dark arch), the strap across it, a seam above. */
 function buildCapBackTexture(): THREE.Texture | null {
   if (typeof document === "undefined") return null;
@@ -719,36 +1041,50 @@ function buildCapBackTexture(): THREE.Texture | null {
 }
 
 function buildCrownGeometry(): THREE.BufferGeometry {
-  const g = new THREE.SphereGeometry(1, 56, 18, 0, Math.PI * 2, 0, Math.PI / 2);
+  // A hemisphere carried a little below its equator (a short band), so the crown meets the visor
+  // and the roof without a gap.
+  const g = new THREE.SphereGeometry(1, 56, 20, 0, Math.PI * 2, 0, Math.PI / 2 + 0.12);
   g.scale(CAP.crownRadii[0], CAP.crownRadii[1], CAP.crownRadii[2]);
   return g;
 }
 
-/** Curved visor: inner edge follows the crown base, widest at the front, drooping at its sides. */
+/** Curved visor. Its inner edge runs along the crown's base ring, tucked just inside it and level
+ *  with it, so the visor is one piece with the cap; the sides bend down only as they reach out,
+ *  and the whole visor angles down a little. Closed all round (top, bottom, outer rim, inner rim). */
 function buildBrimGeometry(): THREE.BufferGeometry {
   const B = CAP.brim;
   const [rx, , rz] = CAP.crownRadii;
-  const cols = 48;
-  const rows = 8;
+  const cols = 56;
+  const rows = 10;
   const phi0 = THREE.MathUtils.degToRad(B.sweepDeg);
   const positions: number[] = [];
+  const brimUvs: number[] = [];
   const index: number[] = [];
-  const grid = (side: number) => {
+  const point = (i: number, v: number) => {
+    const phi = phi0 + (Math.PI - 2 * phi0) * (i / cols);
+    const ix = Math.cos(phi) * rx * 0.94;
+    const iz = Math.sin(phi) * rz * 0.94;
+    const ext = (B.reach * Math.pow(Math.sin(phi), 1.4) + 0.05) * v;
+    const dirX = Math.cos(phi) * 0.35;
+    const dirZ = Math.sin(phi);
+    const len = Math.hypot(dirX, dirZ);
+    const x = ix + (dirX / len) * ext;
+    const z = iz + (dirZ / len) * ext;
+    const side = Math.pow(Math.min(1, Math.abs(Math.cos(phi)) / Math.cos(phi0)), 2);
+    // Bend down toward the sides and along the reach, never at the inner edge.
+    const y = -(B.droop * 0.3 * side + Math.tan(B.tilt)) * ext * (0.6 + 0.4 * v);
+    return [x, y, z] as const;
+  };
+  const grid = (sideSign: number) => {
     const base = positions.length / 3;
     for (let i = 0; i <= cols; i++) {
-      const phi = phi0 + (Math.PI - 2 * phi0) * (i / cols);
-      const ix = Math.cos(phi) * rx * 0.97;
-      const iz = Math.sin(phi) * rz * 0.97;
-      const ext = B.reach * Math.pow(Math.sin(phi), 1.6);
-      const dirX = Math.cos(phi) * 0.35;
-      const dirZ = Math.sin(phi);
-      const len = Math.hypot(dirX, dirZ);
       for (let j = 0; j <= rows; j++) {
         const v = j / rows;
-        const x = ix + (dirX / len) * (ext + 0.03) * v;
-        const z = iz + (dirZ / len) * (ext + 0.03) * v;
-        const y = -B.droop * Math.pow(Math.abs(x) / (rx + 0.05), 2.2) * 0.35 - Math.tan(B.tilt) * (ext + 0.03) * v;
-        positions.push(x, y + side * B.thickness * 0.5, z);
+        const [x, y, z] = point(i, v);
+        // Rounded edge: thinner toward the rim.
+        const th = B.thickness * (0.55 + 0.45 * Math.sqrt(1 - v * v * 0.85));
+        positions.push(x, y + (sideSign * th) / 2, z);
+        brimUvs.push((i / cols) * 3, v * 0.6);
       }
     }
     const stride = rows + 1;
@@ -758,7 +1094,7 @@ function buildBrimGeometry(): THREE.BufferGeometry {
         const b = a + 1;
         const c = a + stride;
         const d = c + 1;
-        if (side > 0) index.push(a, b, c, b, d, c);
+        if (sideSign > 0) index.push(a, b, c, b, d, c);
         else index.push(a, c, b, b, c, d);
       }
     }
@@ -767,16 +1103,32 @@ function buildBrimGeometry(): THREE.BufferGeometry {
   const top = grid(1);
   const bottom = grid(-1);
   const stride = rows + 1;
-  // outer rim strip
   for (let i = 0; i < cols; i++) {
+    // outer rim
     const ta = top + i * stride + rows;
     const tb = top + (i + 1) * stride + rows;
     const ba = bottom + i * stride + rows;
     const bb = bottom + (i + 1) * stride + rows;
     index.push(ta, bb, tb, ta, ba, bb);
+    // inner rim (inside the crown)
+    const ti = top + i * stride;
+    const tj = top + (i + 1) * stride;
+    const bi = bottom + i * stride;
+    const bj = bottom + (i + 1) * stride;
+    index.push(ti, tj, bj, ti, bj, bi);
+  }
+  // the two ends
+  for (const i of [0, cols]) {
+    for (let j = 0; j < rows; j++) {
+      const a = top + i * stride + j;
+      const b = bottom + i * stride + j;
+      if (i === 0) index.push(a, b, a + 1, a + 1, b, b + 1);
+      else index.push(a, a + 1, b, a + 1, b + 1, b);
+    }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(brimUvs, 2));
   g.setIndex(index);
   g.computeVertexNormals();
   return g;
@@ -841,10 +1193,12 @@ function buildCapFrontPanelGeometry(): THREE.BufferGeometry {
   const rows = 24;
   const positions: number[] = [];
   const normals: number[] = [];
+  const panelUvs: number[] = [];
   const index: number[] = [];
   for (let j = 0; j <= rows; j++) {
     const e = 0.02 + (P.elevationTop - 0.02) * (j / rows);
-    const span = P.halfSpan * Math.pow(1 - (j / rows) * 0.92, 0.75);
+    // A wide front panel (a trucker cap's), so the badge sits wholly on white.
+    const span = P.halfSpan * Math.pow(1 - (j / rows) * 0.7, 0.45);
     for (let i = 0; i <= cols; i++) {
       const a = -span + 2 * span * (i / cols);
       const ux = Math.cos(e) * Math.sin(a);
@@ -853,6 +1207,7 @@ function buildCapFrontPanelGeometry(): THREE.BufferGeometry {
       const n = new THREE.Vector3(ux / rx, uy / ry, uz / rz).normalize();
       positions.push(rx * ux + n.x * P.offset, ry * uy + n.y * P.offset, rz * uz + n.z * P.offset);
       normals.push(n.x, n.y, n.z);
+      panelUvs.push((i / cols) * 3, (j / rows) * 2);
     }
   }
   for (let j = 0; j < rows; j++) {
@@ -867,6 +1222,7 @@ function buildCapFrontPanelGeometry(): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   g.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(panelUvs, 2));
   g.setIndex(index);
   return g;
 }
@@ -943,17 +1299,46 @@ export function createNlexMascotModel(options: CreateNlexMascotOptions = {}): TH
       }),
     );
 
+  // ---- surface texture maps (shared; tiled by each mesh's UVs)
+  const peelH = tileNoise(256, 28, 2, 4242);
+  const peelNormal = normalMapFromHeight(peelH, 256, 2.6);
+  const paintRough = greyMapFromHeight(tileNoise(256, 6, 2, 99), 256, 0.7, 1);
+  const weaveNormal = normalMapFromHeight(weaveHeight(256, 32), 256, 2.4);
+  const treadNormal = buildTreadNormal();
+  for (const [tx, rx, ry] of [[peelNormal, 12, 6], [paintRough, 4, 2], [weaveNormal, 10, 5], [treadNormal, 1, 1]] as const) {
+    if (!tx) continue;
+    tx.repeat.set(rx, ry);
+    tx.anisotropy = anisotropy;
+    textures.add(tx);
+  }
+
   // ---- materials
-  const paint = mat(new THREE.MeshPhysicalMaterial({ name: "body-paint", color: PAINT_HEX, roughness: 0.3, metalness: 0, clearcoat: 0.75, clearcoatRoughness: 0.2 }));
-  // The shell carries its colour per vertex (paint, and the dark-gray underbody along the sill).
-  const bodyPaint = mat(new THREE.MeshPhysicalMaterial({ name: "body-paint", color: 0xffffff, vertexColors: true, roughness: 0.3, metalness: 0, clearcoat: 0.75, clearcoatRoughness: 0.2 }));
+  const paint = mat(new THREE.MeshPhysicalMaterial({ name: "body-paint", color: PAINT_HEX, roughness: 0.28, metalness: 0, clearcoat: 0.6, clearcoatRoughness: 0.32 }));
   const faceWhite = mat(
-    new THREE.MeshPhysicalMaterial({ name: "face-white", color: 0xf4f7fc, roughness: 0.42, clearcoat: 0.25, clearcoatRoughness: 0.35, emissive: 0xffffff, emissiveIntensity: LOOK.faceEmissive }),
+    new THREE.MeshPhysicalMaterial({ name: "face-white", color: 0xf6f8fc, roughness: 0.32, clearcoat: 0.6, clearcoatRoughness: 0.2, emissive: 0xffffff, emissiveIntensity: LOOK.faceEmissive }),
   );
   const capBlue = mat(new THREE.MeshStandardMaterial({ name: "cap-fabric-blue", color: CAP_BLUE_HEX, roughness: 0.82, side: THREE.DoubleSide }));
   const capWhite = mat(new THREE.MeshStandardMaterial({ name: "cap-fabric-white", color: 0xf4f6f9, roughness: 0.8, emissive: 0xffffff, emissiveIntensity: LOOK.capWhiteEmissive }));
   const rubber = mat(new THREE.MeshStandardMaterial({ name: "tyre-rubber", color: 0x16171b, roughness: 0.9 }));
-  const lampRing = mat(new THREE.MeshPhysicalMaterial({ name: "headlight-ring", color: 0xdfe8f4, roughness: 0.25, metalness: 0.3, clearcoat: 1, emissive: 0x6fbaff, emissiveIntensity: 0.12 }));
+  // Relief: an orange-peel on the paint (and a faint one in its clear coat), woven fabric on the
+  // cap, a fine grain on the rubber. Kept subtle: the toy stays glossy.
+  if (peelNormal) {
+    paint.normalMap = peelNormal;
+    paint.normalScale.set(0.1, 0.1);
+    paint.clearcoatNormalMap = peelNormal;
+    paint.clearcoatNormalScale.set(0.1, 0.1);
+  }
+  if (paintRough) paint.roughnessMap = paintRough;
+  if (weaveNormal) {
+    for (const m of [capBlue, capWhite]) {
+      m.normalMap = weaveNormal;
+      m.normalScale.set(0.55, 0.55);
+    }
+  }
+  if (treadNormal) {
+    rubber.normalMap = treadNormal;
+    rubber.normalScale.set(1, 1);
+  }
   const chrome = mat(new THREE.MeshPhysicalMaterial({ name: "chrome", color: 0xb9c3d1, roughness: 0.18, metalness: 0.75, clearcoat: 1, clearcoatRoughness: 0.06 }));
   const trimWhite = mat(new THREE.MeshPhysicalMaterial({ name: "trim-white", color: 0xeef1f7, roughness: 0.3, clearcoat: 0.8, emissive: 0xffffff, emissiveIntensity: 0.12 }));
   const lensMap = buildHeadlightTexture();
@@ -973,19 +1358,32 @@ export function createNlexMascotModel(options: CreateNlexMascotOptions = {}): TH
       }),
     ),
   );
-  // Light-blue glass (#63B3FF on the sheet), lit a little from within so it stays light.
-  const glass = mat(new THREE.MeshPhysicalMaterial({ name: "window-glass", color: 0x3f8fe8, roughness: 0.22, metalness: 0, clearcoat: 0.2, clearcoatRoughness: 0.3, emissive: 0x2a72d6, emissiveIntensity: 0.14 }));
-  const tailLens = mat(new THREE.MeshPhysicalMaterial({ name: "taillight-lens", color: 0xd8262e, roughness: 0.12, clearcoat: 1, emissive: 0xff2a2a, emissiveIntensity: 0.55 }));
-  const windowFrame = mat(new THREE.MeshPhysicalMaterial({ name: "window-frame", color: 0x0a4cc0, roughness: 0.35, clearcoat: 0.6, clearcoatRoughness: 0.2 }));
+  // Light-blue glass, as on the sheet, lit a little from within so it stays light.
+  const glassMap = buildGlassTexture();
+  if (glassMap) {
+    glassMap.anisotropy = anisotropy;
+    textures.add(glassMap);
+  }
+  // Glass that reads as glass: the sky gradient, lit a little from within so it never goes black,
+  // glossy but without the soft white blob the rough coat used to smear across it.
+  const glass = mat(
+    new THREE.MeshPhysicalMaterial({ name: "window-glass", color: 0xffffff, map: glassMap, roughness: 0.2, metalness: 0, clearcoat: 0.55, clearcoatRoughness: 0.18, emissive: 0xffffff, emissiveMap: glassMap, emissiveIntensity: 0.08 }),
+  );
+  const windowFrame = mat(new THREE.MeshPhysicalMaterial({ name: "window-frame", color: 0x0a3a9c, roughness: 0.4, clearcoat: 0.4, clearcoatRoughness: 0.3 }));
   const tailAmber = mat(new THREE.MeshPhysicalMaterial({ name: "taillight-amber", color: 0xffa23a, roughness: 0.12, clearcoat: 1, emissive: 0xff8a1a, emissiveIntensity: 0.6 }));
+  const tailLens = mat(new THREE.MeshPhysicalMaterial({ name: "taillight-lens", color: 0xd8262e, roughness: 0.12, clearcoat: 1, emissive: 0xff2a2a, emissiveIntensity: 0.55 }));
 
   const root = new THREE.Group();
   root.name = "nlex-mascot";
   const loft = new BodyLoft();
 
   // ---- body + face plate
-  const body = mesh("body-shell", buildBodyGeometry(loft), bodyPaint);
-  root.add(body);
+  const body = mesh("body-shell", buildBodyGeometry(loft), paint);
+  const shape = new THREE.Group();
+  shape.name = "nlex-mascot-shape";
+  shape.scale.x = WIDTH_SCALE;
+  root.add(shape);
+  shape.add(body);
   const facePanel = mesh("windscreen-face-panel", buildFacePanelGeometry(loft), faceWhite);
   body.add(facePanel);
 
@@ -999,9 +1397,10 @@ export function createNlexMascotModel(options: CreateNlexMascotOptions = {}): TH
   const haloMaterial = mat(
     new THREE.MeshBasicMaterial({ name: "headlight-glow", map: haloMap, color: 0xd6ebff, transparent: true, opacity: HEADLIGHT.haloOpacity, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
   );
-  body.add(mesh("bumper-front", buildBumperGeometry(loft, BUMPER.front.y, BUMPER.front.radius, 1), paint));
-  body.add(mesh("bumper-rear", buildBumperGeometry(loft, BUMPER.rear.y, BUMPER.rear.radius, -1), paint));
-  // Side windows, door handles, taillights and the rear window make the sides and tail read as a car.
+  // The sheet's sides and back: framed front and rear side windows, door handles, a rear window,
+  // rounded red-and-amber taillights (the plate is a decal, below).
+  // The rear window, framed and glazed like the side panes.
+  body.add(mesh("rear-window-frame", buildRearWindowGeometry(loft, WINDOW_FRAME, -0.003), windowFrame));
   body.add(mesh("rear-window", buildRearWindowGeometry(loft), glass));
   const tailGeometry = geo(buildRoundedSlab(TAILLIGHT.w, TAILLIGHT.h, TAILLIGHT.r, TAILLIGHT.depth));
   const amberGeometry = geo(buildRoundedSlab(TAILLIGHT.w * 0.26, TAILLIGHT.h * 0.56, TAILLIGHT.r * 0.5, 0.006));
@@ -1009,18 +1408,20 @@ export function createNlexMascotModel(options: CreateNlexMascotOptions = {}): TH
   for (const side of [1, -1] as const) {
     SIDE_WINDOWS.forEach((w, wi) => {
       const tag = (side > 0 ? "-l" : "-r") + (wi ? "-rear" : "-front");
-      const frame: WindowSpec = { ...w, zRear: w.zRear - WINDOW_FRAME, zFront: w.zFront + WINDOW_FRAME, halfHeight: w.halfHeight + WINDOW_FRAME, offset: w.offset - 0.003 };
+      const F = WINDOW_FRAME;
+      const frame: WindowSpec = { ...w, zRear: w.zRear - F, zFront: w.zFront + F, yBottom: w.yBottom - F, yTop: w.yTop + F, radius: w.radius + F, rearTop: w.rearTop + F, offset: w.offset - 0.003 };
       body.add(mesh("side-window-frame" + tag, buildSideWindowGeometry(loft, side, frame), windowFrame));
       body.add(mesh("side-window" + tag, buildSideWindowGeometry(loft, side, w), glass));
     });
+    DOOR_SEAMS.forEach((pts, si) => body.add(mesh(`door-seam-${side > 0 ? "l" : "r"}-${si}`, buildSideStripGeometry(loft, side, pts, 0.007), windowFrame)));
     const f = loft.frontFrame(side * TAILLIGHT.x, TAILLIGHT.y, -1);
     const tail = new THREE.Group();
     tail.name = side > 0 ? "taillight-l" : "taillight-r";
     tail.position.copy(f.point).addScaledVector(f.normal, -0.008);
     tail.quaternion.copy(surfaceQuaternion(f.normal));
+    tail.scale.x = 1 / WIDTH_SCALE;
     const lens = new THREE.Mesh(tailGeometry, tailLens);
     lens.name = tail.name + "-lens";
-    // The amber end faces the plate: seen from behind, local +x is the car's -X.
     const amber = new THREE.Mesh(amberGeometry, tailAmber);
     amber.name = tail.name + "-amber";
     amber.position.set(side * TAILLIGHT.w * 0.3, 0, TAILLIGHT.depth);
@@ -1035,11 +1436,12 @@ export function createNlexMascotModel(options: CreateNlexMascotOptions = {}): TH
     const f = loft.frontFrame(side * HEADLIGHT.x, HEADLIGHT.y);
     const group = new THREE.Group();
     group.name = side > 0 ? "headlight-l-mount" : "headlight-r-mount";
+    group.scale.x = 1 / WIDTH_SCALE; // round lamps on the widened body
     group.position.copy(f.point).addScaledVector(f.normal, 0.004);
     group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), f.normal);
     const lens = new THREE.Mesh(lensGeometry, headlightMaterials[side > 0 ? 0 : 1]);
     lens.name = side > 0 ? "headlight-l" : "headlight-r";
-    const bezel = new THREE.Mesh(bezelGeometry, lampRing);
+    const bezel = new THREE.Mesh(bezelGeometry, chrome);
     bezel.name = side > 0 ? "headlight-bezel-l" : "headlight-bezel-r";
     const halo = new THREE.Mesh(haloGeometry, haloMaterial);
     halo.name = side > 0 ? "headlight-glow-l" : "headlight-glow-r";
@@ -1098,12 +1500,10 @@ export function createNlexMascotModel(options: CreateNlexMascotOptions = {}): TH
     body.add(group);
   }
 
-  // ---- wheels: steer mount at the axle -> spin group (origin ON the axle) -> tyre + hub + hub-n + tread
+  // ---- wheels: steer mount at the axle -> spin group (origin ON the axle) -> tyre (tread pressed in) + hub + hub-n
   const wheels: THREE.Group[] = [];
   const hubNMaterial = decalMaterial("decal-hub-n", texture(HUB_N.texture), 0.3, 0.6);
-  const treadGeometry = geo(new THREE.BoxGeometry(TREAD.block[0], TREAD.block[1], TREAD.block[2]));
   const hubFaceX = WHEEL.hubOffset - 0.03 + WHEEL.hubProfile[WHEEL.hubProfile.length - 1][1];
-  const xAxisUnit = new THREE.Vector3(1, 0, 0);
   for (const [id, sx, sz] of [["fl", 1, 1], ["fr", -1, 1], ["rl", 1, -1], ["rr", -1, -1]] as const) {
     const steer = new THREE.Group();
     steer.name = "wheel-" + id + "-steer";
@@ -1121,30 +1521,8 @@ export function createNlexMascotModel(options: CreateNlexMascotOptions = {}): TH
     nG.translate(hubFaceX + HUB_N.lift, 0, 0);
     if (sx < 0) reflectGeometryX(nG, true); // U flipped so the N reads correctly on the -X side
     wheel.add(mesh("hub-n", nG, hubNMaterial));
-    // directional chevron tread; the -X wheels carry the reflection so chevrons point the same way
-    const tread = new THREE.InstancedMesh(treadGeometry, rubber, TREAD.count * 2);
-    tread.name = "tread";
-    const m4 = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const euler = new THREE.Euler();
-    const one = new THREE.Vector3(1, 1, 1);
-    const r = WHEEL.radius + TREAD.block[1] * 0.1; // blocks sit proud of the 0.28 tread crown
-    let k = 0;
-    for (let i = 0; i < TREAD.count; i++) {
-      const theta = (i / TREAD.count) * Math.PI * 2;
-      for (const half of [1, -1]) {
-        euler.set(theta, THREE.MathUtils.degToRad(TREAD.angleDeg) * half * sx, 0, "XYZ");
-        q.setFromEuler(euler);
-        const pos = new THREE.Vector3(half * TREAD.axial * sx, r, 0).applyAxisAngle(xAxisUnit, theta);
-        m4.compose(pos, q, one);
-        tread.setMatrixAt(k++, m4);
-      }
-    }
-    tread.instanceMatrix.needsUpdate = true;
-    wheel.add(tread);
-    root.add(steer);
+    shape.add(steer);
     wheels.push(wheel);
-
   }
 
   // ---- decals: project the PNG cuts onto their host meshes along the reference view direction
@@ -1152,10 +1530,14 @@ export function createNlexMascotModel(options: CreateNlexMascotOptions = {}): TH
   const hosts: Record<DecalSpec["targets"][number], THREE.Mesh> = { "windscreen-face-panel": facePanel, "body-shell": body, "cap-front-panel": capFront, "cap-crown": crown };
   const raycaster = new THREE.Raycaster();
   const face = createMascotFace();
+  if (face) {
+    face.texture.anisotropy = anisotropy;
+    textures.add(face.texture);
+  }
   const procedural: Record<string, THREE.Texture | null> = {
-    "procedural:face": face?.texture ?? null,
     "procedural:plate": buildPlateTexture(),
     "procedural:cap-back": buildCapBackTexture(),
+    "procedural:cap-n": buildCapNTexture(),
   };
   for (const t of Object.values(procedural)) {
     if (!t) continue;
@@ -1163,12 +1545,16 @@ export function createNlexMascotModel(options: CreateNlexMascotOptions = {}): TH
     textures.add(t);
   }
   for (const d of DECALS) {
-    const map = d.texture.startsWith("procedural:") ? procedural[d.texture] : texture(d.texture);
-    if (!map) continue; // no 2D canvas here: that detail is simply left off
-    const flat = d.name === "cap-logo" || d.name === "cap-back";
-    // The face takes a light coat: a heavy clearcoat mirrored the room over the eyes and washed them out.
-    const isFace = d.name === "face-decal";
-    const material = decalMaterial("decal-" + d.name, map, d.name === "bonnet-badge-n" ? 0.22 : isFace ? 0.45 : 0.3, flat ? 0 : isFace ? 0.2 : 0.8);
+    const isFace = d.texture === "procedural:face";
+    const map = isFace ? face?.texture ?? null : d.texture.startsWith("procedural:") ? procedural[d.texture] ?? null : texture(d.texture);
+    if (!map) continue; // no 2D canvas here: the face is simply left off
+    // The face takes a light coat and little self-glow, so its eyes stay a deep blue.
+    const material = decalMaterial("decal-" + d.name, map, d.name === "bonnet-badge-n" ? 0.22 : isFace ? 0.55 : 0.3, d.name === "cap-logo" || d.name === "cap-back" || isFace ? 0 : 0.8);
+    if (isFace) material.emissiveIntensity = 0.1;
+    if (d.name === "cap-logo") {
+      material.emissiveIntensity = 0.04;
+      material.roughness = 0.6;
+    }
     const zAxis = new THREE.Vector3(-d.dir[0], -d.dir[1], -d.dir[2]).normalize();
     const yAxis = new THREE.Vector3(0, 1, 0).addScaledVector(zAxis, -zAxis.y).normalize();
     const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis);
