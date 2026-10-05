@@ -93,6 +93,15 @@ SEQ_LEN = 14  # LSTM lookback, matches train_incident_models.py's SEQ_LEN
 N_NEIGHBORS = 2
 EPOCHS = 60
 PATIENCE = 8
+# How many days the per-exit hotspot grid reaches. Matches the main daily
+# pipeline's own FUTURE_DAYS=28 ("1 month") write -- the frontend's own
+# Week/Month toggle shows either the first 7 of these or all 28, so one
+# rollout has to reach the longer of the two. Every day past the first is a
+# RECURSIVE rollout (see rollout_spatial_lstm): each exit's own prediction is
+# fed back in as next day's "count" input, so error compounds day over day
+# the way it does for any walk-forward forecast -- the frontend caveats days
+# past 1 for exactly this reason, more insistently the further out they are.
+HORIZON_DAYS = 28
 
 
 def set_all_seeds(seed: int = SEED) -> None:
@@ -651,38 +660,114 @@ def fit_spatial_lstm(panel: pd.DataFrame, exits_df: pd.DataFrame, holdout_days: 
         "epochs_trained": epoch + 1,
     }
 
-    # Next-24h forecast: the most recent SEQ_LEN-day window per exit, one
-    # forward pass each — this is a single next-day step, not a recursive
-    # multi-day rollout, matching the "24-hr" framing exactly.
-    forecasts = []
-    with torch.no_grad():
-        for eid, g in panel.groupby("exit_id"):
-            g = g.sort_values("d").reset_index(drop=True)
-            if len(g) < SEQ_LEN or g[SEQ_FEATURES].tail(SEQ_LEN).isna().any().any():
-                continue
-            feats = (g[SEQ_FEATURES].tail(SEQ_LEN).values.astype("float32") - seq_mean) / seq_std
-            static_row = g[STATIC_FEATURES].iloc[0]
-            static_km_mean, static_km_std = exits_df["km"].mean(), exits_df["km"].std() or 1.0
-            static_vec = np.array([
-                (static_row["km"] - static_km_mean) / static_km_std,
-                static_row["access_count"] / 4.0,
-            ], dtype="float32")
-            seq_t = torch.tensor(feats).unsqueeze(0)
-            static_t = torch.tensor(static_vec).unsqueeze(0)
-            pred_count = float(torch.exp(model(seq_t, static_t)).item())
-            forecast_date = (g["d"].iloc[-1] + pd.Timedelta(days=1)).date()
-            forecasts.append({
-                "exit_id": int(eid),
-                "forecast_date": forecast_date,
-                "predicted_incidents": max(pred_count, 0.0),
-                "last_observed_count": float(g["count"].iloc[-1]),
-            })
-
-    forecasts.sort(key=lambda r: r["predicted_incidents"], reverse=True)
-    for rank, row in enumerate(forecasts, start=1):
-        row["rank"] = rank
+    forecasts = rollout_spatial_lstm(model, panel, exits_df, seq_mean, seq_std, HORIZON_DAYS)
 
     return {"metrics": metrics, "forecasts": forecasts}
+
+
+def rollout_spatial_lstm(model: "SpatialLSTM", panel: pd.DataFrame, exits_df: pd.DataFrame,
+                          seq_mean: np.ndarray, seq_std: np.ndarray, horizon_days: int) -> list[dict]:
+    """Recursive HORIZON_DAYS-ahead forecast, jointly across all exits.
+
+    The model itself only ever took one step (see the SpatialLSTM/
+    _build_sequences docstrings above) — day h+1 is produced the same way a
+    single next-24h forecast always was, but day h+1's prediction is then fed
+    back in as day h+1's own "count" input so day h+2 can be forecast from
+    it, and so on for `horizon_days`. This is the same walk-forward idea
+    train_incident_models.py's own multi-day models already use for the main
+    Forecast chart's Future zone, applied per-exit here instead of
+    corridor-wide.
+
+    Two of the four SEQ_FEATURES have no real future value to feed in:
+      - neighbor_lag_1 is NOT a problem — it is rebuilt each rollout day from
+        THIS SAME day's own predictions for the neighbouring exits (every
+        exit is rolled forward in lockstep, one day at a time, precisely so
+        this coupling keeps working past day 1).
+      - log_volume and rain_mm have no per-exit, multi-day forecast of their
+        own anywhere in this warehouse. Held flat for the whole rollout
+        instead of guessed fresh each day: log_volume at that exit's own
+        mean over its last 7 OBSERVED days (its typical recent level),
+        rain_mm at 0 (a dry-day assumption — there is no rainfall forecast
+        to read instead). Both choices are named in ml_incident_spatial_metadata
+        so the frontend can caveat them rather than present day 4-7 as resting
+        on the same footing as day 1.
+
+    Returns a flat list of {exit_id, forecast_date, horizon_day,
+    predicted_incidents, last_observed_count, rank} — last_observed_count and
+    rank are per-horizon_day (rank 1 = highest-predicted exit on THAT day,
+    not across the whole week), and last_observed_count is only ever real
+    (non-null) on horizon_day 1; later days have no corresponding observation
+    to report.
+    """
+    static_km_mean, static_km_std = exits_df["km"].mean(), exits_df["km"].std() or 1.0
+    km_by_exit = exits_df.set_index("exit_id")["km"]
+    neighbors_by_exit: dict[int, list[int]] = {}
+    for eid in exits_df["exit_id"]:
+        dists = (km_by_exit - km_by_exit.loc[eid]).abs().drop(eid)
+        neighbors_by_exit[eid] = dists.nsmallest(N_NEIGHBORS).index.tolist()
+
+    static_vec_by_exit: dict[int, np.ndarray] = {}
+    windows: dict[int, list[list[float]]] = {}
+    last_date_by_exit: dict[int, pd.Timestamp] = {}
+    last_observed_by_exit: dict[int, float] = {}
+    typical_log_volume: dict[int, float] = {}
+
+    for eid, g in panel.groupby("exit_id"):
+        g = g.sort_values("d").reset_index(drop=True)
+        if len(g) < SEQ_LEN or g[SEQ_FEATURES].tail(SEQ_LEN).isna().any().any():
+            continue
+        windows[eid] = g[SEQ_FEATURES].tail(SEQ_LEN).values.astype("float64").tolist()
+        last_date_by_exit[eid] = g["d"].iloc[-1]
+        last_observed_by_exit[eid] = float(g["count"].iloc[-1])
+        typical_log_volume[eid] = float(g["log_volume"].tail(7).mean())
+        static_row = g[STATIC_FEATURES].iloc[0]
+        static_vec_by_exit[eid] = np.array([
+            (static_row["km"] - static_km_mean) / static_km_std,
+            static_row["access_count"] / 4.0,
+        ], dtype="float32")
+
+    usable_exits = list(windows.keys())
+    forecasts: list[dict] = []
+
+    for h in range(1, horizon_days + 1):
+        preds_this_day: dict[int, float] = {}
+        with torch.no_grad():
+            for eid in usable_exits:
+                feats = (np.array(windows[eid], dtype="float32") - seq_mean) / seq_std
+                seq_t = torch.tensor(feats).unsqueeze(0)
+                static_t = torch.tensor(static_vec_by_exit[eid]).unsqueeze(0)
+                pred = float(torch.exp(model(seq_t, static_t)).item())
+                preds_this_day[eid] = max(pred, 0.0)
+
+        day_rows = [
+            {
+                "exit_id": int(eid),
+                "forecast_date": (last_date_by_exit[eid] + pd.Timedelta(days=h)).date(),
+                "horizon_day": h,
+                "predicted_incidents": preds_this_day[eid],
+                "last_observed_count": last_observed_by_exit[eid] if h == 1 else None,
+            }
+            for eid in usable_exits
+        ]
+        day_rows.sort(key=lambda r: r["predicted_incidents"], reverse=True)
+        for rank, row in enumerate(day_rows, start=1):
+            row["rank"] = rank
+        forecasts.extend(day_rows)
+
+        if h == horizon_days:
+            break
+        # Slide every exit's window forward one day using THIS day's
+        # predictions — including for neighbor_lag_1, which is why this
+        # whole rollout runs one day at a time across ALL exits rather than
+        # per-exit to the full horizon: day h+1's neighbor feature for exit
+        # E depends on day h's prediction for E's neighbours.
+        for eid in usable_exits:
+            neighbor_vals = [preds_this_day[n] for n in neighbors_by_exit.get(eid, []) if n in preds_this_day]
+            neighbor_lag = float(np.mean(neighbor_vals)) if neighbor_vals else 0.0
+            new_row = [preds_this_day[eid], neighbor_lag, typical_log_volume[eid], 0.0]
+            windows[eid] = windows[eid][1:] + [new_row]
+
+    return forecasts
 
 
 # ---------------------------------------------------------------------------
@@ -712,7 +797,7 @@ def ensure_schema(conn, commit: bool = True) -> None:
 
             CREATE TABLE IF NOT EXISTS gold.ml_incident_segment_risk (
                 id SERIAL PRIMARY KEY,
-                exit_id INT NOT NULL UNIQUE,
+                exit_id INT NOT NULL,
                 exit_name TEXT NOT NULL,
                 latitude DOUBLE PRECISION NOT NULL,
                 longitude DOUBLE PRECISION NOT NULL,
@@ -723,6 +808,25 @@ def ensure_schema(conn, commit: bool = True) -> None:
                 risk_rank INT NOT NULL,
                 trained_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+
+            -- One row per exit per day-ahead now (rollout_spatial_lstm),
+            -- not one row per exit -- UNIQUE(exit_id) predates the multi-day
+            -- grid and is dropped in favor of UNIQUE(exit_id, horizon_day).
+            -- horizon_day=1 is still the real next-24h figure every earlier
+            -- caller of this table read; 2-7 are the recursive rollout.
+            ALTER TABLE gold.ml_incident_segment_risk
+                ADD COLUMN IF NOT EXISTS horizon_day INT NOT NULL DEFAULT 1;
+            ALTER TABLE gold.ml_incident_segment_risk
+                DROP CONSTRAINT IF EXISTS ml_incident_segment_risk_exit_id_key;
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'ml_incident_segment_risk_exit_horizon_key'
+                ) THEN
+                    ALTER TABLE gold.ml_incident_segment_risk
+                        ADD CONSTRAINT ml_incident_segment_risk_exit_horizon_key UNIQUE (exit_id, horizon_day);
+                END IF;
+            END $$;
 
             CREATE TABLE IF NOT EXISTS gold.ml_incident_spatial_metadata (
                 id SERIAL PRIMARY KEY,
@@ -761,13 +865,13 @@ def write_to_db(conn, gwr_out: dict, lstm_out: dict, metadata: dict, dry: bool =
                 continue
             rows.append((
                 f["exit_id"], ref["exit_name"], ref["latitude"], ref["longitude"], ref["km"],
-                f["forecast_date"], f["predicted_incidents"], f["last_observed_count"], f["rank"],
+                f["forecast_date"], f["predicted_incidents"], f["last_observed_count"], f["rank"], f["horizon_day"],
             ))
         psycopg2.extras.execute_values(
             cur,
             """INSERT INTO gold.ml_incident_segment_risk
                (exit_id, exit_name, latitude, longitude, km, forecast_date,
-                predicted_incidents, last_observed_count, risk_rank) VALUES %s""",
+                predicted_incidents, last_observed_count, risk_rank, horizon_day) VALUES %s""",
             rows,
         )
 
@@ -816,10 +920,17 @@ def print_report(gwr_out: dict, lstm_out: dict) -> str:
         L.append(f"    (all-exit figures: MAE {allx['MAE']:.3f}, baseline {allx['baseline_mae_per_exit_mean']:.3f}, n {allx['n']})")
     L.append(f"    epochs trained   = {lstm_out['metrics']['epochs_trained']}")
     L.append("")
-    L.append("  Next-24h high-risk segments (top 5):")
-    for f in lstm_out["forecasts"][:5]:
+    L.append(f"  Next-24h high-risk segments (top 5 of {HORIZON_DAYS}-day rollout, day 1):")
+    for f in lstm_out["forecasts"]:
+        if f["horizon_day"] != 1:
+            continue
+        if f["rank"] > 5:
+            continue
         L.append(f"    #{f['rank']:<2} exit_id={f['exit_id']:<3} "
                   f"predicted={f['predicted_incidents']:.3f}  last_observed={f['last_observed_count']:.0f}")
+    day7_top = min((f for f in lstm_out["forecasts"] if f["horizon_day"] == HORIZON_DAYS), key=lambda f: f["rank"])
+    L.append(f"  Day {HORIZON_DAYS} top exit: exit_id={day7_top['exit_id']} predicted={day7_top['predicted_incidents']:.3f} "
+              f"(recursive rollout -- compounded, treat with less confidence than day 1)")
     L.append("=" * 80)
     return "\n".join(L)
 
@@ -861,8 +972,19 @@ def main() -> None:
         metadata = {
             "data_source": "silver.nlex_accident_events_clean + silver.nlex_breakdown_events_clean",
             "gwr": {"bandwidth": gwr_out["bw"], "metrics": gwr_out["metrics"], "variables": GWR_VARIABLES},
-            "spatial_lstm": {"metrics": lstm_out["metrics"], "seq_len": SEQ_LEN, "n_neighbors": N_NEIGHBORS,
-                              "seq_features": SEQ_FEATURES, "static_features": STATIC_FEATURES},
+            "spatial_lstm": {
+                "metrics": lstm_out["metrics"], "seq_len": SEQ_LEN, "n_neighbors": N_NEIGHBORS,
+                "seq_features": SEQ_FEATURES, "static_features": STATIC_FEATURES,
+                "horizon_days": HORIZON_DAYS,
+                # Only day 1 is a direct model output; days 2-HORIZON_DAYS are
+                # a recursive rollout (see rollout_spatial_lstm's own doc
+                # comment) that also holds two inputs flat for the whole
+                # window rather than forecasting them: log_volume at each
+                # exit's own last-7-observed-day mean, rain_mm at 0. Carried
+                # here so the frontend can caveat days past 1 instead of
+                # showing them with day 1's own confidence.
+                "rollout_assumptions": "log_volume held at each exit's own recent (7-day) mean; rain_mm assumed 0 (no rainfall forecast exists to use instead)",
+            },
             "trained_at": pd.Timestamp.utcnow().isoformat(),
         }
         print("\nWriting gold.ml_incident_spatial_coefficients / ml_incident_segment_risk / ml_incident_spatial_metadata...")

@@ -33,6 +33,14 @@ export type SegmentRisk = {
   longitude: number;
   km: number;
   forecastDate: string;
+  // Which day of the rollout this row is: 1 is the real next-24h model
+  // output; 2..HORIZON_DAYS is a recursive rollout (see
+  // rollout_spatial_lstm's own doc comment in train_incident_spatial_models.py)
+  // that also holds two of its inputs flat for the whole window rather than
+  // forecasting them — metadata.spatial_lstm.rollout_assumptions says which.
+  // rank is PER horizon_day (the highest-predicted exit on that day), not
+  // across the whole window.
+  horizonDay: number;
   predictedIncidents: number;
   lastObservedCount: number | null;
   rank: number;
@@ -139,12 +147,12 @@ export async function getIncidentSpatialFromDb(): Promise<IncidentSpatialData | 
       db.query<{
         exit_id: number; exit_name: string; latitude: number; longitude: number; km: number;
         forecast_date: string; predicted_incidents: number; last_observed_count: number | null;
-        risk_rank: number; trained_at: string;
+        risk_rank: number; horizon_day: number; trained_at: string;
       }>(
         `SELECT exit_id, exit_name, latitude, longitude, km, forecast_date::text AS forecast_date,
-                predicted_incidents, last_observed_count, risk_rank, trained_at
+                predicted_incidents, last_observed_count, risk_rank, horizon_day, trained_at
          FROM gold.ml_incident_segment_risk
-         ORDER BY risk_rank ASC`
+         ORDER BY horizon_day ASC, risk_rank ASC`
       ),
       db.query<{ metadata_json: Record<string, unknown>; created_at: string }>(
         `SELECT metadata_json, created_at FROM gold.ml_incident_spatial_metadata
@@ -161,13 +169,18 @@ export async function getIncidentSpatialFromDb(): Promise<IncidentSpatialData | 
 
     const trainedAt = coefRes.rows[0]?.trained_at ?? riskRes.rows[0]?.trained_at ?? null;
 
-    const exitsForSegments = riskRes.rows.map((r) => ({ exit_id: r.exit_id, exit_name: r.exit_name, km: Number(r.km) }));
-    const predictedByExit = new Map(riskRes.rows.map((r) => [r.exit_id, Number(r.predicted_incidents)]));
-    const nameByExit = new Map(riskRes.rows.map((r) => [r.exit_id, r.exit_name]));
+    // gold.ml_incident_segment_risk now carries one row per (exit, horizon
+    // day) -- segmentRiskByKm stays anchored to day 1 only (the real,
+    // non-rollout model output), same single-snapshot meaning it always had.
+    // The full multi-day set still goes out below, in segmentRisk.
+    const day1Rows = riskRes.rows.filter((r) => r.horizon_day === 1);
+    const exitsForSegments = day1Rows.map((r) => ({ exit_id: r.exit_id, exit_name: r.exit_name, km: Number(r.km) }));
+    const predictedByExit = new Map(day1Rows.map((r) => [r.exit_id, Number(r.predicted_incidents)]));
+    const nameByExit = new Map(day1Rows.map((r) => [r.exit_id, r.exit_name]));
 
     // Exits the model has no incident history for. Unknown (null map) counts as
     // "has data" so a failed coverage read cannot blank the whole panel.
-    const historyByExit = await loadExitEventCounts(riskRes.rows.map((r) => ({ exitId: r.exit_id, km: Number(r.km) })));
+    const historyByExit = await loadExitEventCounts(day1Rows.map((r) => ({ exitId: r.exit_id, km: Number(r.km) })));
     const hasData = (exitId: number): boolean => historyByExit == null || (historyByExit.get(exitId) ?? 0) > 0;
 
     type SegmentDraft = Omit<SegmentRiskByKm, "rank">;
@@ -224,6 +237,7 @@ export async function getIncidentSpatialFromDb(): Promise<IncidentSpatialData | 
         longitude: Number(r.longitude),
         km: Number(r.km),
         forecastDate: r.forecast_date,
+        horizonDay: r.horizon_day,
         predictedIncidents: Number(r.predicted_incidents),
         lastObservedCount: r.last_observed_count == null ? null : Number(r.last_observed_count),
         rank: r.risk_rank,

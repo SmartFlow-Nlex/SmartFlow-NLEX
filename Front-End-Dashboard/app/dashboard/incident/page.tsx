@@ -18,7 +18,6 @@ import PrescriptiveDeploymentPanel from "../../../components/dashboard/Prescript
 import PatrolAlertWindowPanel from "../../../components/dashboard/PatrolAlertWindowPanel";
 import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import EventBreakdownPanel from "../../../components/dashboard/EventBreakdownPanel";
-import type { CorridorForecastPoint, KmSegmentForecastPoint } from "../../../components/dashboard/incidentPredictive.shared";
 import DateRangePicker from "../traffic/components/DateRangePicker";
 import { rangeDays, grainBlockedReason, bestGrainFor, axisLabelFor, bucketLabelFor } from "../../../lib/granularity";
 import styles from "../traffic/traffic.module.css";
@@ -139,18 +138,6 @@ export default function IncidentPage() {
   // Whether the predictive endpoint's current Range has any scored rows for
   // Weather to filter.
   const [weatherApplicable, setWeatherApplicable] = useState(true);
-
-  // Lifted from PredictiveIncidentChart's same response so the corridor card
-  // below it doesn't refetch /api/incident/predictive on its own.
-  const [corridorData, setCorridorData] = useState<{
-    corridorForecast: CorridorForecastPoint[] | null;
-    kmSegmentForecast: KmSegmentForecastPoint[] | null;
-    unclassifiedLocationShare: number | null;
-    forecastHorizon: number;
-    forecastModelLabel: string | null;
-    showVolume: boolean;
-    showWeather: boolean;
-  } | null>(null);
 
   // Restore the view the hourly drill-down was opened from
   useEffect(() => {
@@ -829,26 +816,16 @@ export default function IncidentPage() {
               weather={weather}
               onDataBoundsChange={setPredictiveDataBounds}
               onWeatherApplicableChange={setWeatherApplicable}
-              onCorridorForecastChange={setCorridorData}
             />
           </div>
         ) : null}
         {activeTab === "Predictive" && (
-          <div className={styles.spanHalf}>
-            <PredictiveCorridorChart
-              corridorForecast={corridorData?.corridorForecast ?? null}
-              kmSegmentForecast={corridorData?.kmSegmentForecast ?? null}
-              unclassifiedLocationShare={corridorData?.unclassifiedLocationShare ?? null}
-              forecastHorizon={corridorData?.forecastHorizon ?? 0}
-              showVolume={corridorData?.showVolume ?? false}
-              showWeather={corridorData?.showWeather ?? true}
-              forecastModelLabel={corridorData?.forecastModelLabel ?? null}
-              loading={corridorData === null}
-            />
+          <div className={styles.spanFull}>
+            <PredictiveCorridorChart />
           </div>
         )}
         {activeTab === "Predictive" && (
-          <div className={styles.spanHalf}>
+          <div className={styles.spanFull}>
             <BreakdownResponseModel />
           </div>
         )}

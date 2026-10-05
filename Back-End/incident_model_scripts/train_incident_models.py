@@ -92,16 +92,28 @@ EVAL_EXCLUDED_DAYS: dict[str, str] = {
         "the value was not imputed."
     ),
 }
-# 28 so the dashboard's Future control has a full month to trim: its presets are
-# 1 wk / 2 wk / 1 mo, and a preset wider than what this writes renders disabled.
+# 90 so the dashboard's Future control can offer 2mo/3mo the same way the
+# traffic module's own Ahead control does (gold.ml_predictive_volume, via
+# retrain_honest.py + extend_future_volume.py) — matched to that precedent
+# rather than picked independently.
 #
 # Read these days with the horizon in mind. Every model here forecasts the
 # future window recursively — each day is predicted, then fed back in as if it
 # were observed, because no actual exists yet. Error therefore compounds with
-# distance, and the lag_1/roll_mean_7 features are pure model output well before
-# day 28. The 90-day scoring window still measures one-step-ahead accuracy only,
-# so the published metrics describe day 1 and progressively overstate the rest.
-FUTURE_DAYS = 28
+# distance, and the lag_1/roll_mean_7 features are pure model output well
+# before day 90. The 90-day VALIDATION_DAYS window above measures something
+# different and does not stand in for this: every one of its predictions is
+# one-step-ahead (fed the real previous day, never its own prior guess), so it
+# describes "given yesterday's actual count, how good is today's forecast,"
+# not "how good is day 60 of one continuous blind run." The latter is what
+# measure_incident_horizon_accuracy.py exists to measure — a genuine
+# rolling-origin backtest at this same 90-day depth, written to
+# ml_incident_horizon_accuracy, so the dashboard can quote real error per
+# horizon bucket instead of extrapolating the day-1 figure across three months.
+# Lengthening this constant cannot change any published accuracy metric or
+# which model is champion: both are decided by run_evaluation/select_champion
+# well before this future block is ever built.
+FUTURE_DAYS = 90
 N_FOLDS = 3
 SEQ_LEN = 14  # LSTM/GRU lookback window
 SEED = 42

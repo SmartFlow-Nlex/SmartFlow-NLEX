@@ -231,6 +231,12 @@ const SECTION_STYLE: React.CSSProperties = {
   color: "var(--text-muted)",
 };
 
+const todayLocal = () => {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
 const emptyForm = {
   title: "",
   description: "",
@@ -257,6 +263,9 @@ export default function MaintenancePage() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  // Start of the job when the edit form opened, so an in-progress job whose
+  // start has already passed can still be edited without moving its start.
+  const originalStartRef = useRef<string>("");
   const [form, setForm] = useState(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -438,6 +447,7 @@ export default function MaintenancePage() {
       endTime: timeOf(ends),
     });
     setEditId(s.id);
+    originalStartRef.current = `${dateOf(starts)}T${timeOf(starts)}`;
     setFormError(null);
     setDetail(null);
     setFormOpen(true);
@@ -463,6 +473,9 @@ export default function MaintenancePage() {
     const startsAt = new Date(`${form.startDate}T${form.startTime || "00:00"}`);
     const endsAt = new Date(`${form.endDate}T${form.endTime || "00:00"}`);
     if (endsAt <= startsAt) return setFormError("The window must end after it starts.");
+    const startChanged = !editId || `${form.startDate}T${form.startTime || "00:00"}` !== originalStartRef.current;
+    if (startChanged && startsAt.getTime() < Date.now())
+      return setFormError("The start can't be in the past. Pick a date and time from now onward.");
 
     setSaving(true);
     setFormError(null);
@@ -946,7 +959,7 @@ export default function MaintenancePage() {
               <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1.2fr 1fr", gap: 12 }}>
                 <div className="ms-input-group">
                   <label>Start date <span className="ms-req">*</span></label>
-                  <input type="date" className="ms-input" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} />
+                  <input type="date" min={editId ? undefined : todayLocal()} className="ms-input" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} />
                 </div>
                 <div className="ms-input-group">
                   <label>Start time</label>
@@ -954,7 +967,7 @@ export default function MaintenancePage() {
                 </div>
                 <div className="ms-input-group">
                   <label>End date <span className="ms-req">*</span></label>
-                  <input type="date" min={form.startDate || undefined} className="ms-input" value={form.endDate} onChange={(e) => set("endDate", e.target.value)} />
+                  <input type="date" min={form.startDate || (editId ? undefined : todayLocal())} className="ms-input" value={form.endDate} onChange={(e) => set("endDate", e.target.value)} />
                 </div>
                 <div className="ms-input-group">
                   <label>End time</label>
