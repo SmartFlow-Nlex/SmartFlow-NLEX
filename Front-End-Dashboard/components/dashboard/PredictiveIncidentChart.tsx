@@ -45,19 +45,6 @@ type Props = {
   // weatherApplicable, so the page can disable the Weather chips when the
   // current Range has nothing for them to filter.
   onWeatherApplicableChange?: (applicable: boolean) => void;
-  // Legacy callback to power PredictiveCorridorChart from this component's fetch.
-  // Kept so the page can render PredictiveCorridorChart as its own card without this
-  // component fetching /api/incident/predictive a second time for the same
-  // Range/Weather-scoped data.
-  onCorridorForecastChange?: (corridor: {
-    corridorForecast: PredictiveData["corridorForecast"];
-    kmSegmentForecast: PredictiveData["kmSegmentForecast"];
-    unclassifiedLocationShare: number | null;
-    forecastHorizon: number;
-    forecastModelLabel: string | null;
-    showVolume: boolean;
-    showWeather: boolean;
-  }) => void;
 };
 
 const zoneLabel = (text: string, show: boolean, color: string) => ({
@@ -75,20 +62,24 @@ const zoneLabel = (text: string, show: boolean, color: string) => ({
 // still renders legibly, but a custom range can squeeze it much narrower.
 const MIN_ZONE_LABEL_FRACTION = 0.06;
 
-// How far into the Future band to draw, mirroring the Future control on the
-// traffic chart. `d` counts days from the first forecast row, and the control
-// only ever trims what is already on the response — it cannot ask the API for
-// a longer horizon, because the horizon is whatever the training run wrote
-// into ml_predictive_incidents.
+// How far into the Future band to draw, matching the traffic chart's own
+// Ahead control exactly (2wk/1mo/2mo/3mo) — `d` counts days from the first
+// forecast row, and the control only ever trims what is already on the
+// response — it cannot ask the API for a longer horizon, because the
+// horizon is whatever the training run wrote into ml_predictive_incidents.
 //
-// That pipeline currently writes 7 forecast days, so the wider presets render
-// disabled rather than hidden: a greyed "1 mo" states the ceiling, where an
-// absent button would read as a missing feature. They enable themselves once
-// the table holds that many days, with no change needed here.
+// train_incident_models.py now writes 90 forecast days (FUTURE_DAYS), the
+// same depth traffic's own retrain_honest.py + extend_future_volume.py
+// write to gold.ml_predictive_volume, so every preset below is backed by a
+// real forecast the same way traffic's is. A preset wider than what's
+// actually on the response still renders disabled rather than hidden,
+// exactly as before — the ceiling is stated, not hidden, if a future
+// retrain ever writes fewer days again.
 const FUTURE_PRESETS = [
-  { label: "1 wk", d: 7 },
   { label: "2 wk", d: 14 },
   { label: "1 mo", d: 28 },
+  { label: "2 mo", d: 60 },
+  { label: "3 mo", d: 90 },
 ] as const;
 
 // No defaults: with nothing passed the component sends no query params, so the
@@ -101,7 +92,6 @@ export default function PredictiveIncidentChart({
   weather,
   onDataBoundsChange,
   onWeatherApplicableChange,
-  onCorridorForecastChange,
 }: Props = {}) {
   const [data, setData] = useState<PredictiveData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -193,16 +183,6 @@ export default function PredictiveIncidentChart({
         setData(payload);
         onDataBoundsChange?.(payload.dataBounds);
         onWeatherApplicableChange?.(payload.weatherApplicable);
-        
-        onCorridorForecastChange?.({
-          corridorForecast: payload.corridorForecast,
-          kmSegmentForecast: payload.kmSegmentForecast,
-          unclassifiedLocationShare: payload.unclassifiedLocationShare,
-          forecastHorizon: payload.corridorForecastDays,
-          forecastModelLabel: payload.corridorForecast ? (META[payload.corridorForecastModel as ModelKey]?.label ?? payload.corridorForecastModel) : null,
-          showVolume,
-          showWeather,
-        });
 
         // Open on the champion so the default view matches the headline metrics,
         // but only on first load — re-seeding on every filter change would throw
@@ -224,7 +204,7 @@ export default function PredictiveIncidentChart({
     return () => {
       cancelled = true;
     };
-  }, [months, from, to, weather, showVolume, showWeather, onDataBoundsChange, onWeatherApplicableChange, onCorridorForecastChange]);
+  }, [months, from, to, weather, showVolume, showWeather, onDataBoundsChange, onWeatherApplicableChange]);
 
   // Only blank the card on the very first load. Changing Range or Weather
   // refetches, and swapping the whole chart out for a spinner each time made the
@@ -1012,6 +992,30 @@ export default function PredictiveIncidentChart({
 
   const option: EChartsOption = splitOn ? splitOption : totalOption;
 
+  // Same pill/groupLabel helpers PredictiveVolumeChart's own View/Ahead
+  // controls use, so the two charts' control rows are visually identical,
+  // not just structurally similar.
+  const pill = (on: boolean, colour: string): React.CSSProperties => ({
+    padding: "3px 10px", borderRadius: "999px", cursor: "pointer", border: `1px solid ${on ? colour : "var(--border-default)"}`,
+    background: on ? colour : "var(--bg-surface)", color: on ? "var(--text-on-dark)" : "var(--text-secondary)",
+    fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap",
+  });
+  const groupLabel: React.CSSProperties = {
+    fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-muted)", whiteSpace: "nowrap",
+  };
+
+  // Which horizon-accuracy bucket covers the currently-selected Ahead
+  // preset, so the caption row can quote the real measured error for THIS
+  // stretch instead of the day-1 figure in modelInfo.metrics (see
+  // measure_incident_horizon_accuracy.py — one-step-ahead validation cannot
+  // describe a 90-day recursive run). Picks the bucket whose range contains
+  // effectiveFutureDays; falls back to the widest stored bucket if the
+  // selection sits past everything measured so far.
+  const futureHorizonBucket =
+    data.horizonAccuracy.find((b) => effectiveFutureDays >= b.hLo && effectiveFutureDays <= b.hHi) ??
+    [...data.horizonAccuracy].sort((a, b) => b.hHi - a.hHi)[0] ??
+    null;
+
   const modelToolbar = (
     <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: "0 1 auto", minWidth: 0 }}>
       <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)", flex: "none" }}>
@@ -1236,28 +1240,45 @@ export default function PredictiveIncidentChart({
             Click any point to view that day&apos;s hourly breakdown
           </p>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-          {data.accidentSplit && (
-            <div
-              style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px" }}
-              title="Total: the blended forecast with every candidate model. Split: a dedicated accident forecast, with breakdowns derived as blended total minus accidents."
-            >
-              {([false, true] as const).map((on) => (
-                <button
-                  key={String(on)}
-                  onClick={() => setSplitView(on)}
-                  aria-pressed={splitView === on}
-                  style={{
-                    padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
-                    background: splitView === on ? "#4f46e5" : "transparent",
-                    color: splitView === on ? "var(--text-on-dark)" : "var(--text-secondary)",
-                    fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap",
-                  }}
-                >
-                  {on ? "Accident / Breakdown" : "Total"}
-                </button>
-              ))}
-            </div>
+        {data.accidentSplit && (
+          <div
+            style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px" }}
+            title="Total: the blended forecast with every candidate model. Split: a dedicated accident forecast, with breakdowns derived as blended total minus accidents."
+          >
+            {([false, true] as const).map((on) => (
+              <button
+                key={String(on)}
+                onClick={() => setSplitView(on)}
+                aria-pressed={splitView === on}
+                style={{
+                  padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
+                  background: splitView === on ? "#4f46e5" : "transparent",
+                  color: splitView === on ? "var(--text-on-dark)" : "var(--text-secondary)",
+                  fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap",
+                }}
+              >
+                {on ? "Accident / Breakdown" : "Total"}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Controls row, one row, matching PredictiveVolumeChart's own layout
+          exactly: Models + Volume + Weather on the left, View + Ahead on the
+          right. These used to be split across a title-row cluster and a
+          separate Models-only row; merged here so the two forecast charts
+          are operated the same way. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px 20px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", minHeight: 40 }}>
+          {splitOn && split ? (
+            <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>
+              Model picker not used in this view — the accident forecast is{" "}
+              {split.championModel ? (META[split.championModel as ModelKey]?.label ?? split.championModel) : "its own champion model"},
+              fitted on accidents alone; breakdowns are derived as blended total minus accidents.
+            </span>
+          ) : (
+            modelToolbar
           )}
           {/* Exposure overlay toggle — same pill the traffic forecast uses for
               its Weather overlay, so the two charts are operated the same way. */}
@@ -1323,25 +1344,51 @@ export default function PredictiveIncidentChart({
             Weather
           </button>
         </div>
-      </div>
 
-      {/* The model picker has its own row instead of sharing the flex-wrapping cluster
-          above. It used to sit in that cluster and vanish in the Accident / Breakdown
-          view, which let the row reflow: at typical widths the cluster wrapped in Total
-          view and not in split view, so the Total | Accident / Breakdown toggle jumped
-          position exactly when clicked. With the picker out of the cluster, the toggle,
-          Volume and Weather are identical in both views, and this row keeps its height in
-          split view (saying why the picker doesn't apply) so nothing below shifts either. */}
-      <div style={{ display: "flex", alignItems: "center", minHeight: 40 }}>
-        {splitOn && split ? (
-          <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>
-            Model picker not used in this view — the accident forecast is{" "}
-            {split.championModel ? (META[split.championModel as ModelKey]?.label ?? split.championModel) : "its own champion model"},
-            fitted on accidents alone; breakdowns are derived as blended total minus accidents.
+        <div style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span style={groupLabel}>View</span>
+            <span style={{ display: "inline-flex", padding: 2, borderRadius: 999, background: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
+              {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
+                <button
+                  key={g}
+                  onClick={() => setGranularity(g)}
+                  title={g === "Daily" ? "One point per day — the resolution the models actually forecast" : `Averaged per ${g.replace("ly", "").toLowerCase()} — a viewing aid, not a separate forecast`}
+                  style={{
+                    padding: "3px 10px", borderRadius: 999, border: "none",
+                    background: granularity === g ? "var(--page-accent, #3876f5)" : "transparent",
+                    color: granularity === g ? "var(--text-on-dark)" : "var(--text-secondary)",
+                    fontWeight: 600, fontSize: "0.72rem", cursor: "pointer",
+                  }}
+                >
+                  {g}
+                </button>
+              ))}
+            </span>
           </span>
-        ) : (
-          modelToolbar
-        )}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={groupLabel}>Ahead</span>
+            {FUTURE_PRESETS.map((item) => {
+              const unavailable = item.d > futureAvailable;
+              const active = effectiveFutureDays === item.d;
+              return (
+                <button
+                  key={item.label}
+                  onClick={() => setFutureDays(item.d)}
+                  disabled={unavailable}
+                  title={
+                    unavailable
+                      ? `The forecast only runs ${futureAvailable} day${futureAvailable === 1 ? "" : "s"} ahead — retrain the incident pipeline with a longer horizon to use this`
+                      : `Show ${item.d} days of forecast`
+                  }
+                  style={{ ...pill(active, "#16a34a"), cursor: unavailable ? "not-allowed" : "pointer", opacity: unavailable ? 0.4 : 1 }}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </span>
+        </div>
       </div>
 
       {/* "Each point = X" badge — only relevant once aggregation is actually
@@ -1362,118 +1409,45 @@ export default function PredictiveIncidentChart({
         </div>
       )}
 
-      {/* Zone window & Granularity controls, laid out the same way
-          PredictiveVolumeChart's toolbar is: one row, GRANULARITY first, then
-          a tinted card per band. No Hourly pill here — every Daily point
-          already opens the hourly breakdown on click, so there's no separate
-          capability an Hourly granularity would add. */}
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-        {/* GRANULARITY control pill */}
-        <span style={{
-          display: "inline-flex", alignItems: "center", gap: "8px", padding: "10px 14px",
-          borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)", fontSize: "0.76rem",
-        }}>
-          <b style={{ color: "var(--page-accent, #3b82f6)", letterSpacing: "0.04em", fontSize: "0.75rem", textTransform: "uppercase" }}>
-            GRANULARITY
-          </b>
-          <div style={{
-            display: "inline-flex", alignItems: "center", padding: "2px",
-            borderRadius: "999px", background: "var(--bg-surface)", border: "1px solid var(--border-default)",
-          }}>
-            {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
-              <button
-                key={g}
-                onClick={() => setGranularity(g)}
-                title={
-                  g === "Daily"
-                    ? "One point per day — the resolution the models actually forecast"
-                    : `Averaged per ${g.replace("ly", "").toLowerCase()} — a viewing aid, not a separate forecast`
-                }
-                style={{
-                  padding: "3px 10px", borderRadius: "999px", cursor: "pointer", border: "none",
-                  background: "transparent",
-                  color: granularity === g ? "#2563eb" : "var(--text-secondary)",
-                  fontWeight: granularity === g ? 700 : 600, fontSize: "0.72rem",
-                }}
-              >
-                {granularity === g ? `✓ ${g}` : g}
-              </button>
-            ))}
-          </div>
-        </span>
-
-        {/* Past */}
+      {/* Caption row — what the chart shows, one slim read-only line, matching
+          PredictiveVolumeChart's own Past/Present/Future legend exactly (no
+          buttons here; View and Ahead above are the controls, this is only
+          the explanation of what they produced). */}
+      <div style={{ display: "flex", alignItems: "center", gap: "18px", flexWrap: "wrap", fontSize: "0.74rem", color: "var(--text-secondary)" }}>
         {showPast && (
-          <span style={{
-            display: "inline-flex", alignItems: "center", gap: "8px", padding: "10px 14px",
-            borderRadius: "10px", background: "rgba(37,99,235,0.07)", border: "1px solid rgba(37,99,235,0.18)", fontSize: "0.76rem",
-          }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(37,99,235,0.5)" }} />
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(37,99,235,0.25)" }} />
             <b style={{ color: "var(--text-primary)" }}>Past</b>
-            {modelInfo.trainedDays != null && (
-              <span style={{ color: "var(--text-secondary)" }}>
-                {fmtInt(modelInfo.trainedDays)}d trained{trainedPct != null ? ` · ${trainedPct.toFixed(2)}%` : ""} · showing last {fmtInt(effHoldoutStart)}d
+            {modelInfo.trainedDays != null
+              ? `trained · ${fmtInt(modelInfo.trainedDays)}d${trainedPct != null ? ` (${trainedPct.toFixed(0)}%)` : ""} · showing last ${fmtInt(effHoldoutStart)}d`
+              : `showing last ${fmtInt(effHoldoutStart)}d`}
+          </span>
+        )}
+        {showPresent && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(249,115,22,0.35)" }} />
+            <b style={{ color: "var(--text-primary)" }}>Present</b>
+            tested on real counts · {presentScoredDays}d{scoredPct != null ? ` (${scoredPct.toFixed(0)}%)` : ""}
+          </span>
+        )}
+        {/* Hidden outright when the visible window has no Future band at all
+            (a custom range ending before the horizon starts) — same
+            condition the Ahead control above uses. */}
+        {futureAvailable > 0 && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(22,163,74,0.3)" }} />
+            <b style={{ color: "var(--text-primary)" }}>Future</b>
+            forecast · {effectiveFutureDays}d
+            {daily.length > 0 && <> · to {fmtDateFull(daily[daily.length - 1].date)}</>}
+            {futureHorizonBucket && (
+              <span
+                title={futureHorizonBucket.note ?? undefined}
+                style={{ color: futureHorizonBucket.usable ? "inherit" : "var(--color-danger, #dc2626)" }}
+              >
+                {" "}· typical error {futureHorizonBucket.wmape != null ? `${futureHorizonBucket.wmape.toFixed(0)}%` : "n/a"}
+                {!futureHorizonBucket.usable ? " (beyond what this champion clears)" : ""}
               </span>
             )}
-          </span>
-        )}
-
-        {/* Present */}
-        {showPresent && (
-          <span style={{
-            display: "inline-flex", alignItems: "center", gap: "8px", padding: "10px 14px",
-            borderRadius: "10px", background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.22)", fontSize: "0.76rem",
-          }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(249,115,22,0.55)" }} />
-            <b style={{ color: "var(--text-primary)" }}>Present</b>
-            <span style={{ color: "var(--text-secondary)" }}>
-              {presentScoredDays}d scored{scoredPct != null ? ` · ${scoredPct.toFixed(2)}%` : ""} · fixed by evaluation
-            </span>
-          </span>
-        )}
-
-        {/* Future. Hidden outright when the visible window has no Future band
-            at all (a custom range ending before the horizon starts), since
-            there would be nothing for the preset buttons to trim. */}
-        {futureAvailable > 0 && (
-          <span style={{
-            display: "inline-flex", alignItems: "center", gap: "8px", flexWrap: "wrap", padding: "10px 14px",
-            borderRadius: "10px", background: "rgba(22,163,74,0.07)", border: "1px solid rgba(22,163,74,0.2)", fontSize: "0.76rem",
-          }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(22,163,74,0.5)" }} />
-            <b style={{ color: "var(--text-primary)" }}>Future</b>
-            {FUTURE_PRESETS.map((item) => {
-              const unavailable = item.d > futureAvailable;
-              const active = effectiveFutureDays === item.d;
-              return (
-                <button
-                  key={item.label}
-                  onClick={() => setFutureDays(item.d)}
-                  disabled={unavailable}
-                  title={
-                    unavailable
-                      ? `The forecast only runs ${futureAvailable} day${futureAvailable === 1 ? "" : "s"} ahead — retrain the incident pipeline with a longer horizon to use this`
-                      : `Show ${item.d} days of forecast`
-                  }
-                  style={{
-                    padding: "3px 10px",
-                    borderRadius: "999px",
-                    cursor: unavailable ? "not-allowed" : "pointer",
-                    border: active ? "1px solid #16a34a" : "1px solid var(--border-default)",
-                    background: active ? "#16a34a" : "var(--bg-surface)",
-                    color: active ? "var(--bg-surface)" : "var(--text-secondary)",
-                    fontWeight: 600,
-                    fontSize: "0.72rem",
-                    opacity: unavailable ? 0.4 : 1,
-                  }}
-                >
-                  {item.label}
-                </button>
-              );
-            })}
-            <span style={{ color: "var(--text-muted)" }}>
-              · validated at {presentScoredDays}d
-            </span>
           </span>
         )}
       </div>
