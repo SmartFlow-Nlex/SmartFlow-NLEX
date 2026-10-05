@@ -80,23 +80,15 @@ export type ManualInterventions = ManualControls & { readonly incidents: readonl
 /** The part of the operator's settings a closure event has to be checked against. */
 export type ManualClosure = Pick<ManualControls, "closedLanes" | "closurePoint" | "closureEnd">;
 
-/** Why an event that needs the closure stretch is refused while the operator has a closure of their own elsewhere. Direction-agnostic base text; addEvent prefixes it with the event's own carriageway (see manualClosureMessage) so a Both-mode refusal names which one it is about. */
-export const MANUAL_CLOSURE_MESSAGE = "Clear your manual lane closure first — this event needs the closure stretch.";
-
-/** MANUAL_CLOSURE_MESSAGE, named to the carriageway the refused event was for — "SB: Clear your manual lane closure first ...". */
-export function manualClosureMessage(direction: Direction): string {
-  return `${direction}: ${MANUAL_CLOSURE_MESSAGE}`;
-}
-
 /** Two stretches closer than this (metres, at each end) are the same stretch. */
 export const SAME_STRETCH_TOL_M = 0.5;
 
 /**
  * True when the operator has a closure of their own (any lane closed by hand) on a
- * stretch that is not `stretch`. The engine has ONE closure stretch, so an event
- * that needs it cannot run alongside such a closure; lanes are never moved from the
- * operator's stretch onto the event's. A closure on the very same stretch is no
- * conflict: nothing would move.
+ * stretch that is not `stretch`. Lanes are never moved from the operator's stretch
+ * onto an event's, so such an event closes its own lanes on its own stretch beside
+ * the operator's (composeInterventions) rather than taking the shared one. A closure
+ * on the very same stretch is no conflict: nothing would move.
  */
 export function manualClosureConflicts(manual: ManualClosure, stretch: { readonly closurePointM: number; readonly closureEndM: number }): boolean {
   if (!manual.closedLanes.some(Boolean)) return false;
@@ -512,11 +504,6 @@ export function resourceWindows(event: ScenarioEvent): readonly Window[] {
   }
 }
 
-const RESOURCE_NAME: Readonly<Record<ExclusiveResource, string>> = {
-  closure_stretch: "closure stretch",
-  speed_zone: "speed zone",
-};
-
 function minutesAfterWarmup(s: number): string {
   return `+${Number((s / 60).toFixed(1))} min`;
 }
@@ -544,34 +531,13 @@ function conflictMessage(existing: readonly ScenarioEvent[], candidate: Scenario
     }
     return null;
   }
-  const mine = resourceWindows(candidate);
-  for (const other of existing) {
-    for (const theirs of resourceWindows(other)) {
-      for (const w of mine) {
-        if (w.resource !== theirs.resource) continue;
-        if (w.fromS < theirs.toS && theirs.fromS < w.toS) {
-          return (
-            `${candidate.direction}: Cannot add "${candidate.name}": it needs the engine's single ${RESOURCE_NAME[w.resource]} from ${minutesAfterWarmup(w.fromS)} to ${minutesAfterWarmup(w.toS)}, ` +
-            `and "${other.name}" holds it from ${minutesAfterWarmup(theirs.fromS)} to ${minutesAfterWarmup(theirs.toS)}. ` +
-            `The two are not merged; move one of them in time. Nothing was changed.`
-          );
-        }
-      }
-    }
-  }
+  // On the carriageway, events overlap freely: each has a closure or speed zone of its own (composeInterventions).
   return null;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Adding and removing events
 ───────────────────────────────────────────────────────────────────────────── */
-
-/** The closure stretch an event takes in its first lane-blocking phase; null for an event with no closure. */
-function firstClosureStretch(event: ScenarioEvent, road: Road): ClosureStretch | null {
-  const phase = event.phases.find((p) => !p.skipped && p.lanesBlocked > 0 && p.wreckLengthM !== null);
-  if (phase === undefined || phase.wreckLengthM === null) return null;
-  return closureStretch(road.metresAt(event.positionKm), phase.wreckLengthM, road.segmentLengthM);
-}
 
 /** "Breakdown in a lane #2"; rain names its intensity instead ("Heavy rain #1", "Light rain #2"). */
 export function eventName(variant: ScenarioVariant, seq: number): string {
@@ -588,11 +554,10 @@ export function eventName(variant: ScenarioVariant, seq: number): string {
  * per-direction list it was called for. Whoever stores the result into a
  * per-direction list must go through addEventToBucket, which does know and
  * refuses a mismatch (see directionBucketsConsistent).
- * Refused when the event cannot run on `road` (see eventProblems), when it needs
- * the closure stretch while the operator has a manual closure on a different
- * stretch (manualClosureMessage; judged against the stretch of its first
- * lane-blocking phase), or when it needs a single-instance lever another event
- * holds at an overlapping time.
+ * Refused when the event cannot run on `road` (see eventProblems), or when it is at
+ * a booth or pump another event holds at an overlapping time. Nothing else limits
+ * how many events run at once: on the carriageway each has a closure or speed zone
+ * of its own (composeInterventions). `manual` is kept for the callers' sake.
  */
 export function addEvent(events: readonly ScenarioEvent[], spec: NewEventSpec, road: Road, seq: number, manual: ManualClosure): AddResult {
   if (!Number.isInteger(seq) || seq < 1) throw new RangeError(`seq must be a positive integer, got ${seq}`);
@@ -629,8 +594,9 @@ export function addEvent(events: readonly ScenarioEvent[], spec: NewEventSpec, r
   }
   const problems = eventProblems(event, road);
   if (problems.length > 0) return { ok: false, reason: `Cannot add "${name}": ${problems.join("; ")}.` };
-  const first = firstClosureStretch(event, road);
-  if (first !== null && manualClosureConflicts(manual, first)) return { ok: false, reason: manualClosureMessage(spec.direction) };
+  // Another event, or the operator's own closure, on the road at the same time is no reason to refuse: each event
+  // closes its own lanes on its own stretch (composeInterventions). Only a booth already taken is.
+  void manual;
   const conflict = conflictMessage(events, event);
   if (conflict !== null) return { ok: false, reason: conflict };
   return { ok: true, events: [...events, event], event };
@@ -789,15 +755,20 @@ export type InvalidEvent = { readonly eventId: string; readonly eventName: strin
 export type SuppressedEvent = { readonly eventId: string; readonly eventName: string; readonly resource: ExclusiveResource; readonly heldBy: string };
 
 export type Ownership = {
+  /** The closure stretch the operator's controls show: the first event closing lanes, with the operator's lanes on it. */
   readonly closure: ClosureOwnership | null;
   readonly speedZone: SpeedZoneOwnership | null;
+  /** Every further event closing lanes at the same time, each on its own lanes and stretch (Interventions.closures). */
+  readonly extraClosures: readonly ClosureOwnership[];
+  /** Every further event with a speed zone at the same time, each with its own zone and limit (Interventions.speedZones). */
+  readonly extraSpeedZones: readonly SpeedZoneOwnership[];
   readonly incidents: readonly IncidentOwnership[];
   readonly yielded: readonly YieldedEvent[];
   readonly invalid: readonly InvalidEvent[];
   readonly suppressed: readonly SuppressedEvent[];
 };
 
-export const NO_OWNERS: Ownership = { closure: null, speedZone: null, incidents: [], yielded: [], invalid: [], suppressed: [] };
+export const NO_OWNERS: Ownership = { closure: null, speedZone: null, extraClosures: [], extraSpeedZones: [], incidents: [], yielded: [], invalid: [], suppressed: [] };
 
 /** "<event> — <phase>", for "Driven by: ...". */
 export function describeOwner(o: Owner): string {
@@ -807,7 +778,7 @@ export function describeOwner(o: Owner): string {
 /** Engine lane indices a scenario is blocking, as a flag per lane. */
 export function scenarioLockedLanes(owners: Ownership, laneCount: number): boolean[] {
   const locked = Array<boolean>(laneCount).fill(false);
-  if (owners.closure !== null) for (const i of owners.closure.lanes) if (i >= 0 && i < laneCount) locked[i] = true;
+  for (const c of [owners.closure, ...owners.extraClosures]) if (c !== null) for (const i of c.lanes) if (i >= 0 && i < laneCount) locked[i] = true;
   return locked;
 }
 
@@ -819,7 +790,9 @@ export function ownershipKey(o: Ownership): string {
   const y = o.yielded.map((x) => `${x.eventId}/${x.resource}`).join(",");
   const v = o.invalid.map((x) => x.eventId).join(",");
   const s = o.suppressed.map((x) => x.eventId).join(",");
-  return [c, z, i, y, v, s].join("|");
+  const ec = o.extraClosures.map((x) => `${x.eventId}/${x.phaseId}/${x.lanes.join(",")}`).join(";");
+  const ez = o.extraSpeedZones.map((x) => `${x.eventId}/${x.phaseId}`).join(";");
+  return [c, z, i, y, v, s, ec, ez].join("|");
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -876,14 +849,17 @@ function ownerOf(event: ScenarioEvent, phase: ScheduledPhase): Owner {
  *     lanes and its stretch replace the operator's stretch. Its lanes are always
  *     closed. Lanes the operator closes WHILE it owns the stretch are kept on top
  *     (never fewer lanes than the scenario blocks, extra ones allowed), on the
- *     event's stretch. Nothing is carried over: if the operator already has a
- *     closure on a different stretch when the event would take over, the event
- *     YIELDS instead (`previous` says who already held the stretch a moment ago; an
- *     event that did keeps it, and the operator's lanes are then the ones closed
- *     while it owned it).
- *   - Speed zone: a shoulder breakdown's zone and limit replace the operator's for
- *     the event's duration, unless the operator has a limit set, in which case the
- *     event yields.
+ *     event's stretch. If the operator already has a closure on a different
+ *     stretch when the event would take over (`previous` says who already held the
+ *     stretch a moment ago; an event that did keeps it), or another event already
+ *     holds it, the event closes its own lanes on its own stretch instead
+ *     (owners.extraClosures → Interventions.closures). There is no limit on how
+ *     many run at once (an adviser's requirement, 2026-10-05; the road used to
+ *     have one closure, so a second collision was refused).
+ *   - Speed zone: the first event's zone and limit replace the operator's for its
+ *     duration. Every further one, and every one while the operator has a limit of
+ *     their own, runs alongside as a zone of its own (owners.extraSpeedZones →
+ *     Interventions.speedZones); where zones overlap the engine takes the lowest.
  *   - Incidents: the operator's, then one per obstacle slot for each in-lane
  *     breakdown that is running.
  *   - Zero-length phases are never current, so they change nothing.
@@ -903,6 +879,8 @@ export function composeInterventions(
 
   let closure: ClosureOwnership | null = null;
   let speedZone: SpeedZoneOwnership | null = null;
+  const extraClosures: ClosureOwnership[] = [];
+  const extraSpeedZones: SpeedZoneOwnership[] = [];
   const incidents: IncidentOwnership[] = [];
   const yielded: YieldedEvent[] = [];
   const invalid: InvalidEvent[] = [];
@@ -926,16 +904,7 @@ export function composeInterventions(
         const base = operatorLaneToEngineIndex(event.lane, road.laneCount);
         const stretch = closureStretch(positionM, phase.wreckLengthM, road.segmentLengthM);
         if (base === null || stretch === null) break;
-        if (closure !== null) {
-          suppressed.push({ eventId: event.id, eventName: event.name, resource: "closure_stretch", heldBy: closure.eventId });
-          break;
-        }
-        const keeping = previous.closure !== null && previous.closure.eventId === event.id;
-        if (!keeping && manualClosureConflicts(manual, stretch)) {
-          yielded.push({ ...ownerOf(event, phase), resource: "closure_stretch", reason: "operator_closure_active" });
-          break;
-        }
-        closure = {
+        const held: ClosureOwnership = {
           ...ownerOf(event, phase),
           lanes: event.extraLanes.length > 0
             ? manualBlockedLanes(base, event.extraLanes, road.laneCount)
@@ -943,20 +912,19 @@ export function composeInterventions(
           closurePointM: stretch.closurePointM,
           closureEndM: stretch.closureEndM,
         };
+        // The shared stretch if it is free and the operator's own closure is not elsewhere; otherwise a closure of its own.
+        const keeping = previous.closure !== null && previous.closure.eventId === event.id;
+        if (closure === null && (keeping || !manualClosureConflicts(manual, stretch))) closure = held;
+        else extraClosures.push(held);
         break;
       }
       case "speed_zone": {
-        if (manual.speedLimitKmh !== null) {
-          yielded.push({ ...ownerOf(event, phase), resource: "speed_zone", reason: "operator_limit_active" });
-          break;
-        }
-        if (speedZone !== null) {
-          suppressed.push({ eventId: event.id, eventName: event.name, resource: "speed_zone", heldBy: speedZone.eventId });
-          break;
-        }
         const window = speedZoneWindow(event.variant, positionM, road);
         if (window === null) break;
-        speedZone = { ...ownerOf(event, phase), zone: window.zone, limitKmh: window.limitKmh };
+        const held: SpeedZoneOwnership = { ...ownerOf(event, phase), zone: window.zone, limitKmh: window.limitKmh };
+        // The shared zone if the operator has no limit of their own and no event has it; otherwise a zone of its own.
+        if (manual.speedLimitKmh === null && speedZone === null) speedZone = held;
+        else extraSpeedZones.push(held);
         break;
       }
       case "incident": {
@@ -987,8 +955,14 @@ export function composeInterventions(
     incidents: [...manual.incidents.map((i): Incident => ({ lane: i.lane, x: i.x })), ...incidents.map((i): Incident => ({ lane: i.lane, x: i.x }))],
     speedLimitKmh: speedZone === null ? manual.speedLimitKmh : speedZone.limitKmh,
     speedZone: speedZone === null ? [manual.speedZone[0], manual.speedZone[1]] : [speedZone.zone[0], speedZone.zone[1]],
+    closures: extraClosures.map((c) => ({
+      lanes: Array.from({ length: road.laneCount }, (_, i) => c.lanes.includes(i)),
+      from: c.closurePointM,
+      to: c.closureEndM,
+    })),
+    speedZones: extraSpeedZones.map((z) => ({ from: z.zone[0], to: z.zone[1], kmh: z.limitKmh })),
   };
-  return { interventions, owners: { closure, speedZone, incidents, yielded, invalid, suppressed } };
+  return { interventions, owners: { closure, speedZone, extraClosures, extraSpeedZones, incidents, yielded, invalid, suppressed } };
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1141,6 +1115,8 @@ export function createEngineBinding(): EngineBinding {
       sim.interventions.showClosurePreview = next.showClosurePreview;
       sim.interventions.speedLimitKmh = next.speedLimitKmh;
       sim.interventions.speedZone = next.speedZone;
+      sim.interventions.closures = next.closures;
+      sim.interventions.speedZones = next.speedZones;
 
       // Scenario incidents: drop the ones no longer wanted, add or repair the ones wanted.
       const wanted = new Map(composition.owners.incidents.map((i) => [i.key, i] as const));
@@ -1193,7 +1169,11 @@ export function createEngineBinding(): EngineBinding {
          * A collision crashes the traffic that is there. Roadworks are not a
          * crash — nothing collides — so they get a works convoy that drives
          * in and parks in the lane it is closing, which is what makes the
-         * closure appear to be set up rather than to switch on. */
+         * closure appear to be set up rather than to switch on. A flood is not
+         * a crash either: the water closes the lane (drawn by drawWater) and
+         * traffic moves out of it. It shares the closure lever with the
+         * collisions, and through that it used to crash two cars into the water
+         * and send an ambulance to them. */
         if (state === "active" && !crashed.has(e.id) && lane !== null) {
           const family = e.variant.family;
           if (family === "scheduled_roadworks") {
@@ -1203,7 +1183,7 @@ export function createEngineBinding(): EngineBinding {
               sim.dispatchResponder("works", lane, at - 26, 14, e.id);
               crashed.add(e.id);
             }
-          } else if (effectOf(family) === "closure" && typeof sim.crashAt === "function") {
+          } else if (effectOf(family) === "closure" && family !== "flood" && typeof sim.crashAt === "function") {
             sim.crashAt(lane, road.metresAt(e.positionKm), crashSize(family), e.id);
             crashed.add(e.id);
           }
@@ -1448,7 +1428,7 @@ export function sceneMarks(events: readonly ScenarioEvent[], road: Road, simTime
     const phase = mark.state === "pending" ? null : phaseAt(e, t);
     const start = phase === null ? 0 : e.startS + phase.offsetS;
     const fraction = phase === null || !(phase.durationS > 0) ? 0 : Math.max(0, Math.min(1, (t - start) / phase.durationS));
-    const holds = owners.closure !== null && owners.closure.eventId === e.id ? owners.closure : null;
+    const holds = [owners.closure, ...owners.extraClosures].find((c) => c !== null && c.eventId === e.id) ?? null;
     out.push({
       ...mark,
       family: e.variant.family,

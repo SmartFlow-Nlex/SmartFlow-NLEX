@@ -55,11 +55,55 @@ run/pause state, sim speed and the fixed-step accumulator in `page.tsx`. Two sep
 matter: a binding closes over private ownership state, so one shared between directions would let each
 side's "who owns the closure right now" overwrite the other's (`verify.ts`'s binding-isolation checks
 pin that applying one never touches the other). A **focus** direction exists only for the few things
-that can address one road at a time — the Command prompt (its request carries no direction) and the
+that can address one road at a time — the Command prompt (for a command that names no carriageway) and the
 "Add to" picker; everything else in Both mode shows
 both carriageways, each named. There is no separate Focus control: each of those carries **its own NB / SB
 choice** (Add to, Commands apply to, and the "Exits, entries & gas stations" list's Showing), and they
 all move the same state, so choosing on one is seen on the others.
+
+### The Command prompt (GLM)
+
+Commands in English, Tagalog, Taglish or another Philippine language become a list of proposed actions;
+nothing changes until Apply. The prompt, the actions and their checks are in
+`Back-End/src/services/sandbox-command.service.ts`; the model is `z-ai/glm-5.3-flash` through OpenRouter,
+paid per token (approved 2026-10-05).
+
+- **What it can do (21 actions).** Route, window and "go to" a place; the view; lane closures and speed
+  zones by km on either carriageway; any scenario event (the catalogue's families and variants) on a lane,
+  at a plaza's booths, a station's pumps or a ramp's approach, or "where it usually happens" (the same
+  incident-log lookup as the Scenario panel's), with a start and a duration (typical = median, worst case =
+  90th percentile, or minutes); remove or clear events; booths or pumps shut or reopened by hand, with no
+  incident (held in `useDirectionSim`'s `closedBooths`, cleared by a rebuild like hand-closed lanes, and
+  counted as an intervention); lane reallocation on or off; lanes back to the road's or a count by hand;
+  inflow back to the recorded flow or a figure; the clock; the forecast day; a baseline; play, pause and the
+  simulation speed; reset; full screen.
+- **What it is sent.** Both carriageways' state, the route and window, every place on the corridor with its
+  id (marked on screen, on the route or off it), the events on the road (keyed `NB:ev2`, since each
+  carriageway numbers its own), the reallocation, the clock and the forecast days with their weekdays. It
+  may only name ids from those lists.
+- **Language.** The prompt carries the operators' words: Tagalog directions (pa-Maynila, pahilaga), lane
+  words and ordinals (pinakakanan, ikatlo), events (banggaan, karambola, tumaob, nasiraan, baha), times
+  (alas-siyete ng gabi), days (Biyernes, bukas), negation (huwag, maliban sa). The reply comes back in the
+  operator's language.
+- **Carriageway.** A direction word decides it; with none, a named place that is on one carriageway only
+  (the Bocaue Barrier) decides; otherwise the *Commands apply to* choice. Every action names its carriageway.
+- **Checks (server).** Every field is re-checked against what was sent (lane numbers per carriageway, as a
+  lane count or a reallocation in the same command changes them; km against the route; ids; dates;
+  variants; the sliders' ranges). A step a sound command left out is put in, not the action dropped: a
+  route round a place or km off the route, a window on one off screen. Every change is listed as a warning
+  under the proposal. Valid JSON with nothing in it is asked again once.
+- **Applying in steps (page).** Route, view, clock and day first; then the window and lane counts; then a
+  reallocation; then everything that acts on the road — each step after both runs have been rebuilt and
+  settled. A lane that is not there when Apply runs is reported. While the model works, the button counts
+  the seconds and Cancel stops it; it gives up after 2½ minutes.
+- **Tests.** `npm run check-command` (Back-End): 35 offline checks of the server's checks with hand-written
+  model answers — sound, incomplete, wrong and hostile; free. `npm run eval-command` (Back-End): 74 commands
+  in English, Tagalog, Taglish, with typos and in Bisaya, through GLM (paid, about 74 calls), with the pass
+  rate per language and the answer times. Last full run 70/71 (the one miss, "alas-siyete" read as 8:00,
+  fixed by spelling out the Spanish hours; the time cases then 9/9). Also checked end to end in the page
+  against the running backend: forecast day and clock, "kung saan madalas", a booth shut, pause, play at
+  5×, full screen, inflow, closures with a speed limit, "ibalik sa dati", lane reallocation on and off, a
+  km window, reset with one carriageway shown.
 
 ### The two carriageways are independent (modelling limitation)
 
@@ -128,9 +172,27 @@ field, **and** lives in that direction's own event list (the one held by that di
 `useDirectionSim`). Both, deliberately: the field lets a row, a log line or a message name its
 carriageway without knowing which list holds it, and having two records of the same fact means a drift
 between them is detectable instead of silent. Everything downstream is scoped by the bucket — one
-direction's events and manual controls go into `composeInterventions`, so conflicts, resource locks and
-ownership are per carriageway (the same event can exist on both at once; a refusal names its direction,
-e.g. `SB: Cannot add …`, via `conflictMessage` / `manualClosureMessage`).
+direction's events and manual controls go into `composeInterventions`, so resource locks and ownership are
+per carriageway (the same event can exist on both at once; a refusal names its direction, e.g.
+`SB: Cannot add …`, via `conflictMessage`).
+
+### No limit on events at once (2026-10-05)
+
+The engine used to have **one** closure stretch and **one** speed zone per carriageway, so at any moment a
+carriageway could run one event that closes lanes, one that sets a speed zone, and any number of in-lane
+breakdowns — two or three events, and a second collision overlapping the first was refused. At the adviser's
+request there is now no limit. `Interventions` carries `closures` and `speedZones` beside the original single
+pair: the first event that closes lanes still takes the shared stretch (with the operator's lanes on it, as
+before), and every further one — or one that meets the operator's own closure on another stretch — closes its
+own lanes on its own stretch (`owners.extraClosures`); the same for speed zones (`owners.extraSpeedZones`),
+and where zones overlap the engine takes the lowest limit. Every place the engine read "the closure" (the wall
+at its taper, the escape from a closing lane, merge caution beside it, lane-change blocking, the alert scan,
+seeding) now asks which closure in this lane is ahead (`closureList()` in `simulation.ts`, built once a step),
+so with a single closure it behaves exactly as before — every measured check passes unchanged. Nothing yields
+or is suppressed any more. The one refusal left is physical: two events at the same booth or pump at the same
+time (other booths of the plaza are free). `verify.ts` checks ten collisions at once on one carriageway, two
+closures on the real engine with no vehicle driving through either, and the lowest limit applying where zones
+overlap.
 
 The consistency rule is `directionBucketsConsistent(byDirection)` in `adapter.ts`: every event in
 bucket X must have `direction === X`. It is **enforced where events are stored**:
@@ -222,8 +284,8 @@ Choosing Rain in the Add panel offers **Light / Moderate / Heavy** (default Mode
 the speed of the whole simulated stretch for as long as the event runs, through the engine's one speed
 zone (`speedLimitKmh` + `speedZone` = `[0, segment length]`): **100, 100 and 96 km/h**
 (`ASSUMPTIONS.RAIN_SPEED_KMH`). The event is named for its intensity (`Heavy rain #1`), and its row shows
-`Corridor-wide · 96 km/h cap`. Rain still shares the engine's single speed zone, so it conflicts with an
-overlapping shoulder breakdown, exactly as before.
+`Corridor-wide · 96 km/h cap`. Rain and an overlapping shoulder breakdown both run: one takes the shared
+speed zone, the other a zone of its own, and the lower limit applies where they overlap.
 
 **Where the caps come from.** They are derived from one NLEx study, not invented: Mejia & Sigua (2018),
 *Impacts of Different Rainfall Intensities on Key Traffic Flow Parameters at …* (the end of the title did not
@@ -255,8 +317,8 @@ Chapter 11 weather adjustment factors were looked for and not found in any free 
 `sceneMarks(events, road, simTime, owners)` (in `adapter.ts`) turns each running event into a `SceneMark`:
 its family, phase and how far through the phase it is, and — the important part — **the lanes and stretch
 the engine's closure owner actually holds**. An event is drawn holding lanes only if it *owns* the closure,
-so the picture never shows a wreck, flood or work zone the engine is not honouring (an event that yielded
-its closure to the operator's own is drawn as the amber marker only). `sceneArt.ts` then draws, in this
+so the picture never shows a wreck, flood or work zone the engine is not honouring. An event on a closure
+of its own (a second collision, or one beside the operator's closure) draws its own lanes and stretch. `sceneArt.ts` then draws, in this
 order: flood water (under the traffic), the vehicles, the scenes (breakdown with hazards and cones,
 collision with skid marks, debris and smoke, the responders arriving and leaving by phase, roadworks
 with taper, barrels, work truck and arrow board), rain over everything, then the event labels — which
@@ -465,7 +527,7 @@ its cap-source chain; the catalogue/assumptions' internal consistency (phases, s
 lengths, resources, per-family default lane/vehicle/cause matching the data's own mode); closure
 geometry (buffer, wreck length, clamping) against 20,000 random cases; drift guards (chainage table,
 engine constants mirrored from `simulation.ts`, calibration file provenance); the adapter's
-scheduler and ownership rules (conflicts, yielding, lock-while-owned, no carry-over, zero-length
+scheduler and ownership rules (no limit on events at once, lock-while-owned, no carry-over, zero-length
 phases, a road that stops suiting an event); the real engine loop, rebuild, removal and fast-forward;
 every UI view (`resolutionView`, `describeResolution`, `effectiveState`, `describeBoundary`,
 `canvasMarks`); and a 1,500-trial fuzz check that re-composing with the previous ownership fed back

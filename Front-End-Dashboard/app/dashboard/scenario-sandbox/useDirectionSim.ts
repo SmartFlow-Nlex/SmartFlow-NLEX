@@ -87,6 +87,9 @@ export type Baseline = {
 };
 
 /** What every direction shares, computed once by the page and handed to each hook call. */
+/** The key a booth or pump shut by hand is held under in the facility engine (an event's is its own id). */
+const OPERATOR_BOOTHS = "operator";
+
 export type SharedRoadInputs = {
   readonly BACKEND: string;
   readonly fromKm: number;
@@ -162,6 +165,11 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
   const [closedLanes, setClosedLanes] = useState<boolean[]>(Array(4).fill(false));
   const [speedLimit, setSpeedLimit] = useState<number | null>(null);
   const [incidentCount, setIncidentCount] = useState(0);
+  /* Booths and pumps the operator has shut by hand, with no incident (the Command box: "isara ang booth 3"), by
+     facility id → station indices from the expressway side. Like hand-closed lanes they belong to the run, not the
+     setup: a rebuild (Reset, a new window, a new lane count) clears them. An event at a booth shuts it separately,
+     under the event's own key, so the two never undo each other. */
+  const [closedBooths, setClosedBooths] = useState<Readonly<Record<string, readonly number[]>>>({});
   const [scenarioEvents, setScenarioEvents] = useState<readonly ScenarioEvent[]>([]);
   const [owners, setOwners] = useState<Ownership>(NO_OWNERS);
   const ownersKeyRef = useRef(ownershipKey(NO_OWNERS));
@@ -483,6 +491,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     );
     simRef.current = sim;
     setClosedLanes(Array(laneCount).fill(false));
+    setClosedBooths({});
     setSpeedLimit(null);
     setIncidentCount(0);
     setBaseline(null);
@@ -508,6 +517,16 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
   useEffect(() => {
     if (simRef.current) simRef.current.cfg.inflowVehPerHour = inflow;
   }, [inflow]);
+
+  // The booths shut by hand, into the engine: each station held or released under the operator's own key.
+  useEffect(() => {
+    const sim = simRef.current;
+    if (!sim) return;
+    for (const f of sim.fac.list) {
+      const shut = closedBooths[f.spec.id] ?? [];
+      f.stations.forEach((_, i) => (shut.includes(i) ? sim.fac.closeStation(f.spec.id, i, OPERATOR_BOOTHS) : sim.fac.openStation(f.spec.id, i, OPERATOR_BOOTHS)));
+    }
+  }, [closedBooths]);
 
   const clampKm = useCallback((km: number) => Math.min(Math.max(km, fromKm), toKm), [fromKm, toKm]);
   const kmAt = useCallback((m: number) => (direction === "NB" ? fromKm + m / 1000 : toKm - m / 1000), [direction, fromKm, toKm]);
@@ -568,7 +587,8 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
   const eff = effectiveState({ closedLanes, speedLimitKmh: speedLimit }, owners, scenarioEvents, scenarioNowS, laneCount);
   const effIncidentCount = incidentCount + eff.scenarioIncidents;
   const activeScenarioText = describeActiveEvents(eff.active);
-  const anyIntervention = eff.closedLanes.some(Boolean) || eff.speedLimitKmh != null || effIncidentCount > 0;
+  const boothsShut = Object.entries(closedBooths).filter(([, s]) => s.length > 0);
+  const anyIntervention = eff.closedLanes.some(Boolean) || eff.speedLimitKmh != null || effIncidentCount > 0 || boothsShut.length > 0;
   const closedLaneList = eff.closedLanes.map((c, i) => (c ? `L${i + 1}` : null)).filter(Boolean).join(", ");
   const interventionSummary =
     [
@@ -576,6 +596,11 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
       closedLaneList ? `Km ${shownClosureFromKm.toFixed(2)}–${shownClosureToKm.toFixed(2)}` : null,
       effIncidentCount > 0 ? `${effIncidentCount} incident${effIncidentCount === 1 ? "" : "s"}` : null,
       eff.speedLimitKmh != null ? `${eff.speedLimitKmh} km/h zone` : null,
+      ...boothsShut.map(([id, s]) => {
+        const f = facilities.find((x) => x.id === id);
+        const what = f?.kind === "service_area" ? "pump" : "booth";
+        return `${f?.name ?? id}: ${what}${s.length === 1 ? "" : "s"} ${s.map((i) => i + 1).join(", ")} shut`;
+      }),
       ...activeScenarioText,
     ]
       .filter(Boolean)
@@ -766,6 +791,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     inflow, setInflow, dataAnchor, inflowBasis, inflowFrom,
     demand, hourOfDay, activeHour,
     closedLanes, setClosedLanes, toggleLane, lockedLanes,
+    closedBooths, setClosedBooths,
     speedLimit, setSpeedLimit, shownSpeedLimit,
     incidentCount, clearIncidents, placeIncident, forecastAdded,
     closureKm, setClosureKm, closureEndKm, setClosureEndKm, zoneFromKm, setZoneFromKm, zoneToKm, setZoneToKm,

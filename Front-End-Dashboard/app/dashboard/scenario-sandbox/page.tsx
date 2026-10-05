@@ -27,11 +27,13 @@ import {
   type RoadFrame,
   type SceneMark,
   type ScenarioEvent,
+  type EventSite,
+  type NewEventSpec,
 } from "./scenarios/adapter";
 import ScenarioPanel, { TimeField, type DirectionScenarioData, type SkipPlan } from "./components/ScenarioPanel";
 import PlacesList from "./components/PlacesList";
-import { SCENARIO_DRAG_TYPE, SITE_FAMILIES, type PickResult, type ScenarioDrop, type SiteOption } from "./components/placement";
-import { getTemplate, type FamilyKey } from "./scenarios/catalogue";
+import { candidatesFrom, HOTSPOT_FAMILIES, SCENARIO_DRAG_TYPE, SITE_FAMILIES, type Hotspots, type PickResult, type ResolvedPlace, type ScenarioDrop, type SiteOption } from "./components/placement";
+import { defaultOperatorLane, defaultVariant, getTemplate, type FamilyKey, type ScenarioVariant } from "./scenarios/catalogue";
 import { expectedOnStretch, ON_CARRIAGEWAY_SHARE } from "./scenarios/forecastIncidents";
 import { engineIndexToOperatorLane } from "./scenarios/assumptions";
 import DirectionPill, { DIRECTION_NAME } from "./components/DirectionPill";
@@ -424,17 +426,55 @@ type Baseline = { avgSpeedKmh: number; throughputPerMin: number; longestQueueM: 
 /**
  * A proposed set of simulation changes from the command parser. Mirrors the
  * response of POST /api/ai-sandbox/command — keep in step with
- * Back-End/src/services/sandbox-command.service.ts.
+ * Back-End/src/services/sandbox-command.service.ts. Every action names its
+ * carriageway (the server fills in the focused one when the command did not),
+ * and lane numbers are operator numbers: 1 against the median.
  */
 type CommandAction =
-  | { type: "close_lane"; lanes: number[] }
-  | { type: "open_lane"; lanes: number[] }
-  | { type: "set_speed_limit"; kmh: number | null }
+  | { type: "set_route"; originExitId: number; destinationExitId: number }
+  | { type: "frame"; fromKm: number; toKm: number }
+  | { type: "frame_place"; placeId: string }
+  | { type: "set_view"; view: Direction | "Both" }
+  | { type: "close_lane"; direction: Direction; lanes: number[]; fromKm: number | null; toKm: number | null }
+  | { type: "open_lane"; direction: Direction; lanes: number[] }
+  | { type: "set_speed_limit"; direction: Direction; kmh: number | null; fromKm: number | null; toKm: number | null }
+  | {
+      type: "add_event";
+      direction: Direction;
+      family: FamilyKey;
+      variant: {
+        vehicle?: "car" | "bus" | "truck";
+        cause?: "tire" | "engine" | "mechanical" | "fuel" | "electrical";
+        label?: "rear_end" | "sideswipe" | "hit_and_run";
+        intensity?: "light" | "moderate" | "heavy";
+      };
+      lane: number | null;
+      extraLanes: number[];
+      km: number | null;
+      placeId: string | null;
+      site: "booth" | "pump" | "approach" | null;
+      stations: number[];
+      startMinutes: number;
+      duration: { kind: "p50" } | { kind: "p90" } | { kind: "sampled" } | { kind: "manual"; minutes: number };
+      /** Where the incident log records this kind of event most on the window (looked up when it is applied). */
+      usual?: boolean;
+    }
+  | { type: "remove_event"; eventId: string }
+  | { type: "clear_events"; direction: Direction }
+  | { type: "set_reallocation"; toward: Direction | null; fromKm: number | null; toKm: number | null }
+  | { type: "set_lane_count"; direction: Direction; lanes: number | "auto" }
+  | { type: "set_inflow"; direction: Direction; vehPerHour: number | "observed" }
+  | { type: "set_time"; hour: number; minute: number }
+  | { type: "set_forecast_day"; date: string }
+  | { type: "capture_baseline"; direction: Direction }
+  /** Booths or pumps shut or reopened by hand, no incident; stations 0-based from the expressway side, [] = all. */
+  | { type: "set_booths"; direction: Direction; placeId: string; stations: number[]; open: boolean }
+  | { type: "playback"; run: "play" | "pause" | null; speed: number | null }
+  | { type: "reset" }
+  | { type: "full_screen"; on: boolean }
+  // The original two, still understood if a cached proposal carries them.
   | { type: "add_incident"; lane: number; positionPct: number }
-  | { type: "clear_incidents" }
-  | { type: "set_inflow"; vehPerHour: number }
-  | { type: "set_lane_count"; lanes: number }
-  | { type: "set_route"; originExitId: number; destinationExitId: number };
+  | { type: "clear_incidents" };
 
 type CommandPlan = {
   actions: CommandAction[];
@@ -443,32 +483,107 @@ type CommandPlan = {
   warnings: string[];
 };
 
+/** Names for a proposal's ids: exits, places on the route, events on the road (keyed "NB:ev2"). */
+type CommandLookup = {
+  exits: { exit_id: number; exit_name: string }[];
+  placeName: (id: string) => string;
+  /** A gas station has pumps; everything else, booths. */
+  hasPumps: (id: string) => boolean;
+  eventName: (key: string) => string;
+  /** The stretch a closure or a speed limit with no km of its own takes: the one set in Interventions. Null when the
+   *  same proposal moves the window first, since that stretch is placed along whatever window is on screen. */
+  closureStretch: (d: Direction) => { fromKm: number; toKm: number } | null;
+  zoneStretch: (d: Direction) => { fromKm: number; toKm: number } | null;
+};
+
+/** How long the page waits for the command parser: the backend's 90 s per call plus its one retry, and a little. */
+const COMMAND_TIMEOUT_MS = 150_000;
+
+const hhmm2 = (h: number, m: number) => `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+
 /** One proposed action as a line an operator can check before applying. */
-function describeAction(a: CommandAction, exits: { exit_id: number; exit_name: string }[]): string {
+function describeAction(a: CommandAction, look: CommandLookup): string {
+  const on = (d: Direction) => `on ${DIRECTION_NAME[d]}`;
+  const span = (f: number | null, t: number | null) => (f != null && t != null ? `, Km ${f.toFixed(2)}–${t.toFixed(2)}` : "");
   switch (a.type) {
-    case "close_lane":
-      return `Close lane ${a.lanes.join(", ")}`;
-    case "open_lane":
-      return `Reopen lane ${a.lanes.join(", ")}`;
-    case "set_speed_limit":
-      return a.kmh == null ? "Remove the speed limit" : `Set a ${a.kmh} km/h speed limit`;
-    case "add_incident":
-      return `Place an incident in lane ${a.lane}, ${Math.round(a.positionPct)}% along the segment`;
-    case "clear_incidents":
-      return "Clear all incidents";
-    case "set_inflow":
-      return `Set inflow to ${fmt(a.vehPerHour)} veh/h`;
-    case "set_lane_count":
-      return `Rebuild the road with ${a.lanes} lanes`;
     case "set_route": {
       const name = (id: number) => {
-        const hit = exits.find((x) => x.exit_id === id);
+        const hit = look.exits.find((x) => x.exit_id === id);
         return hit ? displayExitName(hit.exit_name) : `exit ${id}`;
       };
       return `Set the route ${name(a.originExitId)} → ${name(a.destinationExitId)}`;
     }
+    case "frame":
+      return `Show Km ${a.fromKm.toFixed(2)}–${a.toKm.toFixed(2)}`;
+    case "frame_place":
+      return `Go to ${look.placeName(a.placeId)}`;
+    case "set_view":
+      return a.view === "Both" ? "Show both carriageways" : `Show ${DIRECTION_NAME[a.view]} only`;
+    case "close_lane": {
+      const at = a.fromKm != null && a.toKm != null ? { fromKm: a.fromKm, toKm: a.toKm } : look.closureStretch(a.direction);
+      return `Close lane ${a.lanes.join(", ")} ${on(a.direction)}${at ? span(at.fromKm, at.toKm) : ", over the closure stretch in Interventions"}`;
+    }
+    case "open_lane":
+      return `Reopen lane ${a.lanes.join(", ")} ${on(a.direction)}`;
+    case "set_speed_limit": {
+      if (a.kmh == null) return `Remove the speed limit ${on(a.direction)}`;
+      const at = a.fromKm != null && a.toKm != null ? { fromKm: a.fromKm, toKm: a.toKm } : look.zoneStretch(a.direction);
+      return `${a.kmh} km/h speed limit ${on(a.direction)}${at ? span(at.fromKm, at.toKm) : ", over the speed-zone stretch in Interventions"}`;
+    }
+    case "add_event": {
+      const v = a.variant;
+      const detail = [v.vehicle, v.cause, v.label?.replace(/_/g, " "), v.intensity].filter(Boolean).join(", ");
+      const what = `${getTemplate(a.family).displayName}${detail ? ` (${detail})` : ""}`;
+      const where = a.placeId
+        ? `at ${look.placeName(a.placeId)}${a.site === "approach" ? ", on the approach" : a.stations.length ? `, ${a.site === "pump" ? "pump" : "booth"} ${a.stations.map((x) => x + 1).join(", ")}` : ""}`
+        : `${a.lane != null ? `in lane ${[a.lane, ...a.extraLanes].join(", ")}` : ""}${a.km != null ? ` at Km ${a.km.toFixed(2)}` : " mid-window"}`;
+      const when = a.startMinutes > 0 ? `starting in ${a.startMinutes} min` : "starting now";
+      const long =
+        a.duration.kind === "manual" ? `for ${a.duration.minutes} min`
+          : a.duration.kind === "p90" ? "for a long (90th percentile) time"
+            : a.duration.kind === "sampled" ? "for a sampled time"
+              : "for the typical (median) time";
+      return `${what} ${on(a.direction)}, ${a.usual ? "where the incident log records it most on this stretch" : where.trim()}, ${when}, ${long}`;
+    }
+    case "remove_event":
+      return `Remove ${look.eventName(a.eventId)}`;
+    case "clear_events":
+      return `Clear every event and incident ${on(a.direction)}`;
+    case "set_reallocation":
+      return a.toward == null ? `End the ${REALLOCATION_NAME.toLowerCase()}` : `${REALLOCATION_NAME}: ${DIRECTION_NAME[a.toward]} borrows one lane${span(a.fromKm, a.toKm)}`;
+    case "set_lane_count":
+      return a.lanes === "auto" ? `${DIRECTION_NAME[a.direction]}: lanes back to what the road has` : `Rebuild ${DIRECTION_NAME[a.direction]} with ${a.lanes} lanes (clears its closures and events)`;
+    case "set_inflow":
+      return a.vehPerHour === "observed" ? `Inflow ${on(a.direction)} back to the recorded flow` : `Set inflow ${on(a.direction)} to ${fmt(a.vehPerHour)} veh/h`;
+    case "set_time":
+      return `Set the clock to ${hhmm2(a.hour, a.minute)}`;
+    case "set_forecast_day":
+      return `Run the forecast for ${new Date(`${a.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}`;
+    case "capture_baseline":
+      return `Capture a baseline ${on(a.direction)}`;
+    case "set_booths": {
+      const name = look.placeName(a.placeId);
+      const what = look.hasPumps(a.placeId) ? "pump" : "booth";
+      const which = a.stations.length === 0 ? `every ${what}` : `${what}${a.stations.length === 1 ? "" : "s"} ${a.stations.map((x) => x + 1).join(", ")}`;
+      return `${a.open ? "Reopen" : "Shut"} ${which} at ${name} (${DIRECTION_NAME[a.direction]})`;
+    }
+    case "playback":
+      return [a.run === "play" ? "Play the simulation" : a.run === "pause" ? "Pause the simulation" : null, a.speed != null ? `at ${a.speed}×` : null].filter(Boolean).join(" ") || "Simulation speed unchanged";
+    case "reset":
+      return "Reset: clear every event, closure, booth, speed limit and baseline on both carriageways";
+    case "full_screen":
+      return a.on ? "Full screen" : "Exit full screen";
+    case "add_incident":
+      return `Place an incident in lane ${a.lane}, ${Math.round(a.positionPct)}% along the segment`;
+    case "clear_incidents":
+      return "Clear all incidents";
   }
 }
+
+/** On no lane: the shoulder, and rain over the whole stretch (ScenarioPanel's hasLane). */
+const eventHasLane = (f: FamilyKey) => f !== "breakdown_shoulder" && f !== "rain";
+/** Where blocking more than one lane may be given by hand (ScenarioPanel's MULTI_LANE_FAMILIES). */
+const EVENT_MULTI_LANE = new Set<FamilyKey>(["multi_vehicle_collision", "overturned_vehicle", "flood", "scheduled_roadworks"]);
 
 const fmt = (n: number, d = 0) => n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 
@@ -814,6 +929,17 @@ export default function AiSandboxPage() {
   const [commandBusy, setCommandBusy] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [plan, setPlan] = useState<CommandPlan | null>(null);
+  /* While the model works: when it started (for the seconds shown on the button), and the request, so it can be
+     cancelled. GLM usually answers in a few seconds and now and then takes a minute or more (its providers' slow
+     tail), which with no sign of life read as a hung button. */
+  const [commandSince, setCommandSince] = useState<number | null>(null);
+  const [, setCommandClock] = useState(0);
+  const commandAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (commandSince === null) return;
+    const t = setInterval(() => setCommandClock((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [commandSince]);
   /** The carriageway a proposal was worked out FOR — fixed when the command is sent, so changing focus while it is on screen cannot redirect Apply to a different road. */
   const [planDirection, setPlanDirection] = useState<Direction | null>(null);
 
@@ -1024,17 +1150,19 @@ export default function AiSandboxPage() {
     setZipper(null);
     setReallocError(null);
   };
-  const chooseZipper = (toward: Direction | null, lanes: number) => {
+  /** Start (or change) the scheme over `at`, or the stretch in the control. Returns why it could not, or null. */
+  const chooseZipper = (toward: Direction | null, lanes: number, at?: { fromKm: number; toKm: number }): string | null => {
     if (toward === null) {
       endReallocation();
-      return;
+      return null;
     }
     const plan = planZipper(zipper === null ? laneCounts : zipper.base, toward, lanes);
-    if (!plan.ok) return;
-    const stretch = planStretch(stretchNow.fromKm, stretchNow.toKm, stretchLimits);
+    if (!plan.ok) return plan.reason;
+    const want = at ?? stretchNow;
+    const stretch = planStretch(want.fromKm, want.toKm, stretchLimits);
     if (!stretch.ok) {
       setReallocError(stretch.reason);
-      return;
+      return stretch.reason;
     }
     setReallocError(null);
     if (zipper === null) windowBeforeRef.current = { from: segFromKm, to: segToKm, setFrom: stretch.fromKm, setTo: stretch.toKm };
@@ -1043,6 +1171,7 @@ export default function AiSandboxPage() {
     nb.setLaneCount(plan.counts.NB);
     sb.setLaneCount(plan.counts.SB);
     setZipper(plan.state);
+    return null;
   };
   /** One end of the stretch was edited. Off it is only an entry; on it moves the simulated window. */
   const editStretch = (which: "from" | "to", km: number) => {
@@ -1645,6 +1774,49 @@ export default function AiSandboxPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [placingArmed]);
 
+  // A proposal that moves the window places a km-less closure or zone along the NEW window: no km to quote yet.
+  const planMovesWindow = !!plan && plan.actions.some((a) => a.type === "set_route" || a.type === "frame" || a.type === "frame_place" || (a.type === "set_reallocation" && a.toward !== null));
+  const commandLookup: CommandLookup = {
+    closureStretch: (d) => (planMovesWindow ? null : { fromKm: Math.min(byDirection[d].closureAtKm, byDirection[d].closureEndAtKm), toKm: Math.max(byDirection[d].closureAtKm, byDirection[d].closureEndAtKm) }),
+    zoneStretch: (d) => (planMovesWindow ? null : { fromKm: Math.min(byDirection[d].shownZoneFromKm, byDirection[d].shownZoneToKm), toKm: Math.max(byDirection[d].shownZoneFromKm, byDirection[d].shownZoneToKm) }),
+    exits: EXITS,
+    placeName: (id) => (["NB", "SB"] as const).map((d) => byDirection[d].places.find((x) => x.id === id)).find(Boolean)?.name ?? id,
+    hasPumps: (id) => (["NB", "SB"] as const).map((d) => byDirection[d].places.find((x) => x.id === id)).find(Boolean)?.kind === "service_area",
+    eventName: (key) => {
+      const [d, id] = key.split(":");
+      const e = d === "NB" || d === "SB" ? byDirection[d].scenarioEvents.find((x) => x.id === id) : undefined;
+      return e ? `${e.name} (${d})` : key;
+    },
+  };
+  /** One carriageway as the command parser sees it: operator lane numbers, km for the closure and the zone. */
+  const commandDirState = (d: Direction) => {
+    const h = byDirection[d];
+    const closed = h.eff.closedLanes.map((c, i) => (c ? i + 1 : 0)).filter(Boolean);
+    return {
+      lanes: h.laneCount,
+      lanesFromRoad: segmentLanes[d],
+      closedLanes: closed,
+      closure: closed.length ? { fromKm: Math.min(h.shownClosureFromKm, h.shownClosureToKm), toKm: Math.max(h.shownClosureFromKm, h.shownClosureToKm) } : null,
+      speedLimitKmh: h.eff.speedLimitKmh,
+      zone: h.eff.speedLimitKmh != null ? { fromKm: Math.min(h.shownZoneFromKm, h.shownZoneToKm), toKm: Math.max(h.shownZoneFromKm, h.shownZoneToKm) } : null,
+      inflowVehPerHour: h.inflow,
+      inflowSource: h.inflowFrom,
+      closedBooths: Object.entries(h.closedBooths).filter(([, st]) => st.length > 0).map(([placeId, st]) => ({ placeId, stations: [...st] })),
+    };
+  };
+  /** Every toll plaza, barrier and gas station on the corridor, both carriageways, in km order: "go to Shell
+   *  Balagtas" has to work from any route, so the ones off it are sent too (the server routes round them). */
+  const commandPlaces = () =>
+    (["NB", "SB"] as const)
+      .flatMap((d) =>
+        byDirection[d].places.map((p) => ({
+          id: p.id, name: p.name, kind: p.kind, direction: d, km: p.km, stations: p.booths,
+          inWindow: p.km >= fromKm && p.km <= toKm,
+          onRoute: p.km >= routeFromKm - 0.05 && p.km <= routeToKm + 0.05,
+        })),
+      )
+      .sort((a, b) => a.km - b.km);
+
   // Ask the backend to turn the sentence into simulation actions. This only
   // ever produces a PROPOSAL — applyPlan() below is what actually touches the
   // simulation, and it runs when the operator presses Apply.
@@ -1662,10 +1834,16 @@ export default function AiSandboxPage() {
     setCommandNote(null);
     setPlan(null);
     setPlanDirection(null);
+    const abort = new AbortController();
+    commandAbortRef.current = abort;
+    setCommandSince(Date.now());
+    // Past the backend's own per-call limit with its one retry: something is wrong, not slow.
+    const limit = setTimeout(() => abort.abort("timeout"), COMMAND_TIMEOUT_MS);
 
     try {
       const res = await fetch(`${BACKEND}/api/ai-sandbox/command`, {
         method: "POST",
+        signal: abort.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           command: text,
@@ -1683,7 +1861,36 @@ export default function AiSandboxPage() {
             closedLanes: sentTo.eff.closedLanes.map((c, i) => (c ? i + 1 : 0)).filter(Boolean),
             speedLimitKmh: sentTo.eff.speedLimitKmh,
             incidentCount: sentTo.effIncidentCount,
-            exits: EXITS.map((x) => ({ exit_id: x.exit_id, exit_name: displayExitName(x.exit_name) })),
+            exits: EXITS.map((x) => ({ exit_id: x.exit_id, exit_name: displayExitName(x.exit_name), km: x.km })),
+            /* Since 2026-10-05, the sandbox as it now is: both carriageways (each action names its own; the
+               fields above stay the focused one's, for an older backend), the route and the window, the places
+               on the route and the events on the road (keyed by carriageway, since each numbers its own), the
+               reallocation, the clock and the forecast days — so "close lane 3 southbound" or "a crash at the
+               Meycauayan booths at 7 am" can be resolved against what is really there. */
+            view,
+            focus: sentDirection,
+            ...(EXITS[origin] && EXITS[destination]
+              ? { route: { originExitId: EXITS[origin].exit_id, destinationExitId: EXITS[destination].exit_id, fromKm: routeFromKm, toKm: routeToKm } }
+              : {}),
+            window: { fromKm, toKm },
+            directions: Object.fromEntries(activeDirections.map((d) => [d, commandDirState(d)])),
+            places: commandPlaces(),
+            events: activeDirections.flatMap((d) =>
+              byDirection[d].scenarioEvents.map((e) => ({
+                id: `${d}:${e.id}`,
+                name: e.name,
+                direction: d,
+                km: e.positionKm,
+                startMin: (e.startS - byDirection[d].scenarioNowS) / 60,
+                endMin: (e.endS - byDirection[d].scenarioNowS) / 60,
+              })),
+            ),
+            reallocation: zipper !== null ? { toward: zipper.toward, fromKm, toKm } : null,
+            clock: { hour: Math.floor(liveMin / 60) % 24, minute: Math.floor(liveMin % 60) },
+            nowMin: Math.max(0, sentTo.scenarioNowS / 60),
+            forecastDay: forecast.date,
+            forecastDays: forecast.data?.availableDates ?? [],
+            playback: { running, speed: simSpeed, fullScreen: expanded },
           },
         }),
       });
@@ -1696,106 +1903,402 @@ export default function AiSandboxPage() {
       setPlan(json.data as CommandPlan);
       setPlanDirection(sentDirection);
     } catch {
-      setCommandError("Could not reach the backend. Is it running on port 4000?");
+      setCommandError(
+        abort.signal.aborted
+          ? abort.signal.reason === "timeout"
+            ? `The model took longer than ${Math.round(COMMAND_TIMEOUT_MS / 60000 * 10) / 10} minutes. Try again; it is usually a few seconds.`
+            : "Cancelled."
+          : "Could not reach the backend. Is it running on port 4000?",
+      );
     } finally {
+      clearTimeout(limit);
+      commandAbortRef.current = null;
+      setCommandSince(null);
       setCommandBusy(false);
     }
   };
 
+  /* A plan is applied in steps, because some actions rebuild the road the later ones land on: a new route opens
+     its own window, a new window or lane count or hour builds a new run (and a new run starts clean), a forecast
+     day loads over the network. Applied all at once, "go to Meycauayan and put a crash at the booths" added the
+     crash to the old window and the rebuild then threw it away. So: route, view, clock and day first; then the
+     window and lane counts; then a reallocation (which sets the window and lanes itself); then everything that
+     acts on the road. Each step waits until both runs have been rebuilt and have stood unchanged for a moment. */
+  type CommandQueue = {
+    stages: CommandAction[][];
+    /** The carriageway the proposal was made for: where the two old-style actions land. */
+    dir: Direction;
+    applied: string[];
+    notApplied: string[];
+    waitDay: string | null;
+    /** "Where it usually happens" lookups still in flight: the plan is not finished until they land. */
+    pending: number;
+    sig: string;
+    since: number;
+    started: number;
+  };
+  const cmdQueueRef = useRef<CommandQueue | null>(null);
+  const [, setCmdTick] = useState(0);
+  const simNumbers = useRef(new WeakMap<object, number>());
+  const simCount = useRef(0);
+  const commandStage = (a: CommandAction): number =>
+    a.type === "reset" ? 0
+    : a.type === "playback" ? 5
+    : a.type === "set_route" || a.type === "set_view" || a.type === "set_time" || a.type === "set_forecast_day" || a.type === "full_screen" ? 1
+      : a.type === "frame" || a.type === "frame_place" || a.type === "set_lane_count" || (a.type === "set_reallocation" && a.toward === null) ? 2
+        : a.type === "set_reallocation" ? 3
+          : 4;
+  const finishCommand = (q: CommandQueue) =>
+    setCommandNote(
+      (q.applied.length ? `Applied: ${q.applied.join(" · ")}.` : "Nothing to apply.") +
+        (q.notApplied.length ? ` Not applied: ${q.notApplied.join(" · ")}.` : ""),
+    );
+
+  /** A proposed event onto its carriageway; `at` is a place worked out on the page ("where it usually happens"). */
+  const addCommandEvent = (a: Extract<CommandAction, { type: "add_event" }>, q: CommandQueue, at: ResolvedPlace | null) => {
+    const ok = (t: string) => q.applied.push(t);
+    const no = (t: string) => q.notApplied.push(t);
+    const h = byDirection[a.direction];
+    const variant = { ...defaultVariant(a.family), ...a.variant } as ScenarioVariant;
+    let site: EventSite | null = at?.site ?? null;
+    let km = at ? at.positionKm : a.km;
+    if (!at && a.placeId) {
+      const f = h.facilities.find((x) => x.id === a.placeId);
+      if (!f) {
+        no(`${getTemplate(a.family).displayName}: that place is not on screen on ${DIRECTION_NAME[a.direction]}`);
+        return;
+      }
+      site = { facilityId: f.id, facilityName: f.name, kind: a.site ?? "approach", stations: a.site === "approach" ? [] : a.stations };
+      km = f.km ?? km;
+    }
+    const cap = h.laneCount;
+    const wantLane = at ? at.lane ?? a.lane : a.lane;
+    if (site === null && eventHasLane(a.family) && wantLane != null && wantLane > cap) no(`${DIRECTION_NAME[a.direction]} has no lane ${wantLane} here (it has ${cap}); the event goes in lane ${cap}`);
+    const lane = site !== null || !eventHasLane(a.family) ? null : Math.min(Math.max(1, wantLane ?? defaultOperatorLane(getTemplate(a.family), cap)), cap);
+    const spec: NewEventSpec = {
+      variant,
+      direction: a.direction,
+      lane,
+      extraLanes: lane === null || !EVENT_MULTI_LANE.has(a.family) ? [] : [...new Set(a.extraLanes.filter((l) => l >= 1 && l <= cap && l !== lane))],
+      positionKm: Math.min(toKm, Math.max(fromKm, km ?? (fromKm + toKm) / 2)),
+      // Minutes after warm-up. A run just rebuilt is still warming up (its "now" is below zero), and an event
+      // cannot start before warm-up ends, so "now" is the later of the two, as the Scenario panel has it.
+      startMinutes: Math.max(0, h.scenarioNowS / 60) + a.startMinutes,
+      duration: a.duration.kind === "sampled" ? { kind: "sampled", seed: 1 + Math.floor(Math.random() * 2147483000) } : a.duration,
+      site,
+    };
+    const r = h.addScenarioEvent(spec);
+    if (r.ok) ok(`${r.event.name} on ${DIRECTION_NAME[a.direction]}${at?.note ? ` (${at.note.replace(/\.$/, "")})` : ""}`);
+    else no(r.reason);
+  };
+  /** "Where it usually happens", once the incident log has answered: its busiest place on this window, or mid-window with a note. */
+  const placeUsual = (a: Extract<CommandAction, { type: "add_event" }>, q: CommandQueue, hot: Hotspots | null) => {
+    const h = byDirection[a.direction];
+    const sites = h.facilities.map((f): SiteOption => ({
+      id: f.id,
+      name: f.name,
+      kind: f.kind,
+      km: f.km ?? h.kmAt(f.x),
+      stations: h.simRef.current?.fac.get(f.id)?.stations.length ?? f.booths,
+      recordNames: f.recordNames ?? [],
+    }));
+    const best = HOTSPOT_FAMILIES.has(a.family) ? candidatesFrom(hot, sites, fromKm, toKm)[0] : undefined;
+    if (!best) q.notApplied.push(`${getTemplate(a.family).displayName}: ${hot ? "the incident log has nothing of this kind on this stretch" : "the incident log could not be read"}, so it goes mid-window`);
+    // A place at a booth only for a family that can happen there; otherwise the place's km on the road.
+    const place = best ? (best.place.site && !SITE_FAMILIES.has(a.family) ? { ...best.place, site: null } : best.place) : null;
+    addCommandEvent(a, q, place);
+  };
+  const cmdLatestRef = useRef({ placeUsual });
+  cmdLatestRef.current = { placeUsual };
+
+  /** One action, against the state as it is in this render. */
+  const applyCommandAction = (a: CommandAction, q: CommandQueue) => {
+    const ok = (t: string) => q.applied.push(t);
+    const no = (t: string) => q.notApplied.push(t);
+    switch (a.type) {
+      case "set_route": {
+        const o = EXITS.findIndex((x) => x.exit_id === a.originExitId);
+        const d = EXITS.findIndex((x) => x.exit_id === a.destinationExitId);
+        if (o < 0 || d < 0) {
+          no("the route (an exit is not on the corridor)");
+          break;
+        }
+        setOrigin(o);
+        setDestination(d);
+        ok(`Route ${displayExitName(EXITS[o].exit_name)} → ${displayExitName(EXITS[d].exit_name)}`);
+        break;
+      }
+      case "set_view":
+        setView(a.view);
+        ok(a.view === "Both" ? "Both carriageways shown" : `${DIRECTION_NAME[a.view]} shown`);
+        break;
+      case "set_time":
+        setHourOfDay(a.hour);
+        setClockMinuteOffset(a.minute);
+        ok(`Clock ${hhmm2(a.hour, a.minute)}`);
+        break;
+      case "set_forecast_day":
+        if (!(forecast.data?.availableDates ?? []).includes(a.date)) {
+          no(`no forecast for ${a.date}`);
+          break;
+        }
+        forecast.selectDay(a.date);
+        setForecastFollowing(true);
+        q.waitDay = a.date;
+        ok(`Forecast day ${a.date}`);
+        break;
+      case "frame":
+        showWindow({ fromKm: a.fromKm, toKm: a.toKm });
+        ok(`Window Km ${a.fromKm.toFixed(2)}–${a.toKm.toFixed(2)}`);
+        break;
+      case "frame_place": {
+        const hit = (["NB", "SB"] as const).map((d) => ({ d, p: byDirection[d].places.find((x) => x.id === a.placeId) })).find((x) => x.p);
+        if (!hit?.p) {
+          no("that place is not on this route");
+          break;
+        }
+        framePlace(hit.p, hit.d);
+        ok(`Window on ${hit.p.name}`);
+        break;
+      }
+      case "set_lane_count": {
+        const h = byDirection[a.direction];
+        if (a.lanes === "auto") {
+          const n = segmentLanes[a.direction];
+          if (n == null) {
+            no(`${DIRECTION_NAME[a.direction]} lanes: the lane table has nothing for this stretch`);
+            break;
+          }
+          h.setLaneCount(n);
+          ok(`${DIRECTION_NAME[a.direction]}: ${n} lanes, as the road has`);
+        } else {
+          h.setLaneCount(a.lanes);
+          ok(`${DIRECTION_NAME[a.direction]}: ${a.lanes} lanes`);
+        }
+        break;
+      }
+      case "set_reallocation": {
+        if (a.toward === null) {
+          endReallocation();
+          ok(`${REALLOCATION_NAME} ended`);
+          break;
+        }
+        const why = chooseZipper(a.toward, 1, a.fromKm != null && a.toKm != null ? { fromKm: a.fromKm, toKm: a.toKm } : undefined);
+        if (why) no(`${REALLOCATION_NAME}: ${why}`);
+        else ok(`${REALLOCATION_NAME}: ${DIRECTION_NAME[a.toward]} +1 lane`);
+        break;
+      }
+      case "close_lane":
+      case "open_lane": {
+        const h = byDirection[a.direction];
+        const shut = a.type === "close_lane";
+        // The count may have changed since the proposal (a lane count, a new window): say which lanes are not there.
+        const missing = a.lanes.filter((n) => n < 1 || n > h.laneCount);
+        if (missing.length > 0) no(`${DIRECTION_NAME[a.direction]} has no lane ${missing.join(", ")} here (it has ${h.laneCount})`);
+        const idx = a.lanes.map((n) => n - 1).filter((i) => i >= 0 && i < h.laneCount);
+        // Things a running scenario event owns cannot be changed from here; say so rather than report them applied.
+        const held = shut ? [] : idx.filter((i) => h.lockedLanes[i]);
+        if (held.length > 0 && h.owners.closure) {
+          no(`${DIRECTION_NAME[a.direction]} lane ${held.map((i) => i + 1).join(", ")} stays closed (driven by ${describeOwner(h.owners.closure)})`);
+        }
+        const free = idx.filter((i) => !held.includes(i));
+        if (free.length === 0) break;
+        h.setClosedLanes((prev) => prev.map((c, i) => (free.includes(i) ? shut : c)));
+        if (a.type === "close_lane" && a.fromKm != null && a.toKm != null) {
+          h.setClosureKm(a.fromKm);
+          h.setClosureEndKm(a.toKm);
+        }
+        ok(`${shut ? "Closed" : "Opened"} ${DIRECTION_NAME[a.direction]} lane ${free.map((i) => i + 1).join(", ")}`);
+        break;
+      }
+      case "set_speed_limit": {
+        const h = byDirection[a.direction];
+        if (h.owners.speedZone) {
+          no(`the ${DIRECTION_NAME[a.direction]} speed zone is driven by ${describeOwner(h.owners.speedZone)}`);
+          break;
+        }
+        h.setSpeedLimit(a.kmh);
+        if (a.kmh != null && a.fromKm != null && a.toKm != null) {
+          h.setZoneFromKm(a.fromKm);
+          h.setZoneToKm(a.toKm);
+        }
+        ok(a.kmh == null ? `Removed the ${DIRECTION_NAME[a.direction]} speed limit` : `${DIRECTION_NAME[a.direction]} ${a.kmh} km/h`);
+        break;
+      }
+      case "add_event": {
+        if (!a.usual) {
+          addCommandEvent(a, q, null);
+          break;
+        }
+        /* "Where it usually happens": the same lookup and the same choice as the Scenario panel's — the busiest
+           100 m of this stretch in the incident log (with its usual lane), or the plaza or station where this kind of
+           event is recorded most. Asked now, applied when it answers, through the latest render's functions. */
+        q.pending += 1;
+        const qs = new URLSearchParams({ family: a.family, direction: a.direction, fromKm: String(fromKm), toKm: String(toKm) });
+        fetch(`${BACKEND}/api/ai-sandbox/hotspots?${qs}`, { cache: "no-store" })
+          .then((r) => r.json())
+          .catch(() => null)
+          .then((j: { success?: boolean; data?: Hotspots } | null) => {
+            cmdLatestRef.current.placeUsual(a, q, j?.success && j.data ? j.data : null);
+            q.pending -= 1;
+            setCmdTick((x) => x + 1);
+          });
+        break;
+      }
+      case "remove_event": {
+        const [d, id] = a.eventId.split(":");
+        const h = d === "NB" || d === "SB" ? byDirection[d] : null;
+        const e = h?.scenarioEvents.find((x) => x.id === id);
+        if (!h || !e) {
+          no("that event is no longer on the road");
+          break;
+        }
+        h.removeScenarioEvent(id);
+        ok(`Removed ${e.name} (${d})`);
+        break;
+      }
+      case "clear_events": {
+        const h = byDirection[a.direction];
+        for (const e of h.scenarioEvents) h.removeScenarioEvent(e.id);
+        h.clearIncidents();
+        ok(`Cleared ${DIRECTION_NAME[a.direction]}'s events and incidents`);
+        break;
+      }
+      case "set_inflow": {
+        const h = byDirection[a.direction];
+        if (a.vehPerHour === "observed") {
+          if (h.dataAnchor == null) {
+            no(`${DIRECTION_NAME[a.direction]} inflow: no recorded flow for this stretch`);
+            break;
+          }
+          h.setInflow(h.dataAnchor);
+          ok(`${DIRECTION_NAME[a.direction]} inflow back to ${fmt(h.dataAnchor)} veh/h (recorded)`);
+        } else {
+          h.setInflow(a.vehPerHour);
+          ok(`${DIRECTION_NAME[a.direction]} inflow ${fmt(a.vehPerHour)} veh/h`);
+        }
+        break;
+      }
+      case "capture_baseline":
+        byDirection[a.direction].captureBaseline();
+        ok(`Baseline captured on ${DIRECTION_NAME[a.direction]}`);
+        break;
+      case "set_booths": {
+        const h = byDirection[a.direction];
+        const f = h.facilities.find((x) => x.id === a.placeId);
+        const n = f ? h.simRef.current?.fac.get(f.id)?.stations.length ?? f.booths : 0;
+        if (!f || n === 0) {
+          no(`booths: that place is not on screen on ${DIRECTION_NAME[a.direction]}`);
+          break;
+        }
+        const which = (a.stations.length === 0 ? Array.from({ length: n }, (_, i) => i) : a.stations).filter((i) => i >= 0 && i < n);
+        h.setClosedBooths((prev) => {
+          const cur = new Set(prev[f.id] ?? []);
+          for (const i of which) {
+            if (a.open) cur.delete(i);
+            else cur.add(i);
+          }
+          return { ...prev, [f.id]: [...cur].sort((x, y) => x - y) };
+        });
+        const what = f.kind === "service_area" ? "pump" : "booth";
+        ok(`${a.open ? "Reopened" : "Shut"} ${a.stations.length === 0 ? `every ${what}` : `${what} ${which.map((i) => i + 1).join(", ")}`} at ${f.name}`);
+        break;
+      }
+      case "playback":
+        if (a.run) setRunning(a.run === "play");
+        if (a.speed != null && (SPEED_STEPS as readonly number[]).includes(a.speed)) setSimSpeed(a.speed as (typeof SPEED_STEPS)[number]);
+        ok([a.run === "play" ? "Playing" : a.run === "pause" ? "Paused" : null, a.speed != null ? `${a.speed}×` : null].filter(Boolean).join(" at "));
+        break;
+      case "reset":
+        resetEverything();
+        ok("Reset");
+        break;
+      case "full_screen":
+        setExpanded(a.on);
+        ok(a.on ? "Full screen" : "Left full screen");
+        break;
+      case "add_incident":
+        byDirection[q.dir].placeIncident(a.lane - 1, (a.positionPct / 100) * segLengthM);
+        ok(`Incident in lane ${a.lane}`);
+        break;
+      case "clear_incidents":
+        byDirection[q.dir].clearIncidents();
+        ok("Cleared incidents");
+        break;
+    }
+  };
+
   // Apply a confirmed plan to the simulation. Every action was already range-
-  // checked server-side; the bounds are re-asserted here because this function
-  // is the last thing between model output and sim state. Applies to the
-  // direction the proposal was made for (planDirection), matching the context runCommand sent.
+  // checked server-side; the bounds are re-asserted as each is applied, because
+  // that is the last thing between model output and sim state. Each action names
+  // its carriageway; the two old-style ones land on the carriageway the proposal
+  // was made for (planDirection), matching the context runCommand sent.
   const applyPlan = () => {
     // The carriageway the proposal was made for, not whatever is focused now.
     const planTarget = byDirection[planDirection ?? focusDirection];
-    const sim = planTarget.simRef.current;
-    if (!plan || !sim) return;
-    const applied: string[] = [];
-
-    // Changing the lane count rebuilds the simulation, and rebuild() resets
-    // closures, the speed limit and incidents. Applying a closure in the same
-    // batch would therefore be silently undone a tick later, so a plan that
-    // resizes the road applies only that and says the rest was dropped.
-    const resize = plan.actions.find((a) => a.type === "set_lane_count");
-    if (resize && resize.type === "set_lane_count") {
-      planTarget.setLaneCount(resize.lanes);
-      const dropped = plan.actions.length - 1;
-      setCommandNote(
-        `Applied: ${resize.lanes} lanes.` +
-          (dropped > 0
-            ? ` Rebuilding the road clears existing interventions, so ${dropped} other action${dropped > 1 ? "s were" : " was"} not applied — re-issue them now.`
-            : ""),
-      );
-      setPlan(null);
-      setCommand("");
-      return;
+    if (!plan || !planTarget.simRef.current) return;
+    const actions = [...plan.actions];
+    // A carriageway the view does not show: show both first, so what is changed can be seen.
+    const named = actions.flatMap((a) => ("direction" in a ? [a.direction] : a.type === "set_reallocation" && a.toward ? [a.toward] : []));
+    if (!actions.some((a) => a.type === "set_view") && named.some((d) => !activeDirections.includes(d))) actions.unshift({ type: "set_view", view: "Both" });
+    const stages = [0, 1, 2, 3, 4, 5].map((n) => actions.filter((a) => commandStage(a) === n)).filter((g) => g.length > 0);
+    const now = Date.now();
+    const q: CommandQueue = { stages, dir: planDirection ?? focusDirection, applied: [], notApplied: [], waitDay: null, pending: 0, sig: "", since: now, started: now };
+    for (const a of q.stages.shift() ?? []) applyCommandAction(a, q);
+    if (q.stages.length > 0 || q.pending > 0) {
+      cmdQueueRef.current = q;
+      setCommandNote(`Applying… ${q.applied.join(" · ")}`);
+      setCmdTick((t) => t + 1);
+    } else {
+      cmdQueueRef.current = null;
+      finishCommand(q);
     }
-
-    // Things a running scenario event owns cannot be changed from here either; say so rather than report them applied.
-    const notApplied: string[] = [];
-    for (const a of plan.actions) {
-      switch (a.type) {
-        case "close_lane":
-        case "open_lane": {
-          const shut = a.type === "close_lane";
-          const idx = a.lanes.map((n) => n - 1).filter((i) => i >= 0 && i < planTarget.laneCount);
-          const held = shut ? [] : idx.filter((i) => planTarget.lockedLanes[i]);
-          if (held.length > 0 && planTarget.owners.closure) {
-            notApplied.push(`Lane ${held.map((i) => i + 1).join(", ")} stays closed (driven by ${describeOwner(planTarget.owners.closure)})`);
-          }
-          const free = idx.filter((i) => !held.includes(i));
-          if (free.length === 0) break;
-          planTarget.setClosedLanes((prev) => prev.map((c, i) => (free.includes(i) ? shut : c)));
-          applied.push(`${shut ? "Closed" : "Opened"} lane ${free.map((i) => i + 1).join(", ")}`);
-          break;
-        }
-        case "set_speed_limit":
-          if (planTarget.owners.speedZone) {
-            notApplied.push(`The speed zone is driven by ${describeOwner(planTarget.owners.speedZone)}`);
-            break;
-          }
-          planTarget.setSpeedLimit(a.kmh);
-          applied.push(a.kmh == null ? "Removed the speed limit" : `Speed limit ${a.kmh} km/h`);
-          break;
-        case "add_incident": {
-          const x = (a.positionPct / 100) * segLengthM;
-          planTarget.placeIncident(a.lane - 1, x);
-          applied.push(`Incident in lane ${a.lane}`);
-          break;
-        }
-        case "clear_incidents":
-          // Only the operator's: a running scenario's obstacle stays until its event ends.
-          planTarget.clearIncidents();
-          applied.push("Cleared incidents");
-          break;
-        case "set_inflow":
-          planTarget.setInflow(a.vehPerHour);
-          applied.push(`Inflow ${fmt(a.vehPerHour)} veh/h`);
-          break;
-        case "set_lane_count":
-          planTarget.setLaneCount(a.lanes);
-          applied.push(`${a.lanes} lanes`);
-          break;
-        case "set_route": {
-          const o = EXITS.findIndex((x) => x.exit_id === a.originExitId);
-          const d = EXITS.findIndex((x) => x.exit_id === a.destinationExitId);
-          if (o < 0 || d < 0) break;
-          setOrigin(o);
-          setDestination(d);
-          applied.push(`Route ${displayExitName(EXITS[o].exit_name)} → ${displayExitName(EXITS[d].exit_name)}`);
-          break;
-        }
-      }
-    }
-
-    setCommandNote(
-      (applied.length ? `Applied: ${applied.join(" · ")}.` : "Nothing to apply.") +
-        (notApplied.length ? ` Not applied: ${notApplied.join(" · ")}.` : ""),
-    );
     setPlan(null);
     setCommand("");
   };
+
+  // The next step of a plan, once the road it acts on has been rebuilt and has settled (see CommandQueue).
+  useEffect(() => {
+    const q = cmdQueueRef.current;
+    if (!q) return;
+    const numberOf = (sim: object | null) => {
+      if (!sim) return 0;
+      let n = simNumbers.current.get(sim);
+      if (n == null) {
+        n = ++simCount.current;
+        simNumbers.current.set(sim, n);
+      }
+      return n;
+    };
+    const runs = (["NB", "SB"] as const).map((d) => {
+      const sim = byDirection[d].simRef.current;
+      return `${numberOf(sim)}:${sim?.cfg.length ?? 0}:${sim?.cfg.laneCount ?? 0}`;
+    });
+    const sig = [origin, destination, fromKm, toKm, view, hourOfDay, ...runs].join("|");
+    const now = Date.now();
+    if (sig !== q.sig) {
+      q.sig = sig;
+      q.since = now;
+    }
+    const dayReady = q.waitDay === null || (forecast.date === q.waitDay && !forecast.busy);
+    const runsReady = activeDirections.every((d) => {
+      const sim = byDirection[d].simRef.current;
+      return !!sim && sim.cfg.length === segLengthM && sim.cfg.laneCount === byDirection[d].laneCount;
+    });
+    // Ten seconds is long enough for any rebuild; past it, apply anyway and let each action say if it cannot.
+    if (q.stages.length > 0 && ((now - q.since >= 450 && dayReady && runsReady) || now - q.started > 10_000)) {
+      for (const a of q.stages.shift() ?? []) applyCommandAction(a, q);
+      q.sig = "";
+      q.since = now;
+    }
+    if (q.stages.length === 0 && q.pending === 0) {
+      cmdQueueRef.current = null;
+      finishCommand(q);
+      return;
+    }
+    const t = setTimeout(() => setCmdTick((x) => x + 1), 150);
+    return () => clearTimeout(t);
+  });
   // clearIncidents, toggleLane, addScenarioEvent, removeScenarioEvent, cancelSkip, skipToNextPhase,
   // captureBaseline, interventionSummary and anyIntervention are all useDirectionSim's now — called
   // per direction there, read here as focused.clearIncidents etc. (see the JSX below).
@@ -2434,7 +2937,7 @@ export default function AiSandboxPage() {
         {/* Controls */}
         <aside className={`sandbox-side${expanded ? " is-expanded" : ""}${expanded && !railOpen ? " is-folded" : ""}`}>
           <div className="sandbox-side-head">
-            <h2>{sideMode === "command" ? "Command Prompt" : "Simulation Controls"}</h2>
+            <h2>{sideMode === "command" ? "SmartFlow Copilot" : "Simulation Controls"}</h2>
             <div className="sandbox-mode-seg" role="tablist">
               <button
                 role="tab"
@@ -2911,14 +3414,16 @@ export default function AiSandboxPage() {
           <div className="sandbox-side-scroll">
             <div className="ai-command">
               <p className="ai-command-sub">
-                Type natural-language commands to control traffic on the NLEX corridor.
+                Type a command in English, Filipino or Taglish: close lanes or set a speed limit by km, add a crash,
+                breakdown, rain or road works (on a lane or at a booth or pump), borrow a lane from the other side,
+                go to a place, or change the time or forecast day. You see the actions before anything changes.
               </p>
-              {/* Both mode: a command is worked out for ONE carriageway (the existing request fields carry no
-                  direction, so the backend cannot tell). It goes to the focused one — a deliberate,
-                  always-visible choice, changeable right here — rather than gating every command behind a
-                  second pick. The proposal below is stamped with the carriageway it was made for. */}
+              {/* Both mode: a command that names a carriageway ("southbound", "pa-Maynila", "both directions")
+                  goes there; one that names none goes to the carriageway picked here — a deliberate,
+                  always-visible choice, rather than gating every command behind a second pick. Each line of
+                  the proposal below says which carriageway it changes. */}
               {both && (
-                <div className="sandbox-dir-pick" data-cmd="direction" role="tablist" aria-label="Carriageway the command applies to">
+                <div className="sandbox-dir-pick" data-cmd="direction" role="tablist" aria-label="Carriageway a command applies to when it names none" title="Used when the command does not say northbound or southbound">
                   <span className="k">Commands apply to</span>
                   <div className="sandbox-dir-seg">
                     {activeDirections.map((dn) => (
@@ -2940,15 +3445,20 @@ export default function AiSandboxPage() {
                 rows={4}
                 value={command}
                 onChange={(e) => setCommand(e.target.value)}
-                placeholder={'Try: "From Balintawak close lane 4" or "Set 2 lanes open"'}
+                placeholder={'Try: "isara lane 4 southbound mula Km 20.1 hanggang 20.4" or "may banggaan sa Meycauayan toll, booth 2, 30 minutes"'}
               />
               <button
                 className="ai-command-btn"
                 onClick={runCommand}
                 disabled={!command.trim() || commandBusy}
               >
-                {commandBusy ? "Interpreting…" : "Execute Command"}
+                {commandBusy ? `Interpreting… ${commandSince === null ? 0 : Math.floor((Date.now() - commandSince) / 1000)} s` : "Execute Command"}
               </button>
+              {commandBusy && (
+                <button className="ai-plan-discard" data-cmd="cancel" onClick={() => commandAbortRef.current?.abort("cancel")}>
+                  Cancel
+                </button>
+              )}
 
               {commandError && <p className="ai-command-error">{commandError}</p>}
 
@@ -2958,7 +3468,7 @@ export default function AiSandboxPage() {
                 <div className="ai-plan">
                   {both && planDirection !== null && (
                     <p className="ai-plan-target" data-plan-direction={planDirection}>
-                      <DirectionPill direction={planDirection} long /> proposal — Apply changes this carriageway only
+                      Each line names the carriageway it changes; one the command did not name went to <DirectionPill direction={planDirection} long />
                     </p>
                   )}
                   <p className="ai-plan-reply">{plan.reply}</p>
@@ -2966,7 +3476,7 @@ export default function AiSandboxPage() {
                   {plan.actions.length > 0 ? (
                     <ul className="ai-plan-actions">
                       {plan.actions.map((a, i) => (
-                        <li key={i}>{describeAction(a, EXITS)}</li>
+                        <li key={i}>{describeAction(a, commandLookup)}</li>
                       ))}
                     </ul>
                   ) : (
@@ -4370,8 +4880,12 @@ function drawCarriageway(
     overlay !== null &&
     overlay.owners.speedZone !== null &&
     overlay.events.some((e) => overlay.owners.speedZone !== null && e.id === overlay.owners.speedZone.eventId && e.variant.family === "rain");
-  if (sim.interventions.speedLimitKmh != null && !rainOwnsZone) {
-    const [z0, z1] = sim.interventions.speedZone;
+  // Further speed zones (Interventions.speedZones): each event's own; rain's spans the whole stretch and is shown by
+  // the rain and its sign instead, so only the ones narrower than the stretch get the wash.
+  const zonesToDraw: [number, number][] = [];
+  if (sim.interventions.speedLimitKmh != null && !rainOwnsZone) zonesToDraw.push([sim.interventions.speedZone[0], sim.interventions.speedZone[1]]);
+  for (const z of sim.interventions.speedZones ?? []) if (z.to - z.from < sim.cfg.length - 1) zonesToDraw.push([z.from, z.to]);
+  for (const [z0, z1] of zonesToDraw) {
     ctx.fillStyle = "rgba(234,88,12,0.16)";
     // A zone measured in metres is sub-pixel once the span is kilometres long,
     // so the one intervention the operator applied became invisible. Floored to
@@ -4458,15 +4972,21 @@ function drawCarriageway(
   // Set once the traffic's own scale is known (below); the water, scenes and weather share it.
   const laneCenterY = (engineLane: number): number => slotTop(engineLane) + laneH / 2;
 
-  // closed-lane hatching + taper
+  // closed-lane hatching + taper, for every closure on the road: the shared one (the operator's, or the first
+  // event's) and each further event's own (Interventions.closures — there is no limit on how many run at once).
+  const allClosures = [
+    { lanes: sim.interventions.closedLanes, from: sim.interventions.closurePoint, to: sim.interventions.closureEnd },
+    ...(sim.interventions.closures ?? []),
+  ];
+  for (const closure of allClosures)
   for (let l = 0; l < lanes; l++) {
-    if (!sim.interventions.closedLanes[l]) continue;
+    if (!closure.lanes[l]) continue;
     const y = slotTop(l);
-    const x0 = xPx(sim.interventions.closurePoint);
+    const x0 = xPx(closure.from);
     // The works end where the operator said they end, not at the edge of the
     // view — a closure that always ran to the end of the screen could not
     // represent "lane 4 shut between km 0.20 and km 0.40".
-    const x1 = xPx(sim.interventions.closureEnd);
+    const x1 = xPx(closure.to);
     const cL = Math.max(0, Math.min(x0, x1));
     const cR = Math.min(cssW, Math.max(x0, x1));
     ctx.fillStyle = "rgba(220,38,38,0.28)";
@@ -5783,23 +6303,103 @@ function drawVehicle(
     }
   }
 
-  // head / tail lights
+  // headlights
   const lampR = Math.max(0.9, wid * 0.11);
   ctx.fillStyle = headlight;
   dot(ctx, -1.2, -wid / 2 + wid * 0.2, lampR);
   dot(ctx, -1.2, wid / 2 - wid * 0.2, lampR);
-  const tailW = Math.max(1.6, wid * 0.2);
-  const tailH = Math.max(2.2, wid * 0.26);
-  if (braking) {
-    ctx.fillStyle = "rgba(255,50,50,0.4)";
-    ctx.fillRect(-len - 1.6, -wid / 2 + 0.4, tailW + 2.4, tailH + 1.6);
-    ctx.fillRect(-len - 1.6, wid / 2 - 0.4 - (tailH + 1.6), tailW + 2.4, tailH + 1.6);
-  }
-  ctx.fillStyle = braking ? "#ff2a2a" : "#8f1d1d";
-  ctx.fillRect(-len, -wid / 2 + 1.2, tailW, tailH);
-  ctx.fillRect(-len, wid / 2 - 1.2 - tailH, tailW, tailH);
+  drawRearLights(ctx, len, wid, vClass, braking, detail);
 
   ctx.restore();
+}
+
+/** Brake-light colours: the lens unlit, lit, and the hot middle of a lit lamp. */
+const TAIL_UNLIT = "#6e1515";
+const TAIL_UNLIT_EDGE = "rgba(255,120,110,0.35)";
+const TAIL_LIT = "#ff3b30";
+const TAIL_CORE = "rgba(255,226,214,0.95)";
+
+/**
+ * Rear lights, seen from above, in the sprite's own frame (nose at 0, rear at -len).
+ *
+ * A lamp at each rear corner that wraps a little way down the side, as a real tail-light cluster does; on a car
+ * a third, high-mounted brake light at the top of the rear window, and on a bus one across the middle of the
+ * rear. Unlit they are a dark lens. Braking they light bright red with a hot core and a soft glow, so a wave of
+ * braking reads as a pulse of red running back through the traffic in daylight too (the night pass adds its own
+ * bigger glow, drawn after every vehicle). The glow is held to 2 px behind the vehicle: a halo reaching the car
+ * behind would read as the two touching.
+ */
+function drawRearLights(ctx: CanvasRenderingContext2D, len: number, wid: number, vClass: 1 | 2 | 3, braking: boolean, detail: boolean) {
+  const rear = -len;
+  // Along the road (thin: a lamp is a few centimetres deep), across from each corner, and down the side.
+  // A lit lamp is drawn a little larger than an unlit one: at the docked canvas a car is ~16 px long, and a lamp
+  // at its true size changes colour without anyone noticing.
+  const grow = braking ? 1.35 : 1;
+  const depth = Math.max(1.4, Math.min(3.2, len * (vClass === 1 ? 0.06 : 0.03))) * grow;
+  const span = Math.min(wid * 0.45, Math.max(2, wid * (vClass === 1 ? 0.32 : vClass === 2 ? 0.28 : 0.24)) * grow);
+  const wrap = detail ? Math.max(1, len * (vClass === 1 ? 0.08 : 0.035)) : 0;
+  const rim = Math.max(0.8, wid * 0.08);
+  const inset = Math.min(1, wid * 0.06);
+
+  if (braking) {
+    // The glow first, under the lamps, clipped so it never reaches more than 2 px behind the bumper.
+    const sprite = getLightSprites();
+    if (sprite) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(rear - 2, -wid / 2 - 2, len * 0.35 + 2, wid + 4);
+      ctx.clip();
+      ctx.globalAlpha = 0.9;
+      const r = Math.max(4, span * 1.7);
+      for (const sgn of [-1, 1]) {
+        const cy = sgn * (wid / 2 - inset - span / 2);
+        ctx.drawImage(sprite.tail, rear + depth * 0.5 - r, cy - r, r * 2, r * 2);
+      }
+      ctx.restore();
+    }
+  }
+
+  for (const sgn of [-1, 1]) {
+    // One corner: the strip across the rear, and its wrap down the side, as one L-shaped lens.
+    const yEdge = sgn * (wid / 2 - inset);
+    const yIn = yEdge - sgn * span;
+    ctx.beginPath();
+    ctx.moveTo(rear + 0.3, yEdge);
+    ctx.lineTo(rear + 0.3 + depth + wrap, yEdge);
+    ctx.lineTo(rear + 0.3 + depth + wrap, yEdge - sgn * rim);
+    ctx.lineTo(rear + 0.3 + depth, yEdge - sgn * rim);
+    ctx.lineTo(rear + 0.3 + depth, yIn);
+    ctx.lineTo(rear + 0.3, yIn);
+    ctx.closePath();
+    ctx.fillStyle = braking ? TAIL_LIT : TAIL_UNLIT;
+    ctx.fill();
+    if (braking) {
+      // The bulb's hot middle.
+      ctx.fillStyle = TAIL_CORE;
+      ctx.fillRect(rear + 0.3 + depth * 0.25, Math.min(yEdge, yIn) + span * 0.3, Math.max(0.6, depth * 0.45), span * 0.4);
+    } else if (detail) {
+      // A highlight along the unlit lens, so it reads as glass and not a smudge.
+      ctx.strokeStyle = TAIL_UNLIT_EDGE;
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(rear + 0.3 + depth, yIn);
+      ctx.lineTo(rear + 0.3 + depth, yEdge - sgn * rim);
+      ctx.stroke();
+    }
+  }
+
+  // The third, high-mounted brake light: only lit, it is part of the glass or the body when off.
+  if (braking && detail && vClass !== 3) {
+    ctx.fillStyle = TAIL_LIT;
+    const w = Math.max(0.8, len * (vClass === 1 ? 0.022 : 0.012));
+    const h = wid * (vClass === 1 ? 0.3 : 0.36);
+    // A car's sits at the top of the rear window; a bus's across the rear, above the engine grille.
+    const x = vClass === 1 ? -len * 0.85 : rear + depth + 0.6;
+    roundRect(ctx, x, -h / 2, w, h, w / 2);
+    ctx.fill();
+    ctx.fillStyle = TAIL_CORE;
+    ctx.fillRect(x + w * 0.3, -h * 0.3, Math.max(0.4, w * 0.4), h * 0.6);
+  }
 }
 
 function dot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
