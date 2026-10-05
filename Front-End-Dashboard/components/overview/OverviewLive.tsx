@@ -1,19 +1,42 @@
 "use client";
 
-import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useMemo, useState } from "react";
+import { ArrowUpRight, ChevronDown, Home } from "lucide-react";
 import { useCorridorLive } from "../../lib/use-corridor-live";
-import { accessLabel, displayExitName } from "../../lib/nlex-exits";
+import type { ExitStatus } from "../../lib/corridor-status";
+import { displayExitName, type NlexExit } from "../../lib/nlex-exits";
 import SignalGlyph from "../dashboard/SignalGlyph";
+import InfoTooltip from "../dashboard/InfoTooltip";
+import StateNote from "../stage/StateNote";
+import Mascot from "../stage/Mascot";
+import TitleReveal from "../stage/TitleReveal";
+import PageGroupName from "../dashboard/PageGroupName";
+import EvidenceModal from "../dashboard/EvidenceModal";
 
-// WebGL only exists in the browser, and the static export pre-renders pages.
-const CorridorScene = dynamic(() => import("./CorridorScene"), {
-  ssr: false,
-  loading: () => <div className="ov-stage ov-stage-loading">Loading the 3D corridor…</div>,
-});
+/**
+ * The Overview's live block: what the corridor is doing right now and where it
+ * is slow. One feed read (useCorridorLive) feeds all of it, so the headline,
+ * the counts, the hotspot list and the Live Corridor Status panel below apply
+ * the same rule to the same data and cannot disagree.
+ *
+ * The page opens on a hero (5 Oct 2026, at the user's request, after the
+ * reference they supplied): the 3D mascot centre-stage on the WebGL stage,
+ * which draws it over the hero's [data-stage-anchor="mascot"] box, an
+ * oversized Italiana title and two short columns of live status. Scrolling
+ * down brings the counts, the hotspots (the three worst, "See all" for the
+ * rest) and then Live Corridor Status. The "corridor at true scale" ribbon was
+ * removed at the user's request (5 Oct 2026); Live Corridor Status carries the
+ * same per-exit queues.
+ *
+ * Redesigned 4 Oct 2026 at the user's request: the 3D corridor and its km
+ * ruler are gone. Their per-exit reading lives on in the hotspot list (every
+ * slow or congested exit-direction, with its queue, delay and speed) and in
+ * the Live Corridor Status stops (every exit, keyboard-reachable).
+ */
 
-const KM0 = 12;
-const KM1 = 88.25;
+/* The list shows the three worst; "See all" opens every one in a modal. */
+const SHOWN = 3;
 
 function ageText(min: number | null): string {
   if (min == null) return "age unknown";
@@ -22,111 +45,231 @@ function ageText(min: number | null): string {
   return `${Math.floor(min / 60)} h ${Math.round(min % 60)} min old`;
 }
 
-/**
- * The Overview's live block: freshness, the 3D corridor with its km ruler,
- * and the corridor counts. One feed read (useCorridorLive) feeds all of it.
- */
+const queueText = (m: number | null) =>
+  m == null || m <= 0 ? null : m >= 1000 ? `${(m / 1000).toFixed(1)} km queue` : `${Math.round(m)} m queue`;
+const delayText = (s: number | null) => (s == null || s <= 0 ? null : `${Math.max(1, Math.round(s / 60))} min delay`);
+const speedText = (k: number | null) => (k == null ? null : `${Math.round(k)} km/h`);
+
+const keyOf = (s: Pick<ExitStatus, "exit" | "direction">) => `${s.exit.toLowerCase().trim()}|${s.direction}`;
+const severity = (s: ExitStatus) => (s.status === "congested" ? 2 : s.status === "slow" ? 1 : 0);
+
+type Hot = { s: ExitStatus; exit: NlexExit | undefined };
+
 export default function OverviewLive() {
   const live = useCorridorLive();
   const { exits, statuses, tally, slowest, stale, loading, failed } = live;
-  // Start the car at the slowest reading when there is one, so the first thing
-  // on screen is the worst place on the corridor; otherwise at Balintawak.
-  const startKm = useMemo(() => {
-    if (!slowest) return null;
-    const x = exits.find((e) => e.exit_name.toLowerCase().trim() === slowest.exit.toLowerCase().trim());
-    return x ? Math.max(KM0, x.km - 1) : null;
-  }, [slowest, exits]);
-  const [kmState, setKm] = useState<number | null>(null);
-  const km = kmState ?? startKm ?? KM0;
+  const [hover, setHover] = useState<string | null>(null);
+  const [allOpen, setAllOpen] = useState(false);
 
-  const ordered = useMemo(() => [...exits].sort((a, b) => a.km - b.km), [exits]);
-  const nearest = ordered.length
-    ? ordered.reduce((a, b) => (Math.abs(b.km - km) < Math.abs(a.km - km) ? b : a))
-    : null;
-  const stateAt = (dir: "NB" | "SB") => {
-    if (!nearest) return "no data";
-    if (accessLabel(nearest, dir) === "No Access") return "no access";
-    const s = statuses.find((x) => x.exit.toLowerCase().trim() === nearest.exit_name.toLowerCase().trim() && x.direction === dir);
-    return s?.status ?? "clear";
+  const byName = useMemo(() => new Map(exits.map((x) => [x.exit_name.toLowerCase().trim(), x])), [exits]);
+
+  // Every exit-direction that is not clear, worst first: congested before slow,
+  // then the slowest speed, then the longest delay.
+  const hot: Hot[] = useMemo(
+    () =>
+      statuses
+        .filter((s) => s.status !== "clear")
+        .map((s) => ({ s, exit: byName.get(s.exit.toLowerCase().trim()) }))
+        .sort(
+          (a, b) =>
+            severity(b.s) - severity(a.s) ||
+            (a.s.speedKmh ?? Infinity) - (b.s.speedKmh ?? Infinity) ||
+            (b.s.delaySeconds ?? 0) - (a.s.delaySeconds ?? 0),
+        ),
+    [statuses, byName],
+  );
+
+
+  // The headline is computed from the tally, never written in advance.
+  const headline = failed
+    ? "Live feed unreachable"
+    : loading || !tally
+      ? "Reading the live feed…"
+      : tally.congested > 0
+        ? `${tally.congested} exit-direction${tally.congested === 1 ? "" : "s"} congested`
+        : tally.slow > 0
+          ? `${tally.slow} exit-direction${tally.slow === 1 ? "" : "s"} slow`
+          : "Corridor flowing";
+  const headState = failed || loading || !tally ? "none" : tally.congested > 0 ? "congested" : tally.slow > 0 ? "slow" : "clear";
+  const windowMin = live.windowMinutes ?? 60;
+
+  // The hero's scroll cue: hand the reader to the live corridor below.
+  const toNow = () => {
+    const main = document.querySelector<HTMLElement>("main.ds-main");
+    const el = document.getElementById("ov-now");
+    if (!main || !el) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const topbar = parseFloat(getComputedStyle(main).getPropertyValue("--ds-topbar-h")) || 64;
+    main.scrollTo({ top: el.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop - topbar - 12, behavior: reduced ? "auto" : "smooth" });
   };
-  const congestedKm = useMemo(() => {
-    const set = new Set(statuses.filter((s) => s.status !== "clear").map((s) => s.exit.toLowerCase().trim()));
-    return ordered.filter((x) => set.has(x.exit_name.toLowerCase().trim()));
-  }, [statuses, ordered]);
-  const worstAt = (name: string) =>
-    statuses.some((s) => s.exit.toLowerCase().trim() === name && s.status === "congested") ? "congested" : "slow";
 
-  const pct = (k: number) => `${((k - KM0) / (KM1 - KM0)) * 100}%`;
-  const valueText = nearest
-    ? `Km ${km.toFixed(1)}, nearest exit ${displayExitName(nearest.exit_name)}: northbound ${stateAt("NB")}, southbound ${stateAt("SB")}`
-    : `Km ${km.toFixed(1)}`;
+  // One row of the hotspot list, shared by the card and the "See all" modal.
+  const hotRow = ({ s, exit }: Hot, i: number) => {
+    const k = keyOf(s);
+    const facts = [queueText(s.longestQueueMeters), delayText(s.delaySeconds), speedText(s.speedKmh)].filter(Boolean);
+    return (
+      <li
+        key={k}
+        className={`ov-hot-row is-${s.status}${hover === k ? " is-hot" : ""}`}
+        onPointerEnter={() => setHover(k)}
+        onPointerLeave={() => setHover((h) => (h === k ? null : h))}
+      >
+        <span className="ov-hot-rank">{i + 1}</span>
+        <SignalGlyph state={s.status} size={22} title="" />
+        <b className="ov-hot-name">{displayExitName(s.exit)}</b>
+        <span className="ov-hot-word">{s.status === "congested" ? "Congested" : "Slow"}</span>
+        <span className="ov-hot-meta">
+          {exit ? `Km ${exit.km.toFixed(1)} · ` : ""}
+          {s.direction === "NB" ? "Northbound" : "Southbound"}
+        </span>
+        <span className="ov-hot-facts">{facts.length ? facts.join(" · ") : "No queue figures reported"}</span>
+      </li>
+    );
+  };
 
   return (
     <>
-      <div className="ov-fresh" role="status">
-        {failed ? (
-          <><SignalGlyph state="none" size={20} title="" /><span><b>Live feed unreachable.</b> Counts and the corridor are not current.</span></>
-        ) : loading ? (
-          <><SignalGlyph state="none" size={20} title="" /><span>Reading the live feed…</span></>
-        ) : (
-          <>
-            <SignalGlyph state={stale ? "slow" : "clear"} size={20} title="" />
-            <span>
-              <b>{stale ? "Feed stale" : "Live"}</b> · Waze jam reports · {ageText(live.ageMinutes)}
-              {live.windowMinutes ? ` · ${live.windowMinutes}-minute window` : ""}
-            </span>
-          </>
-        )}
+    <section className="ov-hero" data-section="Overview" aria-labelledby="ov-title">
+      {/* The stage draws the 3D car over this box; the picture inside shows
+          until the stage's car is ready, and stays if WebGL is missing. */}
+      <div className="ov-hero-mascot" data-stage-anchor="mascot">
+        <Mascot size={520} className="ov-hero-fallback" />
       </div>
 
-      <CorridorScene exits={exits} statuses={statuses} km={km} onKm={setKm} waiting={loading || failed} />
+      <div className="ov-hero-copy">
+        <p className="ds-page-eyebrow">
+          <Home size={12} strokeWidth={2.2} aria-hidden="true" />
+          <PageGroupName />
+        </p>
+        <TitleReveal as="h1" text="Overview" className="ov-hero-title" id="ov-title" />
+        <p className="ov-hero-span ov-span">
+          Balintawak <b>Km 12</b> <span aria-hidden="true">→</span><span className="sr-only">to</span> Sta. Ines <b>Km 88.25</b> · both carriageways
+        </p>
 
-      <div className="ov-ruler">
-        <div className="ov-ruler-track" aria-hidden="true">
-          {[15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85].map((k) => (
-            <span key={k} className="ov-ruler-km" style={{ left: pct(k) }}>{k}</span>
-          ))}
-          {ordered.map((x) => (
-            <span key={x.exit_id} className="ov-ruler-exit" style={{ left: pct(x.km) }} />
-          ))}
-          {congestedKm.map((x) => (
-            <span key={`c${x.exit_id}`} className={`ov-ruler-flag is-${worstAt(x.exit_name.toLowerCase().trim())}`} style={{ left: pct(x.km) }} />
-          ))}
+        <div className="ov-hero-cols">
+          {/* The answer: freshness and the computed headline. */}
+          <div className="ov-answer">
+            <div className="ov-fresh" role="status">
+              {failed ? (
+                <><SignalGlyph state="none" size={20} title="" /><span><b>Live feed unreachable.</b> Counts and the corridor are not current.</span></>
+              ) : loading ? (
+                /* Placeholder bars while the first read is in flight; the words are for screen readers. */
+                <><span className="ov-skel ov-skel-dot" aria-hidden="true" /><span className="ov-skel ov-skel-line" aria-hidden="true" /><span className="sr-only">Reading the live feed…</span></>
+              ) : (
+                <>
+                  <SignalGlyph state={stale ? "slow" : "clear"} size={20} title="" />
+                  <span>
+                    <b>{stale ? "Feed stale" : "Live"}</b> · Waze jam reports · {ageText(live.ageMinutes)}
+                    {live.windowMinutes ? ` · ${live.windowMinutes}-minute window` : ""}
+                  </span>
+                </>
+              )}
+            </div>
+            {loading && !failed && !tally ? (
+              <h2 className="ov-headline is-loading" aria-busy="true">
+                <span className="ov-skel ov-skel-head" aria-hidden="true" />
+                <span className="ov-skel ov-skel-head is-short" aria-hidden="true" />
+                <span className="sr-only">{headline}</span>
+              </h2>
+            ) : (
+              <h2 className={`ov-headline is-${headState}`}>{headline}</h2>
+            )}
+          </div>
+
+          <div className="ov-answer-side">
+            <div className="ov-worst">
+              <div className="ov-worst-label">Slowest reading on the corridor</div>
+              {slowest ? (
+                <div className="ov-worst-value">
+                  {displayExitName(slowest.exit)} · <span>{Math.round(slowest.speedKmh)} km/h</span>
+                </div>
+              ) : (
+                loading ? (
+                  <div className="ov-worst-value is-none" aria-busy="true">
+                    <span className="ov-skel ov-skel-line is-wide" aria-hidden="true" />
+                    <span className="sr-only">Waiting for the feed</span>
+                  </div>
+                ) : (
+                  <div className="ov-worst-value is-none">No speed reported</div>
+                )
+              )}
+            </div>
+            <div className="ov-actions">
+              <Link href="/dashboard/map-comparison" className="btn-muted">
+                Open Live Map <ArrowUpRight size={14} aria-hidden="true" />
+              </Link>
+              <Link href="/dashboard/traffic" className="btn-muted">
+                Traffic forecast <ArrowUpRight size={14} aria-hidden="true" />
+              </Link>
+            </div>
+          </div>
         </div>
-        <input
-          className="ov-ruler-input"
-          type="range"
-          min={KM0}
-          max={KM1}
-          step={0.1}
-          value={km}
-          onChange={(e) => setKm(Number(e.target.value))}
-          aria-label="Km along the corridor"
-          aria-valuetext={valueText}
-        />
       </div>
 
+      <button type="button" className="ov-scroll-cue" onClick={toNow}>
+        Live corridor <ChevronDown size={14} aria-hidden="true" />
+      </button>
+    </section>
+
+    <div className="ov-now" id="ov-now" data-section="Right now">
       <section className="ov-counts" aria-label="Exit-directions by state, last feed window">
         {(["congested", "slow", "clear"] as const).map((s) => (
           <div key={s} className={`ov-count is-${s}`}>
-            <SignalGlyph state={s} size={40} title="" />
+            <SignalGlyph state={s} size={28} title="" />
             <div>
               <div className="ov-count-value">{tally ? tally[s] : "–"}</div>
               <div className="ov-count-label">{s === "congested" ? "exit-directions congested" : s}</div>
             </div>
           </div>
         ))}
-        <div className="ov-worst">
-          <div className="ov-worst-label">Slowest reading on the corridor</div>
-          {slowest ? (
-            <div className="ov-worst-value">
-              {displayExitName(slowest.exit)} · <span>{Math.round(slowest.speedKmh)} km/h</span>
-            </div>
-          ) : (
-            <div className="ov-worst-value is-none">{loading ? "Waiting for the feed" : "No speed reported"}</div>
-          )}
-        </div>
       </section>
+
+      {/* Where it is slow: every non-clear exit-direction, worst first. */}
+      <section className="ov-hot chart-card" aria-labelledby="ov-hot-title">
+        <header className="ov-card-head">
+          <h3 id="ov-hot-title">
+            Slow and congested now
+            <InfoTooltip text="Exit-directions with a slow or congested Waze jam in the last feed window, worst first: congested before slow, then the slowest speed, then the longest delay. The queue is the longest single report at that exit; reports overlap, so they are never added together." />
+          </h3>
+        </header>
+
+        {failed ? (
+          <StateNote kind="error" title="Live feed unreachable.">Counts and the corridor are not current.</StateNote>
+        ) : loading ? (
+          <ul className="ov-hot-list is-loading" aria-hidden="true">
+            {[0, 1, 2].map((i) => <li key={i} className="ov-hot-skel" />)}
+          </ul>
+        ) : hot.length === 0 ? (
+          <p className="ov-hot-empty">
+            No slow or congested exit-direction in the last {windowMin} minutes. An exit with no report is flowing freely.
+          </p>
+        ) : (
+          <>
+            <ol className="ov-hot-list">
+              {hot.slice(0, SHOWN).map(hotRow)}
+            </ol>
+            {hot.length > SHOWN && (
+              <div className="ov-hot-foot">
+                <button type="button" className="btn-muted ov-hot-all" aria-haspopup="dialog" onClick={() => setAllOpen(true)}>
+                  See all {hot.length}
+                </button>
+              </div>
+            )}
+            <EvidenceModal
+              hideTrigger
+              icon={null}
+              open={allOpen}
+              onOpenChange={setAllOpen}
+              title="Slow and congested now"
+              subtitle={`Every exit-direction with a slow or congested Waze jam in the last ${windowMin} minutes, worst first.`}
+            >
+              <ol className="ov-hot-list is-all">{hot.map(hotRow)}</ol>
+            </EvidenceModal>
+          </>
+        )}
+      </section>
+
+    </div>
     </>
   );
 }

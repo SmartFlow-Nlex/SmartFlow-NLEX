@@ -56,6 +56,12 @@ export function clockFor(hoursAhead: number): string {
   return day === "Today" ? timeOf(t) : `${day} · ${timeOf(t)}`;
 }
 
+/** Day and time apart, for the large timestamp on the forecast map. */
+export function dayTimeFor(hoursAhead: number): { day: string; time: string } {
+  const t = hourOf(hoursAhead);
+  return { day: dayOf(t), time: timeOf(t) };
+}
+
 /** The hours worth offering for a range, clamped to what the warehouse holds. */
 export function horizonOptionsFor(range: HorizonRangeKey, maxHorizon: number | null): number[] {
   const r = HORIZON_RANGES.find((x) => x.key === range) ?? HORIZON_RANGES[0];
@@ -86,6 +92,8 @@ export default function ForecastHorizonPicker({
   setRange,
   maxHorizon,
   compact = false,
+  live,
+  onPick,
 }: {
   horizon: number;
   setHorizon: (h: number) => void;
@@ -94,6 +102,12 @@ export default function ForecastHorizonPicker({
   maxHorizon: number | null;
   /** Drops the heading, for a header bar that already has one. */
   compact?: boolean;
+  /** Night Corridor timeline: the "Live" end at the left of the scrubber. It
+   *  points the corridor strip at the live map; the forecast hour is
+   *  untouched, because the forecast endpoint has no "live" hour. */
+  live?: { label: string; active: boolean; onSelect: () => void };
+  /** Told when a tick on the timeline is picked (after setHorizon). */
+  onPick?: (h: number) => void;
 }) {
   const options = useMemo(() => horizonOptionsFor(range, maxHorizon), [range, maxHorizon]);
 
@@ -196,6 +210,63 @@ export default function ForecastHorizonPicker({
           );
         })}
       </div>
+
+      {/* The timeline scrubber: one tick per hour the forecast actually
+          offers for this range (the same list the select below holds), with
+          "Live" at the left end. Picking a tick does exactly what picking the
+          same hour in the select does. */}
+      {!compact && offered.length > 0 && (
+        <div className="lm-scrub" role="group" aria-label="Forecast timeline">
+          {live && (
+            <button
+              type="button"
+              className={`lm-scrub-live${live.active ? " is-active" : ""}`}
+              aria-pressed={live.active}
+              onClick={live.onSelect}
+              title="Show the live map's state on the corridor strip"
+            >
+              <i aria-hidden="true" />
+              <span className="lm-scrub-live-word">Live</span>
+              <span className="lm-scrub-live-age">{live.label}</span>
+            </button>
+          )}
+          <div className="lm-scrub-track" style={{ ["--ticks" as string]: offered.length }}>
+            {offered.map((h, i) => {
+              const t = usePeaks ? new Date(peaks![i].at) : hourOf(h);
+              const on = h === horizon;
+              const every = offered.length <= 13 ? 1 : offered.length <= 30 ? 4 : 8;
+              const labelled = on || usePeaks || i % every === 0 || i === offered.length - 1;
+              const short = usePeaks
+                ? t.toLocaleDateString(undefined, { weekday: "short" })
+                : `+${h} h`;
+              return (
+                <button
+                  key={`${h}-${i}`}
+                  type="button"
+                  className={`lm-tick${on ? " is-on" : ""}${labelled ? " is-labelled" : ""}`}
+                  aria-pressed={on}
+                  aria-label={`${dayOf(t)} ${timeOf(t)}, +${h} h`}
+                  title={`${dayOf(t)} · ${timeOf(t)} · +${h} h`}
+                  onClick={() => {
+                    setHorizon(h);
+                    onPick?.(h);
+                  }}
+                >
+                  {/* The chosen hour, large, riding above its tick. */}
+                  {on && (
+                    <span className="lm-tick-now" aria-hidden="true">
+                      <b>{timeOf(t)}</b>
+                      <small>{dayOf(t)}</small>
+                    </span>
+                  )}
+                  <span className="lm-tick-mark" aria-hidden="true" />
+                  <span className="lm-tick-label" aria-hidden="true">{short}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <label className="mc-horizon-pick">
         <span className="sr-only">Forecast hour</span>

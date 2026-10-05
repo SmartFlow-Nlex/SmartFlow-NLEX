@@ -173,99 +173,45 @@ export default function ModelNarrative({
     .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
   const best = accepted[0];
 
+  // The module's own limitation (quantityNote: e.g. "CO₂ is not measured…").
+  // It was declared but never rendered once the template prose gave way to the
+  // model-written read-out; it is a method fact, so it sits one click away on
+  // the card whether or not a report has been generated.
+  const method = quantityNote ? (
+    <details className="nc-details">
+      <summary>How this is measured</summary>
+      <p style={{ margin: 0 }}>{quantityNote}</p>
+    </details>
+  ) : null;
+
   // Nothing but the button until it is pressed.
-  if (!open) return <GenerateReportButton onClick={() => setOpen(true)} />;
+  if (!open) return (
+    <>
+      <GenerateReportButton onClick={() => setOpen(true)} />
+      {method}
+    </>
+  );
 
+  /* Night Corridor: the same shell the other Narrative Explanations wear
+     (NarrativePanel's .nc-narrative): model violet, one heading, one Hide
+     control, a muted line saying what the read-out was generated from, then
+     the read-out itself (one sentence and at most three bullets up front, the
+     rest behind Details, in AiModelInsight). */
   return (
-    <section
-      style={{
-        border: "1px solid color-mix(in srgb, var(--page-accent, #4f46e5) 28%, transparent)",
-        borderRadius: 12,
-        background: "linear-gradient(135deg, color-mix(in srgb, var(--page-accent, #4f46e5) 11%, var(--bg-surface)), color-mix(in srgb, var(--page-accent, #4f46e5) 4%, var(--bg-surface)))",
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.5)",
-        padding: open ? "18px 20px" : "12px 18px",
-        display: "flex",
-        flexDirection: "column",
-        gap: open ? 14 : 0,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ minWidth: 190, display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: 9, flex: "none",
-            background: "linear-gradient(135deg, color-mix(in srgb, var(--page-accent, #4f46e5) 82%, white), var(--page-accent, #4f46e5))", color: "#fff", boxShadow: "0 1px 6px color-mix(in srgb, var(--page-accent, #4f46e5) 35%, transparent)" }}>
-            <Sparkles size={15} strokeWidth={2.4} />
-          </span>
-          <div>
-          <h4 style={{ margin: 0, fontSize: "0.98rem", fontWeight: 800, letterSpacing: "-0.01em", color: "var(--text-primary)" }}>
-            Narrative Explanation
-          </h4>
-          {!open && (
-            <p style={{ margin: "3px 0 0", fontSize: "0.78rem", color: "var(--text-secondary)" }}>
-              Plain-language read-out of how {selected.length === 1 ? "the selected model" : `the ${selected.length} selected models`} performed
-            </p>
-          )}
-          </div>
-        </div>
-
-        {/* Collapsed, the row was mostly dead space. These chips put the headline
-            verdict in it, so the strip is informative even before it is opened. */}
-        {!open && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: 1, justifyContent: "flex-end" }}>
-            {selected.map((k) => {
-              const r = rowFor(k);
-              if (!r) return null;
-              const isAcc = !!r.accepted;
-              const mase = r.mase != null && isFinite(r.mase) ? r.mase : null;
-              return (
-                <span
-                  key={k}
-                  title={isAcc ? `Accepted — rank ${r.rank} of ${rankedCount}` : r.rejected_reason ?? "Rejected"}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 7,
-                    padding: "5px 11px", borderRadius: 8, fontSize: "0.735rem",
-                    background: isAcc ? "var(--color-success-bg)" : "var(--bg-surface-hover)",
-                    border: `1px solid ${isAcc ? "var(--color-success-border)" : "var(--border-default)"}`,
-                  }}
-                >
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: CLR[k] }} />
-                  <b style={{ color: "var(--text-primary)" }}>{LBL[k]}</b>
-                  <span style={{ fontWeight: 700, fontSize: "0.66rem", color: isAcc ? "var(--color-success)" : "var(--text-muted)" }}>
-                    {isAcc ? (isTied(r) ? "CO-CHAMPION" : `RANK #${r.rank}`) : "REJECTED"}
-                  </span>
-                  {r.wmape != null && (
-                    <span style={{ color: "var(--text-secondary)" }}>{r.wmape.toFixed(2)}%</span>
-                  )}
-                  {mase != null && (
-                    <span style={{ color: mase < 1 ? "var(--color-success)" : "var(--color-danger)", fontWeight: 600 }}>
-                      MASE {mase.toFixed(2)}
-                    </span>
-                  )}
-                </span>
-              );
-            })}
-          </div>
-        )}
-
-        <button
-          onClick={() => setOpen((v) => !v)}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px",
-            marginLeft: open ? "auto" : 0, flexShrink: 0,
-            borderRadius: 999, cursor: "pointer", fontSize: "0.76rem", fontWeight: 600,
-            border: open ? "1px solid #cbd5e1" : "1px solid transparent",
-            background: open ? "var(--bg-surface)" : "linear-gradient(135deg, color-mix(in srgb, var(--page-accent, #4f46e5) 82%, white), var(--page-accent, #4f46e5))",
-            color: open ? "var(--text-secondary)" : "var(--bg-surface)",
-            boxShadow: open ? "none" : "0 1px 6px color-mix(in srgb, var(--page-accent, #4f46e5) 35%, transparent)",
-          }}
-        >
+    <section className="nc-narrative">
+      <div className="nc-narrative-head">
+        <span className="nc-narrative-icon">
+          <Sparkles size={15} strokeWidth={2.2} aria-hidden="true" />
+        </span>
+        <h4>Narrative Explanation</h4>
+        <button type="button" className="btn-muted nc-narrative-hide" onClick={() => setOpen((v) => !v)}>
           Hide report
         </button>
       </div>
 
-      {open && (
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-          Generated from the stored validation metrics for the models currently selected
+      <div className="nc-narrative-body">
+        <p className="nc-narrative-context">
+          From the stored validation metrics of the selected models
           {scoredDays != null && windowStart && windowEnd ? (
             <>
               {" "}· {scoredDays.toLocaleString()} scored days, {windowStart} to {windowEnd},
@@ -304,9 +250,8 @@ export default function ModelNarrative({
             diagnosis: r.diagnosis ?? null,
           }))}
       />
-
+      {method}
       </div>
-      )}
     </section>
   );
 }

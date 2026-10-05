@@ -1,0 +1,1677 @@
+/* Night Corridor: page styles for livemap. Loaded after globals.css (app/layout.tsx),
+   so rules here override the shared layer at equal specificity. Tokens only.
+
+   The Live Map is the one page where the map is the stage: the WebGL stage and
+   the editorial grid are off here (the shell does that), and the two maps run
+   full-bleed under the topbar, with the horizon timeline and the corridor strip
+   docked beneath them. Every rule is scoped to .lm-page (the page section, which
+   also holds the two expanded views) so nothing leaks into other routes. */
+
+/* --- Theme-dependent values the map graphics share ------------------------ */
+.lm-page {
+  --lm-hatch: rgba(255, 255, 255, 0.45);
+  --lm-tape-a: #ffffff;
+  --lm-tape-b: #283043;
+  --lm-shadow: 0 10px 28px rgba(20, 24, 40, 0.16);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lm-page {
+    --lm-hatch: rgba(3, 6, 13, 0.38);
+    --lm-tape-a: #e9edf5;
+    --lm-tape-b: #121a2a;
+    --lm-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  }
+}
+:root[data-theme="dark"] .lm-page {
+  --lm-hatch: rgba(3, 6, 13, 0.38);
+  --lm-tape-a: #e9edf5;
+  --lm-tape-b: #121a2a;
+  --lm-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* --- Page frame ------------------------------------------------------------ */
+.lm-page.ds-content { padding-bottom: 24px; }
+.lm-page .ds-page-header { margin-bottom: 20px; z-index: 2; }
+.lm-page .ds-page-eyebrow { margin-bottom: 10px; }
+.lm-page .ds-page-subtitle { margin-top: 10px; }
+
+/* Full-bleed: the stage cancels the content column's side padding. */
+.lm-stage {
+  position: relative;
+  z-index: 1;
+  margin: 0 -32px;
+  border-top: 1px solid var(--border-default);
+  background: var(--stage);
+}
+@media (max-width: 980px) { .lm-stage { margin: 0 -20px; } }
+@media (max-width: 640px) { .lm-stage { margin: 0 -16px; } }
+
+/* Two maps side by side, flush, one hairline between them. */
+.lm-page .map-grid.mc-map-grid.lm-maps {
+  height: clamp(560px, calc(100dvh - 250px), 820px);
+  gap: 0;
+}
+.lm-page .mc-panel-wrapper.lm-panel {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--stage);
+  min-width: 0;
+}
+.lm-page .lm-panel-live { border-right: 1px solid var(--border-default); }
+.lm-page .lm-panel .map-card { border: 0; border-radius: 0; background: transparent; }
+.lm-page .map-canvas.mapbox,
+.lm-page .map-canvas { background: var(--stage); }
+.lm-page .lm-panel .map-canvas-container { min-height: 0; }
+
+/* --- Panel header: a flat bar, the live / forecast tag on the right ------- */
+.lm-page .map-head,
+.lm-page .map-head.blue,
+.lm-page .map-head.purple {
+  gap: 14px;
+  padding: 12px 20px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-primary);
+}
+.lm-page .map-head h3 {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+.lm-page .map-head p {
+  margin: 3px 0 0;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.lm-page .map-head > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  letter-spacing: 0;
+}
+.lm-page .map-head.purple > span { color: var(--text-secondary); border: 0; }
+.lm-page .lm-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.lm-page .lm-tag.is-forecast {
+  color: var(--color-purple);
+  border-color: color-mix(in srgb, var(--color-purple) 50%, transparent);
+  border-style: dashed;
+}
+.lm-page .mc-dot.green { background: var(--signal-clear); box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal-clear) 22%, transparent); }
+.lm-page .mc-maximise {
+  margin-left: 0 !important;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  transition: border-color var(--transition-fast), transform var(--transition-fast), background-color var(--transition-fast);
+}
+.lm-page .mc-maximise:hover { border-color: var(--hairline-hover); background: color-mix(in srgb, var(--text-primary) 5%, transparent); transform: translateY(-2px); }
+.lm-page .mc-maximise:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+
+/* --- Footer stats: eyebrow label, 32 px tabular value ---------------------- */
+.lm-page .lm-panel .mc-footer-stats {
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px 12px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-default);
+}
+.lm-page .lm-panel .mc-stat-item { align-items: flex-start; gap: 2px; }
+.lm-page .lm-panel .mc-stat-label {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.lm-page .lm-panel .mc-stat-value,
+.lm-page .lm-panel .mc-stat-value.blue,
+.lm-page .lm-panel .mc-stat-value.red,
+.lm-page .lm-panel .mc-stat-value.orange,
+.lm-page .lm-panel .mc-stat-value.purple,
+.lm-page .lm-panel .mc-stat-value.green {
+  font-size: var(--fs-numeral);
+  font-weight: 400;
+  line-height: 1.05;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Header actions: exit picker and the 3D toggle ------------------------ */
+.lm-page .mc-search-bar.lm-exit-picker {
+  position: relative;
+  width: 300px;
+  height: 40px;
+  padding: 0 14px;
+  gap: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--bg-input);
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.lm-page .lm-exit-picker:hover { border-color: var(--hairline-hover); }
+.lm-page .lm-exit-trigger {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 400;
+  text-align: left;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.lm-page .lm-exit-picker.has-value .lm-exit-trigger { color: var(--text-primary); }
+.lm-page .lm-exit-chev { margin-left: auto; flex-shrink: 0; color: var(--text-secondary); }
+.lm-page .lm-exit-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+.lm-page .lm-exit-reset,
+.lm-page .lm-exit-option {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-body);
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.lm-page .lm-exit-reset { color: var(--text-secondary); border-bottom: 1px solid var(--border-default); border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+.lm-page .lm-exit-reset:hover,
+.lm-page .lm-exit-option:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.lm-page .lm-exit-option.is-on { background: color-mix(in srgb, var(--page-accent) 14%, transparent); font-weight: 600; }
+.lm-page .lm-exit-id { min-width: 1.6rem; font-size: var(--fs-label); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.lm-page .lm-exit-km { margin-left: auto; font-size: var(--fs-label); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lm-page .lm-exit-empty { padding: 10px 12px; font-size: var(--fs-body); color: var(--text-secondary); }
+
+.lm-page .lm-3d {
+  height: 40px;
+  min-width: 52px;
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast);
+}
+.lm-page .lm-3d:hover { border-color: var(--hairline-hover); transform: translateY(-2px); }
+.lm-page .lm-3d.is-on {
+  border-color: color-mix(in srgb, var(--page-accent) 70%, transparent);
+  background: color-mix(in srgb, var(--page-accent) 16%, transparent);
+}
+
+/* --- Overlays on the maps --------------------------------------------------
+   The corridor runs bottom-right (Balintawak) to top-left (Sta. Ines), so the
+   overlays take the two empty corners: top-right and bottom-left. */
+.lm-page .lm-panel .mc-legend-card {
+  left: 12px;
+  bottom: 34px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  max-width: min(320px, calc(100% - 24px));
+}
+.lm-page .mc-legend-card > summary {
+  padding: 7px 12px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-primary);
+}
+.lm-page .mc-legend-card > summary::before { color: var(--text-muted); }
+.lm-page .mc-legend-card > summary:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.lm-page .mc-sub-label,
+.lm-page .map-legend h4,
+.lm-page .wz-legend h4 {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.lm-page .mc-density-row,
+.lm-page .wz-legend-row,
+.lm-page .map-legend { font-size: var(--fs-body); font-weight: 400; color: var(--text-secondary); }
+.lm-page .mc-density-line,
+.lm-page .wz-line { width: 22px; height: 6px; border-radius: 3px; }
+.lm-page .mc-legend-pin {
+  width: 12px;
+  height: 12px;
+  border: 2.5px solid var(--action);
+  background: var(--bg-raised);
+  box-shadow: none;
+}
+
+/* Data age badges: "Live · updated N min ago" / "Forecast · +N h". */
+.lm-page .lm-age {
+  position: absolute;
+  left: 12px;
+  bottom: 80px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--bg-raised);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+.lm-page .lm-age i { width: 7px; height: 7px; border-radius: 50%; background: var(--signal-clear); flex: none; }
+.lm-page .lm-age.is-stale i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-muted); }
+.lm-page .lm-age.is-forecast i { background: var(--color-purple); }
+
+/* The forecast hour, large on the map. */
+.lm-page .lm-when {
+  position: absolute;
+  left: 12px;
+  bottom: 80px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px 11px;
+  border: 1px dashed color-mix(in srgb, var(--color-purple) 55%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  pointer-events: none;
+}
+.lm-page .lm-when .lm-age { position: static; padding: 0; border: 0; background: none; color: var(--color-purple); }
+.lm-page .lm-when-time {
+  font-size: var(--fs-numeral);
+  font-weight: 400;
+  line-height: 1.05;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lm-page .lm-when-day {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Forecast model card and the (inert) icon buttons, top-right beside the zoom control. */
+.lm-page .lm-panel .mc-forecast-controls {
+  top: 10px;
+  right: 52px;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+}
+.lm-page .lm-panel .mc-model-card {
+  min-width: 0;
+  max-width: 240px;
+  padding: 9px 12px 10px;
+  gap: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  box-shadow: none;
+}
+.lm-page .mc-model-head {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--color-purple);
+}
+.lm-page .mc-model-name { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); flex-wrap: wrap; gap: 6px; }
+.lm-page .mc-model-name em {
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--color-purple) 50%, transparent);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--color-purple);
+  font-variant-numeric: tabular-nums;
+}
+.lm-page .mc-model-note { font-size: var(--fs-label); font-weight: 400; line-height: 1.45; color: var(--text-secondary); }
+.lm-page .mc-purple-text { color: var(--color-purple); }
+.lm-page .lm-panel .mc-zoom-group { gap: 0; background: transparent; box-shadow: none; border-radius: var(--radius-sm); }
+.lm-page .lm-panel .mc-icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  box-shadow: none;
+}
+.lm-page .lm-panel .mc-zoom-group .mc-icon-btn { border-radius: 0; border-bottom-width: 0; }
+.lm-page .lm-panel .mc-zoom-group .mc-icon-btn:first-child { border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+.lm-page .lm-panel .mc-zoom-group .mc-icon-btn:last-child { border-radius: 0 0 var(--radius-sm) var(--radius-sm); border-bottom-width: 1px; }
+.lm-page .lm-panel .mc-icon-btn svg { width: 15px; height: 15px; }
+
+/* Mapbox's own controls, in the world's surfaces. */
+.lm-page .mapboxgl-ctrl-group {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  overflow: hidden;
+}
+.lm-page .mapboxgl-ctrl-group button + button { border-top: 1px solid var(--border-default); }
+.lm-page .mapboxgl-ctrl-group button:hover { background-color: color-mix(in srgb, var(--text-primary) 8%, transparent); }
+.lm-page .mapboxgl-ctrl.mapboxgl-ctrl-attrib,
+.lm-page .mapboxgl-ctrl-attrib.mapboxgl-compact {
+  background: color-mix(in srgb, var(--stage) 72%, transparent);
+  color: var(--text-muted);
+  font-size: var(--fs-micro);
+  border-radius: var(--radius-sm) 0 0 0;
+}
+.lm-page .mapboxgl-ctrl-attrib a { color: var(--text-secondary); }
+.lm-page .mapboxgl-ctrl-attrib-inner { line-height: 1.6; padding: 0 4px; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lm-page .mapboxgl-ctrl-icon { filter: invert(1) brightness(1.4); }
+}
+:root[data-theme="dark"] .lm-page .mapboxgl-ctrl-icon { filter: invert(1) brightness(1.4); }
+
+/* --- Horizon timeline, docked under the maps ------------------------------- */
+.lm-page .mc-forecast-controls.lm-timeline-dock {
+  position: static;
+  display: block;
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-surface);
+}
+.lm-page .lm-timeline-dock .mc-horizon {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  min-width: 0;
+  padding: 10px 20px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.lm-page .mc-horizon-head {
+  gap: 7px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.lm-page .mc-horizon-ranges {
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+}
+.lm-page .mc-horizon-range {
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.lm-page .mc-horizon-range.is-active {
+  background: color-mix(in srgb, var(--color-purple) 18%, transparent);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-purple) 60%, transparent);
+}
+.lm-page .mc-horizon-range:not(:disabled):not(.is-active):hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
+.lm-page .mc-horizon-pick select {
+  height: 34px;
+  min-width: 168px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background-color: var(--bg-input);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238590a6' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.lm-page .mc-horizon-pick select:focus-visible {
+  border-color: var(--color-purple);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-purple) 25%, transparent);
+}
+.lm-page .mc-horizon-pick option,
+.lm-page .mc-horizon-pick optgroup { background: var(--bg-surface-solid); color: var(--text-primary); }
+.lm-page .mc-horizon-when {
+  margin: 0;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* The scrubber: "Live" at the left end, one tick per offered hour. */
+.lm-page .lm-scrub {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  order: 10;
+}
+.lm-page .lm-timeline-dock .mc-horizon-pick { order: 6; }
+.lm-page .lm-timeline-dock .mc-horizon-when { order: 7; }
+.lm-page .lm-scrub-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  flex: none;
+}
+.lm-page .lm-scrub-live i { width: 8px; height: 8px; border-radius: 50%; background: var(--signal-clear); }
+.lm-page .lm-scrub-live-word {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-primary);
+}
+.lm-page .lm-scrub-live-age { font-size: var(--fs-label); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.lm-page .lm-scrub-live.is-active {
+  border-color: color-mix(in srgb, var(--signal-clear) 60%, transparent);
+  background: color-mix(in srgb, var(--signal-clear) 10%, transparent);
+}
+.lm-page .lm-scrub-live:hover { border-color: var(--hairline-hover); }
+.lm-page .lm-scrub-track {
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(var(--ticks, 12), minmax(0, 1fr));
+  min-width: 0;
+  height: 40px;
+}
+.lm-page .lm-scrub-track::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 13px;
+  height: 1px;
+  background: var(--border-strong);
+}
+.lm-page .lm-tick {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.lm-page .lm-tick-mark {
+  width: 1.5px;
+  height: 14px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--text-primary) 38%, transparent);
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+}
+.lm-page .lm-tick-label {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  visibility: hidden;
+}
+.lm-page .lm-tick.is-labelled .lm-tick-label { visibility: visible; }
+.lm-page .lm-tick:hover .lm-tick-mark { background: var(--text-primary); transform: scaleY(1.2); }
+.lm-page .lm-tick:hover .lm-tick-label { visibility: visible; color: var(--text-primary); }
+.lm-page .lm-tick.is-on .lm-tick-mark {
+  width: 12px;
+  height: 12px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--color-purple);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-purple) 28%, transparent);
+}
+.lm-page .lm-tick.is-on .lm-tick-label { color: var(--text-primary); visibility: visible; }
+/* While the strip shows Live, the forecast hour is still marked, quieter. */
+.lm-page .lm-scrub-live.is-active + .lm-scrub-track .lm-tick.is-on .lm-tick-mark {
+  background: var(--bg-surface-solid);
+  box-shadow: inset 0 0 0 2px var(--color-purple);
+}
+
+/* --- The compact key ------------------------------------------------------- */
+.lm-page .lm-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.lm-page .lm-key-item { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.lm-page .lm-key-swatch { width: 16px; height: 6px; border-radius: 3px; flex: none; }
+.lm-page .lm-key-sep { width: 1px; height: 14px; background: var(--border-strong); }
+.lm-page .lm-key-finish {
+  position: relative;
+  width: 22px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+.lm-page .lm-key-finish.is-live { box-shadow: 0 0 0 1.5px var(--text-primary); }
+.lm-page .lm-key-finish.is-forecast {
+  background-image: repeating-linear-gradient(45deg, var(--lm-hatch) 0 2px, transparent 2px 5px) !important;
+  outline: 1.5px dashed var(--text-primary);
+  outline-offset: 1px;
+}
+.lm-page .lm-key-pill { display: none; }
+
+/* --- Corridor strip -------------------------------------------------------- */
+.lm-page .lm-strip {
+  padding: 12px 20px 10px;
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-surface);
+}
+.lm-page .lm-strip-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+}
+.lm-page .lm-strip-title { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.lm-page .lm-strip-title h2 { margin: 0; font-size: var(--fs-title); font-weight: 600; color: var(--text-primary); }
+.lm-page .lm-strip-span { font-size: var(--fs-label); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lm-page .lm-strip-mode {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+}
+.lm-page .lm-strip-mode button {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.lm-page .lm-strip-mode button.is-on { background: color-mix(in srgb, var(--text-primary) 10%, transparent); color: var(--text-primary); }
+.lm-page .lm-strip-mode button:hover:not(.is-on) { color: var(--text-primary); }
+.lm-page .lm-strip-age { font-size: var(--fs-label); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lm-page .lm-strip-key { margin-left: auto; }
+.lm-page .lm-strip-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.lm-page .lm-strip-toggle svg { transition: transform var(--transition-fast); }
+.lm-page .lm-strip.is-collapsed .lm-strip-toggle svg { transform: rotate(-90deg); }
+.lm-page .lm-strip-toggle:hover { border-color: var(--hairline-hover); }
+.lm-page .lm-strip-body { padding-top: 6px; }
+.lm-page .lm-strip-body[hidden] { display: none; }
+
+.lm-page .lm-strip-names,
+.lm-page .lm-strip-axis,
+.lm-page .lm-strip-readout { position: relative; margin-left: 52px; }
+.lm-page .lm-strip-names { height: 20px; }
+.lm-page .lm-strip-name {
+  position: absolute;
+  bottom: 3px;
+  translate: -50% 0;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.lm-page .lm-strip-lanes { display: grid; gap: 8px; padding: 4px 0; }
+.lm-page .lm-lane { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; }
+.lm-page .lm-lane-tag {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+}
+.lm-page .lm-lane-track {
+  position: relative;
+  height: 12px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  cursor: crosshair;
+}
+.lm-page .lm-lane-track:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 4px; }
+.lm-page .lm-lane-empty { position: absolute; left: 8px; top: -2px; font-size: var(--fs-label); color: var(--text-muted); }
+.lm-page .lm-seg { position: absolute; top: 0; bottom: 0; }
+.lm-page .lm-seg:first-of-type { border-radius: 3px 0 0 3px; }
+.lm-page [data-level="clear"] { --lm-c: var(--signal-clear); }
+.lm-page [data-level="slow"] { --lm-c: var(--signal-slow); }
+.lm-page [data-level="congested"] { --lm-c: var(--signal-congested); }
+.lm-page [data-level="nodata"] { --lm-c: var(--signal-none); }
+.lm-page .lm-seg { background: var(--lm-c); }
+.lm-page .lm-strip-jam {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  min-width: 3px;
+  border-radius: 2px;
+  background: var(--lm-c);
+  box-shadow: 0 0 0 1.5px var(--stage);
+  z-index: 2;
+}
+.lm-page .lm-strip-tail {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  background: repeating-linear-gradient(90deg, var(--lm-c) 0 4px, transparent 4px 7px);
+  opacity: 0.7;
+  z-index: 1;
+}
+/* Forecast finish on the strip too: the hatch, and a dashed edge. */
+.lm-page .lm-strip-lanes.is-forecast .lm-seg,
+.lm-page .lm-strip-lanes.is-forecast .lm-strip-jam {
+  background-image: repeating-linear-gradient(45deg, var(--lm-hatch) 0 2px, transparent 2px 6px);
+}
+.lm-page .lm-strip-lanes.is-forecast .lm-lane-track::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 1.5px dashed color-mix(in srgb, var(--text-primary) 70%, transparent);
+  border-radius: 5px;
+  pointer-events: none;
+}
+.lm-page .lm-strip-lanes.is-forecast .lm-seg[data-level="nodata"] { background-image: none; }
+.lm-page .lm-exit-tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  translate: -0.5px 0;
+  background: color-mix(in srgb, var(--text-primary) 40%, transparent);
+  z-index: 1;
+  pointer-events: none;
+}
+.lm-page .lm-strip-closure {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  min-width: 8px;
+  padding: 0;
+  border: 1px solid var(--text-primary);
+  border-radius: 2px;
+  background: repeating-linear-gradient(45deg, var(--lm-tape-a) 0 3px, var(--lm-tape-b) 3px 6px);
+  z-index: 3;
+  cursor: pointer;
+}
+.lm-page .lm-strip-closure svg {
+  position: absolute;
+  top: -17px;
+  left: 50%;
+  translate: -50% 0;
+  padding: 2px;
+  box-sizing: content-box;
+  border-radius: 50%;
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.lm-page .lm-strip-alert {
+  position: absolute;
+  top: 50%;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  translate: -50% -50%;
+  border: 1.5px solid var(--stage);
+  border-radius: 50%;
+  background: var(--alert);
+  color: #ffffff;
+  cursor: pointer;
+}
+.lm-page .lm-strip-alert.is-unconfirmed { opacity: 0.72; outline: 1.5px dashed var(--alert); outline-offset: 1px; }
+.lm-page .lm-strip-cursor {
+  position: absolute;
+  top: -7px;
+  bottom: -7px;
+  width: 2px;
+  translate: -1px 0;
+  border-radius: 1px;
+  background: var(--text-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--stage) 60%, transparent);
+  z-index: 5;
+  pointer-events: none;
+}
+.lm-page .lm-strip-axis { height: 18px; margin-top: 2px; }
+.lm-page .lm-strip-axis span {
+  position: absolute;
+  top: 2px;
+  translate: -50% 0;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.lm-page .lm-strip-axis span:first-child { translate: 0 0; }
+.lm-page .lm-strip-axis span:last-child { translate: -100% 0; }
+.lm-page .lm-strip-readout {
+  min-height: 18px;
+  margin-top: 2px;
+  margin-bottom: 0;
+  font-size: var(--fs-label);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Map graphics drawn as markers ---------------------------------------- */
+/* Jam callouts: a leader from the queue's head to "length · delay · direction". */
+.lm-page .lm-callout { position: relative; width: 0; height: 0; pointer-events: none; z-index: 4; }
+.lm-page .lm-callout-lead {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 24px;
+  height: 1.5px;
+  background: var(--lm-c);
+  transform-origin: 0 50%;
+  rotate: -48deg;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--stage) 55%, transparent);
+}
+.lm-page .lm-callout[data-side="west"] .lm-callout-lead { rotate: -132deg; }
+.lm-page .lm-callout-plate {
+  position: absolute;
+  left: 16px;
+  top: -40px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--lm-c) 65%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  box-shadow: var(--lm-shadow);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.lm-page .lm-callout[data-side="west"] .lm-callout-plate { left: auto; right: 16px; }
+.lm-page .lm-callout[data-predicted] .lm-callout-plate { border-style: dashed; }
+
+/* The strip's spot on the map. */
+.lm-page .lm-hover-ring,
+.lm-page .lm-clock { z-index: 4; }
+.lm-page .lm-hover-ring {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--text-primary);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--stage) 55%, transparent), 0 0 16px color-mix(in srgb, var(--action) 65%, transparent);
+  pointer-events: none;
+}
+
+/* The forecast finish's clock badge on the selected segment. */
+.lm-page .lm-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px dashed var(--color-purple);
+  border-radius: var(--radius-full);
+  background: var(--bg-raised);
+  color: var(--color-purple);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--lm-shadow);
+  pointer-events: none;
+}
+
+/* Exit pins: rings in expressway blue, plates with the km post. */
+.lm-page .custom-toll-marker .toll-pin-dot { background: var(--bg-raised); border-color: var(--action); color: var(--text-primary); box-shadow: none; }
+.lm-page .custom-toll-marker[data-tier="far"] .toll-pin-dot { width: 11px; height: 11px; border: 2.5px solid var(--action); background: var(--bg-raised); box-shadow: none; }
+.lm-page .custom-toll-marker[data-tier="mid"] .toll-pin-dot { width: 15px; height: 15px; border: 3px solid var(--action); background: var(--bg-raised); box-shadow: none; }
+.lm-page .custom-toll-marker[data-tier="near"] .toll-pin-dot { width: 24px; height: 24px; border: 2px solid var(--bg-raised); background: var(--action); color: var(--action-ink); }
+.lm-page .custom-toll-marker[data-tier="far"] .toll-pin:hover .toll-pin-dot,
+.lm-page .custom-toll-marker[data-tier="mid"] .toll-pin:hover .toll-pin-dot { border-color: var(--text-primary); }
+.lm-page .custom-toll-marker .toll-pin-name {
+  --callout-line: color-mix(in srgb, var(--text-primary) 45%, transparent);
+  padding: 2px 7px 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  box-shadow: none;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+}
+.lm-page .custom-toll-marker .toll-pin-name::before,
+.lm-page .custom-toll-marker .toll-pin-name::after { box-shadow: 0 0 0 1.25px color-mix(in srgb, var(--stage) 60%, transparent); }
+.lm-page .toll-pin-km { margin-left: 6px; font-weight: 400; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.lm-page .custom-toll-marker[data-label="off"] .toll-pin-name { display: none; }
+.lm-page .custom-toll-marker[data-selected="on"] .toll-pin-dot { box-shadow: 0 0 0 3px color-mix(in srgb, var(--action) 45%, transparent); }
+.lm-page .custom-toll-marker[data-selected="on"] .toll-pin-name { border-color: var(--action); }
+:root .lm-page .custom-toll-marker[data-queue="slow"] .toll-pin-name {
+  --callout-line: var(--signal-slow);
+  color: var(--signal-slow);
+  border-color: color-mix(in srgb, var(--signal-slow) 55%, transparent);
+  background: color-mix(in srgb, var(--signal-slow) 12%, var(--bg-surface-solid));
+}
+:root .lm-page .custom-toll-marker[data-queue="congested"] .toll-pin-name {
+  --callout-line: var(--signal-congested);
+  color: var(--signal-congested);
+  border-color: color-mix(in srgb, var(--signal-congested) 55%, transparent);
+  background: color-mix(in srgb, var(--signal-congested) 12%, var(--bg-surface-solid));
+}
+
+/* Waze report pins: a soft stage-coloured halo so they lift off the dark map. */
+.lm-page .pulsing-marker-container { position: relative; display: grid; place-items: center; }
+.lm-page .pulsing-marker-glow {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--stage) 45%, transparent);
+}
+
+/* --- Hover cards (Mapbox popups) ------------------------------------------- */
+.lm-page .mjp-pop .mapboxgl-popup-content,
+.lm-page .mapboxgl-popup-content {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+}
+.lm-page .mapboxgl-popup-anchor-left .mapboxgl-popup-tip { border-right-color: var(--bg-raised); }
+.lm-page .mapboxgl-popup-anchor-right .mapboxgl-popup-tip { border-left-color: var(--bg-raised); }
+.lm-page .mapboxgl-popup-anchor-top .mapboxgl-popup-tip { border-bottom-color: var(--bg-raised); }
+.lm-page .mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip { border-top-color: var(--bg-raised); }
+.lm-page .mjp { min-width: 190px; font-size: var(--fs-body); }
+.lm-page .mjp-head {
+  --mjp-c: var(--text-muted);
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--mjp-c) 38%, transparent);
+  background: color-mix(in srgb, var(--mjp-c) 14%, var(--bg-surface-solid));
+  color: var(--mjp-c);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.lm-page .mjp-head span { font-size: var(--fs-label); letter-spacing: 1px; color: var(--text-secondary); opacity: 1; font-variant-numeric: tabular-nums; }
+.lm-page .mjp-head.is-clear { --mjp-c: var(--signal-clear); }
+.lm-page .mjp-head.is-slow { --mjp-c: var(--signal-slow); }
+.lm-page .mjp-head.is-congested { --mjp-c: var(--signal-congested); }
+.lm-page .mjp-head.is-exit,
+.lm-page .mjp-head.is-closure { --mjp-c: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 6%, var(--bg-surface-solid)); border-bottom-color: var(--border-default); }
+.lm-page .mjp-where { padding: 8px 12px 4px; font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.3px; color: var(--text-primary); max-width: 270px; }
+.lm-page .mjp-row { padding: 3px 12px; font-size: var(--fs-label); }
+.lm-page .mjp-row span { color: var(--text-secondary); }
+.lm-page .mjp-row b { font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.lm-page .mjp-row:last-child { padding-bottom: 10px; }
+.lm-page .mjp-answer { padding-top: 9px; padding-bottom: 4px; align-items: baseline; }
+.lm-page .mjp-answer b { font-size: var(--fs-title); font-weight: 600; }
+.lm-page .mjp-basis { font-weight: 400; color: var(--text-muted); padding-top: 6px; line-height: 1.45; }
+.lm-page .mjp-warn { font-weight: 600; color: var(--text-primary); padding-top: 6px; }
+.lm-page .mjp-warn::before { content: "! "; color: var(--signal-congested); font-weight: 600; }
+.lm-page .mjp-note { margin: 2px 12px 10px; padding-top: 7px; font-size: var(--fs-label); line-height: 1.45; color: var(--text-secondary); border-top-color: var(--border-default); }
+.lm-page .nlex-pop { font-family: var(--font-ui); }
+.lm-page .nlex-pop-head { border-left: 0; background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-surface-solid)); }
+.lm-page .nlex-pop-title { font-size: var(--fs-label); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-primary); }
+.lm-page .nlex-pop-sub { font-size: var(--fs-label); color: var(--text-secondary); }
+.lm-page .nlex-pop-foot { font-size: var(--fs-micro); letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); background: transparent; }
+
+/* --- Report detail panel ---------------------------------------------------- */
+.lm-page .wz-report-detail {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+}
+.lm-page .wz-rd-type { font-size: var(--fs-label); font-weight: 600; letter-spacing: 2px; text-transform: uppercase; }
+.lm-page .wz-rd-sub { font-size: var(--fs-label); color: var(--text-secondary); }
+.lm-page .wz-rd-where { font-size: var(--fs-body); font-weight: 400; color: var(--text-primary); }
+.lm-page .wz-rd-when { font-size: var(--fs-label); font-variant-numeric: tabular-nums; }
+.lm-page .wz-rd-grid dt,
+.lm-page .wz-rd-first-k { font-size: var(--fs-micro); letter-spacing: 2px; color: var(--text-muted); }
+.lm-page .wz-rd-grid dd { font-size: var(--fs-label); font-weight: 600; font-variant-numeric: tabular-nums; }
+.lm-page .wz-rd-id { font-family: var(--font-ui); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
+.lm-page .wz-report-detail header button { border-radius: var(--radius-full); border-color: var(--border-strong); }
+
+/* --- Fallback states --------------------------------------------------------- */
+.lm-page .map-fallback { background: var(--bg-surface-solid); color: var(--text-secondary); }
+.lm-page .map-fallback-title { font-size: var(--fs-title); font-weight: 600; color: var(--text-primary); }
+.lm-page .map-fallback-body { font-size: var(--fs-body); font-weight: 300; max-width: 46ch; }
+.lm-page .map-fallback code { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--text-primary); }
+
+/* --- The expanded views (WazeLiveModal, ForecastExpandModal) ----------------- */
+.lm-page .wz-backdrop {
+  background: rgba(3, 6, 13, 0.7);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-theme="light"] .lm-page .wz-backdrop { background: rgba(11, 18, 32, 0.34); }
+.lm-page .wz-shell {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-lg);
+}
+.lm-page .wz-head,
+.lm-page .fc-shell .wz-head {
+  padding: 14px 20px;
+  background: transparent;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-default);
+}
+.lm-page .wz-head h2,
+.lm-page .fc-head h2 { font-size: var(--fs-title); font-weight: 600; letter-spacing: 0; color: var(--text-primary); }
+.lm-page .wz-head p,
+.lm-page .fc-head p { margin-top: 2px; font-size: var(--fs-body); font-weight: 300; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.lm-page .wz-mark { border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: transparent; color: var(--text-primary); }
+.lm-page .wz-live {
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+.lm-page .wz-live i { background: var(--signal-clear); }
+.lm-page .wz-live.stale i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-muted); }
+.lm-page .wz-live b { color: var(--text-secondary); font-weight: 400; letter-spacing: 0; }
+.lm-page .wz-btn {
+  height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.lm-page .wz-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--text-primary) 6%, transparent); border-color: var(--hairline-hover); }
+.lm-page .wz-close { width: 34px; padding: 0; justify-content: center; }
+.lm-page .wz-side { background: transparent; border-left-color: var(--border-default); padding: 18px 20px 20px; }
+.lm-page .wz-side-title { font-size: var(--fs-title); font-weight: 600; color: var(--text-primary); }
+.lm-page .wz-kpis { gap: 8px; }
+.lm-page .wz-kpi,
+.lm-page .wz-kpi.speed,
+.lm-page .wz-kpi.reports,
+.lm-page .wz-kpi.delay {
+  padding: 10px 11px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+.lm-page .wz-kpi-label { font-size: var(--fs-micro); font-weight: 600; letter-spacing: 1.5px; color: var(--text-muted); }
+.lm-page .wz-kpi-value { font-size: var(--fs-title); font-weight: 400; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.lm-page .wz-kpi-value em { font-size: var(--fs-micro); color: var(--text-muted); }
+.lm-page .wz-sec { font-size: var(--fs-label); font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); }
+.lm-page .wz-density-bar { height: 6px; background: linear-gradient(to right, var(--signal-clear), var(--signal-slow), var(--signal-congested)); }
+.lm-page .wz-density { height: 6px; }
+.lm-page .wz-density-mark { top: -5px; height: 16px; background: var(--text-primary); box-shadow: 0 0 0 2px var(--bg-raised); }
+.lm-page .wz-note,
+.lm-page .wz-updated { font-size: var(--fs-label); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.lm-page .wz-alert-row:hover:not(:disabled) { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.lm-page .wz-alert-row:focus-visible { outline: 2px solid var(--page-accent); }
+.lm-page .wz-alert-text b { font-size: var(--fs-label); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+.lm-page .wz-alert-text em,
+.lm-page .wz-alert-age { font-size: var(--fs-label); color: var(--text-muted); }
+.lm-page .wz-empty,
+.lm-page .wz-empty-row { font-size: var(--fs-body); font-style: normal; font-weight: 300; color: var(--text-secondary); }
+.lm-page .wz-worst { border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+.lm-page .wz-worst-head { font-size: var(--fs-micro); letter-spacing: 2px; color: var(--text-muted); }
+.lm-page .wz-worst b { font-size: var(--fs-title); font-weight: 600; }
+.lm-page .wz-worst-speed { font-size: var(--fs-label); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.lm-page .wz-legend {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  box-shadow: none;
+}
+.lm-page .fc-badge,
+.lm-page .fc-head .fc-badge {
+  padding: 5px 11px;
+  border: 1px dashed color-mix(in srgb, var(--color-purple) 55%, transparent);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-purple);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+.lm-page .fc-head .mc-horizon.is-compact {
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+}
+.lm-page .fc-head .mc-horizon-range { color: var(--text-secondary); }
+.lm-page .fc-head .mc-horizon-range:not(:disabled):not(.is-active):hover { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--text-primary); }
+.lm-page .fc-head .mc-horizon-range.is-active {
+  background: color-mix(in srgb, var(--color-purple) 18%, transparent);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-purple) 60%, transparent);
+}
+.lm-page .fc-head .mc-horizon-range:disabled { color: var(--text-muted); text-decoration-color: var(--text-muted); }
+.lm-page .fc-head .mc-horizon-pick::before { background: var(--border-strong); }
+.lm-page .fc-head .mc-horizon-pick select {
+  height: 30px;
+  border: 0;
+  background-color: transparent;
+  color: var(--text-primary);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238590a6' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+.lm-page .fc-head .mc-horizon-pick select:hover { background-color: color-mix(in srgb, var(--text-primary) 8%, transparent); }
+.lm-page .fc-head .mc-horizon-pick option,
+.lm-page .fc-head .mc-horizon-pick optgroup { color: var(--text-primary); background: var(--bg-surface-solid); }
+.lm-page .fc-tally-item { border-color: var(--border-default); border-radius: var(--radius-md); font-size: var(--fs-label); letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary); }
+.lm-page .fc-tally-item b { font-size: var(--fs-numeral); font-weight: 400; font-variant-numeric: tabular-nums; }
+.lm-page .fc-tally-item.is-high b { color: var(--signal-congested); }
+.lm-page .fc-tally-item.is-med b { color: var(--signal-slow); }
+.lm-page .fc-tally-item.is-low b { color: var(--signal-clear); }
+.lm-page .fc-list li { font-size: var(--fs-body); border-radius: var(--radius-sm); }
+.lm-page .fc-list li:nth-child(odd) { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+.lm-page .fc-state,
+.lm-page .fc-prob { font-size: var(--fs-label); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+/* --- Narrower screens --------------------------------------------------------- */
+@media (max-width: 1100px) {
+  .lm-page .map-grid.mc-map-grid.lm-maps { height: auto; }
+  .lm-page .lm-panel-live { border-right: 0; border-bottom: 1px solid var(--border-default); }
+  .lm-page .lm-panel .map-canvas-container { min-height: 460px; }
+}
+@media (max-width: 640px) {
+  .lm-page .ds-page-header-actions { flex-wrap: nowrap; }
+  .lm-page .mc-search-bar.lm-exit-picker { width: auto; flex: 1; min-width: 0; }
+  .lm-page .lm-panel .map-canvas-container { min-height: 380px; }
+  .lm-page .map-head,
+  .lm-page .map-head.blue,
+  .lm-page .map-head.purple { flex-wrap: wrap; padding: 12px 16px; }
+  .lm-page .lm-panel .mc-footer-stats { padding: 10px 16px; }
+  .lm-page .lm-panel .mc-stat-value,
+  .lm-page .lm-panel .mc-stat-value.blue,
+  .lm-page .lm-panel .mc-stat-value.red,
+  .lm-page .lm-panel .mc-stat-value.orange,
+  .lm-page .lm-panel .mc-stat-value.purple,
+  .lm-page .lm-panel .mc-stat-value.green { font-size: var(--fs-title); }
+  .lm-page .lm-panel .mc-stat-label { letter-spacing: 1px; font-size: var(--fs-micro); }
+  .lm-page .lm-panel .mc-forecast-controls { right: 50px; gap: 6px; }
+  .lm-page .lm-panel .mc-model-card { max-width: 170px; padding: 7px 10px; }
+  .lm-page .lm-panel .mc-model-note { font-size: var(--fs-micro); }
+  .lm-page .lm-when { padding: 8px 11px; bottom: 76px; }
+  .lm-page .lm-when-time { font-size: var(--fs-title); }
+  .lm-page .lm-timeline-dock .mc-horizon { padding: 10px 16px 12px; gap: 10px; }
+  .lm-page .lm-scrub { flex-basis: 100%; flex-wrap: wrap; gap: 8px; }
+  .lm-page .lm-scrub-track { flex-basis: 100%; }
+  .lm-page .mc-horizon-pick { flex: 1; }
+  .lm-page .mc-horizon-pick select { width: 100%; }
+  .lm-page .lm-strip { padding: 12px 16px 10px; }
+  .lm-page .lm-strip-key { display: none; }
+  .lm-page .lm-key-pill {
+    display: block;
+    padding: 10px 16px;
+    border-top: 1px solid var(--border-default);
+    background: var(--bg-surface);
+  }
+  .lm-page .lm-key-pill > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-full);
+    list-style: none;
+    font-size: var(--fs-label);
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+  .lm-page .lm-key-pill > summary::-webkit-details-marker { display: none; }
+  .lm-page .lm-key-pill[open] > summary { margin-bottom: 10px; }
+  .lm-page .lm-strip-names,
+  .lm-page .lm-strip-axis,
+  .lm-page .lm-strip-readout { margin-left: 40px; }
+  .lm-page .lm-lane { grid-template-columns: 40px minmax(0, 1fr); }
+  .lm-page .lm-strip-axis span:not(:first-child):not(:last-child):not(:nth-child(5)) { display: none; }
+  .lm-page .lm-tick:nth-child(even):not(.is-on) .lm-tick-label { visibility: hidden; }
+  .lm-page .wz-head { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lm-page .lm-tick-mark,
+  .lm-page .lm-strip-toggle svg,
+  .lm-page .mc-maximise,
+  .lm-page .lm-3d { transition: none; }
+  .lm-page .mc-maximise:hover,
+  .lm-page .lm-3d:hover { transform: none; }
+}
+
+/* ===========================================================================
+   SECOND PASS: the map is the stage, the chrome steps back, the strip is an
+   instrument, and phones get the map first with the overlays as a sheet.
+   =========================================================================== */
+
+/* Calmer chrome: panel heads and footers sit on the stage, not on cards. */
+.lm-page .map-head,
+.lm-page .map-head.blue,
+.lm-page .map-head.purple { background: transparent; padding: 10px 20px; }
+.lm-page .lm-panel .mc-footer-stats { background: transparent; }
+.lm-page .mc-forecast-controls.lm-timeline-dock,
+.lm-page .lm-strip,
+.lm-page .lm-key-pill { background: transparent; }
+
+/* Depth: a soft vignette pulls the eye to the corridor (stage-coloured, so
+   it darkens the night edges and lightens the paper ones). Decoration only. */
+.lm-page .lm-panel .mapboxgl-canvas-container::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(125% 95% at 55% 50%, transparent 58%, color-mix(in srgb, var(--stage) 42%, transparent) 100%);
+}
+
+/* Hover cards: labelled rows separated by hairlines. */
+.lm-page .mjp-row + .mjp-row { border-top: 1px solid color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.lm-page .mjp-row { gap: 18px; padding-top: 5px; padding-bottom: 5px; }
+.lm-page .mjp-row b { text-align: right; }
+
+/* Timeline: the chosen hour rides large above its tick. */
+.lm-page .lm-scrub-track { height: 72px; }
+.lm-page .lm-scrub-track::before { top: 39px; }
+.lm-page .lm-tick { padding-top: 32px; }
+.lm-page .lm-tick-now {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.lm-page .lm-tick-now b {
+  font-size: var(--fs-title);
+  font-weight: 400;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.lm-page .lm-tick-now small {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--color-purple);
+}
+.lm-page .lm-tick:first-child .lm-tick-now { left: 0; translate: 0 0; }
+.lm-page .lm-tick:last-child .lm-tick-now { left: auto; right: 0; translate: 0 0; }
+
+/* --- The corridor strip as an instrument ----------------------------------- */
+.lm-page .lm-instrument { position: relative; padding-top: 2px; }
+.lm-page .lm-instrument-badge {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.lm-page .lm-instrument-badge i { width: 7px; height: 7px; border-radius: 50%; background: var(--signal-clear); }
+.lm-page .lm-instrument.is-forecast .lm-instrument-badge { color: var(--color-purple); }
+.lm-page .lm-instrument.is-forecast .lm-instrument-badge i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--color-purple); }
+.lm-page .lm-instrument .lm-strip-names { height: 24px; }
+.lm-page .lm-strip-field {
+  position: relative;
+  isolation: isolate;
+  display: block;
+  margin-left: 52px;
+  padding: 6px 0 4px;
+}
+.lm-page .lm-strip-field .lm-lane { display: block; position: relative; height: 16px; }
+.lm-page .lm-strip-field .lm-lane-tag { position: absolute; left: -52px; top: 50%; translate: 0 -50%; }
+.lm-page .lm-strip-field .lm-lane-track {
+  height: 16px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+.lm-page .lm-strip-field .lm-seg { z-index: 0; }
+.lm-page .lm-strip-field .lm-seg.is-first { border-radius: 8px 0 0 8px; }
+.lm-page .lm-strip-field .lm-seg.is-last { border-radius: 0 8px 8px 0; }
+.lm-page .lm-median {
+  display: block;
+  height: 10px;
+  margin: 0 6px;
+  background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--text-primary) 26%, transparent) 0 8px, transparent 8px 16px) center / 100% 1px no-repeat;
+}
+.lm-page .lm-strip-grid { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.lm-page .lm-strip-grid .lm-exit-tick {
+  top: 2px;
+  bottom: 0;
+  background: color-mix(in srgb, var(--stage) 55%, transparent);
+}
+.lm-page .lm-strip-grid .lm-exit-tick.is-named { top: -10px; background: color-mix(in srgb, var(--text-primary) 34%, transparent); }
+.lm-page .lm-strip-field .lm-strip-jam {
+  top: -4px;
+  bottom: -4px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1.5px var(--stage), 0 0 12px color-mix(in srgb, var(--lm-c) 55%, transparent);
+}
+.lm-page .lm-strip-field .lm-strip-closure { top: -5px; bottom: -5px; }
+.lm-page .lm-strip-field .lm-lane-track::before { border-radius: 11px; border-color: color-mix(in srgb, var(--color-purple) 70%, transparent); }
+.lm-page .lm-strip-field .lm-strip-cursor { top: 0; bottom: 0; z-index: 6; }
+.lm-page .lm-strip-chip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 8px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--bg-raised);
+  box-shadow: var(--lm-shadow);
+  font-size: var(--fs-label);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.lm-page .lm-strip-chip.is-flip { left: auto; right: 8px; }
+.lm-page .lm-strip-chip b { font-weight: 600; color: var(--text-primary); }
+.lm-page .lm-strip-ruler {
+  position: relative;
+  height: 24px;
+  margin: 6px 0 0 52px;
+  border-top: 1px solid var(--border-default);
+}
+.lm-page .lm-ruler-tick {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 4px;
+  background: color-mix(in srgb, var(--text-primary) 26%, transparent);
+}
+.lm-page .lm-ruler-tick.is-major { height: 7px; background: color-mix(in srgb, var(--text-primary) 42%, transparent); }
+.lm-page .lm-ruler-tick em {
+  position: absolute;
+  top: 9px;
+  left: 0;
+  translate: -50% 0;
+  font-size: var(--fs-micro);
+  font-style: normal;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.lm-page .lm-ruler-end {
+  position: absolute;
+  top: 8px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lm-page .lm-ruler-end.is-start { left: 0; }
+.lm-page .lm-ruler-end.is-end { right: 0; }
+
+/* --- Phones: the map first, the overlays as a sheet beneath it -------------- */
+@media (max-width: 640px) {
+  .lm-page .ds-page-header { margin-bottom: 14px; }
+  .lm-page .map-head,
+  .lm-page .map-head.blue,
+  .lm-page .map-head.purple { padding: 10px 16px; gap: 8px 12px; }
+  .lm-page .lm-panel .map-canvas-container { display: flex; flex-direction: column; min-height: 0; }
+  .lm-page .lm-panel .map-canvas-container > .map-canvas {
+    position: relative;
+    inset: auto;
+    flex: none;
+    /* Capped, so a tall window (or a full-page capture) cannot grow it forever. */
+    height: clamp(340px, 60vh, 540px);
+  }
+  .lm-page .lm-panel .map-canvas-container > .lm-age,
+  .lm-page .lm-panel .map-canvas-container > .lm-when,
+  .lm-page .lm-panel .map-canvas-container > .mc-forecast-controls,
+  .lm-page .lm-panel .map-canvas-container > .mc-legend-card {
+    position: relative;
+    inset: auto;
+    z-index: 2;
+    margin: 0;
+    max-width: none;
+  }
+  /* The sheet: rounded top and a grabber, raised over the map's lower edge. */
+  .lm-page .lm-panel .map-canvas-container > .lm-age,
+  .lm-page .lm-panel .map-canvas-container > .lm-when {
+    order: 1;
+    margin-top: -18px;
+    padding: 22px 16px 10px;
+    border: 0;
+    border-top: 1px solid var(--border-strong);
+    border-radius: 18px 18px 0 0;
+    background: var(--bg-raised);
+    box-shadow: 0 -12px 28px color-mix(in srgb, var(--stage) 50%, transparent);
+  }
+  .lm-page .lm-panel .map-canvas-container > .lm-age::before,
+  .lm-page .lm-panel .map-canvas-container > .lm-when::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    width: 36px;
+    height: 4px;
+    translate: -50% 0;
+    border-radius: 2px;
+    background: var(--border-strong);
+  }
+  .lm-page .lm-panel .map-canvas-container > .lm-age { display: flex; width: 100%; }
+  .lm-page .lm-panel .map-canvas-container > .lm-when { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+  .lm-page .lm-panel .map-canvas-container > .lm-when .lm-age { flex-basis: 100%; }
+  .lm-page .lm-when-time { font-size: var(--fs-numeral); }
+  .lm-page .lm-panel .map-canvas-container > .mc-forecast-controls {
+    order: 2;
+    flex-wrap: wrap;
+    padding: 4px 16px 10px;
+    background: var(--bg-raised);
+  }
+  .lm-page .lm-panel .mc-model-card { flex: 1 1 200px; max-width: none; }
+  .lm-page .lm-panel .mc-model-note { font-size: var(--fs-label); }
+  .lm-page .lm-panel .map-canvas-container > .mc-legend-card {
+    order: 3;
+    align-self: stretch;
+    border: 0;
+    border-radius: 0;
+    padding: 2px 16px 12px;
+    background: var(--bg-raised);
+  }
+  .lm-page .lm-panel .map-canvas-container > .mc-legend-card > summary {
+    display: inline-flex;
+    height: 30px;
+    padding: 0 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-full);
+  }
+  .lm-page .lm-panel .map-canvas-container > .mc-legend-card[open] > summary { margin-bottom: 8px; }
+  .lm-page .lm-panel .mc-footer-stats { background: var(--bg-raised); border-top: 1px solid var(--border-default); }
+  .lm-page .lm-strip-field,
+  .lm-page .lm-strip-ruler { margin-left: 40px; }
+  .lm-page .lm-strip-field .lm-lane-tag { left: -40px; }
+  .lm-page .lm-ruler-tick em { display: none; }
+  .lm-page .lm-tick-now b { font-size: var(--fs-body); }
+}
+
+/* Fix pass: the mode badge sits in the ruler row's free left column; the end exit names hug the ends. */
+.lm-page .lm-instrument-badge { top: auto; bottom: 6px; }
+.lm-page .lm-instrument .lm-strip-name:first-child { translate: 0 0; }
+.lm-page .lm-instrument .lm-strip-name:last-child { translate: -100% 0; }
+
+/* ===========================================================================
+   THIRD PASS (5 Oct 2026, user request): the two maps as cards with a gutter
+   between them, quieter numbers under each map, and the timeline and the
+   corridor strip folded into one card below. Same controls, same order.
+   =========================================================================== */
+.lm-stage,
+.lm-page .lm-stage {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  border-top: 0;
+  background: transparent;
+}
+.lm-page .map-grid.mc-map-grid.lm-maps {
+  gap: 16px;
+  height: clamp(560px, calc(100dvh - 250px), 820px);
+}
+.lm-page .mc-panel-wrapper.lm-panel {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+.lm-page .lm-panel .map-head,
+.lm-page .lm-panel .map-head.blue,
+.lm-page .lm-panel .map-head.purple { padding: 12px 18px; }
+
+/* Numbers under each map: a 20 px readout, not a second headline. */
+.lm-page .lm-panel .mc-footer-stats { padding: 10px 18px 12px; gap: 12px; }
+.lm-page .lm-panel .mc-stat-label { font-size: var(--fs-micro); letter-spacing: 1.5px; }
+.lm-page .lm-panel .mc-stat-value,
+.lm-page .lm-panel .mc-stat-value.blue,
+.lm-page .lm-panel .mc-stat-value.red,
+.lm-page .lm-panel .mc-stat-value.orange,
+.lm-page .lm-panel .mc-stat-value.purple,
+.lm-page .lm-panel .mc-stat-value.green { font-size: var(--fs-title); line-height: 1.25; }
+
+/* The dock: timeline on top, corridor strip beneath, one card. */
+.lm-page .lm-dock {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+}
+.lm-page .lm-dock > .mc-forecast-controls.lm-timeline-dock { border-top: 0; background: transparent; }
+.lm-page .lm-dock .lm-timeline-dock .mc-horizon { padding: 14px 20px 6px; gap: 10px 14px; }
+/* Exact-hour picker and its day sit at the right end of the first row. */
+.lm-page .lm-dock .lm-timeline-dock .mc-horizon-pick { margin-left: auto; }
+.lm-page .lm-dock .lm-scrub-track { height: 58px; }
+.lm-page .lm-dock .lm-scrub-track::before { top: 31px; }
+.lm-page .lm-dock .lm-tick { padding-top: 24px; }
+.lm-page .lm-dock .lm-tick-now b { font-size: var(--fs-body); font-weight: 600; }
+.lm-page .lm-dock > .lm-key-pill { border-top: 1px solid var(--border-default); }
+.lm-page .lm-dock > .lm-strip { margin: 0 20px; padding: 12px 0 10px; border-top: 1px solid var(--border-default); background: transparent; }
+.lm-page .lm-dock .lm-strip-key .lm-key { gap: 6px 12px; font-size: var(--fs-micro); letter-spacing: 1px; }
+
+@media (max-width: 1100px) {
+  .lm-page .map-grid.mc-map-grid.lm-maps { height: auto; }
+  .lm-page .mc-panel-wrapper.lm-panel.lm-panel-live { border: 1px solid var(--border-default); }
+}
+@media (max-width: 640px) {
+  .lm-stage,
+  .lm-page .lm-stage { gap: 12px; }
+  .lm-page .map-grid.mc-map-grid.lm-maps { gap: 12px; }
+  .lm-page .lm-dock .lm-timeline-dock .mc-horizon { padding: 12px 16px 6px; }
+  .lm-page .lm-dock .lm-timeline-dock .mc-horizon-pick { margin-left: 0; }
+  .lm-page .lm-dock > .lm-strip { margin: 0 16px; }
+}
+
+/* --- The band under each map (5 Oct 2026, user request) ---------------------
+   Feed age on the live card; the chosen forecast hour and the model on the
+   forecast card. Moved off the maps so nothing covers the corridor: each map
+   now carries only its legend (bottom-left) and Mapbox's +/- (top-right).
+   Both bands share a minimum height, so the two maps stay the same size. */
+.lm-page .lm-band {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 18px;
+  min-height: 64px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border-default);
+}
+.lm-page .lm-band .lm-age {
+  position: static;
+  inset: auto;
+  z-index: auto;
+}
+.lm-page .lm-band .lm-when {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.lm-page .lm-band .lm-when .lm-age { align-self: center; }
+.lm-page .lm-band .lm-when-time { font-size: var(--fs-title); font-weight: 600; }
+.lm-page .lm-band .mc-model-card {
+  position: static;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: 0;
+  max-width: none;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: right;
+}
+.lm-page .lm-band .mc-model-line { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 10px; }
+.lm-page .lm-band .mc-model-head { display: inline-flex; align-items: center; gap: 6px; }
+.lm-page .lm-band .mc-model-name { display: inline-flex; align-items: center; }
+/* Legend sits a little lower now that nothing stacks above it. */
+.lm-page .lm-panel .mc-legend-card { bottom: 30px; }
+@media (max-width: 640px) {
+  .lm-page .lm-band { padding: 10px 16px; min-height: 0; }
+  .lm-page .lm-band .mc-model-card { justify-items: start; margin-left: 0; text-align: left; }
+  .lm-page .lm-band .mc-model-line { justify-content: flex-start; }
+}
+/* The two cards share their rows (subgrid): map, band, numbers. Whichever band
+   is taller sets both, so the two maps always come out the same size. */
+@media (min-width: 1101px) {
+  .lm-page .map-grid.mc-map-grid.lm-maps { grid-template-rows: minmax(0, 1fr) auto auto; }
+  .lm-page .mc-panel-wrapper.lm-panel { display: grid; grid-template-rows: subgrid; grid-row: span 3; }
+  .lm-page .mc-panel-wrapper.lm-panel > .map-card { min-height: 0; }
+}
+/* The forecast hour as a compact two-line block: its tag over the time. */
+.lm-page .lm-band.is-forecast { flex-wrap: nowrap; }
+.lm-page .lm-band .lm-when {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-areas: "age age" "time day";
+  align-items: baseline;
+  gap: 2px 8px;
+  flex: none;
+}
+.lm-page .lm-band .lm-when > .lm-age { grid-area: age; justify-self: start; }
+.lm-page .lm-band .lm-when > .lm-when-time { grid-area: time; }
+.lm-page .lm-band .lm-when > .lm-when-day { grid-area: day; }
+.lm-page .lm-band .mc-model-card { flex: 0 1 auto; }
+@media (max-width: 640px) {
+  .lm-page .lm-band.is-forecast { flex-wrap: wrap; }
+}

@@ -1952,12 +1952,16 @@ export default function AiSandboxPage() {
           figure on top of each tile with each carriageway's own value under it (per-direction rows,
           always visible) — see bothMetrics.ts for which metrics sum, which take the max, which are
           flow-weighted, and which (density) have no total at all. */}
-      {both && (
-        <p className="sandbox-metric-caption" data-metric-caption>
-          Corridor totals with NB and SB beneath. <b>Average speed is flow-weighted</b> — each direction&apos;s speed weighted by its
-          throughput, not a plain mean of the two. Longest queue is the worse of the two; density has no total.
-        </p>
-      )}
+      {/* Every figure in this strip comes from the agent-based engine, not from the road: the pill says so. */}
+      <div className="sandbox-metric-flag">
+        <span className="nc-tag-illustrative">Simulation</span>
+        {both && (
+          <p className="sandbox-metric-caption" data-metric-caption>
+            Corridor totals with NB and SB beneath.{" "}
+            <InfoTooltip text="Average speed is flow-weighted — each direction's speed weighted by its throughput, not a plain mean of the two. Longest queue is the worse of the two; density has no total." />
+          </p>
+        )}
+      </div>
       {both ? (
         <div className="sandbox-metric-row">
           <MetricTileBoth
@@ -2148,7 +2152,7 @@ export default function AiSandboxPage() {
                 ))}
               </div>
               <button
-                className="btn-primary"
+                className="nc-pill sandbox-play"
                 onClick={() => {
                   // Pressing Play while reviewing means "catch up", not
                   // "resume from here" — the engine never stopped.
@@ -2214,15 +2218,14 @@ export default function AiSandboxPage() {
               style={{
                 display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
                 padding: "8px 12px", marginTop: 8,
-                border: "1px solid var(--border-default)",
-                borderLeft: "3px solid var(--brand-primary)",
-                borderRadius: 10, background: "var(--bg-surface-hover)",
+                border: "1px solid color-mix(in srgb, var(--page-accent) 40%, transparent)",
+                borderRadius: 14, background: "var(--bg-raised)",
                 position: "relative", zIndex: 3,
               }}
             >
               <span style={{
-                fontSize: "0.62rem", fontWeight: 800, letterSpacing: "0.06em",
-                textTransform: "uppercase", color: "var(--brand-primary)", whiteSpace: "nowrap",
+                fontSize: "var(--fs-label)", fontWeight: 600, letterSpacing: "2px",
+                textTransform: "uppercase", color: "var(--page-accent)", whiteSpace: "nowrap",
               }}>
                 Reviewing
               </span>
@@ -2234,13 +2237,13 @@ export default function AiSandboxPage() {
                 max={Math.max(0, replayLen - 1)}
                 value={replayIndex}
                 onChange={(e) => setReplayIndex(Number(e.target.value))}
-                style={{ flex: "1 1 220px", minWidth: 160, maxWidth: 420, accentColor: "var(--brand-primary)" }}
+                style={{ flex: "1 1 220px", minWidth: 160, maxWidth: 420, accentColor: "var(--page-accent)" }}
                 aria-label="Scrub through the recording"
               />
               <button className="btn-muted" title="One frame forward"
                 onClick={() => setReplayIndex((i) => Math.min(replayLen - 1, (i ?? 0) + 1))}>▶</button>
               <span style={{
-                fontSize: "0.72rem", color: "var(--text-secondary)",
+                fontSize: "var(--fs-label)", color: "var(--text-secondary)",
                 fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
               }}>
                 {(() => {
@@ -2313,13 +2316,16 @@ export default function AiSandboxPage() {
             </p>
           )}
           {view === "Both" && !expanded && (
-            <p className="sandbox-live-note">
-              Both carriageways run together, median-separated, lane 1 against the median on each
-              side. Every control, event and readout below belongs to one carriageway and says which.
-              The few things that can address only one road at a time — the Command prompt and the
-              Add-event picker — each carry their own NB / SB choice;
-              with a placing tool armed, clicking a lane on either road changes that road.
-            </p>
+            <details className="nc-details sandbox-both-details">
+              <summary>Details</summary>
+              <p className="sandbox-live-note">
+                Both carriageways run together, median-separated, lane 1 against the median on each
+                side. Every control, event and readout below belongs to one carriageway and says which.
+                The few things that can address only one road at a time — the Command prompt and the
+                Add-event picker — each carry their own NB / SB choice;
+                with a placing tool armed, clicking a lane on either road changes that road.
+              </p>
+            </details>
           )}
 
           {/* A floor, not a fixed height. This was pinned to the lane count so
@@ -2439,13 +2445,17 @@ export default function AiSandboxPage() {
               <div key={dn} className={`sandbox-reco ${recommendations[dn].tone}`} data-reco={dn}>
                 <strong>
                   <DirectionPill direction={dn} long /> Prescriptive recommendation
+                  <span className="nc-tag-illustrative">Simulation</span>
                 </strong>
                 <p>{recommendations[dn].text}</p>
               </div>
             ))
           ) : (
             <div className={`sandbox-reco ${recommendation.tone}`}>
-              <strong>Prescriptive recommendation</strong>
+              <strong>
+                Prescriptive recommendation
+                <span className="nc-tag-illustrative">Simulation</span>
+              </strong>
               <p>{recommendation.text}</p>
             </div>
           )}
@@ -2521,7 +2531,7 @@ export default function AiSandboxPage() {
               >
                 {view === "Both" ? `Inflow (${focusDirection})` : "Inflow"}
               </InfoLabel>
-              <span className="sandbox-slider-value" style={{ color: "var(--brand-primary)" }}>{fmt(focused.inflow)} veh/hr</span>
+              <span className="sandbox-slider-value" style={{ color: "var(--page-accent)" }}>{fmt(focused.inflow)} veh/hr</span>
             </div>
             <input
               type="range"
@@ -2543,7 +2553,7 @@ export default function AiSandboxPage() {
             <div className="sandbox-slider-group">
               <div className="sandbox-slider-header">
                 <span className="sandbox-slider-label">Inflow ({focusDirection === "NB" ? "SB" : "NB"})</span>
-                <span className="sandbox-slider-value" style={{ color: "var(--brand-primary)" }}>
+                <span className="sandbox-slider-value" style={{ color: "var(--page-accent)" }}>
                   {fmt(byDirection[focusDirection === "NB" ? "SB" : "NB"].inflow)} veh/hr
                 </span>
               </div>
@@ -2634,7 +2644,7 @@ export default function AiSandboxPage() {
               >
                 Segment
               </InfoLabel>
-              <span className="sandbox-slider-value" style={{ color: "#7c3aed" }}>
+              <span className="sandbox-slider-value" style={{ color: "var(--text-primary)" }}>
                 {(segLengthM / 1000).toFixed(2)} km
               </span>
             </div>
@@ -2684,7 +2694,7 @@ export default function AiSandboxPage() {
           <div className="sandbox-slider-group" data-lanes={lanesBy}>
             <div className="sandbox-slider-header">
               <InfoLabel info={laneInfo}>Lanes</InfoLabel>
-              <span className="sandbox-slider-value" style={{ color: lanesBy === "road" ? "#16a34a" : "#b45309" }}>
+              <span className="sandbox-slider-value" style={{ color: lanesBy === "road" ? "var(--color-success)" : "var(--color-warning)" }}>
                 {laneDirs.length > 1 ? laneDirs.map((d) => `${d} ${byDirection[d].laneCount}`).join(" · ") : byDirection[laneDirs[0]].laneCount}
               </span>
             </div>
@@ -2705,7 +2715,7 @@ export default function AiSandboxPage() {
           <div className="sandbox-slider-group">
             <div className="sandbox-slider-header">
               <span className="sandbox-slider-label">{view === "Both" ? `Lanes (${focusDirection})` : "Lanes"}</span>
-              <span className="sandbox-slider-value" style={{ color: laneOverridden ? "#b45309" : "#16a34a" }}>
+              <span className="sandbox-slider-value" style={{ color: laneOverridden ? "var(--color-warning)" : "var(--color-success)" }}>
                 {focused.laneCount}
               </span>
             </div>
@@ -2725,7 +2735,7 @@ export default function AiSandboxPage() {
             <div className="sandbox-slider-group">
               <div className="sandbox-slider-header">
                 <span className="sandbox-slider-label">Lanes ({focusDirection === "NB" ? "SB" : "NB"})</span>
-                <span className="sandbox-slider-value" style={{ color: "#16a34a" }}>
+                <span className="sandbox-slider-value" style={{ color: "var(--color-success)" }}>
                   {byDirection[focusDirection === "NB" ? "SB" : "NB"].laneCount}
                 </span>
               </div>
@@ -3130,7 +3140,7 @@ function ZipperControl({
     <div className="sandbox-slider-group sandbox-zipper" data-zipper={state === null ? "off" : `${state.toward}+${state.lanes}`}>
       <div className="sandbox-slider-header">
         <InfoLabel info={REALLOCATION_INFO}>{REALLOCATION_NAME}</InfoLabel>
-        <span className="sandbox-slider-value" style={{ color: state === null ? "var(--text-muted)" : "#ca8a04" }}>
+        <span className="sandbox-slider-value" style={{ color: state === null ? "var(--text-muted)" : "var(--text-primary)" }}>
           {state === null ? "off" : `${state.toward} +${state.lanes}`}
         </span>
       </div>
@@ -3348,7 +3358,7 @@ function InterventionControls({
       <div className="sandbox-slider-group">
         <div className="sandbox-slider-header">
           <span className="sandbox-slider-label">Speed limit zone</span>
-          <span className="sandbox-slider-value" style={{ color: "#ea580c" }}>
+          <span className="sandbox-slider-value" style={{ color: "var(--text-primary)" }}>
             {d.shownSpeedLimit == null ? "off" : `${d.shownSpeedLimit} km/h`}
           </span>
         </div>

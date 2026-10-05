@@ -1,34 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Shell, Banner, Foot, Empty } from "./prescriptiveShell";
+import { Clock } from "lucide-react";
+import { Shell, Empty, ActionCard } from "./prescriptiveShell";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
 const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`);
 
-// Single-hue sequential ramp, endpoints pulled from this app's own theme
-// tokens (app/globals.css) rather than generic grey/navy guesses:
-//   light end = var(--border-strong), var(--border-strong) — the same "muted border" this
-//               card already borders every cell with (below), so quiet hours
-//               read as barely-there in exactly the tone the UI already uses
-//               for "subtle structure," not an unrelated grey.
-//   dark end  = var(--bg-sidebar), #0A2240 — the sidebar's own navy, so the
-//               peak-hour end of the ramp is literally the product's brand
-//               color, not a stand-in dark slate.
-// Hardcoded rather than read via var() because the interpolation is plain
-// RGB math in JS; a CSS variable has no numeric value until the browser
-// resolves it. Both tokens are light-mode values (dark mode shifts
-// --bg-sidebar to #0A0E14, barely different at this swatch size), consistent
-// with shadeFor/shadeHour's own precedent elsewhere on this tab of a fixed
-// RGB ramp rather than a live theme read.
-const SHADE_LIGHT: [number, number, number] = [212, 219, 234]; // var(--border-strong), var(--border-strong)
-const SHADE_DARK: [number, number, number] = [10, 34, 64]; // #0A2240, var(--bg-sidebar)
-
-function shadeHour(t: number): string {
+// Single-hue sequential ramp for the shape bars: the incident magnitude ramp
+// (--inc-heat-lo -> --inc-heat-hi, app/styles/nc-incident.css), which follows
+// the theme. It replaced a fixed light-grey-to-navy RGB ramp whose peak end
+// vanished on the Night Corridor dark stage.
+function heatShade(t: number): string {
   const clamped = Math.max(0, Math.min(1, t));
-  const [r, g, b] = [0, 1, 2].map((k) => Math.round(SHADE_LIGHT[k] + (SHADE_DARK[k] - SHADE_LIGHT[k]) * clamped));
-  return `rgb(${r}, ${g}, ${b})`;
+  return `color-mix(in oklab, var(--inc-heat-hi) ${(clamped * 100).toFixed(1)}%, var(--inc-heat-lo))`;
 }
 
 // Color by RANK within the table's own values, not by linear position between
@@ -144,7 +130,7 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
 
   if (loading && data === null) return <Empty msg="Loading patrol alert schedule…" />;
   if (error || !data || data.heatmap.length === 0) {
-    return <Empty msg={`Patrol alert schedule unavailable: ${error ?? "no hourly incident data for this Range."}`} />;
+    return <Empty kind={error ? "error" : "nodata"} msg={`Patrol alert schedule unavailable: ${error ?? "no hourly incident data for this Range."}`} />;
   }
 
   // How many of each specific weekday (not just weekday-vs-weekend) fall in
@@ -172,7 +158,7 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
 
   const withWindow = rows.filter((r) => r.primary != null) as (DayRow & { primary: [number, number] })[];
   if (withWindow.length === 0) {
-    return <Empty msg="Patrol alert schedule unavailable: no days in the selected Range have incident data." />;
+    return <Empty kind="nodata" msg="Patrol alert schedule unavailable: no days in the selected Range have incident data." />;
   }
   const widest = [...withWindow].sort((a, b) => windowSpanHours(b.primary) - windowSpanHours(a.primary))[0];
   const allHours = rows.flatMap((r) => r.profile.hours);
@@ -183,69 +169,86 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
       title="Patrol Alert Schedule"
       hint="Hours patrol should treat as elevated-risk, one row per day of the week, from the Descriptive tab's own Hour x Day-of-week incident frequency — the same table its Time-of-Day chart draws Weekday/Weekend lines from, broken out further here since different weekdays (and Saturday vs Sunday) don't share one rhythm. A window is any run of hours whose average incident count sits above that specific day's own mean, so it's sized to this corridor's measured rhythm rather than a fixed span like 'rush hour.'"
     >
-      <Banner>
-        <strong>{widest.label}</strong> needs the longest alert window: <strong>{windowLabel(widest.primary)}</strong>{" "}
-        ({windowSpanHours(widest.primary)}h), peaking around <strong>{fmtHour(widest.profile.peakHour)}</strong>.
-        Every other day&apos;s own window is in the table below — none of them share a single rush-hour assumption.
-      </Banner>
+      <ActionCard
+        lead
+        icon={Clock}
+        title={`${widest.label}: longest alert window`}
+        facts={[
+          { label: "Action", value: "Treat these hours as elevated-risk for patrol" },
+          { label: "Where", value: "Whole corridor, all logged incidents" },
+          {
+            label: "When",
+            value: (
+              <>
+                <b>{windowLabel(widest.primary)}</b> ({windowSpanHours(widest.primary)}h), peaking around <b>{fmtHour(widest.profile.peakHour)}</b>
+              </>
+            ),
+          },
+          { label: "Basis", value: "Hours above that day's own mean" },
+          { label: "Confidence", value: <>Measured over {rows.map((r) => `${r.label} ${r.days}`).join(", ")} days</> },
+        ]}
+        details={
+          <>
+            <p style={{ margin: 0 }}>
+              <strong>{widest.label}</strong> needs the longest alert window: <strong>{windowLabel(widest.primary)}</strong>{" "}
+              ({windowSpanHours(widest.primary)}h), peaking around <strong>{fmtHour(widest.profile.peakHour)}</strong>.
+              Every other day&apos;s own window is in the table below — none of them share a single rush-hour assumption.
+            </p>
+            <p style={{ margin: "8px 0 0" }}>
+              Hours patrol should treat as elevated-risk, one row per day of the week, from the Descriptive tab&apos;s own Hour x
+              Day-of-week incident frequency — the same table its Time-of-Day chart draws Weekday/Weekend lines from, broken out
+              further here since different weekdays (and Saturday vs Sunday) don&apos;t share one rhythm. A window is any run of hours
+              whose average incident count sits above that specific day&apos;s own mean, so it&apos;s sized to this corridor&apos;s
+              measured rhythm rather than a fixed span like &apos;rush hour.&apos;
+            </p>
+            <p style={{ margin: "8px 0 0" }}>
+              Each day&apos;s window is measured over however many of that weekday fell in the selected Range (
+              {rows.map((r) => `${r.label} ${r.days}`).join(", ")}) and recomputed from that day&apos;s own hourly rhythm —
+              it is not a fixed rush-hour assumption shared across days.
+            </p>
+          </>
+        }
+      />
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+      {/* Evidence: every day's own window and its 24-hour shape. */}
+      <div className="inc-table-wrap">
+        <table className="inc-table inc-sched">
           <thead>
-            <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--border-default)" }}>
-              <th style={{ padding: "6px 8px", fontWeight: 700 }}>Day</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700 }}>Alert window</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700 }}>Peak hour</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700 }}>Shape (12 AM – 12 AM)</th>
+            <tr>
+              <th>Day</th>
+              <th style={{ textAlign: "left" }}>Alert window</th>
+              <th style={{ textAlign: "left" }}>Peak hour</th>
+              <th style={{ textAlign: "left" }}>Shape (12 AM – 12 AM)</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.dow} style={{ borderBottom: "1px solid var(--border-default)" }}>
-                <td style={{ padding: "6px 8px", fontWeight: 700, whiteSpace: "nowrap" }}>{r.label}</td>
+              <tr key={r.dow}>
+                <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.label}</td>
                 {r.primary == null ? (
                   <>
-                    <td colSpan={2} style={{ padding: "6px 8px", color: "var(--text-muted)", fontStyle: "italic" }}>
+                    <td colSpan={2} className="is-none">
                       No {r.label} in this Range
                     </td>
                     <td />
                   </>
                 ) : (
                   <>
-                    <td
-                      style={{
-                        padding: "6px 8px", whiteSpace: "nowrap",
-                        fontWeight: r.dow === widest.dow ? 700 : 500,
-                        color: r.dow === widest.dow ? "var(--page-accent, var(--action))" : "var(--text-primary)",
-                      }}
-                    >
+                    <td className={r.dow === widest.dow ? "is-widest" : undefined} style={{ textAlign: "left", whiteSpace: "nowrap" }}>
                       {windowLabel(r.primary)}
                     </td>
-                    <td style={{ padding: "6px 8px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{fmtHour(r.profile.peakHour)}</td>
-                    <td style={{ padding: "6px 8px", minWidth: "160px" }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(24, 1fr)", gap: "1px", alignItems: "end", height: "22px" }}>
+                    <td className="is-muted" style={{ textAlign: "left", whiteSpace: "nowrap", color: "var(--text-secondary)" }}>{fmtHour(r.profile.peakHour)}</td>
+                    <td style={{ textAlign: "left" }}>
+                      <div className="inc-shape">
                         {r.profile.hours.map((v, h) => {
                           const pct = Math.max((v / maxHour) * 100, 6);
                           return (
-                            <div key={h} title={`${fmtHour(h)}: ${v.toFixed(2)} incidents/day avg`} style={{ height: "100%", display: "flex", alignItems: "end" }}>
-                              {/* Height is linear (true magnitude); fill color is
-                                  by RANK among all 168 cells in the table, not
-                                  linear position — see percentileOf's own doc
-                                  comment for why a clustered real distribution
-                                  needs ranking, not min-max, to keep hour-to-hour
-                                  differences visible. Computed once against the
-                                  table's shared `allHours`, not rescaled per-day,
-                                  so a shade means the same relative rank in every
-                                  row. The 1px border keeps the lightest cells
-                                  delineated against the white card even though
-                                  they're deliberately subtle. */}
-                              <div
-                                style={{
-                                  width: "100%", height: `${pct}%`,
-                                  background: shadeHour(percentileOf(v, allHours)),
-                                  border: "1px solid var(--border-strong)",
-                                }}
-                              />
+                            <div key={h} title={`${fmtHour(h)}: ${v.toFixed(2)} incidents/day avg`}>
+                              {/* Height is linear (true magnitude); shade is by RANK
+                                  among all 168 cells, computed against the table's
+                                  shared allHours so a shade means the same relative
+                                  rank in every row (see percentileOf). */}
+                              <i style={{ height: `${pct}%`, background: heatShade(percentileOf(v, allHours)) }} />
                             </div>
                           );
                         })}
@@ -258,12 +261,6 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
           </tbody>
         </table>
       </div>
-
-      <Foot>
-        Each day&apos;s window is measured over however many of that weekday fell in the selected Range (
-        {rows.map((r) => `${r.label} ${r.days}`).join(", ")}) and recomputed from that day&apos;s own hourly rhythm —
-        it is not a fixed rush-hour assumption shared across days.
-      </Foot>
     </Shell>
   );
 }

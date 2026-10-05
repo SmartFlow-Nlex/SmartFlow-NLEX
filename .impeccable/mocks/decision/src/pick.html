@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Guide Sign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sign: #00613f;          /* guide-sign green: the shell */
+    --sign-hi: #0b7a52;
+    --legend: #f4f7f5;        /* retroreflective white */
+    --ground: #0c110f;        /* asphalt at night */
+    --panel: #141b18;
+    --rule: #26332d;
+    --text: #e9efec;
+    --text-2: #a3b2ab;
+    --post: #f2f4f1;          /* km-post tablet */
+    --post-ink: #101513;
+    --congested: #ff5a48;
+    --slow: #f2a900;          /* reflective amber */
+    --clear: #46c98a;
+    --sc: "Barlow Semi Condensed", sans-serif;
+    --sans: "Barlow", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 1440px; height: 900px; overflow: hidden; background: var(--ground); color: var(--text); font-family: var(--sans); font-size: 15px; display: grid; grid-template-columns: 228px 1fr; }
+  nav { background: var(--sign); color: var(--legend); padding: 16px 12px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid #0a4a31; }
+  .brand { font: 700 20px var(--sc); letter-spacing: 0.01em; padding: 4px 10px 16px; border-bottom: 2px solid var(--legend); margin: 0 4px 6px; }
+  .grp { font: 600 12.5px var(--sc); letter-spacing: 0.06em; text-transform: uppercase; color: #bfe0d1; padding: 14px 10px 5px; }
+  .item { padding: 7px 10px; border-radius: 6px; font: 600 16px var(--sc); display: flex; align-items: center; gap: 10px; color: var(--legend); }
+  .item.on { background: var(--legend); color: var(--sign); }
+  .item svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+  .who { margin-top: auto; font-size: 13px; color: #cfe6db; padding: 10px; border-top: 1px solid #0a4a31; }
+  main { display: flex; flex-direction: column; min-width: 0; }
+  header.top { height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid var(--rule); }
+  h1 { font: 700 26px var(--sc); letter-spacing: 0.005em; }
+  .fresh { display: flex; align-items: center; gap: 18px; font: 600 15px var(--sc); color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .fresh .live { color: var(--text); display: inline-flex; gap: 7px; align-items: center; }
+  .fresh .live i { width: 9px; height: 9px; border-radius: 50%; background: var(--clear); }
+  select { font: 600 14px var(--sc); background: var(--panel); color: var(--text); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 8px; }
+  .page { padding: 20px 28px; display: flex; flex-direction: column; gap: 16px; }
+  .band { display: grid; grid-template-columns: repeat(3, 190px) 1fr; border: 1px solid var(--rule); background: var(--panel); border-radius: 8px; }
+  .cell { padding: 14px 18px; border-right: 1px solid var(--rule); }
+  .cell:last-child { border-right: 0; }
+  .cell .lbl { font: 600 14px var(--sc); color: var(--text-2); letter-spacing: 0.02em; display: flex; align-items: center; gap: 8px; }
+  .cell .lbl i { width: 14px; height: 5px; display: inline-block; }
+  .cell .val { font: 700 46px var(--sc); line-height: 1.05; font-variant-numeric: tabular-nums; }
+  .cell .val small { font-size: 18px; font-weight: 600; color: var(--text-2); margin-left: 4px; }
+  .slow-cell .row { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+  .post { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; background: var(--post); color: var(--post-ink); border-radius: 5px; min-width: 46px; padding: 3px 6px 2px; font: 700 18px var(--sc); line-height: 1; }
+  .post em { font: 600 9.5px var(--sc); font-style: normal; letter-spacing: 0.08em; }
+  .slow-cell .name { font: 700 22px var(--sc); }
+  .slow-cell .speed { font: 700 22px var(--sc); color: var(--congested); }
+  .panel { border: 1px solid var(--rule); background: var(--panel); border-radius: 8px; padding: 14px 18px 8px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .panel-head h2 { font: 700 18px var(--sc); }
+  .panel-head p { color: var(--text-2); font-size: 13.5px; }
+  .legend { display: flex; gap: 16px; font: 600 14px var(--sc); color: var(--text-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 16px; height: 6px; display: inline-block; }
+  .note { font-size: 13px; color: var(--text-2); }
+  .mock { position: fixed; right: 12px; bottom: 10px; font: 600 12px var(--sc); color: #8fa098; letter-spacing: 0.04em; }
+</style>
+</head>
+<body>
+<nav>
+  <div class="brand">SmartFlow NLEX</div>
+  <div class="grp">Analytics</div>
+  <div class="item on"><svg viewBox="0 0 24 24"><path d="M3 12h18M3 6h18M3 18h12"/></svg>Overview</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/></svg>Traffic</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5"/></svg>Incidents</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M5 19c8 0 14-6 14-14C11 5 5 11 5 19z"/></svg>Emissions</div>
+  <div class="grp">Operations</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/></svg>Live Map</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M14 6l4 4-9 9H5v-4z"/></svg>Maintenance</div>
+  <div class="item"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/></svg>Mobile App</div>
+  <div class="grp">Planning</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M4 18V6M20 18V6M12 6v3M12 12v2M12 17v1"/></svg>Scenario Sandbox</div>
+  <div class="grp">Admin</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM4 10h16"/></svg>Data Management</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6"/></svg>Audit Log</div>
+  <div class="who">qa.data-analyst · Data Analyst</div>
+</nav>
+<main>
+  <header class="top">
+    <h1>Corridor now</h1>
+    <div class="fresh">
+      <span class="live"><i></i>Waze · 22:56 · 1 min old</span>
+      <span>Sat 3 Oct · 22:57</span>
+      <select aria-label="Theme"><option>Dark</option><option>Light</option><option>System</option></select>
+    </div>
+  </header>
+  <div class="page">
+    <section class="band" aria-label="Corridor status, last 60 minutes">
+      <div class="cell"><div class="lbl"><i style="background:var(--congested)"></i>Congested</div><div class="val" style="color:var(--congested)">6<small>of 40</small></div></div>
+      <div class="cell"><div class="lbl"><i style="background:var(--slow)"></i>Slow</div><div class="val">0<small>of 40</small></div></div>
+      <div class="cell"><div class="lbl"><i style="background:var(--clear)"></i>Clear</div><div class="val">34<small>of 40</small></div></div>
+      <div class="cell slow-cell"><div class="lbl">Slowest reading, last 60 min</div>
+        <div class="row"><span class="post"><em>KM</em>15.4</span><span class="name">Paso de Blas Valenzuela</span><span class="speed">4 km/h</span></div>
+      </div>
+    </section>
+
+    <section class="panel" aria-label="Corridor diagram">
+      <div class="panel-head">
+        <div><h2>Both carriageways, Km 12 to 88.25</h2><p>Waze jam reports matched to the nearest exit · 60-minute window</p></div>
+        <div class="legend">
+          <span><i style="background:var(--congested)"></i>Congested</span>
+          <span><i style="background:var(--slow)"></i>Slow</span>
+          <span><i style="background:var(--clear)"></i>Clear</span>
+          <span><i style="background:#4b5a54"></i>No report</span>
+        </div>
+      </div>
+      <svg id="corr" width="100%" height="372" role="img" aria-label="Corridor diagram"></svg>
+    </section>
+    <p class="note">Positions of the six congested exit-directions are read approximately off the 22:56 capture.</p>
+  </div>
+</main>
+<div class="mock">MOCK · OVERVIEW · COUNTS FROM LIVE CAPTURE 3 OCT 22:56</div>
+<script src="corridor.js"></script>
+<script>
+  document.fonts.ready.then(() => {
+    const svg = document.getElementById("corr");
+    const ctx = document.createElement("canvas").getContext("2d");
+    const wOf = (font, s) => { ctx.font = font; return ctx.measureText(s).width; };
+    const NM = "600 14px 'Barlow Semi Condensed'";
+    drawCorridor(svg, {
+      width: svg.getBoundingClientRect().width, yNB: 158, ySB: 212, laneWidth: 16, padL: 50, padR: 4,
+      clear: "#46c98a", congested: "#ff5a48", markW: 8, markR: 2,
+      median: "#f2a900", medianDash: "0", scale: "#5d6e66",
+      tick: "#33423b", leader: "#33423b", tickOut: 8,
+      labelRows: 4, rowH: 25, labelTop: 30, bothSides: true,
+      labelWidth: (k, n) => 40 + 5 + wOf(NM, n),
+      drawLabel: (el, x0, ly, k, n) => {
+        el("rect", { x: x0, y: ly - 15, width: 40, height: 19, rx: 3, fill: "#f2f4f1" });
+        el("text", { x: x0 + 20, y: ly, "text-anchor": "middle", fill: "#101513", "font-family": "Barlow Semi Condensed", "font-size": 15, "font-weight": 700 }, k.toFixed(1));
+        el("text", { x: x0 + 45, y: ly, fill: "#e9efec", "font-family": "Barlow Semi Condensed", "font-size": 14, "font-weight": 600, stroke: "#141b18", "stroke-width": 5, "paint-order": "stroke", "stroke-linejoin": "round" }, n);
+      },
+      dirLabel: true, dirColor: "#a3b2ab", dirFamily: "Barlow Semi Condensed", dirSize: 15,
+    });
+  });
+</script>
+</body>
+</html>

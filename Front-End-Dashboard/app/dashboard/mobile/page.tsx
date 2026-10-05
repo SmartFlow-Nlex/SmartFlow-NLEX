@@ -37,6 +37,7 @@ import {
   X,
 } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
+import StateNote from "../../../components/stage/StateNote";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -385,7 +386,7 @@ export default function MobileControlPage() {
   const previewHidden = previewOn.length === 0;
 
   return (
-    <section className="ds-content ds-mc-page">
+    <section className="ds-content ds-mc-page nc-ops nc-ops-mobile">
       <PageHeader
         icon={Smartphone}
         title="Mobile Control Centre"
@@ -401,13 +402,12 @@ export default function MobileControlPage() {
           different depending on whether an operator chose it or the database
           was unreachable, so the page never leaves that ambiguous. */}
       {meta?.source === "defaults" && !loading && (
-        <div className="ds-mc-banner is-warn" role="status">
-          <AlertTriangle size={16} aria-hidden="true" />
-          <div>
-            <b>Showing built-in defaults, not saved settings.</b> The configuration row could not be
-            read, so the app is currently being served every feature switched on. Saving from here
-            will create it. If this persists, run <code>Back-End/scripts/mobile-config.sql</code>.
-          </div>
+        <div className="ds-mc-banner is-warn nc-ops-banner">
+          <StateNote kind="offline" role="status" title="Showing built-in defaults, not saved settings.">
+            The configuration row could not be read, so the app is currently being served every
+            feature switched on. Saving from here will create it. If this persists, run{" "}
+            <code>Back-End/scripts/mobile-config.sql</code>.
+          </StateNote>
         </div>
       )}
 
@@ -496,7 +496,7 @@ export default function MobileControlPage() {
 
                 return (
                   <li key={key} className={`${shown ? "is-on" : "is-off"}${expanded ? " is-open" : ""}`}>
-                    <div className="ds-mc-feature-row">
+                    <div className="ds-mc-feature-row" data-mc-control={`tab-${key}`}>
                       <button
                         type="button"
                         className="ds-mc-disclosure"
@@ -563,7 +563,7 @@ export default function MobileControlPage() {
                           {t.sections.map((s) => {
                             const SIcon = s.icon;
                             return (
-                              <li key={s.key}>
+                              <li key={s.key} data-mc-control={`${key}-${s.key}`}>
                                 <span className="ds-mc-section-icon" aria-hidden="true">
                                   <SIcon size={15} />
                                 </span>
@@ -655,7 +655,7 @@ export default function MobileControlPage() {
                         {previewOn.map((s) => {
                           const SIcon = s.icon;
                           return (
-                            <div key={s.key} className="ds-phone-card">
+                            <div key={s.key} className="ds-phone-card" data-mc-preview={`${previewMeta.key}-${s.key}`}>
                               <span className="ds-phone-card-icon" aria-hidden="true">
                                 <SIcon size={13} />
                               </span>
@@ -683,6 +683,7 @@ export default function MobileControlPage() {
                           previewTab === key ? " is-current" : ""
                         }`}
                         title={`Preview ${label}`}
+                        data-mc-preview={`tab-${key}`}
                         onClick={() => {
                           setPreviewTab(key);
                           setOpen(key);
@@ -901,7 +902,7 @@ export default function MobileControlPage() {
               </button>
               <button
                 type="button"
-                className="btn-primary"
+                className="nc-pill"
                 disabled={saving || !dirty || Boolean(blockedReason)}
                 onClick={() => void save().then(() => setAdvisoryOpen(false))}
               >
@@ -937,7 +938,7 @@ export default function MobileControlPage() {
             Discard
           </button>
           <button
-            className="btn-primary"
+            className="nc-pill"
             onClick={() => void save()}
             disabled={saving || !dirty || Boolean(blockedReason)}
           >

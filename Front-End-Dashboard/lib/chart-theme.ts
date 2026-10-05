@@ -22,19 +22,28 @@ export type ChartTheme = {
   split: string;
   tooltipBg: string;
   tooltipText: string;
+  tooltipBorder: string;
   /** Lightest step of a sequential ramp; near-white in light, near-black in dark. */
   seqLightest: string;
+  /** The resolved interface face (next/font hashes the family name). */
+  fontFamily: string;
+  /** Primary ink, for the "now" marker and crosshair labels. */
+  ink: string;
   isDark: boolean;
 };
 
+/* Night Corridor dark is the default, so the pre-mount fallback is dark too. */
 const FALLBACK: ChartTheme = {
-  text: "#3b4d72",
-  axis: "#b9c5da",
-  split: "#e3e8f1",
-  tooltipBg: "#0a1630",
-  tooltipText: "#e8eefb",
-  seqLightest: "#eef1f6",
-  isDark: false,
+  text: "#8590a6",
+  axis: "rgba(255, 255, 255, 0)",
+  split: "rgba(255, 255, 255, 0.06)",
+  tooltipBg: "rgba(14, 22, 40, 0.96)",
+  tooltipText: "#f4f1ea",
+  tooltipBorder: "rgba(255, 255, 255, 0.12)",
+  seqLightest: "#0e1628",
+  fontFamily: "Outfit, ui-sans-serif, system-ui, sans-serif",
+  ink: "#f4f1ea",
+  isDark: true,
 };
 
 function read(): ChartTheme {
@@ -51,7 +60,10 @@ function read(): ChartTheme {
     split: v("--chart-split", FALLBACK.split),
     tooltipBg: v("--chart-tooltip-bg", FALLBACK.tooltipBg),
     tooltipText: v("--chart-tooltip-text", FALLBACK.tooltipText),
+    tooltipBorder: v("--chart-tooltip-border", FALLBACK.tooltipBorder),
     seqLightest: v("--chart-seq-lightest", FALLBACK.seqLightest),
+    fontFamily: getComputedStyle(document.body).fontFamily || FALLBACK.fontFamily,
+    ink: v("--text-primary", FALLBACK.ink),
     isDark,
   };
 }
@@ -85,22 +97,53 @@ export function useChartTheme(): ChartTheme {
  * Axis, grid and tooltip defaults to spread into any cartesian ECharts option.
  * Applying these consistently is also what makes the plots look like one system
  * rather than a dozen separately-styled charts.
+ *
+ * Night Corridor chart kit (DESIGN.md): transparent ground, 11 px axis text in
+ * the muted ink, no axis lines or ticks, horizontal gridlines only, a raised
+ * hairline tooltip with tabular figures, and a crosshair on time axes.
  */
 export function chartBase(t: ChartTheme) {
+  const tooltipCss = [
+    `box-shadow: 0 24px 60px ${t.isDark ? "rgba(0,0,0,0.55)" : "rgba(20,24,40,0.18)"}`,
+    "border-radius: 10px",
+    `font-family: ${t.fontFamily}`,
+    "font-variant-numeric: tabular-nums",
+    "font-weight: 400",
+    "line-height: 1.5",
+  ].join("; ") + ";";
   return {
-    textStyle: { color: t.text },
+    textStyle: { color: t.text, fontFamily: t.fontFamily, fontSize: 11 },
     axisCommon: {
-      axisLine: { lineStyle: { color: t.axis } },
-      axisTick: { lineStyle: { color: t.axis } },
-      axisLabel: { color: t.text },
-      splitLine: { lineStyle: { color: t.split } },
-      nameTextStyle: { color: t.text },
+      axisLine: { show: false, lineStyle: { color: t.axis } },
+      axisTick: { show: false, lineStyle: { color: t.axis } },
+      axisLabel: { color: t.text, fontSize: 11, fontFamily: t.fontFamily },
+      splitLine: { lineStyle: { color: t.split, width: 1 } },
+      nameTextStyle: { color: t.text, fontSize: 11, fontFamily: t.fontFamily },
     },
+    /* Vertical gridlines off: the brief asks for horizontal ones only. */
+    xAxisOnly: { splitLine: { show: false } },
     tooltip: {
       backgroundColor: t.tooltipBg,
-      borderColor: t.split,
-      textStyle: { color: t.tooltipText },
-      extraCssText: "box-shadow: 0 14px 36px rgba(6,14,32,0.28); border-radius: 6px; font-family: Archivo, system-ui, sans-serif;",
+      borderColor: t.tooltipBorder,
+      borderWidth: 1,
+      padding: [10, 12],
+      textStyle: { color: t.tooltipText, fontFamily: t.fontFamily, fontSize: 15 },
+      extraCssText: tooltipCss,
+    },
+    /* A crosshair on time-series charts (axis-triggered tooltips). */
+    axisPointer: {
+      type: "cross",
+      lineStyle: { color: t.isDark ? "rgba(244,241,234,0.32)" : "rgba(11,18,32,0.3)", type: "dashed", width: 1 },
+      crossStyle: { color: t.isDark ? "rgba(244,241,234,0.32)" : "rgba(11,18,32,0.3)", type: "dashed", width: 1 },
+      label: { backgroundColor: t.tooltipBg, color: t.tooltipText, borderColor: t.tooltipBorder, borderWidth: 1, fontFamily: t.fontFamily, fontSize: 11 },
+    },
+    legend: {
+      textStyle: { color: t.text, fontFamily: t.fontFamily, fontSize: 11 },
+      inactiveColor: t.isDark ? "rgba(244,241,234,0.22)" : "rgba(11,18,32,0.22)",
+      icon: "roundRect",
+      itemWidth: 14,
+      itemHeight: 6,
+      itemGap: 14,
     },
   };
 }
@@ -136,10 +179,42 @@ export function applyChartTheme<T extends Record<string, any>>(option: T, t: Cha
   const out: any = { ...option };
 
   out.textStyle = underlay(option.textStyle, base.textStyle);
-  if (option.xAxis) out.xAxis = underlay(option.xAxis, base.axisCommon);
+  if (out.backgroundColor == null) out.backgroundColor = "transparent";
+  if (option.xAxis) {
+    // Vertical gridlines go only where the chart said nothing about them.
+    const noVertical = (a: any) => (a && typeof a === "object" && a.splitLine == null ? { ...a, ...base.xAxisOnly } : a);
+    const x = Array.isArray(option.xAxis) ? option.xAxis.map(noVertical) : noVertical(option.xAxis);
+    out.xAxis = underlay(x, base.axisCommon);
+  }
   if (option.yAxis) out.yAxis = underlay(option.yAxis, base.axisCommon);
   // A chart with no tooltip configured should not gain one.
-  if (option.tooltip) out.tooltip = underlay(option.tooltip, base.tooltip);
+  if (option.tooltip) {
+    const tip = underlay(option.tooltip, base.tooltip);
+    if (!Array.isArray(tip) && tip.trigger === "axis") tip.axisPointer = underlay(tip.axisPointer, base.axisPointer);
+    out.tooltip = tip;
+  }
+  if (option.legend) out.legend = underlay(option.legend, base.legend);
+
+  // Draw in once (600 ms); never re-animate when data refreshes, because a
+  // number changing must not look like a page load.
+  if (out.animationDuration == null) out.animationDuration = 600;
+  if (out.animationEasing == null) out.animationEasing = "cubicOut";
+  if (out.animationDurationUpdate == null) out.animationDurationUpdate = 0;
+
+  // Bars: 4 px rounded ends and a 40-60% band, unless the chart chose its own.
+  // Stacked segments stay square, so a stack does not read as separate pills.
+  if (Array.isArray(option.series)) {
+    const yCategory = [].concat(option.yAxis ?? []).some((a: any) => a && a.type === "category");
+    out.series = option.series.map((s: any) => {
+      if (!s || s.type !== "bar") return s;
+      const next: any = { ...s };
+      if (next.stack == null) {
+        next.itemStyle = underlay(s.itemStyle, { borderRadius: yCategory ? [0, 4, 4, 0] : [4, 4, 0, 0] });
+      }
+      if (next.barWidth == null && next.barCategoryGap == null && next.barMaxWidth == null) next.barCategoryGap = "50%";
+      return next;
+    });
+  }
 
   return out as T;
 }

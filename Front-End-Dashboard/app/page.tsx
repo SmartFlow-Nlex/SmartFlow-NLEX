@@ -1,10 +1,47 @@
 "use client";
 
 import Image from 'next/image';
-import { useState } from 'react';
-import { User, Lock, Eye, EyeOff, Activity, TrendingUp, TriangleAlert } from "lucide-react";
+import dynamic from 'next/dynamic';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { User, Lock, Eye, EyeOff, Activity, TrendingUp, TriangleAlert, Pause, Play } from "lucide-react";
 import { supabase } from '../lib/supabase';
 import { logActivity } from "../lib/backend-auth";
+import { emitStage } from '../components/stage/stage-bus';
+import EditorialGrid from '../components/stage/EditorialGrid';
+import TitleReveal from '../components/stage/TitleReveal';
+import Mascot from '../components/stage/Mascot';
+import SigninCursor from '../components/stage/SigninCursor';
+import EffectsToggle from '../components/dashboard/EffectsToggle';
+
+// The WebGL stage is client-only: three.js never runs during the static export.
+const NightCorridorStage = dynamic(() => import('../components/stage/NightCorridorStage'), { ssr: false });
+
+/* The four sign-in stories. Copy is taken from PRODUCT.md, verbatim from the
+   redesign brief; it makes no claim the product does not. */
+const STORIES = [
+  {
+    label: "Forecast",
+    title: "Forecast, Not Just Live",
+    body: "Congestion, incidents, volume and emissions per exit and per hour, up to seven days ahead, with the action to take next.",
+  },
+  {
+    label: "Validation",
+    title: "Honest Validation",
+    body: "Every model states how it was tested, how it scores against simple baselines, and how its served forecasts compared with what actually happened.",
+  },
+  {
+    label: "Corridor",
+    title: "One Corridor, One View",
+    body: "Live Waze jams, Waze history since 2022, toll volumes, incident logs, weather and events, joined in one warehouse from Balintawak to Sta. Ines.",
+  },
+  {
+    label: "Drivers",
+    title: "Connected to Drivers",
+    body: "Operators publish advisories and decide what the companion mobile app shows commuters.",
+  },
+] as const;
+
+const STORY_MS = 7000;
 
 export default function Home() {
   const [showPassword, setShowPassword] = useState(false);
@@ -53,30 +90,77 @@ export default function Home() {
     }
   }
 
-  return (
-    <main className="login-shell">
-      {/* Decorative corridor: four lanes sweeping the page with a marching
-          dash, the same visual idea as the flow animation on the live map, so
-          the first screen looks like the product it opens into. Ornament only,
-          so it is hidden from assistive tech and stops under
-          prefers-reduced-motion. */}
-      <div className="login-flow" aria-hidden="true">
-        <svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
-          <path className="flow-line l1" d="M-100 250 C 260 140, 520 360, 820 300 S 1300 190, 1560 260" />
-          <path className="flow-line l2" d="M-100 430 C 300 330, 560 560, 900 470 S 1320 380, 1560 440" />
-          <path className="flow-line l3" d="M-100 620 C 240 540, 600 760, 940 660 S 1340 590, 1560 640" />
-          <path className="flow-line l4" d="M-100 800 C 320 720, 640 900, 980 820 S 1360 760, 1560 800" />
-        </svg>
-      </div>
+  /* ---- Presentation only: the story timer and the stage's reactions ---- */
 
-      <section className="login-brand" aria-label="SmartFlow branding">
-        <div className="brand-stack">
-          {/* Was pointing at /SMARTFLOW_LOGO.png, which no longer exists in
-              public/ and was 404-ing — a broken image on the first screen anyone
-              sees. Swapped for the two cuts that do exist, with the same
-              three-state theme guard used in the topbar; the login shell takes
-              --bg-login, which flips to near-black in dark mode, so a single
-              light-background mark would have been wrong half the time. */}
+  const [story, setStory] = useState(0);
+  const [userPaused, setUserPaused] = useState(false);
+  const [holdFocus, setHoldFocus] = useState(false);
+  const [holdHover, setHoldHover] = useState(false);
+  const [reduced, setReduced] = useState(false);
+  const fillRef = useRef<HTMLSpanElement | null>(null);
+  const elapsedRef = useRef(0);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setReduced(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  const goToStory = useCallback((i: number) => {
+    elapsedRef.current = 0;
+    setStory(((i % STORIES.length) + STORIES.length) % STORIES.length);
+  }, []);
+
+  // Tell the stage which story is showing (the wave runs amber to blue).
+  useEffect(() => {
+    emitStage({ type: "story", index: story, count: STORIES.length });
+  }, [story]);
+
+  // The stories advance on a 7 s timer, held while a field has focus, the
+  // pointer is over the card, the reader paused it, or motion is reduced.
+  const held = holdFocus || holdHover || userPaused || reduced;
+  useEffect(() => {
+    if (held) return;
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      elapsedRef.current += now - last;
+      last = now;
+      const p = Math.min(1, elapsedRef.current / STORY_MS);
+      if (fillRef.current) fillRef.current.style.transform = `scaleX(${p})`;
+      if (p >= 1) {
+        elapsedRef.current = 0;
+        setStory((s) => (s + 1) % STORIES.length);
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [held, story]);
+
+  // The sign-in request drives the car: wheels and lights while pending, settle on error.
+  useEffect(() => {
+    emitStage({ type: "pending", on: isLoading });
+  }, [isLoading]);
+  useEffect(() => {
+    if (errorMessage) emitStage({ type: "error" });
+  }, [errorMessage]);
+
+  const flashLights = useCallback(() => emitStage({ type: "flash" }), []);
+
+  const current = STORIES[story];
+
+  return (
+    <main className="si-shell">
+      <NightCorridorStage variant="signin" />
+      <EditorialGrid variant="signin" />
+      <SigninCursor />
+
+      <header className="si-topbar">
+        <section className="si-brand" aria-label="SmartFlow branding">
           <Image
             src="/SMARTFLOW_LOGO_WHITE.png"
             alt="SmartFlow NLEX"
@@ -95,34 +179,90 @@ export default function Home() {
             unoptimized
             className="brand-logo ds-brand-swap is-dark"
           />
-
           <div className="brand-copy">
-            {/* The product had no name anywhere on its own first screen — the
-                mark is a road glyph with no wordmark, so the only text was a
-                grey subtitle. A stylesheet rule for .brand-copy h1 already
-                existed with nothing to style; this is the heading it was
-                written for. */}
             <h1>SmartFlow <span>NLEX</span></h1>
             <p>Decision-Intelligence System</p>
           </div>
+        </section>
 
-          {/* Fills the dead half of the panel with what the system actually
-              does. A login screen is the one page every stakeholder sees
-              before they have any context, and three words each is cheaper
-              than a paragraph nobody reads. */}
-          <ul className="brand-points">
-            <li><Activity size={15} aria-hidden="true" /> Live corridor status</li>
-            <li><TrendingUp size={15} aria-hidden="true" /> Predictive volume</li>
-            <li><TriangleAlert size={15} aria-hidden="true" /> Incident intelligence</li>
-          </ul>
+        <nav className="si-story-nav" aria-label="Stories">
+          {STORIES.map((s, i) => (
+            <button
+              key={s.label}
+              type="button"
+              className={i === story ? "is-current" : ""}
+              aria-current={i === story ? "true" : undefined}
+              onClick={() => goToStory(i)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </nav>
+        <span className="si-topbar-end"><EffectsToggle /></span>
+      </header>
+
+      {/* The stage draws the mascot over this box; the picture inside shows
+          until the stage's own mascot is ready, and stays if WebGL is missing. */}
+      <div className="si-mascot" data-stage-anchor="mascot">
+        <Mascot size={420} className="si-mascot-fallback" />
+      </div>
+
+      <section className="si-story" aria-label="About SmartFlow">
+        <div className="si-story-text" key={story}>
+          <TitleReveal as="h2" text={current.title} className="si-story-title" />
+          <p className="si-story-body">{current.body}</p>
         </div>
+
+        <div className="si-story-controls">
+          <div className="si-story-dashes" role="group" aria-label="Choose a story">
+            {STORIES.map((s, i) => (
+              <button
+                key={s.label}
+                type="button"
+                className={`si-dash${i === story ? " is-current" : ""}${i < story ? " is-done" : ""}`}
+                aria-label={`Story ${i + 1} of ${STORIES.length}: ${s.title}`}
+                aria-current={i === story ? "true" : undefined}
+                onClick={() => goToStory(i)}
+              >
+                <span ref={i === story ? fillRef : undefined} className="si-dash-fill" />
+              </button>
+            ))}
+          </div>
+          {!reduced && (
+            <button
+              type="button"
+              className="si-story-pause"
+              aria-label={userPaused ? "Play stories" : "Pause stories"}
+              aria-pressed={userPaused}
+              onClick={() => setUserPaused((p) => !p)}
+            >
+              {userPaused ? <Play size={13} aria-hidden="true" /> : <Pause size={13} aria-hidden="true" />}
+            </button>
+          )}
+        </div>
+
+        <ul className="brand-points">
+          <li><Activity size={15} aria-hidden="true" /> Live corridor status</li>
+          <li><TrendingUp size={15} aria-hidden="true" /> Predictive volume</li>
+          <li><TriangleAlert size={15} aria-hidden="true" /> Incident intelligence</li>
+        </ul>
       </section>
 
-      <section className="login-panel" aria-label="Sign in form">
+      <section
+        className="login-panel"
+        aria-label="Sign in form"
+        onPointerEnter={() => setHoldHover(true)}
+        onPointerLeave={() => setHoldHover(false)}
+      >
         <div className="login-card">
               <h2>Sign In to Dashboard</h2>
 
-              <form onSubmit={handleSignInSubmit} className="login-form">
+              <form
+                onSubmit={handleSignInSubmit}
+                className="login-form"
+                onFocus={() => setHoldFocus(true)}
+                onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHoldFocus(false); }}
+              >
                 {errorMessage && <div className="login-alert danger">{errorMessage}</div>}
                 {successMessage && <div className="login-alert success">{successMessage}</div>}
 
@@ -130,13 +270,13 @@ export default function Home() {
                   <span>Username / Email</span>
                   <div className="input-with-icon">
                     <User className="input-icon-left" size={18} />
-                    <input 
-                      type="text" 
-                      name="username" 
-                      placeholder="Enter your username or email" 
+                    <input
+                      type="text"
+                      name="username"
+                      placeholder="Enter your username or email"
                       value={signInUsername}
                       onChange={(e) => setSignInUsername(e.target.value)}
-                      required 
+                      required
                       disabled={isLoading}
                     />
                   </div>
@@ -183,15 +323,21 @@ export default function Home() {
                   </button>
                 </div>
 
-                <button type="submit" className="submit-button" disabled={isLoading}>
-                  {isLoading ? 'Signing In...' : 'Sign In'}
+                <button
+                  type="submit"
+                  className="submit-button"
+                  disabled={isLoading}
+                  onPointerEnter={flashLights}
+                  onFocus={flashLights}
+                >
+                  <span>{isLoading ? 'Signing In...' : 'Sign In'}</span>
+                  <i className="pill-ring" aria-hidden="true" />
                 </button>
               </form>
         </div>
 
-        <p className="copyright">{'\u00A9'} 2026 SmartFlow NLEX. All rights reserved.</p>
+        <p className="copyright">{'©'} 2026 SmartFlow NLEX. All rights reserved.</p>
       </section>
     </main>
   );
 }
-

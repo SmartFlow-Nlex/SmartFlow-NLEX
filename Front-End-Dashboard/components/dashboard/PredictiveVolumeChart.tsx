@@ -8,8 +8,12 @@ import ModelNarrative, { type MetricRow } from "./ModelNarrative";
 import { aggregateSeries } from "./aggregateSeries";
 import { useThemeTokens, zoneTints } from "./useThemeTokens";
 import WeatherEvidencePanel, { EvidenceHeading } from "./WeatherEvidencePanel";
-import { BarChart3, ShieldCheck, ChevronRight } from "lucide-react";
-import { TOOLTIP_CSS } from "./replayViz";
+import { BarChart3 } from "lucide-react";
+import { useChartTheme } from "../../lib/chart-theme";
+import { areaFade, forecastLineStyle, nowMarkLine } from "../../lib/chart-kit";
+import { useTrafficPalette } from "./trafficPalette";
+import StateNote from "../stage/StateNote";
+import EvidenceModal from "./EvidenceModal";
 
 type ModelType = "LSTM" | "Prophet" | "HoltWinters" | "SARIMAX" | "HoltsLinear";
 
@@ -224,6 +228,8 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const [granularity, setGranularity] = useState<"Hourly" | "Daily" | "Weekly" | "Monthly" | "Yearly">("Weekly");
   // ECharts needs literal colours, so the CSS tokens are resolved at runtime.
   const T = useThemeTokens();
+  const chartTheme = useChartTheme();
+  const P = useTrafficPalette();
   const modelColor = (k: string) => (T.isDark ? MODEL_DARK : MODEL_LIGHT)[k] ?? "#2a78d6";
   const ZONE = zoneTints(T.isDark);
 
@@ -440,22 +446,11 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
     (horizonAcc.length ? horizonAcc[horizonAcc.length - 1] : null);
 
   const modelToolbar = (
-    <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: "0 1 auto", minWidth: 0 }}>
-      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)", flex: "none" }}>
-        <path d="M2 11.5l3.5-4 3 3L13.5 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M10.5 4h3v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-      <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--text-secondary, #4b5e7d)", letterSpacing: "0.02em", whiteSpace: "nowrap" }}>
-        Models
-      </span>
-      {/* Same segmented-pill control the Range/Weather filters use, with each
-          selected model tinted its own series colour. */}
-      <div
-        style={{
-          display: "inline-flex", flexWrap: "wrap", gap: "2px", padding: "3px",
-          background: "var(--bg-surface)", border: "1px solid var(--border-strong)", borderRadius: "999px",
-        }}
-      >
+    <div className="nct-group">
+      <span className="nct-group-label">Models</span>
+      {/* Hairline pills; a selected model is tinted its own series colour so
+          the pill reads as the same model as its line. */}
+      <div className="nct-pills" role="group" aria-label="Models">
         {MODELS.map((baseM) => {
           const m = metricsMeta[baseM.key];
           const on = selected.includes(m.key);
@@ -470,22 +465,10 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               aria-pressed={on}
               disabled={weatherLocked}
               title={weatherLocked ? `${m.label} uses no weather inputs — turn Weather off to show it` : locked ? "At least one model must stay selected" : `${on ? "Hide" : "Show"} ${m.label}`}
-              style={{
-                display: "inline-flex", alignItems: "center", border: 0,
-                padding: "5px 12px", borderRadius: "4px",
-                fontSize: "0.76rem", fontWeight: 600, whiteSpace: "nowrap",
-                cursor: weatherLocked ? "not-allowed" : locked ? "default" : "pointer", transition: "all 0.15s",
-                opacity: weatherLocked ? 0.4 : 1,
-                background: on ? modelColor(m.key) : "transparent",
-                color: on ? "var(--bg-surface)" : "var(--text-secondary, #4b5e7d)",
-                boxShadow: "none",
-              }}
+              className={`nct-pill-btn nct-model-btn${on ? " is-on" : ""}${locked ? " is-locked" : ""}`}
+              style={{ ["--mc" as string]: modelColor(m.key) }}
             >
-              {on && (
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}>
-                  <path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              )}
+              <span className="nct-model-dot" aria-hidden="true" />
               {m.label}
             </button>
           );
@@ -495,82 +478,72 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   );
 
   const metricsTable = (
-    <div style={{ display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.4} />} tint="var(--action)" title="Held-out accuracy">
+    <div className="nct-ev-section">
+      <div className="nct-ev-section-head">
+        <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.2} />} tint="var(--page-accent)" title="Held-out accuracy">
           <InfoTooltip text="Scored on the Present zone: real daily counts the model never trained on. WMAPE is the headline error; MASE below 1 beats repeating last week's pattern. Show more adds the secondary error measures." />
         </EvidenceHeading>
-        <button
-          onClick={() => setShowAllMetrics(!showAllMetrics)}
-          style={{ padding: 0, border: 0, background: "transparent", cursor: "pointer", fontSize: "0.74rem", fontWeight: 600, color: "var(--text-secondary)" }}
-        >
+        <button type="button" className="nct-link-btn" onClick={() => setShowAllMetrics(!showAllMetrics)}>
           {showAllMetrics ? "Hide secondary metrics" : "Show secondary metrics"}
         </button>
       </div>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem", minWidth: showAllMetrics ? 820 : 0 }}>
+      <div className="nct-table-wrap">
+        <table className="nct-table" style={{ minWidth: showAllMetrics ? 820 : 0 }}>
           <thead>
-            <tr style={{ textAlign: "left", color: "var(--text-muted)", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              <th style={{ padding: "6px 8px", fontWeight: 700, position: "sticky", left: 0, background: "var(--bg-surface-hover)", zIndex: 1 }}>Model</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>WMAPE</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }} title="Error relative to repeating last week. Below 1.0 beats it.">MASE</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>MAE (veh)</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>RMSE (veh)</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>R²</th>
+            <tr>
+              <th className="nct-sticky">Model</th>
+              <th className="num">WMAPE</th>
+              <th className="num" title="Error relative to repeating last week. Below 1.0 beats it.">MASE</th>
+              <th className="num">MAE (veh)</th>
+              <th className="num">RMSE (veh)</th>
+              <th className="num">R²</th>
               {showAllMetrics && (
                 <>
-                  <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>MAPE</th>
-                  <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>sMAPE</th>
-                  <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>RMSSE</th>
+                  <th className="num">MAPE</th>
+                  <th className="num">sMAPE</th>
+                  <th className="num">RMSSE</th>
                   {/* Adj R² removed: it was permanently blank, and it is not
                       merely unimplemented — adjusted R² penalises by the number
                       of predictors, which is undefined for Prophet, SARIMAX and
                       an LSTM. Replaced with the train/validation pair, which is
                       defined for every fitted model and answers the question a
                       reader actually has: did it memorise? */}
-                  <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Train R²</th>
-                  <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Gap</th>
+                  <th className="num">Train R²</th>
+                  <th className="num">Gap</th>
                 </>
               )}
             </tr>
           </thead>
           <tbody>
             {MODELS.map(baseM => metricsMeta[baseM.key]).filter((m) => selected.includes(m.key)).map((m) => (
-              <tr key={m.key} style={{ borderTop: "1px solid var(--border-default)" }}>
-                <td style={{ padding: "8px", fontWeight: 700, color: "var(--text-primary)", position: "sticky", left: 0, background: "var(--bg-surface-hover)", zIndex: 1, whiteSpace: "nowrap" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ width: 9, height: 9, borderRadius: "50%", background: modelColor(m.key) }} />
-                    {m.label}
-                    <span style={{ fontSize: "0.7rem", fontWeight: 600, color: m.accepted ? "var(--color-success)" : "var(--color-danger)" }}>{m.note}</span>
+              <tr key={m.key}>
+                <td className="nct-sticky">
+                  <span className="nct-model-cell">
+                    <span className="nct-swatch" style={{ background: modelColor(m.key) }} />
+                    <b>{m.label}</b>
+                    <span className={m.accepted ? "nct-ok" : "nct-bad"}>{m.note}</span>
                   </span>
                 </td>
-                <td style={{ padding: "8px", textAlign: "right", fontWeight: 700, color: modelColor(m.key), fontVariantNumeric: "tabular-nums" }}>{m.wmape}</td>
-                <td style={{ padding: "8px", textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums",
-                  color: m.mase && m.mase !== "—" ? (parseFloat(m.mase) < 1 ? "var(--color-success)" : "var(--color-danger)") : "var(--text-secondary)" }}>
+                <td className="num strong">{m.wmape}</td>
+                <td className={`num strong ${m.mase && m.mase !== "—" ? (parseFloat(m.mase) < 1 ? "nct-ok" : "nct-bad") : ""}`}>
                   {m.mase ?? "—"}
                 </td>
-                <td style={{ padding: "8px", textAlign: "right", color: "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>{m.mae}</td>
-                <td style={{ padding: "8px", textAlign: "right", color: "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>{m.rmse}</td>
-                <td style={{ padding: "8px", textAlign: "right", color: "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>{m.r2}</td>
+                <td className="num">{m.mae}</td>
+                <td className="num">{m.rmse}</td>
+                <td className="num">{m.r2}</td>
                 {showAllMetrics && (
                   <>
-                    <td style={{ padding: "8px", textAlign: "right", color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>{m.mape ?? "—"}</td>
-                    <td style={{ padding: "8px", textAlign: "right", color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>{m.smape ?? "—"}</td>
-                    <td style={{ padding: "8px", textAlign: "right", color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>{m.rmsse ?? "—"}</td>
-                    <td style={{ padding: "8px", textAlign: "right", color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>{m.train_r2 ?? "—"}</td>
+                    <td className="num dim">{m.mape ?? "—"}</td>
+                    <td className="num dim">{m.smape ?? "—"}</td>
+                    <td className="num dim">{m.rmsse ?? "—"}</td>
+                    <td className="num dim">{m.train_r2 ?? "—"}</td>
                     {/* The gap is the diagnostic, so it is the one that gets
                         coloured: a wide positive gap means the model fits its
                         training days far better than unseen ones. Under 0.15 is
                         unremarkable; the threshold is a reading aid, not a
                         pass/fail the pipeline enforces. A dash means the model
                         has no parameters to overfit (the two naive baselines). */}
-                    <td style={{
-                      padding: "8px", textAlign: "right", fontVariantNumeric: "tabular-nums",
-                      fontWeight: m.gap && m.gap !== "—" ? 700 : 400,
-                      color: m.gap && m.gap !== "—"
-                        ? (parseFloat(m.gap) > 0.15 ? "var(--color-danger)" : "var(--color-success)")
-                        : "var(--text-secondary)",
-                    }}>{m.gap ?? "—"}</td>
+                    <td className={`num ${m.gap && m.gap !== "—" ? (parseFloat(m.gap) > 0.15 ? "strong nct-bad" : "strong nct-ok") : "dim"}`}>{m.gap ?? "—"}</td>
                   </>
                 )}
               </tr>
@@ -583,8 +556,8 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
 
   if (!chartData) {
     return (
-      <article className="chart-card wide" style={{ padding: "24px" }}>
-        <div style={{ color: "var(--text-secondary)" }}>Loading ML forecast from AWS…</div>
+      <article className="chart-card wide nct-card">
+        <StateNote kind="loading">Loading ML forecast from AWS…</StateNote>
       </article>
     );
   }
@@ -678,7 +651,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const zoneLabel = (text: string) => ({
     show: true,
     position: "insideTop" as const,
-    color: "var(--text-muted)",
+    color: T.textMuted,
     fontSize: 11,
     fontWeight: 600 as const,
     formatter: text,
@@ -860,21 +833,40 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const spansMultipleYears =
     isoDates.length > 0 && isoDates[0]?.slice(0, 4) !== isoDates[isoDates.length - 1]?.slice(0, 4);
 
+  // Where today falls on the plotted axis, if it does (see the NOW mark).
+  const todayIso = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+  const nowIdx = (() => {
+    if (isoDates.length === 0 || todayIso < isoDates[0]) return -1;
+    if (!isAggregated) return isoDates.indexOf(todayIso);
+    let idx = -1;
+    for (let i = 0; i < isoDates.length; i++) if (isoDates[i] <= todayIso) idx = i;
+    const last = new Date(`${isoDates[isoDates.length - 1]}T00:00:00`);
+    last.setDate(last.getDate() + bucketDays);
+    return idx === isoDates.length - 1 && todayIso >= toIsoDate(last.toISOString()) ? -1 : idx;
+  })();
+  const nowMark = nowMarkLine(chartTheme, "");
+  const lastForecastIso = chartData.isoDates[chartData.isoDates.length - 1] ?? null;
+  const forecastEndsBeforeToday = lastForecastIso != null && lastForecastIso < todayIso;
+
   const dailyOption: EChartsOption = {
     grid: { left: 80, right: showWeather ? 80 : 24, top: 28, bottom: 104 },
     tooltip: {
       trigger: "axis",
-      backgroundColor: T.tooltipBg,
-      borderColor: T.border,
-      textStyle: { color: T.tooltipText },
       confine: true,
-      extraCssText: TOOLTIP_CSS,
+      extraCssText: P.tooltipCss,
       formatter: (params: unknown) => {
         const items = params as { name: string; marker: string; seriesName: string; value: number | null }[];
         if (!items || items.length === 0) return "";
         let tip = `<b>${items[0].name}</b><br/>`;
+        // Each model is drawn as two series of one name (solid to the forecast
+        // start, dashed after), which meet on one shared day: name it once.
+        const seen = new Set<string>();
         items.forEach((p) => {
-          if (p.value != null) {
+          if (p.value != null && !seen.has(p.seriesName)) {
+            seen.add(p.seriesName);
             if (p.seriesName === "Rainfall (mm)") {
               const mm = Number(p.value);
               {
@@ -886,11 +878,11 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                   : `${p.marker} Rainfall: <b>${mm.toFixed(1)} mm</b> \u00B7 ${rainBand(mm).label}<br/>`;
               }
             } else {
-              tip += `${p.marker} ${p.seriesName}: <b>${fmtVeh(Number(p.value))}</b><br/>`;
+              tip += `${p.marker} ${p.seriesName}: <b>${fmtVeh(Number(p.value))}</b> vehicles<br/>`;
             }
           }
         });
-        return `${tip}<span style="color:var(--text-muted);font-size:12px">${
+        return `${tip}<span style="color:var(--text-muted);font-size:11px">${
           isAggregated ? "Switch to Daily to open a day" : "Click to view hourly"
         }</span>`;
       },
@@ -911,9 +903,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         ...(showWeather ? ["Rainfall (mm)"] : []),
       ],
       bottom: 0,
-      icon: "circle",
       itemGap: 16,
-      textStyle: { fontSize: 12, color: T.chartText },
       // Names the statistic on every series in the place readers actually look.
       // Formatter is display-only: the underlying seriesName values still drive
       // tooltip matching and the click-to-drill handler, so renaming them here
@@ -921,10 +911,11 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
     },
     dataZoom: [
       { type: "slider", start: 0, end: 100, height: 18, bottom: 44,
-        borderColor: T.border, fillerColor: T.isDark ? "rgba(56,118,245,0.18)" : "rgba(37,99,235,0.08)",
-        handleStyle: { color: T.isDark ? "#5cc8ff" : "#0a6cc2" }, textStyle: { color: T.textMuted, fontSize: 10 },
-        backgroundColor: T.isDark ? "rgba(255,255,255,0.03)" : "transparent",
-        dataBackground: { lineStyle: { color: T.chartAxis }, areaStyle: { color: T.chartSplit } } },
+        borderColor: P.hairline, fillerColor: T.isDark ? "rgba(79, 141, 255, 0.16)" : "rgba(35, 87, 216, 0.10)",
+        handleStyle: { color: P.ink2, borderColor: P.hairline }, moveHandleStyle: { color: P.neutral },
+        textStyle: { color: T.textMuted, fontSize: 11 },
+        backgroundColor: "transparent",
+        dataBackground: { lineStyle: { color: P.neutral }, areaStyle: { color: T.chartSplit } } },
     ],
     xAxis: {
       type: "category",
@@ -961,7 +952,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         nameLocation: "middle",
         nameGap: 60,
         axisLabel: { color: T.chartText, formatter: (val: number) => `${(val / 1000).toFixed(0)}k` },
-        splitLine: { lineStyle: { color: T.chartSplit, type: "dashed" } },
+        splitLine: { lineStyle: { color: T.chartSplit } },
         scale: true,
       },
       {
@@ -969,7 +960,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         name: showWeather ? (isAggregated ? "Avg daily rainfall, mm" : "Daily rainfall (mm)") : "",
         nameLocation: "middle",
         nameGap: 50,
-        nameTextStyle: { color: T.isDark ? "#38bdf8" : "#0284c7", fontSize: 11, fontWeight: "bold" },
+        nameTextStyle: { color: T.isDark ? "#38bdf8" : "#0284c7", fontSize: 11, fontWeight: 600 },
         position: "right",
         axisLabel: { show: showWeather, color: T.isDark ? "#38bdf8" : "#0284c7", formatter: (val: number) => `${val.toFixed(0)}` },
         axisLine: { show: showWeather, lineStyle: { color: T.isDark ? "#38bdf8" : "#0284c7" } },
@@ -990,14 +981,16 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         yAxisIndex: 0,
         data: baseActual,
         smooth: true,
-        connectNulls: true,
+        // Night Corridor: a gap stays a gap. The scored window has none today,
+        // but a missing day must break the line rather than be bridged.
+        connectNulls: false,
         symbol: "circle",
         symbolSize: dates.length > 400 ? 0 : 5,
         z: 3,
         // Dark slate at full weight — this is the treatment that made the series
         // legible. Still thinner at daily density, where ~880 points would
         // otherwise fuse into a solid block.
-        lineStyle: { width: dates.length > 400 ? 1.6 : 2.6, color: actualColor },
+        lineStyle: { width: dates.length > 400 ? 1.5 : 2, color: actualColor },
         itemStyle: { color: actualColor },
         emphasis: { scale: 2.2 },
         markArea: {
@@ -1021,6 +1014,12 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             ...[holdoutStart, futureStart]
               .filter((i) => dates[i] != null)
               .map((i) => ({ xAxis: dates[i], label: { show: false } })),
+            // NOW, only when today is on this axis. The stored forecast can end
+            // before today (its window is fixed by the last training run), and a
+            // NOW drawn at the forecast start would claim a present it is not.
+            ...(nowIdx >= 0 && dates[nowIdx] != null
+              ? [{ xAxis: dates[nowIdx], lineStyle: nowMark.lineStyle, label: nowMark.label }]
+              : []),
             // Period dividers for Weekly/Monthly granularity. These are thinned to
             // at most ~12 across the window: at the full 744-day range Monthly drew
             // 24 unlabelled green lines over the data, which read as noise rather
@@ -1036,9 +1035,9 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                 : [];
               if (periods.length === 0) return [];
               const stride = Math.max(1, Math.ceil(periods.length / 12));
-              const tint = T.isDark ? "#4a6396" : "#8d9ab5";
-              const ink = T.isDark ? "#a9b9da" : "#3b4d72";
-              const wash = T.isDark ? "rgba(15,31,61,0.92)" : "rgba(255,255,255,0.92)";
+              const tint = P.neutral;
+              const ink = P.ink2;
+              const wash = P.tooltipBg;
               return periods
                 .filter((_, i) => i % stride === 0)
                 .map((p) => ({
@@ -1049,8 +1048,8 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                     position: "insideEndTop" as const,
                     formatter: p.tag,
                     color: ink,
-                    fontSize: 9,
-                    fontWeight: 700 as const,
+                    fontSize: 10,
+                    fontWeight: 600 as const,
                     backgroundColor: wash,
                     padding: [1, 3],
                     borderRadius: 2,
@@ -1060,19 +1059,32 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
           ],
         },
       },
-      ...visibleModels.map((key) => ({
-        name: `${metricsMeta[key].label} Prediction`,
-        type: "line" as const,
-        yAxisIndex: 0,
-        data: models[key],
-        smooth: true,
-        connectNulls: true,
-        symbol: "circle",
-        symbolSize: 5,
-        lineStyle: { width: dates.length > 400 ? 1.2 : 2.2, color: modelColor(key) },
-        itemStyle: { color: modelColor(key) },
-        emphasis: { scale: 2.2 },
-      })),
+      // Each model is two series under ONE name, so its legend pill still
+      // toggles the whole line: solid through the scored (Present) window,
+      // dashed from the forecast start, meeting on the last scored day. The
+      // values are the same array, split at futureStart; nothing is recomputed.
+      ...visibleModels.flatMap((key) => {
+        const name = `${metricsMeta[key].label} Prediction`;
+        const all = models[key];
+        const cutAt = Math.max(0, Math.min(futureStart, all.length));
+        const scored = all.map((v, i) => (i < cutAt ? v : null));
+        const ahead = all.map((v, i) => (i >= cutAt - 1 ? v : null));
+        const width = dates.length > 400 ? 1.5 : 2;
+        return [
+          {
+            name, type: "line" as const, yAxisIndex: 0, data: scored, smooth: true, connectNulls: false,
+            symbol: "circle", symbolSize: 5, showSymbol: dates.length <= 400,
+            lineStyle: { width, color: modelColor(key) }, itemStyle: { color: modelColor(key) }, emphasis: { scale: 2.2 },
+          },
+          {
+            name, type: "line" as const, yAxisIndex: 0, data: ahead, smooth: true, connectNulls: false,
+            ...forecastLineStyle(modelColor(key)),
+            symbol: "circle", symbolSize: 5, showSymbol: dates.length <= 400,
+            lineStyle: { width, color: modelColor(key), type: "dashed" as const },
+            emphasis: { scale: 2.2 },
+          },
+        ];
+      }),
       ...weatherSeries,
     ],
   };
@@ -1130,7 +1142,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         tooltip: {
           trigger: "axis",
           confine: true,
-          extraCssText: TOOLTIP_CSS,
+          extraCssText: P.tooltipCss,
           formatter: (params: unknown) => {
             const items = params as { name: string; marker: string; seriesName: string; value: number | null; dataIndex: number }[];
             const t = hourTemps[items[0]?.dataIndex ?? -1];
@@ -1142,7 +1154,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                 } else if (p.seriesName === "Temperature (\u00B0C)") {
                   tip += `${p.marker} ${p.seriesName}: <b>${Number(p.value).toFixed(1)}\u00B0C</b><br/>`;
                 } else {
-                  tip += `${p.marker} ${p.seriesName}: <b>${fmtVeh(Number(p.value))}</b><br/>`;
+                  tip += `${p.marker} ${p.seriesName}: <b>${fmtVeh(Number(p.value))}</b> vehicles/hr<br/>`;
                 }
               }
             });
@@ -1156,15 +1168,12 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             ...(drawWeather ? ["Rainfall (mm)"] : []),
           ],
           bottom: 0,
-          icon: "circle",
           itemGap: 16,
-          textStyle: { fontSize: 12 },
         },
         xAxis: {
           type: "category",
           data: hourLabels,
-          axisLabel: { color: "var(--text-secondary)", interval: 1, rotate: 0, fontSize: 11 },
-          axisLine: { lineStyle: { color: "var(--border-strong)" } },
+          axisLabel: { color: T.chartText, interval: 1, rotate: 0, fontSize: 11 },
         },
         yAxis: [
           {
@@ -1172,18 +1181,18 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             name: "Vehicles per hour",
             nameLocation: "middle",
             nameGap: 48,
-            axisLabel: { color: "var(--text-secondary)", formatter: (val: number) => `${(val / 1000).toFixed(0)}k` },
-            splitLine: { lineStyle: { color: "var(--border-default)", type: "dashed" } },
+            axisLabel: { color: T.chartText, formatter: (val: number) => `${(val / 1000).toFixed(0)}k` },
+            splitLine: { lineStyle: { color: T.chartSplit } },
           },
           {
             type: "value",
             name: drawWeather ? "Rainfall (mm)" : "",
             nameLocation: "middle",
             nameGap: 44,
-            nameTextStyle: { color: "#0284c7", fontSize: 11, fontWeight: "bold" },
+            nameTextStyle: { color: T.isDark ? "#38bdf8" : "#0284c7", fontSize: 11, fontWeight: 600 },
             position: "right",
-            axisLabel: { show: drawWeather, color: "#0284c7", formatter: (val: number) => `${val.toFixed(0)}` },
-            axisLine: { show: drawWeather, lineStyle: { color: "#0284c7" } },
+            axisLabel: { show: drawWeather, color: T.isDark ? "#38bdf8" : "#0284c7", formatter: (val: number) => `${val.toFixed(0)}` },
+            axisLine: { show: drawWeather, lineStyle: { color: T.isDark ? "#38bdf8" : "#0284c7" } },
             splitLine: { show: false },
             min: 0,
             max: (value: { max: number }) => Math.max(Math.ceil(value.max * 2.5), 10),
@@ -1198,12 +1207,12 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                   yAxisIndex: 0,
                   data: anyHourly.hours.map((h) => h.actual),
                   smooth: true,
-                  connectNulls: true,
+                  connectNulls: false,
                   symbol: "circle" as const,
                   symbolSize: 5,
-                  lineStyle: { width: 2.6, color: actualColor },
+                  lineStyle: { width: 2, color: actualColor },
                   itemStyle: { color: actualColor },
-                  areaStyle: { color: T.isDark ? "rgba(232, 238, 251, 0.06)" : "rgba(10, 22, 48, 0.05)" },
+                  areaStyle: areaFade(actualColor) as Record<string, unknown>,
                   z: 3,
                 },
               ]
@@ -1219,7 +1228,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               symbol: "circle",
               symbolSize: 5,
               z: 3,
-              lineStyle: { width: 2.2, color: modelColor(k) },
+              lineStyle: { width: 2, color: modelColor(k) },
               itemStyle: { color: modelColor(k) },
             })),
           ...hourlyWeatherSeries,
@@ -1229,90 +1238,72 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
 
   if (drillDate) {
     return (
-      <article className="chart-card wide" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "18px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", flexWrap: "wrap" }}>
-          <div style={{ minWidth: 0 }}>
-            <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+      <article className="chart-card wide nct-card">
+        <div className="nct-card-head nct-card-head-split">
+          <div className="nct-head-text">
+            <h3 className="nct-title">
               Hourly Breakdown — {drillLabel}
-              <InfoTooltip text="Blue bars are the vehicles counted at the toll plazas in each hour of this day. The model line is that model's daily prediction spread across the day in the shape of a typical same-weekday, so you can see where the day ran above or below expectation." />
-              {anyHourly && (
-                <span style={{ fontSize: "0.8rem", padding: "2px 8px", background: "var(--border-default)", color: "var(--text-secondary)", borderRadius: "12px", fontWeight: 600 }}>
-                  {anyHourly.weekday}
-                </span>
-              )}
-              {anyHourly?.isFuture && (
-                <span style={{ fontSize: "0.8rem", padding: "2px 8px", background: "var(--color-success-bg)", color: "var(--color-success)", borderRadius: "12px", fontWeight: 600 }}>
-                  Forecast
-                </span>
-              )}
+              <InfoTooltip text="The line is the vehicles counted at the toll plazas in each hour of this day. Each model line is that model's daily prediction spread across the day in the shape of a typical same-weekday, so you can see where the day ran above or below expectation." />
+              {anyHourly && <span className="pill">{anyHourly.weekday}</span>}
+              {anyHourly?.isFuture && <span className="pill purple">Forecast</span>}
             </h3>
             {anyHourly && (() => {
               const k = visibleModels[0];
               const h = k ? hourlyByModel[k] : undefined;
               const pct = h?.dayPredicted != null && anyHourly.dayActual ? ((h.dayPredicted - anyHourly.dayActual) / anyHourly.dayActual) * 100 : null;
               return (
-                <p style={{ color: "var(--text-secondary)", fontSize: "0.84rem", margin: "6px 0 0 0" }}>
+                /* The day in pills, not a sentence. Peak and quietest hour are
+                   the stat tiles under the chart, so they are not repeated here. */
+                <div className="nct-chip-row nct-day-pills">
                   {anyHourly.profileSource === "weekday-profile"
-                    ? <>Forecast day: each model&apos;s daily total spread over a typical {anyHourly.weekday}.</>
-                    : <>
-                        Peak <b style={{ color: "var(--text-primary)" }}>{extremeLabel(anyHourly.hours, "max")}</b> · quietest <b style={{ color: "var(--text-primary)" }}>{extremeLabel(anyHourly.hours, "min")}</b>
-                        {k && h?.dayPredicted != null && pct != null && (
-                          <> · {metricsMeta[k].label} was <b style={{ color: Math.abs(pct) <= 5 ? "var(--color-success)" : "var(--color-warning)" }}>{Math.abs(pct).toFixed(1)}% {pct < 0 ? "under" : "over"}</b> the day&apos;s actual</>
-                        )}
-                      </>}
+                    ? <span className="nct-sub" style={{ margin: 0 }}>Forecast day: each model&apos;s daily total spread over a typical {anyHourly.weekday}.</span>
+                    : k && h?.dayPredicted != null && pct != null && (
+                        <span className="nct-mini-chip">
+                          {metricsMeta[k].label} was <b className={Math.abs(pct) <= 5 ? "nct-ok" : "nct-warn"}>{Math.abs(pct).toFixed(1)}% {pct < 0 ? "under" : "over"}</b> the day&apos;s actual
+                        </span>
+                      )}
                   {weatherSummary && (
                     <>
-                      {" · "}
-                      {weatherSummary.totalRain > 0.05
-                        ? <>rain <b style={{ color: "#0284c7" }}>{weatherSummary.totalRain.toFixed(1)} mm</b>{weatherSummary.wettestLabel && <> (heaviest {weatherSummary.wettestLabel})</>}</>
-                        : <>no rain recorded</>}
+                      <span className="nct-mini-chip">
+                        {weatherSummary.totalRain > 0.05
+                          ? <>Rain <b className="nct-rain">{weatherSummary.totalRain.toFixed(1)} mm</b>{weatherSummary.wettestLabel && <> · heaviest {weatherSummary.wettestLabel}</>}</>
+                          : <>No rain recorded</>}
+                      </span>
                       {weatherSummary.tMin != null && weatherSummary.tMax != null && (
-                        <> · {weatherSummary.tMin.toFixed(0)}&ndash;{weatherSummary.tMax.toFixed(0)}&deg;C</>
+                        <span className="nct-mini-chip"><b>{weatherSummary.tMin.toFixed(0)}&ndash;{weatherSummary.tMax.toFixed(0)}&deg;C</b></span>
                       )}
                     </>
                   )}
-                </p>
+                </div>
               );
             })()}
             {weather !== "all" && (
-              <p style={{ color: anyHourly && anyHourly.observedHours === 0 ? "var(--color-warning)" : "var(--text-secondary)", fontSize: "0.78rem", margin: "4px 0 0 0" }}>
+              <p className={`nct-sub nct-sub-note${anyHourly && anyHourly.observedHours === 0 ? " nct-warn" : ""}`}>
                 {anyHourly && anyHourly.observedHours === 0
                   ? `No ${weather} hours recorded for this date — weather data only covers up to 1 Jul 2026. Bars are hidden; the model curve is unaffected.`
                   : `Showing ${weather} hours only (${anyHourly?.observedHours ?? 0} of 24). The models carry no weather dimension, so their curves are unfiltered.`}
               </p>
             )}
           </div>
-          <button
-            onClick={closeDrill}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: "6px", padding: "7px 14px", borderRadius: "8px",
-              border: "1px solid var(--border-strong)", background: "var(--bg-surface)", color: "var(--text-primary)",
-              fontSize: "0.85rem", fontWeight: 600, cursor: "pointer", flex: "none",
-            }}
-          >
+          <button type="button" onClick={closeDrill} className="btn-muted">
             ← Back to daily
           </button>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+        <div className="nct-toolbar">
           {modelToolbar}
           <button
+            type="button"
             onClick={() => setShowWeather(!showWeather)}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: "6px", padding: "5px 14px",
-              borderRadius: "999px", border: "1px solid var(--border-strong)",
-              fontSize: "0.76rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
-              background: showWeather ? "var(--action)" : "var(--bg-surface)",
-              color: showWeather ? "var(--action-ink)" : "var(--text-secondary)",
-              boxShadow: "none",
-            }}
+            aria-pressed={showWeather}
+            className={`nct-pill-btn${showWeather ? " is-on" : ""}`}
           >
             {showWeather ? (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ marginRight: 2 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M12 2v2m0 16v2M4 12H2m20 0h-2m-2.93-7.07l-1.41 1.41m-9.32 9.32l-1.41 1.41m0-12.14l1.41 1.41m9.32 9.32l1.41 1.41M17 12a5 5 0 11-10 0 5 5 0 0110 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
               </svg>
             ) : (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ marginRight: 2 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M12 2v2m0 16v2M4 12H2m20 0h-2" stroke="currentColor" strokeWidth="2" />
                 <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="2" />
               </svg>
@@ -1322,9 +1313,13 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         </div>
 
         {hourlyLoading && !anyHourly ? (
-          <div style={{ height: "420px", display: "grid", placeItems: "center", color: "var(--text-secondary)" }}>Loading hourly breakdown…</div>
+          <div className="nct-chart-slot" style={{ height: 420 }}>
+            <StateNote kind="loading">Loading hourly breakdown…</StateNote>
+          </div>
         ) : hourlyError ? (
-          <div style={{ height: "420px", display: "grid", placeItems: "center", color: "var(--color-danger)" }}>{hourlyError}</div>
+          <div className="nct-chart-slot" style={{ height: 420 }}>
+            <StateNote kind="error" role="alert">{hourlyError}</StateNote>
+          </div>
         ) : hourlyOption ? (
           <div style={{ height: "420px", width: "100%" }}>
             <DashboardChart option={hourlyOption} height={420} />
@@ -1332,34 +1327,37 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         ) : null}
 
         {anyHourly && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
-            <div style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border-default)" }}>
-              <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Day Actual</div>
-              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{anyHourly.dayActual != null ? fmtVeh(anyHourly.dayActual) : "—"}</div>
+          <div className="nct-stats nct-stats-auto">
+            <div className="nct-stat">
+              <span className="nct-stat-label">Day Actual</span>
+              <span className="nct-stat-value">{anyHourly.dayActual != null ? fmtVeh(anyHourly.dayActual) : "—"}</span>
             </div>
             {visibleModels.map((k) => {
               const h = hourlyByModel[k];
               return (
-                <div key={k} style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border-default)" }}>
-                  <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>{metricsMeta[k].label} Predicted</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: modelColor(k) }}>
+                <div key={k} className="nct-stat">
+                  <span className="nct-stat-label">
+                    <span className="nct-swatch" style={{ background: modelColor(k) }} />
+                    {metricsMeta[k].label} Predicted
+                  </span>
+                  <span className="nct-stat-value">
                     {h?.dayPredicted != null ? fmtVeh(h.dayPredicted) : "—"}
                     {h?.dayPredicted != null && anyHourly.dayActual ? (
-                      <span style={{ marginLeft: 8, fontSize: "0.74rem", fontWeight: 600, color: "var(--text-secondary)" }}>
+                      <span className="nct-stat-aside">
                         {(((h.dayPredicted - anyHourly.dayActual) / anyHourly.dayActual) * 100).toFixed(1)}% vs actual
                       </span>
                     ) : null}
-                  </div>
+                  </span>
                 </div>
               );
             })}
-            <div style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border-default)" }}>
-              <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Peak Hour</div>
-              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{extremeLabel(anyHourly.hours, "max")}</div>
+            <div className="nct-stat">
+              <span className="nct-stat-label">Peak Hour</span>
+              <span className="nct-stat-value">{extremeLabel(anyHourly.hours, "max")}</span>
             </div>
-            <div style={{ background: "var(--bg-surface-hover)", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border-default)" }}>
-              <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Quietest Hour</div>
-              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{extremeLabel(anyHourly.hours, "min")}</div>
+            <div className="nct-stat">
+              <span className="nct-stat-label">Quietest Hour</span>
+              <span className="nct-stat-value">{extremeLabel(anyHourly.hours, "min")}</span>
             </div>
           </div>
         )}
@@ -1383,113 +1381,124 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const primaryMeta = metricsMeta[primary];
   const futureAvailable = chartData.dates.length - chartData.futureStart;
 
-  const pill = (on: boolean, colour: string) => ({
-    padding: "3px 10px", borderRadius: "4px", cursor: "pointer", border: `1px solid ${on ? colour : "var(--border-strong)"}`,
-    background: on ? colour : "var(--bg-surface)", color: on ? "var(--action-ink)" : "var(--text-secondary)",
-    fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap" as const,
-  });
-  const groupLabel: React.CSSProperties = {
-    fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-muted)", whiteSpace: "nowrap",
-  };
+  /* The model trust strip, read off the same payload as the table it opens:
+     which model the API names champion, the window it was scored on, its
+     accuracy against repeating last week (MASE), and the error measured at
+     the chosen range. No live track record is shown because this payload
+     carries none for the volume forecast. */
+  const champKey = (() => {
+    if (!apiChampion) return null;
+    const BY_DB: Record<string, ModelType> = {
+      prophet: "Prophet", holtwinters: "HoltWinters", sarimax: "SARIMAX",
+      lstm: "LSTM", holtslinear: "HoltsLinear",
+    };
+    return BY_DB[apiChampion.toLowerCase().replace(/[^a-z]/g, "")] ?? null;
+  })();
+  const champLabel = champKey ? metricsMeta[champKey].label : apiChampion;
+  const scoredDays = chartData.futureStart - chartData.holdoutStart;
+  const testFrom = chartData.isoDates[chartData.holdoutStart] ?? null;
+  const testTo = chartData.isoDates[chartData.futureStart - 1] ?? null;
+  const maseNum = primaryMeta.mase && primaryMeta.mase !== "—" ? parseFloat(primaryMeta.mase) : null;
 
-  /* Layout, top to bottom: what am I looking at -> the finding -> the controls,
-     on one row -> what the chart shows (the three zones) -> the chart -> the
-     evidence, behind one disclosure whose summary still states the validation
-     figures. The previous card put four rows of controls and a banner that
-     repeated the subtitle between the title and the chart, then four boxed
-     panels of evidence between this forecast and the other two. */
+  /* Layout, top to bottom: the title -> the answer (the next N days) -> the
+     model controls -> what the chart shows, with the view and horizon pickers
+     attached -> the chart -> the trust strip, which opens the full validation
+     evidence -> the narrative report. */
   return (
-    <article className="chart-card wide" style={{ padding: "22px 24px", display: "flex", flexDirection: "column", gap: "14px" }}>
-      {/* Row 1 */}
-      <div>
-        <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
+    <article className="chart-card wide nct-card nct-forecast">
+      <header className="nct-card-head">
+        <h3 className="nct-title">
           Traffic Volume Walk-Forward Forecast
           <InfoTooltip text="Daily corridor volume: the model's past fit, its held-out test period against real counts, and the forecast ahead. Pick a model above; the champion is preselected." />
         </h3>
-      </div>
+      </header>
 
-      {/* Row 2: the finding. */}
+      {/* The answer. */}
       {futAvg != null && (
-        <div style={{
-          padding: "12px 14px", borderRadius: "10px", fontSize: "0.88rem", lineHeight: 1.5,
-          background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)", color: "var(--text-primary)",
-        }}>
-          <b>Next {futureDays} days</b> · <b>{fmtVeh(futAvg)}</b> vehicles/day on average
-          {futPeak && <> · peak {isAggregated ? bucketNoun : "day"} <b>{dates[futPeak.idx]}</b> ({fmtVeh(futPeak.v)})</>}
-          {" "}· typical error <b>{rangeErr}</b>
-          {primaryMeta.accepted ? "" : <span style={{ color: "var(--color-danger)" }}> · failed acceptance, shown for comparison</span>}
+        <div className="fc-answer">
+          <span className="fc-answer-label">Next {futureDays} days · average</span>
+          <span className="fc-answer-value">
+            {fmtVeh(futAvg)}
+            <span className="fc-answer-unit">vehicles/day</span>
+          </span>
+          <span className="fc-answer-context">
+            {futPeak && <>peak {isAggregated ? bucketNoun : "day"} <b>{dates[futPeak.idx]}</b> ({fmtVeh(futPeak.v)}) · </>}
+            typical error <b>{rangeErr}</b>
+            {primaryMeta.accepted ? "" : <span className="nct-bad"> · failed acceptance, shown for comparison</span>}
+          </span>
         </div>
       )}
 
-      {/* Row 3: controls, one row. */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px 20px", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-          {modelToolbar}
-          <button
-            onClick={() => setShowWeather(!showWeather)}
-            title={showWeather ? "Showing the weather-aware forecasts and rainfall bars" : "Showing the weather-free forecasts"}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: "6px", padding: "5px 14px", borderRadius: "999px",
-              border: "1px solid var(--border-strong)", fontSize: "0.76rem", fontWeight: 600, cursor: "pointer",
-              background: showWeather ? "var(--action)" : "var(--bg-surface)",
-              color: showWeather ? "var(--action-ink)" : "var(--text-secondary)",
-            }}
-          >
-            Weather {showWeather ? "on" : "off"}
-          </button>
+      {/* Which forecasts are drawn; the overlay toggle at the end of the row. */}
+      <div className="fc-row fc-models">
+        {modelToolbar}
+        <button
+          type="button"
+          onClick={() => setShowWeather(!showWeather)}
+          title={showWeather ? "Showing the weather-aware forecasts and rainfall bars" : "Showing the weather-free forecasts"}
+          aria-pressed={showWeather}
+          className={`nct-pill-btn fc-push${showWeather ? " is-on" : ""}`}
+        >
+          Weather {showWeather ? "on" : "off"}
+        </button>
+      </div>
+
+      {/* Controls, then the key: the order every forecast card uses. */}
+      <div className="fc-row fc-controls">
+        <div className="fc-group">
+          <span className="fc-label">View</span>
+          <div className="nct-pills" role="group" aria-label="View">
+            {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
+              <button key={g}
+                onClick={() => {
+                  setGranularity(g);
+                  setPastDays(g === "Daily" ? 90 : ALL_PAST);
+                  // A monthly point averages a whole month; a 14-day horizon
+                  // would be half of one, so Monthly starts at one month ahead.
+                  if (g === "Monthly" && futureDays < 28) setFutureDays(28);
+                }}
+                title={g === "Daily" ? "One point per day — the resolution the models actually forecast" : `Averaged per ${g.replace("ly", "").toLowerCase()} — a viewing aid, not a separate forecast`}
+                aria-pressed={granularity === g}
+                className={`nct-pill-btn${granularity === g ? " is-on" : ""}`}>
+                {g}
+              </button>
+            ))}
+          </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <span style={groupLabel}>View</span>
-            <span style={{ display: "inline-flex", padding: 2, borderRadius: 999, background: "var(--bg-surface)", border: "1px solid var(--border-strong)" }}>
-              {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
-                <button key={g}
-                  onClick={() => {
-                    setGranularity(g);
-                    setPastDays(g === "Daily" ? 90 : ALL_PAST);
-                    // A monthly point averages a whole month; a 14-day horizon
-                    // would be half of one, so Monthly starts at one month ahead.
-                    if (g === "Monthly" && futureDays < 28) setFutureDays(28);
-                  }}
-                  title={g === "Daily" ? "One point per day — the resolution the models actually forecast" : `Averaged per ${g.replace("ly", "").toLowerCase()} — a viewing aid, not a separate forecast`}
-                  style={{ padding: "3px 10px", borderRadius: 999, border: "none", background: granularity === g ? "var(--action)" : "transparent", color: granularity === g ? "var(--action-ink)" : "var(--text-secondary)", fontWeight: 600, fontSize: "0.72rem", cursor: "pointer" }}>
-                  {g}
-                </button>
-              ))}
-            </span>
-          </span>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <span style={groupLabel}>Ahead</span>
+        <div className="fc-group">
+          <span className="fc-label">Ahead</span>
+          <div className="nct-pills" role="group" aria-label="Ahead">
             {[{ label: "2 wk", d: 14 }, { label: "1 mo", d: 28 }, { label: "2 mo", d: 60 }, { label: "3 mo", d: 90 }].map((item) => {
               const tooShort = granularity === "Monthly" && item.d < 28;
               const off = item.d > futureAvailable || tooShort;
               return (
                 <button key={item.label} onClick={() => setFutureDays(item.d)} disabled={off}
                   title={tooShort ? "Monthly view needs at least one month ahead" : off ? "Beyond the stored forecast" : undefined}
-                  style={{ ...pill(futureDays === item.d, "var(--action)"), cursor: off ? "not-allowed" : "pointer", opacity: off ? 0.4 : 1 }}>
+                  aria-pressed={futureDays === item.d}
+                  className={`nct-pill-btn${futureDays === item.d ? " is-on" : ""}`}>
                   {item.label}
                 </button>
               );
             })}
-          </span>
+          </div>
         </div>
       </div>
 
-      {/* Row 4: what the chart shows — the three zones, one slim line. */}
-      <div style={{ display: "flex", alignItems: "center", gap: "18px", flexWrap: "wrap", fontSize: "0.74rem", color: "var(--text-secondary)" }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(37,99,235,0.25)" }} />
-          <b style={{ color: "var(--text-primary)" }}>Past</b>
+      {/* The key: what each band of the chart is. */}
+      <div className="fc-legend">
+        <span className="fc-legend-item">
+          <i style={{ background: ZONE.past }} />
+          <b>Past</b>
           trained · {chartData.holdoutStart.toLocaleString()}d shown
         </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(249,115,22,0.35)" }} />
-          <b style={{ color: "var(--text-primary)" }}>Present</b>
+        <span className="fc-legend-item">
+          <i style={{ background: ZONE.present }} />
+          <b>Present</b>
           tested on real counts · {(chartData.futureStart - chartData.holdoutStart).toLocaleString()}d
         </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(22,163,74,0.3)" }} />
-          <b style={{ color: "var(--text-primary)" }}>Future</b>
+        <span className="fc-legend-item">
+          <i style={{ background: ZONE.future }} />
+          <b>Future</b>
           forecast · {Math.min(futureDays, futureAvailable)}d
           {(() => {
             const last = chartData.isoDates[chartData.futureStart + Math.min(futureDays, futureAvailable) - 1];
@@ -1507,83 +1516,85 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             );
           })()}
         </span>
+        {forecastEndsBeforeToday && lastForecastIso && (
+          <span className="pill amber fc-push">
+            Stored forecast ends {new Date(`${lastForecastIso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}, before today
+          </span>
+        )}
       </div>
 
-      {/* Row 5: the chart. */}
+      {/* The evidence: history solid, forecast dashed. */}
       <div style={{ height: "450px", width: "100%", cursor: isAggregated ? "default" : "pointer" }}>
         <DashboardChart option={dailyOption} height={450} onEvents={{ click: onChartClick as (p: never) => void }} />
       </div>
 
       {/* Rainfall key, one muted line under the bars it explains. */}
       {showWeather && (
-        <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap", fontSize: "0.72rem", color: "var(--text-secondary)" }}>
-          <span style={{ fontWeight: 700, color: "var(--text-primary)" }} title={isAggregated ? `Bar height is the ${bucketNoun}'s mean rainfall; bar colour is its wettest single day.` : "Taller bar = wetter day."}>Rainfall</span>
+        <div className="nct-key">
+          <span className="nct-key-title" title={isAggregated ? `Bar height is the ${bucketNoun}'s mean rainfall; bar colour is its wettest single day.` : "Taller bar = wetter day."}>Rainfall</span>
           {RAIN_BANDS.map((b, i) => (
-            <span key={b.label} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <span style={{ width: 12, height: 9, borderRadius: 2, background: b.color, border: "1px solid rgba(2,132,199,0.5)", display: "inline-block" }} />
-              {b.label} <span style={{ color: "var(--text-muted)" }}>{i === 0 ? `< ${b.max} mm` : b.max === Infinity ? `≥ ${RAIN_BANDS[i - 1].max} mm` : `${RAIN_BANDS[i - 1].max}–${b.max} mm`}</span>
+            <span key={b.label} className="nct-key-item">
+              <i style={{ background: b.color }} />
+              {b.label} <span className="nct-key-dim">{i === 0 ? `< ${b.max} mm` : b.max === Infinity ? `≥ ${RAIN_BANDS[i - 1].max} mm` : `${RAIN_BANDS[i - 1].max}–${b.max} mm`}</span>
             </span>
           ))}
         </div>
       )}
 
-      {/* Row 6: the model narrative and its AI explanation. This stays in the
-          open -- the "explain" control is the way an operator asks what the
-          figures mean, and a control nobody can see is not a control. The raw
-          evidence (weather panel, metrics table) is what goes behind the
-          disclosure below. */}
-      <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: 10 }}>
-        <ModelNarrative
-          selected={selected}
-          metrics={rawMetrics}
-          showWeather={showWeather}
-          scoredDays={chartData ? chartData.futureStart - chartData.holdoutStart : null}
-          windowStart={chartData ? chartData.isoDates[chartData.holdoutStart] ?? null : null}
-          windowEnd={chartData ? chartData.isoDates[chartData.futureStart - 1] ?? null : null}
-          horizonDays={VALIDATED_HORIZON}
-        />
-      </div>
-
-      {/* Row 7: the evidence, behind one disclosure. The summary states the
-          validation figures so they stay visible without opening it. */}
-      <details style={{ fontSize: "0.78rem", color: "var(--text-secondary)", borderTop: "1px solid var(--border-default)", paddingTop: 10 }}>
-        <summary
-          className="evidence-summary"
-          style={{ cursor: "pointer", listStyle: "none", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}
-        >
-          <span style={{
-            display: "grid", placeItems: "center", width: 28, height: 28, borderRadius: 8,
-            background: "color-mix(in srgb, var(--color-success) 14%, transparent)", color: "var(--color-success)", flex: "none",
-          }}>
-            <ShieldCheck size={16} strokeWidth={2.4} />
-          </span>
-          <span style={{ fontSize: "0.98rem", fontWeight: 800, letterSpacing: "-0.01em", color: "var(--text-primary)" }}>
-            Validation evidence
-          </span>
-          <span style={{
-            display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999,
-            background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)",
-            fontSize: "0.74rem", fontWeight: 600, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums",
-          }}>
+      {/* The model trust strip. Its pills state the validation figures; the
+          strip itself opens the full evidence (every table and figure) in a modal. */}
+      <EvidenceModal
+        subtitle="Daily volume forecast: every model's scores on days it never saw."
+        strip={<>
+          {champLabel && (
+            <span className="nct-trust-pill">
+              <span className="nct-trust-k">Champion</span>
+              {champLabel}
+            </span>
+          )}
+          {testFrom && testTo && (
+            <span className="nct-trust-pill">
+              <span className="nct-trust-k">Tested on</span>
+              {scoredDays.toLocaleString()} unseen days · {testFrom} to {testTo}
+            </span>
+          )}
+          <span className="nct-trust-pill" title="MASE below 1.0 beats repeating last week.">
+            <span className="nct-trust-k">Accuracy</span>
             {primaryMeta.label} · WMAPE {primaryMeta.wmape} · MASE {primaryMeta.mase ?? "—"}
+            {maseNum != null && (
+              <span className={maseNum < 1 ? "nct-ok" : "nct-bad"}>
+                {maseNum < 1 ? " · beats repeating last week" : " · no better than repeating last week"}
+              </span>
+            )}
           </span>
-          <span className="evidence-chevron" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.74rem", fontWeight: 600, color: "var(--text-secondary)" }}>
-            <span className="evidence-open-label">Show</span>
-            <span className="evidence-close-label">Hide</span>
-            <ChevronRight size={15} strokeWidth={2.4} />
+          <span className="nct-trust-pill">
+            <span className="nct-trust-k">At {futureDays}d ahead</span>
+            typical error {rangeErr}
           </span>
-        </summary>
-        <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-          <div style={{ background: "var(--bg-surface-hover)", borderRadius: 12, padding: "14px 16px", minWidth: 0 }}>
-            {metricsTable}
-          </div>
+        </>}
+      >
+        <div className="nct-evidence">
+          {metricsTable}
           {showWeather && (
-            <div style={{ background: "var(--bg-surface-hover)", borderRadius: 12, padding: "14px 16px", minWidth: 0 }}>
+            <div className="nct-ev-section">
               <WeatherEvidencePanel plotted="total_rain" selectedModels={visibleModels.map((k) => metricsMeta[k].label)} />
             </div>
           )}
         </div>
-      </details>
+      </EvidenceModal>
+
+      {/* The model narrative and its AI explanation. This stays in the open:
+          the "explain" control is the way an operator asks what the figures
+          mean, and a control nobody can see is not a control. */}
+      <ModelNarrative
+        selected={selected}
+        metrics={rawMetrics}
+        showWeather={showWeather}
+        scoredDays={chartData ? chartData.futureStart - chartData.holdoutStart : null}
+        windowStart={chartData ? chartData.isoDates[chartData.holdoutStart] ?? null : null}
+        windowEnd={chartData ? chartData.isoDates[chartData.futureStart - 1] ?? null : null}
+        horizonDays={VALIDATED_HORIZON}
+      />
     </article>
   );
 }

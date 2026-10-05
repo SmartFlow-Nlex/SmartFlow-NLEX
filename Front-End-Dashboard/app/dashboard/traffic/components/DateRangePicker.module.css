@@ -233,3 +233,62 @@
   border-color: #bfdbfe;
   color: #1d4ed8;
 }
+
+/* ===========================================================================
+   NIGHT CORRIDOR (4 Oct 2026)
+   The picker joins the world: a hairline pill trigger and a raised popover,
+   every colour from the theme tokens (the rules above hardcoded the light
+   palette, so the picker stayed white in the dark theme).
+   =========================================================================== */
+.pickerContainer { font-family: var(--font-ui); }
+.triggerBtn {
+  min-height: 32px;
+  padding: 0 14px;
+  gap: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  box-shadow: none;
+}
+.triggerBtn:hover { border-color: var(--hairline-hover); background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.triggerBtn.active { border-color: var(--page-accent, var(--action)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--page-accent, var(--action)) 20%, transparent); }
+.dash { color: var(--text-muted); }
+.popover {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+}
+.monthYearBtn { color: var(--text-primary); font-size: var(--fs-body); font-weight: 600; }
+.monthYearBtn:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.navBtn { color: var(--text-secondary); border-radius: 50%; }
+.navBtn:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
+.weekday { color: var(--text-muted); font-size: var(--fs-label); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+.gridItemBtn,
+.dayBtn { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.gridItemBtn:hover,
+.dayBtn:hover:not(.disabled) { background: color-mix(in srgb, var(--text-primary) 7%, transparent); color: var(--text-primary); }
+.dayBtn.disabled { color: color-mix(in srgb, var(--text-muted) 45%, transparent); }
+.dayBtn.inRange { background: color-mix(in srgb, var(--page-accent, var(--action)) 14%, transparent); color: var(--text-primary); }
+.gridItemBtn.selected,
+.dayBtn.selected,
+.dayBtn.rangeStart,
+.dayBtn.rangeEnd { background: var(--page-accent, var(--action)); color: var(--stage); font-weight: 600; }
+.presets { border-color: var(--border-default); }
+.presetBtn {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.presetBtn:hover { border-color: var(--hairline-hover); color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.popover { background: linear-gradient(var(--bg-raised), var(--bg-raised)), var(--stage); }

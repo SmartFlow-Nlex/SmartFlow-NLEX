@@ -26,8 +26,11 @@
 
 import type { EChartsOption } from "echarts";
 import { useEffect, useMemo, useState } from "react";
+import { TriangleAlert } from "lucide-react";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
+import ChartSkeleton from "./ChartSkeleton";
+import StateNote from "../stage/StateNote";
 import { useChartTheme, seriesRamp } from "../../lib/chart-theme";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
@@ -152,27 +155,37 @@ export default function FleetMixForecastChart() {
     return { rows, dates, firstFuture, observed, projected, champ, surges };
   }, [data]);
 
+  const head = (
+    <h3>
+      Forecasted Fleet Composition
+      <InfoTooltip text="Share of corridor traffic by toll class, stacked to 100%. Solid is observed; the paler band past the dashed line is projected. Shares are a composition — a point gained by one class is lost by another — so they are modelled jointly rather than as three separate forecasts." />
+    </h3>
+  );
+
   if (error) {
     return (
-      <article className="chart-card wide" style={{ padding: 24, display: "grid", gap: 12 }}>
-        <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>Forecasted Fleet Composition</h3>
-        <p style={{ color: "var(--color-danger, var(--color-danger))", fontSize: "0.88rem", margin: 0 }}>{error}</p>
-        <div>
-          <button
-            onClick={() => { setError(null); setAttempt((a) => a + 1); }}
-            style={{ padding: "6px 16px", borderRadius: 999, cursor: "pointer", border: "1px solid transparent",
-                     background: "var(--action)", color: "var(--action-ink)", fontSize: "0.78rem", fontWeight: 600 }}
-          >Try again</button>
-        </div>
+      <article className="chart-card wide nc-em-fc">
+        {head}
+        <StateNote kind="error" role="alert">
+          {error}
+          <span className="nc-em-state-action">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => { setError(null); setAttempt((a) => a + 1); }}
+            >Try again</button>
+          </span>
+        </StateNote>
       </article>
     );
   }
 
   if (!data) {
     return (
-      <article className="chart-card wide" style={{ padding: 24 }}>
-        <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>Forecasted Fleet Composition</h3>
-        <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Loading…</p>
+      <article className="chart-card wide nc-em-fc">
+        {head}
+        <p className="nc-em-loading">Loading…</p>
+        <div className="nc-em-skeleton"><ChartSkeleton /></div>
       </article>
     );
   }
@@ -182,12 +195,12 @@ export default function FleetMixForecastChart() {
    * someone hunting for a bug that is not there. */
   if (!model) {
     return (
-      <article className="chart-card wide" style={{ padding: 24, display: "grid", gap: 8 }}>
-        <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>Forecasted Fleet Composition</h3>
-        <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", margin: 0 }}>
+      <article className="chart-card wide nc-em-fc">
+        {head}
+        <StateNote kind="nodata">
           No fleet-mix forecast has been published yet. Run{" "}
           <code>smartflow_scripts/3_training_testing/fleet_mix/train_fleet_mix.py</code> to generate one.
-        </p>
+        </StateNote>
       </article>
     );
   }
@@ -199,13 +212,9 @@ export default function FleetMixForecastChart() {
     tooltip: {
       trigger: "axis",
       confine: true,
-      backgroundColor: T.tooltipBg,
-      borderColor: T.axis,
-      borderWidth: 1,
-      textStyle: { color: T.tooltipText },
       // A crosshair, because reading a stacked area means reading a DATE first.
-      axisPointer: { type: "line" as const, lineStyle: { color: T.axis, width: 1 } },
-      extraCssText: "box-shadow: 0 6px 16px rgba(15,23,42,0.12); border-radius: 8px; max-width: 320px;",
+      axisPointer: { type: "line" as const, lineStyle: { color: T.text, width: 1, type: "dashed" as const } },
+      extraCssText: "max-width: 320px;",
       formatter: (params: unknown) => {
         const ps = params as { dataIndex: number }[];
         if (!ps.length) return "";
@@ -214,10 +223,10 @@ export default function FleetMixForecastChart() {
         const src = r.is_future ? "projected" : "observed";
         const vals = CLASS_META.map((c, k) => {
           const v = r.is_future ? r[`pred_${c.key}` as "pred_c1"] : r[`actual_${c.key}` as "actual_c1"];
-          return `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colorOf(c.tone)};margin-right:6px;"></span>${c.label}<span style="float:right;font-weight:700;margin-left:16px;">${pct(v)}</span>`;
+          return `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colorOf(c.tone)};margin-right:6px;"></span>${c.label}<span style="float:right;font-weight:600;margin-left:16px;">${pct(v)}</span>`;
         }).join("<br/>");
         const heavy = r.is_future && r.heavy_pred != null
-          ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid ${T.axis};">Heavy (C2+C3) <b>${pct(r.heavy_pred)}</b>${r.heavy_surge ? ' <span style="color:var(--color-warning);font-weight:700;">· surge</span>' : ""}</div>`
+          ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid ${T.tooltipBorder};">Heavy (C2+C3) <b>${pct(r.heavy_pred)}</b>${r.heavy_surge ? ' <span style="color:var(--color-warning);font-weight:600;">· surge</span>' : ""}</div>`
           : "";
         return `<div style="padding:2px 4px;min-width:220px;">
                   <b style="color:${T.tooltipText};">${r.d}</b>
@@ -243,8 +252,7 @@ export default function FleetMixForecastChart() {
       type: "category",
       data: dates,
       boundaryGap: false,
-      axisLabel: { fontSize: 10, color: T.text, hideOverlap: true },
-      axisLine: { lineStyle: { color: T.axis } },
+      axisLabel: { fontSize: 11, color: T.text, hideOverlap: true },
       axisTick: { show: false },
     },
     yAxis: {
@@ -254,7 +262,7 @@ export default function FleetMixForecastChart() {
       // headline number for the magnitude.
       max: 100,
       min: 0,
-      axisLabel: { formatter: "{value}%", fontSize: 10, color: T.text },
+      axisLabel: { formatter: "{value}%", fontSize: 11, color: T.text },
       axisLine: { show: false },
       axisTick: { show: false },
       // Hairline, solid, one step off the surface.
@@ -266,6 +274,10 @@ export default function FleetMixForecastChart() {
         type: "line" as const,
         stack: "observed",
         areaStyle: { color: colorOf(c.tone), opacity: 1 },
+        /* The legend swatch takes the series' item colour; without it the
+           legend fell back to ECharts' default palette and its three swatches
+           did not match the bands they name. */
+        itemStyle: { color: colorOf(c.tone) },
         /* The 2px spacer, in the surface colour. A stacked fill is separated
            from its neighbour by a gap, never by a stroke drawn around it. */
         lineStyle: { width: 2, color: T.tooltipBg },
@@ -278,11 +290,20 @@ export default function FleetMixForecastChart() {
               markLine: {
                 silent: true,
                 symbol: "none" as const,
+                animation: false,
                 /* Dashed is right HERE and wrong on a gridline: it marks the
                    boundary between what was measured and what is projected,
-                   which is exactly what a dash conventionally means. */
-                label: { formatter: "forecast →", fontSize: 10, color: T.text, position: "insideEndTop" as const },
-                lineStyle: { color: T.text, type: "dashed" as const, width: 1 },
+                   which is exactly what a dash conventionally means (and what
+                   the card's tooltip promises). The plot is filled edge to
+                   edge, so the line takes the surface colour (it reads against
+                   every band in both themes) and the label sits on a chip.
+                   Not labelled NOW: the data ends well before today (the
+                   staleness line above says by how much). */
+                label: {
+                  formatter: "forecast →", fontSize: 11, fontWeight: 600, color: T.ink, fontFamily: T.fontFamily,
+                  position: "insideEndTop" as const, backgroundColor: T.tooltipBg, padding: [3, 6], borderRadius: 4,
+                },
+                lineStyle: { color: T.tooltipBg, type: "dashed" as const, width: 2, opacity: 1 },
                 data: [{ xAxis: firstFuture }],
               },
             }
@@ -295,6 +316,7 @@ export default function FleetMixForecastChart() {
         // Paler, and the only thing separating projection from record besides
         // the divider — so it stays a clear step down, not a subtle one.
         areaStyle: { color: colorOf(c.tone), opacity: 0.42 },
+        itemStyle: { color: colorOf(c.tone) },
         lineStyle: { width: 2, color: T.tooltipBg },
         showSymbol: false,
         // Suppressed from the legend: these carry the same three names as the
@@ -335,62 +357,68 @@ export default function FleetMixForecastChart() {
     heavyNowMean != null && heavyEndMean != null ? (heavyEndMean - heavyNowMean) * 100 : null;
 
   return (
-    <article className="chart-card wide" style={{ padding: 20, display: "grid", gap: 14 }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>
-            Forecasted Fleet Composition
-            <InfoTooltip text="Share of corridor traffic by toll class, stacked to 100%. Solid is observed; the paler band past the dashed line is projected. Shares are a composition — a point gained by one class is lost by another — so they are modelled jointly rather than as three separate forecasts." />
-          </h3>
-          <p style={{ margin: "4px 0 0", fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-            {champ ? <>Champion <b style={{ color: "var(--text-primary)" }}>{champ.model_name}</b></> : "No model accepted"}
-            {data.split?.future_days ? <> · {data.split.future_days}-day projection</> : null}
-            {" "}· validated at {VALIDATED_HORIZON} days
-            {data.split?.updated_at ? <> · trained {data.split.updated_at.slice(0, 10)}</> : null}
-          </p>
-          {/* Data vintage, not run date.
-              "updated <date>" meant "the script ran then", which on a card whose
-              forecast window has already passed reads as "this is current". The
-              observed series ends when the warehouse ends; if that is well
-              behind today, the projection covers days that have already
-              happened and the reader should be told plainly rather than left to
-              infer it from the axis. */}
-          {staleDays != null && staleDays > 45 && (
-            <p style={{ margin: "4px 0 0", fontSize: "0.78rem", fontWeight: 600, color: "var(--color-warning)" }}>
-              Data ends {lastObservedDate} — {staleDays} days ago. This projection covers a
-              period that has already passed; refresh the warehouse to forecast forward.
-            </p>
-          )}
-        </div>
+    <article className="chart-card wide nc-em-fc">
+      {/* Answer (the heavy share, mean against mean), then context (champion,
+          projection length, validation, vintage and staleness), then the
+          evidence, then the method. */}
+      <header className="nc-em-fc-head">
+        {head}
         {heavyNowMean != null && heavyEndMean != null && (
-          <div style={{ textAlign: "right", fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-            Heavy share (C2+C3) · {HEAVY_WINDOW_DAYS}-day means
-            <div style={{ fontSize: "1rem", fontWeight: 800, color: "var(--text-primary)" }}>
-              {pct(heavyNowMean)} → {pct(heavyEndMean)}
+          <div className="nc-em-fc-answer">
+            <p className="nc-em-answer">
+              <b>{pct(heavyNowMean)} → {pct(heavyEndMean)}</b>
               {heavyDeltaPp != null && (
                 <span
-                  style={{
-                    marginLeft: 8, fontSize: "0.8rem", fontWeight: 700,
-                    color: Math.abs(heavyDeltaPp) < 1 ? "var(--text-secondary)" : heavyDeltaPp > 0 ? "var(--color-warning)" : "var(--color-success)",
-                  }}
+                  className={`nc-em-delta ${Math.abs(heavyDeltaPp) < 1 ? "is-flat" : heavyDeltaPp > 0 ? "is-up" : "is-down"}`}
                 >
                   {Math.abs(heavyDeltaPp) < 1
                     ? "no material change"
                     : `${heavyDeltaPp > 0 ? "+" : ""}${heavyDeltaPp.toFixed(1)} pp`}
                 </span>
               )}
-            </div>
+            </p>
+            <p className="nc-em-answer-label">Heavy share (C2+C3) · {HEAVY_WINDOW_DAYS}-day means</p>
           </div>
         )}
-      </div>
+        <div className="nc-em-trust" role="group" aria-label="Model">
+          {champ
+            ? <span className="pill purple">Champion · {champ.model_name}</span>
+            : <span className="pill">No model accepted</span>}
+          {data.split?.future_days ? <span className="pill">{data.split.future_days}-day projection</span> : null}
+          <span className="pill">Validated at {VALIDATED_HORIZON} days</span>
+          {data.split?.updated_at ? <span className="pill">Trained {data.split.updated_at.slice(0, 10)}</span> : null}
+        </div>
+        {/* Data vintage, not run date.
+            "updated <date>" meant "the script ran then", which on a card whose
+            forecast window has already passed reads as "this is current". The
+            observed series ends when the warehouse ends; if that is well
+            behind today, the projection covers days that have already
+            happened and the reader should be told plainly rather than left to
+            infer it from the axis. */}
+        {staleDays != null && staleDays > 45 && (
+          <p className="nc-em-stale">
+            <TriangleAlert size={14} strokeWidth={2} aria-hidden="true" />
+            <span>
+              <b>Data ends {lastObservedDate} — {staleDays} days ago.</b> This projection covers a
+              period that has already passed; refresh the warehouse to forecast forward.
+            </span>
+          </p>
+        )}
+      </header>
 
       <DashboardChart option={option} height={320} />
 
       {surges.length > 0 && (
-        <div style={{ padding: "10px 12px", background: "var(--color-warning-bg)", border: "1px solid var(--color-warning-border)", borderRadius: 8, fontSize: "0.84rem", color: "var(--color-warning)" }}>
-          <b>Heavy-vehicle surge predicted</b> on {surges.length} day{surges.length === 1 ? "" : "s"} —{" "}
-          {surges.slice(0, 4).map((s) => s.d).join(", ")}{surges.length > 4 ? ` and ${surges.length - 4} more` : ""}.
-          A day is flagged when the projected Class 2+3 share runs more than 1.5 standard deviations above its training mean.
+        <div className="nc-em-banner">
+          <TriangleAlert size={15} strokeWidth={2} aria-hidden="true" />
+          <span>
+            <b>Heavy-vehicle surge predicted</b> on {surges.length} day{surges.length === 1 ? "" : "s"} —{" "}
+            {surges.slice(0, 4).map((s) => s.d).join(", ")}{surges.length > 4 ? ` and ${surges.length - 4} more` : ""}.
+            <details className="nc-details">
+              <summary>How a surge is flagged</summary>
+              <p>A day is flagged when the projected Class 2+3 share runs more than 1.5 standard deviations above its training mean.</p>
+            </details>
+          </span>
         </div>
       )}
 
@@ -399,46 +427,56 @@ export default function FleetMixForecastChart() {
           baseline is a line on a chart, not a result. Rejected models are shown
           WITH their reason rather than omitted. */}
       {data.models.length > 0 && (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
+        <div className="nc-em-table-wrap">
+          {/* How the leaderboard was scored, as facts above it; the reasoning
+              is under "How this is measured" below. */}
+          <div className="nc-em-trust nc-em-trust-quiet" role="group" aria-label="How the models were ranked">
+            <span className="pill">Ranked by Aitchison distance</span>
+            {champ?.split_label ? <span className="pill">Protocol · {champ.split_label}</span> : null}
+            <span className="pill" title="SKILL is the ratio against a persistence baseline; below 1 means the model beats assuming the mix does not change.">SKILL &lt; 1 beats persistence</span>
+          </div>
+          <table className="nc-em-table">
             <thead>
-              <tr style={{ textAlign: "left", color: "var(--text-secondary)", borderBottom: "1px solid var(--border-default)" }}>
-                <th style={{ padding: "6px 8px", fontWeight: 600 }}>MODEL</th>
-                <th style={{ padding: "6px 8px", fontWeight: 600, textAlign: "right" }}>MAE (pp)</th>
-                <th style={{ padding: "6px 8px", fontWeight: 600, textAlign: "right" }}>MAPE</th>
-                <th style={{ padding: "6px 8px", fontWeight: 600, textAlign: "right" }}>HEAVY WMAPE</th>
-                <th style={{ padding: "6px 8px", fontWeight: 600, textAlign: "right" }}>HEAVY R²</th>
-                <th style={{ padding: "6px 8px", fontWeight: 600, textAlign: "right" }}>SKILL</th>
+              <tr>
+                <th>MODEL</th>
+                <th className="num">MAE (pp)</th>
+                <th className="num">MAPE</th>
+                <th className="num">HEAVY WMAPE</th>
+                <th className="num">HEAVY R²</th>
+                <th className="num">SKILL</th>
               </tr>
             </thead>
             <tbody>
               {data.models.map((m) => (
-                <tr key={m.model_name} style={{ borderBottom: "1px solid var(--bg-surface-hover)" }}>
-                  <td style={{ padding: "6px 8px", fontWeight: 700, color: "var(--text-primary)" }}>
+                <tr key={m.model_name}>
+                  <td className="nc-em-model-cell">
                     {m.model_name}{" "}
                     {m.accepted
-                      ? <span style={{ color: "var(--color-success)", fontWeight: 600, fontSize: "0.92em" }}>accepted{m.rank === 1 ? " · champion" : ""}</span>
-                      : <span style={{ color: "var(--text-muted)", fontWeight: 500, fontSize: "0.92em" }} title={m.rejected_reason ?? m.diagnosis ?? undefined}>
+                      ? <span className="nc-em-status is-ok">accepted{m.rank === 1 ? " · champion" : ""}</span>
+                      : <span className="nc-em-status is-muted" title={m.rejected_reason ?? m.diagnosis ?? undefined}>
                           {m.rejected_reason ? "rejected" : "baseline"}
                         </span>}
                   </td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{m.mae?.toFixed(2) ?? "—"}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{m.mape != null ? `${m.mape.toFixed(2)}%` : "—"}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{m.wmape != null ? `${m.wmape.toFixed(2)}%` : "—"}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{m.r2?.toFixed(3) ?? "—"}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: (m.mase ?? 1) < 1 ? "var(--color-success)" : "var(--color-warning)" }}>
+                  <td className="num">{m.mae?.toFixed(2) ?? "—"}</td>
+                  <td className="num">{m.mape != null ? `${m.mape.toFixed(2)}%` : "—"}</td>
+                  <td className="num">{m.wmape != null ? `${m.wmape.toFixed(2)}%` : "—"}</td>
+                  <td className="num">{m.r2?.toFixed(3) ?? "—"}</td>
+                  <td className={`num nc-em-strong ${(m.mase ?? 1) < 1 ? "is-ok" : "is-warn"}`}>
                     {m.mase?.toFixed(3) ?? "—"}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p style={{ margin: "8px 0 0", fontSize: "0.74rem", color: "var(--text-muted)", lineHeight: 1.5 }}>
-            Ranked by Aitchison distance, the standard metric for compositional data — MAPE divides by the actual
-            value, so on a fleet that is ~79% Class 1 and ~9% Class 3 it scores the same absolute miss ten times
-            harder on the rarest class. <b>SKILL</b> is the ratio against a persistence baseline; below 1 means the
-            model beats assuming the mix does not change. {champ?.split_label ? `Protocol: ${champ.split_label}.` : ""}
-          </p>
+          <details className="nc-details">
+            <summary>How this is measured</summary>
+            <p>
+              Ranked by Aitchison distance, the standard metric for compositional data — MAPE divides by the actual
+              value, so on a fleet that is ~79% Class 1 and ~9% Class 3 it scores the same absolute miss ten times
+              harder on the rarest class. <b>SKILL</b> is the ratio against a persistence baseline; below 1 means the
+              model beats assuming the mix does not change. {champ?.split_label ? `Protocol: ${champ.split_label}.` : ""}
+            </p>
+          </details>
         </div>
       )}
     </article>

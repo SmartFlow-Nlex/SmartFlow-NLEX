@@ -10,7 +10,8 @@ function createWindow() {
     height: 920,
     minWidth: 1200,
     minHeight: 760,
-    backgroundColor: '#e9eef7',
+    // The Night Corridor stage colour, so the window never flashes light before the dark default paints.
+    backgroundColor: '#03060d',
     title: 'SmartFlow NLEX',
     show: false,
     webPreferences: {

@@ -1,0 +1,57 @@
+{
+  "title": "Choose the visual world for SmartFlow NLEX (round 2)",
+  "question": "Steered to modern, advanced and blue, with a 3D corridor and a car you can drag on the Overview. Both mocks use the live counts from 3 Oct 22:56. Pick one, re-roll, or take the category standard.",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "Lane Signal",
+      "kicker": "THE ROLL",
+      "lineage": "overhead lane-control signals on NLEX gantries at night",
+      "thesis": "State speaks the road's own signal language: a green arrow, an amber diagonal, a red cross over each lane.",
+      "palette": ["#081327", "#0f1f3d", "#183062", "#e8eefb", "#5cc8ff", "#34d17f", "#ffb21e", "#ff4f4f"],
+      "materials": ["deep navy, not black", "flat steel panels", "lane-signal glyphs", "Archivo with condensed widths"],
+      "viewport": "A chase-camera 3D corridor: drag the car down the road, gantries over each exit carry NB and SB state, a readout follows the car; a km ruler and three signal counts below.",
+      "risk": "Dark-first; the light theme must be designed separately, and lane-signal glyphs must stay a state vocabulary, never decoration.",
+      "raised": [
+        { "from": "rw-lexicon-shoulder-and-plate", "raise": "Guide words: every corridor view names the first and last exit in sight." },
+        { "from": "digital-design-canon-warm-consumer-app-surface", "raise": "One action colour (sky blue) appears only on what you can press or drag." },
+        { "from": "rw-timetable-slide-rack", "raise": "One reversed plate per screen, reserved for the worst reading." },
+        { "from": "pop-culture-shelf-streaming-title-card-wall", "raise": "Focusing an exit dims the rest of the corridor." },
+        { "from": "crouwel-grid-specimen", "raise": "The 5 km grid stays visible as the scene's armature." },
+        { "from": "ikeda-datamatics", "raise": "Dense tabular km numerals along every ruler and margin." }
+      ],
+      "comp": ".impeccable/mocks/decision/gantry.png"
+    },
+    {
+      "id": "model-pick",
+      "label": "Radar Composite",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "PAGASA radar composites and forecast bulletins",
+      "thesis": "Every reading is issued, valid for a window, and drawn on the real map like a weather product.",
+      "palette": ["#0b2a5b", "#e9eff7", "#ffffff", "#0a1d40", "#1d63d6", "#1f9d55", "#e08a00", "#d7262e"],
+      "materials": ["bulletin-blue rail", "pale map sheet with graticule", "issued and valid stamps", "Public Sans and Red Hat Mono"],
+      "viewport": "A bulletin column (issued, valid, source, age, counts, slowest) beside a 3D plate of the real NLEX geometry; drag the car along the true road shape.",
+      "risk": "Light-first, and the most expected look for a forecasting product; the 3D plate has to earn its space over the Live Map's 2D view.",
+      "comp": ".impeccable/mocks/decision/radar.png"
+    },
+    { "id": "challenger-datamatics", "label": "Datamatics", "verdict": "declined", "lineage": "Ryoji Ikeda data-sublime installations", "thesis": "Barcode columns and sine lattices in pure black and white.", "palette": ["#000000", "#ffffff"], "materials": ["bar fields", "monospace numerics"], "viewport": "A strobing bar field with dense numbers in the margin.", "case": "Black and white only cannot carry road state, and strobing is wrong for a control room.", "risk": "Spectacle over task.", "kept": "Dense tabular numerals in the margins.", "hero": "https://impeccable.style/worlds/cards/ikeda-datamatics-hero.webp" },
+    { "id": "challenger-lexicon", "label": "Lexicon Page", "verdict": "declined", "lineage": "19th-century lexicons", "thesis": "Guide words name the span you are inside.", "palette": ["#f4ecd8", "#151515", "#c0392b", "#1f4e8c"], "materials": ["cream stock", "bordered plates"], "viewport": "Text columns with colour quarantined in plates.", "case": "A reading artifact, not an operating surface; cream is the wrong light.", "risk": "Bookish.", "kept": "Guide words: first and last exit in view.", "hero": "https://impeccable.style/worlds/cards/rw-lexicon-shoulder-and-plate-hero.webp" },
+    { "id": "challenger-consumer", "label": "Warm Consumer App", "verdict": "declined", "lineage": "consumer app canon", "thesis": "Soft cards with one action colour.", "palette": ["#f6efe7", "#ffffff", "#ff5a36"], "materials": ["soft radii", "bottom bar"], "viewport": "A single scrolling column of friendly cards.", "case": "Friendly consumer softness undercuts an operations tool.", "risk": "Toy-like for operators.", "kept": "One action colour, only where something can be done.", "hero": "https://impeccable.style/worlds/cards/digital-design-canon-warm-consumer-app-surface-hero.webp" },
+    { "id": "challenger-timetable", "label": "Timetable Slide Rack", "verdict": "declined", "lineage": "1971 pocket airline timetables", "thesis": "One type size; rank by weight, case and reversal.", "palette": ["#e2b33c", "#2b2f36", "#f3ead2", "#c4361f", "#1f5a3a"], "materials": ["goldenrod bed", "tinted glass slides"], "viewport": "Raked slides of columns on a lit bed.", "case": "Raked containers fight scanning; goldenrod is off the brief's blue.", "risk": "Retro costume.", "kept": "One reversed plate per screen for the worst reading.", "hero": "https://impeccable.style/worlds/cards/rw-timetable-slide-rack-hero.webp" },
+    { "id": "challenger-streaming", "label": "Streaming Wall", "verdict": "declined", "lineage": "streaming catalogue walls", "thesis": "Rows of tiles; the focused one grows.", "palette": ["#0e0e10", "#e50914", "#ffffff"], "materials": ["poster tiles", "row rails"], "viewport": "Horizontal rows of exit tiles.", "case": "Browsing grammar, not monitoring; hides the corridor's continuity.", "risk": "Entertainment feel.", "kept": "Focus expands one exit and dims the rest.", "hero": "https://impeccable.style/worlds/cards/pop-culture-shelf-streaming-title-card-wall-hero.webp" },
+    { "id": "challenger-crouwel", "label": "Grid Specimen", "verdict": "declined", "lineage": "Wim Crouwel grid posters", "thesis": "Letterforms built on a visible grid.", "palette": ["#ffffff", "#1d4ed8", "#111111"], "materials": ["construction grid", "monumental type"], "viewport": "Huge grid-built numerals over a visible armature.", "case": "Poster type at that scale crowds out the task.", "risk": "Graphic over operational.", "kept": "The km grid visible as the armature.", "hero": "https://impeccable.style/worlds/cards/crouwel-grid-specimen-hero.webp" }
+  ],
+  "reroll": { "registers": ["safer", "bolder"] },
+  "steer": true,
+  "canon": true,
+  "canonCard": {
+    "label": "The category standard",
+    "thesis": "A clean ops dashboard executed well: neutral grey, white cards, one blue.",
+    "palette": ["#f7f8fa", "#ffffff", "#101828", "#2563eb"],
+    "materials": ["clean grid", "Inter", "white cards"],
+    "viewport": "Stat cards over a corridor card, the arrangement every ops product ships.",
+    "risk": "Indistinguishable from other dashboards by design.",
+    "comp": ".impeccable/mocks/decision/canon.png"
+  },
+  "buildPath": { "value": "code", "toggle": false }
+}

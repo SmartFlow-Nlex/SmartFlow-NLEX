@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { solve } from "yalps";
 import { fmtInt } from "./incidentPredictive.shared";
-import { Shell, Banner, Foot, Empty } from "./prescriptiveShell";
+import { Gauge, Radar, Truck } from "lucide-react";
+import { Shell, Empty, ActionCard } from "./prescriptiveShell";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -171,7 +172,7 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
   const rows = useKmView ? kmRows : exitRows;
 
   if (error || !predictive || rows.length === 0) {
-    return <Empty msg={`Patrol deployment unavailable: ${error ?? "no Predicted Incidents Ranking data — check the Predictive tab's corridor card."}`} />;
+    return <Empty kind={error ? "error" : "nodata"} msg={`Patrol deployment unavailable: ${error ?? "no Predicted Incidents Ranking data — check the Predictive tab's corridor card."}`} />;
   }
 
   const clampedFleet = Math.max(1, Math.min(fleetSize, rows.length));
@@ -208,86 +209,132 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
   const speedAdvisoryRows = byRate.slice(0, Math.min(3, byRate.length));
 
   const slider = (label: string, value: number, min: number, max: number, step: number, onChange: (v: number) => void, suffix: string) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: "150px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+    <label className="inc-slider">
+      <span className="inc-slider-top">
         <span>{label}</span>
-        <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{value}{suffix}</span>
-      </div>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: "100%", accentColor: "var(--page-accent, var(--action))" }} />
-    </div>
+        <b>{value}{suffix}</b>
+      </span>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+    </label>
   );
+
+  const unitWord = useKmView ? "segments" : "exits";
+  // The staffed sites, busiest first: the order the table ranks them in.
+  const staffedRows = displayRows.filter((r) => r.staffed);
+  const reachesMost = coverageShare >= 0.8;
+  const verdict = reachesMost
+    ? "this fleet size/radius combination reaches most of the ranking's predicted risk."
+    : "a larger fleet or wider radius would be needed to cover most of the ranking's predicted risk.";
+  const spreadWide = alertRows.length > rows.length / 2;
+  const modelName = predictive.corridorForecastModel ? `${predictive.corridorForecastModel} ` : "";
 
   return (
     <Shell
       title="Resource Staging & Patrol Repositioning"
       hint={hint}
       right={
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end", flexShrink: 0 }}>
-          <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface)", border: "1px solid var(--border-strong)", borderRadius: "999px" }}>
+        <div className="inc-controls">
+          <div className="inc-seg" role="group" aria-label="Group by">
             {(["exit", "km"] as const).map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
                 disabled={v === "km" && (predictive.kmSegmentForecast == null || predictive.kmSegmentForecast.length === 0)}
-                style={{
-                  padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
-                  background: view === v ? "var(--action)" : "transparent",
-                  color: view === v ? "var(--action-ink)" : "var(--text-secondary)",
-                  fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap",
-                }}
+                aria-pressed={view === v}
+                className={view === v ? "is-on" : ""}
               >
                 {v === "exit" ? "By Exit" : "By Km"}
               </button>
             ))}
           </div>
-          <div style={{ display: "flex", gap: "16px" }}>
-            {slider("Fleet size", fleetSize, 1, Math.min(12, rows.length), 1, setFleetSize, " units")}
-            {slider("Coverage radius", radiusKm, 1, 40, 1, setRadiusKm, " km")}
-          </div>
+          {slider("Fleet size", fleetSize, 1, Math.min(12, rows.length), 1, setFleetSize, " units")}
+          {slider("Coverage radius", radiusKm, 1, 40, 1, setRadiusKm, " km")}
         </div>
       }
     >
-      <Banner>
-        <strong>Recommended staging: {chosen.map((j) => rows[j].label).join(", ")}.</strong> Pre-position patrol
-        and tow-truck units at these {staffedCount} {useKmView ? "segments" : "exits"} — a {radiusKm}km radius from
-        each covers <strong>{(coverageShare * 100).toFixed(0)}%</strong> of the ranking&apos;s{" "}
-        {fmtInt(totalWeight)}-incident forecast ({fmtInt(coveredWeight)} of {fmtInt(totalWeight)}) —{" "}
-        {coverageShare >= 0.8
-          ? "this fleet size/radius combination reaches most of the ranking's predicted risk."
-          : "a larger fleet or wider radius would be needed to cover most of the ranking's predicted risk."}
-      </Banner>
+      {/* The fleet disclaimer stays visible, beside the controls it qualifies. */}
+      <p className="inc-caption" style={{ marginTop: -6 }}>
+        Fleet size and radius are yours to set — nothing in the warehouse records NLEX&apos;s actual patrol fleet.
+      </p>
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+      {/* The recommended action, as labelled rows; the reasoning behind Details. */}
+      <ActionCard
+        lead
+        icon={Truck}
+        title={`Stage units at ${staffedCount} ${unitWord}`}
+        tag={<span className={`inc-pill${reachesMost ? " is-on" : ""}`}><i aria-hidden="true" />{reachesMost ? "Reaches most risk" : "Larger fleet or radius needed"}</span>}
+        facts={[
+          { label: "Action", value: "Pre-position patrol and tow-truck units" },
+          {
+            label: "Where",
+            value: (
+              <ol className="inc-sites">
+                {staffedRows.map((r, i) => (
+                  <li key={r.key}>
+                    <em>{i + 1}</em>
+                    <b>{r.label}</b>
+                    <span>
+                      Km {r.km} · {fmtInt(r.predictedIncidents)} predicted
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            ),
+          },
+          { label: "When", value: <>The <b>{predictive.corridorForecastDays}-day</b> forecast window</> },
+          {
+            label: "Effect",
+            value: (
+              <>
+                <b>{(coverageShare * 100).toFixed(0)}%</b> of {fmtInt(totalWeight)} predicted incidents within {radiusKm} km ({fmtInt(coveredWeight)} covered)
+              </>
+            ),
+          },
+          { label: "Basis", value: <>Exact covering solve over the {modelName}{predictive.corridorForecastDays}-day ranking</> },
+          { label: "Confidence", value: "Forecast apportioned by historical share, not modelled per site" },
+        ]}
+        details={
+          <>
+            <p style={{ margin: 0 }}>
+              <strong>Recommended staging: {chosen.map((j) => rows[j].label).join(", ")}.</strong> Pre-position patrol
+              and tow-truck units at these {staffedCount} {unitWord} — a {radiusKm}km radius from
+              each covers <strong>{(coverageShare * 100).toFixed(0)}%</strong> of the ranking&apos;s{" "}
+              {fmtInt(totalWeight)}-incident forecast ({fmtInt(coveredWeight)} of {fmtInt(totalWeight)}) — {verdict}
+            </p>
+            <p style={{ margin: "8px 0 0" }}>
+              Method: a Maximal Covering Location Problem solved as an integer linear program (YALPS, branch-and-cut). Each candidate{" "}
+              {useKmView ? "segment" : "exit"} covers every zone within the coverage radius, measured along the corridor (|km_i − km_j|),
+              weighted by that zone&apos;s predicted incidents from the Predictive tab&apos;s ranking.
+            </p>
+            <p style={{ margin: "8px 0 0" }}>
+              Built from the {modelName}
+              {predictive.corridorForecastDays}-day forecast, apportioned the same way as the ranking above. Fleet size and
+              coverage radius are yours to set — nothing in the warehouse records NLEX&apos;s actual patrol fleet.
+            </p>
+          </>
+        }
+      />
+
+      {/* Evidence: every candidate site, busiest first. */}
+      <div className="inc-table-wrap">
+        <table className="inc-table">
           <thead>
-            <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--border-default)" }}>
-              <th style={{ padding: "6px 8px", fontWeight: 700 }}>{useKmView ? "Segment" : "Exit"}</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Km</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Predicted incidents</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Rate /km</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Status</th>
+            <tr>
+              <th>{useKmView ? "Segment" : "Exit"}</th>
+              <th>Km</th>
+              <th>Predicted incidents</th>
+              <th>Rate /km</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody>
             {visible.map((r) => (
-              <tr
-                key={r.key}
-                style={{
-                  borderBottom: "1px solid var(--border-default)",
-                  background: r.staffed ? "color-mix(in srgb, var(--page-accent, var(--action)) 7%, transparent)" : undefined,
-                }}
-              >
-                <td style={{ padding: "6px 8px", fontWeight: r.staffed ? 700 : 600, whiteSpace: "nowrap" }}>{r.label}</td>
-                <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-secondary)" }}>{r.km}</td>
-                <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{fmtInt(r.predictedIncidents)}</td>
-                <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-secondary)" }}>{r.ratePerKm.toFixed(2)}</td>
-                <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                  {r.staffed ? (
-                    <span style={{ fontWeight: 800, fontSize: "0.68rem", letterSpacing: "0.03em", color: "var(--page-accent, var(--action))" }}>● STAFFED</span>
-                  ) : (
-                    <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>—</span>
-                  )}
-                </td>
+              <tr key={r.key} className={r.staffed ? "is-staffed" : undefined}>
+                <td style={{ whiteSpace: "nowrap" }}>{r.label}</td>
+                <td className="is-muted">{r.km}</td>
+                <td style={{ fontWeight: 600 }}>{fmtInt(r.predictedIncidents)}</td>
+                <td className="is-muted">{r.ratePerKm.toFixed(2)}</td>
+                <td>{r.staffed ? <span className="inc-staffed">Staffed</span> : <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -295,74 +342,100 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
       </div>
 
       {displayRows.length > 8 && (
-        <button
-          onClick={() => setShowAll((v) => !v)}
-          style={{
-            alignSelf: "flex-start", border: "1px solid var(--border-strong)", background: "var(--bg-surface)", color: "var(--text-secondary)",
-            borderRadius: 999, padding: "4px 12px", fontSize: "0.72rem", fontWeight: 700, cursor: "pointer",
-          }}
-        >
+        <button onClick={() => setShowAll((v) => !v)} className="inc-ghost-btn">
           {showAll ? "Show the 8 busiest" : `Show all ${displayRows.length} ${useKmView ? "segments" : "exits"}`}
         </button>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px" }}>
-        <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: "12px" }}>
-          <h4 style={{ margin: "0 0 4px 0", fontSize: "0.85rem", color: "var(--text-primary)", fontWeight: 700 }}>Hotspot monitoring alert</h4>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", margin: "0 0 8px 0" }}>
-            {useKmView ? "Segments" : "Exits"} carrying at least 80% of the ranking&apos;s predicted incident total
-            between them — same evidence-coverage cutoff used on the ranking cards above, not an arbitrary top-N.
-            {alertRows.length > rows.length / 2 && (
-              <> That takes {alertRows.length} of {rows.length} — risk here is spread across most of the corridor
-              rather than concentrated in a handful of spots, so the cutoff genuinely needs this many.</>
-            )}
-          </p>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.68rem", color: "var(--text-muted)", fontWeight: 600, padding: "0 0 3px 0" }}>
-            <span>{useKmView ? "Segment" : "Exit"}</span>
-            <span>Predicted incidents</span>
-          </div>
-          <div className="ds-scroll-fade" style={{ display: "flex", flexDirection: "column", gap: "4px", maxHeight: "220px", overflowY: "auto" }}>
-            {alertRows.map((r) => (
-              <div key={r.key} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", padding: "3px 0", borderTop: "1px solid var(--border-default)" }}>
-                <span style={{ color: "var(--text-primary)" }}>{r.label}</span>
-                <span style={{ color: "var(--color-warning)", fontWeight: 700 }}>{fmtInt(r.predictedIncidents)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: "12px" }}>
-          <h4 style={{ margin: "0 0 4px 0", fontSize: "0.85rem", color: "var(--text-primary)", fontWeight: 700 }}>Proactive speed advisory</h4>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", margin: "0 0 8px 0" }}>
-            Top 3 hotspots by density (predicted incidents per km) — advise reduced speed here first as rainfall
-            rises. The percentages below are the weather-incident-risk model&apos;s own probability of a
-            corridor-wide high-incident day at each rainfall level{weatherRisk ? ` (AUC ${weatherRisk.auc?.toFixed(3) ?? "—"})` : ""}.
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            {speedAdvisoryRows.map((r) => (
-              <div key={r.key} style={{ fontSize: "0.78rem", padding: "3px 0", borderTop: "1px solid var(--border-default)" }}>
-                <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{r.label}</span>
-                <span style={{ color: "var(--text-muted)" }}> — {useKmView ? "" : `Km ${r.km}, `}{r.ratePerKm.toFixed(2)} incidents/km</span>
-              </div>
-            ))}
-          </div>
-          {weatherRisk && (
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "8px" }}>
-              {weatherRisk.scenarios.map((s) => (
-                <div key={s.rain_mm} style={{ padding: "4px 8px", borderRadius: "6px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)", fontSize: "0.68rem" }}>
-                  <div style={{ color: "var(--text-muted)" }}>{s.rain_mm}mm rain</div>
-                  <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>{(s.probability * 100).toFixed(1)}%</div>
+      <div className="inc-actions-grid">
+        <ActionCard
+          icon={Radar}
+          title="Hotspot monitoring alert"
+          tag={spreadWide ? <span className="inc-pill">Risk spread wide</span> : undefined}
+          facts={[
+            { label: "Action", value: `Monitor these ${unitWord} closely` },
+            { label: "Where", value: <><b>{alertRows.length}</b> of {rows.length} {unitWord}, listed below</> },
+            { label: "When", value: <>The {predictive.corridorForecastDays}-day forecast window</> },
+            { label: "Effect", value: <>Watches at least <b>80%</b> of predicted incidents</> },
+            { label: "Basis", value: "80% cumulative cutoff, not a fixed top-N" },
+          ]}
+          details={
+            <>
+              {useKmView ? "Segments" : "Exits"} carrying at least 80% of the ranking&apos;s predicted incident total
+              between them — same evidence-coverage cutoff used on the ranking cards above, not an arbitrary top-N.
+              {spreadWide && (
+                <> That takes {alertRows.length} of {rows.length} — risk here is spread across most of the corridor
+                rather than concentrated in a handful of spots, so the cutoff genuinely needs this many.</>
+              )}
+            </>
+          }
+        >
+          <div className="inc-list">
+            <div className="inc-list-head">
+              <span>{useKmView ? "Segment" : "Exit"}</span>
+              <span>Predicted incidents</span>
+            </div>
+            <div className="ds-scroll-fade" style={{ display: "flex", flexDirection: "column", maxHeight: "220px", overflowY: "auto" }}>
+              {alertRows.map((r) => (
+                <div key={r.key} className="inc-list-row">
+                  <span>{r.label}</span>
+                  <b>{fmtInt(r.predictedIncidents)}</b>
                 </div>
               ))}
             </div>
-          )}
-        </div>
-      </div>
+          </div>
+        </ActionCard>
 
-      <Foot>
-        Built from the {predictive.corridorForecastModel ? `${predictive.corridorForecastModel} ` : ""}
-        {predictive.corridorForecastDays}-day forecast, apportioned the same way as the ranking above. Fleet size and
-        coverage radius are yours to set — nothing in the warehouse records NLEX&apos;s actual patrol fleet.
-      </Foot>
+        <ActionCard
+          icon={Gauge}
+          title="Proactive speed advisory"
+          facts={[
+            { label: "Action", value: "Advise reduced speed here first" },
+            {
+              label: "Where",
+              value: (
+                <ol className="inc-sites">
+                  {speedAdvisoryRows.map((r, i) => (
+                    <li key={r.key}>
+                      <em>{i + 1}</em>
+                      <b>{r.label}</b>
+                      <span>
+                        {useKmView ? "" : `Km ${r.km} · `}{r.ratePerKm.toFixed(2)} incidents/km
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              ),
+            },
+            { label: "When", value: "As rainfall rises" },
+            ...(weatherRisk
+              ? [
+                  {
+                    label: "Effect",
+                    value: (
+                      <div className="inc-rain-chips" aria-label="Probability of a corridor-wide high-incident day by rainfall">
+                        {weatherRisk.scenarios.map((s) => (
+                          <div key={s.rain_mm} className="inc-rain-chip">
+                            <span>{s.rain_mm}mm rain</span>
+                            <b>{(s.probability * 100).toFixed(1)}%</b>
+                          </div>
+                        ))}
+                      </div>
+                    ),
+                  },
+                  { label: "Confidence", value: <>Weather-incident-risk model, <b>AUC {weatherRisk.auc?.toFixed(3) ?? "—"}</b></> },
+                ]
+              : []),
+          ]}
+          details={
+            <>
+              Top 3 hotspots by density (predicted incidents per km) — advise reduced speed here first as rainfall
+              rises. The percentages below are the weather-incident-risk model&apos;s own probability of a
+              corridor-wide high-incident day at each rainfall level{weatherRisk ? ` (AUC ${weatherRisk.auc?.toFixed(3) ?? "—"})` : ""}.
+            </>
+          }
+        />
+      </div>
     </Shell>
   );
 }

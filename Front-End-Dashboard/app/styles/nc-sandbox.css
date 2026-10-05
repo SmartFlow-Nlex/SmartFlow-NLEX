@@ -1,0 +1,735 @@
+/* Night Corridor: page styles for sandbox. Loaded after globals.css (app/layout.tsx),
+   so rules here override the shared layer at equal specificity. Tokens only. */
+
+/* ===========================================================================
+   SCENARIO SANDBOX (/dashboard/scenario-sandbox, and /dashboard/ai-sandbox,
+   which redirects here)
+
+   Restyle only. scenarios/verify.ts reads page.tsx and ScenarioPanel.tsx as
+   source text, so every class name stays; the look changes here.
+
+   Two scopes:
+   - `.ds-main .sandbox-page` prefixes every rule, so it outranks the older
+     sandbox layers in globals.css, including their `:root[data-theme="dark"]`
+     overrides, without !important.
+   - Anything inside the simulation card is scoped to `.sandbox-main:not(.is-expanded)`.
+     Full screen is a fixed dark HUD over the road (globals.css, "full screen is
+     a SCREEN"); it keeps its own glass look in both themes.
+   =========================================================================== */
+
+/* --- Cards: one surface, one hairline, no shadow ------------------------- */
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded),
+.ds-main .sandbox-page .sandbox-side,
+.ds-main .sandbox-page .sandbox-forecast {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded),
+.ds-main .sandbox-page .sandbox-side:not(.is-expanded) { padding: 20px; }
+/* The rail in full screen is an overlay over the road: a raised surface. */
+.ds-main .sandbox-page .sandbox-side.is-expanded {
+  max-height: none;
+  background: var(--bg-raised);
+  border: 0;
+  border-left: 1px solid var(--border-strong);
+  border-radius: 0;
+  box-shadow: var(--shadow-lg);
+}
+.ds-main .sandbox-page .sandbox-grid { gap: 16px; }
+/* The grid was `flex: 1 1 0%; min-height: 0` inside the page's flex column (a
+   leftover of the old viewport-locked layout), so it collapsed to 0 px and its
+   rows to 34 px. Stacked on a phone, the controls card then sat on top of the
+   simulation card and hid the road, the notes and the recommendation. Sized by
+   its content, nothing overlaps. */
+.ds-main .sandbox-page .sandbox-grid { flex: none; }
+
+/* Full screen pins the card over everything (z-index 55, the rail 56). The shell's
+   `.ds-main { isolation: isolate }` makes <main> a stacking context, which trapped
+   the card under the sidebar (z-index 35): the title and Play were hidden behind
+   it. While the sandbox is in full screen only, <main> stops isolating. */
+/* (main no longer isolates, so fixed overlays rise above the sidebar on their own) */
+
+/* --- Card heads ----------------------------------------------------------- */
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-head h2,
+.ds-main .sandbox-page .sandbox-side-head h2,
+.ds-main .sandbox-page .sandbox-forecast-title h3 {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+.ds-main .sandbox-page .sandbox-head { gap: 12px; }
+/* The transport row: speeds, Play (the white pill), Replay, Reset, Full screen. */
+.ds-main .sandbox-page .sandbox-head > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ds-main .sandbox-page .sandbox-head :is(.btn-primary, .btn-muted, .nc-pill) { margin-left: 0; }
+.ds-main .sandbox-page .sandbox-head .nc-pill {
+  min-height: 36px;
+  padding: 0 38px 0 20px;
+}
+.ds-main .sandbox-page .sandbox-head .nc-pill::after {
+  right: 15px;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+}
+/* Full screen draws the head as dark glass in either theme, so the pill stays
+   white there (the light theme's ink pill would vanish against the glass). */
+:root[data-theme="light"] .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-head .nc-pill {
+  background: var(--pill-ink);
+  color: var(--pill-bg);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-head .nc-pill {
+    background: var(--pill-ink);
+    color: var(--pill-bg);
+  }
+}
+
+/* The simulation clock: a hairline capsule, tabular figures. */
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock {
+  gap: 10px;
+  padding: 4px 8px 4px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--bg-input);
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock-label {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock-date {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-time-seg-input {
+  font-size: var(--fs-label);
+  border-radius: var(--radius-sm);
+  border-color: var(--border-strong);
+  background: transparent;
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-time-seg-arrows {
+  border-color: var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-time-seg-arrows button { background: transparent; }
+
+/* --- Segmented controls: hairline capsules, the active one in the accent ---- */
+.ds-main .sandbox-page :is(.sandbox-main:not(.is-expanded), .sandbox-side) :is(.sandbox-speed-seg, .sandbox-dir-seg),
+.ds-main .sandbox-page .sandbox-mode-seg {
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  box-shadow: none;
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-speed-seg { margin-right: 0; }
+.ds-main .sandbox-page :is(.sandbox-main:not(.is-expanded), .sandbox-side) :is(.sandbox-speed-seg, .sandbox-dir-seg) button,
+.ds-main .sandbox-page .sandbox-mode-seg button {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.ds-main .sandbox-page .sandbox-mode-seg button {
+  min-height: 32px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.ds-main .sandbox-page :is(.sandbox-main:not(.is-expanded), .sandbox-side) :is(.sandbox-speed-seg, .sandbox-dir-seg) button:hover:not(:disabled),
+.ds-main .sandbox-page .sandbox-mode-seg button:hover:not(.active) { color: var(--text-primary); }
+.ds-main .sandbox-page :is(.sandbox-main:not(.is-expanded), .sandbox-side) :is(.sandbox-speed-seg, .sandbox-dir-seg) button.active,
+.ds-main .sandbox-page .sandbox-mode-seg button.active {
+  background: color-mix(in srgb, var(--page-accent) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page-accent) 60%, transparent);
+  color: var(--text-primary);
+}
+/* A direction choice keeps its carriageway colour on the label (DirectionPill's
+   convention); the letters always name it, the capsule says it is selected. */
+.ds-main .sandbox-page .sandbox-side .sandbox-dir-seg button.dir-NB.active,
+.ds-main .sandbox-page .sandbox-side .sandbox-dir-seg button.dir-SB.active { color: inherit; }
+.ds-main .sandbox-page .sandbox-side .sandbox-dir-pick .k,
+.ds-main .sandbox-page .sandbox-view-seg .k {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+}
+
+/* --- The control rail ----------------------------------------------------- */
+.ds-main .sandbox-page .sandbox-side-head { gap: 14px; margin-bottom: 6px; }
+/* Section headers (RailSection): an eyebrow-weight label, the chevron in muted ink. */
+.ds-main .sandbox-page .sandbox-side-scroll > section > button[aria-expanded] {
+  min-height: 28px;
+  color: var(--text-muted);
+}
+.ds-main .sandbox-page .sandbox-side-scroll > section > button[aria-expanded]:hover { color: var(--text-primary); }
+.ds-main .sandbox-page .sandbox-section-title {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-primary);
+}
+.ds-main .sandbox-page .sandbox-side label {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+.ds-main .sandbox-page .sandbox-side label:has(> select) {
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.ds-main .sandbox-page .sandbox-side select { margin-top: 8px; }
+.ds-main .sandbox-page .sandbox-slider-group { margin-top: 20px; }
+.ds-main .sandbox-page .sandbox-slider-label {
+  font-size: var(--fs-body);
+  font-weight: 400;
+  color: var(--text-primary);
+}
+.ds-main .sandbox-page .sandbox-slider-value {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.ds-main .sandbox-page .sandbox-slider-value.is-info { color: var(--page-accent); }
+.ds-main .sandbox-page .sandbox-slider-hint {
+  margin-top: 6px;
+  font-size: var(--fs-label);
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+.ds-main .sandbox-page .sandbox-mini-label {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+.ds-main .sandbox-page .sandbox-baseline-lede,
+.ds-main .sandbox-page .ai-command-sub {
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* Sliders: one accent per page, a hairline track, an ink thumb ringed in the accent. */
+.ds-main .sandbox-page .sandbox-range,
+.ds-main .sandbox-page .sandbox-range.inflow,
+.ds-main .sandbox-page .sandbox-range.lanes,
+.ds-main .sandbox-page .sandbox-range.capacity {
+  --range-color: var(--page-accent);
+  height: 4px;
+  background: linear-gradient(
+    to right,
+    var(--range-color) 0%,
+    var(--range-color) var(--range-pct, 50%),
+    var(--border-strong) var(--range-pct, 50%),
+    var(--border-strong) 100%
+  );
+}
+.ds-main .sandbox-page .sandbox-range::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--text-primary);
+  border: 3px solid var(--range-color);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--range-color) 18%, transparent);
+}
+.ds-main .sandbox-page .sandbox-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--text-primary);
+  border: 3px solid var(--range-color);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--range-color) 18%, transparent);
+}
+.ds-main .sandbox-page .sandbox-range:disabled { opacity: 0.45; cursor: not-allowed; }
+.ds-main .sandbox-page .sandbox-range:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 6px; }
+
+/* Lane toggles: hairline capsules; a closed lane carries the closure colour. */
+.ds-main .sandbox-page .sandbox-lane-toggles button {
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+.ds-main .sandbox-page .sandbox-lane-toggles button:hover:not(:disabled) { border-color: var(--hairline-hover); color: var(--text-primary); }
+.ds-main .sandbox-page .sandbox-lane-toggles button:disabled { opacity: 0.6; cursor: not-allowed; }
+.ds-main .sandbox-page .sandbox-lane-toggles button.closed {
+  background: var(--color-danger-bg);
+  border-color: var(--color-danger-border);
+  color: var(--color-danger);
+}
+
+/* Both mode: one block per carriageway. The pill in its head names the road;
+   the 3 px coloured edge it used to carry is gone (one hairline, like every card). */
+.ds-main .sandbox-page .sandbox-dir-panel,
+.ds-main .sandbox-page .sandbox-dir-panel.dir-NB,
+.ds-main .sandbox-page .sandbox-dir-panel.dir-SB {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: transparent;
+  padding: 12px 14px;
+}
+.ds-main .sandbox-page .sandbox-dir-panel-head { font-size: var(--fs-label); }
+
+/* The guided baseline steps. */
+.ds-main .sandbox-page .sandbox-steps li { padding: 10px 12px; border-radius: var(--radius-md); }
+.ds-main .sandbox-page .sandbox-steps li .n {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.ds-main .sandbox-page .sandbox-steps li .t b {
+  font-size: var(--fs-body);
+  font-weight: 400;
+}
+.ds-main .sandbox-page .sandbox-steps li .t i { font-size: var(--fs-label); line-height: 1.55; }
+.ds-main .sandbox-page .sandbox-steps li.is-done .n { background: var(--color-success-bg); color: var(--color-success); }
+.ds-main .sandbox-page .sandbox-steps li.is-now {
+  border-color: color-mix(in srgb, var(--page-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--page-accent) 8%, transparent);
+}
+.ds-main .sandbox-page .sandbox-steps li.is-now .n { background: var(--page-accent); color: var(--action-ink); }
+
+/* Confidence run: the results read as a small table of tabular figures. */
+.ds-main .sandbox-page .sandbox-reps-label { font-size: var(--fs-label); letter-spacing: 1px; }
+.ds-main .sandbox-page .sandbox-reps-out {
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: transparent;
+}
+.ds-main .sandbox-page .sandbox-reps-row { font-size: var(--fs-label); padding: 4px 0; border-bottom: 1px solid var(--border-default); }
+.ds-main .sandbox-page .sandbox-reps-row:last-of-type { border-bottom: 0; }
+.ds-main .sandbox-page .sandbox-reps-row .v { font-size: var(--fs-body); font-weight: 600; }
+.ds-main .sandbox-page .sandbox-reps-row .v i { font-size: var(--fs-label); }
+.ds-main .sandbox-page .sandbox-reps-note { font-size: var(--fs-label); }
+.ds-main .sandbox-page .sandbox-reps-warn,
+.ds-main .sandbox-page .sandbox-scn-skipwarn,
+.ds-main .sandbox-page .sandbox-scn-est.is-heavy,
+.ds-main .sandbox-page .ai-plan-warn { color: var(--color-warning); }
+.ds-main .sandbox-page .sandbox-reps-warn { font-size: var(--fs-label); }
+
+/* Scenario picker (ScenarioPanel): chips and readouts on the token palette. */
+.ds-main .sandbox-page .sandbox-scn-fam {
+  border-color: var(--border-default);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-size: var(--fs-label);
+}
+.ds-main .sandbox-page .sandbox-scn-fam:hover:not(:disabled) { border-color: var(--hairline-hover); }
+.ds-main .sandbox-page .sandbox-scn-fam.active {
+  border-color: color-mix(in srgb, var(--page-accent) 60%, transparent);
+  background: color-mix(in srgb, var(--page-accent) 12%, transparent);
+}
+.ds-main .sandbox-page :is(.sandbox-scn-scene, .sandbox-scn-preview) { border-color: var(--border-default); background: transparent; }
+.ds-main .sandbox-page :is(.sandbox-scn-event, .sandbox-scn-info-pop, .sandbox-scn-hot-row) { background: transparent; }
+.ds-main .sandbox-page .sandbox-scn-info-pop { background: var(--bg-raised); border-color: var(--border-strong); }
+.ds-main .sandbox-page .sandbox-scn-badge.no-cal { color: var(--color-warning); background: var(--color-warning-bg); border-color: var(--color-warning-border); }
+.ds-main .sandbox-page .sandbox-scn-badge.low { color: var(--color-purple); background: var(--color-purple-bg); border-color: color-mix(in srgb, var(--color-purple) 40%, transparent); }
+.ds-main .sandbox-page .sandbox-scn-badge.cap { color: var(--color-info); background: var(--color-info-bg); border-color: var(--color-info-border); }
+.ds-main .sandbox-page :is(.sandbox-scn-chip.active, .sandbox-scn-chip.running) {
+  color: var(--color-success);
+  border-color: var(--color-success-border);
+  background: var(--color-success-bg);
+}
+.ds-main .sandbox-page .sandbox-scn-group-head { font-size: var(--fs-label); letter-spacing: 2px; font-weight: 600; }
+
+/* The km and place notes say where to click next: the accent, not an error red. */
+.ds-main .sandbox-page .sandbox-place-hint {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--page-accent);
+}
+
+/* --- Command tab: the prompt is part of the rail, not a card inside it ---- */
+.ds-main .sandbox-page .ai-command { padding: 0; border: 0; background: transparent; }
+.ds-main .sandbox-page .ai-command-input { min-height: 112px; border-style: solid; }
+.ds-main .sandbox-page .ai-command-btn,
+.ds-main .sandbox-page .ai-plan-apply {
+  min-height: 40px;
+  border: 1px solid color-mix(in srgb, var(--page-accent) 60%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--page-accent) 14%, transparent);
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  filter: none;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+}
+.ds-main .sandbox-page .ai-command-btn:hover:not(:disabled),
+.ds-main .sandbox-page .ai-plan-apply:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--page-accent) 24%, transparent);
+  border-color: var(--page-accent);
+  transform: translateY(-2px);
+  filter: none;
+}
+.ds-main .sandbox-page .ai-plan-discard {
+  min-height: 40px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.ds-main .sandbox-page .ai-plan-discard:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); border-color: var(--hairline-hover); }
+.ds-main .sandbox-page .ai-plan {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: transparent;
+  padding: 14px;
+}
+.ds-main .sandbox-page .ai-plan-reply { font-size: var(--fs-body); font-weight: 400; }
+.ds-main .sandbox-page .ai-plan-actions { font-size: var(--fs-label); line-height: 1.7; }
+.ds-main .sandbox-page .ai-command-note {
+  border: 1px solid var(--border-default);
+  border-left-width: 1px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-size: var(--fs-label);
+}
+.ds-main .sandbox-page .ai-command-error { font-size: var(--fs-label); color: var(--color-danger); }
+
+/* --- The forecast card ("Simulate a Forecast Day") ------------------------ */
+.ds-main .sandbox-page .sandbox-forecast { margin-top: 16px; padding: 20px; }
+.ds-main .sandbox-page .sandbox-forecast-head { margin-bottom: 16px; align-items: center; }
+.sandbox-forecast-titlerow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.ds-main .sandbox-page .sandbox-forecast-title p {
+  margin-top: 4px;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  color: var(--text-secondary);
+}
+/* The card's action: an accent ghost pill (the white pill is Play). */
+.ds-main .sandbox-page .sandbox-forecast-apply {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid color-mix(in srgb, var(--page-accent) 60%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--page-accent) 14%, transparent);
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  filter: none;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+}
+.ds-main .sandbox-page .sandbox-forecast-apply:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--page-accent) 24%, transparent);
+  border-color: var(--page-accent);
+  transform: translateY(-2px);
+  filter: none;
+}
+.ds-main .sandbox-page .sandbox-forecast-apply:disabled {
+  background: transparent;
+  border-color: var(--border-default);
+  color: var(--text-muted);
+}
+.ds-main .sandbox-page .sandbox-forecast-apply.is-applied {
+  background: var(--color-success-bg);
+  border-color: var(--color-success-border);
+  color: var(--color-success);
+}
+.ds-main .sandbox-page .sandbox-forecast-tiles { gap: 12px; }
+.ds-main .sandbox-page .sandbox-forecast-tile {
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: transparent;
+}
+.ds-main .sandbox-page .sandbox-forecast-tile.accent {
+  border-color: color-mix(in srgb, var(--page-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--page-accent) 8%, transparent);
+}
+.ds-main .sandbox-page .sandbox-forecast-tile .k {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+}
+.ds-main .sandbox-page .sandbox-forecast-tile .v {
+  font-size: var(--fs-numeral);
+  font-weight: 300;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.ds-main .sandbox-page .sandbox-forecast-tile .s {
+  font-size: var(--fs-label);
+  line-height: 1.5;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ds-main .sandbox-page .sandbox-forecast-foot {
+  margin-top: 14px;
+  padding-top: 12px;
+  font-size: var(--fs-label);
+  line-height: 1.6;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* "What gets loaded?" opened: secondary prose at body size. */
+.ds-main .sandbox-page .sandbox-forecast-foot[style] {
+  font-size: var(--fs-body);
+  font-weight: 300;
+  color: var(--text-secondary);
+}
+.ds-main .sandbox-page .sandbox-forecast-help {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--page-accent);
+}
+.ds-main .sandbox-page .sandbox-forecast-help:hover { color: var(--text-primary); }
+.ds-main .sandbox-page .sandbox-forecast-note { font-size: var(--fs-label); line-height: 1.6; }
+
+/* --- The metric strip (docked: direct children of the page) --------------- */
+.sandbox-metric-flag {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 20px;
+}
+.ds-main .sandbox-page .sandbox-metric-flag .sandbox-metric-caption {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.sandbox-main.is-expanded .sandbox-metric-flag { display: none; }
+.ds-main .sandbox-page > .sandbox-metric-row { gap: 12px; margin-top: 12px; }
+.ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 18px;
+  border-radius: var(--radius-lg);
+}
+.ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric h3 {
+  gap: 4px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+}
+.ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric-tag {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 1;
+}
+.ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric-val {
+  margin-top: 10px;
+  font-size: var(--fs-numeral);
+  font-weight: 300;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+/* Six tiles share the row; below 1600 px the 32 px numeral cannot hold "18.7 kg/min". */
+@media (max-width: 1599px) {
+  .ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric-val { font-size: var(--fs-title); font-weight: 400; }
+}
+.ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric.is-both .sandbox-metric-val.is-none {
+  font-size: var(--fs-body);
+  font-weight: 400;
+  line-height: 2.13;
+  color: var(--text-muted);
+}
+.ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric-delta {
+  margin-top: 6px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.ds-main .sandbox-page .sandbox-metric-delta.up,
+.ds-main .sandbox-page .sandbox-metric-dir .d.up { color: var(--color-success); }
+.ds-main .sandbox-page .sandbox-metric-delta.down,
+.ds-main .sandbox-page .sandbox-metric-dir .d.down { color: var(--color-danger); }
+.ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric-dirs { margin-top: auto; padding-top: 10px; gap: 6px; }
+.ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric-dir { font-size: var(--fs-label); }
+.ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric-dir .v { font-size: var(--fs-label); font-weight: 600; }
+.ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric-dir .d { font-size: var(--fs-micro); }
+
+/* --- Inside the docked simulation card ------------------------------------ */
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-canvas {
+  margin-top: 14px;
+  border-radius: var(--radius-md);
+}
+.ds-main .sandbox-page .sandbox-both-details { margin-top: 12px; padding-top: 0; border-top: 0; }
+.ds-main .sandbox-page .sandbox-both-details .sandbox-live-note {
+  max-width: 75ch;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  color: var(--text-secondary);
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-note {
+  padding: 10px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-note.warn,
+.ds-main .sandbox-page .sandbox-side .sandbox-live-note.warn {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-bg);
+  color: var(--text-primary);
+}
+.ds-main .sandbox-page .sandbox-side .sandbox-live-note {
+  border-color: var(--border-default);
+  background: transparent;
+  font-size: var(--fs-label);
+  line-height: 1.55;
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-legend {
+  gap: 8px 20px;
+  margin-top: 14px;
+  font-size: var(--fs-label);
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+
+/* Before / after: a quiet table of tabular figures. */
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-compare {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: transparent;
+}
+.ds-main .sandbox-page .sandbox-compare-head b {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.ds-main .sandbox-page .sandbox-compare-head span { font-size: var(--fs-label); }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-compare-row { font-size: var(--fs-body); }
+.ds-main .sandbox-page .sandbox-compare-row .now { font-weight: 600; }
+.ds-main .sandbox-page .sandbox-compare-row .now i,
+.ds-main .sandbox-page .sandbox-compare-row .d { font-size: var(--fs-label); }
+.ds-main .sandbox-page .sandbox-compare-labels :is(.was, .now) { font-size: var(--fs-micro); letter-spacing: 2px; font-weight: 600; }
+.ds-main .sandbox-page .sandbox-compare-row .d.good { color: var(--color-success); }
+.ds-main .sandbox-page .sandbox-compare-row .d.bad { color: var(--color-danger); }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-compare-none {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  font-size: var(--fs-label);
+  line-height: 1.55;
+}
+
+/* The recommendation: a hairline card, its tone on the label, never a
+   4 px coloured edge or a tinted slab. The Simulation pill sits on the label. */
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-reco,
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-reco.good,
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-reco.warn,
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-reco.bad {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: transparent;
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-reco.good { border-color: var(--color-success-border); }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-reco.warn { border-color: var(--color-warning-border); }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-reco.bad { border-color: var(--color-danger-border); }
+.ds-main .sandbox-page .sandbox-reco strong {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-reco.good strong { color: var(--color-success); }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-reco.warn strong { color: var(--color-warning); }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-reco.bad strong { color: var(--color-danger); }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-reco p {
+  margin-top: 10px;
+  max-width: 75ch;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+/* Full screen keeps its glass, but loses the thick coloured edge too. */
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-reco { border-width: 1px; border-style: solid; }
+
+/* --- Narrow screens -------------------------------------------------------- */
+@media (max-width: 760px) {
+  .ds-main .sandbox-page .sandbox-main:not(.is-expanded),
+  .ds-main .sandbox-page .sandbox-side:not(.is-expanded),
+  .ds-main .sandbox-page .sandbox-forecast { padding: 16px; }
+  .ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric { padding: 14px; }
+  .ds-main .sandbox-page > .sandbox-metric-row .sandbox-metric-val { font-size: var(--fs-title); font-weight: 400; }
+  .ds-main .sandbox-page .sandbox-forecast-tile .v { font-size: var(--fs-title); font-weight: 400; }
+  .ds-main .sandbox-page .sandbox-forecast-apply { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-main .sandbox-page :is(.sandbox-forecast-apply, .ai-command-btn, .ai-plan-apply):hover { transform: none; }
+}

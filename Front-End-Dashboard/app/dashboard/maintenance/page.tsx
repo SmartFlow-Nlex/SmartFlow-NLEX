@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Calendar, ChevronDown, MapPin, Plus, Search, Wrench, X } from "lucide-react";
+import { AlertTriangle, Calendar, ChevronDown, Info, MapPin, Plus, Search, Trash2, Wrench, X } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
+import StateNote from "../../../components/stage/StateNote";
 import styles from "../traffic/traffic.module.css";
 import { supabase } from "../../../lib/supabase";
 
@@ -102,27 +103,25 @@ function Select({
   const selected = options.find((o) => o.value === value);
 
   return (
-    <div className={styles.customSelectWrap} ref={ref} style={{ width: "100%" }}>
+    <div className={`${styles.customSelectWrap} nc-ops-select`} ref={ref}>
       <button
         type="button"
-        className={styles.customSelectBtn}
-        style={{ width: "100%", justifyContent: "space-between", padding: "10px 14px", fontSize: "0.95rem", fontWeight: 500, borderRadius: "var(--radius-sm)" }}
+        className={`${styles.customSelectBtn} nc-ops-select-btn`}
         onClick={() => setOpen(!open)}
         aria-expanded={open}
       >
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: selected ? undefined : "var(--text-muted)" }}>
+        <span className={`nc-ops-select-value${selected ? "" : " is-placeholder"}`}>
           {selected ? selected.label : placeholder}
         </span>
-        <ChevronDown size={16} style={{ flexShrink: 0, transition: "transform 0.15s", transform: open ? "rotate(180deg)" : "none" }} />
+        <ChevronDown size={16} aria-hidden="true" className="nc-ops-chevron" />
       </button>
       {open && (
-        <div className={styles.customSelectMenu} style={{ maxHeight: 240, overflowY: "auto", width: "100%" }}>
+        <div className={`${styles.customSelectMenu} nc-ops-select-menu`}>
           {options.map((o) => (
             <button
               key={o.value}
               type="button"
-              className={`${styles.customSelectOption} ${value === o.value ? styles.customSelectOptionActive : ""}`}
-              style={{ fontSize: "0.9rem", padding: "9px 12px" }}
+              className={`${styles.customSelectOption} ${value === o.value ? styles.customSelectOptionActive : ""} nc-ops-select-opt`}
               onClick={() => {
                 onChange(o.value);
                 setOpen(false);
@@ -130,7 +129,7 @@ function Select({
             >
               {o.label}
               {value === o.value && (
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ marginLeft: "auto", color: "var(--brand-primary)" }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="nc-ops-tick" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
               )}
             </button>
           ))}
@@ -169,50 +168,48 @@ function StatusControl({
   const canCancel = schedule.status === "scheduled" || schedule.status === "in_progress";
 
   if (advances.length === 0 && !canCancel) {
-    return <span className={`ms-badge ${meta.badge}`} style={{ whiteSpace: "nowrap" }}>{meta.label}</span>;
+    return <span className={`ms-badge ${meta.badge}`}>{meta.label}</span>;
   }
 
   return (
-    <div className={styles.customSelectWrap} ref={ref} onClick={(e) => e.stopPropagation()}>
+    <div className={`${styles.customSelectWrap} nc-ops-status`} ref={ref} onClick={(e) => e.stopPropagation()}>
       <button
         type="button"
-        className={`ms-badge ${meta.badge}`}
-        style={{ whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer", font: "inherit", fontSize: "0.7rem", fontWeight: 700 }}
+        className={`ms-badge ${meta.badge} nc-ops-status-btn`}
         disabled={disabled}
         onClick={() => setOpen(!open)}
         aria-expanded={open}
         title="Change status"
       >
         {meta.label}
-        <ChevronDown size={12} style={{ transition: "transform 0.15s", transform: open ? "rotate(180deg)" : "none" }} />
+        <ChevronDown size={12} aria-hidden="true" className="nc-ops-chevron" />
       </button>
       {open && (
-        <div className={styles.customSelectMenu} style={{ minWidth: 180 }}>
+        <div className={`${styles.customSelectMenu} nc-ops-status-menu`}>
           {advances.map((a) => (
             <button
               key={a.to}
               type="button"
-              className={styles.customSelectOption}
+              className={`${styles.customSelectOption} nc-ops-select-opt`}
               onClick={() => {
                 setOpen(false);
                 onAdvance(a.to);
               }}
             >
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ marginRight: 6, color: "var(--brand-primary)" }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="nc-ops-tick is-lead" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
               {a.label}
             </button>
           ))}
           {canCancel && (
             <button
               type="button"
-              className={styles.customSelectOption}
-              style={{ color: "var(--color-danger)" }}
+              className={`${styles.customSelectOption} nc-ops-select-opt is-danger`}
               onClick={() => {
                 setOpen(false);
                 onCancel();
               }}
             >
-              <X size={13} style={{ marginRight: 6 }} />
+              <X size={13} aria-hidden="true" className="nc-ops-tick is-lead" />
               Cancel schedule…
             </button>
           )}
@@ -221,15 +218,6 @@ function StatusControl({
     </div>
   );
 }
-
-const SECTION_STYLE: React.CSSProperties = {
-  margin: "0 0 -6px",
-  fontSize: "0.72rem",
-  fontWeight: 700,
-  textTransform: "uppercase",
-  letterSpacing: "0.07em",
-  color: "var(--text-muted)",
-};
 
 const emptyForm = {
   title: "",
@@ -547,23 +535,23 @@ export default function MaintenancePage() {
       : null;
 
   const check = (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}>
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="nc-ops-check" aria-hidden="true">
       <path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 
   return (
-    <section className={styles.page}>
+    <section className={`${styles.page} nc-ops nc-ops-maint`}>
       <PageHeader icon={Wrench} title="Maintenance Overview" subtitle="Scheduled roadworks, closures, and asset upkeep across NLEX" />
 
       {/* Row A — filters + primary action */}
-      <div className={styles.filterRow} style={{ flexWrap: "wrap", rowGap: 8 }}>
+      <div className={`${styles.filterRow} nc-ops-filters`}>
         <div className={styles.filterGroup}>
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)" }}><path d="M2.5 4h11M4.5 8h7M6.5 12h3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 4h11M4.5 8h7M6.5 12h3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
           <span className={styles.filterLabel}>Status</span>
-          <div className={styles.segmented}>
+          <div className={`${styles.segmented} nc-ops-status-filter`}>
             {(["all", "scheduled", "in_progress", "completed", "cancelled"] as const).map((s) => (
-              <button key={s} className={statusFilter === s ? "active" : ""} onClick={() => setStatusFilter(s)}>
+              <button key={s} className={statusFilter === s ? "active" : ""} onClick={() => setStatusFilter(s)} aria-pressed={statusFilter === s}>
                 {statusFilter === s && check}
                 {s === "all" ? "All" : STATUS_META[s].label}
               </button>
@@ -571,10 +559,11 @@ export default function MaintenancePage() {
           </div>
         </div>
 
-        <div className="ms-search-bar" style={{ width: 220, padding: "7px 14px", flexShrink: 1 }}>
-          <Search size={15} />
+        <label className="ms-search-bar nc-ops-search">
+          <Search size={15} aria-hidden="true" />
+          <span className="sr-only">Search schedules</span>
           <input type="text" placeholder="Search schedules…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-        </div>
+        </label>
       </div>
 
       {/* Row B — KPI tiles */}
@@ -606,28 +595,28 @@ export default function MaintenancePage() {
       </div>
 
       {/* Row C — schedule list */}
-      <article className={`${styles.chartCard} ${styles.chart1}`}>
-        <div className={styles.chartHead}>
+      <article className={`${styles.chartCard} ${styles.chart1} nc-ops-card`}>
+        <div className={`${styles.chartHead} nc-ops-card-head`}>
           <div className={styles.headText}>
             <h3>Maintenance Schedules</h3>
             <p className={styles.subtitle}>
               {loading ? "Loading…" : `${visible.length} of ${schedules.length} shown`}
             </p>
           </div>
-          <button className="ms-btn-primary" style={{ whiteSpace: "nowrap", flexShrink: 0, padding: "8px 16px" }} onClick={() => { setFormError(null); setEditId(null); setForm(emptyForm); setFormOpen(true); }}>
-            <Plus size={16} /> Schedule Maintenance
+          <button className="btn-primary nc-ops-new" onClick={() => { setFormError(null); setEditId(null); setForm(emptyForm); setFormOpen(true); }}>
+            <Plus size={15} aria-hidden="true" /> Schedule Maintenance
           </button>
         </div>
 
         {error ? (
-          <div className={styles.placeholder}>Live data unavailable — is the backend running on port 4000?</div>
+          <StateNote kind="offline">Live data unavailable — is the backend running on port 4000?</StateNote>
         ) : !loading && schedules.length === 0 ? (
-          <div className={styles.placeholder}>No maintenance scheduled yet — create the first one.</div>
+          <StateNote kind="nodata">No maintenance scheduled yet — create the first one.</StateNote>
         ) : !loading && visible.length === 0 ? (
-          <div className={styles.placeholder}>Nothing matches the current filters.</div>
+          <StateNote kind="nodata">Nothing matches the current filters.</StateNote>
         ) : (
-          <div className={styles.plazaTableWrap} style={{ maxHeight: "none", overflow: "visible" }}>
-            <table className={styles.plazaTable}>
+          <div className={`${styles.plazaTableWrap} nc-ops-table-wrap`}>
+            <table className={`${styles.plazaTable} nc-ops-table`}>
               <thead>
                 <tr>
                   <SortableTh label="Status" sortKey="status" sort={sort} onToggle={toggle} />
@@ -639,7 +628,7 @@ export default function MaintenancePage() {
               <tbody>
                 {visible.map((s) => (
                   <tr key={s.id} className={styles.clickableRow} onClick={() => { setActionError(null); setDetail(s); }}>
-                    <td>
+                    <td className="nc-ops-td-status">
                       <StatusControl
                         schedule={s}
                         disabled={mutating}
@@ -647,19 +636,19 @@ export default function MaintenancePage() {
                         onCancel={() => { setActionError(null); setCancelReason(""); setCancelTarget(s); }}
                       />
                     </td>
-                    <td>
+                    <td className="nc-ops-td-work">
                       <strong>{s.title}</strong>
                       {s.description && (
-                        <span style={{ display: "block", fontSize: "0.78rem", color: "var(--text-muted)", maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span className="nc-ops-sub is-clip">
                           {s.description}
                         </span>
                       )}
                     </td>
-                    <td style={{ whiteSpace: "nowrap" }}>
-                      {kmRange(s)} · {s.direction}
-                      <span style={{ display: "block", fontSize: "0.78rem", color: "var(--text-muted)" }}>{s.lane_closure}</span>
+                    <td className="nc-ops-td-loc" data-label="Location">
+                      <span className="nc-ops-num">{kmRange(s)}</span> · {s.direction}
+                      <span className="nc-ops-sub">{s.lane_closure}</span>
                     </td>
-                    <td>{fmtWindow(s.starts_at, s.ends_at)}</td>
+                    <td className="nc-ops-td-window nc-ops-num" data-label="Window">{fmtWindow(s.starts_at, s.ends_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -667,17 +656,17 @@ export default function MaintenancePage() {
           </div>
         )}
         {actionError && !detail && !cancelTarget && !deleteTarget && (
-          <p style={{ color: "var(--color-danger)", fontSize: "0.8rem", padding: "8px 18px" }}>{actionError}</p>
+          <p className="nc-ops-error is-card">{actionError}</p>
         )}
       </article>
 
       {/* Detail modal */}
       {detail && (
-        <div className={styles.detailBackdrop} role="dialog" aria-modal="true" aria-label={detail.title} onClick={() => setDetail(null)}>
-          <div className={styles.detailModal} style={{ width: "min(94vw, 480px)" }} onClick={(e) => e.stopPropagation()}>
+        <div className={`${styles.detailBackdrop} nc-ops-backdrop`} role="dialog" aria-modal="true" aria-label={detail.title} onClick={() => setDetail(null)}>
+          <div className={`${styles.detailModal} nc-ops-modal is-detail`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
-            <div className={styles.detailHeader}>
-              <div className={styles.detailIcon}>🛠️</div>
+            <div className={`${styles.detailHeader} nc-ops-modal-head`}>
+              <div className={styles.detailIcon}><Wrench size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>{detail.title}</h3>
                 <p><span className={`ms-badge ${STATUS_META[detail.status].badge}`}>{STATUS_META[detail.status].label}</span></p>
@@ -696,31 +685,31 @@ export default function MaintenancePage() {
                 ...(detail.status_reason ? ([["Reason", detail.status_reason]] as [string, string][]) : []),
                 ["Created", new Date(detail.created_at).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })],
               ] as [string, string][]).map(([k, v], i) => (
-                <div key={k} className={`${styles.detailRow} ${i % 2 === 0 ? styles.detailRowAlt : ""}`}>
+                <div key={k} className={`${styles.detailRow} ${i % 2 === 0 ? styles.detailRowAlt : ""} nc-ops-detail-row`}>
                   <span className={styles.detailKey}>{k}</span>
-                  <span className={styles.detailVal}>{v}</span>
+                  <span className={`${styles.detailVal} nc-ops-num`}>{v}</span>
                 </div>
               ))}
             </div>
-            {actionError && <p style={{ color: "var(--color-danger)", fontSize: "0.8rem", padding: "0 18px 8px" }}>{actionError}</p>}
+            {actionError && <p className="nc-ops-error is-modal">{actionError}</p>}
             {/* Always rendered, because Delete applies to every status. The
                 live-only actions are gated individually inside: a completed or
                 already-cancelled schedule has nothing to advance or call off,
                 and the API answers 409 if asked, but it can still be removed. */}
-            <div className="ms-form-actions" style={{ padding: "0 18px 16px", flexWrap: "wrap" }}>
+            <div className="nc-ops-actions is-wrap">
               {(detail.status === "scheduled" || detail.status === "in_progress") && (
-                <button className="ms-btn-cancel" disabled={mutating} onClick={() => openEdit(detail)}>
+                <button className="btn-muted" disabled={mutating} onClick={() => openEdit(detail)}>
                   Edit details
                 </button>
               )}
               {NEXT_ACTIONS[detail.status].map((a) => (
-                <button key={a.to} className="ms-btn-submit" disabled={mutating} onClick={() => changeStatus(detail, a.to)}>
+                <button key={a.to} className="btn-primary" disabled={mutating} onClick={() => changeStatus(detail, a.to)}>
                   {mutating ? "Saving…" : a.label}
                 </button>
               ))}
               {(detail.status === "scheduled" || detail.status === "in_progress") && (
                 <button
-                  className="ms-btn-cancel"
+                  className="btn-muted"
                   disabled={mutating}
                   onClick={() => { setCancelReason(""); setCancelTarget(detail); setDetail(null); }}
                 >
@@ -728,12 +717,11 @@ export default function MaintenancePage() {
                 </button>
               )}
               <button
-                className="ms-btn-cancel"
+                className="btn-danger nc-ops-push"
                 disabled={mutating}
-                style={{ marginLeft: "auto", color: "var(--color-danger)" }}
                 onClick={() => { setDeleteTarget(detail); setDetail(null); }}
               >
-                Delete
+                <Trash2 size={14} aria-hidden="true" /> Delete
               </button>
             </div>
           </div>
@@ -747,41 +735,41 @@ export default function MaintenancePage() {
           difference, because "cancel" and "delete" sitting side by side is
           otherwise a guess. */}
       {deleteTarget && (
-        <div className={styles.detailBackdrop} role="dialog" aria-modal="true" aria-label="Delete schedule" onClick={() => setDeleteTarget(null)}>
-          <div className={styles.detailModal} onClick={(e) => e.stopPropagation()}>
+        <div className={`${styles.detailBackdrop} nc-ops-backdrop`} role="dialog" aria-modal="true" aria-label="Delete schedule" onClick={() => setDeleteTarget(null)}>
+          <div className={`${styles.detailModal} nc-ops-modal is-confirm`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
-            <div className={styles.detailHeader}>
-              <div className={styles.detailIcon}>🗑️</div>
+            <div className={`${styles.detailHeader} nc-ops-modal-head`}>
+              <div className={`${styles.detailIcon} nc-ops-icon-danger`}><Trash2 size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>Delete this schedule?</h3>
-                <p>{deleteTarget.title} · {kmRange(deleteTarget)}</p>
+                <p className="nc-ops-num">{deleteTarget.title} · {kmRange(deleteTarget)}</p>
               </div>
               <button className={styles.detailClose} onClick={() => setDeleteTarget(null)} aria-label="Close">
                 <X size={18} />
               </button>
             </div>
-            <div style={{ padding: "4px 18px 0" }}>
-              <p style={{ fontSize: "0.84rem", color: "var(--text-secondary)", margin: 0, lineHeight: 1.55 }}>
+            <div className="nc-ops-modal-body">
+              <p className="nc-ops-prose">
                 This removes the record entirely. If the work was planned and then called
                 off, use <strong>Cancel schedule</strong> instead — that keeps the entry and
                 its reason on the corridor record.
               </p>
-              {actionError && <p style={{ color: "var(--color-danger)", fontSize: "0.8rem", marginTop: 8 }}>{actionError}</p>}
+              {actionError && <p className="nc-ops-error">{actionError}</p>}
             </div>
-            <div className="ms-form-actions" style={{ padding: "12px 18px 16px" }}>
+            <div className="nc-ops-actions">
               <button
-                className="ms-btn-submit ms-btn-danger-action"
+                className="btn-danger is-solid"
                 disabled={mutating}
                 onClick={() => removeSchedule(deleteTarget)}
               >
                 {mutating ? "Deleting…" : "Delete permanently"}
               </button>
-              <button className="ms-btn-cancel" disabled={mutating} onClick={() => setDeleteTarget(null)}>
+              <button className="btn-muted" disabled={mutating} onClick={() => setDeleteTarget(null)}>
                 Keep it
               </button>
             </div>
-            <div className={styles.detailFooter}>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.4" /><path d="M8 7v4M8 5.2v.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+            <div className={`${styles.detailFooter} nc-ops-modal-foot`}>
+              <Info size={14} aria-hidden="true" />
               <p>This cannot be undone.</p>
             </div>
           </div>
@@ -790,23 +778,24 @@ export default function MaintenancePage() {
 
       {/* Cancel-with-reason modal */}
       {cancelTarget && (
-        <div className={styles.detailBackdrop} role="dialog" aria-modal="true" aria-label="Cancel schedule" onClick={() => setCancelTarget(null)}>
-          <div className={styles.detailModal} onClick={(e) => e.stopPropagation()}>
+        <div className={`${styles.detailBackdrop} nc-ops-backdrop`} role="dialog" aria-modal="true" aria-label="Cancel schedule" onClick={() => setCancelTarget(null)}>
+          <div className={`${styles.detailModal} nc-ops-modal is-confirm`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
-            <div className={styles.detailHeader}>
-              <div className={styles.detailIcon}>⚠️</div>
+            <div className={`${styles.detailHeader} nc-ops-modal-head`}>
+              <div className={`${styles.detailIcon} nc-ops-icon-danger`}><AlertTriangle size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>Cancel this schedule?</h3>
-                <p>{cancelTarget.title} · {kmRange(cancelTarget)}</p>
+                <p className="nc-ops-num">{cancelTarget.title} · {kmRange(cancelTarget)}</p>
               </div>
               <button className={styles.detailClose} onClick={() => setCancelTarget(null)} aria-label="Close">
                 <X size={18} />
               </button>
             </div>
-            <div style={{ padding: "4px 18px 0" }}>
+            <div className="nc-ops-modal-body">
               <div className="ms-input-group">
-                <label>Cancellation reason <span className="ms-req">*</span></label>
+                <label htmlFor="ms-cancel-reason">Cancellation reason <span className="ms-req">*</span></label>
                 <textarea
+                  id="ms-cancel-reason"
                   className="ms-input ms-textarea"
                   rows={3}
                   placeholder="Why is this work being cancelled?"
@@ -814,22 +803,22 @@ export default function MaintenancePage() {
                   onChange={(e) => setCancelReason(e.target.value)}
                 />
               </div>
-              {actionError && <p style={{ color: "var(--color-danger)", fontSize: "0.8rem", marginTop: 6 }}>{actionError}</p>}
+              {actionError && <p className="nc-ops-error">{actionError}</p>}
             </div>
-            <div className="ms-form-actions" style={{ padding: "12px 18px 16px" }}>
+            <div className="nc-ops-actions">
               <button
-                className="ms-btn-submit ms-btn-danger-action"
+                className="btn-danger is-solid"
                 disabled={mutating || !cancelReason.trim()}
                 onClick={() => changeStatus(cancelTarget, "cancelled", cancelReason.trim())}
               >
                 {mutating ? "Cancelling…" : "Cancel schedule"}
               </button>
-              <button className="ms-btn-cancel" disabled={mutating} onClick={() => setCancelTarget(null)}>
+              <button className="btn-muted" disabled={mutating} onClick={() => setCancelTarget(null)}>
                 Keep it
               </button>
             </div>
-            <div className={styles.detailFooter}>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.4" /><path d="M8 7v4M8 5.2v.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+            <div className={`${styles.detailFooter} nc-ops-modal-foot`}>
+              <Info size={14} aria-hidden="true" />
               <p>This cannot be undone.</p>
             </div>
           </div>
@@ -838,11 +827,11 @@ export default function MaintenancePage() {
 
       {/* Schedule form modal */}
       {formOpen && (
-        <div className={styles.detailBackdrop} role="dialog" aria-modal="true" aria-label="Schedule maintenance" onClick={() => !saving && setFormOpen(false)}>
-          <div className={styles.detailModal} style={{ width: "min(94vw, 780px)" }} onClick={(e) => e.stopPropagation()}>
+        <div className={`${styles.detailBackdrop} nc-ops-backdrop`} role="dialog" aria-modal="true" aria-label="Schedule maintenance" onClick={() => !saving && setFormOpen(false)}>
+          <div className={`${styles.detailModal} nc-ops-modal is-form`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
-            <div className={styles.detailHeader}>
-              <div className={styles.detailIcon}>🛠️</div>
+            <div className={`${styles.detailHeader} nc-ops-modal-head`}>
+              <div className={styles.detailIcon}><Wrench size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>{editId ? "Edit Maintenance" : "Schedule Maintenance"}</h3>
               </div>
@@ -851,10 +840,11 @@ export default function MaintenancePage() {
               </button>
             </div>
 
-            <div style={{ padding: "6px 24px 4px", maxHeight: "calc(100vh - 180px)", overflowY: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="nc-ops-form-body">
               <div className="ms-input-group">
-                <label>Title <span className="ms-req">*</span></label>
+                <label htmlFor="ms-title">Title <span className="ms-req">*</span></label>
                 <input
+                  id="ms-title"
                   type="text"
                   className="ms-input"
                   placeholder="e.g. Road resurfacing, toll booth repair…"
@@ -863,29 +853,28 @@ export default function MaintenancePage() {
                 />
               </div>
 
-              <p className="ms-section-label" style={{ ...SECTION_STYLE, marginTop: 8 }}>Location</p>
+              <p className="ms-section-label">Location</p>
               {/* Direction first: it decides which way the stretch runs, so the
                   exit lists below follow it. */}
               <div className="ms-input-group">
-                <label>Direction <span className="ms-req">*</span></label>
-                <div className={styles.segmentedSmall} style={{ width: "100%" }}>
+                <label id="ms-direction-label">Direction <span className="ms-req">*</span></label>
+                <div className="nc-ops-seg2" role="group" aria-labelledby="ms-direction-label">
                   {DIRECTIONS.map((d) => (
                     <button
                       key={d}
                       type="button"
                       className={form.direction === d ? "active" : ""}
-                      style={{ flex: 1, padding: "9px 12px", fontSize: "0.88rem" }}
                       onClick={() => setDirection(d)}
                       aria-pressed={form.direction === d}
                     >
                       {form.direction === d && check}
-                      {d} <span style={{ fontWeight: 500, opacity: 0.75, marginLeft: 4 }}>{DIRECTION_LABEL[d]}</span>
+                      {d} <span className="nc-ops-seg2-name">{DIRECTION_LABEL[d]}</span>
                     </button>
                   ))}
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.6fr 1.5fr 0.6fr", gap: 12 }}>
+              <div className="nc-ops-grid-loc">
                 <div className="ms-input-group">
                   <label>Start exit <span className="ms-req">*</span></label>
                   <Select
@@ -896,9 +885,10 @@ export default function MaintenancePage() {
                   />
                 </div>
                 <div className="ms-input-group">
-                  <label>Start Km</label>
+                  <label htmlFor="ms-start-km">Start Km</label>
                   <input
-                    type="number" step={0.01} min={KM_MIN} max={KM_MAX} className="ms-input"
+                    id="ms-start-km"
+                    type="number" step={0.01} min={KM_MIN} max={KM_MAX} className="ms-input nc-ops-num"
                     placeholder="auto" value={form.startKm}
                     title="Filled from the exit. Adjust only if the works start between two exits."
                     onChange={(e) => set("startKm", e.target.value)}
@@ -914,9 +904,10 @@ export default function MaintenancePage() {
                   />
                 </div>
                 <div className="ms-input-group">
-                  <label>End Km</label>
+                  <label htmlFor="ms-end-km">End Km</label>
                   <input
-                    type="number" step={0.01} min={KM_MIN} max={KM_MAX} className="ms-input"
+                    id="ms-end-km"
+                    type="number" step={0.01} min={KM_MIN} max={KM_MAX} className="ms-input nc-ops-num"
                     placeholder="auto" value={form.endKm}
                     title="Filled from the exit. Adjust only if the works end between two exits."
                     onChange={(e) => set("endKm", e.target.value)}
@@ -925,8 +916,8 @@ export default function MaintenancePage() {
               </div>
 
               {segmentNote && (
-                <p style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: "var(--text-secondary)", margin: "-4px 0 0" }}>
-                  <MapPin size={13} /> {DIRECTION_LABEL[form.direction]} · {segmentNote}
+                <p className="nc-ops-segment-note">
+                  <MapPin size={13} aria-hidden="true" /> {DIRECTION_LABEL[form.direction]} · {segmentNote}
                 </p>
               )}
 
@@ -942,29 +933,30 @@ export default function MaintenancePage() {
                 </div>
               </div>
 
-              <p className="ms-section-label" style={{ ...SECTION_STYLE, marginTop: 8 }}>Window</p>
-              <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1.2fr 1fr", gap: 12 }}>
+              <p className="ms-section-label">Window</p>
+              <div className="nc-ops-grid-win">
                 <div className="ms-input-group">
-                  <label>Start date <span className="ms-req">*</span></label>
-                  <input type="date" className="ms-input" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} />
+                  <label htmlFor="ms-start-date">Start date <span className="ms-req">*</span></label>
+                  <input id="ms-start-date" type="date" className="ms-input" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} />
                 </div>
                 <div className="ms-input-group">
-                  <label>Start time</label>
-                  <input type="time" className="ms-input" value={form.startTime} onChange={(e) => set("startTime", e.target.value)} />
+                  <label htmlFor="ms-start-time">Start time</label>
+                  <input id="ms-start-time" type="time" className="ms-input" value={form.startTime} onChange={(e) => set("startTime", e.target.value)} />
                 </div>
                 <div className="ms-input-group">
-                  <label>End date <span className="ms-req">*</span></label>
-                  <input type="date" min={form.startDate || undefined} className="ms-input" value={form.endDate} onChange={(e) => set("endDate", e.target.value)} />
+                  <label htmlFor="ms-end-date">End date <span className="ms-req">*</span></label>
+                  <input id="ms-end-date" type="date" min={form.startDate || undefined} className="ms-input" value={form.endDate} onChange={(e) => set("endDate", e.target.value)} />
                 </div>
                 <div className="ms-input-group">
-                  <label>End time</label>
-                  <input type="time" className="ms-input" value={form.endTime} onChange={(e) => set("endTime", e.target.value)} />
+                  <label htmlFor="ms-end-time">End time</label>
+                  <input id="ms-end-time" type="time" className="ms-input" value={form.endTime} onChange={(e) => set("endTime", e.target.value)} />
                 </div>
               </div>
 
               <div className="ms-input-group">
-                <label>Description</label>
+                <label htmlFor="ms-description">Description</label>
                 <textarea
+                  id="ms-description"
                   className="ms-input ms-textarea"
                   rows={2}
                   placeholder="Scope of work, crew, equipment, traffic advisory notes…"
@@ -973,15 +965,15 @@ export default function MaintenancePage() {
                 />
               </div>
 
-              {formError && <p style={{ color: "var(--color-danger)", fontSize: "0.8rem", marginTop: -4 }}>{formError}</p>}
+              {formError && <p className="nc-ops-error">{formError}</p>}
             </div>
 
-            <div className="ms-form-actions" style={{ padding: "12px 18px 16px" }}>
-              <button className="ms-btn-submit" disabled={saving} onClick={submitForm}>
-                <Calendar size={15} style={{ marginRight: 6, marginBottom: -2 }} />
+            <div className="nc-ops-actions is-form">
+              <button className="nc-pill" disabled={saving} onClick={submitForm}>
+                <Calendar size={15} aria-hidden="true" />
                 {saving ? "Saving…" : editId ? "Save changes" : "Schedule Maintenance"}
               </button>
-              <button className="ms-btn-cancel" disabled={saving} onClick={() => setFormOpen(false)}>
+              <button className="btn-muted" disabled={saving} onClick={() => setFormOpen(false)}>
                 Discard
               </button>
             </div>

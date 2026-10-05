@@ -46,6 +46,10 @@ export default function MapLegend({ variant = "live" }: { variant?: "live" | "fo
             <span className="wz-line" style={{ background: palette.status[k.status] }} /> {k.label}
           </div>
         ))}
+        {/* Grey is a stretch nobody forecast, which the forecast map draws. */}
+        <div className="wz-legend-row">
+          <span className="wz-line" style={{ background: palette.noData }} /> No data
+        </div>
         <h4 className="wz-legend-gap">On the map</h4>
         <div className="wz-legend-row">
           <span className="mc-legend-pin" aria-hidden="true" /> NLEX exit

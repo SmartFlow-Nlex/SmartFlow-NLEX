@@ -36,8 +36,8 @@ export type CorridorLive = {
  *
  * The same feed, the same 25 s cache and the same rules (corridorStatusFromFeed,
  * tallyExitStatuses, slowestReading) the hero card and the Live Corridor Status
- * panel already used, so the counts, the 3D corridor and the readout cannot
- * disagree. Re-reads every 60 s.
+ * panel already used, so the headline, the counts, the hotspot list and the
+ * corridor ribbon cannot disagree. Re-reads every 60 s.
  */
 export function useCorridorLive(): CorridorLive {
   const { exits } = useNlexExits();

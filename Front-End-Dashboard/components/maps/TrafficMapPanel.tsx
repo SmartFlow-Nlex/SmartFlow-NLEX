@@ -15,6 +15,13 @@ import { useChartTheme } from "../../lib/chart-theme";
 import { mapPalette } from "../../lib/map-palette";
 import { isDisputedReport, isReportType, isUnconfirmedReport } from "../../lib/waze-reports";
 import { lookOf } from "../../lib/waze-report-look";
+import nlexRamps from "./nlex-ramps.json";
+import { corridorKm } from "./corridor-km";
+import { useActiveClosures, type Closure } from "./useActiveClosures";
+import {
+  FLOW_BANDS, STATIC_DASH, addNightCorridorImages, buildSnapshot, carriagewayShift, createJamCallouts,
+  dashAt, dashPhase, type CorridorSnapshot, type StripAlert,
+} from "./livemap-graphics";
 
 type Props = {
   title: string;
@@ -29,7 +36,43 @@ type Props = {
   layerColor: string;
   tone: "blue" | "purple";
   children?: React.ReactNode;
+  /* Night Corridor additions (REDESIGN_PROMPT.md 5c), all presentational. */
+  /** Tilts the camera to about 50 degrees ("3D"); 2D north-up otherwise. */
+  pitched?: boolean;
+  /** A km post (and carriageway) to mark, from the corridor strip's hover. */
+  highlight?: { km: number; dir: "NB" | "SB" | null } | null;
+  /** Hands the corridor strip what this map is drawing, whenever it changes. */
+  onSnapshot?: (s: CorridorSnapshot) => void;
+  /** The km post under the pointer, so the strip can mark the same spot. */
+  onHoverKm?: (h: { km: number; dir: "NB" | "SB" } | null) => void;
+  /** The exit picked in the header: its pin is marked, and on the forecast
+      map its segment carries the clock badge. */
+  selectedExit?: string;
 };
+
+/* Major interchanges, for the exit names shown at corridor zoom: the two
+   termini plus every interchange with two or more ramp spurs in
+   nlex-ramps.json. All twenty are named once the map is zoomed in. */
+export const MAJOR_EXITS: Set<string> = (() => {
+  const count = new Map<string, number>();
+  for (const f of (nlexRamps as unknown as { features: { properties: { interchange: string } }[] }).features) {
+    // "Balagtas / Tabang" names two exits; "Cdv/Ph Arena" is one name with a slash in it.
+    for (const part of f.properties.interchange.split(" / ")) {
+      const k = part.trim().toLowerCase();
+      if (k) count.set(k, (count.get(k) ?? 0) + 1);
+    }
+  }
+  const sorted = [...FALLBACK_EXITS].sort((a, b) => a.km - b.km);
+  const out = new Set<string>([sorted[0].exit_name.toLowerCase(), sorted[sorted.length - 1].exit_name.toLowerCase()]);
+  for (const e of FALLBACK_EXITS) {
+    const name = e.exit_name.toLowerCase();
+    let n = count.get(name) ?? 0;
+    // "Tabang" in the ramps file is the exit stored as "Tabang Guiguinto".
+    if (!n) for (const [k, v] of count) if (name.startsWith(k + " ")) n += v;
+    if (n >= 2) out.add(name);
+  }
+  return out;
+})();
 
 /**
  * Everything the report detail panel shows. Mirrors the alert properties the
@@ -194,9 +237,64 @@ const sinceLabel = (iso: string) => {
   return `${Math.floor(h / 24)}d ${h % 24}h ago`;
 };
 
-export default function TrafficMapPanel({ title, subtitle, badge, endpoint, layerColor, tone, children, chromeless = false, paused = false }: Props) {
+/** A report's full record, for the strip's icons: the same fields the pin's click hands the detail panel. */
+const reportDetailOf = (props: Record<string, unknown>, coords: [number, number]): ReportDetail => {
+  const v = <T,>(k: string) => (props[k] ?? null) as T | null;
+  return {
+    type: String(props.type ?? "ALERT"),
+    subtype: v<string>("subtype"),
+    street: v<string>("street"),
+    city: v<string>("city"),
+    nearest_exit: v<string>("nearest_exit"),
+    exit_distance_m: v<number>("exit_distance_m"),
+    reliability: v<number>("reliability"),
+    confidence: v<number>("confidence"),
+    report_rating: v<number>("report_rating"),
+    road_type: v<number>("road_type"),
+    by_municipality: v<boolean>("by_municipality"),
+    heading: v<number>("heading"),
+    reported_at: v<string>("reported_at"),
+    first_report_at: v<string>("first_report_at"),
+    reports_here: v<number>("reports_here"),
+    uuid: v<string>("uuid"),
+    lon: Number(coords[0]),
+    lat: Number(coords[1]),
+  };
+};
+
+export default function TrafficMapPanel({
+  title, subtitle, badge, endpoint, layerColor, tone, children, chromeless = false, paused = false,
+  pitched = false, highlight = null, onSnapshot, onHoverKm, selectedExit,
+}: Props) {
   // Reuses the charts' theme hook, so the map switches with everything else.
   const { isDark } = useChartTheme();
+  /* Night Corridor: handles the map effect sets up, so the props below can
+     reach a map that is built once per endpoint/theme without rebuilding it. */
+  const onSnapshotRef = useRef(onSnapshot);
+  onSnapshotRef.current = onSnapshot;
+  const onHoverKmRef = useRef(onHoverKm);
+  onHoverKmRef.current = onHoverKm;
+  const pitchedRef = useRef(pitched);
+  pitchedRef.current = pitched;
+  const highlightRef = useRef(highlight);
+  highlightRef.current = highlight;
+  const selectedExitRef = useRef(selectedExit);
+  selectedExitRef.current = selectedExit;
+  const closures = useActiveClosures();
+  const closuresRef = useRef<Closure[] | null>(closures);
+  closuresRef.current = closures;
+  const reducedRef = useRef(false);
+  const visibleRef = useRef(true);
+  const kickRef = useRef<(() => void) | null>(null);
+  const applyPitchRef = useRef<((on: boolean) => void) | null>(null);
+  const applyHighlightRef = useRef<((h: Props["highlight"]) => void) | null>(null);
+  const applyClosuresRef = useRef<((c: Closure[] | null) => void) | null>(null);
+  const applyExitRef = useRef<((name: string | undefined) => void) | null>(null);
+  useEffect(() => { kickRef.current?.(); }, [paused]);
+  useEffect(() => { applyPitchRef.current?.(pitched); }, [pitched]);
+  useEffect(() => { applyHighlightRef.current?.(highlight); }, [highlight]);
+  useEffect(() => { applyClosuresRef.current?.(closures); }, [closures]);
+  useEffect(() => { applyExitRef.current?.(selectedExit); }, [selectedExit]);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeMarkers = useRef<mapboxgl.Marker[]>([]);
@@ -293,6 +391,10 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         pitch: 0, // Flat (2D)
         bearing: 0, // North up
         attributionControl: false,
+        /* Dark basemap only: its labels are drawn locally in the interface
+           face rather than fetched from CARTO's glyph server, which does not
+           serve every font the style names (each miss was a console error). */
+        ...(isDark ? { localFontFamily: getComputedStyle(document.body).fontFamily || "sans-serif" } : {}),
       });
     } catch (err) {
       console.error("Mapbox failed to initialize:", err);
@@ -327,6 +429,34 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
     });
 
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+    /* The basemap's attribution, always visible: the dark style is CARTO's
+       free Dark Matter, whose terms ask for "© CARTO, © OpenStreetMap
+       contributors" on the map; the light Mapbox style names its own. */
+    map.addControl(new mapboxgl.AttributionControl({ compact: false }), "bottom-right");
+
+    /* Motion is decoration here, so it stops for readers who ask for less of
+       it, and whenever nobody can see the map (scrolled away, or another tab). */
+    const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reducedRef.current = motionQuery.matches;
+    const onMotionPref = () => {
+      reducedRef.current = motionQuery.matches;
+      applyMotionRef?.();
+      kickRef.current?.();
+      map.triggerRepaint();
+    };
+    motionQuery.addEventListener("change", onMotionPref);
+    let applyMotionRef: (() => void) | null = null;
+    const io = new IntersectionObserver((entries) => {
+      const seen = entries.some((en) => en.isIntersecting);
+      visibleRef.current = seen;
+      if (seen) {
+        map.triggerRepaint();
+        kickRef.current?.();
+      }
+    });
+    io.observe(containerRef.current);
+    const onVisibility = () => kickRef.current?.();
+    document.addEventListener("visibilitychange", onVisibility);
 
     // The header's exit search broadcasts a pick; both panels fly to it together
     // so the two maps stay on the same place for comparison.
@@ -469,6 +599,8 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
        same six layers, which is what made the flow stutter and jump. */
     let disposed = false;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
+    /* Set once the Night Corridor graphics exist; tears them down with the map. */
+    let cleanupGraphics: (() => void) | null = null;
 
     const guard = corridorGuard(corridorLine, corridorExits);
 
@@ -606,6 +738,8 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
     const NO_READING = -1;
 
     const exitNames = [...FALLBACK_EXITS].sort((x, y) => x.km - y.km).map((e) => e.exit_name);
+    /* Km post at each exit, south to north: segment N runs from [N-1] to [N]. */
+    const exitKmByOrder = CORRIDOR_BY_KM.map((e) => e.km);
 
     const corridorBase: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
@@ -733,6 +867,9 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
     map.on("load", async () => {
       const response = await fetch(endpoint, { cache: "no-store" });
       const data = onlyOnCorridor(withPredictedQueues(await response.json()));
+      // Rebuilt (new hour, new theme) or unmounted while the feed was loading:
+      // this map is gone, so there is nothing left to draw on.
+      if (disposed) return;
 
       const isRealtime = endpoint.includes("real-time");
 
@@ -768,6 +905,35 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         data: corridorAtLoad,
       });
 
+      /* Night Corridor: the images the new layers draw with, and the active
+         maintenance closures (read-only, /api/maintenance/list). */
+      addNightCorridorImages(map, PALETTE);
+      const K = corridorKm();
+      const closuresFC = (list: Closure[] | null): GeoJSON.FeatureCollection => ({
+        type: "FeatureCollection",
+        features: (list ?? []).flatMap((c) => {
+          const a = Math.max(K.kmStart, Math.min(K.kmEnd, Number(c.start_km)));
+          const b = Math.max(K.kmStart, Math.min(K.kmEnd, Number(c.end_km)));
+          // Wholly off the corridor's km posts, or no length: nothing to draw.
+          if (Math.abs(b - a) < 0.01) return [];
+          const dirs: ("NB" | "SB")[] = c.direction === "Both" ? ["NB", "SB"] : [c.direction === "SB" ? "SB" : "NB"];
+          return dirs.map((direction) => ({
+            type: "Feature" as const,
+            properties: {
+              id: c.id, title: c.title, description: c.description, direction,
+              start_km: Number(c.start_km), end_km: Number(c.end_km), lane_closure: c.lane_closure,
+              starts_at: c.starts_at, ends_at: c.ends_at, status: c.status,
+            },
+            geometry: { type: "LineString" as const, coordinates: K.sliceKm(a, b) },
+          }));
+        }),
+      });
+      map.addSource("lm-closures", { type: "geojson", data: closuresFC(closuresRef.current) });
+      applyClosuresRef.current = (list) => {
+        if (disposed) return;
+        (map.getSource("lm-closures") as GeoJSONSource | undefined)?.setData(closuresFC(list));
+      };
+
       /* Push the base map back. A background layer added before ours sits over
          every base layer, so the surrounding road network and labels fade and
          the corridor drawn on top of it becomes the only thing at full
@@ -789,6 +955,22 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
          both gone. The spurs were the stray lines wandering off the corridor --
          18.5 km of on- and off-ramps drawn at near corridor weight, which read
          as breakage rather than as detail. */
+      /* The lit ribbon's outer light: wider and fainter than the halo, the
+         glow the corridor throws on the ground around it, in both themes. */
+      map.addLayer({
+        id: "lm-ribbon-glow",
+        type: "line",
+        source: "nlex-corridor",
+        filter: ["==", ["get", "direction"], "NB"],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": PALETTE.glow,
+          "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 8, 34, 12, 64, 16, 96],
+          "line-opacity": PALETTE.glowOpacity,
+          "line-blur": ["interpolate", ["linear"], ["zoom"], 8, 18, 16, 40],
+        },
+      });
+
       map.addLayer({
         id: "nlex-halo",
         type: "line",
@@ -802,6 +984,29 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         },
       });
 
+      /* The road surface (5 Oct 2026): an edge line, then the asphalt, as one
+         band on the centreline wide enough to hold both offset ribbons. Drawn
+         once (northbound features only: both directions share a centreline).
+         Widths follow the ribbons: 2 x (offset + half the ribbon) + 3 px. */
+      const ROADBED_WIDTH = ["interpolate", ["linear"], ["zoom"], 8, 22, 12, 26, 15, 28, 16, 33, 17, 46, 18, 69] as unknown as mapboxgl.ExpressionSpecification;
+      const ROAD_EDGE_WIDTH = ["interpolate", ["linear"], ["zoom"], 8, 25, 12, 29, 15, 31, 16, 36, 17, 49, 18, 72] as unknown as mapboxgl.ExpressionSpecification;
+      map.addLayer({
+        id: "lm-road-edge",
+        type: "line",
+        source: "nlex-corridor",
+        filter: ["==", ["get", "direction"], "NB"],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": PALETTE.roadEdge, "line-width": ROAD_EDGE_WIDTH, "line-opacity": 1 },
+      });
+      map.addLayer({
+        id: "lm-roadbed",
+        type: "line",
+        source: "nlex-corridor",
+        filter: ["==", ["get", "direction"], "NB"],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": PALETTE.roadbed, "line-width": ROADBED_WIDTH, "line-opacity": 1 },
+      });
+
       map.addLayer({
         id: "nlex-casing",
         type: "line",
@@ -812,6 +1017,41 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
           "line-width": ["interpolate", ["linear"], ["zoom"], 8, 8, 12, 15, 16, 17, 18, 28],
           "line-opacity": 1,
           "line-offset": OFFSET,
+        },
+      });
+
+      /* The forecast finish, part 1: a dashed casing. Only on the forecast map
+         and only on stretches that were forecast (level >= 0), so a predicted
+         segment can never be mistaken for a live one, even in a screenshot. */
+      if (!isRealtimeEndpoint) {
+        map.addLayer({
+          id: "lm-forecast-edge",
+          type: "line",
+          source: "nlex-corridor",
+          filter: [">=", ["get", "level"], 0],
+          layout: { "line-join": "round", "line-cap": "butt" },
+          paint: {
+            "line-color": PALETTE.ink,
+            "line-width": ["interpolate", ["linear"], ["zoom"], 8, 8, 12, 12.5, 16, 14.5, 18, 22],
+            "line-opacity": 0.85,
+            "line-dasharray": [1.1, 0.9],
+            "line-offset": OFFSET,
+          },
+        });
+      }
+
+      /* The median: a fine dashed line between the two carriageways. */
+      map.addLayer({
+        id: "lm-median",
+        type: "line",
+        source: "nlex-corridor",
+        filter: ["==", ["get", "direction"], "NB"],
+        layout: { "line-join": "round", "line-cap": "butt" },
+        paint: {
+          "line-color": PALETTE.median,
+          "line-opacity": PALETTE.medianOpacity,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 12, 1.2, 16, 1.6, 18, 2.4],
+          "line-dasharray": [4, 3],
         },
       });
 
@@ -870,6 +1110,23 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
           "line-offset": OFFSET,
         },
       });
+
+      /* The forecast finish, part 2: the same three colours under a soft
+         diagonal hatch. Forecast map only, forecast stretches only. */
+      if (!isRealtimeEndpoint) {
+        map.addLayer({
+          id: "lm-forecast-hatch",
+          type: "line",
+          source: "nlex-corridor",
+          filter: [">=", ["get", "level"], 0],
+          layout: { "line-join": "round", "line-cap": "butt" },
+          paint: {
+            "line-pattern": "lm-hatch",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 8, 5, 12, 9, 16, 11, 18, 18],
+            "line-offset": OFFSET,
+          },
+        });
+      }
 
       /* Flow. A pale pulse travelling along each ribbon, so the corridor reads
          as moving traffic rather than a static coloured band.
@@ -973,6 +1230,9 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
             // without asking for another frame lets the map go idle; the
             // paused effect below kicks it again on the way back.
             if (pausedRef.current) return false;
+            // Same for reduced motion (a still frame stays drawn) and for a
+            // map nobody can see; both kick a repaint when that changes.
+            if (reducedRef.current || !visibleRef.current) return false;
             // render() only runs as part of a repaint, so an animated image has
             // to ask for the next one or the map settles and never calls it
             // again.
@@ -1030,6 +1290,53 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         }
       }
 
+      /* Directional flow, the no-data half: a static grey dash down every
+         ribbon. The ribbons carry no measured speed (Waze reports speed only
+         inside a jam), so nothing moves here; the moving dashes ride on the
+         queues further up, at their own measured speed. */
+      for (const dir of ["NB", "SB"] as const) {
+        map.addLayer({
+          id: `lm-lane-dash-${dir.toLowerCase()}`,
+          type: "line",
+          source: "nlex-corridor",
+          filter: ["==", ["get", "direction"], dir],
+          layout: { "line-join": "round", "line-cap": "butt" },
+          paint: {
+            "line-color": PALETTE.lane,
+            "line-opacity": PALETTE.laneOpacity,
+            "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.8, 12, 1.4, 16, 1.8, 18, 2.6],
+            "line-dasharray": [3, 4],
+            "line-offset": OFFSET,
+          },
+        });
+      }
+
+      /* Active maintenance closures: hatched stretches between their start and
+         end km, on their own carriageway(s). */
+      map.addLayer({
+        id: "lm-closure-casing",
+        type: "line",
+        source: "lm-closures",
+        layout: { "line-join": "round", "line-cap": "butt" },
+        paint: {
+          "line-color": PALETTE.ink,
+          "line-opacity": 0.9,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 8, 12, 13, 16, 15, 18, 23],
+          "line-offset": OFFSET,
+        },
+      });
+      map.addLayer({
+        id: "lm-closure-hatch",
+        type: "line",
+        source: "lm-closures",
+        layout: { "line-join": "round", "line-cap": "butt" },
+        paint: {
+          "line-pattern": "lm-closure",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 5.5, 12, 10, 16, 12, 18, 19],
+          "line-offset": OFFSET,
+        },
+      });
+
       /* The queues themselves, each over the length it actually covers. This
          is now the only layer on the map that states congestion.
 
@@ -1076,6 +1383,30 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         },
       });
 
+      /* Jam callout, part 1: each queue's real extent glows softly under it,
+         pulsing (still under reduced motion). Same filter and colours as
+         jam-extent, so it marks exactly the road the queue covers. */
+      map.addLayer({
+        id: "lm-jam-pulse",
+        type: "line",
+        source: "traffic",
+        filter: ["all", ["==", ["get", "feature_type"], "jam"], ["has", "direction_source"]],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": [
+            "match", ["get", "level"],
+            0, PALETTE.status.clear,
+            [1, 2], PALETTE.status.slow,
+            [3, 4, 5], PALETTE.status.congested,
+            PALETTE.noData,
+          ],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 18, 12, 26, 16, 30, 18, 42],
+          "line-blur": ["interpolate", ["linear"], ["zoom"], 8, 6, 16, 12],
+          "line-opacity": 0.28,
+          "line-offset": OFFSET,
+        },
+      });
+
       map.addLayer({
         id: "jam-casing",
         type: "line",
@@ -1093,6 +1424,25 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
           "line-offset": OFFSET,
         },
       });
+
+      /* Forecast finish on the predicted queues too: a dashed edge between
+         the casing and the queue. */
+      if (!isRealtimeEndpoint) {
+        map.addLayer({
+          id: "lm-forecast-jam-edge",
+          type: "line",
+          source: "traffic",
+          filter: ["all", ["==", ["get", "feature_type"], "jam"], ["has", "direction_source"]],
+          layout: { "line-join": "round", "line-cap": "butt" },
+          paint: {
+            "line-color": PALETTE.ink,
+            "line-opacity": 0.9,
+            "line-width": ["interpolate", ["linear"], ["zoom"], 8, 10, 12, 15.5, 16, 18, 18, 27],
+            "line-dasharray": [1.1, 0.9],
+            "line-offset": OFFSET,
+          },
+        });
+      }
 
       map.addLayer({
         id: "jam-extent",
@@ -1125,6 +1475,21 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
           "line-offset": OFFSET,
         },
       });
+
+      if (!isRealtimeEndpoint) {
+        map.addLayer({
+          id: "lm-forecast-hatch-jam",
+          type: "line",
+          source: "traffic",
+          filter: ["all", ["==", ["get", "feature_type"], "jam"], ["has", "direction_source"]],
+          layout: { "line-join": "round", "line-cap": "butt" },
+          paint: {
+            "line-pattern": "lm-hatch",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 8, 7, 12, 12, 16, 14, 18, 23],
+            "line-offset": OFFSET,
+          },
+        });
+      }
 
       /* Where each queue starts. See the marker note in onlyOnCorridor: at
          corridor zoom a 228 m queue is under three pixels of road, so the
@@ -1257,9 +1622,64 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         }
       }
 
+      /* Directional flow, the measured half: dashes travelling along each
+         queue in its direction of travel, NB and SB separately, at a rate
+         scaled from that queue's own speed (live: Waze speed_kmh; forecast:
+         the typical in-jam speed the prediction carries). A queue reported at
+         0 km/h gets still dashes; one with no speed at all gets the grey
+         no-data dash. Stepped by the animation loop below; hidden under
+         reduced motion, which leaves the static arrows. */
+      const jamFilter = (dir: "NB" | "SB", extra: unknown[]) => [
+        "all",
+        ["==", ["get", "feature_type"], "jam"],
+        ["has", "direction_source"],
+        ["==", ["get", "direction"], dir],
+        ...extra,
+      ] as unknown as mapboxgl.FilterSpecification;
+      // A speed only counts when Waze (or the forecast) actually sent a number.
+      const hasSpeed = ["==", ["typeof", ["get", "speed"]], "number"];
+      const speedOf = ["to-number", ["get", "speed"]];
+      const DASH_W = ["interpolate", ["linear"], ["zoom"], 8, 1.6, 12, 2.4, 16, 3, 18, 4.5] as unknown as mapboxgl.ExpressionSpecification;
+      const flowLayers: { id: string; rate: number; dir: "NB" | "SB"; key: number }[] = [];
+      for (const dir of ["NB", "SB"] as const) {
+        const d = dir.toLowerCase();
+        map.addLayer({
+          id: `lm-flow-${d}-nodata`,
+          type: "line",
+          source: "traffic",
+          filter: jamFilter(dir, [["!=", ["typeof", ["get", "speed"]], "number"]]),
+          layout: { "line-join": "round", "line-cap": "butt" },
+          paint: { "line-color": PALETTE.lane, "line-opacity": PALETTE.laneOpacity, "line-width": DASH_W, "line-dasharray": STATIC_DASH, "line-offset": OFFSET },
+        }, "jam-mark-nb");
+        map.addLayer({
+          id: `lm-flow-${d}-stop`,
+          type: "line",
+          source: "traffic",
+          filter: jamFilter(dir, [hasSpeed, ["==", speedOf, 0]]),
+          layout: { "line-join": "round", "line-cap": "butt" },
+          paint: { "line-color": PALETTE.dash, "line-opacity": 0.8, "line-width": DASH_W, "line-dasharray": STATIC_DASH, "line-offset": OFFSET },
+        }, "jam-mark-nb");
+        for (const band of FLOW_BANDS) {
+          const id = `lm-flow-${d}-${band.id}`;
+          map.addLayer({
+            id,
+            type: "line",
+            source: "traffic",
+            filter: jamFilter(dir, [hasSpeed, [">=", speedOf, band.min], ["<", speedOf, band.max]]),
+            layout: { "line-join": "round", "line-cap": "butt", visibility: reducedRef.current ? "none" : "visible" },
+            paint: { "line-color": PALETTE.dash, "line-opacity": 0.85, "line-width": DASH_W, "line-dasharray": dashAt(0), "line-offset": OFFSET },
+          }, "jam-mark-nb");
+          flowLayers.push({ id, rate: band.rate, dir, key: -1 });
+        }
+      }
+
       /* Direction of travel. Chevrons rather than triangles: under line
          placement they rotate with the road, so each ribbon reads as flowing
-         even where the corridor bends. */
+         even where the corridor bends.
+
+         Drawn as icons (lm-chevron-fwd / -back) rather than the "\u276F" glyph:
+         the dark basemap's glyph server has no such character, so a text
+         arrow drew nothing there. Same placement, spacing and colour. */
       map.addLayer({
         id: "carriageway-arrows",
         type: "symbol",
@@ -1267,22 +1687,21 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         layout: {
           "symbol-placement": "line",
           "symbol-spacing": ["interpolate", ["linear"], ["zoom"], 8, 34, 14, 60],
-          "text-field": "\u276F",
-          "text-rotate": ["case", ["==", ["get", "direction"], "NB"], -90, 90],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 8, 9, 14, 13],
-          "text-allow-overlap": true,
-          "text-ignore-placement": true,
-          "text-keep-upright": false,
-          "text-offset": [
+          "icon-image": ["case", ["==", ["get", "direction"], "NB"], "lm-chevron-fwd", "lm-chevron-back"],
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 8, 0.62, 14, 0.9],
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+          "icon-rotation-alignment": "map",
+          "icon-keep-upright": false,
+          "icon-offset": [
             "case",
             ["==", ["get", "direction"], "NB"],
-            ["literal", [0, 0.5]],
-            ["literal", [0, -0.5]],
+            ["literal", [0, 9]],
+            ["literal", [0, -9]],
           ],
         },
         paint: {
-          "text-color": PALETTE.arrow,
-          "text-opacity": 0.85,
+          "icon-opacity": 0.85,
         },
       });
 
@@ -1418,6 +1837,9 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
 
         const row = (label: string, value: string) =>
           `<div class="mjp-row"><span>${label}</span><b>${value}</b></div>`;
+        // The card's answer: the same row, set larger.
+        const answerRow = (label: string, value: string) =>
+          `<div class="mjp-row mjp-answer"><span>${label}</span><b>${value}</b></div>`;
 
         /* The queue wins over the plaza beneath it. Hovering a queue that
            starts at an interchange put both cards up at once, overlapping;
@@ -1445,25 +1867,37 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
                  Predicted &middot; ${lvl >= 3 ? "Congested" : "Slow"}
                  <span>${p.rel_km == null ? "" : `km ${Math.round(Number(p.rel_km))}`}</span>
                </div>
-               <div class="mjp-where">${where ?? esc(p.nearest_exit ?? "NLEX")}</div>
-               ${chance != null ? row("Chance of a jam", `${chance}%`) : ""}
+               ${/* Night Corridor order of importance: the delay answers first,
+                    then the queue and where it is, then confidence and its
+                    basis, then traffic volume. Same values, same words. */ ""}
+               ${delay != null && delay > 0 ? answerRow("Est. delay", `~${mins(delay)}`) : ""}
                ${len != null ? row("Queue length", `~${km(len)}`) : ""}
                ${p.length_p75_m != null ? row("May extend to", `~${km(Number(p.length_p75_m))}`) : ""}
-               ${delay != null && delay > 0 ? row("Est. delay", `~${mins(delay)}`) : ""}
+               <div class="mjp-where">${where ?? esc(p.nearest_exit ?? "NLEX")}</div>
                ${speed != null && speed > 0 ? row("Speed", `~${speed} km/h`) : ""}
+               ${chance != null ? row("Chance of a jam", `${chance}%`) : ""}
+               ${/* The basis and the side rule as labelled rows rather than a
+                    paragraph: same facts, same numbers, fewer words. */ ""}
+               ${row("Basis",
+                 p.jam_basis === "hour" ? "This exit, this hour"
+                 : p.jam_basis === "exit" ? "This exit, any hour"
+                 : "Corridor-wide (too little history here)")}
+               ${p.jam_basis === "hour" || p.jam_basis === "exit" ? row("Source", "Waze jams 2022–2026") : ""}
+               ${p.side_share != null
+                 ? row("This side", `${Math.round(Number(p.side_share) * 100)}% of jams at this time${
+                     p.dir_jam_hours != null ? ` (${Number(p.dir_jam_hours)} live jam-hours)` : ""}`)
+                 : ""}
+               <div class="mjp-where mjp-basis">${
+                 p.side_share != null
+                   ? "The other side is drawn only at 40% or more."
+                   : "No live jams here yet to pick a side, so both are drawn."}</div>
+
                ${p.vol_median != null && p.vol_rel != null
                  ? row("Typical traffic", `~${Math.round(Number(p.vol_median) / 10) * 10} veh/h · ${Number(p.vol_rel).toFixed(1)}×`)
                  : ""}
                ${p.vol_rel != null && Number(p.vol_rel) < 0.7
-                 ? `<div class="mjp-where" style="font-weight:400; color:#b45309; margin-top:4px;">A jam in a quiet hour is usually an incident or roadworks.</div>`
+                 ? `<div class="mjp-where mjp-warn">A jam in a quiet hour is usually an incident or roadworks.</div>`
                  : ""}
-               <div class="mjp-where" style="font-weight:400; opacity:0.75; margin-top:6px;">
-                 ${basis}. ${
-                   p.side_share != null
-                     ? `${Math.round(Number(p.side_share) * 100)}% of jams here at this time of day are on this side${
-                         p.dir_jam_hours != null ? ` (${Number(p.dir_jam_hours)} live jam-hours)` : ""}; the other side is drawn only if it carries 40% or more.`
-                     : "No live jams here yet to say which side, so both are drawn."}
-               </div>
              </div>`,
           );
           return;
@@ -1478,9 +1912,9 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
                    p.rel_km == null ? "" : ` &middot; km ${Math.round(Number(p.rel_km))}`
                  }</span>
                </div>
-               <div class="mjp-where">${where ?? esc(p.street ?? p.nearest_exit ?? "NLEX")}</div>
+               ${delay != null && delay > 0 ? answerRow("Est. delay", mins(delay)) : ""}
                ${len != null ? row("Queue length", km(len)) : ""}
-               ${delay != null && delay > 0 ? row("Est. delay", mins(delay)) : ""}
+               <div class="mjp-where">${where ?? esc(p.street ?? p.nearest_exit ?? "NLEX")}</div>
                ${speed != null && speed > 0 ? row("Speed", `${speed} km/h`) : ""}
                ${running != null && running > 0 ? row("Going on for", mins(running * 60)) : ""}
              </div>`,
@@ -1496,6 +1930,151 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         map.on("mousemove", id, onJamMove);
         map.on("mouseleave", id, onJamLeave);
       }
+
+      /* A maintenance closure on hover, in the same card as everything else.
+         Every line is a field of the schedule as the Maintenance page stores it. */
+      const closureCard = sideCard("mjp-pop");
+      const when = (iso: unknown) =>
+        typeof iso === "string" && iso
+          ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
+          : "—";
+      map.on("mousemove", "lm-closure-hatch", (e: mapboxgl.MapLayerMouseEvent) => {
+        const f = e.features?.[0];
+        if (!f) return;
+        map.getCanvas().style.cursor = "pointer";
+        const p = (f.properties ?? {}) as Record<string, unknown>;
+        const r = (label: string, value: string) => `<div class="mjp-row"><span>${label}</span><b>${value}</b></div>`;
+        closureCard.show(
+          e.lngLat,
+          `<div class="mjp">
+             <div class="mjp-head is-closure">Maintenance <span>${p.direction === "SB" ? "Southbound" : "Northbound"} &middot; km ${esc(p.start_km)}–${esc(p.end_km)}</span></div>
+             <div class="mjp-where">${esc(p.title)}</div>
+             ${r("Lanes closed", esc(p.lane_closure))}
+             ${r("Status", p.status === "in_progress" ? "In progress" : esc(p.status))}
+             ${r("Scheduled", `${esc(when(p.starts_at))} – ${esc(when(p.ends_at))}`)}
+             ${p.description ? `<p class="mjp-note">${esc(p.description)}</p>` : ""}
+           </div>`,
+        );
+      });
+      map.on("mouseleave", "lm-closure-hatch", () => {
+        map.getCanvas().style.cursor = "";
+        closureCard.remove();
+      });
+
+      /* Strip <-> map, map half: the km post under the pointer, handed to the
+         corridor strip when the pointer is on (or within a few pixels of) the
+         corridor. The carriageway is the side of the centreline it is on. */
+      let hoverRaf = 0;
+      let hoverEvt: mapboxgl.MapMouseEvent | null = null;
+      let lastHover = "";
+      const emitHover = (h: { km: number; dir: "NB" | "SB" } | null) => {
+        const key = h ? `${h.dir}:${h.km.toFixed(2)}` : "";
+        if (key === lastHover) return;
+        lastHover = key;
+        onHoverKmRef.current?.(h);
+      };
+      map.on("mousemove", (e: mapboxgl.MapMouseEvent) => {
+        hoverEvt = e;
+        if (hoverRaf) return;
+        hoverRaf = requestAnimationFrame(() => {
+          hoverRaf = 0;
+          const ev = hoverEvt;
+          if (!ev || disposed || !onHoverKmRef.current) return;
+          const loc = K.locate([ev.lngLat.lng, ev.lngLat.lat]);
+          const px = map.project(loc.at);
+          const off = Math.hypot(px.x - ev.point.x, px.y - ev.point.y);
+          emitHover(off <= 26 ? { km: loc.km, dir: ev.point.x >= px.x ? "NB" : "SB" } : null);
+        });
+      });
+      map.getCanvas().addEventListener("mouseleave", () => emitHover(null));
+
+      /* Strip <-> map, strip half: a ring on the spot the strip is pointing at. */
+      const ringEl = document.createElement("div");
+      ringEl.className = "lm-hover-ring";
+      ringEl.setAttribute("aria-hidden", "true");
+      const ring = new mapboxgl.Marker({ element: ringEl, anchor: "center" });
+      let ringOn: Props["highlight"] = null;
+      const placeRing = () => {
+        if (!ringOn) {
+          ring.remove();
+          return;
+        }
+        ring.setLngLat(K.pointAtKm(ringOn.km)).setOffset([carriagewayShift(map.getZoom(), ringOn.dir), 0]).addTo(map);
+      };
+      applyHighlightRef.current = (h) => {
+        if (disposed) return;
+        ringOn = h ?? null;
+        placeRing();
+        placeClock();
+      };
+
+      /* The forecast finish, part 3: a clock badge on the selected forecast
+         segment -- the one the strip points at, else one clicked on the map,
+         else the exit picked in the header, else the segment of the likeliest
+         predicted jam. Forecast map only. */
+      const clockEl = document.createElement("div");
+      clockEl.className = "lm-clock";
+      clockEl.setAttribute("aria-hidden", "true");
+      const clock = new mapboxgl.Marker({ element: clockEl, anchor: "center" });
+      let clickedOrder: number | null = null;
+      let exitOrder: number | null = null;
+      let defaultOrder: number | null = null;
+      let clockHours: number | null = null;
+      const orderAtKm = (km: number) => {
+        for (let i = 1; i < exitKmByOrder.length; i++) if (km <= exitKmByOrder[i]) return i;
+        return exitKmByOrder.length - 1;
+      };
+      const forecastDefault = (fc: GeoJSON.FeatureCollection) => {
+        let best: { order: number; rank: number; pc: number } | null = null;
+        let hours: number | null = null;
+        for (const f of fc.features ?? []) {
+          const q = f.properties as Record<string, unknown> | null;
+          if (q?.feature_type !== "forecast") continue;
+          if (q.hours_ahead != null && Number.isFinite(Number(q.hours_ahead))) hours = Number(q.hours_ahead);
+          const state = shownForecastState(q);
+          const rank = state === "High" ? 2 : state === "Med" ? 1 : 0;
+          if (!rank) continue;
+          const hit = corridorBase.features.find(
+            (c) => (c.properties as { segment_name: string }).segment_name === q.corridor_segment,
+          );
+          if (!hit) continue;
+          const pc = Number(q.p_congested ?? 0);
+          const order = (hit.properties as { segment_order: number }).segment_order;
+          if (!best || rank > best.rank || (rank === best.rank && pc > best.pc)) best = { order, rank, pc };
+        }
+        defaultOrder = best?.order ?? null;
+        clockHours = hours;
+      };
+      const placeClock = () => {
+        if (isRealtimeEndpoint) return;
+        const order = ringOn ? orderAtKm(ringOn.km) : clickedOrder ?? exitOrder ?? defaultOrder;
+        const part = order != null ? corridorParts[order - 1] : null;
+        if (!part || part.length < 2 || clockHours == null) {
+          clock.remove();
+          return;
+        }
+        clockEl.innerHTML = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>+${clockHours} h</span>`;
+        clock.setLngLat(part[Math.floor(part.length / 2)] as [number, number]).addTo(map);
+      };
+      if (!isRealtimeEndpoint) {
+        forecastDefault(data);
+        map.on("click", "carriageway", (e: mapboxgl.MapLayerMouseEvent) => {
+          const o = Number((e.features?.[0]?.properties as { segment_order?: number } | undefined)?.segment_order);
+          if (Number.isFinite(o)) {
+            clickedOrder = o;
+            placeClock();
+          }
+        });
+      }
+      applyExitRef.current = (name) => {
+        if (disposed) return;
+        const i = name ? CORRIDOR_BY_KM.findIndex((x) => x.exit_name.toLowerCase().trim() === name.toLowerCase().trim()) : -1;
+        exitOrder = i < 0 ? null : Math.min(i + 1, CORRIDOR_BY_KM.length - 1);
+        if (name) clickedOrder = null;
+        placeClock();
+        markSelectedPin?.(name);
+      };
+      let markSelectedPin: ((name: string | undefined) => void) | null = null;
 
       // Point Hover
 
@@ -1726,6 +2305,14 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
           /* The name rides alongside from the middle zooms on, where there is
              room for it. Zoomed out it is left off: twenty names along the
              corridor is soup, and the shape alone is enough to say "exit". */
+          /* Night Corridor: the plate carries the km post too, from the same
+             exit list the card and the exit picker read, and major
+             interchanges are marked so they keep their names at corridor zoom. */
+          const kmStat = FALLBACK_EXITS.find(
+            (x) => x.exit_name.toLowerCase().trim() === toll.name.toLowerCase().trim(),
+          );
+          el.dataset.major = MAJOR_EXITS.has(toll.name.toLowerCase().trim()) ? "1" : "0";
+          el.dataset.exit = toll.name.toLowerCase().trim();
           el.innerHTML = `
             <div class="toll-pin">
               <div class="toll-pin-dot">
@@ -1735,7 +2322,9 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
                   <path d="M2 20h20M9 20v-5h6v5" />
                 </svg>
               </div>
-              <span class="toll-pin-name">${displayExitName(toll.shortName)}</span>
+              <span class="toll-pin-name">${displayExitName(toll.shortName)}${
+                kmStat ? `<span class="toll-pin-km">Km ${kmStat.km}</span>` : ""
+              }</span>
             </div>
           `;
 
@@ -1809,7 +2398,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
                        centimetre-accurate claim about a kilometre post. -->
                   <span>${stat ? `km ${Math.round(stat.km)}` : esc(toll.type)}</span>
                 </div>
-                <div class="mjp-where">${esc(toll.location)}</div>
+                ${row("Where", esc(toll.location))}
                 ${access ? row("Access", esc(access)) : ""}
                 ${row("Toll", esc(toll.rates.replace(/\s*toll\s*$/i, "")))}
                 ${adds ? `<p class="mjp-note">${esc(toll.description)}</p>` : ""}
@@ -2048,7 +2637,10 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
              likely to go as any other. */
           const ordered = [...plazaPins]
             .map((pin) => ({ pin, q: map.project(pin.lngLat), level: plateLevel.get(pin.el) ?? -1 }))
-            .sort((a, b) => Number(b.level >= 0) - Number(a.level >= 0));
+            .sort((a, b) =>
+              Number(b.level >= 0) - Number(a.level >= 0) ||
+              // Then major interchanges, so they are the names that survive.
+              Number(b.pin.el.dataset.major === "1") - Number(a.pin.el.dataset.major === "1"));
 
           if (measuredTier !== tier) {
             /* Shown first, then measured. A hidden element measures zero, so a
@@ -2057,7 +2649,11 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
                against the wrong width is the one thing this whole arrangement
                is supposed to rule out. Every pin is about to be re-decided
                below, so nothing is lost by revealing them all here. */
-            for (const pin of plazaPins) pin.el.style.display = "";
+            for (const pin of plazaPins) {
+              pin.el.style.display = "";
+              // Measured with the name showing, whatever the last band hid.
+              delete pin.el.dataset.label;
+            }
             for (const pin of plazaPins) {
               const plate = pin.el.querySelector(".toll-pin-name") as HTMLElement | null;
               const w = plate?.offsetWidth ?? 0;
@@ -2127,6 +2723,18 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
               continue;
             }
 
+            /* At corridor zoom only the major interchanges (and any exit with
+               a queue on it) are named; the rest keep their rings and get
+               their names back on the way in. */
+            if (band === "wide" && level < 0 && pin.el.dataset.major !== "1") {
+              pin.el.style.display = "";
+              pin.el.dataset.label = "off";
+              pin.el.dataset.ring = coversPin(q) ? "off" : "on";
+              delete pin.el.dataset.queue;
+              continue;
+            }
+            delete pin.el.dataset.label;
+
             const w = plateW.get(pin.el) ?? 60;
             const home: "east" | "west" = pin.index % 2 === 0 ? "east" : "west";
             const sides: ("east" | "west")[] = [home, home === "east" ? "west" : "east"];
@@ -2191,6 +2799,14 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
         };
 
         rethinkPlazaPins = declutterPlazas;
+        markSelectedPin = (name) => {
+          const k = (name ?? "").toLowerCase().trim();
+          for (const pin of plazaPins) {
+            if (k && pin.el.dataset.exit === k) pin.el.dataset.selected = "on";
+            else delete pin.el.dataset.selected;
+          }
+        };
+        markSelectedPin(selectedExitRef.current);
         declutterPlazas();
         map.on("zoom", declutterPlazas);
         map.on("move", declutterPlazas);
@@ -2370,6 +2986,161 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
          The corridor runs south to north and so does the pattern's x axis, so
          northbound scrolls one way and southbound the other. */
 
+      /* ---- Night Corridor: strip snapshot, jam callouts, motion, 3D ------- */
+      const alertOf = (p: Record<string, unknown>, coords: [number, number]): StripAlert | null => {
+        if (!Number.isFinite(coords?.[0]) || !Number.isFinite(coords?.[1])) return null;
+        const { dir } = directionOfReport(p.street, p.heading);
+        return {
+          km: K.locate(coords).km,
+          dir,
+          type: String(p.type ?? ""),
+          unconfirmed: isUnconfirmedReport(p),
+          detail: reportDetailOf(p, coords) as unknown as Record<string, unknown>,
+        };
+      };
+      let lastFeedAt = "";
+      const emitSnapshot = (fc: GeoJSON.FeatureCollection, corridor: GeoJSON.FeatureCollection) => {
+        lastFeedAt = String((fc as { feed?: { newestAt?: string } }).feed?.newestAt ?? "");
+        onSnapshotRef.current?.(buildSnapshot({
+          kind: isRealtimeEndpoint ? "live" : "forecast",
+          feed: fc,
+          corridor,
+          exitKmByOrder,
+          alertOf,
+        }));
+      };
+
+      // Jam callout, part 2: the leader-line labels.
+      const callouts = createJamCallouts(map, mapboxgl.Marker, map.getContainer());
+      let layoutRaf = 0;
+      const scheduleLayout = () => {
+        if (layoutRaf) return;
+        layoutRaf = requestAnimationFrame(() => {
+          layoutRaf = 0;
+          if (disposed) return;
+          callouts.layout();
+          if (ringOn) placeRing();
+        });
+      };
+      map.on("move", scheduleLayout);
+      callouts.set(data.features ?? []);
+
+      /* The animation loop: steps the flow dashes' line-dasharray and the jam
+         glow, at most 30 times a second, only while someone can see it. */
+      let hasMotion = false;
+      const noteMotion = (fc: GeoJSON.FeatureCollection) => {
+        hasMotion = (fc.features ?? []).some((f) => {
+          const q = f.properties as Record<string, unknown> | null;
+          return q?.feature_type === "jam" && q?.direction_source != null;
+        });
+      };
+      noteMotion(data);
+      let animRaf = 0;
+      let lastFrame = 0;
+      const shouldRun = () =>
+        !disposed && hasMotion && !reducedRef.current && visibleRef.current && !pausedRef.current && !document.hidden;
+      const frame = (now: number) => {
+        animRaf = 0;
+        if (!shouldRun()) return;
+        if (now - lastFrame >= 33) {
+          lastFrame = now;
+          for (const L of flowLayers) {
+            const s = dashPhase(now, L.rate, L.dir);
+            if (s !== L.key) {
+              L.key = s;
+              map.setPaintProperty(L.id, "line-dasharray", dashAt(s));
+            }
+          }
+          map.setPaintProperty("lm-jam-pulse", "line-opacity", 0.14 + 0.26 * (0.5 + 0.5 * Math.sin((now / 2400) * Math.PI * 2)));
+        }
+        animRaf = requestAnimationFrame(frame);
+      };
+      kickRef.current = () => {
+        if (!animRaf && shouldRun()) animRaf = requestAnimationFrame(frame);
+      };
+      applyMotionRef = () => {
+        if (disposed) return;
+        const vis = reducedRef.current ? "none" : "visible";
+        for (const L of flowLayers) map.setLayoutProperty(L.id, "visibility", vis);
+        if (reducedRef.current) map.setPaintProperty("lm-jam-pulse", "line-opacity", 0.28);
+      };
+      kickRef.current();
+
+      /* Optional 3D: tilt to about 50 degrees, and extrude buildings only if
+         the basemap has a building layer to extrude. 2D north-up otherwise. */
+      const ensureBuildings = () => {
+        if (map.getLayer("lm-buildings-3d")) return true;
+        const b = (map.getStyle().layers ?? []).find(
+          (l) => (l as { "source-layer"?: string })["source-layer"] === "building" && typeof (l as { source?: unknown }).source === "string",
+        ) as { source: string } | undefined;
+        if (!b) return false;
+        try {
+          map.addLayer(
+            {
+              id: "lm-buildings-3d",
+              type: "fill-extrusion",
+              source: b.source,
+              "source-layer": "building",
+              minzoom: 13,
+              layout: { visibility: "none" },
+              paint: {
+                "fill-extrusion-color": isDark ? "#1a2236" : "#d9dde5",
+                "fill-extrusion-height": ["coalesce", ["get", "render_height"], ["get", "height"], 0],
+                "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], ["get", "min_height"], 0],
+                "fill-extrusion-opacity": 0.75,
+              },
+            },
+            "nlex-halo",
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      applyPitchRef.current = (on) => {
+        if (disposed) return;
+        map.easeTo({ pitch: on ? 50 : 0, bearing: 0, duration: reducedRef.current ? 0 : 700 });
+        if (ensureBuildings()) map.setLayoutProperty("lm-buildings-3d", "visibility", on ? "visible" : "none");
+      };
+      if (pitchedRef.current) applyPitchRef.current(true);
+
+      placeClock();
+      if (highlightRef.current) applyHighlightRef.current?.(highlightRef.current);
+      if (selectedExitRef.current) applyExitRef.current?.(selectedExitRef.current);
+
+      const afterPoll = (
+        fresh: GeoJSON.FeatureCollection,
+        corridorNow: GeoJSON.FeatureCollection,
+        feedChanged: boolean,
+        corridorChanged: boolean,
+      ) => {
+        if (feedChanged) {
+          callouts.set(fresh.features ?? []);
+          noteMotion(fresh);
+          kickRef.current?.();
+          if (!isRealtimeEndpoint) {
+            forecastDefault(fresh);
+            placeClock();
+          }
+        }
+        const feedAt = String((fresh as { feed?: { newestAt?: string } }).feed?.newestAt ?? "");
+        if (feedChanged || corridorChanged || feedAt !== lastFeedAt) emitSnapshot(fresh, corridorNow);
+      };
+      cleanupGraphics = () => {
+        callouts.clear();
+        ring.remove();
+        clock.remove();
+        if (layoutRaf) cancelAnimationFrame(layoutRaf);
+        if (animRaf) cancelAnimationFrame(animRaf);
+        if (hoverRaf) cancelAnimationFrame(hoverRaf);
+        kickRef.current = null;
+        applyPitchRef.current = null;
+        applyHighlightRef.current = null;
+        applyClosuresRef.current = null;
+        applyExitRef.current = null;
+      };
+      emitSnapshot(data, corridorAtLoad);
+
       if (isRealtime) {
         renderAlerts(data);
       }
@@ -2383,6 +3154,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
           ));
 
           const feedSig = signature(fresh);
+          const feedChanged = feedSig !== lastFeedSig;
           if (feedSig !== lastFeedSig) {
             lastFeedSig = feedSig;
             source.setData(fresh);
@@ -2393,6 +3165,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
 
           const corridorNow = corridorWithState(fresh);
           const corridorSig = signature(corridorNow);
+          const corridorChanged = corridorSig !== lastCorridorSig;
           if (corridorSig !== lastCorridorSig) {
             lastCorridorSig = corridorSig;
             setSegmentState(corridorNow);
@@ -2401,6 +3174,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
                tier with no segments costs nothing on its own. */
             (map.getSource("nlex-corridor") as GeoJSONSource | undefined)?.setData(corridorNow);
           }
+          afterPoll(fresh, corridorNow, feedChanged, corridorChanged);
         } catch {
           // No-op polling fallback
         }
@@ -2409,6 +3183,10 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
 
     return () => {
       disposed = true;
+      cleanupGraphics?.();
+      io.disconnect();
+      motionQuery.removeEventListener("change", onMotionPref);
+      document.removeEventListener("visibilitychange", onVisibility);
       if (pollTimer != null) {
         // Was assigned to an unused local and never cleared, so every rebuild
         // left a live 15-second fetch running against a removed map.
@@ -2441,7 +3219,7 @@ export default function TrafficMapPanel({ title, subtitle, badge, endpoint, laye
   }, [endpoint, layerColor, isDark]);
 
   return (
-    <article className={`map-card${chromeless ? " chromeless" : ""}`}>
+    <article className={`map-card${chromeless ? " chromeless" : ""}`} data-kind={endpoint.includes("real-time") ? "live" : "forecast"}>
       {/* The maximised view supplies its own header, so the panel's is dropped
           there rather than stacking two title bars. */}
       {!chromeless && (

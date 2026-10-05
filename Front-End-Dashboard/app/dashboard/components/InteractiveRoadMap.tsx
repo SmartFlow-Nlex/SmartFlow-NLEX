@@ -65,22 +65,24 @@ const CAR_SPEED: Record<string, number> = { "seg-red": 0.12, "seg-orange": 0.4 }
  * queues that happened to be live, the tightest gap seen was 86 px behind an
  * 18 px car, with no overlap at any sampled frame.
  */
+/* Paints (5 Oct 2026): whites, silvers, slate and expressway blues -- never the
+   status hues, so a vehicle can't be mistaken for a queue. */
 const CAR_LANES = [
   // Lane 1 -- light traffic, closest spacing.
-  { lane: 1, phase: 0.0, kind: "car", paint: "#eef2f7" },
-  { lane: 1, phase: 0.2, kind: "car", paint: "#b9c6d6" },
-  { lane: 1, phase: 0.4, kind: "car", paint: "#dfe7f0" },
-  { lane: 1, phase: 0.6, kind: "car", paint: "#aebdd0" },
-  { lane: 1, phase: 0.8, kind: "car", paint: "#cdd8e5" },
+  { lane: 1, phase: 0.0, kind: "car", paint: "#f2f4f8" },
+  { lane: 1, phase: 0.2, kind: "car", paint: "#7f9cc4" },
+  { lane: 1, phase: 0.4, kind: "car", paint: "#c4ccd8" },
+  { lane: 1, phase: 0.6, kind: "car", paint: "#4a5870" },
+  { lane: 1, phase: 0.8, kind: "car", paint: "#e3e7ee" },
   // Lane 2 -- cars and vans.
-  { lane: 2, phase: 0.09, kind: "car", paint: "#f4f7fb" },
-  { lane: 2, phase: 0.34, kind: "van", paint: "#c3cfdd" },
-  { lane: 2, phase: 0.59, kind: "car", paint: "#dfe7f0" },
-  { lane: 2, phase: 0.84, kind: "van", paint: "#aebdd0" },
+  { lane: 2, phase: 0.09, kind: "car", paint: "#9aa6b8" },
+  { lane: 2, phase: 0.34, kind: "van", paint: "#eef1f6" },
+  { lane: 2, phase: 0.59, kind: "car", paint: "#3d5a8a" },
+  { lane: 2, phase: 0.84, kind: "van", paint: "#b8c2d0" },
   // Lane 3 -- buses and container trucks.
-  { lane: 3, phase: 0.17, kind: "truck", paint: "#e7edf4" },
-  { lane: 3, phase: 0.5, kind: "bus", paint: "#cbd6e3" },
-  { lane: 3, phase: 0.83, kind: "truck", paint: "#b9c6d6" },
+  { lane: 3, phase: 0.17, kind: "truck", paint: "#e9edf3" },
+  { lane: 3, phase: 0.5, kind: "bus", paint: "#dfe6f0" },
+  { lane: 3, phase: 0.83, kind: "truck", paint: "#6f8fb8" },
 ] as const;
 
 /** Milliseconds for one clear run of the whole corridor. */

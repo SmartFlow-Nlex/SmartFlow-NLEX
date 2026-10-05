@@ -176,7 +176,7 @@ export default function CorridorRiskModelsPanel() {
                     </div>
                   )}
                 </div>
-                <span style={{ justifySelf: "end", padding: "2px 8px", borderRadius: "8px", background: "#fff", border: "1.5px solid #e2e8f0", fontSize: "0.76rem", fontWeight: 700, color: "#1e1b4b" }}>
+                <span style={{ justifySelf: "end", padding: "2px 8px", borderRadius: "8px", background: "var(--bg-surface)", border: "1px solid var(--border-strong)", fontSize: "0.76rem", fontWeight: 700, color: "var(--text-primary)" }}>
                   {fmtNum(r.predictedIncidents, 1)}
                 </span>
               </div>
@@ -202,7 +202,7 @@ export default function CorridorRiskModelsPanel() {
               <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "#78350f" }}>{fmtNum(gwrMeta.metrics.MAE, 3)}</div>
               <div style={{ fontSize: "0.68rem", color: "#92400e" }}>fit and scored on the same 20 exits</div>
             </div>
-            <div style={{ flex: "1 1 160px", padding: "10px 14px", borderRadius: "10px", background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+            <div style={{ flex: "1 1 160px", padding: "10px 14px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
               <div style={{ fontSize: "0.68rem", color: "#64748b", fontWeight: 600, textTransform: "uppercase" }}>Leave-one-exit-out MAE</div>
               <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "#0f172a" }}>
                 {gwrMeta.metrics.loocv_mae != null ? fmtNum(gwrMeta.metrics.loocv_mae, 3) : "—"}

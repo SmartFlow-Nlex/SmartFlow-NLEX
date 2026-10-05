@@ -3,6 +3,7 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Brain, CalendarClock, CheckCircle2, Database, ScanSearch, UploadCloud } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
+import StateNote from "../../../components/stage/StateNote";
 import { apiFetch, BACKEND } from "../../../lib/api";
 
 
@@ -455,7 +456,7 @@ export default function DataManagementPage() {
   const lastRetrain = retraining?.runs[0] ?? null;
 
   return (
-    <section className="ds-content ds-long">
+    <section className="ds-content ds-long dm-page">
       <PageHeader
         icon={Brain}
         title="Data Management"
@@ -464,14 +465,15 @@ export default function DataManagementPage() {
       />
 
       {backendDown && (
-        <section className="panel" role="alert" style={{ marginBottom: 16, borderColor: "var(--color-danger-border)" }}>
-          <h2 className="bad" style={{ margin: 0 }}>The backend is not answering</h2>
-          <p style={{ margin: "6px 0 10px" }}>
-            Nothing replied at <code>{BACKEND}</code>, so the upload layouts, the upload history and the retraining status cannot load,
-            and an upload would not go through. Nothing has been deleted: they are in the database. Start the backend with{" "}
-            <code>npm run dev</code> in the <code>Back-End</code> folder, then try again.
-          </p>
-          <button type="button" className="btn-muted" onClick={loadAll}>Try again</button>
+        <section className="dm-offline">
+          <StateNote kind="offline" role="alert" title="The backend is not answering">
+            <p>
+              Nothing replied at <code>{BACKEND}</code>, so the upload layouts, the upload history and the retraining status cannot load,
+              and an upload would not go through. Nothing has been deleted: they are in the database. Start the backend with{" "}
+              <code>npm run dev</code> in the <code>Back-End</code> folder, then try again.
+            </p>
+            <button type="button" className="btn-muted" onClick={loadAll}>Try again</button>
+          </StateNote>
         </section>
       )}
 
@@ -484,19 +486,21 @@ export default function DataManagementPage() {
           Choose a CSV, JSON or Excel file. The pipeline recognises its layout, validates every row, and loads it where the dashboards read it.
           Check a file first to see exactly what a load would do.
         </p>
-        <label className="btn-primary" style={{ display: "inline-block", cursor: loading ? "wait" : "pointer", opacity: loading ? 0.7 : 1 }}>
+        {/* The view's one white pill. The input is visually hidden rather than display:none, so Tab reaches it
+            and Space/Enter open the picker; the label shows its focus ring. Click-to-pick only: there is no drop handling. */}
+        <label className="nc-pill dm-pick" style={{ cursor: loading ? "wait" : "pointer", opacity: loading ? 0.7 : 1 }}>
           {loading ? (loading === "check" ? "Checking..." : "Loading...") : "Select File"}
           <input
             type="file"
             accept=".csv,.tsv,.json,.xlsx,.xls"
             onChange={handleFileChange}
-            style={{ display: "none" }}
+            className="sr-only"
             disabled={Boolean(loading)}
           />
         </label>
         <small>{fileName || "No file selected yet"}</small>
         {loading && (
-          <small style={{ color: "var(--page-accent, #3b82f6)", display: "block", marginTop: "10px" }}>
+          <small className="dm-progress">
             {loading === "check" ? "Checking" : "Loading"} {fileName}: {elapsed} s. A year of hourly toll data takes one to two minutes.
           </small>
         )}
@@ -613,9 +617,10 @@ export default function DataManagementPage() {
       )}
 
       {error && (
-        <section className="panel" style={{ marginTop: 16 }}>
-          <h2>Pipeline Error</h2>
-          <p className="bad">{error}</p>
+        <section className="dm-result-error">
+          <StateNote kind="error" title="Pipeline Error">
+            <p className="bad">{error}</p>
+          </StateNote>
         </section>
       )}
 
@@ -657,15 +662,15 @@ export default function DataManagementPage() {
             </article>
             <article className="mini-stat">
               <h3>{result.dry_run ? "Would be written (AWS)" : "Written (AWS)"}</h3>
-              <strong style={{ color: "#10b981" }}>{n(s.rows_inserted)}</strong>
+              <strong className="ok">{n(s.rows_inserted)}</strong>
               <p>
                 {n(s.rows_updated)} updated · {n(s.rows_already_loaded)} already loaded
-                {s.rows_failed > 0 && <span style={{ color: "#ef4444" }}> · {n(s.rows_failed)} refused</span>}
+                {s.rows_failed > 0 && <span className="bad"> · {n(s.rows_failed)} refused</span>}
               </p>
             </article>
             <article className="mini-stat">
               <h3>Set aside</h3>
-              <strong style={{ color: s.rows_rejected > 0 ? "#ef4444" : undefined }}>{n(s.rows_rejected)}</strong>
+              <strong className={s.rows_rejected > 0 ? "bad" : undefined}>{n(s.rows_rejected)}</strong>
               <p>{(result.duration_ms / 1000).toFixed(1)} s · {result.file_format.toUpperCase()}</p>
             </article>
           </div>
@@ -687,9 +692,9 @@ export default function DataManagementPage() {
                       <td style={{ fontWeight: 500, whiteSpace: "nowrap" }}>{gate.gate}</td>
                       <td>
                         {gate.passed ? (
-                          <span className="pill" style={{ backgroundColor: '#10b981', color: 'white' }}>PASSED</span>
+                          <span className="pill green">PASSED</span>
                         ) : (
-                          <span className="pill" style={{ backgroundColor: '#ef4444', color: 'white' }}>FAILED</span>
+                          <span className="pill red">FAILED</span>
                         )}
                       </td>
                       <td style={{ whiteSpace: "normal", minWidth: 320 }}>{gate.details}</td>
@@ -717,7 +722,7 @@ export default function DataManagementPage() {
                     {result.rejected_sample.map((r, i) => (
                       <tr key={i}>
                         <td style={{ whiteSpace: "normal", minWidth: 220 }}>{r.reason}</td>
-                        <td style={{ whiteSpace: "normal", fontSize: "0.8rem", color: "var(--text-secondary)" }}>{rowPreview(r.row)}</td>
+                        <td className="dm-row-preview" style={{ whiteSpace: "normal" }}>{rowPreview(r.row)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -730,8 +735,8 @@ export default function DataManagementPage() {
             <section className="panel" style={{ marginTop: 16 }}>
               {result.errors.length > 0 && (
                 <>
-                  <h3 style={{ color: '#ef4444' }}>Pipeline Errors</h3>
-                  <ul style={{ color: '#ef4444', paddingLeft: 20 }}>
+                  <h3 className="bad">Pipeline Errors</h3>
+                  <ul className="bad" style={{ paddingLeft: 20 }}>
                     {result.errors.slice(0, 10).map((err, i) => <li key={i}>{err}</li>)}
                     {result.errors.length > 10 && <li>...and {result.errors.length - 10} more errors</li>}
                   </ul>
@@ -739,7 +744,7 @@ export default function DataManagementPage() {
               )}
               {result.warnings.length > 0 && (
                 <>
-                  <h3 style={{ color: '#f59e0b', marginTop: result.errors.length > 0 ? 16 : 0 }}>Notes</h3>
+                  <h3 className="warn" style={{ marginTop: result.errors.length > 0 ? 16 : 0 }}>Notes</h3>
                   <ul style={{ color: 'var(--text-secondary)', paddingLeft: 20 }}>
                     {result.warnings.slice(0, 10).map((warn, i) => <li key={i}>{warn}</li>)}
                     {result.warnings.length > 10 && <li>...and {result.warnings.length - 10} more</li>}
@@ -759,9 +764,9 @@ export default function DataManagementPage() {
 
       {formats && (
         <details className="panel dm-formats" style={{ marginTop: 16 }}>
-          <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+          <summary style={{ cursor: "pointer" }}>
             What can I upload?{" "}
-            <span className="muted" style={{ fontWeight: 500 }}>
+            <span className="muted">
               — {formats.formats.filter((f) => f.accepted).length} layouts; rows dated after {day(formats.recordEnd)} (the record&apos;s end) are set
               aside, except air-quality readings
             </span>
@@ -809,12 +814,12 @@ export default function DataManagementPage() {
             <tbody>
               {history === null ? (
                 backendDown || historyError ? (
-                  <tr><td colSpan={7} className="bad">{notLoaded(`Not loaded: ${historyError}`)}</td></tr>
+                  <tr><td colSpan={7} className="dm-state-cell"><StateNote kind="error" size={44}>{notLoaded(`Not loaded: ${historyError}`)}</StateNote></td></tr>
                 ) : (
                   <tr><td colSpan={7} className="muted">Loading…</td></tr>
                 )
               ) : history.length === 0 ? (
-                <tr><td colSpan={7} className="muted">No uploads recorded yet. Checks are not recorded: they change nothing.</td></tr>
+                <tr><td colSpan={7} className="dm-state-cell"><StateNote kind="nodata" size={44}>No uploads recorded yet. Checks are not recorded: they change nothing.</StateNote></td></tr>
               ) : (
                 history.map((u) => (
                   <tr key={u.id}>
@@ -829,7 +834,7 @@ export default function DataManagementPage() {
                         <button
                           type="button"
                           className="btn-muted"
-                          style={{ padding: "4px 12px", fontSize: "0.78rem" }}
+                          style={{ minHeight: 30, padding: "0 12px" }}
                           disabled={u.undo === "blocked" || Boolean(undoTarget)}
                           title={u.undo === "blocked" ? `Undo #${u.undo_blocked_by ?? "the later upload"} first: it changed the same data after this one` : "Put the data back as it was before this upload"}
                           onClick={() => void startUndo(u)}
@@ -848,20 +853,22 @@ export default function DataManagementPage() {
 
       <div className="table-card" style={{ marginTop: 16 }}>
         <h3 style={{ padding: '16px 20px', margin: 0, borderBottom: '1px solid var(--border-default)' }}>Weekly model retraining</h3>
-        <p className="muted" style={{ padding: "12px 20px 0", margin: 0, fontSize: "0.86rem" }}>
+        <p className="muted" style={{ padding: "12px 20px 0", margin: 0 }}>
           Uploads do not retrain the models. Every Sunday at 10:00 PM one batch retrains and re-tests each model group whose data
           changed since it was last trained. New models go live only if they pass the tests; otherwise last week&apos;s stay.
           {nextRetrain && <> Next batch: <b>{nextRetrain}</b>.</>}
         </p>
         {retraining === null ? (
-          <p className={backendDown || retrainingError ? "bad" : "muted"} style={{ padding: "8px 20px 16px", margin: 0 }}>
-            {backendDown || retrainingError ? notLoaded(`Not loaded: ${retrainingError}`) : "Loading…"}
-          </p>
+          backendDown || retrainingError ? (
+            <div className="dm-state-block"><StateNote kind="error" size={44}>{notLoaded(`Not loaded: ${retrainingError}`)}</StateNote></div>
+          ) : (
+            <p className="muted" style={{ padding: "8px 20px 16px", margin: 0 }}>Loading…</p>
+          )
         ) : !lastRetrain ? (
-          <p className="muted" style={{ padding: "8px 20px 16px", margin: 0 }}>No batch has run yet.</p>
+          <div className="dm-state-block"><StateNote kind="nodata" size={44}>No batch has run yet.</StateNote></div>
         ) : (
           <>
-            <p style={{ padding: "8px 20px 0", margin: 0, fontSize: "0.86rem" }}>
+            <p style={{ padding: "8px 20px 0", margin: 0 }}>
               Last batch #{lastRetrain.id} · {when(lastRetrain.started_at)}
               {lastRetrain.finished_at && <> to {clock(lastRetrain.finished_at)}</>} · {lastRetrain.trigger}{" "}
               <span className={`pill ${retrainPill(lastRetrain.status)}`}>{lastRetrain.status}</span>
@@ -881,7 +888,7 @@ export default function DataManagementPage() {
                     <tr key={g.key}>
                       <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>{g.title}</td>
                       <td><span className={`pill ${retrainPill(g.status)}`}>{g.status}</span></td>
-                      <td style={{ whiteSpace: "normal", minWidth: 320, fontSize: "0.8rem" }}>
+                      <td style={{ whiteSpace: "normal", minWidth: 320 }}>
                         {g.reason}
                         {g.comparisons.map((c) => <div key={c} className="muted">{c}</div>)}
                         {g.status !== "unchanged" && g.changes.slice(0, 2).map((c) => <div key={c} className="muted">Data: {c}</div>)}
@@ -892,7 +899,7 @@ export default function DataManagementPage() {
               </table>
             </div>
             {retraining.runs.length > 1 && (
-              <p className="muted" style={{ padding: "8px 20px 16px", margin: 0, fontSize: "0.8rem" }}>
+              <p className="muted" style={{ padding: "8px 20px 16px", margin: 0 }}>
                 Earlier:{" "}
                 {retraining.runs.slice(1).map((r, i) => (
                   <span key={r.id}>{i > 0 && " · "}#{r.id} {when(r.started_at)} — {r.status}</span>

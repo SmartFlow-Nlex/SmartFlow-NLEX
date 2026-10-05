@@ -49,54 +49,21 @@ export default function NarrativePanel({
   if (!open) return <GenerateReportButton onClick={() => setOpen(true)} />;
 
   return (
-    <section
-      style={{
-        border: "1px solid var(--border-default)",
-        borderRadius: 8,
-        background: "var(--bg-surface-hover)",
-        padding: "18px 20px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 14,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ minWidth: 190, display: "flex", alignItems: "center", gap: 10 }}>
-          <span
-            style={{
-              display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: 6, flex: "none",
-              border: "1px solid var(--border-strong)", color: "var(--color-purple)",
-            }}
-          >
-            <FileText size={15} strokeWidth={2.2} aria-hidden="true" />
-          </span>
-          <div>
-            <h4 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)" }}>
-              Narrative Explanation
-            </h4>
-          </div>
-        </div>
+    <section className="nc-narrative">
+      <div className="nc-narrative-head">
+        <span className="nc-narrative-icon">
+          <FileText size={15} strokeWidth={2.2} aria-hidden="true" />
+        </span>
+        <h4>Narrative Explanation</h4>
 
-        <button
-          onClick={() => setOpen((v) => !v)}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px",
-            marginLeft: "auto", flexShrink: 0,
-            borderRadius: 6, cursor: "pointer", fontSize: "0.8125rem", fontWeight: 600,
-            border: "1px solid var(--border-strong)",
-            background: "var(--bg-surface)",
-            color: "var(--text-secondary)",
-          }}
-        >
+        <button type="button" className="btn-muted nc-narrative-hide" onClick={() => setOpen((v) => !v)}>
           Hide report
         </button>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {chips && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{chips}</div>}
-        {contextLine && (
-          <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--text-secondary)" }}>{contextLine}</p>
-        )}
+      <div className="nc-narrative-body">
+        {chips && <div className="nc-narrative-chips">{chips}</div>}
+        {contextLine && <p className="nc-narrative-context">{contextLine}</p>}
         <AiModelInsight
           quantity="volume"
           metrics={metrics}
@@ -115,15 +82,7 @@ export default function NarrativePanel({
 export function NarrativeChip({ tone = "neutral", children }: { tone?: "good" | "neutral"; children: ReactNode }) {
   const good = tone === "good";
   return (
-    <span
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 7,
-        padding: "5px 11px", borderRadius: 8, fontSize: "0.735rem",
-        background: good ? "var(--color-success-bg)" : "var(--bg-surface-hover)",
-        border: `1px solid ${good ? "var(--color-success-border)" : "var(--border-default)"}`,
-        color: good ? "var(--color-success)" : "var(--text-secondary)",
-      }}
-    >
+    <span className={`pill${good ? " green" : ""}`} style={{ textTransform: "none", letterSpacing: 0, fontSize: "var(--fs-body)", fontWeight: 400 }}>
       {children}
     </span>
   );

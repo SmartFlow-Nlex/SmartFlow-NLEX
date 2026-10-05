@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { Check, Info, TriangleAlert, X } from "lucide-react";
 
 /**
  * Transient confirmations for actions that used to succeed silently.
@@ -100,7 +101,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-const ICON: Record<ToastKind, string> = { success: "✓", error: "!", info: "i" };
+// Drawn icons in one stroke weight (Night Corridor), not text glyphs.
+const ICON: Record<ToastKind, ReactNode> = {
+  success: <Check size={14} strokeWidth={2.4} />,
+  error: <TriangleAlert size={14} strokeWidth={2.2} />,
+  info: <Info size={14} strokeWidth={2.2} />,
+};
 
 function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
   return (
@@ -125,7 +131,7 @@ function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id:
             onClick={() => onDismiss(t.id)}
             aria-label="Dismiss notification"
           >
-            ×
+            <X size={14} strokeWidth={2.2} aria-hidden="true" />
           </button>
         </div>
       ))}

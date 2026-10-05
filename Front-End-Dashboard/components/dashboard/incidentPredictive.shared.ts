@@ -15,15 +15,18 @@ export type ModelKey =
   | "NegBinomial_GLM"
   | "SARIMAX";
 
+// Night Corridor: green, amber and red belong to road state, so no model line
+// uses them (XGBoost was green #16a34a, SARIMAX red #ef4444). The hues are
+// categorical only; no visible text names a model by its colour.
 export const MODELS: { key: ModelKey; label: string; color: string }[] = [
-  { key: "XGBoost", label: "XGBoost", color: "#16a34a" },
+  { key: "XGBoost", label: "XGBoost", color: "#6366f1" },
   // Deep fuchsia, not the amber it used to be: VOLUME_COLOR below is #f59e0b,
   // so the exposure overlay and this model line were drawn in the same hue and
   // could not be told apart once both were on.
   { key: "RandomForest", label: "Random Forest", color: "#a21caf" },
   { key: "Poisson_GLM", label: "Poisson GLM", color: "#8b5cf6" },
   { key: "NegBinomial_GLM", label: "Neg. Binomial GLM", color: "#0891b2" },
-  { key: "SARIMAX", label: "SARIMAX", color: "#ef4444" },
+  { key: "SARIMAX", label: "SARIMAX", color: "#0d9488" },
   { key: "LSTM", label: "LSTM", color: "#db2777" },
   { key: "GRU", label: "GRU", color: "#64748b" },
 ];

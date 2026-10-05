@@ -5,10 +5,14 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
 /**
  * Theme handling for the dashboard.
  *
- * Three settings, not two. "system" is the default and follows the operating
- * system, which matters for eye comfort: a user who has scheduled their OS to go
- * dark at night gets the same behaviour here without touching a setting.
- * Choosing Light or Dark explicitly overrides the OS in either direction.
+ * Three settings, not two. "system" follows the operating system, which
+ * matters for eye comfort: a user who has scheduled their OS to go dark at
+ * night gets the same behaviour here once they choose it. Choosing Light or
+ * Dark explicitly overrides the OS in either direction.
+ *
+ * Dark is the default (Night Corridor redesign, 4 Oct 2026): with nothing
+ * stored, the dashboard opens dark whatever the OS says. A stored choice,
+ * including "system", is always respected.
  *
  * The choice is written to <html data-theme> and to localStorage. It is applied
  * before paint by the inline script in layout.tsx, so the page never flashes the
@@ -54,12 +58,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   // Read the stored choice once mounted.
   useEffect(() => {
-    let stored: ThemeChoice = "system";
+    let stored: ThemeChoice = "dark";
     try {
       const raw = localStorage.getItem(THEME_STORAGE_KEY);
       if (raw === "light" || raw === "dark" || raw === "system") stored = raw;
     } catch {
-      /* private mode: fall back to system */
+      /* private mode: fall back to the dark default */
     }
     setChoiceState(stored);
     applyChoice(stored);
@@ -118,5 +122,6 @@ export const THEME_INIT_SCRIPT = `(function(){try{
 var c=localStorage.getItem('${THEME_STORAGE_KEY}');
 var d=document.documentElement;
 if(c==='light'||c==='dark'){d.setAttribute('data-theme',c);d.style.colorScheme=c;}
-else{d.style.colorScheme='light dark';}
-}catch(e){}})();`;
+else if(c==='system'){d.style.colorScheme='light dark';}
+else{d.setAttribute('data-theme','dark');d.style.colorScheme='dark';}
+}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`;

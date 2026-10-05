@@ -31,15 +31,14 @@ type ModelComparison = { model: string; withWeather: number | null; withoutWeath
 export function EvidenceHeading({ icon, tint, title, children }: {
   icon: React.ReactNode; tint: string; title: string; children?: React.ReactNode;
 }) {
+  // Night Corridor: a hairline ring carries the icon in the block's tint, and
+  // the title sits at body size, so a block heading never outranks the card's.
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 9 }}>
-      <span style={{
-        display: "grid", placeItems: "center", width: 24, height: 24, borderRadius: 7,
-        background: `color-mix(in srgb, ${tint} 14%, transparent)`, color: tint, flex: "none",
-      }}>
+    <span className="nct-ev-heading">
+      <span className="nct-ev-heading-icon" style={{ color: tint }}>
         {icon}
       </span>
-      <span style={{ fontSize: "0.9rem", fontWeight: 800, letterSpacing: "-0.01em", color: "var(--text-primary)", display: "inline-flex", alignItems: "center" }}>
+      <span className="nct-ev-heading-title">
         {title}
         {children}
       </span>
@@ -85,9 +84,11 @@ export default function WeatherEvidencePanel({ plotted = "total_rain", selectedM
     if (a < 0.5) return "moderate";
     return "strong";
   };
+  // The word carries the grade; ink weight backs it up. Status colours are for
+  // road state and pass/fail only, so a correlation is not painted green.
   const linkTone = (r: number | null) => {
     const a = Math.abs(r ?? 0);
-    return a < 0.1 ? "var(--text-muted)" : a < 0.5 ? "var(--color-warning)" : "var(--color-success)";
+    return a < 0.1 ? "var(--text-muted)" : a < 0.5 ? "var(--text-secondary)" : "var(--text-primary)";
   };
 
   // The models on the chart, if any of them were tested; otherwise all tested.
@@ -107,67 +108,64 @@ export default function WeatherEvidencePanel({ plotted = "total_rain", selectedM
   const maxErr = Math.max(...shown.flatMap((m) => [m.withWeather ?? 0, m.withoutWeather ?? 0]), 0.001);
 
   return (
-    <section style={{ display: "grid", gap: 12 }}>
-      <EvidenceHeading icon={<CloudRain size={14} strokeWidth={2.4} />} tint="#0284c7" title="Does weather change the forecast?">
+    <section className="nct-weather">
+      <EvidenceHeading icon={<CloudRain size={14} strokeWidth={2.2} />} tint="var(--nct-rain)" title="Does weather change the forecast?">
         <InfoTooltip text={`The same model trained with and without weather inputs, compared on held-out error; lower is better. The chips grade how closely each daily weather variable moves with daily corridor volume${days ? ` over ${days.toLocaleString()} days` : ""}; hover one for the correlation. Holt-Winters and Holts Linear take no external inputs, so they are not tested. Rainfall is the variable drawn on the chart because it is the easiest to read.`} />
       </EvidenceHeading>
 
-      <p style={{ margin: 0, fontSize: "0.9rem", lineHeight: 1.5, color: "var(--text-primary)", fontWeight: 600 }}>
+      <p className="nct-weather-verdict">
         {verdict}
       </p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "12px 32px", alignItems: "start" }}>
+      <div className="nct-weather-grid">
       {shown.length > 0 && (
-        <div style={{ display: "grid", gap: 10 }}>
+        <div className="nct-weather-models">
           {shown.map((m) => {
             const d = m.deltaPts;
             const helps = d != null && d > 0.05;
             const hurts = d != null && d < -0.05;
             const tone = helps ? "var(--color-success)" : hurts ? "var(--color-danger)" : "var(--text-muted)";
             const bar = (v: number | null, color: string, label: string) => (
-              <div style={{ display: "grid", gridTemplateColumns: "132px 1fr 56px", alignItems: "center", gap: 8, fontSize: "0.78rem" }}>
-                <span style={{ color: "var(--text-secondary)" }}>{label}</span>
-                <span style={{ height: 8, background: "var(--border-default)", borderRadius: 4, overflow: "hidden" }}>
-                  <span style={{ display: "block", height: "100%", width: `${((v ?? 0) / maxErr) * 100}%`, background: color, borderRadius: 4 }} />
+              <div className="nct-weather-bar">
+                <span className="nct-weather-bar-label">{label}</span>
+                <span className="nct-weather-track">
+                  <span style={{ width: `${((v ?? 0) / maxErr) * 100}%`, background: color }} />
                 </span>
-                <span style={{ textAlign: "right", color: "var(--text-primary)", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{v == null ? "—" : `${v.toFixed(2)}%`}</span>
+                <span className="nct-weather-bar-value">{v == null ? "—" : `${v.toFixed(2)}%`}</span>
               </div>
             );
             return (
-              <div key={m.model} style={{ display: "grid", gap: 4 }}>
+              <div key={m.model} className="nct-weather-model">
                 {shown.length > 1 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: "0.8rem" }}>
-                    <b style={{ color: "var(--text-primary)" }}>{m.model}</b>
-                    <b style={{ color: tone, fontSize: "0.76rem" }}>
+                  <div className="nct-weather-model-head">
+                    <b>{m.model}</b>
+                    <b style={{ color: tone }}>
                       {d == null ? "—" : helps ? `${d.toFixed(2)} pts better with weather` : hurts ? `${Math.abs(d).toFixed(2)} pts worse with weather` : "no difference"}
                     </b>
                   </div>
                 )}
-                {bar(m.withWeather, "#0284c7", "Error with weather")}
-                {bar(m.withoutWeather, "#94a3b8", "Error without")}
+                {bar(m.withWeather, "var(--nct-rain)", "Error with weather")}
+                {bar(m.withoutWeather, "var(--nct-neutral-bar)", "Error without")}
               </div>
             );
           })}
-          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Shorter bar = more accurate.</div>
+          <div className="nct-caption">Shorter bar = more accurate.</div>
         </div>
       )}
 
       {/* The four weather signals, graded in words. */}
-      <div style={{ display: "grid", gap: 8, fontSize: "0.76rem", alignContent: "start" }}>
-        <span style={{ color: "var(--text-secondary)", fontWeight: 700 }}>How much each weather signal moves with traffic</span>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="nct-weather-signals">
+        <span className="nct-weather-signals-title">How much each weather signal moves with traffic</span>
+        <div className="nct-chip-row">
         {corr.map((c) => (
           <span
             key={c.variable}
             title={`Correlation with daily volume r = ${c.pearson == null ? "—" : c.pearson.toFixed(3)}`}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999,
-              background: "var(--bg-surface)", border: "1px solid var(--border-default)",
-            }}
+            className="nct-mini-chip"
           >
-            <b style={{ color: "var(--text-primary)" }}>{c.label}</b>
-            <span style={{ color: linkTone(c.pearson), fontWeight: 700 }}>{linkWord(c.pearson)}</span>
-            {c.variable === plotted && <span style={{ fontSize: "0.62rem", color: "var(--text-muted)" }}>on chart</span>}
+            <b>{c.label}</b>
+            <span style={{ color: linkTone(c.pearson), fontWeight: 600 }}>{linkWord(c.pearson)}</span>
+            {c.variable === plotted && <span className="nct-mini-tag">on chart</span>}
           </span>
         ))}
         </div>

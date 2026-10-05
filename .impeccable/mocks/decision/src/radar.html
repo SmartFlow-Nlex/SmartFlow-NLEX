@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Radar Composite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&family=Red+Hat+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --rail: #0b2a5b;          /* bulletin blue: the shell */
+    --rail-2: #123a7a;
+    --ground: #e9eff7;        /* pale map sheet */
+    --paper: #ffffff;
+    --rule: #cfd9e8;
+    --ink: #0a1d40;
+    --ink-2: #4a5d7e;
+    --action: #1d63d6;
+    --clear: #1f9d55;          /* radar ramp: green, yellow-orange, red */
+    --slow: #e08a00;
+    --congested: #d7262e;
+    --sans: "Public Sans", system-ui, sans-serif;
+    --mono: "Red Hat Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 1440px; height: 900px; overflow: hidden; background: var(--ground); color: var(--ink); font: 400 15px var(--sans); display: grid; grid-template-columns: 76px 1fr; }
+  nav { background: var(--rail); display: flex; flex-direction: column; align-items: center; padding: 14px 0; gap: 4px; }
+  nav .mark { width: 40px; height: 40px; border-radius: 10px; background: #fff; color: var(--rail); display: grid; place-items: center; font: 800 13px var(--sans); margin-bottom: 14px; }
+  nav .it { width: 56px; padding: 7px 0 6px; border-radius: 8px; color: #c8d6f0; display: flex; flex-direction: column; align-items: center; gap: 3px; font: 600 10.5px var(--sans); }
+  nav .it.on { background: #fff; color: var(--rail); }
+  nav .it svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+  main { display: grid; grid-template-rows: 56px 1fr; min-width: 0; }
+  header.top { display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: var(--paper); border-bottom: 1px solid var(--rule); }
+  header h1 { font: 800 20px var(--sans); letter-spacing: -0.01em; }
+  header h1 span { font-weight: 500; color: var(--ink-2); font-size: 15px; margin-left: 10px; }
+  .fresh { display: flex; gap: 16px; align-items: center; font: 600 13px var(--mono); color: var(--ink-2); }
+  .fresh b { color: var(--ink); }
+  select { font: 600 13px var(--sans); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 8px; background: #fff; color: var(--ink); }
+  .work { display: grid; grid-template-columns: 372px 1fr; min-height: 0; }
+  aside { background: var(--paper); border-right: 1px solid var(--rule); padding: 18px 20px; display: flex; flex-direction: column; gap: 16px; }
+  .stamp { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font: 600 13px var(--mono); color: var(--ink-2); padding-bottom: 14px; border-bottom: 1px solid var(--rule); }
+  .stamp b { color: var(--ink); font-weight: 700; }
+  .counts { display: flex; flex-direction: column; gap: 2px; }
+  .c { display: grid; grid-template-columns: 14px 1fr auto; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid #edf1f7; }
+  .c i { width: 14px; height: 14px; border-radius: 3px; }
+  .c .n { font: 600 16px var(--sans); }
+  .c .v { font: 700 30px var(--mono); font-variant-numeric: tabular-nums; }
+  .slowest { background: var(--ink); color: #fff; border-radius: 10px; padding: 14px 16px; }
+  .slowest .l { font: 600 12.5px var(--sans); color: #b9c8e6; }
+  .slowest .v { font: 800 20px var(--sans); margin-top: 3px; }
+  .slowest .v span { font-family: var(--mono); color: #ff8a8f; }
+  .ramp { margin-top: auto; }
+  .ramp .bar { display: grid; grid-template-columns: repeat(3, 1fr) 0.6fr; height: 10px; border-radius: 3px; overflow: hidden; }
+  .ramp .lab { display: grid; grid-template-columns: repeat(3, 1fr) 0.6fr; font: 600 12px var(--sans); color: var(--ink-2); margin-top: 5px; }
+  .note { font-size: 12.5px; color: var(--ink-2); }
+  .plate { position: relative; margin: 16px 18px; border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; background: #dfe8f3; }
+  .plate canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+  .plate .hint { position: absolute; left: 14px; top: 12px; background: rgba(255,255,255,0.92); padding: 5px 9px; border-radius: 6px; font: 600 13px var(--sans); color: var(--ink-2); }
+  .plate .hint b { color: var(--action); }
+  .lbl { position: absolute; transform: translate(12px, -50%); text-shadow: 0 0 2px #eef3f9, 0 0 4px #eef3f9, 0 0 6px #eef3f9; font: 700 12px var(--sans); color: var(--ink); white-space: nowrap; pointer-events: none; }
+  .lbl em { font: 600 11.5px var(--mono); font-style: normal; color: var(--ink-2); margin-right: 4px; }
+  .readout { position: absolute; transform: translate(-50%, calc(-100% - 18px)); background: #fff; border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; width: 262px; box-shadow: 0 8px 22px rgba(10, 29, 64, 0.16); pointer-events: none; }
+  .readout .km { font: 700 12px var(--mono); color: var(--ink-2); }
+  .readout .nm { font: 800 17px var(--sans); margin: 2px 0 8px; }
+  .readout .d { display: flex; gap: 14px; font: 600 13px var(--sans); }
+  .readout .d span { display: inline-flex; align-items: center; gap: 6px; }
+  .readout .d i { width: 10px; height: 10px; border-radius: 2px; }
+  .mock { position: fixed; right: 12px; bottom: 10px; font: 600 12px var(--mono); color: #4a5d7e; }
+</style>
+</head>
+<body>
+<nav>
+  <div class="mark">SF</div>
+  <div class="it on"><svg viewBox="0 0 24 24"><path d="M3 12h18M3 6h18M3 18h12"/></svg>Overview</div>
+  <div class="it"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/></svg>Traffic</div>
+  <div class="it"><svg viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5"/></svg>Incidents</div>
+  <div class="it"><svg viewBox="0 0 24 24"><path d="M5 19c8 0 14-6 14-14C11 5 5 11 5 19z"/></svg>Emissions</div>
+  <div class="it"><svg viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/></svg>Live Map</div>
+  <div class="it"><svg viewBox="0 0 24 24"><path d="M14 6l4 4-9 9H5v-4z"/></svg>Maint.</div>
+  <div class="it"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/></svg>Mobile</div>
+  <div class="it"><svg viewBox="0 0 24 24"><path d="M4 18V6M20 18V6M12 6v3M12 12v2M12 17v1"/></svg>Sandbox</div>
+  <div class="it"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM4 10h16"/></svg>Data</div>
+  <div class="it"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6"/></svg>Audit</div>
+</nav>
+<main>
+  <header class="top">
+    <h1>SmartFlow NLEX<span>Corridor, Km 12 Balintawak to Km 88.25 Sta. Ines</span></h1>
+    <div class="fresh"><span>Sat 3 Oct <b>22:57</b></span><select aria-label="Theme"><option>Light</option><option>Dark</option><option>System</option></select></div>
+  </header>
+  <div class="work">
+    <aside>
+      <div class="stamp"><span>Issued</span><b>22:56 · 3 Oct 2026</b><span>Valid</span><b>last 60 min</b><span>Source</span><b>Waze jam reports</b><span>Age</span><b>1 min</b></div>
+      <div class="counts" aria-label="Exit-directions by state">
+        <div class="c"><i style="background:var(--congested)"></i><span class="n">Congested</span><span class="v" style="color:var(--congested)">6</span></div>
+        <div class="c"><i style="background:var(--slow)"></i><span class="n">Slow</span><span class="v">0</span></div>
+        <div class="c"><i style="background:var(--clear)"></i><span class="n">Clear</span><span class="v">34</span></div>
+      </div>
+      <div class="slowest"><div class="l">Slowest reading on the corridor</div><div class="v">Paso de Blas Valenzuela · <span>4 km/h</span></div></div>
+      <div class="ramp">
+        <div class="bar"><span style="background:var(--clear)"></span><span style="background:var(--slow)"></span><span style="background:var(--congested)"></span><span style="background:#b8c3d4"></span></div>
+        <div class="lab"><span>Clear</span><span>Slow</span><span>Congested</span><span>No report</span></div>
+      </div>
+      <p class="note">40 exit-directions: 20 exits, both carriageways. Exit positions along the road and the six congested ones are approximate in this mock.</p>
+    </aside>
+    <section class="plate" aria-label="3D corridor map">
+      <canvas id="c3"></canvas>
+      <div class="hint">Drag the <b>car</b> along NLEX to read any km</div>
+      <div id="labels"></div>
+      <div class="readout" id="ro"><div class="km" id="ro-km"></div><div class="nm" id="ro-nm"></div><div class="d" id="ro-d"></div></div>
+    </section>
+  </div>
+</main>
+<div class="mock">MOCK · Overview · counts from live capture 3 Oct 22:56</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="corridor.js"></script>
+<script>
+(async () => {
+  await document.fonts.ready;
+  const M = window.MOCK;
+  const geo = await (await fetch("nlex-geometry.json")).json();
+  const canvas = document.getElementById("c3");
+  const plate = canvas.parentElement;
+  const W = plate.clientWidth, H = plate.clientHeight;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(1);
+  renderer.setSize(W, H, false);
+  renderer.setClearColor(0xdfe8f3);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.55);
+  sun.position.set(-300, 500, 300);
+  scene.add(sun);
+
+  // project lon/lat to a local metric plane (x east, z south), 1 unit = 100 m
+  const lat0 = 14.95, kx = 111320 * Math.cos((lat0 * Math.PI) / 180) / 100, kz = 110540 / 100;
+  const raw = geo.coordinates.map(([lo, la]) => new THREE.Vector3((lo - 120.8) * kx, 0, -(la - lat0) * kz));
+  const cum = [0];
+  for (let i = 1; i < raw.length; i++) cum.push(cum[i - 1] + raw[i].distanceTo(raw[i - 1]));
+  const total = cum[cum.length - 1];
+  // km along the road: each exit is anchored at its real coordinates (from
+  // lib/nlex-exits.ts), and km between two exits is interpolated along the
+  // geometry between their anchor points
+  const ANCH = [[12, 14.678767, 121.000089], [13.63, 14.693465, 121.000308], [15.44, 14.708213, 120.993002], [20.21, 14.746388, 120.972316], [23.73, 14.774562, 120.957267], [26.05, 14.793124, 120.947256], [27.2, 14.802456, 120.942456], [27.82, 14.807234, 120.9394], [28.81, 14.815124, 120.935071], [32.69, 14.832746, 120.903911], [33.09, 14.834437, 120.900634], [38.55, 14.862453, 120.858887], [45.33, 14.908258, 120.817015], [56.91, 14.990135, 120.749969], [65.78, 15.049706, 120.694856], [72.78, 15.105217, 120.663619], [81.15, 15.163114, 120.613459], [83.05, 15.178009, 120.604629], [85.23, 15.196301, 120.597121], [88.25, 15.222037, 120.587835]]
+    .map(([k, la, lo]) => {
+      const p = new THREE.Vector3((lo - 120.8) * kx, 0, -(la - lat0) * kz);
+      let bi = 0, bd = Infinity;
+      raw.forEach((q, i) => { const d = q.distanceToSquared(p); if (d < bd) { bd = d; bi = i; } });
+      return { k, c: cum[bi] };
+    });
+  const at = (km) => {
+    km = Math.min(88.25, Math.max(12, km));
+    let j = ANCH.findIndex((a) => a.k >= km);
+    if (j <= 0) j = 1;
+    const A = ANCH[j - 1], B = ANCH[j];
+    const t = A.c + ((km - A.k) / (B.k - A.k)) * (B.c - A.c);
+    let i = cum.findIndex((c) => c >= t);
+    if (i <= 0) return raw[0].clone();
+    const f = (t - cum[i - 1]) / ((cum[i] - cum[i - 1]) || 1);
+    return raw[i - 1].clone().lerp(raw[i], f);
+  };
+
+  // map sheet with a graticule every 0.05 degrees
+  const sheet = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.MeshLambertMaterial({ color: 0xeef3f9 }));
+  sheet.rotation.x = -Math.PI / 2;
+  sheet.position.y = -1;
+  scene.add(sheet);
+  const gm = new THREE.LineBasicMaterial({ color: 0xd3deec });
+  for (let lo = 120.5; lo <= 121.1; lo += 0.05) {
+    const x = (lo - 120.8) * kx;
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, -0.9, -900), new THREE.Vector3(x, -0.9, 900)]), gm));
+  }
+  for (let la = 14.6; la <= 15.3; la += 0.05) {
+    const z = -(la - lat0) * kz;
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-900, -0.9, z), new THREE.Vector3(900, -0.9, z)]), gm));
+  }
+
+  // the road as a ribbon, then congested stretches as raised blocks on top
+  const ribbon = (pts, width, color, y) => {
+    const curve = new THREE.CatmullRomCurve3(pts);
+    const tube = new THREE.TubeGeometry(curve, Math.max(8, pts.length * 2), width, 6, false);
+    const m = new THREE.Mesh(tube, new THREE.MeshLambertMaterial({ color }));
+    m.scale.y = 0.35;
+    m.position.y = y;
+    scene.add(m);
+  };
+  const thin = raw.filter((_, i) => i % 6 === 0 || i === raw.length - 1);
+  ribbon(thin, 5.2, 0x1f9d55, 0);
+  ribbon(thin, 2.2, 0x14552f, 0.6);
+  for (const dir of ["NB", "SB"]) for (const k of M.congestedAt[dir]) {
+    const pts = [];
+    for (let s = -0.9; s <= 0.9; s += 0.15) pts.push(at(k + s));
+    ribbon(pts, dir === "NB" ? 6.4 : 7.6, 0xd7262e, dir === "NB" ? 1.4 : 0.9);
+  }
+  // exit posts
+  for (const [k] of M.exits) {
+    const p = at(k);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 10, 10), new THREE.MeshLambertMaterial({ color: 0x0b2a5b }));
+    post.position.set(p.x, 5, p.z);
+    scene.add(post);
+  }
+
+  // the car
+  const car = new THREE.Group();
+  const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
+  const b = new THREE.Mesh(new THREE.BoxGeometry(12, 3.4, 6.4), mat(0x1d63d6)); b.position.y = 3;
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(6.4, 2.8, 5.4), mat(0xeaf2ff)); cab.position.set(-0.8, 6, 0);
+  car.add(b, cab);
+  for (const [wx, wz] of [[3.8, 3.3], [-3.8, 3.3], [3.8, -3.3], [-3.8, -3.3]]) {
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 1.2, 14), mat(0x101820));
+    w.rotation.x = Math.PI / 2; w.position.set(wx, 1.5, wz); car.add(w);
+  }
+  car.scale.setScalar(2.6);
+  scene.add(car);
+
+  const camera = new THREE.PerspectiveCamera(36, W / H, 1, 6000);
+  // frame the whole road, looking from the north-east toward the south-west
+  // so km runs left to right: Balintawak on the left, Sta. Ines on the right
+  const bb = new THREE.Box3().setFromPoints(raw);
+  const ctr = bb.getCenter(new THREE.Vector3());
+  const span = bb.getSize(new THREE.Vector3()).length();
+  const d = span * 1.12;
+  camera.position.set(ctr.x + d * 0.72, d * 0.92, ctr.z + d * 0.12);
+  camera.lookAt(ctr.x, 0, ctr.z);
+  camera.updateMatrixWorld();
+
+  const v = new THREE.Vector3();
+  const proj = (p, y = 0) => { v.set(p.x, y, p.z).project(camera); return { x: ((v.x + 1) / 2) * W, y: ((1 - v.y) / 2) * H }; };
+  const nearest = (km) => M.exits.reduce((a, e) => (Math.abs(e[0] - km) < Math.abs(a[0] - km) ? e : a));
+  const st = (d, k) => (M.congestedAt[d].includes(k) ? ["congested", "#d7262e"] : ["clear", "#1f9d55"]);
+  let km = 15.4;
+  const setKm = (k) => {
+    km = Math.min(88.25, Math.max(12, k));
+    const p = at(km), q = at(Math.min(88.25, km + 0.3));
+    car.position.set(p.x, 1, p.z);
+    car.rotation.y = Math.atan2(-(q.z - p.z), q.x - p.x);
+    renderer.render(scene, camera);
+    const [ek, en] = nearest(km);
+    document.getElementById("ro-km").textContent = `KM ${km.toFixed(1)} · NEAREST EXIT KM ${ek.toFixed(1)}`;
+    document.getElementById("ro-nm").textContent = en;
+    document.getElementById("ro-d").innerHTML = ["NB", "SB"].map((d) => { const [s, c] = st(d, ek); return `<span><i style="background:${c}"></i>${d} ${s}</span>`; }).join("");
+    const s = proj(p, 8);
+    const ro = document.getElementById("ro");
+    ro.style.left = `${Math.max(140, Math.min(W - 140, s.x))}px`;
+    ro.style.top = `${s.y}px`;
+  };
+  // labels for a readable subset of exits
+  const lab = document.getElementById("labels");
+  for (const k of [12.0, 20.2, 27.2, 38.5, 45.3, 56.9, 65.8, 81.2, 88.3]) {
+    const s = proj(at(k), 10);
+    const n = M.exits.find((e) => e[0] === k)[1];
+    const d = document.createElement("div");
+    d.className = "lbl"; d.style.left = `${s.x}px`; d.style.top = `${s.y}px`;
+    d.innerHTML = `<em>${k.toFixed(1)}</em>${n}`;
+    lab.appendChild(d);
+  }
+  // drag: move the car to the nearest point on the road under the pointer
+  const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3();
+  const samples = []; for (let k = 12; k <= 88.25; k += 0.1) samples.push([k, at(k)]);
+  let drag = false;
+  const onPtr = (e) => {
+    const r = canvas.getBoundingClientRect();
+    ray.setFromCamera({ x: ((e.clientX - r.left) / r.width) * 2 - 1, y: -((e.clientY - r.top) / r.height) * 2 + 1 }, camera);
+    ray.ray.intersectPlane(plane, hit);
+    let best = samples[0], bd = Infinity;
+    for (const s of samples) { const d = s[1].distanceToSquared(hit); if (d < bd) { bd = d; best = s; } }
+    setKm(best[0]);
+  };
+  canvas.addEventListener("pointerdown", (e) => { drag = true; canvas.setPointerCapture(e.pointerId); onPtr(e); });
+  canvas.addEventListener("pointermove", (e) => drag && onPtr(e));
+  canvas.addEventListener("pointerup", () => (drag = false));
+  setKm(15.4);
+})();
+</script>
+</body>
+</html>

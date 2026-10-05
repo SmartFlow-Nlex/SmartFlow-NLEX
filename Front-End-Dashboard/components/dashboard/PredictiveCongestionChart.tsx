@@ -1,15 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import type { EChartsOption } from "echarts";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
 import CongestionNarrative from "./CongestionNarrative";
-import { ShieldCheck, ChevronRight } from "lucide-react";
 import { loadForecast } from "./prescriptiveTraffic.shared";
-import { REPLAY_ACTUAL, REPLAY_FORECAST, TOOLTIP_CSS, useMeasuredWidth } from "./replayViz";
+import { REPLAY_ACTUAL, REPLAY_FORECAST, useMeasuredWidth } from "./replayViz";
 import { plazaLabel } from "../../lib/nlex-exits";
-import { useChartTheme } from "../../lib/chart-theme";
+import { useChartTheme, heatRamp, type ChartTheme } from "../../lib/chart-theme";
+import { useTrafficPalette, type TrafficPalette } from "./trafficPalette";
+import SignalGlyph from "./SignalGlyph";
+import StateNote from "../stage/StateNote";
+import EvidenceModal from "./EvidenceModal";
 
 type State = "Low" | "Med" | "High";
 
@@ -130,15 +134,15 @@ function volTooltip(state: State | "Pending", volMedian?: number | null, volRel?
   if (volMedian == null || volRel == null || state === "Pending") return "";
   const note =
     state !== "Low" && volRel < 0.7
-      ? `<div style="margin-top:4px; color:var(--color-warning); font-size:0.8em; line-height:1.4; max-width:250px; white-space:normal;">A jam in a quiet hour is usually an incident or roadworks rather than demand.</div>`
+      ? `<div style="margin-top:4px; color:var(--color-warning); font-size:0.8em; line-height:1.4;">A jam in a quiet hour is usually an incident or roadworks rather than demand.</div>`
       : state !== "Low" && volRel >= 1.3
-      ? `<div style="margin-top:4px; color:var(--text-secondary); font-size:0.8em; line-height:1.4; max-width:250px; white-space:normal;">Fits the traffic: this is one of the exit's busiest hours.</div>`
+      ? `<div style="margin-top:4px; color:var(--text-secondary); font-size:0.8em; line-height:1.4;">Fits the traffic: this is one of the exit's busiest hours.</div>`
       : "";
   return `
-    <div style="margin-top:9px; display:flex; justify-content:space-between; gap:12px; align-items:baseline; font-size:0.88em;">
-      <span style="color:var(--text-secondary);">Typical traffic</span>
-      <span style="white-space:nowrap;"><b style="color:var(--text-primary);">~${volText(volMedian)}</b>
-        <span style="color:var(--text-muted);"> · ${volRel.toFixed(1)}× · ${volBusy(volRel)}</span></span>
+    <div style="margin-top:10px; display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; font-size:0.86em;">
+      <span style="font-size:0.85em; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-muted);">Traffic</span>
+      <b style="color:var(--text-primary); font-variant-numeric:tabular-nums;">~${volText(volMedian)}</b>
+      <span style="color:var(--text-muted);">${volRel.toFixed(1)}× · ${volBusy(volRel)}</span>
     </div>${note}`;
 }
 
@@ -150,10 +154,6 @@ function jamTooltip(exit: string, state: State, j: Jam | null | undefined): stri
   if (!j) return "";
   const expected = state !== "Low";
   const ink = expected ? "var(--text-primary)" : "var(--text-secondary)";
-  const row = (label: string, value: string, extra = "") =>
-    `<span style="color:var(--text-secondary);">${label}</span>
-     <span style="font-weight:700; color:${ink}; text-align:right; white-space:nowrap;">${value}${
-       extra ? `<span style="font-weight:500; color:var(--text-muted);"> · ${extra}</span>` : ""}</span>`;
   // The 75th percentile is only worth a mention when it says something the
   // median does not: a queue that is usually 300 m but often 900 m.
   const queueTail = j.queueP75M != null && j.queueP75M > j.queueM * 1.25 ? `3 in 4 under ${fmtM(j.queueP75M)}` : "";
@@ -163,19 +163,26 @@ function jamTooltip(exit: string, state: State, j: Jam | null | undefined): stri
     : j.basis === "exit"
     ? `Typical for ${exit} at any hour; too few past jams at this hour to be specific · ${j.basisHours.toLocaleString()} jam-hours`
     : `Corridor-wide typical: ${exit} has too few past jams near its plaza to describe on its own`;
-  return `
-    <div style="margin-top:10px; padding-top:8px; border-top:1px solid var(--bg-surface-hover);">
-      <div style="display:flex; justify-content:space-between; gap:10px; align-items:baseline;">
-        <span style="font-size:0.78em; font-weight:800; letter-spacing:0.05em; text-transform:uppercase; color:${expected ? "var(--color-warning)" : "var(--text-muted)"};">${expected ? "Expected jam" : "If a jam forms"}</span>
-      </div>
-      <div style="margin-top:3px; font-weight:700; color:${ink};">${jamWhere(exit, j)}</div>
-      <div style="margin-top:6px; display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:0.88em; align-items:baseline;">
-        ${row("Queue length", `~${fmtM(j.queueM)}`, queueTail)}
-        ${row("Est. delay", `~${fmtDelay(j.delayS)}`, delayTail)}
-        ${j.speedKmh != null ? row("Speed in the queue", `~${Math.round(j.speedKmh)} km/h`) : ""}
-      </div>
-      <div style="margin-top:7px; color:var(--text-muted); font-size:0.78em; line-height:1.45; max-width:250px; white-space:normal;">${basis}</div>
+  const stat = (label: string, value: string, tail = "") => `
+    <div style="min-width:0;">
+      <div style="font-size:0.72em; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-muted);">${label}</div>
+      <div style="margin-top:2px; font-weight:700; color:${ink}; font-variant-numeric:tabular-nums; white-space:nowrap;">${value}</div>
+      ${tail ? `<div style="margin-top:1px; font-size:0.72em; line-height:1.3; color:var(--text-muted);">${tail}</div>` : ""}
     </div>`;
+  const accent = expected ? "var(--color-warning)" : "var(--text-muted)";
+  return `
+    <div style="margin-top:12px; padding:10px 12px 10px; border-radius:10px;
+                background:color-mix(in srgb, ${expected ? "var(--color-warning)" : "var(--text-primary)"} 8%, transparent);
+                box-shadow:inset 0 0 0 1px color-mix(in srgb, ${expected ? "var(--color-warning)" : "var(--text-primary)"} 22%, transparent);">
+      <div style="font-size:0.74em; font-weight:800; letter-spacing:0.08em; text-transform:uppercase; color:${accent};">${expected ? "Expected jam" : "If a jam forms"}</div>
+      <div style="margin-top:3px; font-weight:600; line-height:1.35; color:${ink};">${jamWhere(exit, j)}</div>
+      <div style="margin-top:8px; display:grid; grid-template-columns:repeat(${j.speedKmh != null ? 3 : 2}, minmax(0, 1fr)); gap:8px;">
+        ${stat("Queue", `~${fmtM(j.queueM)}`, queueTail)}
+        ${stat("Delay", `~${fmtDelay(j.delayS)}`, delayTail)}
+        ${j.speedKmh != null ? stat("Speed", `~${Math.round(j.speedKmh)} km/h`) : ""}
+      </div>
+    </div>
+    <div style="margin-top:7px; color:var(--text-muted); font-size:0.74em; line-height:1.45;">${basis}</div>`;
 }
 
 // Corridor position now arrives per row from the API (gold.exit_km_post), which
@@ -248,6 +255,47 @@ const WEEK_BANDS_DARK: WeekBand[] = [
   { min: 6, max: 8, color: "#e0951f", label: "6-8 h" },
   { min: 9, max: 24, color: "#ff5c5c", label: "9 h+" },
 ];
+/* Night Corridor: Moving, Heavy and Severe are the road's three states, so
+   they wear the three state tokens (--signal-clear / -slow / -congested),
+   read as literals for the canvas. Labels, bands and the rule that picks a
+   cell's state are unchanged. Cached per palette so the object keeps its
+   identity between renders (the grid's memo depends on it). */
+const stateMetaCache = new Map<string, StateMeta>();
+function stateMetaFor(P: TrafficPalette): StateMeta {
+  const key = `${P.isDark}|${P.clear}|${P.slow}|${P.congested}`;
+  const hit = stateMetaCache.get(key);
+  if (hit) return hit;
+  const base = P.isDark ? STATE_META_DARK : STATE_META_LIGHT;
+  const onDark = "#03060d";
+  const onLight = "#ffffff";
+  const meta: StateMeta = {
+    Low: { ...base.Low, color: P.clear, text: P.isDark ? onDark : onLight },
+    Med: { ...base.Med, color: P.slow, text: P.isDark ? onDark : onLight },
+    High: { ...base.High, color: P.congested, text: P.isDark ? onDark : onLight },
+  };
+  stateMetaCache.set(key, meta);
+  return meta;
+}
+
+/* The week grid counts expected congested HOURS: a magnitude, not a state.
+   Shading the state colours into five steps would put a fourth and fifth
+   "state" on the page, so it takes the Traffic accent's heat ramp instead,
+   with the number printed in every cell. Bands and labels are unchanged. */
+const weekBandsCache = new Map<boolean, { bands: WeekBand[]; ink: string[] }>();
+function weekBandsFor(t: ChartTheme) {
+  const hit = weekBandsCache.get(t.isDark);
+  if (hit) return hit;
+  const ramp = heatRamp(t);
+  const pick = [0, 2, 3, 5, 6];
+  const bands = WEEK_BANDS_LIGHT.map((b, i) => ({ ...b, color: ramp[pick[i]] }));
+  // Text on each band, chosen for contrast with that step of the ramp.
+  const ink = t.isDark
+    ? ["#f4f1ea", "#f4f1ea", "#f4f1ea", "#03060d", "#03060d"]
+    : ["#0b1220", "#0b1220", "#ffffff", "#ffffff", "#ffffff"];
+  const out = { bands, ink };
+  weekBandsCache.set(t.isDark, out);
+  return out;
+}
 const LOW_CONF = 0.8;
 
 /** "+1h" is meaningless without an anchor, so every hour label carries the
@@ -325,7 +373,7 @@ function ReplayChart({ series, exits }: { series: { t: string; e: number; a: num
     // A 164-hour line needs a floor width to stay legible; below that the
     // chart scrolls inside its own box rather than widening the page.
     <div ref={ref} style={{ position: "relative", width: "100%", overflowX: "auto" }}>
-      <div style={{ display: "flex", gap: 14, justifyContent: "flex-end", fontSize: "0.7rem", color: "var(--text-secondary)", marginBottom: 2 }}>
+      <div className="nct-key" style={{ justifyContent: "flex-end", marginBottom: 2 }}>
         {[{ c: REPLAY_ACTUAL, dash: false, label: "Actually congested" },
           { c: REPLAY_FORECAST, dash: true, label: "Model expected" }].map((l) => (
           <span key={l.label} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -366,8 +414,8 @@ function ReplayChart({ series, exits }: { series: { t: string; e: number; a: num
           <path d={path((d) => d.a)} fill="none" stroke={REPLAY_ACTUAL} strokeWidth={2} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           <path d={path((d) => d.e)} fill="none" stroke={REPLAY_FORECAST} strokeWidth={2} strokeDasharray="5 3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
 
-          <text x={padL + plotW + 6} y={ends.a + 3} fontSize={10} fontWeight={700} fill={REPLAY_ACTUAL}>Actual</text>
-          <text x={padL + plotW + 6} y={ends.e + 3} fontSize={10} fontWeight={700} fill={REPLAY_FORECAST}>Expected</text>
+          <text x={padL + plotW + 6} y={ends.a + 3} fontSize={11} fontWeight={600} fill={REPLAY_ACTUAL}>Actual</text>
+          <text x={padL + plotW + 6} y={ends.e + 3} fontSize={11} fontWeight={600} fill={REPLAY_FORECAST}>Expected</text>
 
           {hv && (
             <g pointerEvents="none">
@@ -381,10 +429,10 @@ function ReplayChart({ series, exits }: { series: { t: string; e: number; a: num
       {hv && (
         <div style={{
           position: "absolute", left: hvLeft, top: hvTop, transform: "translateX(-50%)", pointerEvents: "none",
-          background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: 8, padding: "6px 9px",
-          boxShadow: "0 6px 16px rgba(15,23,42,0.12)", fontSize: "0.72rem", whiteSpace: "nowrap", zIndex: 2,
+          background: "var(--bg-raised)", border: "1px solid var(--border-strong)", borderRadius: 10, padding: "8px 11px",
+          boxShadow: "var(--shadow-lg)", fontSize: "var(--fs-body)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", zIndex: 2,
         }}>
-          <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: 3 }}>
+          <div style={{ fontWeight: 600, color: "var(--text-primary)", marginBottom: 3 }}>
             {new Date(hv.t.replace(" ", "T")).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", hour12: true })}
           </div>
           <div style={{ color: REPLAY_FORECAST, fontWeight: 600 }}>Model expected {hv.e.toFixed(1)} of {hv.n}</div>
@@ -400,14 +448,11 @@ function ReplayChart({ series, exits }: { series: { t: string; e: number; a: num
  *  they came for. */
 function EvBlock({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "22px minmax(0,1fr)", gap: 10, alignItems: "start" }}>
-      <span style={{
-        display: "grid", placeItems: "center", width: 22, height: 22, borderRadius: 999, fontSize: "0.7rem", fontWeight: 800,
-        background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)", color: "var(--text-secondary)",
-      }}>{n}</span>
+    <div className="nct-ev-block">
+      <span className="nct-ev-n">{n}</span>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: "0.82rem", fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.01em", marginBottom: 4 }}>{title}</div>
-        <div style={{ fontSize: "0.76rem" }}>{children}</div>
+        <div className="nct-ev-title">{title}</div>
+        <div className="nct-ev-body">{children}</div>
       </div>
     </div>
   );
@@ -533,11 +578,13 @@ export default function PredictiveCongestionChart() {
   // detail drawer all order by corridor position and must agree on it.
   // Theme-aware literals: ECharts draws on a canvas and cannot read CSS vars.
   const chartTheme = useChartTheme();
-  const STATE_META = chartTheme.isDark ? STATE_META_DARK : STATE_META_LIGHT;
-  const WEEK_BANDS = chartTheme.isDark ? WEEK_BANDS_DARK : WEEK_BANDS_LIGHT;
-  const K = chartTheme.isDark
-    ? { surface: "#0f1f3d", ink: "#e8eefb", ink2: "#a9b9da", muted: "#8a9cc2", faint: "#4a6396", faint2: "#33497a", border: "#22396b", hover: "#142749" }
-    : { surface: "#ffffff", ink: "#0a1630", ink2: "#3b4d72", muted: "#55678b", faint: "#b9c5da", faint2: "#d9e0ec", border: "#d9e0ec", hover: "#f4f6fa" };
+  const P = useTrafficPalette();
+  const STATE_META = stateMetaFor(P);
+  const WEEK = weekBandsFor(chartTheme);
+  const WEEK_BANDS = WEEK.bands;
+  // Night Corridor literals for the canvas: the card surface for cell gaps,
+  // the ink steps, a neutral for "not this", and a blank for pending hours.
+  const K = { surface: P.surface, ink: P.ink, ink2: P.ink2, muted: P.muted, faint: P.neutral, faint2: P.neutral, border: P.hairline, hover: P.blank };
 
   const KMI = useMemo(() => kmIndex(raw ?? []), [raw]);
 
@@ -726,7 +773,7 @@ export default function PredictiveCongestionChart() {
     // Blank cells for the hours the stored forecast does not reach.
     for (let y = 0; y < segments.length; y++) {
       for (let x = maxHour; x < frameHours; x++) {
-        cells.push({ value: [x, y, 3], state: "Pending", conf: 0, label: { color: "var(--text-muted)" } });
+        cells.push({ value: [x, y, 3], state: "Pending", conf: 0, label: { color: K.muted } });
       }
     }
 
@@ -941,29 +988,28 @@ export default function PredictiveCongestionChart() {
 
   if (!model) {
     return (
-      <article className="chart-card wide" style={{ padding: "24px", marginTop: "24px", display: "flex", flexDirection: "column", gap: 12 }}>
+      <article className="chart-card wide nct-card">
         {loadError ? (
           <>
-            <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>
+            <h3 className="nct-title">
               Predictive Congestion State Map
               <InfoTooltip text="Predicted jam state at each exit for the next 12 hours, from Waze jam reports. Red = crawling under 10 km/h, amber = heavy at 10-20 km/h, blue = moving freely or no jam reported. The cuts are this corridor's own: a generic 30 km/h threshold put every reported jam in one class. Hover a cell for the typical queue length, its distance from the toll plaza and the delay, from four years of Waze jam history at that exit and hour." />
             </h3>
-            <div style={{ color: "var(--color-danger, var(--color-danger))", fontSize: "0.88rem" }}>{loadError}</div>
-            <div>
-              <button
-                onClick={() => { setLoadError(null); setAttempt((a) => a + 1); }}
-                style={{
-                  padding: "7px 16px", borderRadius: 6, cursor: "pointer", border: "1px solid transparent",
-                  background: "var(--action)", color: "var(--action-ink)",
-                  fontSize: "0.875rem", fontWeight: 650,
-                }}
-              >
-                Try again
-              </button>
-            </div>
+            <StateNote kind="error" role="alert">
+              {loadError}
+              <div style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="btn-muted"
+                  onClick={() => { setLoadError(null); setAttempt((a) => a + 1); }}
+                >
+                  Try again
+                </button>
+              </div>
+            </StateNote>
           </>
         ) : (
-          <div style={{ color: "var(--text-secondary)" }}>Loading ML congestion forecast from AWS…</div>
+          <StateNote kind="loading">Loading ML congestion forecast from AWS…</StateNote>
         )}
       </article>
     );
@@ -1018,7 +1064,14 @@ export default function PredictiveCongestionChart() {
 
   const shownDayCells = model.dayCells
     .filter((c) => yMap.has(c.value[1]))
-    .map((c) => ({ ...c, value: [c.value[0], yMap.get(c.value[1])!, c.value[2]] as [number, number, number] }));
+    .map((c) => {
+      const band = Math.max(0, WEEK_BANDS.findIndex((b) => c.hours >= b.min && c.hours <= b.max));
+      return {
+        ...c,
+        value: [c.value[0], yMap.get(c.value[1])!, c.value[2]] as [number, number, number],
+        label: { color: WEEK.ink[band] ?? K.ink },
+      };
+    });
 
   // When does each hidden exit first turn severe? Drives the chip ordering and
   // the warning, so the reader can see which are worth pulling in.
@@ -1061,16 +1114,15 @@ export default function PredictiveCongestionChart() {
       pieces: WEEK_BANDS.map((b) => ({ min: b.min, max: b.max, color: b.color })),
     },
     tooltip: {
-      // Fully opaque: translucency let the cells underneath show through.
-      backgroundColor: K.surface,
-      borderColor: K.border,
+      backgroundColor: P.tooltipBg,
+      borderColor: P.tooltipBorder,
       borderWidth: 1,
-      textStyle: { color: K.ink },
+      textStyle: { color: P.tooltipText },
       // Kept inside the chart box. Hovering a cell in the first few columns
       // otherwise threw the panel off the left edge of the card and under the
       // sidebar, where half of it could not be read.
       confine: true,
-      extraCssText: TOOLTIP_CSS,
+      extraCssText: P.tooltipCss,
       formatter: (params: unknown) => {
         const p = params as { data: DayCell; dataIndex: number };
         const d = p.data;
@@ -1083,7 +1135,7 @@ export default function PredictiveCongestionChart() {
             <span style="color:var(--text-muted); font-size:0.85em;"> · km ${km}</span>
             <div style="margin-top:2px; color:var(--text-secondary); font-size:0.86em;">${day}</div>
             <div style="margin-top:9px; display:flex; align-items:baseline; justify-content:space-between; gap:14px;
-                        padding-bottom:6px; border-bottom:1px solid var(--bg-surface-hover);">
+                        padding-bottom:6px; border-bottom:1px solid var(--border-default);">
               <span style="color:var(--text-secondary);">Expected congested hours</span>
               <b style="font-size:1.15em; color:${d.hours >= 9 ? "var(--color-danger)" : K.ink};">${d.estimated ? d.exact.toFixed(1) : d.hours}<span style="font-weight:500; color:var(--text-muted); font-size:0.8em;"> of ${d.known}</span></b>
             </div>
@@ -1135,12 +1187,11 @@ export default function PredictiveCongestionChart() {
           const d = (params as { data: DayCell }).data;
           return d.hours > 0 ? String(d.hours) : "";
         },
-        color: "inherit",
         fontSize: 11,
-        fontWeight: 700,
+        fontWeight: 600,
       },
       itemStyle: { borderColor: K.surface, borderWidth: 3, borderRadius: 4 },
-      emphasis: { itemStyle: { borderColor: K.ink, borderWidth: 2, shadowBlur: 10, shadowColor: "rgba(15,23,42,0.3)" } },
+      emphasis: { itemStyle: { borderColor: K.ink, borderWidth: 2, shadowBlur: 10, shadowColor: "rgba(0,0,0,0.35)" } },
     }],
   };
 
@@ -1160,16 +1211,15 @@ export default function PredictiveCongestionChart() {
       ],
     },
     tooltip: {
-      // Fully opaque: translucency let the cells underneath show through.
-      backgroundColor: K.surface,
-      borderColor: K.border,
+      backgroundColor: P.tooltipBg,
+      borderColor: P.tooltipBorder,
       borderWidth: 1,
-      textStyle: { color: K.ink },
+      textStyle: { color: P.tooltipText },
       // Kept inside the chart box. Hovering a cell in the first few columns
       // otherwise threw the panel off the left edge of the card and under the
       // sidebar, where half of it could not be read.
       confine: true,
-      extraCssText: TOOLTIP_CSS,
+      extraCssText: P.tooltipCss,
       formatter: (params: unknown) => {
         const p = params as { seriesIndex: number; data: CellItem | number; dataIndex: number };
         if (p.seriesIndex === 1) {
@@ -1189,54 +1239,54 @@ export default function PredictiveCongestionChart() {
         const [x, y] = d.value;
         const meta = STATE_META[d.state];
         const low = d.conf < LOW_CONF;
+        const pill = `<span style="flex:none; padding:3px 10px; border-radius:999px; font-size:0.72em; font-weight:800; letter-spacing:0.08em; text-transform:uppercase; color:${meta.text}; background:${meta.color};">${meta.label}</span>`;
+        const probs = ([["High", d.pHigh], ["Med", d.pMed], ["Low", d.pLow]] as [State, number | null | undefined][])
+          .filter((e): e is [State, number] => e[1] != null);
         return `
-          <div style="padding:2px 4px; min-width:215px;">
-            <b style="font-size:1.05em; color:var(--text-primary);">${shownSegments[y]}</b>
-            <span style="color:var(--text-muted); font-size:0.85em;"> · km ${kmLabel(KMI.get(shownSegments[y]))}</span>
-            <div style="margin-top:2px; color:var(--text-secondary); font-size:0.86em;">${(hourLabels[x] ?? "").replace("\n", " · ")}</div>
-            ${d.pCong != null ? `
-              <div style="margin-top:9px; display:flex; align-items:baseline; justify-content:space-between; gap:14px;
-                          padding-bottom:6px; border-bottom:1px solid var(--bg-surface-hover);">
-                <span style="color:var(--text-secondary);">Chance of congestion</span>
-                <b style="font-size:1.2em; color:${d.pCong >= 0.5 ? "var(--color-danger)" : K.ink};">${fmtChance(d.pCong)}</b>
+          <div style="padding:2px 2px 0; width:296px; max-width:100%; white-space:normal;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;">
+              <div style="min-width:0;">
+                <b style="font-size:1.05em; line-height:1.3; color:var(--text-primary);">${shownSegments[y]}</b>
+                <div style="margin-top:2px; color:var(--text-muted); font-size:0.82em; font-variant-numeric:tabular-nums;">km ${kmLabel(KMI.get(shownSegments[y]))} · ${(hourLabels[x] ?? "").replace("\n", " · ")}</div>
               </div>
-              <div style="margin-top:7px; display:grid; grid-template-columns:auto 1fr auto; gap:5px 10px; font-size:0.88em; align-items:baseline;">
-                ${([["High", d.pHigh], ["Med", d.pMed], ["Low", d.pLow]] as [State, number | null | undefined][])
-                  .filter((e) => e[1] != null)
-                  .map((e, i) => {
-                    const m = STATE_META[e[0]];
-                    const win = e[0] === d.state;
-                    const w = win ? 700 : 500;
-                    // A rule above Moving: everything over it is the headline.
-                    const sep = i === 2 ? "border-top:1px solid var(--bg-surface-hover); padding-top:6px;" : "";
-                    return `<span style="${sep} font-weight:${w}; color:var(--text-primary); white-space:nowrap;">
-                              <span style="width:9px; height:9px; border-radius:2px; background:${m.color}; display:inline-block; margin-right:6px;"></span>${m.label}
-                            </span>
-                            <span style="${sep} color:var(--text-muted); white-space:nowrap;">${m.speed}</span>
-                            <span style="${sep} font-weight:${w}; color:var(--text-primary); text-align:right;">${fmtChance(e[1] as number)}</span>`;
-                  }).join("")}
+              ${pill}
+            </div>
+            ${d.pCong != null ? `
+              <div style="margin-top:12px; display:flex; align-items:baseline; gap:8px;">
+                <b style="font-size:1.9em; line-height:1; font-weight:600; color:${d.pCong >= 0.5 ? "var(--color-danger)" : K.ink}; font-variant-numeric:tabular-nums;">${fmtChance(d.pCong)}</b>
+                <span style="color:var(--text-secondary); font-size:0.9em;">chance of congestion</span>
+              </div>
+              <div style="margin-top:9px; display:flex; height:8px; border-radius:4px; overflow:hidden; gap:2px;" aria-hidden="true">
+                ${probs.map(([st, pr]) => `<span style="flex:${Math.max(0.0001, pr)} 1 0; background:${STATE_META[st].color};"></span>`).join("")}
+              </div>
+              <div style="margin-top:8px; display:grid; grid-template-columns:repeat(${probs.length}, minmax(0, 1fr)); gap:8px;">
+                ${probs.map(([st, pr]) => {
+                  const m = STATE_META[st];
+                  const win = st === d.state;
+                  return `<div style="min-width:0;">
+                    <div style="display:flex; align-items:center; gap:5px; font-size:0.74em; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:${win ? "var(--text-primary)" : "var(--text-secondary)"};">
+                      <span style="width:8px; height:8px; border-radius:2px; background:${m.color}; flex:none;"></span>${m.label}
+                    </div>
+                    <div style="margin-top:2px; font-size:1.02em; font-weight:${win ? 700 : 500}; color:var(--text-primary); font-variant-numeric:tabular-nums;">${fmtChance(pr)}</div>
+                    <div style="margin-top:1px; font-size:0.72em; line-height:1.3; color:var(--text-muted);">${m.speed}</div>
+                  </div>`;
+                }).join("")}
               </div>
               ${(() => {
-                /* Two different things were being conflated. A 73% leader is a
-                   perfectly ordinary call, and flagging it amber put a warning
-                   on nearly every cell. What actually deserves attention is a
-                   near-tie, where the colour could as easily have been the
-                   other state. So: amber only for that, and a quiet grey line
-                   otherwise to explain the asterisk the legend mentions. */
-                const ranked = ([["High", d.pHigh], ["Med", d.pMed], ["Low", d.pLow]] as [State, number | null | undefined][])
-                  .filter((e) => e[1] != null)
-                  .sort((x, y) => (y[1] as number) - (x[1] as number));
+                /* Amber only for a near-tie, where the colour could as easily
+                   have been the other state; a quiet grey line otherwise to
+                   explain the asterisk the legend mentions. */
+                const ranked = [...probs].sort((a, b) => b[1] - a[1]);
                 if (ranked.length > 1) {
-                  const gap = (ranked[0][1] as number) - (ranked[1][1] as number);
+                  const gap = ranked[0][1] - ranked[1][1];
                   if (gap < 0.12) {
-                    return `<div style="margin-top:8px; color:var(--color-warning); font-size:0.82em; line-height:1.45;">Close call — ${STATE_META[ranked[0][0]].label} and ${STATE_META[ranked[1][0]].label} are within ${Math.round(gap * 100)} points.</div>`;
+                    return `<div style="margin-top:9px; color:var(--color-warning); font-size:0.8em; line-height:1.45;">Close call: ${STATE_META[ranked[0][0]].label} and ${STATE_META[ranked[1][0]].label} are within ${Math.round(gap * 100)} points.</div>`;
                   }
                 }
-                return low ? `<div style="margin-top:8px; color:var(--text-muted); font-size:0.82em;">* the leading state is under 80% sure</div>` : "";
+                return low ? `<div style="margin-top:9px; color:var(--text-muted); font-size:0.8em;">* the leading state is under 80% sure</div>` : "";
               })()}
             ` : `
-              <div style="margin-top:9px; display:grid; grid-template-columns:auto 1fr; gap:5px 10px; font-size:0.9em;">
-                <span style="color:var(--text-secondary);">Predicted state</span><span style="font-weight:700; color:${d.state === "High" ? STATE_META.High.color : meta.text};">${meta.label}</span>
+              <div style="margin-top:10px; display:grid; grid-template-columns:auto 1fr; gap:5px 12px; font-size:0.9em;">
                 <span style="color:var(--text-secondary);">Meaning</span><span style="font-weight:500;">${meta.speed}</span>
                 <span style="color:var(--text-secondary);">Confidence</span><span style="font-weight:600; color:${low ? "var(--color-warning)" : K.ink};">${(d.conf * 100).toFixed(0)}%${low ? " · indicative" : ""}</span>
               </div>
@@ -1294,7 +1344,7 @@ export default function PredictiveCongestionChart() {
         name: `Exits congested at each hour ahead, of ${segments.length}`,
         nameLocation: "middle",
         nameGap: 38,
-        nameTextStyle: { color: K.ink2, fontSize: 11, fontWeight: 700 },
+        nameTextStyle: { color: K.ink2, fontSize: 11, fontWeight: 600 },
         // Was dropping the clock line to save height, which left the bars
         // labelled only by horizon while the grid above showed the hour.
         // Same two-line format in both, so a column reads the same
@@ -1360,7 +1410,7 @@ export default function PredictiveCongestionChart() {
         label: { show: false },
         itemStyle: { borderColor: K.surface, borderWidth: 3, borderRadius: 4 },
         // Nothing on the grid is in the past now, so there is nothing to grey.
-        emphasis: { itemStyle: { borderColor: K.ink, borderWidth: 2, shadowBlur: 10, shadowColor: "rgba(15,23,42,0.3)" } },
+        emphasis: { itemStyle: { borderColor: K.ink, borderWidth: 2, shadowBlur: 10, shadowColor: "rgba(0,0,0,0.35)" } },
       },
       {
         name: "Segments congested",
@@ -1372,8 +1422,8 @@ export default function PredictiveCongestionChart() {
           const n = perHour[i];
           return {
             value: n,
-            itemStyle: { color: n === maxPerHour && n > 0 ? "var(--text-secondary)" : "var(--border-default)", borderRadius: [3, 3, 0, 0] },
-            label: { color: n === maxPerHour && n > 0 ? "var(--text-primary)" : "var(--text-muted)" },
+            itemStyle: { color: n === maxPerHour && n > 0 ? K.ink2 : K.faint, borderRadius: [4, 4, 0, 0] },
+            label: { color: n === maxPerHour && n > 0 ? K.ink : K.muted },
           };
         }),
         barMaxWidth: 40,
@@ -1382,7 +1432,7 @@ export default function PredictiveCongestionChart() {
           position: "top",
           formatter: (p: unknown) => String((p as { value: number }).value || ""),
           fontSize: 11,
-          fontWeight: 700,
+          fontWeight: 600,
         },
       },
     ],
@@ -1404,29 +1454,30 @@ export default function PredictiveCongestionChart() {
     const severe = a.state === "High";
     const span = a.to - a.from + 1;
     return (
-      <div key={key} style={{ display: "grid", gridTemplateColumns: "64px 1fr auto auto", alignItems: "center", gap: 10, padding: "7px 10px", borderRadius: 8, background: severe ? "var(--color-danger-bg)" : "var(--color-warning-bg)", border: `1px solid ${severe ? "var(--color-danger-border)" : "var(--color-warning-border)"}`, fontSize: "0.8rem" }}>
-        <span style={{ padding: "2px 7px", borderRadius: 999, textAlign: "center", background: severe ? STATE_META.High.color : STATE_META.Med.color, color: severe ? STATE_META.High.text : STATE_META.Med.text, fontSize: "0.75rem", fontWeight: 750, letterSpacing: "0.04em" }}>
+      <div key={key} className={`nct-episode ${severe ? "is-severe" : "is-heavy"}`}>
+        <span className={`pill ${severe ? "red" : "amber"} nct-episode-tag`}>
+          <SignalGlyph state={severe ? "congested" : "slow"} size={16} plate={false} title="" />
           {severe ? "SEVERE" : "HEAVY"}
         </span>
-        <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            <b style={{ color: "var(--text-primary)" }}>{a.segment}</b> <span style={{ color: "var(--text-muted)" }}>km {kmLabel(KMI.get(a.segment))}</span>
+        <span className="nct-episode-main">
+          <span className="nct-episode-where">
+            <b>{a.segment}</b> <span className="nct-dim">km {kmLabel(KMI.get(a.segment))}</span>
           </span>
           {/* The same three things the live map's jam card leads with, as
               typical figures for this exit at the episode's surest hour. */}
           {a.jam && (
             <span title="Typical for this exit at this hour, from four years of Waze jam history"
-                  style={{ fontSize: "0.72rem", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  className="nct-episode-jam">
               {jamSummary(a.segment, a.jam)}
               {a.volRel != null && (
-                <span style={{ color: a.volRel < 0.7 ? "var(--color-warning)" : "var(--text-muted)" }}>
+                <span className={a.volRel < 0.7 ? "nct-warn" : "nct-dim"}>
                   {" · "}{a.volRel < 0.7 ? "quiet hour, check for incidents" : `${a.volRel.toFixed(1)}× usual traffic`}
                 </span>
               )}
             </span>
           )}
         </span>
-        <span style={{ color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+        <span className="nct-episode-when">
           {/* Columns are now-relative: column 1 is the hour in progress, so it
               is "now" and column n is "+(n-1)h". */}
           {(() => {
@@ -1436,9 +1487,9 @@ export default function PredictiveCongestionChart() {
               return n == null ? `+${col}h` : n <= 0 ? "now" : `+${n}h`;
             };
             return a.from === a.to ? lbl(a.from) : `${lbl(a.from)} → ${lbl(a.to)}`;
-          })()} <span style={{ color: "var(--text-muted)" }}>· {span}h</span>
+          })()} <span className="nct-dim">· {span}h</span>
         </span>
-        <span style={{ color: a.conf < LOW_CONF ? "var(--color-warning)" : "var(--text-muted)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{(a.conf * 100).toFixed(0)}%</span>
+        <span className={`nct-episode-conf${a.conf < LOW_CONF ? " nct-warn" : ""}`}>{(a.conf * 100).toFixed(0)}%</span>
       </div>
     );
   };
@@ -1466,14 +1517,34 @@ export default function PredictiveCongestionChart() {
       ? `${nCongested} neighbouring exits over about ${kmSpan} km, km ${model.kmFrom} to ${model.kmTo}`
       : `${nCongested} of ${segments.length} exits (${model.congestedSegments.join(", ")})`;
 
+  /* Presentation of the same "who": the variant is picked by exactly the
+     conditions above; only the exit list moves out of the sentence into a
+     labelled chip row under it. */
+  const whoShort =
+    nCongested === segments.length
+      ? `every exit on the corridor`
+      : nCongested > segments.length * 0.6
+      ? `all but ${clear.length} exit${clear.length === 1 ? "" : "s"}`
+      : model.contiguous && kmSpan != null
+      ? whoText
+      : `${nCongested} of ${segments.length} exits`;
+  const whoList: { label: string; exits: string[] } | null =
+    nCongested === segments.length
+      ? null
+      : nCongested > segments.length * 0.6
+      ? { label: clear.length === 1 ? "Keeps moving" : "Keep moving", exits: clear }
+      : model.contiguous && kmSpan != null
+      ? null
+      : { label: "Congested", exits: model.congestedSegments };
+
   // The grade to name: severe if any hour crawls, otherwise heavy.
   const worstWord = nSevere > 0 ? "severe" : "heavy";
 
   const headline = !model.firstAlert
     ? `Traffic is forecast to keep moving at every exit for the next ${hourLabels.length} hours.`
     : firstCount < peakCount
-    ? `Congestion builds: ${firstCount} of ${segments.length} exit${firstCount === 1 ? "" : "s"} congested at +1h, rising to ${peakCount} by +${peakAt}h. By the peak it is ${whoText}${nSevere > 0 ? `, with ${nSevere} crawling under 10 km/h` : ""}.`
-    : `${whoText.charAt(0).toUpperCase()}${whoText.slice(1)} — congested from the first hour${model.allHours ? ` and holding for the whole ${model.maxHour}-hour window` : ""}${nSevere > 0 ? `, ${nSevere} of them crawling under 10 km/h at some point` : ", none of it severe"}.`;
+    ? `Congestion builds: ${firstCount} of ${segments.length} exit${firstCount === 1 ? "" : "s"} congested at +1h, rising to ${peakCount} by +${peakAt}h. By the peak it is ${whoShort}${nSevere > 0 ? `, with ${nSevere} crawling under 10 km/h` : ""}.`
+    : `${whoShort.charAt(0).toUpperCase()}${whoShort.slice(1)} — congested from the first hour${model.allHours ? ` and holding for the whole ${model.maxHour}-hour window` : ""}${nSevere > 0 ? `, ${nSevere} of them crawling under 10 km/h at some point` : ", none of it severe"}.`;
 
   /* The worst episode, said the way the live map says a real jam: which
      plaza, how long a queue, how many minutes. Alerts are already ranked
@@ -1487,11 +1558,21 @@ export default function PredictiveCongestionChart() {
     const when = n != null && n <= 0 ? "from now" : clock ? `from ${clock}` : `from +${n ?? lead.from}h`;
     return `${lead.state === "High" ? "Worst" : "Heaviest"}: ${lead.segment} ${when}, typically a ${jamSummary(lead.segment, lead.jam)}.`;
   })();
+  // The same lead, as a labelled row: the label, then where and when, then the jam.
+  const leadRow = (() => {
+    if (!lead?.jam || !leadText) return null;
+    const label = lead.state === "High" ? "Worst" : "Heaviest";
+    const rest = leadText.slice(label.length + 2);
+    const cut = rest.indexOf(", typically a ");
+    return cut < 0
+      ? { label, where: rest, jam: null as string | null }
+      : { label, where: rest.slice(0, cut), jam: rest.slice(cut + 2) };
+  })();
 
   const stat = (value: string, label: string, tone?: string, title?: string) => (
-    <div title={title} style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-      <span style={{ fontSize: "1.02rem", fontWeight: 800, color: tone ?? "var(--text-primary)", letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums", lineHeight: 1.1, whiteSpace: "nowrap" }}>{value}</span>
-      <span style={{ fontSize: "0.68rem", color: "var(--text-secondary)" }}>{label}</span>
+    <div title={title} className="nct-stat">
+      <span className="nct-stat-value" style={tone ? { color: tone } : undefined}>{value}</span>
+      <span className="nct-stat-label">{label}</span>
     </div>
   );
 
@@ -1509,33 +1590,26 @@ export default function PredictiveCongestionChart() {
      header far from the grid it explains, fifteen chips of exit names, and
      four three-line cards that each restated a heatmap row. */
   return (
-    <article className="chart-card wide" style={{ padding: "22px 24px", display: "flex", flexDirection: "column", gap: "14px", marginTop: "24px" }}>
+    <article className="chart-card wide nct-card">
       {/* Row 1: title left, provenance right, anchor time beneath. */}
       <div>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
+        <div className="nct-card-head-split">
+          <h3 className="nct-title">
             Predictive Congestion State Map
             <InfoTooltip text="Predicted jam state at each exit for the next 12 hours, from Waze jam reports. Red = crawling under 10 km/h, amber = heavy at 10-20 km/h, blue = moving freely or no jam reported. The cuts are this corridor's own: a generic 30 km/h threshold put every reported jam in one class. Hover a cell for the typical queue length, its distance from the toll plaza and the delay, from four years of Waze jam history at that exit and hour." />
           </h3>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div className="nct-pill-row">
             <span
               title={modelInfo && !modelInfo.accepted && modelInfo.rejectedReason ? modelInfo.rejectedReason : undefined}
-              style={{
-                fontSize: "0.7rem", padding: "2px 8px", borderRadius: "999px", fontWeight: 600, whiteSpace: "nowrap",
-                background: modelInfo?.accepted ? "var(--color-success-bg)" : "var(--bg-surface-hover)",
-                border: `1px solid ${modelInfo?.accepted ? "var(--color-success-border)" : "var(--border-default)"}`,
-                color: modelInfo?.accepted ? "var(--color-success)" : "var(--text-secondary)",
-              }}
+              className={`pill${modelInfo?.accepted ? " green" : ""}`}
             >
               {modelInfo?.model ?? "—"}{modelInfo?.accuracy != null && ` · ${(modelInfo.accuracy * 100).toFixed(1)}%`}{modelInfo && !modelInfo.accepted && " · not accepted"}
             </span>
             {!expired && ageHours != null && ageHours > 2 && (
               <span
                 title={`The hourly refresh has not published since ${model.baseTs}. Check the Scheduled Task "SmartFlow congestion refresh" and All_Scripts/Predictive_Modeling/refresh_congestion.log.`}
-                style={{
-                  fontSize: "0.7rem", padding: "2px 8px", borderRadius: 999, fontWeight: 700, cursor: "help", whiteSpace: "nowrap",
-                  background: "var(--color-warning-bg)", border: "1px solid var(--color-warning-border)", color: "var(--color-warning)",
-                }}
+                className="pill amber"
+                style={{ cursor: "help" }}
               >
                 {`⚠ refresh overdue · ${Math.round(ageHours)}h old`}
               </span>
@@ -1543,26 +1617,22 @@ export default function PredictiveCongestionChart() {
             {expired && (
               <span
                 title={`This forecast was generated from data ending ${model.baseTs} and its whole ${model.storedHours}-hour window has now passed. The hourly refresh task should replace it; see All_Scripts/Predictive_Modeling/README_congestion.md.`}
-                style={{
-                  fontSize: "0.7rem", padding: "2px 8px", borderRadius: 999, fontWeight: 700, cursor: "help", whiteSpace: "nowrap",
-                  background: "var(--color-danger-bg)",
-                  border: "1px solid var(--color-danger-border)",
-                  color: "var(--color-danger)",
-                }}
+                className="pill red"
+                style={{ cursor: "help" }}
               >
                 {`⚠ expired · ${Math.round(ageHours ?? 0)}h old`}
               </span>
             )}
           </div>
         </div>
-        <p style={{ color: "var(--text-secondary)", fontSize: "0.82rem", margin: "4px 0 0 0" }}>
+        <p className="nct-sub">
           {expired
-            ? <>No hours left in this forecast · last covered <b style={{ color: "var(--text-primary)" }}>{baseLabel(model.baseTs) ?? "the last reading"}</b></>
-            : <>Forecast made <b style={{ color: "var(--text-primary)" }}>{baseLabel(model.baseTs) ?? "at the last reading"}</b>,
+            ? <>No hours left in this forecast · last covered <b>{baseLabel(model.baseTs) ?? "the last reading"}</b></>
+            : <>Forecast made <b>{baseLabel(model.baseTs) ?? "at the last reading"}</b>,
                 {isWeek ? <> next {model.dayCount} days</> : <> next {frameHours} hours</>}
                 {" "}· renews every hour
                 {!isWeek && frameHours > hourLabels.length && (
-                  <span style={{ color: "var(--color-warning)" }}> · {frameHours - hourLabels.length} hour{frameHours - hourLabels.length === 1 ? "" : "s"} not yet forecast</span>
+                  <span className="nct-warn"> · {frameHours - hourLabels.length} hour{frameHours - hourLabels.length === 1 ? "" : "s"} not yet forecast</span>
                 )}</>}
           <span style={{ cursor: "help" }} title="Rows are exits ordered north-bound by km-post. Hover any cell for the model's confidence. The base time is the last complete hour of Waze ingestion."></span>
         </p>
@@ -1573,39 +1643,45 @@ export default function PredictiveCongestionChart() {
           the grid -- and it lands where the event card beside this one puts
           its own SHOWING control, so the two read in the same order. The exit
           picker stays with the grid, which is the only thing it changes. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <div role="group" aria-label="Forecast range" style={{ display: "inline-flex", background: "var(--bg-surface)", border: "1px solid var(--border-strong)", borderRadius: 6, padding: 2, gap: 2 }}>
+      <div className="nct-toolbar">
+        <div className="nct-group">
+          <span className="nct-group-label">Range</span>
+          <div role="group" aria-label="Forecast range" className="nct-pills">
             {RANGES.map((r) => (
               <button
                 key={r.key}
                 onClick={() => setRange(r.key)}
                 title={r.help}
                 aria-pressed={range === r.key}
-                style={{
-                  font: "inherit", fontSize: "0.8125rem", fontWeight: 600, cursor: "pointer",
-                  padding: "4px 11px", borderRadius: 4, border: "1px solid transparent", whiteSpace: "nowrap",
-                  background: range === r.key ? "var(--action)" : "transparent",
-                  color: range === r.key ? "var(--action-ink)" : "var(--text-secondary)",
-                  boxShadow: "none",
-                }}
+                className={`nct-pill-btn${range === r.key ? " is-on" : ""}`}
               >
                 {r.label}
               </button>
             ))}
           </div>
+        </div>
       </div>
 
       {/* Row 2: the finding. */}
-      <div style={{
-        padding: "12px 14px", borderRadius: "10px", fontSize: "0.88rem", lineHeight: 1.5,
-        background: nSevere > 0 ? "var(--color-danger-bg)" : model.firstAlert ? "var(--color-warning-bg)" : "var(--color-success-bg)",
-        border: `1px solid ${nSevere > 0 ? "var(--color-danger-border)" : model.firstAlert ? "var(--color-warning-border)" : "var(--color-success-border)"}`,
-        color: nSevere > 0 ? "var(--color-danger)" : model.firstAlert ? "var(--color-warning)" : "var(--color-success)",
-      }}>
-        {headline}
-        {leadText && !isWeek && (
-          <div style={{ marginTop: 4, fontWeight: 600 }}>{leadText}</div>
-        )}
+      {/* The answer: the corridor's state in one sentence, with the road's own
+          signal beside it, then the worst episode. */}
+      <div className="nct-finding" data-tone={nSevere > 0 ? "congested" : model.firstAlert ? "slow" : "clear"}>
+        <SignalGlyph state={nSevere > 0 ? "congested" : model.firstAlert ? "slow" : "clear"} size={26} />
+        <div className="nct-finding-text">
+          <p>{headline}</p>
+          {whoList && whoList.exits.length > 0 && (
+            <div className="nct-finding-chips">
+              <span className="nct-kv-k">{whoList.label}</span>
+              {whoList.exits.map((x) => <span key={x} className="nct-tiny-chip">{x}</span>)}
+            </div>
+          )}
+          {leadRow && !isWeek && (
+            <div className="nct-finding-kv">
+              <span className="nct-kv-k">{leadRow.label}</span>
+              <span><b>{leadRow.where}</b>{leadRow.jam && <span className="nct-soft"> · {leadRow.jam}</span>}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Row 3: how many, where, how long, how sure — once each.
@@ -1613,7 +1689,7 @@ export default function PredictiveCongestionChart() {
           half-width card but gave the two panels stat blocks of different
           heights, so everything below them — the charts, the Generate report
           button, the evidence header — sat at a different level on each. */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px 18px", padding: "12px 16px", background: "var(--bg-surface-hover)", borderRadius: "10px" }}>
+      <div className="nct-stats">
         {stat(`${nCongested} of ${segments.length}`, nCongested > 0 ? "exits with a jam" : "all moving",
               nCongested > 0 ? (nSevere > 0 ? "var(--color-danger)" : "var(--color-warning)") : "var(--color-success)",
               nCongested > 0 ? `${nCongested} of ${segments.length} exits are expected to carry a jam somewhere in this window` : undefined)}
@@ -1650,19 +1726,18 @@ export default function PredictiveCongestionChart() {
 
       {/* Row 4: the grid, with its legend and its exit picker attached to it. */}
       <div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 2 }}>
-
-
+        <div className="nct-grid-bar">
           {/* Which exits are drawn. A select instead of fifteen chips: the
               reader pulls in the two or three they are responsible for. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem", color: "var(--text-secondary)", flexWrap: "wrap" }}>
-            <span><b style={{ color: "var(--text-secondary)" }}>{shownSegments.length}</b> of {segments.length} exits</span>
+          <div className="nct-exit-picker">
+            <span><b>{shownSegments.length}</b> of {segments.length} exits</span>
             {hiddenCount > 0 && (
               <select
                 value=""
                 onChange={(e) => { if (e.target.value) setExtraExits((cur) => [...cur, e.target.value]); }}
                 title={urgentHidden ? "Some hidden exits turn severe sooner than any shown" : undefined}
-                style={{ font: "inherit", fontWeight: 600, color: urgentHidden ? "var(--color-warning)" : "var(--text-secondary)", background: "var(--bg-surface)", border: `1px solid ${urgentHidden ? "var(--color-warning-border)" : "var(--border-default)"}`, borderRadius: 8, padding: "3px 8px", cursor: "pointer" }}
+                aria-label="Add exit"
+                className={`nct-select${urgentHidden ? " is-warn" : ""}`}
               >
                 <option value="">{urgentHidden ? "⚠ Add exit…" : "Add exit…"}</option>
                 {hiddenSorted.map((sg) => {
@@ -1672,12 +1747,12 @@ export default function PredictiveCongestionChart() {
               </select>
             )}
             {hiddenCount > 0 && (
-              <button onClick={() => setExtraExits(hiddenSegments)} style={{ padding: "3px 9px", borderRadius: 999, cursor: "pointer", fontSize: "0.71rem", fontWeight: 700, background: "var(--bg-surface)", border: "1px solid var(--border-default)", color: "var(--text-secondary)" }}>
+              <button type="button" onClick={() => setExtraExits(hiddenSegments)} className="nct-pill-btn">
                 All {segments.length}
               </button>
             )}
             {extraExits.length > 0 && (
-              <button onClick={() => setExtraExits([])} style={{ padding: "3px 6px", borderRadius: 999, cursor: "pointer", fontSize: "0.71rem", fontWeight: 600, background: "transparent", border: "none", color: "var(--text-muted)" }}>
+              <button type="button" onClick={() => setExtraExits([])} className="nct-link-btn">
                 reset
               </button>
             )}
@@ -1688,20 +1763,16 @@ export default function PredictiveCongestionChart() {
             control row it wrapped onto a line of its own and read as a third
             bank of settings. Speeds are abbreviated here and spelled out on
             hover, so the whole key fits one line at this card width. */}
-        <div style={{
-          display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap",
-          fontSize: "0.71rem", color: "var(--text-secondary)",
-          padding: "6px 2px", borderTop: "1px solid var(--bg-surface-hover)", marginTop: 8,
-        }}>
+        <div className="nct-key nct-grid-key">
           {isWeek ? (
             <>
               {WEEK_BANDS.map((b) => (
-                <span key={b.label} style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
-                  <span style={{ width: 10, height: 10, background: b.color, borderRadius: 3 }} />
+                <span key={b.label} className="nct-key-item">
+                  <i style={{ background: b.color }} />
                   {b.label}
                 </span>
               ))}
-              <span style={{ color: "var(--text-muted)" }}>expected congested hours per day</span>
+              <span className="nct-key-dim">expected congested hours per day</span>
             </>
           ) : (
             <>
@@ -1710,20 +1781,20 @@ export default function PredictiveCongestionChart() {
                 return (
                   <span key={st}
                         title={absent ? "No exit-hour in this forecast falls in the 10-20 km/h band" : STATE_META[st].speed}
-                        style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", opacity: absent ? 0.45 : 1 }}>
-                    <span style={{ width: 10, height: 10, background: STATE_META[st].color, borderRadius: 3 }} />
-                    <b style={{ fontWeight: 600, color: "var(--text-secondary)" }}>{STATE_META[st].label}</b>
-                    <span style={{ color: "var(--text-muted)" }}>{STATE_META[st].brief}</span>
+                        className={`nct-key-item${absent ? " is-absent" : ""}`}>
+                    <i style={{ background: STATE_META[st].color }} />
+                    <b>{STATE_META[st].label}</b>
+                    <span className="nct-key-dim">{STATE_META[st].brief}</span>
                   </span>
                 );
               })}
-              <span style={{ color: "var(--text-muted)" }}>km/h</span>
+              <span className="nct-key-dim">km/h</span>
               {/* Two different asterisks used to share this card: one on cells
                   for low confidence, one on row labels for an estimated
                   km-post. The cell one is gone with the cell text, so this is
                   the only one left and it finally gets named. */}
               {shownSegments.some((sg) => KMI.get(sg)?.est) && (
-                <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}
+                <span className="nct-key-dim" style={{ whiteSpace: "nowrap" }}
                       title="No surveyed km-post for this exit; the distance is interpolated from its neighbours.">
                   <b>*</b> km-post estimated
                 </span>
@@ -1739,9 +1810,9 @@ export default function PredictiveCongestionChart() {
 
       {/* Row 5: what to act on. Four rows; the rest in the dialog. */}
       <div>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
-          <h4 style={{ margin: 0, fontSize: "0.88rem", color: "var(--text-primary)", fontWeight: 700 }}>
-            What to act on <span style={{ color: "var(--text-muted)", fontWeight: 500 }}>
+        <div className="nct-subhead-row">
+          <h4 className="nct-subhead">
+            What to act on <span className="nct-subhead-dim">
               · {alerts.length} episode{alerts.length === 1 ? "" : "s"}
               {(model.severeCount > 0 || model.heavyCount > 0) && <>
                 {" · "}
@@ -1751,16 +1822,17 @@ export default function PredictiveCongestionChart() {
             </span>
           </h4>
           {alerts.length > VISIBLE_ALERTS && (
-            <button onClick={() => setAlertsOpen(true)} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid var(--border-default)", background: "var(--bg-surface)", borderRadius: 999, padding: "4px 12px", fontSize: "0.74rem", fontWeight: 600, color: "var(--text-secondary)", cursor: "pointer" }}>
+            <button type="button" onClick={() => setAlertsOpen(true)} className="btn-muted">
               View all {alerts.length}
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
           )}
         </div>
-        <div style={{ display: "grid", gap: 6 }}>
+        <div className="nct-episodes">
           {alerts.length === 0 ? (
-            <div style={{ padding: "10px 12px", background: "var(--color-success-bg)", border: "1px solid var(--color-success-border)", borderRadius: 8, fontSize: "0.84rem", color: "var(--color-success)" }}>
-              No heavy or severe congestion predicted in the next {hourLabels.length} hours.
+            <div className="nct-finding" data-tone="clear">
+              <SignalGlyph state="clear" size={22} />
+              <p className="nct-finding-text">No heavy or severe congestion predicted in the next {hourLabels.length} hours.</p>
             </div>
           ) : (
             shown.map((a, i) => alertRow(a, `${a.segment}-${a.from}-${i}`))
@@ -1794,46 +1866,22 @@ export default function PredictiveCongestionChart() {
         neverPredictsHeavy={!model.everHeavy}
       />
 
-      {/* Row 7: model evidence, behind one disclosure. */}
+      {/* Row 7: model evidence, one strip that opens it in a modal. */}
       {hzAcc.length > 1 && hzFirst && hzLast && (
-        <details style={{ fontSize: "0.76rem", color: "var(--text-secondary)", borderTop: "1px solid var(--bg-surface-hover)", paddingTop: 10 }}>
-          <summary
-            className="evidence-summary"
-            style={{ cursor: "pointer", listStyle: "none", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}
-          >
-            {/* Forces a flex line break: the chips always start a new row, so the
-                Show/Hide control stays on the title row and both cards' evidence
-                headers come out the same height. */}
-            <span aria-hidden style={{ order: 3, flexBasis: "100%", height: 0 }} />
-            <span style={{
-              order: 1,
-              display: "grid", placeItems: "center", width: 28, height: 28, borderRadius: 8,
-              background: "color-mix(in srgb, var(--color-success) 14%, transparent)", color: "var(--color-success)", flex: "none",
-            }}>
-              <ShieldCheck size={16} strokeWidth={2.4} />
-            </span>
-            <span style={{ order: 1, fontSize: "0.98rem", fontWeight: 800, letterSpacing: "-0.01em", color: "var(--text-primary)" }}>
-              Validation evidence
-            </span>
-            <span style={{
-              order: 4, display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999,
-              background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)",
-              fontSize: "0.74rem", fontWeight: 600, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums",
-            }}>
+        <EvidenceModal
+          subtitle="Congestion forecast: how it was tested, how far ahead it holds, and how it compares with no-change."
+          strip={
+            <span className="nct-trust-pill" style={{ order: 4 }}>
               {(() => {
                 const a0 = hzFirst.accuracy ?? 0; const a1 = hzLast.accuracy ?? 0;
                 return a1 < a0 - 0.03 ? "accuracy fades with distance" : a1 > a0 + 0.03 ? "accuracy improves with distance" : "accuracy holds across the horizon";
               })()} · {pct(hzFirst.accuracy)} at +1h → {pct(hzLast.accuracy)} at +{hzLast.horizon}h
               {" · "}{beatsFrom ? "beats no-change" : "no better than no-change"}
             </span>
-            <span className="evidence-chevron" style={{ order: 2, marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.74rem", fontWeight: 600, color: "var(--text-secondary)" }}>
-              <span className="evidence-open-label">Show</span>
-              <span className="evidence-close-label">Hide</span>
-              <ChevronRight size={15} strokeWidth={2.4} />
-            </span>
-          </summary>
+          }
+        >
 
-          <div style={{ display: "grid", gap: 14, marginTop: 12, color: "var(--text-secondary)", lineHeight: 1.55 }}>
+          <div className="nct-evidence nct-ev-blocks">
             {/* 1. How it was tested. One sentence, because everything below
                    is meaningless without knowing the numbers come from hours
                    the model never saw. */}
@@ -1857,19 +1905,19 @@ export default function PredictiveCongestionChart() {
                 <ReplayChart series={evalInfo.replay.series} exits={evalInfo.replay.exits} />
                 <div style={{
                   display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8, marginTop: 8,
-                  padding: "8px 10px", borderRadius: 8, background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)",
+                  padding: "8px 10px", borderRadius: 8, background: "color-mix(in srgb, var(--text-primary) 4%, transparent)", border: "1px solid var(--border-default)",
                 }}>
                   {[[`${evalInfo.replay.mae_exits.toFixed(1)} exits`, "average gap between the lines"],
                     [evalInfo.replay.corr.toFixed(2), "correlation \u00b7 1.00 traces perfectly"],
                     [pct(evalInfo.replay.match_rate), "exit-hours with the exact state right"]].map(([v, l]) => (
                     <div key={l} style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: "0.95rem", fontWeight: 800, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{v}</span>
-                      <span style={{ fontSize: "0.68rem", color: "var(--text-secondary)" }}>{l}</span>
+                      <span style={{ fontSize: "var(--fs-title)", fontWeight: 600, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{v}</span>
+                      <span style={{ fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>{l}</span>
                     </div>
                   ))}
                 </div>
                 {evalInfo.replay.examples.length > 0 && (
-                  <div style={{ display: "grid", gap: 3, marginTop: 7, fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+                  <div style={{ display: "grid", gap: 3, marginTop: 7, fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>
                     {evalInfo.replay.examples.map((ex) => (
                       <div key={ex.kind}>
                         <span>{ex.kind.charAt(0).toUpperCase() + ex.kind.slice(1)}</span> —
@@ -1899,8 +1947,8 @@ export default function PredictiveCongestionChart() {
                 ].filter((r) => r.v != null).map((r) => (
                   <div key={r.label} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 44px", alignItems: "center", gap: 10 }}>
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: "0.72rem", color: r.bold ? "var(--text-primary)" : "var(--text-secondary)", fontWeight: r.bold ? 700 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.label}</div>
-                      <div style={{ height: 6, borderRadius: 3, background: "var(--bg-surface-hover)", overflow: "hidden", marginTop: 3 }}>
+                      <div style={{ fontSize: "var(--fs-label)", color: r.bold ? "var(--text-primary)" : "var(--text-secondary)", fontWeight: r.bold ? 700 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.label}</div>
+                      <div style={{ height: 6, borderRadius: 3, background: "color-mix(in srgb, var(--text-primary) 4%, transparent)", overflow: "hidden", marginTop: 3 }}>
                         <div style={{ width: `${Math.round((r.v as number) * 100)}%`, height: "100%", background: r.tone, borderRadius: 3 }} />
                       </div>
                     </div>
@@ -1914,7 +1962,7 @@ export default function PredictiveCongestionChart() {
             {evalInfo && (
               <EvBlock n={evalInfo.replay ? 4 : 3} title="How much to trust each colour">
                 <div style={{ overflowX: "auto" }}>
-                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.74rem", fontVariantNumeric: "tabular-nums" }}>
+                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "var(--fs-body)", fontVariantNumeric: "tabular-nums" }}>
                     <thead>
                       <tr style={{ color: "var(--text-secondary)", textAlign: "left" }}>
                         <th style={{ padding: "4px 6px 6px 0", fontWeight: 600 }}>State</th>
@@ -1930,14 +1978,14 @@ export default function PredictiveCongestionChart() {
                         const share = evalInfo.class_share[st];
                         if (!pc) return null;
                         return (
-                          <tr key={st} style={{ borderTop: "1px solid var(--bg-surface-hover)" }}>
+                          <tr key={st} style={{ borderTop: "1px solid var(--border-default)" }}>
                             <td style={{ padding: "6px 6px 6px 0", whiteSpace: "nowrap" }}>
                               <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: meta.color, marginRight: 6, verticalAlign: -1 }} />
                               <b style={{ color: "var(--text-primary)" }}>{meta.label}</b>
                             </td>
                             <td style={{ padding: "6px" }}>{share != null ? pct(share) : "—"}</td>
-                            <td style={{ padding: "6px", fontWeight: 700, color: pc.precision >= 0.6 ? "var(--color-success)" : pc.precision >= 0.4 ? "var(--color-warning)" : "var(--color-danger)" }}>{pct(pc.precision)}</td>
-                            <td style={{ padding: "6px 0 6px 6px", fontWeight: 700, color: pc.recall >= 0.6 ? "var(--color-success)" : pc.recall >= 0.4 ? "var(--color-warning)" : "var(--color-danger)" }}>{pct(pc.recall)}</td>
+                            <td style={{ padding: "6px", fontWeight: 600, color: pc.precision >= 0.6 ? "var(--color-success)" : pc.precision >= 0.4 ? "var(--color-warning)" : "var(--color-danger)" }}>{pct(pc.precision)}</td>
+                            <td style={{ padding: "6px 0 6px 6px", fontWeight: 600, color: pc.recall >= 0.6 ? "var(--color-success)" : pc.recall >= 0.4 ? "var(--color-warning)" : "var(--color-danger)" }}>{pct(pc.recall)}</td>
                           </tr>
                         );
                       })}
@@ -1945,7 +1993,7 @@ export default function PredictiveCongestionChart() {
                   </table>
                 </div>
                 {evalInfo.per_class.High && evalInfo.per_class.High.recall < 0.3 && (
-                  <p style={{ margin: "8px 0 0", fontSize: "0.72rem", color: "var(--color-warning)" }}>
+                  <p style={{ margin: "8px 0 0", fontSize: "var(--fs-label)", color: "var(--color-warning)" }}>
                     Severe hours are rare and the model names them cautiously, so it misses most of them as a label — check the <b>severe %</b> in each cell&apos;s tooltip rather than waiting for a red cell.
                   </p>
                 )}
@@ -1968,7 +2016,7 @@ export default function PredictiveCongestionChart() {
                         display: "inline-flex", alignItems: "baseline", gap: 4, padding: "3px 8px", borderRadius: 6,
                         background: gap <= 0.05 ? "var(--color-success-bg)" : gap <= 0.1 ? "var(--color-warning-bg)" : "var(--color-danger-bg)",
                         border: `1px solid ${gap <= 0.05 ? "var(--color-success-border)" : gap <= 0.1 ? "var(--color-warning-border)" : "var(--color-danger-border)"}`,
-                        fontSize: "0.72rem", fontVariantNumeric: "tabular-nums",
+                        fontSize: "var(--fs-label)", fontVariantNumeric: "tabular-nums",
                       }}>
                         <span style={{ color: "var(--text-secondary)" }}>said</span> <b>{Math.round(c.predicted * 100)}%</b>
                         <span style={{ color: "var(--text-muted)" }}>→</span>
@@ -1977,7 +2025,7 @@ export default function PredictiveCongestionChart() {
                     );
                   })}
                 </div>
-                <p style={{ margin: "8px 0 0", fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+                <p style={{ margin: "8px 0 0", fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>
                   Green: within 5 points · Brier {evalInfo.brier.toFixed(3)}
                   <InfoTooltip text="Brier score is the average squared error of the probabilities themselves, not of the state the card names: 0 is perfect and 0.667 is a coin toss between the three states." />
                 </p>
@@ -1995,7 +2043,7 @@ export default function PredictiveCongestionChart() {
                   );
                 })}
               </div>
-              <p style={{ margin: "6px 0 0", fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+              <p style={{ margin: "6px 0 0", fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>
                   {pct(hzFirst.accuracy)} at +1h → {pct(hzLast.accuracy)} at +{hzLast.horizon}h · green where it beats assuming nothing changes
                   {hzLast.persistenceAccuracy != null && <>, which falls to {pct(hzLast.persistenceAccuracy)} by +{hzLast.horizon}h</>}
               </p>
@@ -2013,7 +2061,7 @@ export default function PredictiveCongestionChart() {
                   {new Date(jamEval.test_from).toLocaleDateString(undefined, { month: "short", day: "numeric" })} that the history never saw:
                 </p>
                 <div style={{ overflowX: "auto" }}>
-                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.74rem", fontVariantNumeric: "tabular-nums" }}>
+                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "var(--fs-body)", fontVariantNumeric: "tabular-nums" }}>
                     <thead>
                       <tr style={{ color: "var(--text-secondary)", textAlign: "left" }}>
                         <th style={{ padding: "4px 6px 6px 0", fontWeight: 600 }}>Typical error</th>
@@ -2022,20 +2070,20 @@ export default function PredictiveCongestionChart() {
                       </tr>
                     </thead>
                     <tbody>
-                      <tr style={{ borderTop: "1px solid var(--bg-surface-hover)" }}>
+                      <tr style={{ borderTop: "1px solid var(--border-default)" }}>
                         <td style={{ padding: "6px 6px 6px 0" }}>Queue length <span style={{ color: "var(--text-muted)" }}>· real median {fmtM(jamEval.actual_queue_median_m)}</span></td>
-                        <td style={{ padding: "6px", fontWeight: 700, color: "var(--color-success)" }}>{fmtM(jamEval.queue.profile_median_err_m)}</td>
+                        <td style={{ padding: "6px", fontWeight: 600, color: "var(--color-success)" }}>{fmtM(jamEval.queue.profile_median_err_m)}</td>
                         <td style={{ padding: "6px 0 6px 6px", color: "var(--text-secondary)" }}>{fmtM(jamEval.queue.corridor_median_err_m)}</td>
                       </tr>
-                      <tr style={{ borderTop: "1px solid var(--bg-surface-hover)" }}>
+                      <tr style={{ borderTop: "1px solid var(--border-default)" }}>
                         <td style={{ padding: "6px 6px 6px 0" }}>Delay <span style={{ color: "var(--text-muted)" }}>· real median {Math.round(jamEval.actual_delay_median_s)} s</span></td>
-                        <td style={{ padding: "6px", fontWeight: 700, color: "var(--text-primary)" }}>{Math.round(jamEval.delay.profile_median_err_s)} s</td>
+                        <td style={{ padding: "6px", fontWeight: 600, color: "var(--text-primary)" }}>{Math.round(jamEval.delay.profile_median_err_s)} s</td>
                         <td style={{ padding: "6px 0 6px 6px", color: "var(--text-secondary)" }}>{Math.round(jamEval.delay.corridor_median_err_s)} s</td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
-                <p style={{ margin: "8px 0 0", fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+                <p style={{ margin: "8px 0 0", fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>
                   The queue length is specific to the exit and hour, and that detail more than halves the error. The delay is
                   not: jams on this corridor cost about two minutes almost everywhere, so read it as &ldquo;about 2 min&rdquo; rather
                   than to the second.
@@ -2071,22 +2119,22 @@ export default function PredictiveCongestionChart() {
                   <div style={{ display: "grid", gap: 5 }}>
                     {volEval.bands.map((b) => (
                       <div key={b.band} style={{ display: "grid", gridTemplateColumns: "150px minmax(0,1fr) 44px", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: "0.72rem", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{b.label} usual volume</span>
-                        <div style={{ height: 6, borderRadius: 3, background: "var(--bg-surface-hover)", overflow: "hidden" }}>
+                        <span style={{ fontSize: "var(--fs-label)", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{b.label} usual volume</span>
+                        <div style={{ height: 6, borderRadius: 3, background: "color-mix(in srgb, var(--text-primary) 4%, transparent)", overflow: "hidden" }}>
                           <div style={{ width: `${(b.jam_rate / peak) * 100}%`, height: "100%", background: "var(--text-secondary)", borderRadius: 3 }} />
                         </div>
-                        <span style={{ fontWeight: 700, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{pct(b.jam_rate)}</span>
+                        <span style={{ fontWeight: 600, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{pct(b.jam_rate)}</span>
                       </div>
                     ))}
                   </div>
-                  <p style={{ margin: "6px 0 10px", fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+                  <p style={{ margin: "6px 0 10px", fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>
                     Share of exit-hours with a jam at the plaza. It peaks at 1.5–2× and eases at the very busiest hours, which
                     usually run heavy but moving.
                   </p>
                   {live.length > 0 && (
                     <>
                       <p style={{ margin: "0 0 6px" }}>This forecast, by the same measure — average chance of a jam it gives:</p>
-                      <div style={{ display: "grid", gap: 4, fontSize: "0.74rem" }}>
+                      <div style={{ display: "grid", gap: 4, fontSize: "var(--fs-body)" }}>
                         {rows.filter((r) => r.g).map((r) => (
                           <div key={r.label} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                             <span style={{ color: "var(--text-secondary)" }}>{r.label} <span style={{ color: "var(--text-muted)" }}>· {r.g!.n} cells</span></span>
@@ -2094,7 +2142,7 @@ export default function PredictiveCongestionChart() {
                           </div>
                         ))}
                       </div>
-                      <p style={{ margin: "6px 0 0", fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+                      <p style={{ margin: "6px 0 0", fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>
                         Rising from quiet to busy hours is what the traffic says should happen. A forecast that put its jams in
                         the quiet hours would be one to doubt. Hover a cell for its typical volume.
                       </p>
@@ -2118,7 +2166,7 @@ export default function PredictiveCongestionChart() {
                     {Math.max(...liveScore.buckets.map((b) => b.runs))} hourly runs:
                   </p>
                   <div style={{ overflowX: "auto" }}>
-                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.74rem", fontVariantNumeric: "tabular-nums" }}>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "var(--fs-body)", fontVariantNumeric: "tabular-nums" }}>
                       <thead>
                         <tr style={{ color: "var(--text-secondary)", textAlign: "left" }}>
                           <th style={{ padding: "4px 6px 6px 0", fontWeight: 600 }}>Hours ahead</th>
@@ -2129,9 +2177,9 @@ export default function PredictiveCongestionChart() {
                       </thead>
                       <tbody>
                         {liveScore.buckets.map((b) => (
-                          <tr key={b.bucket} style={{ borderTop: "1px solid var(--bg-surface-hover)" }}>
+                          <tr key={b.bucket} style={{ borderTop: "1px solid var(--border-default)" }}>
                             <td style={{ padding: "6px 6px 6px 0" }}>{b.bucket} <span style={{ color: "var(--text-muted)" }}>· {b.n.toLocaleString()}</span></td>
-                            <td style={{ padding: "6px", fontWeight: 700, color: "var(--text-primary)" }}>{pct(b.shown_jam_acc)}</td>
+                            <td style={{ padding: "6px", fontWeight: 600, color: "var(--text-primary)" }}>{pct(b.shown_jam_acc)}</td>
                             <td style={{ padding: "6px", color: "var(--text-secondary)" }}>{pct(b.argmax_jam_acc)}</td>
                             <td style={{ padding: "6px 0 6px 6px", color: "var(--text-secondary)" }}>{pct(b.argmax_state_acc)}</td>
                           </tr>
@@ -2139,7 +2187,7 @@ export default function PredictiveCongestionChart() {
                       </tbody>
                     </table>
                   </div>
-                  <p style={{ margin: "8px 0 0", fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+                  <p style={{ margin: "8px 0 0", fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>
                     &ldquo;Old colouring&rdquo; is the likeliest-of-three rule this card used before; the current one colours a cell
                     congested when the chance of a jam is 50% or more. Early figures rest on few hours and will steady as runs accumulate.
                   </p>
@@ -2152,55 +2200,56 @@ export default function PredictiveCongestionChart() {
               )}
             </EvBlock>
 
-            <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--text-muted)" }}>
+            <p style={{ margin: 0, fontSize: "var(--fs-label)", color: "var(--text-muted)" }}>
               States from Waze jam speeds · Severe under {evalInfo?.thresholds_kmh.severe_below ?? 10}, Heavy{" "}
               {evalInfo?.thresholds_kmh.severe_below ?? 10}–{evalInfo?.thresholds_kmh.heavy_below ?? 20}, Moving above that or no jam
               <InfoTooltip text="The cuts are this corridor's own speed distribution, not a national standard, so they describe what counts as a jam on NLEX rather than anywhere else." />
               {!model.everHeavy && <> · no Heavy hour in the current forecast</>}
             </p>
           </div>
-        </details>
+        </EvidenceModal>
       )}
 
       {/* Full list in a dialog — the inline expander pushed the rest of the
           page down and trapped 29 cards in a small scroll box. */}
-      {alertsOpen && (
+      {/* Rendered into <body> so no animated ancestor can trap it under the
+          sticky filter bar; it keeps the page's accent through .viz-traffic. */}
+      {alertsOpen && typeof document !== "undefined" && createPortal(
         <div role="dialog" aria-modal="true" aria-label="All predicted congestion episodes" onClick={() => setAlertsOpen(false)}
-             style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(15, 23, 42, 0.55)", display: "grid", placeItems: "center", padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()}
-               style={{ width: "min(980px, 100%)", maxHeight: "84vh", display: "flex", flexDirection: "column", background: "var(--bg-surface)", borderRadius: 14, boxShadow: "0 24px 60px rgba(15,23,42,0.3)", overflow: "hidden" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "18px 22px", borderBottom: "1px solid var(--border-default)" }}>
+             className="nct-modal-backdrop viz-traffic">
+          <div onClick={(e) => e.stopPropagation()} className="nct-modal">
+            <div className="nct-modal-head">
               <div>
-                <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>Predicted congestion · next {hourLabels.length} hours</h3>
-                <p style={{ margin: "4px 0 0 0", fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-                  {alerts.length} episodes across {bySegment.length} segments · <b style={{ color: "var(--color-danger)" }}>{model.severeCount} severe</b>, <b style={{ color: "var(--color-warning)" }}>{alerts.length - model.severeCount} heavy</b> · grouped by location
+                <h3>Predicted congestion · next {hourLabels.length} hours</h3>
+                <p>
+                  {alerts.length} episodes across {bySegment.length} segments · <b className="nct-bad">{model.severeCount} severe</b>, <b className="nct-warn">{alerts.length - model.severeCount} heavy</b> · grouped by location
                 </p>
               </div>
-              <button onClick={() => setAlertsOpen(false)} aria-label="Close"
-                      style={{ flex: "none", width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border-default)", background: "var(--bg-surface)", color: "var(--text-secondary)", cursor: "pointer", display: "grid", placeItems: "center", fontSize: "1rem", lineHeight: 1 }}>
+              <button type="button" onClick={() => setAlertsOpen(false)} aria-label="Close" className="nct-modal-close">
                 ✕
               </button>
             </div>
-            <div style={{ overflowY: "auto", padding: "18px 22px", display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="nct-modal-body">
               {bySegment.map(({ seg, runs }) => (
                 <div key={seg}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
-                    <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "var(--text-primary)" }}>{seg}</span>
-                    <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>km {kmLabel(KMI.get(seg))}</span>
-                    <span style={{ flex: 1, borderBottom: "1px solid var(--bg-surface-hover)" }} />
-                    <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{runs.length} {runs.length === 1 ? "episode" : "episodes"}</span>
+                  <div className="nct-modal-group">
+                    <span className="nct-modal-group-name">{seg}</span>
+                    <span className="nct-dim">km {kmLabel(KMI.get(seg))}</span>
+                    <span className="nct-modal-group-rule" />
+                    <span className="nct-dim">{runs.length} {runs.length === 1 ? "episode" : "episodes"}</span>
                   </div>
-                  <div style={{ display: "grid", gap: 6 }}>
+                  <div className="nct-episodes">
                     {runs.map((a, i) => alertRow(a, `modal-${seg}-${a.from}-${i}`))}
                   </div>
                 </div>
               ))}
             </div>
-            <div style={{ padding: "12px 22px", borderTop: "1px solid var(--border-default)", background: "var(--bg-surface-hover)", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+            <div className="nct-modal-foot">
               Confidence is the model&apos;s certainty in its classification, not the probability of congestion. Press Esc to close.
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </article>
   );

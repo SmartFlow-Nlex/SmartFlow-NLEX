@@ -4,9 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cachedJson } from "../../../lib/cached-json";
 import { attachCategoryClick } from "../../../lib/chart-click";
 import { useChartTheme, applyChartTheme, heatRamp, seriesRamp, seriesPair } from "../../../lib/chart-theme";
+import { areaFade } from "../../../lib/chart-kit";
 import ReactECharts from "echarts-for-react";
-import type { EChartsOption } from "echarts";
-import { Activity, ArrowDownWideNarrow, ArrowUpNarrowWide, Building2, CalendarClock, Clock, Gauge, TrendingUp } from "lucide-react";
+import type { EChartsOption, LineSeriesOption } from "echarts";
+import { Activity, ArrowDownWideNarrow, ArrowUpNarrowWide, Building2, CalendarClock, Clock, Gauge, TrendingUp, X } from "lucide-react";
 import { BoothStaffingPanel, CongestionResponsePanel, EventInterventionPanel } from "../../../components/dashboard/PrescriptiveTrafficPanels";
 import ChartSkeleton, { KpiSkeleton } from "../../../components/dashboard/ChartSkeleton";
 import CustomSelect from "../../../components/dashboard/CustomSelect";
@@ -20,6 +21,8 @@ import styles from "./traffic.module.css";
 import DateRangePicker from "./components/DateRangePicker";
 import { rangeDays, grainBlockedReason, bestGrainFor, axisLabelFor, bucketLabelFor } from "../../../lib/granularity";
 import CountUpValue from "../../../components/dashboard/CountUpValue";
+import ModeTabLabel, { modeIndex } from "../../../components/dashboard/ModeTabLabel";
+import StateNote from "../../../components/stage/StateNote";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -134,6 +137,11 @@ export default function TrafficPage() {
   // (slowest = deepest) rather than red/amber/green: those now mean the lane
   // signals only, and on a min-to-max ramp they painted a 10 km/h jam green.
   const SEVERITY = [RAMP[2], RAMP[1], RAMP[0]];
+  // Night Corridor draws no axis lines, so chartTheme.axis is transparent. The
+  // residual "Others" bar, the zero line and scrubbed-out cells need a neutral
+  // that is actually visible on both grounds.
+  const NEUTRAL = chartTheme.isDark ? "rgba(244, 241, 234, 0.24)" : "rgba(11, 18, 32, 0.22)";
+  const CELL_GAP = chartTheme.isDark ? "#0a1121" : "#fdfdfc";
   const [activeTab, setActiveTab] = useState<"Descriptive" | "Predictive" | "Prescriptive">("Descriptive");
 
   // Global filters (Row A)
@@ -272,8 +280,8 @@ export default function TrafficPage() {
     // The raw series behind a moving average is context, not a second identity,
     // so it takes the ramp's lightest step rather than a hue of its own.
     const FAINT = RAMP[0];
-    const nbLine = { name: "Northbound", type: "line" as const, data: rows.map((r) => r.nb), symbol: "none" as const, itemStyle: { color: PAIR_A }, lineStyle: { width: 2.5, color: PAIR_A }, endLabel: { show: true, formatter: "NB", color: PAIR_A, fontWeight: 700 } };
-    const sbLine = { name: "Southbound", type: "line" as const, data: rows.map((r) => r.sb), symbol: "none" as const, itemStyle: { color: PAIR_B }, lineStyle: { width: 2.5, color: PAIR_B }, endLabel: { show: true, formatter: "SB", color: PAIR_B, fontWeight: 700 } };
+    const nbLine = { name: "Northbound", type: "line" as const, data: rows.map((r) => r.nb), symbol: "none" as const, itemStyle: { color: PAIR_A }, lineStyle: { width: 2, color: PAIR_A }, endLabel: { show: true, formatter: "NB", color: PAIR_A, fontWeight: 600 } };
+    const sbLine = { name: "Southbound", type: "line" as const, data: rows.map((r) => r.sb), symbol: "none" as const, itemStyle: { color: PAIR_B }, lineStyle: { width: 2, color: PAIR_B }, endLabel: { show: true, formatter: "SB", color: PAIR_B, fontWeight: 600 } };
 
     const series: EChartsOption["series"] = splitDirection
       // Direction picks which carriageway to keep. Both data series are already
@@ -282,31 +290,31 @@ export default function TrafficPage() {
       : window > 0
         ? [
           { name: grain === "hourly" ? "Hourly volume" : "Daily volume", type: "line", data: rows.map((r) => r.total), symbol: "none", itemStyle: { color: FAINT }, lineStyle: { width: 1, color: FAINT } },
-          { name: `${window === 24 ? "24-hour" : "7-day"} average`, type: "line", data: movingAverage(rows.map((r) => r.total), window), symbol: "none", itemStyle: { color: PAIR_A }, lineStyle: { width: 3, color: PAIR_A } },
+          { name: `${window === 24 ? "24-hour" : "7-day"} average`, type: "line", data: movingAverage(rows.map((r) => r.total), window), symbol: "none", itemStyle: { color: PAIR_A }, lineStyle: { width: 2, color: PAIR_A } },
         ]
-        : [{ name: "Volume", type: "line", data: rows.map((r) => r.total), symbol: rows.length <= 24 ? "circle" : "none", symbolSize: 7, itemStyle: { color: PAIR_A }, lineStyle: { width: 3, color: PAIR_A } }];
+        : [{ name: "Volume", type: "line", data: rows.map((r) => r.total), symbol: rows.length <= 24 ? "circle" : "none", symbolSize: 7, itemStyle: { color: PAIR_A }, lineStyle: { width: 2, color: PAIR_A } }];
 
     // Hoisted: the grid should reserve the bottom strip only when the legend is
     // actually drawn in it, and both need the same answer.
     const showLegend = (splitDirection && direction === "Both") || window > 0;
 
     return {
-      grid: { left: 52, right: splitDirection ? 44 : 16, top: 14, bottom: showLegend ? 52 : 26 },
+      grid: { left: 52, right: splitDirection ? 44 : 16, top: 28, bottom: showLegend ? 52 : 26 },
       xAxis: {
         type: "category",
         data: labels,
-        axisLabel: { formatter: axisFmt, interval: labelInterval, fontSize: 10, hideOverlap: true },
+        axisLabel: { formatter: axisFmt, interval: labelInterval, fontSize: 11, hideOverlap: true },
         axisTick: { show: false },
       },
       // scale:true so the weekly rhythm is visible instead of a flat line on a zero base
-      yAxis: { type: "value", scale: true, splitNumber: 3, axisLabel: { formatter: (v: number) => fmtCompact(v), fontSize: 10 } },
-      tooltip: { trigger: "axis", axisPointer: { label: { formatter: (o) => bucketLabelFor(grain)(String((o as { value: unknown }).value)) } }, valueFormatter: (v) => (v == null ? "—" : fmtInt(Number(v))) },
+      yAxis: { type: "value", scale: true, splitNumber: 3, name: "vehicles", nameGap: 12, nameTextStyle: { align: "right" }, axisLabel: { formatter: (v: number) => fmtCompact(v), fontSize: 11 } },
+      tooltip: { trigger: "axis", axisPointer: { label: { formatter: (o) => bucketLabelFor(grain)(String((o as { value: unknown }).value)) } }, valueFormatter: (v) => (v == null ? "—" : `${fmtInt(Number(v))} vehicles`) },
       // A legend whenever there is more than one line. The old condition hid it
       // precisely when the chart split into northbound and southbound — the case
       // that needs it most, since two lines with no key are unreadable.
       // Split down to one carriageway leaves a single line, which its own end
       // label already names — a one-item legend would just be furniture.
-      legend: { show: showLegend, bottom: 0, left: "center", itemWidth: 14, itemHeight: 8, itemGap: 18, padding: 0, textStyle: { fontSize: 11 } },
+      legend: { show: showLegend, bottom: 0, left: "center", itemGap: 18, padding: 0 },
       series,
     };
   }, [data, grain, splitDirection, direction, trendRows]);
@@ -325,9 +333,9 @@ export default function TrafficPage() {
     return {
       // Legend lives in a slim strip below the plot, never on it
       grid: { left: 40, right: 10, top: 6, bottom: 26 },
-      xAxis: { type: "category", data: Array.from({ length: 24 }, (_, h) => fmtHour(h)), splitArea: { show: true }, axisLabel: { interval: 3, fontSize: 10 }, axisTick: { show: false } },
+      xAxis: { type: "category", data: Array.from({ length: 24 }, (_, h) => fmtHour(h)), splitArea: { show: false }, axisLabel: { interval: 3, fontSize: 11 }, axisTick: { show: false } },
       // inverse:true puts Mon at the top, Sun at the bottom
-      yAxis: { type: "category", data: DOW_LABELS, inverse: true, splitArea: { show: true }, axisLabel: { interval: 0, fontSize: 10 }, axisTick: { show: false } },
+      yAxis: { type: "category", data: DOW_LABELS, inverse: true, splitArea: { show: false }, axisLabel: { interval: 0, fontSize: 11 }, axisTick: { show: false } },
       tooltip: {
         formatter: (p) => {
           const v = (p as unknown as { value: [number, number, number] }).value;
@@ -347,10 +355,10 @@ export default function TrafficPage() {
         // which on the dark surface turned the grid into grey-blue mud and made
         // the highlighted cells harder to pick out, not easier. One flat grey
         // gives the lit band something uniform to stand against.
-        outOfRange: { color: chartTheme.axis },
+        outOfRange: { color: NEUTRAL },
         formatter: (v) => fmtCompact(Number(v)),
       },
-      series: [{ type: "heatmap", data: heatData, emphasis: { itemStyle: { borderColor: RAMP[2], borderWidth: 1 } } }],
+      series: [{ type: "heatmap", data: heatData, itemStyle: { borderColor: CELL_GAP, borderWidth: 2, borderRadius: 3 }, emphasis: { itemStyle: { borderColor: chartTheme.ink, borderWidth: 1 } } }],
     };
     // chartTheme is a dependency because the ramp's lightest step comes from it.
   }, [data, chartTheme]);
@@ -382,9 +390,9 @@ export default function TrafficPage() {
       others,
       option: {
         grid: { left: 120, right: 46, top: 8, bottom: 18 },
-        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => fmtCompact(v), fontSize: 10 } },
+        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => fmtCompact(v), fontSize: 11 } },
         // interval:0 — every plaza name must be readable, that IS the chart
-        yAxis: { type: "category", data: display.map((r) => r.plaza), axisLabel: { interval: 0, fontSize: 10 }, axisTick: { show: false } },
+        yAxis: { type: "category", data: display.map((r) => r.plaza), axisLabel: { interval: 0, fontSize: 11 }, axisTick: { show: false } },
         tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (v) => `${fmtInt(Number(v))} vehicles` },
         /* No legend. There is one series, so it drew a single chip reading
            "Volume by plaza" beneath a chart whose axis already says that, and
@@ -402,9 +410,9 @@ export default function TrafficPage() {
                 // of all — the shade this chart uses for the busiest plaza — which
                 // is the wrong signal for a row that is not a plaza at all.
                 color: r.isOthers
-                  ? chartTheme.axis
+                  ? NEUTRAL
                   : SEQ[Math.min(3, 1 + Math.floor((r.v / maxV) * 2.99))],
-                borderRadius: [0, 3, 3, 0],
+                borderRadius: [0, 4, 4, 0],
               },
             })),
             barMaxWidth: 12,
@@ -424,9 +432,9 @@ export default function TrafficPage() {
     const lo = Math.max(0, Math.floor(Math.min(...speeds)) - 1);
     const hi = Math.ceil(Math.max(...speeds)) + 1;
     return {
-      grid: { left: 36, right: 14, top: 10, bottom: 26 },
-      xAxis: { type: "category", data: data.speedByHour.map((r) => fmtHour(r.hour)), axisLabel: { interval: 3, fontSize: 10 }, axisTick: { show: false } },
-      yAxis: { type: "value", min: lo, max: hi, splitNumber: 4, axisLabel: { formatter: "{value}", fontSize: 10 }, name: "km/h", nameGap: 6, nameTextStyle: { fontSize: 10 } },
+      grid: { left: 36, right: 14, top: 26, bottom: 26 },
+      xAxis: { type: "category", data: data.speedByHour.map((r) => fmtHour(r.hour)), axisLabel: { interval: 3, fontSize: 11 }, axisTick: { show: false } },
+      yAxis: { type: "value", min: lo, max: hi, splitNumber: 4, axisLabel: { formatter: "{value}", fontSize: 11 }, name: "km/h", nameGap: 10, nameTextStyle: { fontSize: 11 } },
       tooltip: {
         trigger: "axis",
         formatter: (p) => {
@@ -441,7 +449,7 @@ export default function TrafficPage() {
         // Scrubbing greys the rest of the line out. A neutral reads more clearly
         // as "not this" on a single line than a washed-out version of the same
         // ramp, which just looks like a lighter reading.
-        outOfRange: { color: chartTheme.axis },
+        outOfRange: { color: NEUTRAL },
       },
       series: [
         {
@@ -453,7 +461,7 @@ export default function TrafficPage() {
           // A ring around each point so it stays visible where the line runs
           // through a step of the same colour.
           itemStyle: { borderColor: chartTheme.tooltipBg, borderWidth: 1.5 },
-          lineStyle: { width: 3.5 },
+          lineStyle: { width: 2 },
         },
       ],
     };
@@ -487,8 +495,8 @@ export default function TrafficPage() {
       rows: display,
       option: {
         grid: { left: 128, right: 42, top: 8, bottom: 46 },
-        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => `${v}%`, fontSize: 10 } },
-        yAxis: { type: "category", data: display.map((r) => r.label), axisLabel: { interval: 0, fontSize: 10 }, axisTick: { show: false } },
+        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => `${v}%`, fontSize: 11 } },
+        yAxis: { type: "category", data: display.map((r) => r.label), axisLabel: { interval: 0, fontSize: 11 }, axisTick: { show: false } },
         tooltip: {
           axisPointer: { type: "shadow" },
           formatter: (p) => {
@@ -513,8 +521,8 @@ export default function TrafficPage() {
            series carry no data. This is a key, not a filter, so it names the
            two colours and ignores clicks. */
         legend: {
-          show: true, bottom: 0, left: "center", itemWidth: 14, itemHeight: 8,
-          itemGap: 18, padding: 0, textStyle: { fontSize: 11 },
+          show: true, bottom: 0, left: "center",
+          itemGap: 18, padding: 0,
           data: ["Above baseline", "Below baseline"],
           selectedMode: false,
         },
@@ -531,7 +539,7 @@ export default function TrafficPage() {
               itemStyle: { color: r.pct >= 0 ? PAIR_B : PAIR_A, borderRadius: r.pct >= 0 ? [0, 4, 4, 0] : [4, 0, 0, 4] },
             })),
             barMaxWidth: 12,
-            markLine: { symbol: "none", silent: true, lineStyle: { color: chartTheme.axis, width: 1 }, data: [{ xAxis: 0 }], label: { show: false } },
+            markLine: { symbol: "none", silent: true, lineStyle: { color: NEUTRAL, width: 1 }, data: [{ xAxis: 0 }], label: { show: false } },
           },
         ],
       },
@@ -545,7 +553,7 @@ export default function TrafficPage() {
       grid: { left: 0, right: 0, top: 2, bottom: 2 },
       xAxis: { type: "category", show: false, data: derived.sparkline.map((_, i) => i) },
       yAxis: { type: "value", show: false, min: "dataMin" },
-      series: [{ type: "line", data: derived.sparkline, symbol: "none", lineStyle: { width: 1.5, color: PAIR_A }, areaStyle: { color: RAMP[0], opacity: 0.18 } }],
+      series: [{ type: "line", data: derived.sparkline, symbol: "none", lineStyle: { width: 2, color: PAIR_A }, areaStyle: areaFade(PAIR_A) as LineSeriesOption["areaStyle"] }],
     };
   }, [derived]);
 
@@ -711,8 +719,8 @@ export default function TrafficPage() {
     onReady?: (chart: unknown) => void,
   ) => {
     if (loading && !data) return <ChartSkeleton />;
-    if (error) return <div className={styles.placeholder}>Live data unavailable — is the backend running on port 4000?</div>;
-    if (!option) return <div className={styles.placeholder}>{emptyNote}</div>;
+    if (error) return <div className="nct-state-slot"><StateNote kind="error">Live data unavailable — is the backend running on port 4000?</StateNote></div>;
+    if (!option) return <div className="nct-state-slot"><StateNote kind="nodata">{emptyNote}</StateNote></div>;
     return (
       <ReactECharts
         option={applyChartTheme(option, chartTheme)}
@@ -784,46 +792,389 @@ export default function TrafficPage() {
   const kpiValue = (v: string | null) =>
     loading && !data ? <KpiSkeleton /> : <CountUpValue text={v ?? "—"} />;
 
-  // ---------- Predictive / Prescriptive share the same shell ----------
-  if (activeTab !== "Descriptive") {
-    return (
-      <section className={`${styles.page} viz-traffic`}>
-        <PageHeader accent="traffic" icon={TrendingUp} title="Traffic Overview" subtitle="Volume, congestion, and speed patterns across NLEX" />
-        <div className={styles.filterRow} style={{ flexWrap: "wrap", rowGap: 8 }}>
-          {/* Predictive keeps the Range presets (they set how much history the
-              forecast card shows) but not Custom, and not the Weather filter:
-              the forecast card carries its own weather toggle. */}
-          {activeTab === "Predictive" && (
-            <div className={styles.filterGroup}>
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)" }}><rect x="2" y="2" width="12" height="12" rx="3" stroke="currentColor" strokeWidth="1.4" /><path d="M2 6h12" stroke="currentColor" strokeWidth="1.4" /><path d="M5.5 2V4M10.5 2V4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
-              <span className={styles.filterLabel}>Range</span>
-              <div className={styles.segmented}>
-                {(["3", "12", "all"] as const).map((m) => (
-                  <button key={m} className={rangeMode === m ? "active" : ""} onClick={() => setRangeMode(m)}>
-                    {rangeMode === m && <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                    {m === "3" ? "3 mo" : m === "12" ? "12 mo" : "All"}
-                  </button>
-                ))}
-              </div>
+  /* ---------- Card answers (Night Corridor: answer, context, evidence, method)
+     Each line is computed from the loaded payload at render time, from the same
+     arrays the charts draw; nothing here is fetched, stored or hardcoded. When
+     the data is not in, the line is simply absent. */
+  const busiestSlot = data && data.hourDow.length > 0
+    ? data.hourDow.reduce((a, b) => (b.v > a.v ? b : a))
+    : null;
+  const slowestHour = data && data.speedByHour.length > 0
+    ? data.speedByHour.reduce((a, b) => (b.speed < a.speed ? b : a))
+    : null;
+  const top3Share = data && derived && derived.plazaTotal > 0 && data.byPlaza.length > 3
+    ? (data.byPlaza.slice(0, 3).reduce((s, r) => s + r.v, 0) / derived.plazaTotal) * 100
+    : null;
+  const furthest = impactChart && impactChart.rows.length > 0
+    ? impactChart.rows.reduce((a, b) => (Math.abs(b.pct) > Math.abs(a.pct) ? b : a))
+    : null;
+
+  /* ---------- Active filters, as removable chips ----------
+     Each × calls the filter's existing setter with its default value, the same
+     call the default button makes. Range and Weather set on Descriptive still
+     reach the volume forecast, so they are shown on Predictive too. */
+  const RANGE_LABEL: Record<RangeMode, string> = { "3": "3 mo", "12": "12 mo", all: "All", custom: "Custom" };
+  const chips: { key: string; name: string; value: string; clear: () => void }[] = [];
+  if (activeTab !== "Prescriptive") {
+    if (rangeMode !== "12") {
+      chips.push({
+        key: "range",
+        name: "Range",
+        value: rangeMode === "custom" ? (customFrom && customTo ? `${customFrom} to ${customTo}` : "Custom, pick two dates") : RANGE_LABEL[rangeMode],
+        clear: () => setRangeMode("12"),
+      });
+    }
+    if (weather !== "all") {
+      chips.push({ key: "weather", name: "Weather", value: weather === "dry" ? "Dry" : "Wet", clear: () => setWeather("all") });
+    }
+  }
+  if (activeTab === "Descriptive" && vClass !== "All") {
+    chips.push({ key: "class", name: "Class", value: vClass, clear: () => setVClass("All") });
+  }
+
+  const sortButton = (sort: "desc" | "asc", setSort: (s: "desc" | "asc") => void) => (
+    <button
+      type="button"
+      className={styles.sortBtn}
+      onClick={() => setSort(sort === "desc" ? "asc" : "desc")}
+      title={sort === "desc" ? "Sorted highest first — click for lowest first" : "Sorted lowest first — click for highest first"}
+      aria-label={`Sort order: ${sort === "desc" ? "highest first" : "lowest first"}. Activate to reverse.`}
+    >
+      {sort === "desc" ? <ArrowDownWideNarrow size={15} /> : <ArrowUpNarrowWide size={15} />}
+    </button>
+  );
+
+  const closeIcon = (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4.5 4.5L13.5 13.5M13.5 4.5L4.5 13.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+  );
+
+  return (
+    <section className={`${styles.page} viz-traffic`}>
+      <PageHeader accent="traffic" icon={TrendingUp} title="Traffic Overview" subtitle="Volume, congestion, and speed patterns across NLEX" />
+
+      {/* The mode switch, directly under the title: icon, name and a
+          three-word hint, with the accent underline sliding to the active one. */}
+      <div className={styles.modeTabs} style={{ ["--mode-i" as string]: modeIndex(activeTab) }}>
+        {(["Descriptive", "Predictive", "Prescriptive"] as const).map((t) => (
+          <button key={t} className={`${styles.modeTab} ${activeTab === t ? styles.modeTabActive : ""}`} onClick={() => setActiveTab(t)} aria-pressed={activeTab === t}>
+            <ModeTabLabel mode={t} />
+          </button>
+        ))}
+        <span className={styles.modeIndicator} aria-hidden="true" />
+      </div>
+
+      {/* The sticky filter bar. Predictive keeps the Range presets (they set how
+          much history the forecast card shows) but not Custom, and not the
+          Weather filter: the forecast card carries its own weather toggle.
+          Prescriptive takes no filter at all. */}
+      <div className={styles.filterRow}>
+        {activeTab !== "Prescriptive" && (
+          <div className={styles.filterGroup}>
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)" }}><rect x="2" y="2" width="12" height="12" rx="3" stroke="currentColor" strokeWidth="1.4" /><path d="M2 6h12" stroke="currentColor" strokeWidth="1.4" /><path d="M5.5 2V4M10.5 2V4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+            <span className={styles.filterLabel}>Range</span>
+            <div className={styles.segmented} role="group" aria-label="Range">
+              {(activeTab === "Descriptive" ? (["3", "12", "all", "custom"] as const) : (["3", "12", "all"] as const)).map((m) => (
+                <button key={m} className={rangeMode === m ? "active" : ""} aria-pressed={rangeMode === m} onClick={() => setRangeMode(m)}>
+                  {RANGE_LABEL[m]}
+                </button>
+              ))}
             </div>
-          )}
-          {activeTab === "Prescriptive" && (
-            <span className={styles.filterNote}>
-              Staffing, congestion response and event ranking, computed from the Predictive tab&apos;s own forecast —
-              Range does not apply.
-            </span>
-          )}
-          <span className={styles.spacer} />
-          <div className={styles.modeTabs}>
-            {(["Descriptive", "Predictive", "Prescriptive"] as const).map((t) => (
-              <button key={t} className={`${styles.modeTab} ${activeTab === t ? styles.modeTabActive : ""}`} onClick={() => setActiveTab(t)}>
-                {activeTab === t && <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 6, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                {t}
-              </button>
+            {activeTab === "Descriptive" && rangeMode === "custom" && (
+              <DateRangePicker
+                startDate={customFrom}
+                minDate={data?.meta.minDate}
+                maxDate={data?.meta.maxDate}
+                endDate={customTo}
+                onChange={(start, end) => {
+                  setCustomFrom(start);
+                  setCustomTo(end);
+                }}
+              />
+            )}
+          </div>
+        )}
+
+        {activeTab === "Descriptive" && (
+          <div className={styles.filterGroup}>
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)" }}><path d="M4.5 11.5a3 3 0 1 1 .4-5.97 4 4 0 0 1 7.75 1.1A2.5 2.5 0 0 1 12 11.5H4.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" /><path d="M6 13.2v1M9 13.2v1M12 13.2v1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+            <span className={styles.filterLabel}>Weather</span>
+            <div className={styles.segmented} role="group" aria-label="Weather">
+              {(["all", "dry", "wet"] as const).map((w) => (
+                <button key={w} className={weather === w ? "active" : ""} aria-pressed={weather === w} onClick={() => setWeather(w)}>
+                  {w === "all" ? "All" : w === "dry" ? "Dry" : "Wet"}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "Descriptive" && loading && data && <span className={styles.updating}>Updating…</span>}
+
+        {activeTab === "Prescriptive" && (
+          <span className={styles.filterNote}>
+            Staffing, congestion response and event ranking use the Predictive tab&apos;s own forecast. Range does not apply.
+          </span>
+        )}
+
+        {chips.length > 0 && (
+          <div className="nct-chips" aria-label="Active filters">
+            {chips.map((c) => (
+              <span key={c.key} className="nct-chip">
+                <span className="nct-chip-name">{c.name}</span>
+                {c.value}
+                <button type="button" onClick={c.clear} aria-label={`Clear ${c.name} filter`} title={`Clear ${c.name}`}>
+                  <X size={12} strokeWidth={2.4} aria-hidden="true" />
+                </button>
+              </span>
             ))}
           </div>
-        </div>
-        {activeTab === "Predictive" ? (
+        )}
+      </div>
+
+      <div className={styles.modeStage} key={activeTab}>
+        {activeTab === "Descriptive" && (
+          <>
+            {/* KPI strip: the answer, the comparison, the method (i). */}
+            <div className={styles.kpiRow}>
+              <article className={styles.kpiTile}>
+                <span className={styles.kpiIcon} aria-hidden="true"><Activity size={15} /></span>
+                <h3>Total Volume<InfoTooltip text="All vehicles counted at NLEX toll plazas over the selected Range, compared with the equivalent prior period." /></h3>
+                <div className={styles.kpiValue} title={data ? `${fmtInt(data.kpis.totalVolume)} vehicles` : undefined}>
+                  {kpiValue(data ? fmtCompact(data.kpis.totalVolume) : null)}
+                </div>
+                <p className={styles.kpiHint}>
+                  {derived ? (
+                    <span className={derived.volumeDeltaPct >= 0 ? styles.deltaUp : styles.deltaDown}>{fmtPct(derived.volumeDeltaPct)}</span>
+                  ) : "—"}{" "}
+                  vs previous period
+                </p>
+              </article>
+              <article className={styles.kpiTile}>
+                <span className={styles.kpiIcon} aria-hidden="true"><CalendarClock size={15} /></span>
+                <h3>Avg Daily Volume<InfoTooltip text="Total volume divided by the number of days in the Range — the corridor's typical day." /></h3>
+                <div className={styles.kpiValue}>{kpiValue(derived ? fmtInt(derived.curAdt) : null)}</div>
+                <div className={styles.sparkBox}>
+                  {sparkOption && <ReactECharts option={applyChartTheme(sparkOption, chartTheme)} style={{ width: "100%", height: "100%" }} opts={{ renderer: "canvas" }} />}
+                </div>
+                {sparkOption && <p className={`${styles.kpiHint} nct-kpi-note`}>Last 30 days</p>}
+              </article>
+              <article className={styles.kpiTile}>
+                <span className={styles.kpiIcon} aria-hidden="true"><Clock size={15} /></span>
+                <h3>Peak Hour (Weekdays)<InfoTooltip text="The hour of a weekday that carries the most vehicles on average across the Range." /></h3>
+                <div className={styles.kpiValue}>{kpiValue(derived ? fmtHour(derived.peakHour) : null)}</div>
+                <p className={styles.kpiHint}>{derived ? `${fmtInt(derived.peakHourVolume)} vehicles/hr avg` : "—"}</p>
+              </article>
+              <article className={styles.kpiTile}>
+                <span className={styles.kpiIcon} aria-hidden="true"><Building2 size={15} /></span>
+                <h3>Busiest Plaza<InfoTooltip text="The toll plaza with the largest share of the Range's volume." /></h3>
+                <div className={`${styles.kpiValue} nct-kpi-name`}>{kpiValue(derived?.busiest ? derived.busiest.plaza : null)}</div>
+                <p className={styles.kpiHint}>
+                  {derived?.busiest && derived.plazaTotal > 0 ? `${((derived.busiest.v / derived.plazaTotal) * 100).toFixed(1)}% of selected volume` : "—"}
+                </p>
+              </article>
+              <article className={styles.kpiTile}>
+                <span className={styles.kpiIcon} aria-hidden="true"><Gauge size={15} /></span>
+                <h3>Congestion Index<InfoTooltip text="Average Waze jam severity on the corridor, 0 (free flow) to 5 (standstill), over the Range." /></h3>
+                <div className={styles.kpiValue}>{kpiValue(data?.kpis.congestionIndex != null ? `${data.kpis.congestionIndex.toFixed(2)} / 5` : null)}</div>
+                <p className={styles.kpiHint}>
+                  {derived?.congestionDelta != null ? (
+                    <>
+                      <span className={derived.congestionDelta <= 0 ? styles.deltaUp : styles.deltaDown}>
+                        {derived.congestionDelta >= 0 ? "+" : ""}{derived.congestionDelta.toFixed(2)}
+                      </span>{" "}
+                      vs prev · Waze jam level
+                    </>
+                  ) : data ? "no prior data" : "—"}
+                </p>
+              </article>
+            </div>
+
+            {/* The main time series, full width. */}
+            <article className={`${styles.chartCard} ${styles.hero} nct-span-full`}>
+              <div className={styles.chartHead}>
+                <div className={styles.headText}>
+                  <h3>Volume Trend<InfoTooltip text="Vehicles per day, week or month over the Range, with the 7-day average smoothing out weekday swings. Click a point for that period's summary." /></h3>
+                  {data && !error && (
+                    <p className="nct-answer-line">
+                      <b>{data.range.from}</b> to <b>{data.range.to}</b> · entry volume, {grain}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className={`${styles.heroFilters} nct-hero-filters`}>
+                <div className={styles.heroFilterGroup}>
+                  <span className={styles.heroFilterLabel}>Direction</span>
+                  <div className={`${styles.segmentedSmall} nct-wrap`}>
+                    {(["Both", "NB", "SB"] as const).map((d) => (
+                      <button
+                        key={d}
+                        className={direction === d ? "active" : ""}
+                        // Only meaningful once the chart is split: unsplit it draws a
+                        // single combined line, which is Both by definition and has no
+                        // carriageway to choose between.
+                        disabled={!splitDirection}
+                        title={!splitDirection ? "Turn on Split NB / SB to choose a direction" : undefined}
+                        aria-pressed={direction === d}
+                        onClick={() => setDirection(d)}
+                      >
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className={styles.heroFilterDivider} />
+                <div className={styles.heroFilterGroup}>
+                  <span className={styles.heroFilterLabel}>Class</span>
+                  <CustomSelect
+                    value={vClass}
+                    onChange={(v) => setVClass(v as VehicleClass)}
+                    options={[
+                      { label: "All classes", value: "All" },
+                      { label: "Class 1", value: "Class 1" },
+                      { label: "Class 2", value: "Class 2" },
+                      { label: "Class 3", value: "Class 3" },
+                    ]}
+                  />
+                </div>
+                <div className={styles.heroFilterDivider} />
+                <div className={styles.heroFilterGroup}>
+                  <span className={styles.heroFilterLabel}>Granularity</span>
+                  <div className={`${styles.segmentedSmall} nct-wrap`}>
+                    {(["hourly", "daily", "weekly", "monthly"] as const).map((g) => (
+                      <button
+                        key={g}
+                        className={grain === g ? "active" : ""}
+                        disabled={(g === "hourly" && !hourlyAvailable) || Boolean(grainBlockedReason(g, spanDays))}
+                        title={
+                          g === "hourly" && !hourlyAvailable
+                            ? "Hourly detail is available for ranges up to 2 weeks"
+                            : grainBlockedReason(g, spanDays) ?? undefined
+                        }
+                        aria-pressed={grain === g}
+                        onClick={() => setGrain(g)}
+                      >
+                        {g.charAt(0).toUpperCase() + g.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className={styles.heroFilterGroup} style={{ marginLeft: "auto" }}>
+                  <label className={styles.heroToggle}>
+                    <input
+                      type="checkbox"
+                      checked={splitDirection}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setSplitDirection(on);
+                        // Turning split off returns the control to Both, so it is never
+                        // left disabled while holding NB or SB — a state the reader
+                        // could see but not change.
+                        if (!on) setDirection("Both");
+                      }}
+                    />
+                    <span className={styles.heroToggleTrack}><span className={styles.heroToggleThumb} /></span>
+                    Split NB / SB
+                  </label>
+                </div>
+              </div>
+              <div className={styles.chartBody}>{chartFrame(trendOption, "No volume data for the selected filters", onTrendClick)}</div>
+            </article>
+
+            {/* Breakdowns, two columns: by plaza, and against normal days. */}
+            <article className={`${styles.chartCard} nct-span-half`}>
+              <div className={styles.chartHead}>
+                <div className={styles.headText}>
+                  <h3>Volume by Plaza<InfoTooltip text="Share of the Range's volume handled by each toll plaza. Click a bar for that plaza's summary." /></h3>
+                  {top3Share != null && !error && (
+                    <p className="nct-answer-line">Top 3 plazas carry <b>{top3Share.toFixed(1)}%</b> of the selected volume</p>
+                  )}
+                </div>
+                <div className="nct-head-tools">
+                  {sortButton(plazaSort, setPlazaSort)}
+                  <button className={styles.secondaryButton} onClick={() => setAllPlazasOpen(true)}>
+                    View all plazas
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </button>
+                </div>
+              </div>
+              <div className={styles.chartBody}>{chartFrame(plazaChart?.option ?? null, "No data for the selected filters", onPlazaClick)}</div>
+            </article>
+
+            <article className={`${styles.chartCard} nct-span-half`}>
+              <div className={styles.chartHead}>
+                <div className={styles.headText}>
+                  <h3>{impactMode === "Events" ? "Arena Event Impact (venue exit entries)" : "Holiday Impact vs Normal Days"}<InfoTooltip text="How volume on Philippine Arena event days or public holidays compares with the normal days around them (±45-day local baseline). Toggle Events / Holidays above." /></h3>
+                </div>
+                <div className="nct-head-tools">
+                  <div className={styles.segmented} role="group" aria-label="Events or holidays">
+                    {(["Events", "Holidays"] as const).map((m) => (
+                      <button key={m} className={impactMode === m ? "active" : ""} aria-pressed={impactMode === m} onClick={() => setImpactMode(m)}>
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                  {sortButton(impactSort, setImpactSort)}
+                  <button className={styles.secondaryButton} onClick={() => setImpactListOpen(true)}>
+                    View all
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </button>
+                </div>
+              </div>
+              {/* The answer, on one line under the header, the full width of the card. */}
+              {furthest && !error && (
+                <p className="nct-answer-line is-one-line nct-answer-row">Furthest from normal: <b>{furthest.event ? furthest.event.label : furthest.holiday ? furthest.holiday.label : furthest.label}</b> <b>{fmtPct(furthest.pct)}</b></p>
+              )}
+              <div className={styles.chartBody}>{chartFrame(impactChart?.option ?? null, "No impact data available", onImpactClick)}</div>
+            </article>
+
+            {/* By hour: the hour × day heatmap, then jam speed by hour. */}
+            <article className={`${styles.chartCard} nct-span-heat`}>
+              <div className={styles.chartHead}>
+                <div className={styles.headText}>
+                  <h3>Average Volume by Hour and Day<InfoTooltip text="Typical vehicles per hour for each day of the week — darker cells are busier. Shows when the corridor peaks." /></h3>
+                  {busiestSlot && !error && (
+                    <p className="nct-answer-line">
+                      Busiest: <b>{DOW_LABELS[DOW_ORDER.indexOf(busiestSlot.dow)]} {fmtHour(busiestSlot.hour)}</b> · {fmtInt(busiestSlot.v)} vehicles/hr on average
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className={styles.chartBody}>{chartFrame(heatmapOption, "No data for the selected filters", onHeatmapClick, false, (c) => { heatChart.current = c; })}</div>
+              <RampKey
+                colors={heatRamp(chartTheme)}
+                min={heatMinValue}
+                max={heatMaxValue}
+                format={(v) => `${fmtCompact(v)} vehicles`}
+                lowLabel="Quieter"
+                highLabel="Busier"
+                onScrub={scrub(heatChart, heatMinValue, heatMaxValue)}
+              />
+            </article>
+
+            <article className={`${styles.chartCard} nct-span-speed`}>
+              <div className={styles.chartHead}>
+                <div className={styles.headText}>
+                  <h3>Average Speed in Jams by Hour<InfoTooltip text="Mean speed reported inside Waze jams for each hour of the day — lower means slower-moving jams at that hour." /></h3>
+                  {slowestHour && !error && (
+                    <p className="nct-answer-line">Slowest: <b>{fmtHour(slowestHour.hour)}</b> · {slowestHour.speed} km/h inside jams</p>
+                  )}
+                </div>
+              </div>
+              <div className={styles.chartBody}>{chartFrame(speedOption, "No congestion data in the selected range", onSpeedClick, true, (c) => { speedChart.current = c; })}</div>
+              <RampKey
+                colors={SEVERITY}
+                min={speedRange[0]}
+                max={speedRange[1]}
+                format={(v) => `${v.toFixed(0)} km/h`}
+                lowLabel="Slower"
+                highLabel="Faster"
+                onScrub={scrub(speedChart, speedRange[0], speedRange[1])}
+              />
+            </article>
+          </>
+        )}
+
+        {activeTab === "Predictive" && (
           <>
             <div className={styles.spanFull}>
               <PredictiveVolumeChart
@@ -833,10 +1184,12 @@ export default function TrafficPage() {
                 weather={weather}
               />
             </div>
-            <div className={styles.spanHalf}><PredictiveCongestionChart /></div>
-            <div className={styles.spanHalf}><PredictiveEventChart /></div>
+            <div className={`${styles.spanHalf} nct-span-half`}><PredictiveCongestionChart /></div>
+            <div className={`${styles.spanHalf} nct-span-half`}><PredictiveEventChart /></div>
           </>
-        ) : (
+        )}
+
+        {activeTab === "Prescriptive" && (
           /* Three panels, one per row of the analytics diagram, each acting on
              the Predictive tab's own forecast rather than a separate model.
              The booth plan takes the descriptive plaza shares and per-plaza
@@ -850,307 +1203,21 @@ export default function TrafficPage() {
                   changes a date range on the descriptive tab. */}
               <BoothStaffingPanel />
             </div>
-            <div className={styles.spanFull}>
+            {/* Two different sizes, so the tab is not a wall of equal cards:
+                the advisory beside the wider event ranking. */}
+            <div className="nct-span-resp">
               <CongestionResponsePanel />
             </div>
-            <div className={styles.spanFull}>
+            <div className="nct-span-event">
               <EventInterventionPanel />
             </div>
           </>
         )}
-      </section>
-    );
-  }
-
-  return (
-    <section className={`${styles.page} viz-traffic`}>
-      <PageHeader accent="traffic" icon={TrendingUp} title="Traffic Overview" subtitle="Volume, congestion, and speed patterns across NLEX" />
-
-      {/* Row A — global filters */}
-      <div className={styles.filterRow}>
-        <div className={styles.filterGroup}>
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: 'var(--text-muted)' }}><rect x="2" y="2" width="12" height="12" rx="3" stroke="currentColor" strokeWidth="1.4" /><path d="M2 6h12" stroke="currentColor" strokeWidth="1.4" /><path d="M5.5 2V4M10.5 2V4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
-          <span className={styles.filterLabel}>Range</span>
-          <div className={styles.segmented}>
-            {(["3", "12", "all", "custom"] as const).map((m) => (
-              <button key={m} className={rangeMode === m ? "active" : ""} onClick={() => setRangeMode(m)}>
-                {rangeMode === m && <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                {m === "3" ? "3 mo" : m === "12" ? "12 mo" : m === "all" ? "All" : "Custom"}
-              </button>
-            ))}
-          </div>
-          {rangeMode === "custom" && (
-            <DateRangePicker
-              startDate={customFrom}
-              minDate={data?.meta.minDate}
-              maxDate={data?.meta.maxDate}
-              endDate={customTo}
-              onChange={(start, end) => {
-                setCustomFrom(start);
-                setCustomTo(end);
-              }}
-            />
-          )}
-        </div>
-
-        <div className={styles.filterGroup}>
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)" }}><path d="M4.5 11.5a3 3 0 1 1 .4-5.97 4 4 0 0 1 7.75 1.1A2.5 2.5 0 0 1 12 11.5H4.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" /><path d="M6 13.2v1M9 13.2v1M12 13.2v1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
-          <span className={styles.filterLabel}>Weather</span>
-          <div className={styles.segmented}>
-            {(["all", "dry", "wet"] as const).map((w) => (
-              <button key={w} className={weather === w ? "active" : ""} onClick={() => setWeather(w)}>
-                {weather === w && <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                {w === "all" ? "All" : w === "dry" ? "Dry" : "Wet"}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {loading && data && <span className={styles.updating}>Updating…</span>}
-        <span className={styles.spacer} />
-
-        <div className={styles.modeTabs}>
-          {(["Descriptive", "Predictive", "Prescriptive"] as const).map((t) => (
-            <button key={t} className={`${styles.modeTab} ${activeTab === t ? styles.modeTabActive : ""}`} onClick={() => setActiveTab(t)}>
-              {activeTab === t && <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 6, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-              {t}
-            </button>
-          ))}
-        </div>
       </div>
 
-      {/* Row B — KPI tiles */}
-      <div className={`${styles.kpiRow} ds-rise`}>
-        <article className={styles.kpiTile}>
-          <span className={styles.kpiIcon} aria-hidden="true"><Activity size={15} /></span>
-          <h3>Total Volume<InfoTooltip text="All vehicles counted at NLEX toll plazas over the selected Range, compared with the equivalent prior period." /></h3>
-          <div className={styles.kpiValue} title={data ? `${fmtInt(data.kpis.totalVolume)} vehicles` : undefined}>
-            {kpiValue(data ? fmtCompact(data.kpis.totalVolume) : null)}
-          </div>
-          <p className={styles.kpiHint}>
-            {derived ? (
-              <span className={derived.volumeDeltaPct >= 0 ? styles.deltaUp : styles.deltaDown}>{fmtPct(derived.volumeDeltaPct)}</span>
-            ) : "—"}{" "}
-            vs previous period
-          </p>
-        </article>
-        <article className={styles.kpiTile}>
-          <span className={styles.kpiIcon} aria-hidden="true"><CalendarClock size={15} /></span>
-          <h3>Avg Daily Volume<InfoTooltip text="Total volume divided by the number of days in the Range — the corridor's typical day." /></h3>
-          <div className={styles.kpiValue}>{kpiValue(derived ? fmtInt(derived.curAdt) : null)}</div>
-          <div className={styles.sparkBox}>
-            {sparkOption && <ReactECharts option={sparkOption} style={{ width: "100%", height: "100%" }} opts={{ renderer: "canvas" }} />}
-          </div>
-        </article>
-        <article className={styles.kpiTile}>
-          <span className={styles.kpiIcon} aria-hidden="true"><Clock size={15} /></span>
-          <h3>Peak Hour (Weekdays)<InfoTooltip text="The hour of a weekday that carries the most vehicles on average across the Range." /></h3>
-          <div className={styles.kpiValue}>{kpiValue(derived ? fmtHour(derived.peakHour) : null)}</div>
-          <p className={styles.kpiHint}>{derived ? `${fmtInt(derived.peakHourVolume)} vehicles/hr avg` : "—"}</p>
-        </article>
-        <article className={styles.kpiTile}>
-          <span className={styles.kpiIcon} aria-hidden="true"><Building2 size={15} /></span>
-          <h3>Busiest Plaza<InfoTooltip text="The toll plaza with the largest share of the Range's volume." /></h3>
-          <div className={styles.kpiValue}>{kpiValue(derived?.busiest ? derived.busiest.plaza : null)}</div>
-          <p className={styles.kpiHint}>
-            {derived?.busiest && derived.plazaTotal > 0 ? `${((derived.busiest.v / derived.plazaTotal) * 100).toFixed(1)}% of selected volume` : "—"}
-          </p>
-        </article>
-        <article className={styles.kpiTile}>
-          <span className={styles.kpiIcon} aria-hidden="true"><Gauge size={15} /></span>
-          <h3>Congestion Index<InfoTooltip text="Average Waze jam severity on the corridor, 0 (free flow) to 5 (standstill), over the Range." /></h3>
-          <div className={styles.kpiValue}>{kpiValue(data?.kpis.congestionIndex != null ? `${data.kpis.congestionIndex.toFixed(2)} / 5` : null)}</div>
-          <p className={styles.kpiHint}>
-            {derived?.congestionDelta != null ? (
-              <>
-                <span className={derived.congestionDelta <= 0 ? styles.deltaUp : styles.deltaDown}>
-                  {derived.congestionDelta >= 0 ? "+" : ""}{derived.congestionDelta.toFixed(2)}
-                </span>{" "}
-                vs prev · Waze jam level
-              </>
-            ) : data ? "no prior data" : "—"}
-          </p>
-        </article>
-      </div>
-
-      {/* Row C — hero chart */}
-      <article className={`${styles.chartCard} ${styles.chart1} ${styles.hero}`}>
-        <div className={styles.chartHead}>
-          <div className={styles.headText}>
-            <h3>Volume Trend<InfoTooltip text="Vehicles per day, week or month over the Range, with the 7-day average smoothing out weekday swings. Click a point to see that period's hourly breakdown." /></h3>
-          </div>
-        </div>
-        <div className={styles.heroFilters}>
-          <div className={styles.heroFilterGroup}>
-            <span className={styles.heroFilterLabel}>Direction</span>
-            <div className={styles.segmentedSmall}>
-              {(["Both", "NB", "SB"] as const).map((d) => (
-                <button
-                  key={d}
-                  className={direction === d ? "active" : ""}
-                  // Only meaningful once the chart is split: unsplit it draws a
-                  // single combined line, which is Both by definition and has no
-                  // carriageway to choose between.
-                  disabled={!splitDirection}
-                  title={!splitDirection ? "Turn on Split NB / SB to choose a direction" : undefined}
-                  onClick={() => setDirection(d)}
-                >
-                  {direction === d && <svg width="10" height="10" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                  {d}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className={styles.heroFilterDivider} />
-          <div className={styles.heroFilterGroup}>
-            <span className={styles.heroFilterLabel}>Class</span>
-            <CustomSelect
-              value={vClass}
-              onChange={(v) => setVClass(v as VehicleClass)}
-              options={[
-                { label: "All classes", value: "All" },
-                { label: "Class 1", value: "Class 1" },
-                { label: "Class 2", value: "Class 2" },
-                { label: "Class 3", value: "Class 3" },
-              ]}
-            />
-          </div>
-          <div className={styles.heroFilterDivider} />
-          <div className={styles.heroFilterGroup}>
-            <span className={styles.heroFilterLabel}>Granularity</span>
-            <div className={styles.segmentedSmall}>
-              {(["hourly", "daily", "weekly", "monthly"] as const).map((g) => (
-                <button
-                  key={g}
-                  className={grain === g ? "active" : ""}
-                  disabled={(g === "hourly" && !hourlyAvailable) || Boolean(grainBlockedReason(g, spanDays))}
-                  title={
-                    g === "hourly" && !hourlyAvailable
-                      ? "Hourly detail is available for ranges up to 2 weeks"
-                      : grainBlockedReason(g, spanDays) ?? undefined
-                  }
-                  onClick={() => setGrain(g)}
-                >
-                  {grain === g && <svg width="10" height="10" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                  {g.charAt(0).toUpperCase() + g.slice(1)}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className={styles.heroFilterGroup} style={{ marginLeft: "auto" }}>
-            <label className={styles.heroToggle}>
-              <input
-                type="checkbox"
-                checked={splitDirection}
-                onChange={(e) => {
-                  const on = e.target.checked;
-                  setSplitDirection(on);
-                  // Turning split off returns the control to Both, so it is never
-                  // left disabled while holding NB or SB — a state the reader
-                  // could see but not change.
-                  if (!on) setDirection("Both");
-                }}
-              />
-              <span className={styles.heroToggleTrack}><span className={styles.heroToggleThumb} /></span>
-              Split NB / SB
-            </label>
-          </div>
-        </div>
-        <div className={styles.chartBody}>{chartFrame(trendOption, "No volume data for the selected filters", onTrendClick)}</div>
-      </article>
-
-      {/* Row D */}
-      <article className={`${styles.chartCard} ${styles.chart2}`}>
-        <div className={styles.chartHead}>
-          <div className={styles.headText}>
-            <h3>Average Volume by Hour × Day of Week<InfoTooltip text="Typical vehicles per hour for each day of the week — darker cells are busier. Shows when the corridor peaks." /></h3>
-          </div>
-        </div>
-        <div className={styles.chartBody}>{chartFrame(heatmapOption, "No data for the selected filters", onHeatmapClick, false, (c) => { heatChart.current = c; })}</div>
-        <RampKey
-          colors={heatRamp(chartTheme)}
-          min={heatMinValue}
-          max={heatMaxValue}
-          format={(v) => `${fmtCompact(v)} vehicles`}
-          lowLabel="Quieter"
-          highLabel="Busier"
-          onScrub={scrub(heatChart, heatMinValue, heatMaxValue)}
-        />
-      </article>
-
-      <article className={`${styles.chartCard} ${styles.chart3}`}>
-        <div className={styles.chartHead}>
-          <div className={styles.headText}>
-            <h3>Volume by Plaza<InfoTooltip text="Share of the Range's volume handled by each toll plaza. Click a bar for its hourly profile." /></h3>
-          </div>
-          <button
-            type="button"
-            className={styles.sortBtn}
-            onClick={() => setPlazaSort(plazaSort === "desc" ? "asc" : "desc")}
-            title={plazaSort === "desc" ? "Sorted highest first — click for lowest first" : "Sorted lowest first — click for highest first"}
-            aria-label={`Sort order: ${plazaSort === "desc" ? "highest first" : "lowest first"}. Activate to reverse.`}
-          >
-            {plazaSort === "desc" ? <ArrowDownWideNarrow size={15} /> : <ArrowUpNarrowWide size={15} />}
-          </button>
-          <button className={styles.secondaryButton} onClick={() => setAllPlazasOpen(true)}>
-            View all plazas
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </button>
-        </div>
-        <div className={styles.chartBody}>{chartFrame(plazaChart?.option ?? null, "No data for the selected filters", onPlazaClick)}</div>
-      </article>
-
-      {/* Row E */}
-      <article className={`${styles.chartCard} ${styles.chart4}`}>
-        <div className={styles.chartHead}>
-          <div className={styles.headText}>
-            <h3>Average Speed in Jams by Hour<InfoTooltip text="Mean speed reported inside Waze jams for each hour of the day — lower means slower-moving jams at that hour." /></h3>
-          </div>
-        </div>
-        <div className={styles.chartBody}>{chartFrame(speedOption, "No congestion data in the selected range", onSpeedClick, true, (c) => { speedChart.current = c; })}</div>
-        <RampKey
-          colors={SEVERITY}
-          min={speedRange[0]}
-          max={speedRange[1]}
-          format={(v) => `${v.toFixed(0)} km/h`}
-          lowLabel="Slower"
-          highLabel="Faster"
-          onScrub={scrub(speedChart, speedRange[0], speedRange[1])}
-        />
-      </article>
-
-      <article className={`${styles.chartCard} ${styles.chart5}`}>
-        <div className={styles.chartHead}>
-          <div className={styles.headText}>
-            <h3>{impactMode === "Events" ? "Arena Event Impact (venue exit entries)" : "Holiday Impact vs Normal Days"}<InfoTooltip text="How volume on Philippine Arena event days or public holidays compares with the normal days around them (±45-day local baseline). Toggle Events / Holidays above." /></h3>
-          </div>
-          <button
-            type="button"
-            className={styles.sortBtn}
-            onClick={() => setImpactSort(impactSort === "desc" ? "asc" : "desc")}
-            title={impactSort === "desc" ? "Sorted highest first — click for lowest first" : "Sorted lowest first — click for highest first"}
-            aria-label={`Sort order: ${impactSort === "desc" ? "highest first" : "lowest first"}. Activate to reverse.`}
-          >
-            {impactSort === "desc" ? <ArrowDownWideNarrow size={15} /> : <ArrowUpNarrowWide size={15} />}
-          </button>
-          <button className={styles.secondaryButton} onClick={() => setImpactListOpen(true)}>
-            View all
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </button>
-          <div className={styles.segmented}>
-            {(["Events", "Holidays"] as const).map((m) => (
-              <button key={m} className={impactMode === m ? "active" : ""} onClick={() => setImpactMode(m)}>
-                {impactMode === m && <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                {m}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className={styles.chartBody}>{chartFrame(impactChart?.option ?? null, "No impact data available", onImpactClick)}</div>
-      </article>
-
-      {/* Click-to-inspect detail modal */}
-      {detail && (
+      {/* Dialogs sit outside the cross-fading stage, so its animation can never
+          trap them under the sticky filter bar. They belong to Descriptive. */}
+      {activeTab === "Descriptive" && detail && (
         <div className={styles.detailBackdrop} role="dialog" aria-modal="true" aria-label={detail.title} onClick={() => setDetail(null)}>
           <div className={styles.detailModal} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
@@ -1161,7 +1228,7 @@ export default function TrafficPage() {
                 {detail.subtitle && <p>{detail.subtitle}</p>}
               </div>
               <button className={styles.detailClose} onClick={() => setDetail(null)} aria-label="Close">
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4.5 4.5L13.5 13.5M13.5 4.5L4.5 13.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                {closeIcon}
               </button>
             </div>
             <div className={styles.detailBody}>
@@ -1174,7 +1241,7 @@ export default function TrafficPage() {
             </div>
             {detail.note && (
               <div className={styles.detailFooter}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.4" /><path d="M8 7v4M8 5.2v.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, marginTop: 3 }}><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.4" /><path d="M8 7v4M8 5.2v.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
                 <p>{detail.note}</p>
               </div>
             )}
@@ -1183,7 +1250,7 @@ export default function TrafficPage() {
       )}
 
       {/* View-all-plazas modal */}
-      {allPlazasOpen && data && (
+      {activeTab === "Descriptive" && allPlazasOpen && data && (
         <div className={styles.detailBackdrop} role="dialog" aria-modal="true" aria-label="All plazas" onClick={() => setAllPlazasOpen(false)}>
           <div className={`${styles.detailModal} ${styles.plazaModal}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
@@ -1194,7 +1261,7 @@ export default function TrafficPage() {
                 <p>{data.byPlaza.length} toll plazas</p>
               </div>
               <button className={styles.detailClose} onClick={() => setAllPlazasOpen(false)} aria-label="Close">
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4.5 4.5L13.5 13.5M13.5 4.5L4.5 13.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                {closeIcon}
               </button>
             </div>
             <div className={styles.plazaTableWrap}>
@@ -1219,9 +1286,9 @@ export default function TrafficPage() {
       )}
 
       {/* View-all events/holidays modal */}
-      {impactListOpen && data && (
+      {activeTab === "Descriptive" && impactListOpen && data && (
         <div className={styles.detailBackdrop} role="dialog" aria-modal="true" aria-label={`All ${impactMode.toLowerCase()}`} onClick={() => setImpactListOpen(false)}>
-          <div className={`${styles.detailModal} ${impactMode === "Events" ? styles.impactModal : styles.plazaModal}`} onClick={(e) => e.stopPropagation()}>
+          <div className={`${styles.detailModal} ${impactMode === "Events" ? styles.impactModal : styles.holidayModal}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
             <div className={styles.detailHeader}>
               <div className={styles.detailIcon}><CalendarClock size={18} aria-hidden="true" /></div>
@@ -1234,7 +1301,7 @@ export default function TrafficPage() {
                 </p>
               </div>
               <button className={styles.detailClose} onClick={() => setImpactListOpen(false)} aria-label="Close">
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4.5 4.5L13.5 13.5M13.5 4.5L4.5 13.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                {closeIcon}
               </button>
             </div>
             <div className={styles.plazaTableWrap}>
@@ -1256,7 +1323,7 @@ export default function TrafficPage() {
                         <td className={styles.plazaNum}>{fmtInt(e.baseline)}</td>
                         <td className={styles.plazaNum}>
                           {e.deviationPct != null ? (
-                            <span className={e.deviationPct >= 0 ? styles.devPos : styles.devNeg}>{fmtPct(e.deviationPct)}</span>
+                            <span className={e.deviationPct >= 0 ? "nct-dev-pos" : "nct-dev-neg"} style={{ ["--dev" as string]: e.deviationPct >= 0 ? PAIR_B : PAIR_A }}>{fmtPct(e.deviationPct)}</span>
                           ) : "—"}
                         </td>
                       </tr>
@@ -1279,7 +1346,7 @@ export default function TrafficPage() {
                         <td className={styles.plazaNum}>{h.volume > 0 ? fmtInt(h.volume) : "—"}</td>
                         <td className={styles.plazaNum}>{h.baseline > 0 ? fmtInt(h.baseline) : "—"}</td>
                         <td className={styles.plazaNum}>
-                          <span className={h.deviationPct >= 0 ? styles.devPos : styles.devNeg}>{fmtPct(h.deviationPct)}</span>
+                          <span className={h.deviationPct >= 0 ? "nct-dev-pos" : "nct-dev-neg"} style={{ ["--dev" as string]: h.deviationPct >= 0 ? PAIR_B : PAIR_A }}>{fmtPct(h.deviationPct)}</span>
                         </td>
                         <td className={styles.plazaNum}>{h.occurrences}</td>
                       </tr>

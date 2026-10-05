@@ -42,3 +42,7 @@ __*.mjs
 # Machine-local AI tooling settings (hooks, consent) and Python bytecode
 .claude/settings.local.json
 __pycache__/
+
+# img2threejs skill is its own git clone (embedded .git); committing it would add a broken
+# gitlink. Teammates install it with: git clone https://github.com/img2threejs/img2threejs.git .claude/skills/img2threejs
+.claude/skills/img2threejs/

@@ -1,0 +1,599 @@
+/* Night Corridor: page styles for emissions. Loaded after globals.css (app/layout.tsx),
+   so rules here override the shared layer at equal specificity. Tokens only. */
+
+/* Everything here is scoped to the Emissions page section (.viz-emissions), so
+   these nc-em-* classes cannot leak into Traffic or Incidents, and the two-class
+   selectors outrank the single hashed classes of traffic.module.css. */
+
+/* ===========================================================================
+   Filter bar: active filters as removable chips
+   =========================================================================== */
+.viz-emissions .nc-em-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.viz-emissions .nc-em-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 4px 0 12px;
+  border: 1px solid color-mix(in srgb, var(--page-accent) 55%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--page-accent) 12%, transparent);
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.viz-emissions .nc-em-chip-key { color: var(--text-muted); letter-spacing: 2px; }
+.viz-emissions .nc-em-chip button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.viz-emissions .nc-em-chip button:hover { background: color-mix(in srgb, var(--text-primary) 10%, transparent); color: var(--text-primary); }
+
+/* ===========================================================================
+   Card bands: answer, context (evidence and method are the chart and the ⓘ)
+   =========================================================================== */
+.viz-emissions .nc-em-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 10px 0 0;
+  white-space: normal;
+}
+.viz-emissions .nc-em-answer b {
+  font-size: var(--fs-numeral);
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.viz-emissions .nc-em-answer > span {
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.viz-emissions .nc-em-answer-label {
+  margin: 0;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.viz-emissions .nc-em-context {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.viz-emissions .nc-em-context b { font-weight: 600; color: var(--text-primary); }
+
+/* An empty or error state inside a fixed-height chart body. */
+.viz-emissions .nc-em-state { height: 100%; display: grid; place-items: center; padding: 8px; }
+.viz-emissions .nc-em-state .nc-state { max-width: 460px; }
+.viz-emissions .nc-em-state-action { display: block; margin-top: 12px; }
+.viz-emissions .nc-em-loading { margin: 0; font-size: var(--fs-body); font-weight: 300; color: var(--text-secondary); }
+.viz-emissions .nc-em-skeleton { height: 280px; }
+
+/* Breakdowns sit in an even two-column grid. */
+.viz-emissions .nc-em-half { grid-column: span 6; }
+
+/* The Avg Daily tile: sparkline under the value, its caption pinned below. */
+.viz-emissions .nc-em-spark { height: 28px; margin-top: 2px; padding-top: 0; }
+
+/* ===========================================================================
+   Hour × weekday heat grid
+   =========================================================================== */
+.viz-emissions .nc-em-heat-body { height: 300px; }
+.viz-emissions .nc-em-heat-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 10px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.viz-emissions .nc-em-heat-key i {
+  display: block;
+  width: 140px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 1px var(--border-default);
+}
+.viz-emissions .nc-em-heat-unit { margin-left: 6px; letter-spacing: 2px; text-transform: uppercase; }
+
+/* ===========================================================================
+   Predictive: the forecast cards
+   =========================================================================== */
+.viz-emissions .nc-em-fc {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px 20px;
+}
+.viz-emissions .nc-em-fc > h3,
+.viz-emissions .nc-em-fc-head h3 { margin: 0; font-size: var(--fs-title); font-weight: 600; line-height: 1.3; color: var(--text-primary); }
+.viz-emissions .nc-em-fc-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px 28px;
+}
+.viz-emissions .nc-em-fc-head { display: grid; gap: 6px; min-width: 0; }
+.viz-emissions .nc-em-fc-top .nc-em-fc-head { flex: 1 1 440px; }
+.viz-emissions .nc-em-fc-head .nc-em-answer { margin-top: 6px; }
+.viz-emissions .nc-em-fc-answer { display: grid; gap: 4px; }
+
+/* Model chips: each is the series' legend swatch and its toggle. */
+.viz-emissions .nc-em-models { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; }
+.viz-emissions .nc-em-model-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.viz-emissions .nc-em-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+.viz-emissions .nc-em-model:hover { border-color: var(--hairline-hover); color: var(--text-primary); }
+.viz-emissions .nc-em-model-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--chip-c);
+}
+.viz-emissions .nc-em-model[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--chip-c) 70%, transparent);
+  background: color-mix(in srgb, var(--chip-c) 16%, transparent);
+  color: var(--text-primary);
+}
+.viz-emissions .nc-em-model[aria-pressed="true"] .nc-em-model-dot { background: var(--chip-c); }
+.viz-emissions .nc-em-model.is-locked { cursor: default; }
+.viz-emissions .nc-em-model-mark { display: inline-flex; align-items: center; color: var(--text-primary); }
+
+/* The view controls, attached to the top of the chart. */
+.viz-emissions .nc-em-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 28px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+}
+.viz-emissions .nc-em-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.viz-emissions .nc-em-ctl-label {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.viz-emissions .nc-em-ctl-note { font-size: var(--fs-body); font-weight: 300; color: var(--text-muted); }
+.viz-emissions .nc-em-seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.viz-emissions .nc-em-seg > button,
+.viz-emissions .nc-em-seg > .nc-em-seg-off {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+.viz-emissions .nc-em-seg > button:hover:not(:disabled):not(.is-on) {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  border-color: var(--hairline-hover);
+  color: var(--text-primary);
+}
+.viz-emissions .nc-em-seg > button.is-on {
+  border-color: var(--page-accent);
+  background: color-mix(in srgb, var(--page-accent) 16%, transparent);
+  color: var(--text-primary);
+}
+.viz-emissions .nc-em-seg > button:disabled,
+.viz-emissions .nc-em-seg > .nc-em-seg-off { opacity: 0.42; cursor: not-allowed; }
+
+/* What the chart shows: zones with their split counts, and the averaging pill. */
+.viz-emissions .nc-em-zones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 24px;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.viz-emissions .nc-em-zone { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.viz-emissions .nc-em-zone i { display: block; flex: none; width: 10px; height: 10px; border-radius: 3px; }
+.viz-emissions .nc-em-zone i.is-past { background: var(--border-strong); }
+.viz-emissions .nc-em-zone i.is-present { background: var(--text-muted); }
+.viz-emissions .nc-em-zone i.is-future { background: var(--action); }
+.viz-emissions .nc-em-zone b { font-weight: 600; color: var(--text-primary); }
+.viz-emissions .nc-em-warn-ink { color: var(--color-warning); }
+.viz-emissions .nc-em-agg {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid var(--color-info-border);
+  border-radius: var(--radius-full);
+  background: var(--color-info-bg);
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.viz-emissions .nc-em-agg > span { color: var(--text-secondary); }
+
+/* Warnings: past the validated horizon, staleness, surge days. */
+.viz-emissions .nc-em-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-bg);
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.viz-emissions .nc-em-banner > svg { flex: none; margin-top: 4px; color: var(--color-warning); }
+.viz-emissions .nc-em-banner > span { max-width: 92ch; }
+.viz-emissions .nc-em-banner b { font-weight: 600; color: var(--text-primary); }
+.viz-emissions .nc-em-banner .nc-em-warn-ink { color: var(--color-warning); }
+.viz-emissions .nc-em-banner-sub { display: block; margin-top: 6px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.viz-emissions .nc-em-stale {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 2px 0 0;
+  font-size: var(--fs-body);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--color-warning);
+}
+.viz-emissions .nc-em-stale > svg { flex: none; margin-top: 4px; }
+.viz-emissions .nc-em-answer > .nc-em-delta {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.viz-emissions .nc-em-answer > .nc-em-delta.is-up { color: var(--color-warning); border-color: var(--color-warning-border); background: var(--color-warning-bg); }
+.viz-emissions .nc-em-answer > .nc-em-delta.is-down { color: var(--color-success); border-color: var(--color-success-border); background: var(--color-success-bg); }
+
+/* Validation: the trust strip, then every stored figure in the table. */
+.viz-emissions .nc-em-validation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-default);
+}
+.viz-emissions .nc-em-validation-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.viz-emissions .nc-em-validation-head h4 { margin: 0; font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); }
+.viz-emissions .nc-em-small-btn { min-height: 30px; padding: 0 14px; }
+.viz-emissions .nc-em-trust { display: flex; flex-wrap: wrap; gap: 8px; }
+.viz-emissions .nc-em-trust { min-width: 0; }
+.viz-emissions .nc-em-trust .pill { max-width: 100%; flex-wrap: wrap; font-variant-numeric: tabular-nums; white-space: normal; text-align: left; }
+
+.viz-emissions .nc-em-table-wrap { overflow-x: auto; }
+.viz-emissions .nc-em-table { width: 100%; border-collapse: collapse; font-size: var(--fs-body); }
+.viz-emissions .nc-em-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-default);
+}
+.viz-emissions .nc-em-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-primary);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.viz-emissions .nc-em-table tbody tr:last-child td { border-bottom: 0; }
+.viz-emissions .nc-em-table .num { text-align: right; }
+.viz-emissions .nc-em-model-cell { font-weight: 600; white-space: nowrap; }
+.viz-emissions .nc-em-model-name { display: inline-flex; align-items: center; gap: 8px; }
+.viz-emissions .nc-em-series-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.viz-emissions .nc-em-status {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.viz-emissions .nc-em-table .nc-em-strong { font-weight: 600; }
+.viz-emissions .nc-em-table .is-ok { color: var(--color-success); }
+.viz-emissions .nc-em-table .is-bad { color: var(--color-danger); }
+.viz-emissions .nc-em-table .is-warn { color: var(--color-warning); }
+.viz-emissions .nc-em-table .is-muted { color: var(--text-muted); }
+.viz-emissions .nc-em-table td.num.is-muted { color: var(--text-secondary); }
+.viz-emissions .nc-em-caption {
+  margin: 10px 0 0;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 96ch;
+}
+.viz-emissions .nc-em-caption b { font-weight: 600; color: var(--text-secondary); }
+.viz-emissions .nc-em-validation .nc-em-caption { margin-top: 0; }
+
+/* ===========================================================================
+   Labelled rows, inline facts and small bars (both forecast cards and the
+   Prescriptive cards): structure in place of sentences
+   =========================================================================== */
+.viz-emissions .nc-em-span { grid-column: 1 / -1; min-width: 0; }
+.viz-emissions .nc-em-facts { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 4px 0 0; }
+.viz-emissions .nc-em-facts > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.viz-emissions .nc-em-facts dt,
+.viz-emissions .nc-em-rows dt {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.viz-emissions .nc-em-facts dd { margin: 0; font-size: var(--fs-body); font-weight: 400; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.viz-emissions .nc-em-rows { display: grid; margin: 0; }
+.viz-emissions .nc-em-rows > div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 4px 16px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border-default);
+}
+.viz-emissions .nc-em-rows > div:first-child { border-top: 0; padding-top: 0; }
+.viz-emissions .nc-em-rows dd {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.viz-emissions .nc-em-rows > .is-note dt { color: var(--color-warning); }
+.viz-emissions .nc-em-rows > .is-note dd { color: var(--text-secondary); font-weight: 300; }
+.viz-emissions .nc-em-rows > .is-note b { font-weight: 600; color: var(--color-warning); }
+.viz-emissions .nc-em-cap::first-letter { text-transform: uppercase; }
+.viz-emissions .nc-em-inline-bar {
+  display: inline-block;
+  position: relative;
+  width: 72px;
+  height: 8px;
+  margin-right: 10px;
+  vertical-align: 1px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  overflow: hidden;
+}
+.viz-emissions .nc-em-inline-bar > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--radius-full);
+  background: var(--bar-c, var(--page-accent));
+}
+.viz-emissions .nc-em-inline-bar > i.is-hollow {
+  background: transparent;
+  border: 1.5px dashed var(--bar-c, var(--page-accent));
+}
+.viz-emissions .nc-em-trust-quiet { margin-bottom: 12px; }
+
+/* The past-horizon warning: headline, weak stretch, one bar per bucket. */
+.viz-emissions .nc-em-banner-line { display: block; margin-top: 4px; }
+.viz-emissions .nc-em-hz { display: grid; gap: 4px; margin-top: 10px; max-width: 420px; font-variant-numeric: tabular-nums; }
+.viz-emissions .nc-em-hz-label { font-size: var(--fs-label); font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); }
+.viz-emissions .nc-em-hz-row { display: grid; grid-template-columns: 96px 1fr auto; align-items: center; gap: 10px; }
+.viz-emissions .nc-em-hz-row .nc-em-inline-bar { width: 100%; margin: 0; }
+.viz-emissions .nc-em-hz-row .nc-em-inline-bar > i { background: var(--text-secondary); }
+.viz-emissions .nc-em-hz-row.is-weak .nc-em-inline-bar > i { background: var(--color-warning); }
+.viz-emissions .nc-em-hz-row.is-weak b { color: var(--color-warning); }
+.viz-emissions .nc-em-banner .nc-details { margin-top: 10px; padding-top: 8px; border-top-color: var(--color-warning-border); }
+
+/* ===========================================================================
+   Prescriptive: ranked action cards, then the evidence card
+   =========================================================================== */
+.viz-emissions .nc-em-acards { display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
+.viz-emissions .nc-em-acard {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 18px 32px;
+  padding: 22px 24px;
+}
+.viz-emissions .nc-em-acard[data-tone="lead"] {
+  border-color: color-mix(in srgb, var(--page-accent) 45%, var(--border-default));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--page-accent) 35%, transparent);
+}
+.viz-emissions .nc-em-acard-answer { display: grid; align-content: start; gap: 10px; min-width: 0; }
+.viz-emissions .nc-em-acard-answer .nc-em-answer { margin-top: 2px; }
+.viz-emissions .nc-em-acard-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.viz-emissions .nc-em-acard-rank {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.viz-emissions .nc-em-acard[data-tone="lead"] .nc-em-acard-rank { box-shadow: inset 0 0 0 1px var(--page-accent); color: var(--page-accent); }
+.viz-emissions .nc-em-acard h3 { margin: 0; font-size: var(--fs-title); font-weight: 600; line-height: 1.3; color: var(--text-primary); }
+.viz-emissions .nc-em-acard-body { display: grid; align-content: start; min-width: 0; }
+.viz-emissions .nc-em-acard-body .nc-details { margin-top: 6px; }
+.viz-emissions .nc-em-acard-body .nc-details > p { max-width: 80ch; }
+.viz-emissions .nc-em-action-tag {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.viz-emissions .nc-em-acard[data-tone="lead"] .nc-em-action-tag { color: var(--color-success); }
+.viz-emissions .nc-em-acard[data-tone="scenario"] .nc-em-action-tag,
+.viz-emissions .nc-em-acard[data-tone="none"] .nc-em-action-tag { color: var(--color-warning); }
+.viz-emissions .nc-em-acard[data-tone="scenario"] .nc-em-answer b { color: var(--text-secondary); }
+.viz-emissions .nc-em-action-text {
+  margin: 0;
+  max-width: 72ch;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.viz-emissions .nc-em-action-assumptions { display: grid; gap: 6px; padding-left: 18px; max-width: 80ch; }
+.viz-emissions .nc-em-action-assumptions li { font-size: var(--fs-body); font-weight: 300; line-height: 1.55; color: var(--text-secondary); }
+.viz-emissions .pill.nc-em-pill-hollow { border-style: dashed; border-color: var(--text-muted); color: var(--text-secondary); background: transparent; }
+
+.viz-emissions .nc-em-rx-evidence { display: flex; flex-direction: column; gap: 16px; padding: 22px 24px 20px; }
+.viz-emissions .nc-em-card-head { display: grid; gap: 6px; }
+.viz-emissions .nc-em-card-head h3 { margin: 0; font-size: var(--fs-title); font-weight: 600; line-height: 1.3; color: var(--text-primary); }
+.viz-emissions .nc-em-rx-chart { margin: 0; }
+.viz-emissions .nc-em-rx-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 6px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.viz-emissions .nc-em-rx-key { display: inline-flex; flex-wrap: wrap; gap: 8px 18px; letter-spacing: 1px; }
+.viz-emissions .nc-em-rx-key > span { display: inline-flex; align-items: center; gap: 8px; }
+.viz-emissions .nc-em-rx-key i { display: block; width: 16px; height: 10px; border-radius: 3px; }
+.viz-emissions .nc-em-rx-key i.is-hollow { border: 1.5px dashed; background: transparent; }
+.viz-emissions .nc-em-basis-rows { padding-top: 12px; border-top: 1px solid var(--border-default); }
+.viz-emissions .nc-em-basis-rows > div { grid-template-columns: 150px minmax(0, 1fr); }
+.viz-emissions .nc-em-rx-evidence > .nc-details { margin-top: 0; }
+
+/* ===========================================================================
+   KPI row: all six tiles in one row on desktop, as Traffic and Incidents show
+   theirs (5 Oct 2026, user request). This replaces the 2 + 1 + 1 / 1 + 1 + 2
+   rhythm, whose staggered widths read as two rows that did not line up.
+   Below 1400px (1180px with the sidebar collapsed to its rail) the module's
+   even 3 + 3 applies, then 2 + 2 + 2 below 980px. Same tiles, same order.
+
+   At six across a tile is about 175px wide, so the row is tightened: labels
+   reserve two lines (values then sit on one line across the row), the icon
+   ring shrinks, and the caption is allowed to wrap instead of being clipped
+   at two lines.
+   =========================================================================== */
+@media (min-width: 1400px) {
+  .nc-em-page.viz-emissions .nc-em-kpis:has(> :nth-child(6)) { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+}
+@media (min-width: 1180px) {
+  .ds-shell-collapsed .nc-em-page.viz-emissions .nc-em-kpis:has(> :nth-child(6)) { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+}
+@media (min-width: 1400px) {
+  .nc-em-page.viz-emissions .nc-em-kpis > article { padding: 16px 14px 16px 16px; gap: 8px; }
+  .nc-em-page.viz-emissions .nc-em-kpis > article > h3 { padding-right: 28px; letter-spacing: 1.5px; min-height: 2.6em; }
+  .nc-em-page.viz-emissions .nc-em-kpis > article > span:first-child { top: 13px; right: 12px; width: 24px; height: 24px; }
+  .nc-em-page.viz-emissions .nc-em-kpis > article > p:last-child { display: block; -webkit-line-clamp: unset; line-clamp: none; overflow: visible; }
+}
+@media (min-width: 1180px) {
+  .ds-shell-collapsed .nc-em-page.viz-emissions .nc-em-kpis > article { padding: 16px 14px 16px 16px; gap: 8px; }
+  .ds-shell-collapsed .nc-em-page.viz-emissions .nc-em-kpis > article > h3 { padding-right: 28px; letter-spacing: 1.5px; min-height: 2.6em; }
+  .ds-shell-collapsed .nc-em-page.viz-emissions .nc-em-kpis > article > span:first-child { top: 13px; right: 12px; width: 24px; height: 24px; }
+  .ds-shell-collapsed .nc-em-page.viz-emissions .nc-em-kpis > article > p:last-child { display: block; -webkit-line-clamp: unset; line-clamp: none; overflow: visible; }
+}
+
+/* ===========================================================================
+   Narrow screens
+   =========================================================================== */
+@media (max-width: 980px) {
+  .viz-emissions .nc-em-half { grid-column: 1 / -1; }
+  .viz-emissions .nc-em-agg { margin-left: 0; white-space: normal; }
+  .viz-emissions .nc-em-acard { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+}
+@media (max-width: 640px) {
+  .viz-emissions .nc-em-fc,
+  .viz-emissions .nc-em-rx-evidence,
+  .viz-emissions .nc-em-acard { padding: 18px 16px 16px; gap: 14px; }
+  .viz-emissions .nc-em-fc-top .nc-em-fc-head { flex-basis: 100%; }
+  .viz-emissions .nc-em-controls { gap: 12px 18px; }
+  .viz-emissions .nc-em-heat-body { height: 260px; }
+  .viz-emissions .nc-em-heat-key i { width: 96px; }
+  .viz-emissions .nc-em-rows > div,
+  .viz-emissions .nc-em-basis-rows > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .viz-emissions .nc-em-chip { white-space: normal; }
+}
+/* Six across with the sidebar collapsed (1180–1399 px): tiles are narrow enough
+   that some labels take three lines, so all labels reserve three. */
+@media (min-width: 1180px) and (max-width: 1399px) {
+  .ds-shell-collapsed .nc-em-page.viz-emissions .nc-em-kpis > article > h3 { min-height: 3.9em; }
+}

@@ -4,9 +4,11 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import type { EChartsOption } from "echarts";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Info, X } from "lucide-react";
 import DashboardChart from "../../../../components/dashboard/DashboardChart";
 import PageHeader from "../../../../components/dashboard/PageHeader";
+import StateNote from "../../../../components/stage/StateNote";
+import { HourSourceHeatmap } from "../../../../components/dashboard/IncidentHeatmaps";
 import styles from "../../traffic/traffic.module.css";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
@@ -25,11 +27,11 @@ type ModelKey =
   | "GRU";
 
 const MODELS: { key: ModelKey; label: string; color: string }[] = [
-  { key: "XGBoost", label: "XGBoost", color: "#16a34a" },
-  { key: "RandomForest", label: "Random Forest", color: "#f59e0b" },
+  { key: "XGBoost", label: "XGBoost", color: "#6366f1" },
+  { key: "RandomForest", label: "Random Forest", color: "#a21caf" },
   { key: "Poisson_GLM", label: "Poisson GLM", color: "#8b5cf6" },
   { key: "NegBinomial_GLM", label: "Neg. Binomial GLM", color: "#0891b2" },
-  { key: "SARIMAX", label: "SARIMAX", color: "#ef4444" },
+  { key: "SARIMAX", label: "SARIMAX", color: "#0d9488" },
   { key: "LSTM", label: "LSTM", color: "#db2777" },
   { key: "GRU", label: "GRU", color: "#64748b" },
 ];
@@ -181,7 +183,7 @@ function HourlyIncidentContent() {
 
   const backLink = (
     <Link href={backHref} className={styles.secondaryButton}>
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
       Back to daily
@@ -190,18 +192,18 @@ function HourlyIncidentContent() {
 
   if (!validDate) {
     return (
-      <section className={styles.page}>
+      <section className={`${styles.page} viz-incident`}>
         <PageHeader accent="incident" icon={AlertTriangle} title="Hourly Breakdown" subtitle="No day selected" actions={backLink} />
         <div className={styles.spanFull}>
           <article className={styles.chartCard}>
-            <div className={`${styles.placeholder} ds-empty-state`}>
-              <AlertTriangle size={28} aria-hidden="true" />
-              <h4>{date ? "That date could not be read" : "Pick a day to break down"}</h4>
-              <p>
-                {date
-                  ? `“${date}” is not a valid date — this page expects YYYY-MM-DD.`
-                  : "This view drills into a single day of the incident forecast. Choose a day on the forecast chart and it will open here."}
-              </p>
+            <div className="ds-empty-state">
+              <StateNote kind="nodata" title={date ? "That date could not be read" : "Pick a day to break down"}>
+                <p>
+                  {date
+                    ? `“${date}” is not a valid date — this page expects YYYY-MM-DD.`
+                    : "This view drills into a single day of the incident forecast. Choose a day on the forecast chart and it will open here."}
+                </p>
+              </StateNote>
               {backLink}
             </div>
           </article>
@@ -234,9 +236,7 @@ function HourlyIncidentContent() {
             ...(showWeatherOverlay ? ["Rainfall (mm)", "Temperature (°C)"] : []),
           ],
           bottom: 0,
-          icon: "circle",
           itemGap: 16,
-          textStyle: { fontSize: 12 },
         },
         tooltip: {
           trigger: "axis",
@@ -245,7 +245,7 @@ function HourlyIncidentContent() {
             const h = data.hours[items[0]?.dataIndex ?? 0];
             if (!h) return "";
             const wetLabel = h.isWet === null ? "no reading" : h.isWet ? "wet hour" : "dry hour";
-            let tip = `<b>${fmtHour(h.hour)}</b> <span style="color:#94a3b8">(${wetLabel})</span><br/>`;
+            let tip = `<b>${fmtHour(h.hour)}</b> <span style="color:var(--text-muted)">(${wetLabel})</span><br/>`;
             items.forEach((it) => {
               if (it.value == null) return;
               const unit =
@@ -253,7 +253,7 @@ function HourlyIncidentContent() {
               tip += `${it.marker} ${it.seriesName}: <b>${it.value}${unit}</b><br/>`;
             });
             if (passes(h) && h.total > 0) {
-              tip += `<span style="color:#94a3b8;font-size:11px">Road ${h.road} · Moto ${h.moto} · Stalled ${h.stalled}</span>`;
+              tip += `<span style="color:var(--text-muted);font-size:11px">Road ${h.road} · Moto ${h.moto} · Stalled ${h.stalled}</span>`;
             }
             return tip;
           },
@@ -261,8 +261,7 @@ function HourlyIncidentContent() {
         xAxis: {
           type: "category",
           data: data.hours.map((h) => fmtHour(h.hour)),
-          axisLabel: { color: "#64748b", fontSize: 10, interval: 1, rotate: 45 },
-          axisLine: { lineStyle: { color: "#cbd5e1" } },
+          axisLabel: { interval: 1, rotate: 45 },
           axisTick: { show: false },
         },
         yAxis: [
@@ -271,22 +270,19 @@ function HourlyIncidentContent() {
             name: "Incidents",
             nameLocation: "middle",
             nameGap: 42,
-            nameTextStyle: { fontSize: 11, color: "#64748b" },
             min: 0,
             minInterval: 1,
-            axisLabel: { color: "#64748b", fontSize: 11 },
-            splitLine: { lineStyle: { color: "#e2e8f0", type: "dashed" } },
           },
           {
             type: "value",
             name: "Rainfall (mm) / Temp (°C)",
             nameLocation: "middle",
             nameGap: 46,
-            nameTextStyle: { fontSize: 10, color: RAIN_COLOR },
+            nameTextStyle: { color: RAIN_COLOR },
             min: 0,
             position: "right",
             show: showWeatherOverlay,
-            axisLabel: { color: RAIN_COLOR, fontSize: 11 },
+            axisLabel: { color: RAIN_COLOR },
             splitLine: { show: false },
           },
         ],
@@ -319,7 +315,8 @@ function HourlyIncidentContent() {
             symbolSize: 5,
             connectNulls: true,
             z: 4,
-            lineStyle: { width: 2.2, color: META[k].color },
+            // Model output is dashed (chart kit): a derived hourly shape, not a record.
+            lineStyle: { width: 2, color: META[k].color, type: "dashed" as const },
             itemStyle: { color: META[k].color },
           })),
           ...(showWeatherOverlay
@@ -341,7 +338,7 @@ function HourlyIncidentContent() {
                   smooth: true,
                   symbol: "none" as const,
                   connectNulls: false,
-                  lineStyle: { width: 1.8, color: TEMP_COLOR, type: "dashed" as const },
+                  lineStyle: { width: 2, color: TEMP_COLOR, type: "dashed" as const },
                   itemStyle: { color: TEMP_COLOR },
                   z: 2,
                 },
@@ -359,27 +356,35 @@ function HourlyIncidentContent() {
     data == null ? 0 : weather === "all" ? data.totals.all : weather === "wet" ? data.totals.wet : data.totals.dry;
 
   const tile = (label: string, value: string, hint: string, color?: string) => (
-    <div style={{ background: "#f8fafc", padding: "12px 14px", borderRadius: 8, border: "1px solid #e2e8f0", minWidth: 0 }}>
-      <div style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: "1.1rem", fontWeight: 700, color: color ?? "#0f172a" }}>{value}</div>
-      <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: 2 }}>{hint}</div>
+    <div className="inc-stat">
+      <span className="inc-stat-label">{label}</span>
+      <span className="inc-stat-value" style={color ? { color } : undefined}>{value}</span>
+      <span className="inc-stat-hint">{hint}</span>
     </div>
   );
 
+  // The long form of the header line, kept on the chart card.
+  const profileNote = data
+    ? data.profileSource === "weekday-profile"
+      ? `No hourly ground truth exists for this date — each model's daily total is distributed over the typical ${data.weekday} shape from the last 90 days.`
+      : "Observed hourly incidents for this day, with each model's daily prediction distributed over the typical shape for this weekday."
+    : null;
+
   return (
-    <section className={styles.page}>
+    <section className={`${styles.page} viz-incident`}>
       <PageHeader
         accent="incident"
         icon={AlertTriangle}
-        title={`Hourly Breakdown — ${fmtShortDate(date)}`}
+        title="Hourly Breakdown"
         subtitle={
-          data
-            ? data.profileSource === "weekday-profile"
-              ? `No hourly ground truth exists for this date — each model's daily total is distributed over the typical ${data.weekday} shape from the last 90 days.`
-              : "Observed hourly incidents for this day, with each model's daily prediction distributed over the typical shape for this weekday."
-            : "Loading…"
+          <>
+            <b>{fmtShortDate(date)}</b> ·{" "}
+            {data
+              ? data.profileSource === "weekday-profile"
+                ? `No hourly ground truth: model totals spread over a typical ${data.weekday}.`
+                : "Observed incidents per hour; model totals spread over this weekday's shape."
+              : "Loading…"}
+          </>
         }
         actions={backLink}
       />
@@ -388,10 +393,6 @@ function HourlyIncidentContent() {
           overlay below, which only controls what is drawn. */}
       <div className={styles.filterRow}>
         <div className={styles.filterGroup}>
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)" }}>
-            <path d="M4.5 11.5a3 3 0 1 1 .4-5.97 4 4 0 0 1 7.75 1.1A2.5 2.5 0 0 1 12 11.5H4.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-            <path d="M6 13.2v1M9 13.2v1M12 13.2v1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          </svg>
           <span className={styles.filterLabel}>Weather</span>
           <div className={styles.segmented}>
             {CHIPS.map((c) => {
@@ -405,15 +406,11 @@ function HourlyIncidentContent() {
                 <button
                   key={c.key}
                   className={weather === c.key ? "active" : ""}
+                  aria-pressed={weather === c.key}
                   disabled={empty}
                   title={empty ? `No ${c.key} hours recorded on this day` : undefined}
                   onClick={() => setWeather(c.key)}
                 >
-                  {weather === c.key && (
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}>
-                      <path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
                   {c.label}
                 </button>
               );
@@ -421,7 +418,7 @@ function HourlyIncidentContent() {
           </div>
         </div>
         {data && (
-          <span className={styles.kpiHint}>
+          <span className="inc-filter-note">
             {data.weekday} · wet = rainfall &gt; {data.weather.threshold} mm/hr ·{" "}
             {data.predictionType === "train"
               ? "in-sample fitted"
@@ -433,123 +430,114 @@ function HourlyIncidentContent() {
           </span>
         )}
         <span className={styles.spacer} />
+        {weather !== "all" && (
+          <div className="inc-chips" role="group" aria-label="Active filters">
+            <span className="inc-chips-label">Active</span>
+            <button type="button" className="inc-chip" onClick={() => setWeather("all")} aria-label={`Remove filter: ${weather === "wet" ? "Wet" : "Dry"} hours`}>
+              {weather === "wet" ? "Wet hours" : "Dry hours"}
+              <X aria-hidden="true" />
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Gaps first: absence of a log is stated, never drawn as zeros. */}
+      {data && !data.hasIncidentLog && (
+        <div className={`${styles.spanFull} inc-notice is-warning`} role="note">
+          <AlertTriangle size={16} aria-hidden="true" />
+          <span>
+            No incident log covers this date (the operations log ends <b>{data.sourceCoverage.stalled.lastLogged ?? "earlier"}</b>).
+            Absent bars mean <b>no data</b>, not zero incidents.
+          </span>
+        </div>
+      )}
+
+      {data && data.hasIncidentLog && missingSources.length > 0 && (
+        <div className={`${styles.spanFull} inc-notice is-info`} role="note">
+          <Info size={16} aria-hidden="true" />
+          <span>
+            Partial coverage: {missingSources.map((k) => SOURCE_LABEL[k]).join(" and ")}{" "}
+            {missingSources.length === 1 ? "is" : "are"} not logged this far
+            {missingSources.length === 1 && data.sourceCoverage[missingSources[0]].lastLogged
+              ? ` (ends ${data.sourceCoverage[missingSources[0]].lastLogged})`
+              : ""}
+            . Bars include only the sources that are.
+          </span>
+        </div>
+      )}
+
+      {/* Hour-by-source heat grid first: the day at a glance. */}
+      {data && (
+        <div className={styles.spanFull}>
+          <article className={styles.chartCard}>
+            <div className={styles.chartHead}>
+              <div className={styles.headText}>
+                <h3>Incidents by Hour and Source</h3>
+              </div>
+            </div>
+            <HourSourceHeatmap
+              hours={data.hours}
+              passes={(h) => passes(h as HourPoint)}
+              hasIncidentLog={data.hasIncidentLog}
+              covered={{
+                road: data.sourceCoverage.road.covered,
+                moto: data.sourceCoverage.moto.covered,
+                stalled: data.sourceCoverage.stalled.covered,
+              }}
+              sliceLabel={weather === "all" ? null : weather}
+            />
+          </article>
+        </div>
+      )}
 
       <div className={styles.spanFull}>
         <article className={styles.chartCard}>
-          {/* Model chips + overlay toggle, mirroring the daily chart's toolbar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "#94a3b8", flex: "none" }}>
-              <path d="M2 11.5l3.5-4 3 3L13.5 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M10.5 4h3v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "#4b5e7d", letterSpacing: "0.02em", whiteSpace: "nowrap" }}>
-              Models
-            </span>
-            <div
-              style={{
-                display: "inline-flex", flexWrap: "wrap", gap: 2, padding: 3,
-                background: "#fff", border: "1px solid #dce2ef", borderRadius: 999,
-              }}
-            >
-              {MODELS.map((m) => {
-                const available = modelsWithPrediction.some((x) => x.key === m.key);
-                const on = activeModels.includes(m.key);
-                const locked = on && activeModels.length === 1;
-                return (
-                  <button
-                    key={m.key}
-                    onClick={() => available && toggleModel(m.key)}
-                    aria-pressed={on}
-                    disabled={!available}
-                    title={
-                      !available
-                        ? "No stored prediction for this day — the pipeline has not written a row for this date"
-                        : locked
-                          ? "At least one model must stay selected"
-                          : `${on ? "Hide" : "Show"} ${m.label}`
-                    }
-                    style={{
-                      display: "inline-flex", alignItems: "center", border: 0,
-                      padding: "5px 12px", borderRadius: 999,
-                      fontSize: "0.76rem", fontWeight: 600, whiteSpace: "nowrap",
-                      cursor: !available ? "not-allowed" : locked ? "default" : "pointer",
-                      transition: "all 0.15s",
-                      background: on ? m.color : "transparent",
-                      color: !available ? "#cbd5e1" : on ? "#fff" : "#4b5e7d",
-                      boxShadow: on ? `0 1px 4px ${m.color}40` : "none",
-                    }}
-                  >
-                    {on && (
-                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}>
-                        <path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    )}
-                    {m.label}
-                  </button>
-                );
-              })}
+          <div className={styles.chartHead}>
+            <div className={styles.headText}>
+              <h3>Hourly Incidents and Model Shape</h3>
             </div>
+          </div>
+          {/* Model chips + overlay toggle, mirroring the daily chart's toolbar */}
+          <div className="inc-models" style={{ marginBottom: 14 }} role="group" aria-label="Models">
+            <span className="inc-subhead">Models</span>
+            {MODELS.map((m) => {
+              const available = modelsWithPrediction.some((x) => x.key === m.key);
+              const on = activeModels.includes(m.key);
+              const locked = on && activeModels.length === 1;
+              return (
+                <button
+                  key={m.key}
+                  onClick={() => available && toggleModel(m.key)}
+                  aria-pressed={on}
+                  disabled={!available}
+                  title={
+                    !available
+                      ? "No stored prediction for this day — the pipeline has not written a row for this date"
+                      : locked
+                        ? "At least one model must stay selected"
+                        : `${on ? "Hide" : "Show"} ${m.label}`
+                  }
+                  className={`inc-model-chip${on ? " is-on" : ""}${locked ? " is-locked" : ""}`}
+                  style={{ ["--chip" as string]: m.color }}
+                >
+                  {m.label}
+                </button>
+              );
+            })}
 
             <button
               onClick={() => setShowWeatherOverlay((v) => !v)}
               aria-pressed={showWeatherOverlay}
               title="Overlay recorded rainfall and temperature"
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                padding: "7px 14px", borderRadius: 999,
-                fontSize: "0.76rem", fontWeight: 600, whiteSpace: "nowrap", cursor: "pointer",
-                background: showWeatherOverlay ? RAIN_COLOR : "transparent",
-                color: showWeatherOverlay ? "#fff" : "#4b5e7d",
-                border: showWeatherOverlay ? "1px solid transparent" : "1px solid #dce2ef",
-                boxShadow: showWeatherOverlay ? `0 1px 4px ${RAIN_COLOR}55` : "none",
-              }}
+              className={`inc-toggle${showWeatherOverlay ? " is-on" : ""}`}
             >
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <circle cx="8" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.5" />
                 <path d="M8 1.4v1.6M8 13v1.6M14.6 8H13M3 8H1.4M12.7 3.3l-1.1 1.1M4.4 11.6l-1.1 1.1M12.7 12.7l-1.1-1.1M4.4 4.4L3.3 3.3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
               Rain &amp; Temp
             </button>
           </div>
-
-          {/* Absence of a log is stated, never drawn as zeros. */}
-          {data && !data.hasIncidentLog && (
-            <div
-              style={{
-                display: "flex", gap: 10, alignItems: "flex-start",
-                background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10,
-                padding: "10px 14px", margin: "0 0 14px", fontSize: "0.8rem", color: "#78350f",
-              }}
-            >
-              <AlertTriangle size={16} style={{ flexShrink: 0, color: "var(--color-warning)" }} aria-hidden="true" />
-              <span>
-                No incident log covers this date — the operations log ends{" "}
-                <b>{data.sourceCoverage.stalled.lastLogged ?? "earlier"}</b>. Weather and the model curves are shown;
-                the absent bars mean <b>no data</b>, not zero incidents.
-              </span>
-            </div>
-          )}
-
-          {data && data.hasIncidentLog && missingSources.length > 0 && (
-            <div
-              style={{
-                display: "flex", gap: 10, alignItems: "flex-start",
-                background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10,
-                padding: "10px 14px", margin: "0 0 14px", fontSize: "0.8rem", color: "#075985",
-              }}
-            >
-              <span style={{ flexShrink: 0 }}>ℹ️</span>
-              <span>
-                Partial coverage: {missingSources.map((k) => SOURCE_LABEL[k]).join(" and ")}{" "}
-                {missingSources.length === 1 ? "is" : "are"} not logged this far
-                {missingSources.length === 1 && data.sourceCoverage[missingSources[0]].lastLogged
-                  ? ` (ends ${data.sourceCoverage[missingSources[0]].lastLogged})`
-                  : ""}
-                . Bars include only the sources that are.
-              </span>
-            </div>
-          )}
 
           <div className={styles.chartBody} style={{ minHeight: 420 }}>
             {loading && <div className={styles.placeholder}>Loading hourly breakdown…</div>}
@@ -558,12 +546,7 @@ function HourlyIncidentContent() {
           </div>
 
           {data && (
-            <div
-              style={{
-                display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-                gap: 12, marginTop: 16,
-              }}
-            >
+            <div className="inc-tiles" style={{ marginTop: 16 }}>
               {tile(
                 weather === "all" ? "Day Actual" : `Actual (${weather})`,
                 hasActualBars || data.hasIncidentLog ? String(shownTotal) : "—",
@@ -572,7 +555,7 @@ function HourlyIncidentContent() {
               {activeModels.map((k) => {
                 const m = data.models.find((x) => x.key === k);
                 return (
-                  <div key={k}>
+                  <div key={k} style={{ display: "contents" }}>
                     {tile(
                       `${META[k].label} Predicted`,
                       m?.dayPredicted != null ? m.dayPredicted.toFixed(1) : "—",
@@ -597,18 +580,38 @@ function HourlyIncidentContent() {
           )}
 
           {data && data.totals.unknownWeather > 0 && (
-            <p className={styles.kpiHint} style={{ marginTop: 10, whiteSpace: "normal" }}>
-              {data.totals.unknownWeather} incident{data.totals.unknownWeather === 1 ? "" : "s"} fell in hours with no
-              weather reading, so they appear under All but in neither Dry nor Wet.
+            <p className="inc-caption" style={{ marginTop: 12 }}>
+              {data.totals.unknownWeather} incident{data.totals.unknownWeather === 1 ? "" : "s"} had no weather reading: counted under All, not Dry or Wet.
             </p>
           )}
 
           {data && (
-            <p className={styles.kpiHint} style={{ marginTop: 8, whiteSpace: "normal", lineHeight: 1.5 }}>
-              Model curves are a <b>derived</b> hourly shape, not an hourly forecast: the pipeline predicts one total
-              per day, spread here across the typical {data.weekday} profile. Weather is recorded observation from{" "}
-              <code>hourly_weather</code> ({data.weather.hoursRecorded} of 24 hours reported), not forecast.
-            </p>
+            <dl className="inc-kv" style={{ marginTop: 14 }}>
+              <div>
+                <dt>Model curves</dt>
+                <dd>
+                  <b>Derived</b> <em>· one daily total spread over a typical {data.weekday}, not an hourly forecast</em>
+                </dd>
+              </div>
+              <div>
+                <dt>Weather</dt>
+                <dd>
+                  <b>Observed</b> <em>· {data.weather.hoursRecorded} of 24 hours reported, not forecast</em>
+                </dd>
+              </div>
+            </dl>
+          )}
+
+          {data && (
+            <details className="nc-details">
+              <summary>How this is measured</summary>
+              <p style={{ margin: 0 }}>
+                Model curves are a <b>derived</b> hourly shape, not an hourly forecast: the pipeline predicts one total
+                per day, spread here across the typical {data.weekday} profile. Weather is recorded observation from{" "}
+                <code>hourly_weather</code> ({data.weather.hoursRecorded} of 24 hours reported), not forecast.
+              </p>
+              {profileNote && <p style={{ margin: "8px 0 0" }}>{profileNote}</p>}
+            </details>
           )}
         </article>
       </div>
@@ -623,7 +626,7 @@ export default function HourlyIncidentPage() {
   return (
     <Suspense
       fallback={
-        <section className={styles.page}>
+        <section className={`${styles.page} viz-incident`}>
           <PageHeader accent="incident" icon={AlertTriangle} title="Hourly Breakdown" />
           <div className={styles.spanFull}>
             <article className={styles.chartCard}>

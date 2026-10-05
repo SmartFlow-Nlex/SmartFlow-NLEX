@@ -6,9 +6,11 @@ import DashboardChart from "./DashboardChart";
 import { useChartTheme } from "../../lib/chart-theme";
 import InfoTooltip from "./InfoTooltip";
 import EventSurgeNarrative from "./EventSurgeNarrative";
-import { ShieldCheck, ChevronRight } from "lucide-react";
 import { loadForecast } from "./prescriptiveTraffic.shared";
-import { REPLAY_ACTUAL, REPLAY_FORECAST, TOOLTIP_CSS, useMeasuredWidth } from "./replayViz";
+import { REPLAY_ACTUAL, REPLAY_FORECAST, useMeasuredWidth } from "./replayViz";
+import { useTrafficPalette } from "./trafficPalette";
+import StateNote from "../stage/StateNote";
+import EvidenceModal from "./EvidenceModal";
 
 type RawRow = {
   exit: string;
@@ -55,7 +57,7 @@ const isArena = (venue: string | null) => !venue || /arena/i.test(venue);
    Severe. Keeping red for severity alone means a red mark on this tab now has
    exactly one meaning. This component renders only on the Traffic page, so it
    takes that page's accent hex directly. */
-const SURGE_COLOR = "#2a78d6";
+// Resolved per theme from the page accent (see `SURGE` in the component).
 
 const fmtVeh = (n: number) => Math.round(n).toLocaleString("en-US");
 const fmtK = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n));
@@ -110,12 +112,12 @@ function EventReplayChart({ series }: { series: { t: string; p: number; a: numbe
 
   return (
     <div ref={ref} style={{ position: "relative", width: "100%", overflowX: "auto" }}>
-      <div style={{ display: "flex", gap: 14, justifyContent: "flex-end", fontSize: "0.7rem", color: "var(--text-secondary)", marginBottom: 2 }}>
+      <div className="nct-key" style={{ justifyContent: "flex-end", marginBottom: 2 }}>
         {[{ c: REPLAY_ACTUAL, fill: true, label: "Actually arrived" },
           { c: REPLAY_FORECAST, fill: false, label: "Model predicted" }].map((l) => (
           <span key={l.label} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
             <svg width={11} height={11} aria-hidden="true">
-              <circle cx={5.5} cy={5.5} r={4} fill={l.fill ? l.c : "#fff"} stroke={l.c} strokeWidth={2} />
+              <circle cx={5.5} cy={5.5} r={4} fill={l.fill ? l.c : "var(--bg-surface-solid)"} stroke={l.c} strokeWidth={2} />
             </svg>
             {l.label}
           </span>
@@ -132,7 +134,7 @@ function EventReplayChart({ series }: { series: { t: string; p: number; a: numbe
              }}>
           {[0, 0.5, 1].map((f) => (
             <g key={f}>
-              <line x1={padL} x2={w - padR} y1={y(lo + (hi - lo) * f)} y2={y(lo + (hi - lo) * f)} strokeWidth={1} style={{ stroke: "var(--bg-surface-hover)" }} />
+              <line x1={padL} x2={w - padR} y1={y(lo + (hi - lo) * f)} y2={y(lo + (hi - lo) * f)} strokeWidth={1} style={{ stroke: "var(--chart-split)" }} />
               <text x={padL - 6} y={y(lo + (hi - lo) * f) + 3} textAnchor="end" fontSize={11} style={{ fill: "var(--text-muted)" }}>{k(lo + (hi - lo) * f)}</text>
             </g>
           ))}
@@ -140,22 +142,22 @@ function EventReplayChart({ series }: { series: { t: string; p: number; a: numbe
             <g key={d.t} opacity={hover == null || hover === i ? 1 : 0.45}>
               {/* The gap IS the error, so it gets a mark of its own. */}
               <line x1={x(i)} x2={x(i)} y1={y(d.p)} y2={y(d.a)} strokeWidth={2} strokeLinecap="round" style={{ stroke: "var(--text-muted)" }} />
-              <circle cx={x(i)} cy={y(d.p)} r={3.6} stroke={REPLAY_FORECAST} strokeWidth={2} style={{ fill: "var(--bg-surface)" }} />
-              <circle cx={x(i)} cy={y(d.a)} r={3.6} fill={REPLAY_ACTUAL} strokeWidth={1.5} style={{ stroke: "var(--bg-surface)" }} />
+              <circle cx={x(i)} cy={y(d.p)} r={3.6} stroke={REPLAY_FORECAST} strokeWidth={2} style={{ fill: "var(--bg-surface-solid)" }} />
+              <circle cx={x(i)} cy={y(d.a)} r={3.6} fill={REPLAY_ACTUAL} strokeWidth={1.5} style={{ stroke: "var(--bg-surface-solid)" }} />
             </g>
           ))}
           <text x={padL} y={H - 5} fontSize={11} style={{ fill: "var(--text-muted)" }}>{fmtDay(series[0].t)}</text>
-          <text x={padL + plotW / 2} y={H - 5} textAnchor="middle" fontSize={11} style={{ fill: "var(--border-strong)" }}>vertical axis zoomed to these days</text>
+          <text x={padL + plotW / 2} y={H - 5} textAnchor="middle" fontSize={11} style={{ fill: "var(--text-muted)" }}>vertical axis zoomed to these days</text>
           <text x={w - padR} y={H - 5} textAnchor="end" fontSize={11} style={{ fill: "var(--text-muted)" }}>{fmtDay(series[series.length - 1].t)}</text>
         </svg>
       )}
       {hv && (
         <div style={{
           position: "absolute", left: hvLeft, top: hvTop, transform: "translateX(-50%)", pointerEvents: "none",
-          background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: 8, padding: "6px 9px",
-          boxShadow: "0 6px 16px rgba(15,23,42,0.12)", fontSize: "0.72rem", whiteSpace: "nowrap", zIndex: 2,
+          background: "var(--bg-raised)", border: "1px solid var(--border-strong)", borderRadius: 10, padding: "8px 11px",
+          boxShadow: "var(--shadow-lg)", fontSize: "var(--fs-body)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", zIndex: 2,
         }}>
-          <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: 3 }}>{fmtDay(hv.t)}</div>
+          <div style={{ fontWeight: 600, color: "var(--text-primary)", marginBottom: 3 }}>{fmtDay(hv.t)}</div>
           <div style={{ color: REPLAY_FORECAST, fontWeight: 600 }}>Predicted {hv.p.toLocaleString()}</div>
           <div style={{ color: REPLAY_ACTUAL, fontWeight: 600 }}>Actually {hv.a.toLocaleString()}</div>
           <div style={{ color: "var(--text-secondary)" }}>off by {Math.abs((hv.p - hv.a) / hv.a * 100).toFixed(1)}%</div>
@@ -168,9 +170,11 @@ function EventReplayChart({ series }: { series: { t: string; p: number; a: numbe
 export default function PredictiveEventChart() {
   // Theme-aware literals for the ECharts option (canvas cannot read CSS vars).
   const chartTheme = useChartTheme();
-  const K = chartTheme.isDark
-    ? { surface: "#0f1f3d", ink: "#e8eefb", ink2: "#a9b9da", muted: "#8a9cc2", faint: "#4a6396", faint2: "#33497a", border: "#22396b", hover: "#1a2d54" }
-    : { surface: "#ffffff", ink: "#0a1630", ink2: "#3b4d72", muted: "#55678b", faint: "#b9c5da", faint2: "#d9e0ec", border: "#d9e0ec", hover: "#e3e8f1" };
+  const P = useTrafficPalette();
+  // Night Corridor literals for the canvas (theme ink steps and hairlines).
+  const K = { surface: P.surface, ink: P.ink, ink2: P.ink2, muted: P.muted, faint: P.neutral, faint2: P.neutral, border: P.hairline, hover: chartTheme.split };
+  // The surge series is the Traffic accent for the active theme.
+  const SURGE = P.accent;
   const [raw, setRaw] = useState<RawRow[] | null>(null);
   // Out-of-sample leaderboard from build_event_surge.py. The uplift table
   // itself is descriptive; this is the separate check that it predicts unseen
@@ -271,8 +275,8 @@ export default function PredictiveEventChart() {
 
   if (!model) {
     return (
-      <article className="chart-card wide" style={{ padding: "24px", marginTop: "24px" }}>
-        <div style={{ color: "var(--text-secondary)" }}>Loading ML event surge forecast from AWS…</div>
+      <article className="chart-card wide nct-card">
+        <StateNote kind="loading">Loading ML event surge forecast from AWS…</StateNote>
       </article>
     );
   }
@@ -288,24 +292,20 @@ export default function PredictiveEventChart() {
   // zero is the most accurate comparison available, and it stops the smallest
   // exit collapsing into a sliver.
   const impactOption: EChartsOption = {
-    grid: { left: 152, right: 210, top: 10, bottom: 36 },
+    grid: { left: 152, right: 150, top: 10, bottom: 40 },
     tooltip: {
       trigger: "item",
-      backgroundColor: K.surface,
-      borderColor: K.border,
-      borderWidth: 1,
-      textStyle: { color: K.ink },
       confine: true,
-      extraCssText: TOOLTIP_CSS,
+      extraCssText: P.tooltipCss,
       formatter: (params: unknown) => {
         const r = rows[(params as { dataIndex: number }).dataIndex];
         return `
           <div style="padding:2px 4px; min-width:225px;">
             <b style="font-size:1.05em; color:var(--text-primary);">${r.exit}</b>
             <div style="margin-top:8px; display:grid; grid-template-columns:auto 1fr; gap:5px 12px; font-size:0.9em;">
-              <span style="color:var(--text-secondary);">Added by event</span><span style="font-weight:700; color:${SURGE_COLOR};">+${fmtVeh(r.added)} (+${r.pct.toFixed(0)}%)</span>
+              <span style="color:var(--text-secondary);">Added by event</span><span style="font-weight:600; color:${SURGE};">+${fmtVeh(r.added)} (+${r.pct.toFixed(0)}%)</span>
               <span style="color:var(--text-secondary);">Normal day</span><span style="font-weight:600;">${fmtVeh(r.baseline)}</span>
-              <span style="color:var(--text-secondary);">With event</span><span style="font-weight:600; color:${SURGE_COLOR};">${fmtVeh(r.surge)}</span>
+              <span style="color:var(--text-secondary);">With event</span><span style="font-weight:600; color:${SURGE};">${fmtVeh(r.surge)}</span>
               <span style="color:var(--text-secondary);">Share of surge</span><span style="font-weight:500;">${r.shareOfSurge.toFixed(0)}%</span>
             </div>
           </div>`;
@@ -318,14 +318,14 @@ export default function PredictiveEventChart() {
       nameGap: 26,
       nameTextStyle: { color: K.muted, fontSize: 11 },
       axisLabel: { color: K.muted, formatter: (v: number) => (v === 0 ? "0" : `+${fmtK(v)}`), fontSize: 11 },
-      splitLine: { lineStyle: { color: K.hover, type: "dashed" } },
+      splitLine: { show: false },
     },
     yAxis: {
       type: "category",
       data: rows.map((r) => r.exit),
       axisTick: { show: false },
       axisLine: { show: false },
-      axisLabel: { color: K.ink, fontWeight: 700, fontSize: 12 },
+      axisLabel: { color: K.ink, fontWeight: 600, fontSize: 11 },
     },
     series: [
       {
@@ -333,7 +333,7 @@ export default function PredictiveEventChart() {
         type: "bar",
         barMaxWidth: 26,
         data: rows.map((r) => r.added),
-        itemStyle: { color: SURGE_COLOR, borderRadius: [0, 5, 5, 0] },
+        itemStyle: { color: SURGE, borderRadius: [0, 4, 4, 0] },
         label: {
           show: true,
           position: "right",
@@ -346,8 +346,8 @@ export default function PredictiveEventChart() {
             return `{add|+${fmtVeh(r.added)}}  {pct|+${r.pct.toFixed(0)}%}`;
           },
           rich: {
-            add: { color: SURGE_COLOR, fontWeight: 800, fontSize: 13, lineHeight: 17 },
-            pct: { color: "#7aa8e0", fontWeight: 700, fontSize: 11, lineHeight: 17 },
+            add: { color: K.ink, fontWeight: 600, fontSize: 13, lineHeight: 17 },
+            pct: { color: K.ink2, fontWeight: 400, fontSize: 11, lineHeight: 17 },
             ctx: { color: K.muted, fontSize: 10, lineHeight: 14 },
           },
         },
@@ -378,39 +378,36 @@ export default function PredictiveEventChart() {
      a banner, four tiles and a share legend all restating the top exit -- and
      read as a pile. Each fact now appears once, at the level it earns. */
   const stat = (value: string, label: string, tone?: string) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-      <span style={{ fontSize: "1.05rem", fontWeight: 800, color: tone ?? "var(--text-primary)", letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{value}</span>
-      <span style={{ fontSize: "0.68rem", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{label}</span>
+    <div className="nct-stat">
+      <span className="nct-stat-value" style={tone ? { color: tone } : undefined}>{value}</span>
+      <span className="nct-stat-label">{label}</span>
     </div>
   );
 
   return (
-    <article className="chart-card wide" style={{ padding: "22px 24px", display: "flex", flexDirection: "column", gap: "14px", marginTop: "24px" }}>
+    <article className="chart-card wide nct-card">
       {/* Row 1: title on the left, provenance on the right. */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
+      <div className="nct-card-head-split">
+        <h3 className="nct-title">
           Event Surge Impact by Exit
           <InfoTooltip text="Extra vehicles each exit takes on a Philippine Arena event day versus a normal day. Choose a past pattern or an upcoming event above." />
         </h3>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div className="nct-pill-row">
+          {/* Forecast and model labels wear model violet, so a forecast never
+              reads as a road state; observed history is a plain pill. */}
           {chosen ? (
-            <span style={{ fontSize: "0.7rem", padding: "2px 8px", background: "color-mix(in srgb, var(--page-accent, #2a78d6) 10%, transparent)", borderRadius: "999px", border: "1px solid color-mix(in srgb, var(--page-accent, #2a78d6) 28%, transparent)", color: "var(--text-secondary)", fontWeight: 600, whiteSpace: "nowrap" }}>
+            <span className="pill purple">
               Forecast · {chosenDate}
             </span>
           ) : (
-            <span style={{ fontSize: "0.7rem", padding: "2px 8px", background: "var(--color-success-bg)", borderRadius: "999px", border: "1px solid var(--color-success-border)", color: "var(--color-success)", fontWeight: 600, whiteSpace: "nowrap" }}>
+            <span className="pill">
               Observed{meta?.nEvents ? ` · ${meta.nEvents} past event days` : ""}
             </span>
           )}
           {champ?.wmape != null && (
             <span
               title={champ.diagnosis ?? undefined}
-              style={{
-                fontSize: "0.7rem", padding: "2px 8px", borderRadius: "999px", fontWeight: 600, whiteSpace: "nowrap",
-                background: champ.accepted ? "var(--color-info-bg)" : "var(--color-danger-bg)",
-                border: `1px solid ${champ.accepted ? "var(--color-info-border)" : "var(--color-danger-border)"}`,
-                color: champ.accepted ? "var(--action)" : "var(--color-danger)",
-              }}
+              className={`pill ${champ.accepted ? "green" : "red"}`}
             >
               {champ.accepted ? "✓ tested" : "failed test"} · {champ.wmape.toFixed(1)}% error held-out
             </span>
@@ -420,16 +417,14 @@ export default function PredictiveEventChart() {
 
       {/* Row 2: what is shown. A select, not seven pills -- the pills wrapped to
           three lines and pushed the finding below the fold. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.68rem" }}>Showing</span>
+      <div className="nct-toolbar">
+        <label className="nct-group">
+          <span className="nct-group-label">Showing</span>
           <select
             value={selUpcoming == null ? "" : String(selUpcoming)}
             onChange={(e) => setSelUpcoming(e.target.value === "" ? null : Number(e.target.value))}
-            style={{
-              font: "inherit", fontWeight: 600, color: "var(--text-primary)", background: "var(--bg-surface)",
-              border: "1px solid var(--border-default)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", maxWidth: 360,
-            }}
+            className="nct-select"
+            style={{ maxWidth: 360 }}
           >
             <option value="">Past events — what {eventName === "the upcoming event" ? "event" : eventName} days did</option>
             {upcoming.map((u, i) => {
@@ -457,23 +452,29 @@ export default function PredictiveEventChart() {
       </div>
 
       {/* Row 3: the finding, in one sentence, event first. */}
-      <div style={{
-        padding: "12px 14px", borderRadius: "10px", fontSize: "0.88rem", lineHeight: 1.5,
-        background: "color-mix(in srgb, var(--page-accent, #2a78d6) 9%, transparent)",
-        border: "1px solid color-mix(in srgb, var(--page-accent, #2a78d6) 28%, transparent)",
-        color: "var(--text-primary)",
-      }}>
+      <div className="nct-finding nct-finding-text" data-tone="accent">
         {chosen ? (
+          /* An upcoming day, as the answer then two labelled rows. */
           <>
-            During <b>{shortTitle(chosen.title)}</b>
-            {chosen.isDerived && <span title="A recurring event the ETL inferred from prior years, not an announced date." style={{ opacity: 0.8 }}> (inferred)</span>}
-            {!isArena(chosen.venue) && (
-              <span style={{ opacity: 0.85 }}> at {chosen.venue}{chosen.capacity ? ` (${fmtVeh(chosen.capacity)} capacity)` : ""}</span>
-            )}
-            {" "}on <b>{chosenDateLong}</b>
-            {chosenLead != null && chosenLead >= 0 && <> · in {chosenLead} day{chosenLead === 1 ? "" : "s"}</>}: expect{" "}
-            <b>+{fmtVeh(totalAdded)}</b> extra vehicles. <b>{top.exit}</b> takes {top.shareOfSurge.toFixed(0)}% of it,{" "}
-            {multiple.toFixed(1)}× its normal {new Date(`${chosen.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}.
+            Expect <b>+{fmtVeh(totalAdded)}</b> extra vehicles during <b>{shortTitle(chosen.title)}</b>
+            {chosen.isDerived && <span title="A recurring event the ETL inferred from prior years, not an announced date." className="nct-soft"> (inferred)</span>}.
+            <span className="nct-finding-kv">
+              <span className="nct-kv-k">When</span>
+              <span>
+                <b>{chosenDateLong}</b>
+                {chosenLead != null && chosenLead >= 0 && <> · in {chosenLead} day{chosenLead === 1 ? "" : "s"}</>}
+                {!isArena(chosen.venue) && (
+                  <span className="nct-soft"> · at {chosen.venue}{chosen.capacity ? ` (${fmtVeh(chosen.capacity)} capacity)` : ""}</span>
+                )}
+              </span>
+            </span>
+            <span className="nct-finding-kv">
+              <span className="nct-kv-k">Top exit</span>
+              <span>
+                <b>{top.exit}</b> takes {top.shareOfSurge.toFixed(0)}% of it, {multiple.toFixed(1)}× its normal{" "}
+                {new Date(`${chosen.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}
+              </span>
+            </span>
           </>
         ) : (
           <>
@@ -486,10 +487,10 @@ export default function PredictiveEventChart() {
       {/* Row 4: the numbers, once each, on one line. */}
       {/* Two by two, not auto-fit: in a half-width card four stats wrapped 3+1
           and left the last one orphaned on its own line. */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px 18px", padding: "12px 16px", background: "var(--bg-surface-hover)", borderRadius: "10px" }}>
-        {stat(`+${fmtVeh(totalAdded)}`, "extra vehicles", SURGE_COLOR)}
+      <div className="nct-stats">
+        {stat(`+${fmtVeh(totalAdded)}`, "extra vehicles")}
         {stat(`${affected.length} of ${totalPlazas}`, "exits with a material rise")}
-        {stat(`+${((totalAdded / affectedBaseline) * 100).toFixed(0)}%`, "uplift at those exits", SURGE_COLOR)}
+        {stat(`+${((totalAdded / affectedBaseline) * 100).toFixed(0)}%`, "uplift at those exits")}
         {stat(`${top2Share.toFixed(0)}%`, `carried by the top ${Math.min(2, affected.length)}`)}
       </div>
 
@@ -532,72 +533,48 @@ export default function PredictiveEventChart() {
         />
       )}
 
-      <details style={{ fontSize: "0.76rem", color: "var(--text-secondary)", borderTop: "1px solid var(--bg-surface-hover)", paddingTop: 10 }}>
-        <summary
-          className="evidence-summary"
-          style={{ cursor: "pointer", listStyle: "none", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}
-        >
-          {/* Forces a flex line break: the chips always start a new row, so the
-              Show/Hide control stays on the title row and both cards' evidence
-              headers come out the same height. */}
-          <span aria-hidden style={{ order: 3, flexBasis: "100%", height: 0 }} />
-          <span style={{
-            order: 1,
-            display: "grid", placeItems: "center", width: 28, height: 28, borderRadius: 8,
-            background: "color-mix(in srgb, var(--color-success) 14%, transparent)", color: "var(--color-success)", flex: "none",
-          }}>
-            <ShieldCheck size={16} strokeWidth={2.4} />
-          </span>
-          <span style={{ order: 1, fontSize: "0.98rem", fontWeight: 800, letterSpacing: "-0.01em", color: "var(--text-primary)" }}>
-            Validation evidence
-          </span>
+      <EvidenceModal
+        subtitle="Event surge model: its error on held-out events, and the exits it covers."
+        strip={<>
           {champ?.wmape != null && (
-            <span style={{
-              order: 4, display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999,
-              background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)",
-              fontSize: "0.74rem", fontWeight: 600, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums",
-            }}>
+            <span className="nct-trust-pill" style={{ order: 4 }}>
               {champ.model} · {champ.wmape.toFixed(2)}% on held-out events
               {noAdj?.wmape != null && <> · vs {noAdj.wmape.toFixed(2)}% ignoring the event</>}
             </span>
           )}
           {(minorAffected.length > 0 || otherExits.length > 0) && (
-            <span style={{ order: 5, color: "var(--text-muted)", fontSize: "0.74rem" }}>
+            <span className="nct-dim" style={{ order: 5, fontSize: "var(--fs-body)" }}>
               the other {minorAffected.length + otherExits.length} exits
             </span>
           )}
-          <span className="evidence-chevron" style={{ order: 2, marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.74rem", fontWeight: 600, color: "var(--text-secondary)" }}>
-            <span className="evidence-open-label">Show</span>
-            <span className="evidence-close-label">Hide</span>
-            <ChevronRight size={15} strokeWidth={2.4} />
-          </span>
-        </summary>
+        </>}
+      >
 
-        <div style={{ display: "grid", gap: 14, marginTop: 10 }}>
+        <div className="nct-evidence nct-ev-body">
           {evalInfo?.series && evalInfo.series.length > 1 && (
             <div>
-              <div style={{ fontSize: "0.82rem", fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.01em", marginBottom: 4 }}>
+              <div className="nct-ev-title">
                 Did past predictions match what really happened?
               </div>
-              <p style={{ margin: "0 0 2px", fontSize: "0.76rem", lineHeight: 1.55, color: "var(--text-secondary)" }}>
+              <p style={{ margin: "0 0 2px", fontSize: "var(--fs-body)", lineHeight: 1.55, color: "var(--text-secondary)" }}>
                 <b>{evalInfo.events_test} event days the model never saw</b>, in date order · the gap is the error
               </p>
               <EventReplayChart series={evalInfo.series} />
               <div style={{
                 display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))", gap: 8, marginTop: 8,
-                padding: "8px 10px", borderRadius: 8, background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)",
+                padding: "8px 10px", borderRadius: 8, background: "color-mix(in srgb, var(--text-primary) 4%, transparent)", border: "1px solid var(--border-default)",
               }}>
                 {[[`${evalInfo.median_day_error_pct.toFixed(1)}%`, "off on the typical event day"],
                   [`${evalInfo.wmape.toFixed(1)}%`, "error across all exit-days"],
                   [`${evalInfo.baseline_wmape.toFixed(1)}%`, "if you ignored the event"]].map(([v, l]) => (
                   <div key={l} style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: "0.95rem", fontWeight: 800, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{v}</span>
-                    <span style={{ fontSize: "0.68rem", color: "var(--text-secondary)" }}>{l}</span>
+                    <span style={{ fontSize: "var(--fs-title)", fontWeight: 600, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{v}</span>
+                    <span style={{ fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>{l}</span>
                   </div>
                 ))}
               </div>
               {evalInfo.examples?.length > 0 && (
-                <div style={{ display: "grid", gap: 3, marginTop: 7, fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+                <div style={{ display: "grid", gap: 3, marginTop: 7, fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>
                   {evalInfo.examples.map((ex) => (
                     <div key={ex.kind}>
                       {ex.kind.charAt(0).toUpperCase() + ex.kind.slice(1)} —{" "}
@@ -607,7 +584,7 @@ export default function PredictiveEventChart() {
                   ))}
                 </div>
               )}
-              <p style={{ margin: "7px 0 0", fontSize: "0.72rem", lineHeight: 1.5, color: "var(--text-muted)" }}>
+              <p style={{ margin: "7px 0 0", fontSize: "var(--fs-label)", lineHeight: 1.5, color: "var(--text-muted)" }}>
                 {evalInfo.events_total} Philippine Arena dates · attendance is not in the calendar, the largest
                 remaining source of error
                 <InfoTooltip
@@ -623,18 +600,18 @@ export default function PredictiveEventChart() {
 
           {champ?.wmape != null && (
             <div>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem" }}>
+              <table className="nct-table">
                 <thead>
-                  <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--bg-surface-hover)" }}>
+                  <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--border-default)" }}>
                     <th style={{ padding: "4px 6px", fontWeight: 600 }}>Model</th>
                     <th style={{ padding: "4px 6px", fontWeight: 600, textAlign: "right" }}>Error on held-out events</th>
                   </tr>
                 </thead>
                 <tbody>
                   {[champ, ...others].map((m, i) => (
-                    <tr key={m.model} style={{ borderBottom: "1px solid var(--bg-surface-hover)", color: i === 0 ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                    <tr key={m.model} style={{ borderBottom: "1px solid var(--border-default)", color: i === 0 ? "var(--text-primary)" : "var(--text-secondary)" }}>
                       <td style={{ padding: "4px 6px", fontWeight: i === 0 ? 700 : 500 }}>
-                        {m.model}{i === 0 && <span style={{ marginLeft: 6, fontSize: "0.66rem", color: "var(--action)", fontWeight: 700 }}>used</span>}
+                        {m.model}{i === 0 && <span className="pill purple" style={{ marginLeft: 8, padding: "1px 8px" }}>used</span>}
                       </td>
                       <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: i === 0 ? 700 : 500 }}>
                         {m.wmape != null ? `${m.wmape.toFixed(2)}%` : "—"}
@@ -662,35 +639,29 @@ export default function PredictiveEventChart() {
           {(minorAffected.length > 0 || otherExits.length > 0) && (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {minorAffected.map((r) => (
-                <span key={r.exit} title={`${r.exit}: +${fmtVeh(r.added)} vehicles, ${r.shareOfSurge.toFixed(1)}% of the surge — too small to chart`} style={{
-                  display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: "999px",
-                  background: "color-mix(in srgb, var(--page-accent, #2a78d6) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--page-accent, #2a78d6) 28%, transparent)", fontSize: "0.72rem", color: "var(--text-secondary)", whiteSpace: "nowrap",
-                }}>
+                <span key={r.exit} title={`${r.exit}: +${fmtVeh(r.added)} vehicles, ${r.shareOfSurge.toFixed(1)}% of the surge — too small to chart`} className="nct-mini-chip is-accent">
                   {r.exit}<b>+{fmtVeh(r.added)}</b>
                 </span>
               ))}
               {shownOthers.map((o) => (
-                <span key={o.exit} title={`${o.exit}: ${fmtVeh(o.baseline)} vehicles/day, no material event effect`} style={{
-                  display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: "999px",
-                  background: "var(--bg-surface)", border: "1px solid var(--border-default)", fontSize: "0.72rem", color: "var(--text-muted)", whiteSpace: "nowrap",
-                }}>
+                <span key={o.exit} title={`${o.exit}: ${fmtVeh(o.baseline)} vehicles/day, no material event effect`} className="nct-mini-chip">
                   {o.exit}<span>no change</span>
                 </span>
               ))}
               {otherExits.length > VISIBLE_OTHERS && (
-                <button onClick={() => setShowAllOthers((v) => !v)} style={{ border: "1px solid var(--border-default)", background: "var(--bg-surface)", borderRadius: "999px", padding: "3px 10px", fontSize: "0.7rem", fontWeight: 600, color: "var(--text-secondary)", cursor: "pointer" }}>
+                <button type="button" onClick={() => setShowAllOthers((v) => !v)} className="nct-mini-chip">
                   {showAllOthers ? "fewer" : `+${otherExits.length - VISIBLE_OTHERS} more`}
                 </button>
               )}
               {otherPoints.length > 0 && (
-                <span style={{ alignSelf: "center", fontSize: "0.7rem", color: "var(--text-muted)" }} title={otherPoints.map((x) => x.exit).join(", ")}>
+                <span className="nct-dim" style={{ alignSelf: "center" }} title={otherPoints.map((x) => x.exit).join(", ")}>
                   · {otherPoints.length} barriers/ramps excluded
                 </span>
               )}
             </div>
           )}
         </div>
-      </details>
+      </EvidenceModal>
     </article>
   );
 }

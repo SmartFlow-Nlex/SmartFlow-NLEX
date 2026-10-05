@@ -1,0 +1,419 @@
+/* Night Corridor: page styles for admin. Loaded after globals.css (app/layout.tsx),
+   so rules here override the shared layer at equal specificity. Tokens only. */
+
+/* ===========================================================================
+   ADMIN: Data Management (.dm-page) and Audit Log (.audit-page)
+   Dense tables on a quiet stage (intensity 0.35, set by the shell): sticky
+   hairline headers, rows that brighten at 3%, tabular ids and timestamps,
+   status as pills, one white pill per view.
+   =========================================================================== */
+
+/* --- Shared: panels and tables -------------------------------------------- */
+.ds-main :is(.dm-page, .audit-page) .panel,
+.ds-main :is(.dm-page, .audit-page) .table-card,
+.ds-main :is(.dm-page, .audit-page) .mini-stat,
+.ds-main .audit-page .audit-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+}
+.ds-main :is(.dm-page, .audit-page) .mini-stat:hover { box-shadow: none; }
+.ds-main :is(.dm-page, .audit-page) .panel { padding: 20px; }
+.ds-main :is(.dm-page, .audit-page) .panel h2,
+.ds-main :is(.dm-page, .audit-page) .panel > h3,
+.ds-main :is(.dm-page, .audit-page) .table-card > h3 {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+.ds-main :is(.dm-page, .audit-page) .panel p { font-size: var(--fs-body); font-weight: 300; line-height: 1.6; }
+
+/* Tables: the header row stays put while the rows scroll under it. */
+.ds-main :is(.dm-page, .audit-page) .table-card table { font-variant-numeric: tabular-nums; }
+.ds-main :is(.dm-page, .audit-page) .table-card thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  background: var(--bg-surface-solid);
+  box-shadow: inset 0 -1px 0 var(--border-default);
+}
+.ds-main :is(.dm-page, .audit-page) .table-card td {
+  font-size: var(--fs-body);
+  font-weight: 300;
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+.ds-main :is(.dm-page, .audit-page) .table-card tbody tr:hover > td { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+.ds-main :is(.dm-page, .audit-page) .table-card tbody tr:last-child > td { border-bottom: 0; }
+.ds-main :is(.dm-page, .audit-page) .table-card td .pill { font-variant-numeric: tabular-nums; }
+.ds-main :is(.dm-page, .audit-page) .ds-th-sort { color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+.ds-main :is(.dm-page, .audit-page) .ds-th-sort:hover,
+.ds-main :is(.dm-page, .audit-page) .ds-th-sort.active { color: var(--text-primary); }
+.ds-main :is(.dm-page, .audit-page) .ds-th-sort:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+
+/* An empty or failed table row holds the mascot note, left-aligned in the row. */
+.ds-main :is(.dm-page, .audit-page) td:is(.dm-state-cell, .audit-state-cell) {
+  padding: 16px;
+  white-space: normal;
+  font-size: var(--fs-body);
+}
+.ds-main :is(.dm-page, .audit-page) tbody tr:hover > td:is(.dm-state-cell, .audit-state-cell) { background: transparent; }
+.ds-main :is(.dm-page, .audit-page) .nc-state p { margin: 0; }
+.ds-main :is(.dm-page, .audit-page) .nc-state p + .btn-muted { margin-top: 12px; margin-left: 0; }
+.ds-main :is(.dm-page, .audit-page) .nc-state code {
+  padding: 1px 6px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* ===========================================================================
+   DATA MANAGEMENT
+   =========================================================================== */
+/* The two dialogs are position: fixed inside <main>. The shell's
+   `.ds-main { isolation: isolate }` traps them in main's stacking context, so the
+   sidebar stayed bright above the backdrop. While a dialog is open, main stops isolating. */
+/* (main no longer isolates, so fixed overlays rise above the sidebar on their own) */
+.ds-main .dm-page .dm-offline { margin-top: 18px; }
+.ds-main .dm-page .dm-result-error { margin-top: 16px; }
+.ds-main .dm-page .dm-state-block { padding: 12px 20px 18px; }
+
+/* The upload zone: a dashed hairline. Click to pick only; there is no drop
+   handling, so it brightens on hover and keyboard focus, never on drag-over. */
+.ds-main .dm-page .upload-zone {
+  margin-top: 18px;
+  min-height: 0;
+  gap: 10px;
+  padding: 36px 24px;
+  background: var(--bg-surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+.ds-main .dm-page .upload-zone:hover,
+.ds-main .dm-page .upload-zone:focus-within {
+  border-color: var(--page-accent);
+  background: color-mix(in srgb, var(--page-accent) 5%, var(--bg-surface));
+  box-shadow: none;
+}
+.ds-main .dm-page .upload-zone > * { max-width: 62ch; }
+.ds-main .dm-page .upload-icon {
+  width: 56px;
+  height: 56px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  box-shadow: none;
+  color: var(--page-accent);
+}
+.ds-main .dm-page .upload-zone:hover .upload-icon { transform: none; border-color: var(--page-accent); }
+.ds-main .dm-page .upload-zone h2 {
+  margin: 6px 0 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-primary);
+}
+.ds-main .dm-page .upload-zone p {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.ds-main .dm-page .upload-zone small {
+  font-size: var(--fs-label);
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+/* The white pill wraps a visually hidden file input: its ring shows keyboard focus. */
+.ds-main .dm-page .dm-pick { margin-top: 6px; }
+.ds-main .dm-page .dm-pick:focus-within {
+  outline: 2px solid var(--page-accent);
+  outline-offset: 3px;
+}
+.ds-main .dm-page .dm-progress {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--page-accent);
+}
+
+/* What happens after you upload: one strip of four steps, numbered in the
+   label, divided by hairlines (not four boxed cards with a coloured edge). */
+.ds-main .dm-page .ds-steps {
+  gap: 0;
+  margin-top: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+.ds-main .dm-page .ds-steps li {
+  gap: 8px;
+  align-content: start;
+  padding: 18px 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 1px 0 0 var(--border-default);
+}
+.ds-main .dm-page .ds-steps li::before { content: none; }
+.ds-main .dm-page .ds-steps .ds-step-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--page-accent);
+}
+.ds-main .dm-page .ds-steps b {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.ds-main .dm-page .ds-steps b::before {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.ds-main .dm-page .ds-steps span:not(.ds-step-icon) {
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* Result: mini stats lead with the number. */
+.ds-main .dm-page .mini-stats-grid { gap: 12px; }
+.ds-main .dm-page .mini-stat { padding: 18px 20px; }
+.ds-main .dm-page .mini-stat h3 {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.ds-main .dm-page .mini-stat strong {
+  margin-top: 10px;
+  font-size: var(--fs-numeral);
+  font-weight: 300;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.ds-main .dm-page .mini-stat strong.ok { color: var(--color-success); }
+.ds-main .dm-page .mini-stat strong.bad { color: var(--color-danger); }
+.ds-main .dm-page .mini-stat p {
+  margin-top: 8px;
+  font-size: var(--fs-label);
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.ds-main .dm-page .panel h3:is(.bad, .warn) {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.ds-main .dm-page .panel code,
+.ds-main .dm-page .panel .muted code {
+  padding: 1px 6px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-label);
+  color: var(--text-primary);
+}
+
+/* "What can I upload?": a disclosure on a hairline panel. */
+.ds-main .dm-page .dm-formats > summary {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.ds-main .dm-page .dm-formats > summary .muted { font-weight: 300; color: var(--text-secondary); }
+.ds-main .dm-page .dm-format-group {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: transparent;
+}
+.ds-main .dm-page .dm-format-group h4 {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+}
+.ds-main .dm-page .dm-format-group li b { font-size: var(--fs-body); font-weight: 600; }
+.ds-main .dm-page .dm-format-group li span { font-size: var(--fs-label); line-height: 1.55; }
+
+/* Retraining: the intro and batch lines at body size, figures tabular. */
+.ds-main .dm-page .table-card > p {
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+.ds-main .dm-page .table-card > p .pill { margin: 0 4px; vertical-align: 1px; }
+.ds-main .dm-page .table-card td > .muted { font-size: var(--fs-label); line-height: 1.55; }
+.ds-main .dm-page .table-card td.dm-row-preview { font-size: var(--fs-label); line-height: 1.55; color: var(--text-secondary); }
+.ds-main .dm-page .table-card p.muted:last-child { font-size: var(--fs-label); line-height: 1.6; }
+
+/* The two dialogs are raised surfaces (the shared layer); their titles snap to the scale. */
+.ds-main .dm-page .ds-modal-head h2 {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-primary);
+}
+.ds-main .dm-page .ds-modal-note { font-size: var(--fs-body); font-weight: 300; line-height: 1.6; }
+.ds-main .dm-page .ds-modal-foot { gap: 8px; }
+.ds-main .dm-page .ds-modal-foot :is(.btn-primary, .btn-muted) { margin-left: 0; }
+
+/* ===========================================================================
+   AUDIT LOG
+   =========================================================================== */
+/* KPI icons in one quiet hairline ring: the four tones were status colours
+   standing in for categories (Uploads loaded sat in danger red). */
+.ds-main .audit-page .audit-kpis .icon-box {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+}
+.ds-main .audit-page .audit-insights-error { margin-top: 16px; }
+
+/* Insight cards. */
+.ds-main .audit-page .audit-insights { gap: 12px; margin-top: 16px; }
+.ds-main .audit-page .audit-card { gap: 10px; padding: 18px 20px; }
+.ds-main .audit-page .audit-card h3 {
+  margin: 0 0 4px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+}
+.ds-main .audit-page .audit-bars { gap: 8px; }
+.ds-main .audit-page .audit-bars li { font-size: var(--fs-label); gap: 10px; }
+.ds-main .audit-page .audit-bar-label { font-size: var(--fs-label); letter-spacing: 0.5px; color: var(--text-secondary); }
+.ds-main .audit-page .audit-bar-track {
+  height: 6px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+.ds-main .audit-page .audit-bar-fill { background: var(--page-accent); }
+.ds-main .audit-page .audit-bar-value {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+/* Activity per day: actions in the accent, page views in model violet, on a
+   hairline baseline so quiet days still read as days. */
+.ds-main .audit-page .audit-days {
+  height: 96px;
+  gap: 3px;
+  border-bottom: 1px solid var(--border-strong);
+}
+.ds-main .audit-page .audit-day-actions { background: var(--page-accent); border-radius: 2px 2px 0 0; }
+.ds-main .audit-page .audit-day-views { background: color-mix(in srgb, var(--color-purple) 55%, transparent); border-radius: 2px 2px 0 0; }
+.ds-main .audit-page .audit-key { border-radius: 50%; }
+.ds-main .audit-page .audit-key.actions { background: var(--page-accent); }
+.ds-main .audit-page .audit-key.views { background: color-mix(in srgb, var(--color-purple) 55%, transparent); }
+.ds-main .audit-page :is(.audit-note, .audit-line, .audit-empty) {
+  font-size: var(--fs-label);
+  letter-spacing: 0.3px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+.ds-main .audit-page :is(.audit-line, .audit-note) b { font-weight: 600; }
+
+/* The log table: toolbar on top, the header sticky inside a bounded scroller
+   (500 rows load at once; the column names stay in view while you read them). */
+.ds-main .audit-page .table-toolbar {
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-default);
+}
+.ds-main .audit-page .table-toolbar input {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+}
+.ds-main .audit-page .table-toolbar input:hover { border-color: var(--hairline-hover); }
+.ds-main .audit-page .table-toolbar :is(.nc-pill, .btn-danger) { margin-left: 0; }
+.ds-main .audit-page .table-toolbar .nc-pill {
+  min-height: 36px;
+  padding: 0 38px 0 20px;
+}
+.ds-main .audit-page .table-toolbar .nc-pill::after {
+  right: 15px;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+}
+.ds-main .audit-page .audit-log-table .table-scroll {
+  max-height: min(72vh, 860px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.ds-main .audit-page .audit-log-table td.audit-id {
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.ds-main .audit-page .audit-log-table td.audit-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.ds-main .audit-page .audit-log-table .audit-role {
+  margin-top: 2px;
+  font-size: var(--fs-label);
+  letter-spacing: 0.5px;
+}
+/* Details wrap instead of pushing the table sideways. */
+.ds-main .audit-page .audit-log-table td:nth-child(6) {
+  min-width: 220px;
+  max-width: 320px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+.ds-main .audit-page .audit-log-table .audit-cat {
+  border-color: var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  letter-spacing: 1px;
+}
+
+/* --- Narrow screens -------------------------------------------------------- */
+@media (max-width: 760px) {
+  .ds-main .dm-page .upload-zone { padding: 28px 16px; }
+  .ds-main .dm-page .ds-steps li { box-shadow: inset 0 1px 0 var(--border-default); }
+  .ds-main .dm-page .ds-steps li:first-child { box-shadow: none; }
+  .ds-main .dm-page .mini-stats-grid { grid-template-columns: 1fr; }
+  .ds-main .audit-page .table-toolbar input { flex-basis: 100%; }
+  .ds-main .audit-page .table-toolbar select { flex: 1 1 140px; }
+  .ds-main .audit-page .audit-log-table .table-scroll { max-height: 70vh; }
+}
+@media (min-width: 761px) {
+  .ds-main .dm-page .ds-steps li:first-child { box-shadow: none; }
+}

@@ -198,17 +198,24 @@ export default function AiModelInsight(props: Props) {
 
   if (!insight) return null;
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-      <p style={{ margin: 0, fontSize: "0.86rem", lineHeight: 1.65, color: "var(--text-primary)" }}>
-        {insight.summary}
-      </p>
+  // Presentation only: lead with the summary's first sentence and at most
+  // three verdicts; the rest of the same text sits behind "Details" on this
+  // card. Nothing the model wrote is dropped.
+  const firstStop = insight.summary.search(/[.!?](\s|$)/);
+  const takeaway = firstStop >= 0 ? insight.summary.slice(0, firstStop + 1) : insight.summary;
+  const restOfSummary = firstStop >= 0 ? insight.summary.slice(firstStop + 1).trim() : "";
+  const shown = insight.perModel.slice(0, 3);
+  const more = insight.perModel.slice(3);
 
-      {insight.perModel.length > 0 && (
-        <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 5 }}>
-          {insight.perModel.map((m) => (
-            <li key={m.model} style={{ fontSize: "0.82rem", lineHeight: 1.55, color: "var(--text-secondary)" }}>
-              <b style={{ color: "var(--text-primary)" }}>{labelFor ? labelFor(m.model) : m.model}</b>
+  return (
+    <div className="nc-insight">
+      <p className="nc-insight-takeaway">{takeaway}</p>
+
+      {shown.length > 0 && (
+        <ul className="nc-insight-bullets">
+          {shown.map((m) => (
+            <li key={m.model}>
+              <b>{labelFor ? labelFor(m.model) : m.model}</b>
               {" — "}
               {m.verdict}
             </li>
@@ -216,13 +223,29 @@ export default function AiModelInsight(props: Props) {
         </ul>
       )}
 
-      {insight.caveat && (
-        <p style={{ margin: 0, fontSize: "0.8rem", lineHeight: 1.55, color: "#b54708", background: "#fffaeb", borderLeft: "3px solid #f79009", borderRadius: 8, padding: "9px 11px" }}>
-          {insight.caveat}
-        </p>
+      {insight.caveat && <p className="nc-insight-caveat">{insight.caveat}</p>}
+
+      {(restOfSummary || more.length > 0) && (
+        <details className="nc-details">
+          <summary>Details</summary>
+          <div>
+            {restOfSummary && <p style={{ margin: 0 }}>{restOfSummary}</p>}
+            {more.length > 0 && (
+              <ul className="nc-insight-bullets" style={{ marginTop: restOfSummary ? 10 : 0 }}>
+                {more.map((m) => (
+                  <li key={m.model}>
+                    <b>{labelFor ? labelFor(m.model) : m.model}</b>
+                    {" — "}
+                    {m.verdict}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </details>
       )}
 
-      <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--text-muted)" }}>
+      <p className="nc-insight-note">
         Written by the language model from the validation metrics shown on this card. Check any figure against the numbers above before acting on it.
       </p>
     </div>

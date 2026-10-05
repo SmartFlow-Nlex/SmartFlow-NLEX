@@ -1,11 +1,14 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { ChevronDown, Clock, Map, Maximize2, Milestone, Navigation, Search, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronDown, Clock, Map, Maximize2, Milestone } from "lucide-react";
 import type { Feature } from "geojson";
-import TrafficMapPanel from "../../../components/maps/TrafficMapPanel";
+import TrafficMapPanel, { MAJOR_EXITS } from "../../../components/maps/TrafficMapPanel";
 import ForecastExpandModal from "../../../components/maps/ForecastExpandModal";
-import ForecastHorizonPicker, { type HorizonRangeKey } from "../../../components/maps/ForecastHorizonPicker";
+import ForecastHorizonPicker, { dayTimeFor, type HorizonRangeKey } from "../../../components/maps/ForecastHorizonPicker";
+import CorridorStrip, { LegendKey, type StripHover } from "../../../components/maps/CorridorStrip";
+import type { CorridorSnapshot } from "../../../components/maps/livemap-graphics";
+import { useActiveClosures } from "../../../components/maps/useActiveClosures";
 import { useChartTheme } from "../../../lib/chart-theme";
 import { mapPalette } from "../../../lib/map-palette";
 import WazeLiveModal from "../../../components/maps/WazeLiveModal";
@@ -68,6 +71,30 @@ export default function MapComparisonPage() {
   const { exits } = useNlexExits();
   const [selectedExit, setSelectedExit] = useState<string>("");
   const [exitOpen, setExitOpen] = useState(false);
+
+  /* Night Corridor (presentation only): the 3D tilt, the corridor strip and
+     the strip <-> map hover link. None of it touches the state above. */
+  const [pitched, setPitched] = useState(false);
+  const [stripMode, setStripMode] = useState<"live" | "forecast">("live");
+  const [stripOpen, setStripOpen] = useState(true);
+  const [liveSnap, setLiveSnap] = useState<CorridorSnapshot | null>(null);
+  const [forecastSnap, setForecastSnap] = useState<CorridorSnapshot | null>(null);
+  const [stripHover, setStripHover] = useState<StripHover>(null);
+  const [mapHover, setMapHover] = useState<StripHover>(null);
+  const closures = useActiveClosures();
+
+  /* Data age, from the live feed's own timestamp (the newest jam it holds),
+     never from the page clock. Recomputed with the clock's tick. */
+  const liveAge = (() => {
+    const at = liveSnap?.feed?.newestAt;
+    if (!at) return null;
+    const mins = Math.max(0, Math.round((Date.now() - new Date(at).getTime()) / 60000));
+    const ago = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.floor(mins / 60)} h ${mins % 60} min ago`;
+    return `${liveSnap?.feed?.stale ? "Stale" : "Live"} · updated ${ago}`;
+  })();
+  const forecastHours = forecastSnap?.hoursAhead ?? horizon;
+  const forecastAge = `Forecast · +${forecastHours} h`;
+  const when = dayTimeFor(horizon);
 
   const flyToExit = (x: ExitHit) => {
     setSelectedExit(x.exit_name);
@@ -169,55 +196,41 @@ export default function MapComparisonPage() {
   }, []);
 
   return (
-    <section className="ds-content ds-long">
+    <section className="ds-content ds-long lm-page">
       <PageHeader
         icon={Map}
         title="Live Map"
         subtitle="Live Waze conditions beside the model's forecast, NLEX corridor"
         actions={
-          <div className="mc-search-bar" style={{ position: "relative", cursor: "pointer" }}>
+          <>
+          <div className={`mc-search-bar lm-exit-picker${selectedExit ? " has-value" : ""}`}>
             <Milestone size={16} />
             <button
               type="button"
               onClick={() => setExitOpen((o) => !o)}
               aria-haspopup="listbox"
               aria-expanded={exitOpen}
-              style={{
-                flex: 1, display: "flex", alignItems: "center", gap: "8px",
-                border: "none", background: "transparent", cursor: "pointer",
-                font: "inherit", color: selectedExit ? "var(--text-primary)" : "var(--text-muted)",
-                textAlign: "left", padding: 0,
-              }}
+              className="lm-exit-trigger"
             >
               {selectedExit || "Jump to exit…"}
-              <ChevronDown size={14} style={{ marginLeft: "auto", flexShrink: 0, color: "var(--text-secondary)" }} />
+              <ChevronDown size={14} className="lm-exit-chev" />
             </button>
 
             {exitOpen && (
               <ul
                 role="listbox"
-                style={{
-                  position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 30,
-                  margin: 0, padding: "4px", listStyle: "none", maxHeight: "320px", overflowY: "auto",
-                  background: "var(--bg-surface, #fff)", border: "1px solid var(--border-default)",
-                  borderRadius: "10px", boxShadow: "0 8px 24px rgba(15,23,42,0.12)",
-                }}
+                className="lm-exit-list"
               >
                 <li>
                   <button
                     onClick={resetView}
-                    style={{
-                      display: "flex", width: "100%", alignItems: "center", gap: "8px",
-                      padding: "8px 12px", border: "none", background: "transparent",
-                      textAlign: "left", cursor: "pointer", borderRadius: "6px",
-                      fontSize: "0.85rem", color: "var(--text-secondary)", borderBottom: "1px solid var(--bg-surface-hover)",
-                    }}
+                    className="lm-exit-reset"
                   >
                     Whole corridor
                   </button>
                 </li>
                 {exits.length === 0 ? (
-                  <li style={{ padding: "10px 12px", fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                  <li className="lm-exit-empty">
                     Exit list unavailable
                   </li>
                 ) : (
@@ -227,20 +240,11 @@ export default function MapComparisonPage() {
                       <li key={x.exit_id} role="option" aria-selected={on}>
                         <button
                           onClick={() => flyToExit(x)}
-                          style={{
-                            display: "flex", width: "100%", alignItems: "baseline", gap: "8px",
-                            padding: "8px 12px", border: "none", cursor: "pointer",
-                            borderRadius: "6px", fontSize: "0.88rem", textAlign: "left",
-                            background: on ? "var(--bg-surface-hover)" : "transparent",
-                            fontWeight: on ? 700 : 500, color: "var(--text-primary)",
-                          }}
+                          className={`lm-exit-option${on ? " is-on" : ""}`}
                         >
-                          <span style={{
-                            fontSize: "0.7rem", color: "var(--text-muted)", minWidth: "1.4rem",
-                            fontVariantNumeric: "tabular-nums",
-                          }}>{x.exit_id}</span>
+                          <span className="lm-exit-id">{x.exit_id}</span>
                           {displayExitName(x.exit_name)}
-                          <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                          <span className="lm-exit-km">
                             Km {x.km}
                           </span>
                         </button>
@@ -251,19 +255,33 @@ export default function MapComparisonPage() {
               </ul>
             )}
           </div>
+          {/* Optional 3D: tilts both maps to about 50 degrees; 2D north-up is the default. */}
+          <button
+            type="button"
+            className={`lm-3d${pitched ? " is-on" : ""}`}
+            aria-pressed={pitched}
+            title="Tilt the maps (3D)"
+            onClick={() => setPitched((v) => !v)}
+          >
+            3D
+          </button>
+          </>
         }
       />
 
-      <div className="map-grid mc-map-grid">
+      <div className="lm-stage">
+      <div className="map-grid mc-map-grid lm-maps">
         {/* Left Map: Waze Real-Time */}
-        <div className="mc-panel-wrapper">
+        <div className="mc-panel-wrapper lm-panel lm-panel-live">
           <TrafficMapPanel
             title="Waze Real-Time Traffic"
             subtitle="Live traffic conditions"
             badge={
               <>
-                <i className="mc-dot green" style={{ display: "inline-block", marginRight: "6px", verticalAlign: "middle" }}></i>
-                LIVE | {timeStr || "Loading..."}
+                <span className="lm-tag is-live">
+                  <i className="mc-dot green" style={{ display: "inline-block", marginRight: "6px", verticalAlign: "middle" }}></i>
+                  LIVE | {timeStr || "Loading..."}
+                </span>
                 <button
                   type="button"
                   className="mc-maximise"
@@ -278,8 +296,12 @@ export default function MapComparisonPage() {
             layerColor="#4a6ff2"
             tone="blue"
             paused={wazeMax}
+            pitched={pitched}
+            highlight={stripHover}
+            onSnapshot={setLiveSnap}
+            onHoverKm={setMapHover}
+            selectedExit={selectedExit}
           >
-
             {/* Waze Legend Overlay */}
             {/* One legend, shared with the maximised view — see
                 components/maps/MapLegend.tsx. This used to be written out by
@@ -290,6 +312,17 @@ export default function MapComparisonPage() {
               <MapLegend />
             </details>
           </TrafficMapPanel>
+
+          {/* Feed status, in a band under the map rather than over it. Data age
+              comes from the feed's own timestamp. */}
+          <div className="lm-band">
+            {liveAge && (
+              <div className={`lm-age is-live${liveSnap?.feed?.stale ? " is-stale" : ""}`}>
+                <i aria-hidden="true" />
+                {liveAge}
+              </div>
+            )}
+          </div>
 
           {/* Waze Footer Stats */}
           <div className="mc-footer-stats">
@@ -309,13 +342,13 @@ export default function MapComparisonPage() {
         </div>
 
         {/* Right Map: Forecasted Traffic */}
-        <div className="mc-panel-wrapper">
+        <div className="mc-panel-wrapper lm-panel lm-panel-forecast">
           <TrafficMapPanel
             title="Forecasted Traffic"
             subtitle="Predictive analysis"
             badge={
               <>
-                PREDICTED
+                <span className="lm-tag is-forecast">PREDICTED</span>
                 <button
                   type="button"
                   className="mc-maximise"
@@ -329,54 +362,12 @@ export default function MapComparisonPage() {
             endpoint={`${process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"}/api/map-comparison/forecast?hours=${horizon}`}
             layerColor="#a855f7"
             tone="purple"
+            pitched={pitched}
+            highlight={stripHover}
+            onSnapshot={setForecastSnap}
+            onHoverKm={setMapHover}
+            selectedExit={selectedExit}
           >
-            {/* Forecast Controls Overlay */}
-            <div className="mc-forecast-controls">
-              <ForecastHorizonPicker
-                horizon={horizon}
-                setHorizon={setHorizon}
-                range={horizonRange}
-                setRange={setHorizonRange}
-                maxHorizon={forecastModel?.maxHorizon ?? null}
-              />
-
-              <div className="mc-model-card">
-                <span className="mc-model-head">
-                  <Clock size={13} className="mc-purple-text" /> Forecast model
-                </span>
-                {forecastModel?.name ? (
-                  <>
-                    <span className="mc-model-name">
-                      {forecastModel.name}
-                      {forecastModel.accuracy != null && (
-                        <em>{Math.round(forecastModel.accuracy * 100)}% accurate</em>
-                      )}
-                    </span>
-                    <span className="mc-model-note">
-                      {forecastModel.trainedAt
-                        ? `Trained ${new Date(forecastModel.trainedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
-                        : "Training date unknown"}
-                      {forecastModel.rejectedCount > 0 && ` · beat ${forecastModel.rejectedCount} others`}
-                    </span>
-                    {/* Said plainly rather than implied by a control that
-                        cannot change anything. */}
-                    <span className="mc-model-note">
-                      {forecastModel.horizonVaries
-                        ? `Varies across ${forecastModel.horizons} h ahead`
-                        : "Same outlook for every hour ahead"}
-                    </span>
-                  </>
-                ) : (
-                  <span className="mc-model-note">Model details unavailable</span>
-                )}
-              </div>
-              <button className="mc-icon-btn"><Navigation size={18} className="mc-purple-text" /></button>
-              <div className="mc-zoom-group">
-                <button className="mc-icon-btn"><ZoomIn size={18} className="mc-purple-text" /></button>
-                <button className="mc-icon-btn"><ZoomOut size={18} className="mc-purple-text" /></button>
-              </div>
-            </div>
-
             {/* Forecast Legend Overlay */}
             <details className="mc-legend-card forecast-legend">
               <summary>Legend</summary>
@@ -393,6 +384,10 @@ export default function MapComparisonPage() {
                     {k.label}
                   </div>
                 ))}
+                <div className="mc-density-row">
+                  <span className="mc-density-line" style={{ background: mapPalette(isDark).noData }} />
+                  No data
+                </div>
               </div>
               <div className="mc-legend-section mt-3">
                 <p className="mc-sub-label">On the map</p>
@@ -401,8 +396,53 @@ export default function MapComparisonPage() {
                 </div>
               </div>
             </details>
-
           </TrafficMapPanel>
+
+          {/* The chosen forecast hour and the model behind it, in a band under
+              the map so neither covers the corridor. (The map's own +/- is the
+              zoom; the three icon buttons that sat beside this card did nothing
+              and are gone.) */}
+          <div className="lm-band is-forecast">
+            <div className="lm-when" aria-live="polite">
+              <span className="lm-age is-forecast">
+                <i aria-hidden="true" />
+                {forecastAge}
+              </span>
+              <span className="lm-when-time">{when.time}</span>
+              <span className="lm-when-day">{when.day}</span>
+            </div>
+            <div className="mc-model-card">
+              <span className="mc-model-line">
+                <span className="mc-model-head">
+                  <Clock size={13} className="mc-purple-text" /> Forecast model
+                </span>
+                {forecastModel?.name ? (
+                  <span className="mc-model-name">
+                    {forecastModel.name}
+                    {forecastModel.accuracy != null && (
+                      <em>{Math.round(forecastModel.accuracy * 100)}% accurate</em>
+                    )}
+                  </span>
+                ) : (
+                  <span className="mc-model-note">Model details unavailable</span>
+                )}
+              </span>
+              {forecastModel?.name && (
+                /* Said plainly rather than implied by a control that cannot
+                   change anything. */
+                <span className="mc-model-note">
+                  {forecastModel.trainedAt
+                    ? `Trained ${new Date(forecastModel.trainedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
+                    : "Training date unknown"}
+                  {forecastModel.rejectedCount > 0 && ` · beat ${forecastModel.rejectedCount} others`}
+                  {" · "}
+                  {forecastModel.horizonVaries
+                    ? `Varies across ${forecastModel.horizons} h ahead`
+                    : "Same outlook for every hour ahead"}
+                </span>
+              )}
+            </div>
+          </div>
 
           {/* Forecast Footer Stats */}
           <div className="mc-footer-stats">
@@ -426,6 +466,50 @@ export default function MapComparisonPage() {
         </div>
 
       </div>
+
+      {/* One card under the maps: the horizon timeline, then the corridor strip. */}
+      <div className="lm-dock">
+      {/* The horizon timeline: "Live" at the left end, then one tick per
+          forecast hour the data offers. Same picker, same options and
+          behaviour; the select is still there for exact picks. */}
+      <div className="mc-forecast-controls lm-timeline-dock">
+        <ForecastHorizonPicker
+          horizon={horizon}
+          setHorizon={setHorizon}
+          range={horizonRange}
+          setRange={setHorizonRange}
+          maxHorizon={forecastModel?.maxHorizon ?? null}
+          live={{
+            label: liveAge ?? "Waze feed",
+            active: stripMode === "live",
+            onSelect: () => setStripMode("live"),
+          }}
+          onPick={() => setStripMode("forecast")}
+        />
+      </div>
+
+      {/* The legend folds to a pill on phones; wider screens carry it in the strip's header. */}
+      <details className="lm-key-pill">
+        <summary>Legend</summary>
+        <LegendKey />
+      </details>
+
+      <CorridorStrip
+        snapshot={stripMode === "live" ? liveSnap : forecastSnap}
+        mode={stripMode}
+        setMode={setStripMode}
+        horizon={horizon}
+        closures={closures}
+        mapHover={mapHover}
+        onHover={setStripHover}
+        open={stripOpen}
+        setOpen={setStripOpen}
+        ageLabel={stripMode === "live" ? liveAge : `${forecastAge} · ${when.day === "Today" ? when.time : `${when.day} · ${when.time}`}`}
+        majorExits={MAJOR_EXITS}
+      />
+      </div>
+      </div>
+
 
       <WazeLiveModal open={wazeMax} onClose={() => setWazeMax(false)} />
 

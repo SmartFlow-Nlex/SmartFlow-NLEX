@@ -8,9 +8,11 @@
  * separating anything that is actually independent.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { AlertTriangle } from "lucide-react";
 import SignalGlyph from "./SignalGlyph";
 import InfoTooltip from "./InfoTooltip";
+import StateNote from "../stage/StateNote";
 import {
   loadForecast, championValue, topsisRank, manilaDate, loadPrescriptive,
   type ForecastPayload, type TrafficPrescriptive, type BoothHour,
@@ -34,21 +36,18 @@ function useForecast() {
   return { data, error };
 }
 
-const CARD: React.CSSProperties = {
-  padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14,
-};
-
+/* Night Corridor chrome for the three panels: a near-opaque card with a
+   hairline, a 20 px headline with its method behind (i), and the panel's
+   own controls on the same line. */
 function Shell({ title, hint, children, right }: {
   title: string; hint: string; right?: React.ReactNode; children: React.ReactNode;
 }) {
   return (
-    <article className="chart-card wide" style={CARD}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 800, letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 6 }}>
-            {title} <InfoTooltip text={hint} />
-          </h3>
-        </div>
+    <article className="chart-card wide nct-card">
+      <div className="nct-card-head-split">
+        <h3 className="nct-title">
+          {title} <InfoTooltip text={hint} />
+        </h3>
         {right}
       </div>
       {children}
@@ -56,27 +55,73 @@ function Shell({ title, hint, children, right }: {
   );
 }
 
-const Banner = ({ tone = "info", children }: { tone?: "info" | "alert"; children: React.ReactNode }) => {
-  const c = tone === "alert" ? "var(--color-danger)" : "var(--brand-primary)";
+const Banner = ({ tone = "info", children }: { tone?: "info" | "alert"; children: React.ReactNode }) => (
+  <div className={`nct-banner${tone === "alert" ? " is-alert" : ""}`}>
+    {tone === "alert" && <AlertTriangle size={18} strokeWidth={2} aria-hidden="true" className="nct-banner-icon" />}
+    <div className="nct-banner-text">{children}</div>
+  </div>
+);
+
+/* Empty, loading and error states keep their words; the mascot only
+   decorates them (headlights dimmed for "no data", hazards for errors). */
+const Empty = ({ msg }: { msg: string }) => {
+  const kind = /unavailable/i.test(msg) ? "error" : /…$/.test(msg) ? "loading" : "nodata";
   return (
-    <div style={{
-      background: `color-mix(in srgb, ${c} 8%, transparent)`,
-      border: `1px solid color-mix(in srgb, ${c} 22%, transparent)`,
-      borderRadius: 10, padding: "12px 14px", fontSize: "0.82rem", lineHeight: 1.5,
-      color: "var(--text-primary)",
-    }}>{children}</div>
+    <article className="chart-card wide nct-card nct-empty-card">
+      <StateNote kind={kind} role={kind === "error" ? "alert" : undefined}>{msg}</StateNote>
+    </article>
   );
 };
 
-const Empty = ({ msg }: { msg: string }) => (
-  <article className="chart-card wide" style={{ ...CARD, minHeight: 160, justifyContent: "center", alignItems: "center", color: "var(--text-muted)", fontSize: "0.85rem" }}>
-    {msg}
-  </article>
+const Foot = ({ children }: { children: React.ReactNode }) => (
+  <p className="nct-foot">{children}</p>
 );
 
-const Foot = ({ children }: { children: React.ReactNode }) => (
-  <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.45 }}>{children}</p>
-);
+/** One recommended action: what to do, where, when, the expected effect and
+ *  its basis, and how sure. Fields the data does not carry are left out
+ *  rather than filled in; the basis and reasoning sit behind Details. */
+function ActionCard({ rank, signal, tag, tone = "info", action, lead, facts, details }: {
+  rank?: number;
+  signal?: "clear" | "slow" | "congested" | "none";
+  tag?: ReactNode;
+  tone?: "info" | "act" | "prepare" | "alert";
+  action: ReactNode;
+  lead?: ReactNode;
+  facts: { k: string; v: ReactNode }[];
+  details?: ReactNode;
+}) {
+  return (
+    <div className={`nct-action is-${tone}`}>
+      {rank != null && <span className="nct-action-rank" aria-label={`Rank ${rank}`}>{rank}</span>}
+      <div className="nct-action-main">
+        {(signal || tag) && (
+          <div className="nct-action-tag">
+            {signal && <SignalGlyph state={signal} size={20} title="" />}
+            {tag}
+          </div>
+        )}
+        <p className="nct-action-title">{action}</p>
+        {lead && <p className="nct-action-lead">{lead}</p>}
+        {facts.length > 0 && (
+          <dl className="nct-action-facts">
+            {facts.map((f) => (
+              <div key={f.k}>
+                <dt>{f.k}</dt>
+                <dd>{f.v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        {details && (
+          <details className="nc-details nct-action-details">
+            <summary>Details</summary>
+            <div>{details}</div>
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /* ==================================================================== 1 ====
  * Booth staffing plan, per plaza, per hour.
@@ -115,7 +160,7 @@ function usePrescriptive(throughput: number) {
  *  but there is no booth for it. */
 function HourStrip({ hours, peakHour, max }: { hours: BoothHour[]; peakHour: number; max: number }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(24, 1fr)", gap: 1, alignItems: "end", height: 34 }}>
+    <div className="nct-hourstrip">
       {hours.map((h) => {
         const frac = max > 0 ? h.need / max : 0;
         const short = h.need - h.staffed;
@@ -138,7 +183,7 @@ function HourStrip({ hours, peakHour, max }: { hours: BoothHour[]; peakHour: num
             )}
             <div style={{
               flex: Math.max(1, h.staffed),
-              background: isPeak ? "var(--brand-primary)" : "color-mix(in srgb, var(--brand-primary) 55%, transparent)",
+              background: isPeak ? "var(--page-accent)" : "color-mix(in srgb, var(--page-accent) 45%, transparent)",
             }} />
           </div>
         );
@@ -196,16 +241,13 @@ export function BoothStaffingPanel() {
   const noBooths = data.basis.plazasWithoutBooths;
 
   const Toggle = (
-    <div style={{ display: "inline-flex", border: "1px solid var(--border-strong)", borderRadius: 999, overflow: "hidden" }}>
+    <div className="nct-pills" role="group" aria-label="Plan view">
       {(["week", "hour"] as const).map((v) => (
         <button
           key={v}
           onClick={() => setView(v)}
-          style={{
-            border: "none", cursor: "pointer", padding: "4px 12px", fontSize: "0.72rem", fontWeight: 700,
-            background: view === v ? "var(--brand-primary)" : "transparent",
-            color: view === v ? "#fff" : "var(--text-secondary)",
-          }}
+          aria-pressed={view === v}
+          className={`nct-pill-btn${view === v ? " is-on" : ""}`}
         >
           {v === "week" ? "Week ahead" : "Hour by hour"}
         </button>
@@ -218,70 +260,88 @@ export function BoothStaffingPanel() {
       title="Booth Staffing Plan"
       hint="Corridor forecast apportioned to each plaza by its measured share of volume, then across the day by that plaza's own hourly profile, split weekday from weekend. Divided by what one booth serves, and capped at the booths each plaza has (OpenStreetMap): demand beyond them is shown as queuing, not as booths that do not exist. Throughput is the one figure you set; the rest is measured."
       right={
-        <div style={{ display: "grid", gap: 6, justifyItems: "end" }}>
+        <div className="nct-panel-controls">
           {Toggle}
-          <label style={{ display: "grid", gap: 4, minWidth: 220 }}>
-            <span style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--text-secondary)" }}>
-              <span>One booth serves</span><b style={{ color: "var(--text-primary)" }}>{rate} veh/hr</b>
+          <label className="nct-range">
+            <span className="nct-range-head">
+              <span>One booth serves</span><b>{rate} veh/hr</b>
             </span>
             <input type="range" min={150} max={800} step={25} value={rate}
-              onChange={(e) => setRate(Number(e.target.value))} style={{ accentColor: "var(--brand-primary)" }} />
+              onChange={(e) => setRate(Number(e.target.value))} />
           </label>
         </div>
       }
     >
-      <Banner>
-        <b>{shortDay(first.date)}: open {first.totalPeakBooths} booths across the corridor at the peak</b>
-        {first.totalPeakBooths !== corridorTypical && (
-          <> — {first.totalPeakBooths > corridorTypical ? "+" : "\u2212"}{Math.abs(first.totalPeakBooths - corridorTypical)} versus a typical day</>
-        )}.{" "}
-        {biggest && biggest.need[0] !== biggest.typical ? (
-          <>The largest change is at <b>{biggest.plaza}</b> ({biggest.typical} → {biggest.need[0]}, peak {fmtHour(biggest.peakHour)}).{" "}</>
-        ) : null}
-        {daysUp > 0
-          ? <>{daysUp} of the next {days.length} days need more than typical staffing somewhere on the corridor.</>
-          : <>No day in the next {days.length} exceeds typical staffing anywhere.</>}
-      </Banner>
+      <ActionCard
+        rank={1}
+        tag={<span className="nct-action-kicker">Staffing</span>}
+        action={<>Open {first.totalPeakBooths} booths across the corridor at the peak</>}
+        facts={[
+          { k: "When", v: shortDay(first.date) },
+          ...(first.totalPeakBooths !== corridorTypical
+            ? [{ k: "Change", v: <>{first.totalPeakBooths > corridorTypical ? "+" : "\u2212"}{Math.abs(first.totalPeakBooths - corridorTypical)} versus a typical day</> }]
+            : []),
+          ...(biggest && biggest.need[0] !== biggest.typical
+            ? [{ k: "Largest change", v: <><b>{biggest.plaza}</b> ({biggest.typical} → {biggest.need[0]}, peak {fmtHour(biggest.peakHour)})</> }]
+            : []),
+          {
+            k: "Week ahead",
+            v: daysUp > 0
+              ? <>{daysUp} of the next {days.length} days need more than typical staffing somewhere on the corridor.</>
+              : <>No day in the next {days.length} exceeds typical staffing anywhere.</>,
+          },
+        ]}
+      />
 
       {worst && (
-        <Banner tone="alert">
-          <b style={{ color: "var(--color-danger)" }}>Not enough booths.</b>{" "}
-          {shortDay(worst.date)} at {fmtHour(worst.hour)}, <b>{worst.plaza}</b>&apos;s {worst.where} booths would need {worst.need},{" "}
-          and there are {worst.booths}: about <b>{fmtInt(worst.vehicles)} vehicles an hour</b> queue with every one of them open.
-          Staffing cannot clear that; divert traffic or post an advisory there.
-          {overDays > 1 && (
-            <> {overDays - 1} more plaza-day{overDays - 1 === 1 ? "" : "s"} this week run past their booths too, marked{" "}
-            <b style={{ color: "var(--color-danger)" }}>!</b> below.</>
-          )}
-        </Banner>
+        <ActionCard
+          tone="alert"
+          tag={<span className="nct-action-kicker nct-bad">Not enough booths</span>}
+          action={<>Divert traffic or post an advisory at {worst.plaza}</>}
+          facts={[
+            { k: "When", v: <>{shortDay(worst.date)} at {fmtHour(worst.hour)}</> },
+            { k: "Where", v: <><b>{worst.plaza}</b>&apos;s {worst.where} booths</> },
+            { k: "Effect", v: <>About <b>{fmtInt(worst.vehicles)} vehicles an hour</b> queue with every one of them open</> },
+            { k: "Basis", v: <>Would need {worst.need} booths; there are {worst.booths}. Staffing cannot clear that.</> },
+            ...(overDays > 1
+              ? [{ k: "This week", v: <>{overDays - 1} more plaza-day{overDays - 1 === 1 ? "" : "s"} run past their booths too, marked <b className="nct-bad">!</b> below</> }]
+              : []),
+          ]}
+        />
       )}
 
       {view === "hour" ? (
         <>
-          <div style={{ fontSize: "0.74rem", color: "var(--text-secondary)" }}>
-            Booths needed hour by hour on <b>{shortDay(plan.date)}</b> ({plan.dayType}).
-            Plazas do not peak together — the tallest bar is each plaza&apos;s own busiest hour.
-            {plan.plazas.some((p) => p.unmetVehicles > 0) && <> Red hatching is need beyond the booths the plaza has.</>}
+          <div className="nct-panel-intro nct-hour-head">
+            <span>
+              Booths needed hour by hour on <b>{shortDay(plan.date)}</b> ({plan.dayType})
+              <InfoTooltip text={`Plazas do not peak together — the tallest bar is each plaza's own busiest hour.${plan.plazas.some((p) => p.unmetVehicles > 0) ? " Red hatching is need beyond the booths the plaza has." : ""}`} />
+            </span>
+            <span className="nct-key">
+              <span className="nct-key-item"><i style={{ background: "var(--page-accent)" }} />Peak hour</span>
+              <span className="nct-key-item"><i style={{ background: "color-mix(in srgb, var(--page-accent) 45%, transparent)" }} />Other hours</span>
+              {plan.plazas.some((p) => p.unmetVehicles > 0) && (
+                <span className="nct-key-item"><i className="nct-hatch" />Need beyond booths</span>
+              )}
+            </span>
           </div>
-          <div style={{ display: "grid", gap: 10 }}>
+          <div className="nct-hour-rows">
             {(showAll ? plan.plazas : plan.plazas.slice(0, 8)).map((p) => (
-              <div key={p.plaza} style={{ display: "grid", gridTemplateColumns: "150px 1fr 128px", gap: 10, alignItems: "end" }}>
-                <div style={{ fontSize: "0.76rem", fontWeight: 600, paddingBottom: 2 }}>
+              <div key={p.plaza} className="nct-hour-row">
+                <div className="nct-hour-name">
                   {p.plaza}
-                  <span style={{ display: "block", fontWeight: 500, fontSize: "0.66rem", color: "var(--text-muted)" }}>
-                    {p.sharePct}% of corridor
-                  </span>
+                  <span>{p.sharePct}% of corridor</span>
                 </div>
                 <HourStrip hours={p.hours} peakHour={p.peakHour} max={hourMax} />
-                <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", textAlign: "right", paddingBottom: 2 }} title={p.boothBasis}>
-                  peak <b style={{ color: "var(--text-primary)" }}>{p.peakStaffed}</b>
+                <div className="nct-hour-peak" title={p.boothBasis}>
+                  peak <b>{p.peakStaffed}</b>
                   {p.booths != null && <> of {p.booths}</>} at {fmtHour(p.peakHour)}
                   {p.worstUnmet && (
-                    <span style={{ display: "block", color: "var(--color-danger)", fontWeight: 700 }}>
+                    <span className="nct-hour-queue">
                       {fmtInt(p.worstUnmet.vehicles)}/h queue at {fmtHour(p.worstUnmet.hour)}
                       {/* Which booths: a plaza can have spare booths on one side while the other is full. */}
                       {p.worstUnmet.where && (
-                        <span style={{ display: "block", fontWeight: 500, fontSize: "0.66rem" }}>{p.worstUnmet.where} full</span>
+                        <span>{p.worstUnmet.where} full</span>
                       )}
                     </span>
                   )}
@@ -291,18 +351,18 @@ export function BoothStaffingPanel() {
           </div>
         </>
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+        <div className="nct-table-wrap">
+          <table className="nct-table nct-booth-table">
             <thead>
-              <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--border-default)" }}>
-                <th style={{ padding: "6px 8px", fontWeight: 700 }}>Plaza</th>
-                <th style={{ padding: "6px 8px", fontWeight: 700 }}>Peak hour</th>
-                <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Booths</th>
-                <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Typical</th>
+              <tr>
+                <th>Plaza</th>
+                <th>Peak hour</th>
+                <th className="num">Booths</th>
+                <th className="num">Typical</th>
                 {days.map((d) => (
-                  <th key={d.date} style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right", whiteSpace: "nowrap" }}>
+                  <th key={d.date} className="num">
                     {new Date(`${d.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "short" })}
-                    <span style={{ display: "block", fontWeight: 500, fontSize: "0.68rem" }}>
+                    <span className="nct-th-sub">
                       {new Date(`${d.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                     </span>
                   </th>
@@ -311,29 +371,25 @@ export function BoothStaffingPanel() {
             </thead>
             <tbody>
               {visible.map((r) => (
-                <tr key={r.plaza} style={{ borderBottom: "1px solid var(--border-default)" }}>
-                  <td style={{ padding: "6px 8px", fontWeight: 600, whiteSpace: "nowrap" }}>{r.plaza}</td>
-                  <td style={{ padding: "6px 8px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{fmtHour(r.peakHour)}</td>
+                <tr key={r.plaza}>
+                  <td className="strong" style={{ whiteSpace: "nowrap" }}>{r.plaza}</td>
+                  <td className="dim" style={{ whiteSpace: "nowrap" }}>{fmtHour(r.peakHour)}</td>
                   <td
                     title={r.booths != null ? r.boothBasis : "No toll booths mapped in OpenStreetMap: not capped"}
-                    style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-muted)" }}
+                    className="num nct-dim"
                   >
                     {r.booths ?? "—"}
                   </td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-secondary)" }}>{r.typical}</td>
+                  <td className="num dim">{r.typical}</td>
                   {r.need.map((n, i) => {
                     const delta = n - r.typical;
                     const short = r.short[i];
                     return (
                       <td key={days[i].date}
                         title={short ? `At ${fmtHour(short.hour)} the ${short.where ?? "plaza's"} booths are full: about ${fmtInt(short.vehicles)} vehicles an hour queue with every one of them open.` : undefined}
-                        style={{
-                          padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: delta !== 0 ? 800 : 500,
-                          color: delta > 0 ? "var(--color-danger)" : delta < 0 ? "var(--color-success)" : "var(--text-primary)",
-                          background: delta > 0 || short ? "color-mix(in srgb, var(--color-danger) 7%, transparent)" : undefined,
-                        }}>
-                        {n}{delta !== 0 && <span style={{ fontSize: "0.66rem", marginLeft: 3 }}>{delta > 0 ? `+${delta}` : delta}</span>}
-                        {short && <b style={{ color: "var(--color-danger)", marginLeft: 3 }}>!</b>}
+                        className={`num${delta !== 0 ? " strong" : ""}${delta > 0 ? " nct-bad" : delta < 0 ? " nct-ok" : ""}${delta > 0 || short ? " nct-cell-hot" : ""}`}>
+                        {n}{delta !== 0 && <span className="nct-cell-delta">{delta > 0 ? `+${delta}` : delta}</span>}
+                        {short && <b className="nct-bad nct-cell-flag">!</b>}
                       </td>
                     );
                   })}
@@ -345,14 +401,30 @@ export function BoothStaffingPanel() {
       )}
 
       {rows.length > 8 && (
-        <button onClick={() => setShowAll((v) => !v)} style={{
-          alignSelf: "flex-start", border: "1px solid var(--border-strong)", background: "var(--bg-surface)", color: "var(--text-secondary)",
-          borderRadius: 999, padding: "4px 12px", fontSize: "0.72rem", fontWeight: 700, cursor: "pointer",
-        }}>
+        <button type="button" onClick={() => setShowAll((v) => !v)} className="btn-muted" style={{ alignSelf: "flex-start" }}>
           {showAll ? "Show the 8 busiest" : `Show all ${rows.length} plazas`}
         </button>
       )}
 
+      <div className="nct-basis">
+        <span className="nct-kv-k">Basis</span>
+        <span>
+          {data.champion.model ?? "champion"} forecast
+          {data.champion.wmapePct != null && <> · WMAPE {data.champion.wmapePct}%</>}
+        </span>
+        {!data.champion.accepted && (
+          <span className="pill amber">Failed its acceptance gate · level less certain</span>
+        )}
+      </div>
+      {data.basis.forecastFrom && data.basis.profileTo && data.basis.forecastFrom <= data.basis.profileTo && (
+        <Banner tone="alert">
+          <b>Its first day, {data.basis.forecastFrom}, is already inside the record, which now runs to {data.basis.profileTo}:</b>{" "}
+          this plan is for days already past. Retrain the volume models to plan the coming week.
+        </Banner>
+      )}
+      <details className="nc-details">
+        <summary>How this is measured</summary>
+        <div>
       <Foot>
         Volume is the {data.champion.model ?? "champion"} forecast
         {data.champion.wmapePct != null && <> (WMAPE {data.champion.wmapePct}%)</>}
@@ -360,9 +432,9 @@ export function BoothStaffingPanel() {
         {data.basis.forecastFrom && data.basis.profileTo && data.basis.forecastFrom <= data.basis.profileTo ? (
           // Traffic was loaded after the model was trained: the "week ahead" is then a stretch the record already holds.
           <> <b>Its first day, {data.basis.forecastFrom}, is already inside the record, which now runs to {data.basis.profileTo}:
-          the model was trained before the latest traffic was loaded, so this plan is for days already past. Retrain the volume models to plan the coming week.</b></>
+          the model was trained before the latest traffic was loaded, so this plan is for days already past. Retrain the volume models to plan the coming week.</b>{" "}</>
         ) : (
-          <> Its first day, {data.basis.forecastFrom}, follows the last recorded day.</>
+          <> Its first day, {data.basis.forecastFrom}, follows the last recorded day.{" "}</>
         )}
         Profiles measured over {data.basis.profileFrom} to {data.basis.profileTo} across {data.basis.plazasProfiled} plazas.
         Booth counts are from {data.basis.boothsFrom}, since the warehouse holds none: each plaza&apos;s booths for the movement
@@ -370,6 +442,8 @@ export function BoothStaffingPanel() {
         {noBooths.length > 0 && <>; {listOf(noBooths)} {noBooths.length === 1 ? "has" : "have"} none mapped, so {noBooths.length === 1 ? "it is" : "they are"} not capped</>}.
         Booth throughput is the one figure that is yours to set.
       </Foot>
+        </div>
+      </details>
     </Shell>
   );
 }
@@ -421,6 +495,9 @@ export function CongestionResponsePanel() {
     Monitor: "No action; re-check next cycle.",
   };
   const tone = (l: string) => (l === "Act" ? "var(--color-danger)" : l === "Prepare" ? "var(--color-warning)" : "var(--text-muted)");
+  // Km-post as served, for the "where" of each card (null stays unknown).
+  const kmOf = (segment: string) => data.congestion.find((c) => c.segment === segment)?.km ?? null;
+  const urgencyOf = (segment: string) => data.congestion.find((c) => c.segment === segment)?.urgency ?? null;
 
   return (
     <Shell
@@ -430,7 +507,7 @@ export function CongestionResponsePanel() {
       <Banner tone={act.length ? "alert" : "info"}>
         {top.length > 0 ? (
           <>
-            <b style={{ color: "var(--color-danger)" }}>Operator alert:</b> severe congestion predicted
+            <b className="nct-bad">Operator alert:</b> severe congestion predicted
             {lead != null && lead < 99 && <> within <b>{lead}h</b></>} — counter-flow advisory for{" "}
             <b>{top.map((r) => r.segment).join(", ")}</b>.
             {rest.length > 0 && <> {rest.length} more segment{rest.length === 1 ? "" : "s"} elevated but not advised.</>}
@@ -444,40 +521,50 @@ export function CongestionResponsePanel() {
         )}
       </Banner>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
-        {(top.length ? top : rows.slice(0, 3)).map((r, i) => (
-          <div key={r.segment} style={{ border: "1px solid var(--border-default)", borderRadius: 8, padding: "12px 14px", display: "grid", gap: 6, background: "var(--bg-surface)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 700, fontSize: "0.9375rem" }}>{i + 1}. {r.segment}</span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.75rem", fontWeight: 700, color: tone(r.label), textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                <SignalGlyph state={r.label === "Act" ? "congested" : r.label === "Prepare" ? "slow" : "none"} size={20} title="" />
-                {r.label}
-              </span>
-            </div>
-            <div style={{ display: "flex", gap: 14, fontSize: "0.8125rem", color: "var(--text-secondary)" }}>
-              {r.first != null ? (
+      {/* Ranked action cards: the action, where, when, how sure; the basis
+          behind Details. */}
+      <div className="nct-actions nct-actions-3">
+        {(top.length ? top : rows.slice(0, 3)).map((r, i) => {
+          const km = kmOf(r.segment);
+          const urgency = urgencyOf(r.segment);
+          return (
+            <ActionCard
+              key={r.segment}
+              rank={i + 1}
+              tone={r.label === "Act" ? "act" : r.label === "Prepare" ? "prepare" : "info"}
+              signal={r.label === "Act" ? "congested" : r.label === "Prepare" ? "slow" : "none"}
+              tag={<span className="nct-action-label" style={{ color: tone(r.label) }}>{r.label}</span>}
+              action={ACTION[r.label]}
+              facts={[
+                { k: "Where", v: <><b>{r.segment}</b>{km != null && <span className="nct-dim"> · km {km}</span>}</> },
+                ...(r.first != null
+                  ? [
+                      { k: "When", v: <>First High <b>+{r.first}h</b></> },
+                      { k: "Confidence", v: <>Peak <b>{Math.round(r.peak * 100)}%</b> at +{r.peakHour}h</> },
+                    ]
+                  : [{ k: "When", v: <span style={{ fontStyle: "italic" }}>Never reaches High inside the horizon</span> }]),
+              ]}
+              details={
                 <>
-                  <span>First High <b style={{ color: "var(--text-primary)" }}>+{r.first}h</b></span>
-                  <span>Peak <b style={{ color: "var(--text-primary)" }}>{Math.round(r.peak * 100)}%</b> at +{r.peakHour}h</span>
+                  Ranked by the fuzzy controller from how likely High congestion is and how soon
+                  {urgency != null && <> (urgency <b>{urgency.toFixed(2)}</b>)</>}, from the congestion forecast on the
+                  Predictive tab. Counter-flow goes to the three most urgent segments only.
                 </>
-              ) : (
-                <span style={{ fontStyle: "italic" }}>Never reaches High inside the horizon</span>
-              )}
-            </div>
-            <div style={{ fontSize: "0.8125rem", lineHeight: 1.45 }}>{ACTION[r.label]}</div>
-          </div>
-        ))}
+              }
+            />
+          );
+        })}
       </div>
 
       {rest.length > 0 && (
-        <div style={{ fontSize: "0.76rem", color: "var(--text-secondary)" }}>
-          <button onClick={() => setShowRest((v) => !v)} style={{ border: 0, background: "none", color: "var(--brand-primary)", fontWeight: 700, cursor: "pointer", padding: 0, fontSize: "0.76rem" }}>
+        <div className="nct-panel-intro">
+          <button type="button" onClick={() => setShowRest((v) => !v)} className="nct-link-btn" aria-expanded={showRest}>
             {showRest ? "Hide" : "Show"} the {rest.length} elevated segment{rest.length === 1 ? "" : "s"} not advised
           </button>
           {showRest && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+            <div className="nct-chip-row" style={{ marginTop: 10 }}>
               {rest.map((r) => (
-                <span key={r.segment} style={{ border: "1px solid var(--border-default)", borderRadius: 999, padding: "3px 10px", background: "var(--bg-surface)" }}>
+                <span key={r.segment} className="nct-mini-chip">
                   <b style={{ color: tone(r.label) }}>{r.label}</b> · {r.segment}{r.first != null && <> · +{r.first}h</>}
                 </span>
               ))}
@@ -487,16 +574,21 @@ export function CongestionResponsePanel() {
       )}
 
       {missing.length > 0 && (
-        <div style={{ fontSize: "0.76rem", color: "var(--text-secondary)" }}>
-          <b style={{ color: "var(--color-warning)" }}>No forecast:</b> {listOf(missing)}. Not ranked, and not clear either:
+        <div className="nct-panel-intro">
+          <b className="nct-warn">No forecast:</b> {listOf(missing)}. Not ranked, and not clear either:
           treat {missing.length === 1 ? "it" : "them"} as unknown until the congestion model next runs.
         </div>
       )}
 
-      <Foot>
-        A volume-to-capacity ratio is not shown: it needs lane capacity, and no capacity or lane-count column exists anywhere in
-        the warehouse. The predicted congestion state is what the data supports.
-      </Foot>
+      <details className="nc-details">
+        <summary>How this is measured</summary>
+        <div>
+          <Foot>
+            A volume-to-capacity ratio is not shown: it needs lane capacity, and no capacity or lane-count column exists anywhere in
+            the warehouse. The predicted congestion state is what the data supports.
+          </Foot>
+        </div>
+      </details>
     </Shell>
   );
 }
@@ -527,40 +619,48 @@ export function EventInterventionPanel() {
       title="Event Intervention Ranking"
       hint="Ranks exits for event-day intervention by closeness to an ideal option across four criteria: vehicles moved, uplift over baseline, how many events the estimate rests on, and the width of its confidence interval as a penalty (TOPSIS)."
     >
-      <Banner>
-        <b>Event traffic management plan: {top.map((r) => r.exit).join(", ")}.</b>{" "}
-        On an event day these three exits carry <b>{fmtInt(totalExtra)}</b> extra vehicles between them.
-        Deploy patrol and advisory resources here first{anchor ? <> — the surge is anchored on {anchor}</> : null}.
-        {next && (
-          <> Next up: <b>{next.title.split(" - ")[0]}</b> on{" "}
-          <b>{new Date(`${next.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</b>
-          {next.isDerived ? " (recurring, inferred)" : ""}.</>
-        )}
-      </Banner>
+      <ActionCard
+        rank={1}
+        tag={<span className="nct-action-kicker">Event plan</span>}
+        action={<>Event traffic management plan: {top.map((r) => r.exit).join(", ")}.</>}
+        lead={<>Deploy patrol and advisory resources here first{anchor ? <> — the surge is anchored on {anchor}</> : null}.</>}
+        facts={[
+          { k: "Expected load", v: <>On an event day these three exits carry <b>{fmtInt(totalExtra)}</b> extra vehicles between them.</> },
+          ...(next
+            ? [{
+                k: "Next up",
+                v: <><b>{next.title.split(" - ")[0]}</b> on{" "}
+                  <b>{new Date(`${next.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</b>
+                  {next.isDerived ? " (recurring, inferred)" : ""}.</>,
+              }]
+            : []),
+          { k: "Estimate", v: top.map((r) => `${r.exit}: ${confidence(r.uncertainty)}`).join(" · ") },
+        ]}
+      />
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+      <div className="nct-table-wrap">
+        <table className="nct-table">
           <thead>
-            <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--border-default)" }}>
-              <th style={{ padding: "6px 8px", fontWeight: 700 }}>#</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700 }}>Exit</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Extra vehicles</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Uplift</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Events seen</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700 }}>Estimate</th>
-              <th style={{ padding: "6px 8px", fontWeight: 700, textAlign: "right" }}>Score</th>
+            <tr>
+              <th>#</th>
+              <th>Exit</th>
+              <th className="num">Extra vehicles</th>
+              <th className="num">Uplift</th>
+              <th className="num">Events seen</th>
+              <th>Estimate</th>
+              <th className="num">Score</th>
             </tr>
           </thead>
           <tbody>
             {ranked.slice(0, 10).map((r) => (
-              <tr key={r.exit} style={{ borderBottom: "1px solid var(--border-default)", background: r.rank <= 3 ? "color-mix(in srgb, var(--brand-primary) 5%, transparent)" : undefined }}>
-                <td style={{ padding: "6px 8px", fontWeight: 800, color: r.rank <= 3 ? "var(--brand-primary)" : "var(--text-muted)" }}>{r.rank}</td>
-                <td style={{ padding: "6px 8px", fontWeight: 600 }}>{r.exit}</td>
-                <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtInt(r.extraVehicles)}</td>
-                <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.uplift.toFixed(2)}×</td>
-                <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.evidence}</td>
-                <td style={{ padding: "6px 8px", color: "var(--text-secondary)" }}>{confidence(r.uncertainty)} <span style={{ fontSize: "0.68rem" }}>(±{(r.uncertainty / 2).toFixed(2)})</span></td>
-                <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{r.closeness.toFixed(2)}</td>
+              <tr key={r.exit} className={r.rank <= 3 ? "nct-row-top" : undefined}>
+                <td className={`strong${r.rank <= 3 ? " nct-accent" : " nct-dim"}`}>{r.rank}</td>
+                <td className="strong">{r.exit}</td>
+                <td className="num">{fmtInt(r.extraVehicles)}</td>
+                <td className="num">{r.uplift.toFixed(2)}×</td>
+                <td className="num">{r.evidence}</td>
+                <td className="dim">{confidence(r.uncertainty)} <span className="nct-dim">(±{(r.uncertainty / 2).toFixed(2)})</span></td>
+                <td className="num strong">{r.closeness.toFixed(2)}</td>
               </tr>
             ))}
           </tbody>
@@ -572,11 +672,16 @@ export function EventInterventionPanel() {
           specific date -- the measured uplift applied to that weekday-in-that-
           month's baseline, the same construction the Predictive tab uses when
           given a date. */}
-      <Foot>
-        Criteria weighted 0.40 vehicles / 0.25 uplift / 0.20 evidence / 0.15 interval width. &ldquo;Estimate&rdquo; reads the
-        uplift interval: firm under ±0.025, fair under ±0.06. The per-exit forecast for each upcoming Arena date is on the
-        Predictive tab&apos;s Event Surge card; this ranking is the deployment order for whichever date is chosen there.
-      </Foot>
+      <details className="nc-details">
+        <summary>How this is measured</summary>
+        <div>
+          <Foot>
+            Criteria weighted 0.40 vehicles / 0.25 uplift / 0.20 evidence / 0.15 interval width. &ldquo;Estimate&rdquo; reads the
+            uplift interval: firm under ±0.025, fair under ±0.06. The per-exit forecast for each upcoming Arena date is on the
+            Predictive tab&apos;s Event Surge card; this ranking is the deployment order for whichever date is chosen there.
+          </Foot>
+        </div>
+      </details>
     </Shell>
   );
 }

@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import type { EChartsOption } from "echarts";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
-import { useChartTheme } from "../../lib/chart-theme";
+import StateNote from "../stage/StateNote";
+import { useChartTheme, seriesRamp } from "../../lib/chart-theme";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -108,27 +109,48 @@ export default function PrescriptiveEmissionsPanel({
     };
   }, [months, from, to]);
 
-  if (loading) return <div style={{ color: "var(--text-muted)", padding: "24px 0" }}>Computing strategies…</div>;
+  /* The evidence card's head: the title, ⓘ and intro that used to sit in
+     page.tsx. Here so the loading, error and no-data states keep them. */
+  const evidenceHead = (
+    <div className="nc-em-card-head">
+      <h3>
+        Projected % Emission Reduction by Strategy
+        <InfoTooltip text="Computed from the warehouse over the selected Range. Faster clearance and peak deployment are bounded by response times this corridor has already achieved; the heavy-vehicle bar is a policy target and is drawn hollow to say so. Emissions here are linear in volume with no congestion term, so shifting trips between hours saves nothing and is deliberately not offered as a strategy." />
+      </h3>
+      <p className="nc-em-context">
+        CO₂ avoided per strategy, as a share of what the corridor actually emitted over the Range.
+      </p>
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <article className="chart-card nc-em-span nc-em-rx-evidence">
+        {evidenceHead}
+        <p className="nc-em-loading">Computing strategies…</p>
+      </article>
+    );
+  }
   if (error || !data) {
     return (
-      <div style={{ padding: "16px 0" }}>
-        <div style={{ fontWeight: 700, color: "var(--text-secondary)", marginBottom: 6 }}>
-          Strategies unavailable
-        </div>
-        <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>{error ?? "No data returned."}</div>
-      </div>
+      <article className="chart-card nc-em-span nc-em-rx-evidence">
+        {evidenceHead}
+        <StateNote kind="error" title="Strategies unavailable">
+          {error ?? "No data returned."}
+        </StateNote>
+      </article>
     );
   }
   // A Range with no emissions in it: say so, rather than draw three bars at
   // zero that would read as "nothing saves anything".
   if (data.noData) {
     return (
-      <div style={{ padding: "16px 0" }}>
-        <div style={{ fontWeight: 700, color: "var(--text-secondary)", marginBottom: 6 }}>
-          No emissions data in this Range
-        </div>
-        <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", maxWidth: "78ch" }}>{data.noData}</div>
-      </div>
+      <article className="chart-card nc-em-span nc-em-rx-evidence">
+        {evidenceHead}
+        <StateNote kind="nodata" title="No emissions data in this Range">
+          <span style={{ display: "block", maxWidth: "78ch" }}>{data.noData}</span>
+        </StateNote>
+      </article>
     );
   }
   const unavailable = data.unavailable ?? [];
@@ -137,24 +159,36 @@ export default function PrescriptiveEmissionsPanel({
   // order the service happens to return.
   const rows = [...data.strategies].sort((a, b) => b.reductionPct - a.reductionPct);
 
+  /* Same teal step as before (the emissions ramp's middle step, per theme),
+     read from the ramp rather than retyped. */
+  const BAR = seriesRamp("emissions", T)[1];
+
+  /* Ranked bars, drawn horizontally: the strategy names read on one line
+     beside their bar instead of wrapping under it. Same bars, same order,
+     same tooltip. */
   const option: EChartsOption = {
-    grid: { left: 54, right: 24, top: 24, bottom: 64 },
-    xAxis: {
-      type: "category",
-      data: rows.map((s) => s.label),
-      axisLabel: { color: T.text, fontSize: 11, interval: 0, width: 130, overflow: "break" },
-    },
+    grid: { left: 8, right: 56, top: 8, bottom: 34, containLabel: true },
     yAxis: {
+      type: "category",
+      inverse: true,
+      data: rows.map((s) => s.label),
+      axisTick: { show: false },
+      axisLabel: { color: T.ink, fontSize: 11, interval: 0, width: 120, overflow: "break", lineHeight: 15 },
+    },
+    xAxis: {
       type: "value",
       name: "% of corridor CO₂",
       nameLocation: "middle",
-      nameGap: 40,
+      nameGap: 26,
       nameTextStyle: { color: T.text, fontSize: 11 },
-      axisLabel: { color: T.text, formatter: (v: number) => `${v}%` },
+      splitNumber: 4,
+      axisLabel: { color: T.text, hideOverlap: true, formatter: (v: number) => `${v}%` },
+      splitLine: { lineStyle: { color: T.split } },
     },
     tooltip: {
       trigger: "axis",
       confine: true,
+      axisPointer: { type: "shadow" },
       formatter: (params: unknown) => {
         const p = (params as { dataIndex: number }[])[0];
         const s = rows[p.dataIndex];
@@ -175,24 +209,26 @@ export default function PrescriptiveEmissionsPanel({
     series: [
       {
         type: "bar",
+        barMaxWidth: 26,
         data: rows.map((s) => ({
           value: s.reductionPct,
           itemStyle: s.evidenceBounded
-            ? { color: T.isDark ? "#3cc3cf" : "#1f97a5", borderRadius: [4, 4, 0, 0] }
+            ? { color: BAR, borderRadius: [0, 4, 4, 0] }
             : // Hollow, so a scenario cannot be mistaken for a measured result.
               {
                 color: "transparent",
-                borderColor: T.isDark ? "#3cc3cf" : "#1f97a5",
+                borderColor: BAR,
                 borderWidth: 2,
                 borderType: "dashed",
-                borderRadius: [8, 8, 0, 0],
+                borderRadius: [0, 4, 4, 0],
               },
         })),
         label: {
           show: true,
-          position: "top",
-          color: T.text,
+          position: "right",
+          color: T.ink,
           fontSize: 11,
+          fontFamily: T.fontFamily,
           formatter: (p: { value?: unknown }) => `${Number(p.value ?? 0).toFixed(2)}%`,
         },
       },
@@ -215,83 +251,228 @@ export default function PrescriptiveEmissionsPanel({
   const lead = doable[0] ?? null;
   const second = doable[1] ?? null;
 
-  const Line = ({ tone, head, children }: { tone: string; head: string; children: React.ReactNode }) => (
-    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, alignItems: "baseline" }}>
-      <span style={{
-        fontSize: "0.62rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase",
-        color: tone, whiteSpace: "nowrap", paddingTop: 2,
-      }}>{head}</span>
-      {/* Capped measure. On a wide monitor this card is ~1,500px, which puts
-          well over 150 characters on a line — past the point where the eye
-          reliably finds the start of the next one. */}
-      <div style={{ fontSize: "0.82rem", lineHeight: 1.55, color: "var(--text-primary)", maxWidth: "78ch" }}>{children}</div>
-    </div>
+  const period = over(data.basis.from, data.basis.to);
+  const maxPct = Math.max(...rows.map((s) => s.reductionPct), 0.0001);
+
+  /* Ranked action cards. Each answers first (tonnes avoided), then reads as
+     labelled rows: Action, Where, When, Effect, Basis, Confidence. The full
+     sentence each card replaced, and the service's own assumptions, sit
+     behind Details on the same card. The order is the recommendation's: the
+     lead, then the second, then the policy scenario. */
+  type Tone = "lead" | "then" | "scenario";
+  const ActionCard = ({
+    s, rank, tone, tag, note, details,
+  }: {
+    s: Strategy; rank: number; tone: Tone; tag: string; note?: React.ReactNode; details: React.ReactNode;
+  }) => (
+    <li className="chart-card nc-em-acard" data-tone={tone}>
+      <div className="nc-em-acard-answer">
+        <div className="nc-em-acard-top">
+          <span className="nc-em-acard-rank" aria-hidden="true">{rank}</span>
+          <span className="nc-em-action-tag">{tag}</span>
+          {s.evidenceBounded
+            ? <span className="pill green">Evidence-bounded</span>
+            : <span className="pill nc-em-pill-hollow">Policy target</span>}
+        </div>
+        <h3>{s.label}</h3>
+        <p className="nc-em-answer">
+          <b>{fmtT(s.reductionTonnes)} t</b>
+          <span>CO₂ avoided {period}</span>
+        </p>
+      </div>
+      <div className="nc-em-acard-body">
+        <dl className="nc-em-rows">
+          <div>
+            <dt>Action</dt>
+            <dd className="nc-em-cap">{s.lever}</dd>
+          </div>
+          <div>
+            <dt>Where</dt>
+            <dd>Corridor-wide</dd>
+          </div>
+          <div>
+            <dt>When</dt>
+            <dd>Estimated over {data.basis.from} to {data.basis.to}</dd>
+          </div>
+          <div>
+            <dt>Effect</dt>
+            <dd>
+              <span className="nc-em-inline-bar" aria-hidden="true">
+                <i
+                  className={s.evidenceBounded ? "" : "is-hollow"}
+                  style={{ width: `${Math.max(2, (s.reductionPct / maxPct) * 100)}%`, ["--bar-c" as string]: BAR }}
+                />
+              </span>
+              {s.reductionPct.toFixed(2)}% of what the corridor emitted
+            </dd>
+          </div>
+          <div>
+            <dt>Basis</dt>
+            <dd>
+              {s.evidenceBounded
+                ? "Bounded by response times this corridor has already delivered"
+                : "Policy target — not demonstrated by any observed change"}
+            </dd>
+          </div>
+          <div>
+            <dt>Confidence</dt>
+            <dd>
+              {s.range
+                ? <>Likely {fmtT(s.range.lowTonnes)}–{fmtT(s.range.highTonnes)} t · 5th–95th of {s.range.runs} Monte Carlo runs</>
+                : "No Monte Carlo range returned for this strategy"}
+            </dd>
+          </div>
+          {note && (
+            <div className="is-note">
+              <dt>Note</dt>
+              <dd>{note}</dd>
+            </div>
+          )}
+        </dl>
+        <details className="nc-details">
+          <summary>Details</summary>
+          {details}
+          {s.assumptions?.length ? (
+            <ul className="nc-em-action-assumptions">
+              {s.assumptions.map((a, i) => (
+                <li key={i}>{a}</li>
+              ))}
+            </ul>
+          ) : null}
+        </details>
+      </div>
+    </li>
   );
 
-  const period = over(data.basis.from, data.basis.to);
+  let rank = 0;
 
   return (
     <>
       {(lead || scenario) && (
-        <div style={{
-          border: "1px solid var(--border-default)",
-          borderLeft: `3px solid ${lead ? "var(--color-success)" : "var(--color-warning)"}`,
-          borderRadius: 10, padding: "14px 16px", marginBottom: 16,
-          display: "grid", gap: 12, background: "var(--bg-surface-hover)",
-        }}>
+        <ol className="nc-em-span nc-em-acards" aria-label="Recommended actions, ranked">
           {lead ? (
-            <Line tone="var(--color-success)" head="Do this">
-              <b>{lead.label}.</b> {lead.lever}.{" "}
-              Worth <b>{fmtT(lead.reductionTonnes)} t</b> of CO₂ {period}
-              {lead.range && <> (likely {fmtT(lead.range.lowTonnes)}–{fmtT(lead.range.highTonnes)} t)</>}:{" "}
-              {lead.reductionPct.toFixed(2)}% of what the corridor emitted. Bounded by response times this corridor has{" "}
-              <b>already delivered</b>, so it asks for no capability it does not have.
-            </Line>
+            <ActionCard
+              s={lead}
+              rank={++rank}
+              tone="lead"
+              tag="Do this"
+              details={
+                <p>
+                  <b>{lead.label}.</b> {lead.lever}.{" "}
+                  Worth <b>{fmtT(lead.reductionTonnes)} t</b> of CO₂ {period}
+                  {lead.range && <> (likely {fmtT(lead.range.lowTonnes)}–{fmtT(lead.range.highTonnes)} t)</>}:{" "}
+                  {lead.reductionPct.toFixed(2)}% of what the corridor emitted. Bounded by response times this corridor has{" "}
+                  <b>already delivered</b>, so it asks for no capability it does not have.
+                </p>
+              }
+            />
           ) : (
-            <Line tone="var(--color-warning)" head="Nothing to do yet">
-              No evidence-bounded strategy can be computed for this Range. {unavailable[0]?.reason}
-            </Line>
+            <li className="chart-card nc-em-acard" data-tone="none">
+              <div className="nc-em-acard-answer">
+                <div className="nc-em-acard-top">
+                  <span className="nc-em-acard-rank" aria-hidden="true">—</span>
+                  <span className="nc-em-action-tag">Nothing to do yet</span>
+                </div>
+              </div>
+              <div className="nc-em-acard-body">
+                <p className="nc-em-action-text">
+                  No evidence-bounded strategy can be computed for this Range. {unavailable[0]?.reason}
+                </p>
+              </div>
+            </li>
           )}
 
           {second && (
-            <Line tone="var(--text-secondary)" head="Then">
-              <b>{second.label}</b> — {second.lever} — worth {fmtT(second.reductionTonnes)} t.{" "}
-              <b>Do not add these two together.</b> This one applies the same clearance floor to fewer hours, so it
-              is a subset of the first, not an addition to it.
-            </Line>
+            <ActionCard
+              s={second}
+              rank={++rank}
+              tone="then"
+              tag="Then"
+              note={<><b>Do not add these two together.</b> It is a subset of #1, not an addition.</>}
+              details={
+                <p>
+                  <b>{second.label}</b> — {second.lever} — worth {fmtT(second.reductionTonnes)} t.{" "}
+                  <b>Do not add these two together.</b> This one applies the same clearance floor to fewer hours, so it
+                  is a subset of the first, not an addition to it.
+                </p>
+              }
+            />
           )}
 
           {scenario && (
-            <Line tone="var(--color-warning)" head="Not on this evidence">
-              <b>{scenario.label}</b> would be worth {fmtT(scenario.reductionTonnes)} t — far the largest figure
-              here — but it is a policy question for MPTC, not an operational one. {scenario.evidenceNote}
-            </Line>
+            <ActionCard
+              s={scenario}
+              rank={++rank}
+              tone="scenario"
+              tag="Not on this evidence"
+              note={<>Far the largest figure, but a policy question for MPTC, not an operational one.</>}
+              details={
+                <>
+                  <p>
+                    <b>{scenario.label}</b> would be worth {fmtT(scenario.reductionTonnes)} t — far the largest figure
+                    here — but it is a policy question for MPTC, not an operational one. {scenario.evidenceNote}
+                  </p>
+                  <p><b>Policy target — not demonstrated by any observed change.</b></p>
+                </>
+              }
+            />
           )}
-        </div>
+        </ol>
       )}
 
-      <DashboardChart option={option} height={280} />
-      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 10, lineHeight: 1.55, maxWidth: "92ch" }}>
-        Against {fmtT(data.basis.actualCo2Tonnes)} t actually emitted over {data.basis.from} to {data.basis.to}.
-        {unavailable.length > 0 ? (
-          <>
-            {" "}<b>Not computed for this Range:</b> {unavailable.map((u) => u.label).join(" and ")}. {unavailable[0].reason}
-          </>
-        ) : (
-          <>
-            {" "}Incident-based strategies use {data.basis.incidentsCounted.toLocaleString()} cleared incidents in the
-            same window.
-          </>
-        )}
-        {scenario && (
-          <>
-            {" "}
-            <b>{scenario.label}</b> is drawn hollow because it is a policy target, not a demonstrated change. The
-            other two are bounded by response times already delivered on this corridor, and their ranges come from a
-            Monte Carlo resampling of the incidents.
-          </>
-        )}
-      </div>
+      <article className="chart-card nc-em-span nc-em-rx-evidence">
+        {evidenceHead}
+        <figure className="nc-em-rx-chart">
+          <figcaption className="nc-em-rx-chart-head">
+            <span>Ranked by size</span>
+            <span className="nc-em-rx-key">
+              <span><i className="is-solid" style={{ background: BAR }} />Evidence-bounded</span>
+              <span><i className="is-hollow" style={{ borderColor: BAR }} />Policy target (hollow)</span>
+            </span>
+          </figcaption>
+          <DashboardChart option={option} height={Math.max(180, rows.length * 62 + 50)} />
+        </figure>
+
+        {/* The basis, as labelled rows rather than a paragraph. */}
+        <dl className="nc-em-rows nc-em-basis-rows">
+          <div>
+            <dt>Actually emitted</dt>
+            <dd>{fmtT(data.basis.actualCo2Tonnes)} t over {data.basis.from} to {data.basis.to}</dd>
+          </div>
+          {unavailable.length > 0 ? (
+            <div className="is-note">
+              <dt>Not computed</dt>
+              <dd>
+                <b>Not computed for this Range:</b> {unavailable.map((u) => u.label).join(" and ")}. {unavailable[0].reason}
+              </dd>
+            </div>
+          ) : (
+            <div>
+              <dt>Incidents</dt>
+              <dd>{data.basis.incidentsCounted.toLocaleString()} cleared incidents in the same window</dd>
+            </div>
+          )}
+        </dl>
+        <details className="nc-details">
+          <summary>How this is measured</summary>
+          <p>
+            Against {fmtT(data.basis.actualCo2Tonnes)} t actually emitted over {data.basis.from} to {data.basis.to}.
+            {unavailable.length === 0 && (
+              <>
+                {" "}Incident-based strategies use {data.basis.incidentsCounted.toLocaleString()} cleared incidents in the
+                same window.
+              </>
+            )}
+          </p>
+          {scenario && (
+            <p>
+              <b>{scenario.label}</b> is drawn hollow because it is a policy target, not a demonstrated change. The
+              other two are bounded by response times already delivered on this corridor, and their ranges come from a
+              Monte Carlo resampling of the incidents.
+            </p>
+          )}
+        </details>
+      </article>
     </>
   );
 }

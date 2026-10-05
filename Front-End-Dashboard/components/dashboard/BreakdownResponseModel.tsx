@@ -6,6 +6,7 @@ import { useThemeTokens } from "./useThemeTokens";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
 import NarrativePanel from "./NarrativePanel";
+import StateNote from "../stage/StateNote";
 import { fmtNum, fmtTrainedAt } from "./incidentPredictive.shared";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
@@ -88,21 +89,18 @@ export default function BreakdownResponseModel() {
 
   if (loading) {
     return (
-      <article className="chart-card wide" style={{ height: "320px", padding: "20px", display: "grid", placeItems: "center" }}>
-        <div style={{ color: "var(--text-muted)" }}>Loading response-time model…</div>
+      <article className="chart-card wide inc-card" style={{ minHeight: "320px", justifyContent: "center" }}>
+        <div className="inc-loading" role="status">Loading response-time model…</div>
       </article>
     );
   }
 
   if (error || !data || (data.byCause.length === 0 && data.byService.length === 0)) {
     return (
-      <article className="chart-card wide" style={{ height: "260px", padding: "20px", display: "grid", placeItems: "center" }}>
-        <div style={{ textAlign: "center", maxWidth: "440px" }}>
-          <div style={{ fontWeight: 700, color: "var(--text-secondary)", marginBottom: "6px" }}>Response-time model unavailable</div>
-          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-            {error ?? "The breakdown response-time pipeline hasn't written its output yet — run train_breakdown_response_models.py --write-db."}
-          </div>
-        </div>
+      <article className="chart-card wide inc-card" style={{ minHeight: "260px", justifyContent: "center" }}>
+        <StateNote kind={error ? "error" : "nodata"} title="Response-time model unavailable">
+          {error ?? "The breakdown response-time pipeline hasn't written its output yet — run train_breakdown_response_models.py --write-db."}
+        </StateNote>
       </article>
     );
   }
@@ -132,9 +130,9 @@ export default function BreakdownResponseModel() {
     // bar chart has nothing to tell apart (same reasoning
     // PredictiveCorridorChart's own shadeFor doc comment gives for dropping
     // its legend).
-    grid: { left: 130, right: 48, top: 8, bottom: 8 },
-    xAxis: { type: "value", name: "predicted median response (min)", nameTextStyle: { fontSize: 9, color: T.chartText }, splitNumber: 3, axisLabel: { fontSize: 10, color: T.chartText }, splitLine: { lineStyle: { color: T.chartSplit } } },
-    yAxis: { type: "category", data: displayRows.map((r) => r.group), axisLabel: { fontSize: 10, color: T.chartText }, axisTick: { show: false } },
+    grid: { left: 130, right: 48, top: 8, bottom: 28 },
+    xAxis: { type: "value", name: "predicted median response (min)", nameLocation: "middle", nameGap: 24, nameTextStyle: { color: T.chartText }, splitNumber: 3, axisLabel: { color: T.chartText, formatter: (v: number) => `${v} min` }, splitLine: { lineStyle: { color: T.chartSplit } } },
+    yAxis: { type: "category", data: displayRows.map((r) => r.group), axisLabel: { color: T.chartText }, axisTick: { show: false } },
     tooltip: {
       trigger: "axis",
       axisPointer: { type: "shadow" },
@@ -154,9 +152,9 @@ export default function BreakdownResponseModel() {
         type: "bar",
         data: displayRows.map((r) => r.predictedMedianMin),
         barMaxWidth: 16,
-        itemStyle: { color: predictedColor, borderRadius: [0, 3, 3, 0] },
+        itemStyle: { color: predictedColor, borderRadius: [0, 4, 4, 0] },
         label: {
-          show: true, position: "right", color: T.textSecondary, fontSize: 11, fontWeight: 600,
+          show: true, position: "right", color: T.textPrimary, fontSize: 11, fontWeight: 600,
           formatter: (p: unknown) => `${(p as { value: number | null }).value ?? "—"}m`,
         },
       },
@@ -164,75 +162,67 @@ export default function BreakdownResponseModel() {
   };
 
   return (
-    <article className="chart-card wide" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
-        <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
-          Response Time Breakdown
-          <InfoTooltip text="Predicted dispatch response time (AAP, Patrol Vehicle, RAMFA, and others), by cause or by service -- a trained model (Cox PH vs XGBoost, whichever scores lower held-out error) predicting a deployment's response_time_min from pre-dispatch context, scored against the actual measured median on a chronological, event-grouped holdout. The descriptive counterpart to this card (Descriptive tab) shows the same two groupings from measured history alone, with no model behind it." />
-        </h3>
+    <article className="chart-card wide inc-card">
+      <div className="inc-card-head">
+        <div className="inc-card-titles">
+          <h3 className="inc-card-title">
+            Response Time Breakdown
+            <InfoTooltip text="Predicted dispatch response time (AAP, Patrol Vehicle, RAMFA, and others), by cause or by service -- a trained model (Cox PH vs XGBoost, whichever scores lower held-out error) predicting a deployment's response_time_min from pre-dispatch context, scored against the actual measured median on a chronological, event-grouped holdout. The descriptive counterpart to this card (Descriptive tab) shows the same two groupings from measured history alone, with no model behind it." />
+          </h3>
+        </div>
         {champion && (
           <span
+            className="inc-tag"
+            style={{ fontSize: "var(--fs-label)", padding: "3px 10px" }}
             title={`Champion model: ${champion} -- MAE ${championMetrics.mae != null ? fmtNum(championMetrics.mae, 1) : "—"} min on ${championMetrics.n?.toLocaleString("en-US") ?? "—"} held-out dispatches${championMetrics.scoreValue ? `, ${championMetrics.scoreLabel.toLowerCase()} ${championMetrics.scoreValue}` : ""}`}
-            style={{
-              display: "inline-flex", alignItems: "center", padding: "2px 9px",
-              borderRadius: "999px", fontSize: "0.7rem", fontWeight: 600,
-              background: "var(--bg-surface-hover)", color: "var(--text-secondary)",
-              border: "1px solid var(--border-default)", flexShrink: 0,
-            }}
           >
             Model: {champion}
           </span>
         )}
       </div>
 
-      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-        <div style={{ flex: "1 1 140px", padding: "10px 14px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
-          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Held-out MAE</div>
-          <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--text-primary)" }}>
-            {championMetrics.mae != null ? `${fmtNum(championMetrics.mae, 1)} min` : "—"}
-          </div>
+      {/* The answer first: how far off the model is on dispatches it never saw. */}
+      <div className="inc-stats">
+        <div className="inc-stat">
+          <span className="inc-stat-label">Held-out MAE</span>
+          <span className="inc-stat-value">{championMetrics.mae != null ? `${fmtNum(championMetrics.mae, 1)} min` : "—"}</span>
         </div>
-        <div style={{ flex: "1 1 140px", padding: "10px 14px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
-          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>{championMetrics.scoreLabel}</div>
-          <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--text-primary)" }}>
-            {championMetrics.scoreValue ?? "—"}
-          </div>
+        <div className="inc-stat">
+          <span className="inc-stat-label">{championMetrics.scoreLabel}</span>
+          <span className="inc-stat-value">{championMetrics.scoreValue ?? "—"}</span>
         </div>
-        <div style={{ flex: "1 1 140px", padding: "10px 14px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
-          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Trained</div>
-          <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)" }}>{fmtTrainedAt(data.trainedAt)}</div>
+        <div className="inc-stat">
+          <span className="inc-stat-label">Trained</span>
+          <span className="inc-stat-value is-text">{fmtTrainedAt(data.trainedAt)}</span>
         </div>
       </div>
 
       <div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", marginBottom: "8px" }}>
-          <h4 style={{ margin: 0, fontSize: "0.85rem", color: "var(--text-primary)", fontWeight: 700 }}>Predicted Median Response Time</h4>
-          <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px" }}>
+        <div className="inc-card-head" style={{ alignItems: "center", marginBottom: 8 }}>
+          <h4 className="inc-subhead">Predicted Median Response Time</h4>
+          <div className="inc-seg" role="group" aria-label="Group by">
             {(["cause", "service"] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                style={{
-                  padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
-                  background: view === v ? "var(--action)" : "transparent",
-                  color: view === v ? "var(--text-on-dark)" : "var(--text-secondary)",
-                  fontWeight: 600, fontSize: "0.72rem",
-                }}
-              >
+              <button key={v} onClick={() => setView(v)} aria-pressed={view === v} className={view === v ? "is-on" : ""}>
                 {v === "cause" ? "By Cause" : "By Service"}
               </button>
             ))}
           </div>
         </div>
         {rows.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", margin: 0 }}>No {view === "cause" ? "cause" : "service"} groups met the training script's evidence cutoff.</p>
+          <p className="inc-caption">No {view === "cause" ? "cause" : "service"} groups met the training script&apos;s evidence cutoff.</p>
         ) : (
           <>
-            <DashboardChart option={chartOption} height={Math.max(160, displayRows.length * 34)} />
-            <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", margin: "6px 0 0 0" }}>
-              Top {rows.length} {view === "cause" ? "causes" : "services"} by held-out evidence. Built from breakdown_data&apos;s per-dispatch
-              records; responses over 24h are treated as data-entry noise and excluded, same as the Descriptive tab&apos;s own figures.
+            <DashboardChart option={chartOption} height={Math.max(180, displayRows.length * 34 + 20)} />
+            <p className="inc-caption" style={{ marginTop: 6 }}>
+              Top {rows.length} {view === "cause" ? "causes" : "services"} by held-out evidence.
             </p>
+            <details className="nc-details">
+              <summary>How this is measured</summary>
+              <p style={{ margin: 0 }}>
+                Built from breakdown_data&apos;s per-dispatch records; responses over 24h are treated as data-entry noise and excluded,
+                same as the Descriptive tab&apos;s own figures.
+              </p>
+            </details>
           </>
         )}
       </div>

@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Shift Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;500;600;700&family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #172046;          /* ballpoint blue-black: the shell */
+    --ink-2: #2a3466;
+    --form: #f3f4f1;         /* carbonless form white, cool not cream */
+    --sheet: #ffffff;
+    --rule: #d9dcd6;
+    --rule-strong: #b9bdb5;
+    --text: #141a33;
+    --text-2: #4a516b;
+    --canary: #f6dc55;       /* the carried-forward highlighter */
+    --canary-ink: #5a4700;
+    --stamp: #c4202f;        /* congested, and only congested */
+    --slow: #d9821f;
+    --clear: #2f9a5c;
+    --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+    --mono: "Atkinson Hyperlegible Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 1440px; height: 900px; overflow: hidden; background: var(--form); color: var(--text); font-family: var(--sans); font-size: 15px; display: grid; grid-template-columns: 232px 1fr; }
+  nav { background: var(--ink); color: #dfe3f4; padding: 18px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .brand { font-weight: 800; font-size: 17px; color: #fff; padding: 4px 10px 18px; letter-spacing: -0.01em; }
+  .brand span { color: var(--canary); }
+  .grp { font-size: 12px; font-weight: 600; color: #9aa3cc; padding: 14px 10px 6px; letter-spacing: 0.02em; }
+  .item { padding: 8px 10px; border-radius: 4px; font-size: 15px; font-weight: 500; color: #dfe3f4; display: flex; align-items: center; gap: 10px; }
+  .item.on { background: var(--form); color: var(--ink); font-weight: 700; }
+  .item svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+  .who { margin-top: auto; border-top: 1px solid var(--ink-2); padding: 12px 10px 0; font-size: 13px; color: #b9c0e0; }
+  main { display: flex; flex-direction: column; min-width: 0; }
+  header.top { height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid var(--rule); background: var(--sheet); }
+  .crumb { font-size: 14px; color: var(--text-2); }
+  .crumb b { color: var(--text); }
+  .fresh { display: flex; align-items: center; gap: 18px; font-family: var(--mono); font-size: 13px; color: var(--text-2); }
+  .fresh .live { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+  .fresh .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--clear); }
+  select { font: 500 13px var(--sans); border: 1px solid var(--rule-strong); border-radius: 4px; padding: 5px 8px; background: var(--sheet); color: var(--text); }
+  .page { padding: 22px 28px 0; }
+  h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.015em; }
+  .sub { color: var(--text-2); margin-top: 2px; font-size: 14px; }
+  .log { margin-top: 18px; background: var(--sheet); border: 1px solid var(--rule); }
+  .entry { display: grid; grid-template-columns: 112px 1fr; border-top: 1px solid var(--rule); }
+  .entry:first-child { border-top: 0; }
+  .gutter { border-right: 1px solid var(--rule); padding: 14px 14px; font-family: var(--mono); font-size: 13px; color: var(--text-2); line-height: 1.45; }
+  .gutter b { display: block; font-size: 17px; color: var(--text); font-weight: 700; }
+  .body { padding: 14px 20px; min-width: 0; }
+  .status { display: flex; align-items: baseline; gap: 28px; flex-wrap: wrap; }
+  .big { font-size: 34px; font-weight: 800; letter-spacing: -0.02em; color: var(--stamp); font-variant-numeric: tabular-nums; }
+  .big small { font-size: 17px; font-weight: 600; color: var(--text); letter-spacing: 0; }
+  .tally { display: flex; gap: 22px; font-size: 16px; }
+  .tally span { display: inline-flex; align-items: center; gap: 7px; }
+  .tally i { width: 12px; height: 4px; display: inline-block; }
+  .tally b { font-family: var(--mono); font-size: 17px; }
+  .slowest { font-size: 15px; color: var(--text-2); }
+  .slowest b { color: var(--text); }
+  .slowest .num { font-family: var(--mono); color: var(--stamp); font-weight: 700; }
+  .row-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .row-head h2 { font-size: 16px; font-weight: 700; }
+  .legend { display: flex; gap: 16px; font-size: 13px; color: var(--text-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 14px; height: 6px; display: inline-block; }
+  .entry.stale .body { background: color-mix(in srgb, var(--canary) 34%, white); }
+  .entry.stale .gutter { background: color-mix(in srgb, var(--canary) 22%, white); }
+  .stale-tag { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--canary-ink); border: 1px solid #c9ad2a; padding: 1px 6px; border-radius: 3px; margin-right: 8px; }
+  a { color: var(--ink); font-weight: 700; text-underline-offset: 3px; }
+  .note { font-size: 12.5px; color: var(--text-2); margin-top: 8px; }
+  .mock { position: fixed; right: 12px; bottom: 10px; font: 600 11.5px var(--mono); color: #4a516b; }
+</style>
+</head>
+<body>
+<nav>
+  <div class="brand">SmartFlow <span>NLEX</span></div>
+  <div class="grp">Analytics</div>
+  <div class="item on"><svg viewBox="0 0 24 24"><path d="M3 12h18M3 6h18M3 18h12"/></svg>Overview</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/></svg>Traffic</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5"/></svg>Incidents</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M5 19c8 0 14-6 14-14C11 5 5 11 5 19z"/></svg>Emissions</div>
+  <div class="grp">Operations</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/></svg>Live Map</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M14 6l4 4-9 9H5v-4z"/></svg>Maintenance</div>
+  <div class="item"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/></svg>Mobile App</div>
+  <div class="grp">Planning</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M4 18V6M20 18V6M12 6v3M12 12v2M12 17v1"/></svg>Scenario Sandbox</div>
+  <div class="grp">Admin</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM4 10h16"/></svg>Data Management</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6"/></svg>Audit Log</div>
+  <div class="who">qa.data-analyst · Data Analyst</div>
+</nav>
+<main>
+  <header class="top">
+    <div class="crumb"><b>Corridor</b> · Sat 3 Oct 2026</div>
+    <div class="fresh">
+      <span class="live"><i></i>Waze feed · 22:56 · 1 min old</span>
+      <span>22:57:04</span>
+      <select aria-label="Theme"><option>Light</option><option>Dark</option><option>System</option></select>
+    </div>
+  </header>
+  <div class="page">
+    <h1>Corridor</h1>
+    <p class="sub">Km 12 Balintawak to Km 88.25 Sta. Ines, both carriageways</p>
+
+    <section class="log" aria-label="Corridor log">
+      <div class="entry">
+        <div class="gutter"><b>22:56</b>Waze<br>60-min window</div>
+        <div class="body">
+          <div class="status">
+            <div class="big">6 <small>exit-directions congested</small></div>
+            <div class="tally">
+              <span><i style="background:var(--slow)"></i><b>0</b> slow</span>
+              <span><i style="background:var(--clear)"></i><b>34</b> clear</span>
+            </div>
+            <div class="slowest">Slowest: <b>Paso de Blas Valenzuela</b> <span class="num">4 km/h</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="entry">
+        <div class="gutter"><b>22:56</b>Waze<br>matched to nearest exit</div>
+        <div class="body">
+          <div class="row-head">
+            <h2>Both carriageways</h2>
+            <div class="legend">
+              <span><i style="background:var(--stamp)"></i>Congested</span>
+              <span><i style="background:var(--slow)"></i>Slow</span>
+              <span><i style="background:var(--clear)"></i>Clear</span>
+              <span><i style="background:#c9cdd4"></i>No report</span>
+            </div>
+          </div>
+          <svg id="corr" width="100%" height="300" role="img" aria-label="Corridor diagram"></svg>
+        </div>
+      </div>
+
+      <div class="entry stale">
+        <div class="gutter"><b>14 Jul</b>Volume model<br>last forecast day</div>
+        <div class="body">
+          <span class="stale-tag">ENDED 81 DAYS AGO</span>The latest volume forecast runs 1–14 Jul 2026. Nothing newer has been produced, so Traffic's "next 14 days" is history, not a forecast. <a href="#">Open Traffic forecast</a>
+        </div>
+      </div>
+    </section>
+    <p class="note">Positions of the six congested exit-directions are read approximately off the 22:56 capture.</p>
+  </div>
+</main>
+<div class="mock">MOCK · Overview · counts from live capture 3 Oct 22:56</div>
+<script src="corridor.js"></script>
+<script>
+  document.fonts.ready.then(() => {
+    const ctx = document.createElement("canvas").getContext("2d");
+    const wOf = (font, s) => { ctx.font = font; return ctx.measureText(s).width; };
+    const KM = "600 12px 'Atkinson Hyperlegible Mono'", NM = "500 13px 'Atkinson Hyperlegible Next'";
+    drawCorridor(document.getElementById("corr"), {
+      width: document.getElementById("corr").getBoundingClientRect().width, yNB: 118, ySB: 168, laneWidth: 14, padL: 52, padR: 4,
+      clear: "#2f9a5c", congested: "#c4202f", markW: 7,
+      median: "#b9bdb5", medianDash: "3 4", scale: "#8a8f9e",
+      tick: "#c9cdc6", leader: "#d9dcd6", tickOut: 6,
+      labelRows: 4, rowH: 20, labelTop: 26, bothSides: true,
+      labelWidth: (k, n) => wOf(KM, k.toFixed(1)) + 5 + wOf(NM, n),
+      drawLabel: (el, x0, ly, k, n) => {
+        const kw = wOf(KM, k.toFixed(1));
+        el("text", { x: x0, y: ly, fill: "#4a516b", "font-family": "Atkinson Hyperlegible Mono", "font-size": 12, "font-weight": 600, stroke: "#ffffff", "stroke-width": 5, "paint-order": "stroke", "stroke-linejoin": "round" }, k.toFixed(1));
+        el("text", { x: x0 + kw + 5, y: ly, fill: "#141a33", "font-family": "Atkinson Hyperlegible Next", "font-size": 13, "font-weight": 500, stroke: "#ffffff", "stroke-width": 5, "paint-order": "stroke", "stroke-linejoin": "round" }, n);
+      },
+      dirLabel: true, dirColor: "#4a516b", dirFamily: "Atkinson Hyperlegible Next", dirSize: 13,
+    });
+  });
+</script>
+</body>
+</html>

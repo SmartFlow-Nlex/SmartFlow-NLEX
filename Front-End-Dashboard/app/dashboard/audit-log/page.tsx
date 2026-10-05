@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { cachedJson } from "../../../lib/cached-json";
-import { Activity, AlertCircle, ClipboardList, Eye, Upload, Users } from "lucide-react";
+import { Activity, ClipboardList, Eye, Upload, Users } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
+import StateNote from "../../../components/stage/StateNote";
 import { SortableTh, useTableSort } from "../../../lib/table-sort";
 import { logActivity } from "../../../lib/backend-auth";
 
@@ -353,7 +354,7 @@ export default function AuditLogPage() {
   const u = insights?.uploads;
 
   return (
-    <section className="ds-content ds-long">
+    <section className="ds-content ds-long audit-page">
       <PageHeader
         icon={ClipboardList}
         title="Audit Log"
@@ -366,7 +367,7 @@ export default function AuditLogPage() {
           </select>
         }
       />
-      <div className="tab-stat-grid compact">
+      <div className="tab-stat-grid compact audit-kpis">
         <article className="tab-stat-card">
           <div className="stat-content">
             <h3>Actions</h3>
@@ -398,37 +399,42 @@ export default function AuditLogPage() {
       </div>
 
       {insightsError && (
-        <p className="audit-warn" style={{ margin: "12px 0 0" }}><AlertCircle size={14} /> Insights unavailable: {insightsError}</p>
+        <div className="audit-insights-error">
+          <StateNote kind="error" size={44}>
+            <span className="audit-warn">Insights unavailable: {insightsError}</span>
+          </StateNote>
+        </div>
       )}
       {insights && <InsightsSection data={insights} />}
 
-      <section className="table-card" style={{ marginTop: 16 }}>
+      <section className="table-card audit-log-table" style={{ marginTop: 16 }}>
         <div className="table-toolbar">
           <input
+            aria-label="Search logs"
             placeholder="Search logs..."
             value={searchText}
             onChange={(event) => setSearchText(event.target.value)}
           />
-          <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
+          <select aria-label="Category" value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
             <option value="All">All Categories</option>
             {categories.map((c) => (
               <option key={c}>{c}</option>
             ))}
           </select>
-          <select value={selectedSeverity} onChange={(event) => setSelectedSeverity(event.target.value)}>
+          <select aria-label="Severity" value={selectedSeverity} onChange={(event) => setSelectedSeverity(event.target.value)}>
             <option value="All">All Severities</option>
             <option value="Info">Info</option>
             <option value="Warning">Warning</option>
             <option value="Critical">Critical</option>
           </select>
-          <select value={selectedDateRange} onChange={(event) => setSelectedDateRange(event.target.value)}>
+          <select aria-label="Date range" value={selectedDateRange} onChange={(event) => setSelectedDateRange(event.target.value)}>
             <option value="All Time">All Time</option>
             <option value="Today">Today</option>
             <option value="Last 7 Days">Last 7 Days</option>
             <option value="Last 30 Days">Last 30 Days</option>
           </select>
 
-          <button className="btn-primary" onClick={exportJSON}>Export JSON</button>
+          <button className="nc-pill audit-export" onClick={exportJSON}>Export JSON</button>
           <button
             className="btn-danger"
             onClick={() => {
@@ -459,36 +465,23 @@ export default function AuditLogPage() {
                 <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)", padding: 24 }}>Loading…</td></tr>
               )}
               {error && !loading && (
-                <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)", padding: 24 }}>Live data unavailable — is the backend running on port 4000?</td></tr>
+                <tr><td colSpan={7} className="audit-state-cell"><StateNote kind="error" size={44}>Live data unavailable — is the backend running on port 4000?</StateNote></td></tr>
               )}
               {!loading && !error && visibleLogs.length === 0 && (
-                <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)", padding: 24 }}>No audit events yet — actions like scheduling maintenance will appear here.</td></tr>
+                <tr><td colSpan={7} className="audit-state-cell"><StateNote kind="nodata" size={44}>No audit events yet — actions like scheduling maintenance will appear here.</StateNote></td></tr>
               )}
               {visibleLogs.map((log) => (
                 <tr key={log.id}>
-                  <td className="font-mono text-xs text-gray-500">{`#${String(log.id).padStart(3, '0')}`}</td>
-                  <td>{new Date(log.timestamp).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "medium" })}</td>
+                  <td className="audit-id">{`#${String(log.id).padStart(3, '0')}`}</td>
+                  <td className="audit-time">{new Date(log.timestamp).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "medium" })}</td>
                   <td>
                     {log.user}
-                    {log.role && <div className="audit-muted" style={{ fontSize: "0.75rem" }}>{log.role}</div>}
+                    {log.role && <div className="audit-muted audit-role">{log.role}</div>}
                   </td>
                   <td>
-                    <span
-                      className="badge"
-                      // Token pairs rather than fixed hex: the light fills these
-                      // used to carry are unreadable on the dark palette.
-                      style={
-                        log.category === "Sign-in" || log.category === "Audit Log"
-                          ? { background: "var(--color-info-bg)", color: "var(--color-info)" }
-                          : log.category === "Navigation"
-                            ? { background: "var(--color-purple-bg)", color: "var(--color-purple)" }
-                            : log.category === "Data Management" || log.category === "Model Training"
-                              ? { background: "var(--color-success-bg)", color: "var(--color-success)" }
-                              : log.category === "Mobile App"
-                                ? { background: "var(--color-warning-bg)", color: "var(--color-warning)" }
-                                : { background: "var(--color-danger-bg)", color: "var(--color-danger)" }
-                      }
-                    >
+                    {/* A neutral hairline pill: colour on this row is kept for Severity, so a
+                        category never reads as a status (Maintenance used to be danger red). */}
+                    <span className="badge audit-cat">
                       {log.category.toLowerCase()}
                     </span>
                   </td>

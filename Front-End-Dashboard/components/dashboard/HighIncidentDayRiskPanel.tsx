@@ -158,7 +158,7 @@ export default function HighIncidentDayRiskPanel() {
               style={{
                 padding: "4px 12px", borderRadius: "999px", border: "none", cursor: "pointer",
                 background: view === v ? "#4f46e5" : "transparent",
-                color: view === v ? "#fff" : "#4b5e7d",
+                color: view === v ? "#fff" : "var(--text-secondary)",
                 fontWeight: 600, fontSize: "0.72rem", whiteSpace: "nowrap",
                 opacity: v === "volume" && volScenarios.length === 0 ? 0.4 : 1,
               }}
@@ -187,15 +187,15 @@ export default function HighIncidentDayRiskPanel() {
       </p>
 
       <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-        <div style={{ flex: "1 1 120px", padding: "10px 14px", borderRadius: "10px", background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+        <div style={{ flex: "1 1 120px", padding: "10px 14px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
           <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Model AUC</div>
           <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#0f172a" }}>{fmtNum(risk.auc, 3)}</div>
         </div>
-        <div style={{ flex: "1 1 120px", padding: "10px 14px", borderRadius: "10px", background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+        <div style={{ flex: "1 1 120px", padding: "10px 14px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
           <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Base rate</div>
           <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#0f172a" }}>{(risk.base_rate * 100).toFixed(1)}%</div>
         </div>
-        <div style={{ flex: "1 1 120px", padding: "10px 14px", borderRadius: "10px", background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+        <div style={{ flex: "1 1 120px", padding: "10px 14px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
           <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Held-out days</div>
           <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#0f172a" }}>{fmtInt(risk.n)}</div>
         </div>

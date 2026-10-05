@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Category Standard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f8fa; --surface: #ffffff; --border: #e4e7ec; --text: #101828; --text-2: #475467;
+    --accent: #2563eb; --congested: #d92d20; --slow: #dc6803; --clear: #079455;
+    --sans: Inter, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 1440px; height: 900px; overflow: hidden; background: var(--bg); color: var(--text); font: 400 14px var(--sans); display: grid; grid-template-columns: 240px 1fr; }
+  nav { background: var(--surface); border-right: 1px solid var(--border); padding: 18px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .brand { font-weight: 700; font-size: 16px; padding: 2px 10px 18px; }
+  .grp { font-size: 12px; font-weight: 500; color: var(--text-2); padding: 14px 10px 6px; }
+  .item { padding: 8px 10px; border-radius: 6px; font-weight: 500; color: #344054; display: flex; gap: 10px; align-items: center; }
+  .item.on { background: #eff4ff; color: var(--accent); font-weight: 600; }
+  .item svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+  .who { margin-top: auto; font-size: 13px; color: var(--text-2); padding: 10px; border-top: 1px solid var(--border); }
+  main { display: flex; flex-direction: column; min-width: 0; }
+  header.top { height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  header .fresh { color: var(--text-2); display: flex; gap: 16px; align-items: center; font-variant-numeric: tabular-nums; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--clear); display: inline-block; margin-right: 6px; }
+  select { font: 500 13px var(--sans); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; background: #fff; }
+  .page { padding: 24px 28px; display: flex; flex-direction: column; gap: 20px; }
+  h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .sub { color: var(--text-2); margin-top: 4px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr) 1.6fr; gap: 16px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  .stat .lbl { color: var(--text-2); font-weight: 500; }
+  .stat .val { font-size: 30px; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .stat .val small { font-size: 14px; color: var(--text-2); font-weight: 500; margin-left: 4px; letter-spacing: 0; }
+  .stat .name { font-size: 18px; font-weight: 600; margin-top: 8px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px 8px; }
+  .card-head { display: flex; justify-content: space-between; align-items: center; }
+  .card-head h2 { font-size: 16px; font-weight: 600; }
+  .card-head p { color: var(--text-2); margin-top: 2px; }
+  .legend { display: flex; gap: 14px; color: var(--text-2); font-size: 13px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .note { color: var(--text-2); font-size: 12.5px; }
+  .mock { position: fixed; right: 12px; bottom: 10px; font: 500 12px var(--sans); color: #667085; }
+</style>
+</head>
+<body>
+<nav>
+  <div class="brand">SmartFlow NLEX</div>
+  <div class="grp">Analytics</div>
+  <div class="item on"><svg viewBox="0 0 24 24"><path d="M3 12h18M3 6h18M3 18h12"/></svg>Overview</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/></svg>Traffic</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5"/></svg>Incidents</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M5 19c8 0 14-6 14-14C11 5 5 11 5 19z"/></svg>Emissions</div>
+  <div class="grp">Operations</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/></svg>Live Map</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M14 6l4 4-9 9H5v-4z"/></svg>Maintenance</div>
+  <div class="item"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/></svg>Mobile App</div>
+  <div class="grp">Planning</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M4 18V6M20 18V6M12 6v3M12 12v2M12 17v1"/></svg>Scenario Sandbox</div>
+  <div class="grp">Admin</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM4 10h16"/></svg>Data Management</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6"/></svg>Audit Log</div>
+  <div class="who">qa.data-analyst · Data Analyst</div>
+</nav>
+<main>
+  <header class="top">
+    <div><b>Overview</b></div>
+    <div class="fresh"><span><span class="dot"></span>Waze feed updated 1 min ago</span><span>Sat 3 Oct, 22:57</span>
+      <select aria-label="Theme"><option>Light</option><option>Dark</option><option>System</option></select></div>
+  </header>
+  <div class="page">
+    <div><h1>Corridor overview</h1><p class="sub">Live status for Km 12 Balintawak to Km 88.25 Sta. Ines, both directions, last 60 minutes</p></div>
+    <section class="stats">
+      <div class="stat"><div class="lbl">Congested</div><div class="val" style="color:var(--congested)">6<small>exit-directions</small></div></div>
+      <div class="stat"><div class="lbl">Slow</div><div class="val">0<small>exit-directions</small></div></div>
+      <div class="stat"><div class="lbl">Clear</div><div class="val">34<small>exit-directions</small></div></div>
+      <div class="stat"><div class="lbl">Slowest reading</div><div class="name">Paso de Blas Valenzuela · <span style="color:var(--congested)">4 km/h</span></div></div>
+    </section>
+    <section class="card">
+      <div class="card-head">
+        <div><h2>Corridor status</h2><p>Waze jam reports matched to the nearest exit</p></div>
+        <div class="legend"><span><i style="background:var(--congested)"></i>Congested</span><span><i style="background:var(--slow)"></i>Slow</span><span><i style="background:var(--clear)"></i>Clear</span><span><i style="background:#d0d5dd"></i>No report</span></div>
+      </div>
+      <svg id="corr" width="100%" height="330" role="img" aria-label="Corridor diagram"></svg>
+    </section>
+    <p class="note">Positions of the six congested exit-directions are read approximately off the 22:56 capture.</p>
+  </div>
+</main>
+<div class="mock">Mock · Overview · counts from live capture 3 Oct 22:56</div>
+<script src="corridor.js"></script>
+<script>
+  document.fonts.ready.then(() => {
+    const svg = document.getElementById("corr");
+    const ctx = document.createElement("canvas").getContext("2d");
+    const wOf = (font, s) => { ctx.font = font; return ctx.measureText(s).width; };
+    const NM = "500 12.5px Inter";
+    drawCorridor(svg, {
+      width: svg.getBoundingClientRect().width, yNB: 140, ySB: 186, laneWidth: 12, padL: 46, padR: 4,
+      clear: "#079455", congested: "#d92d20", markW: 7, markR: 2,
+      median: "#d0d5dd", medianDash: "4 4",
+      tick: "#e4e7ec", leader: "#e4e7ec", tickOut: 6,
+      labelRows: 4, rowH: 20, labelTop: 26, bothSides: true,
+      labelWidth: (k, n) => wOf(NM, `${n} · ${k.toFixed(1)}`),
+      drawLabel: (el, x0, ly, k, n) => {
+        el("text", { x: x0, y: ly, fill: "#344054", "font-family": "Inter", "font-size": 12.5, "font-weight": 500, stroke: "#ffffff", "stroke-width": 5, "paint-order": "stroke", "stroke-linejoin": "round" }, `${n} · ${k.toFixed(1)}`);
+      },
+      dirLabel: true, dirColor: "#475467", dirFamily: "Inter", dirSize: 12.5,
+    });
+  });
+</script>
+</body>
+</html>

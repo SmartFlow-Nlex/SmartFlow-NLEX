@@ -1,0 +1,1246 @@
+/* Night Corridor: page styles for ops. Loaded after globals.css (app/layout.tsx),
+   so rules here override the shared layer at equal specificity. Tokens only.
+
+   Two routes, both under Operations and both without a domain accent, so
+   --page-accent is the shell's expressway blue (--action):
+   - /dashboard/maintenance  (.nc-ops-maint): roadworks schedule, form, lifecycle.
+   - /dashboard/mobile       (.nc-ops-mobile): what the companion app shows.
+   Every rule is scoped to one of those two page roots, because the classes
+   they restyle (.ms-*, .ds-mc-*, .ds-phone-*, .ds-adv-*) are global. */
+
+/* ===========================================================================
+   SHARED
+   =========================================================================== */
+.nc-ops .nc-ops-num { font-variant-numeric: tabular-nums; }
+
+/* Dialogs and menus on these pages sit over an Italiana title and the grid
+   furniture; the raised tint is laid over the stage colour so nothing ghosts
+   through it. Same colour as --bg-raised, fully opaque. */
+.nc-ops-maint .nc-ops-modal,
+.nc-ops-maint .nc-ops-status-menu,
+.nc-ops-maint .nc-ops-select-menu,
+.nc-ops-mobile .ds-modal.is-wide {
+  background-color: var(--stage);
+  background-image: linear-gradient(var(--bg-raised), var(--bg-raised));
+}
+
+/* The confirm step of a destructive action is the one solid danger button;
+   the control that opens it stays the danger ghost (.btn-danger). */
+:root .nc-ops .btn-danger.is-solid {
+  border-color: var(--color-danger);
+  background: var(--color-danger);
+  color: var(--pill-ink);
+}
+:root[data-theme="light"] .nc-ops .btn-danger.is-solid { color: var(--text-on-dark); }
+:root .nc-ops .btn-danger.is-solid:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 86%, var(--text-primary));
+  border-color: color-mix(in srgb, var(--color-danger) 86%, var(--text-primary));
+}
+
+/* Lifecycle status as a hairline pill with a leading dot. The colour carries
+   the lifecycle (scheduled / in progress / completed / cancelled), never a
+   road state. */
+.nc-ops .ms-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.nc-ops .ms-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+.nc-ops .ms-badge.blue   { color: var(--color-info);    border-color: var(--color-info-border);    background: var(--color-info-bg); }
+.nc-ops .ms-badge.yellow { color: var(--color-warning); border-color: var(--color-warning-border); background: var(--color-warning-bg); }
+.nc-ops .ms-badge.green  { color: var(--color-success); border-color: var(--color-success-border); background: var(--color-success-bg); }
+.nc-ops .ms-badge.red    { color: var(--color-danger);  border-color: var(--color-danger-border);  background: var(--color-danger-bg); }
+
+/* ===========================================================================
+   MAINTENANCE  (/dashboard/maintenance)
+   =========================================================================== */
+
+/* --- Filter shelf ----------------------------------------------------------- */
+.nc-ops-maint .nc-ops-filters { flex-wrap: wrap; row-gap: 10px; }
+.nc-ops-maint .nc-ops-status-filter { flex-wrap: wrap; }
+/* The active filter keeps its tick, so the choice never rests on colour alone. */
+.nc-ops-maint .nc-ops-status-filter button > svg.nc-ops-check { display: inline-block; flex: none; margin-right: 6px; }
+.nc-ops-maint .nc-ops-status-filter button { display: inline-flex; align-items: center; }
+
+.nc-ops-maint .nc-ops-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 240px;
+  width: auto;
+  max-width: 360px;
+  min-height: 32px;
+  margin-left: auto;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--bg-input);
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: text;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.nc-ops-maint .nc-ops-search:hover { border-color: var(--hairline-hover); }
+.nc-ops-maint .nc-ops-search:focus-within {
+  border-color: var(--page-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--page-accent) 22%, transparent);
+}
+.nc-ops-maint .nc-ops-search svg { flex: none; }
+.nc-ops-maint .nc-ops-search input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 400;
+}
+.nc-ops-maint .nc-ops-search input[type="text"]:focus-visible { border: 0; box-shadow: none; outline: none; }
+
+/* --- Schedule card ---------------------------------------------------------- */
+.nc-ops-maint .nc-ops-card { padding: 20px 22px 8px; }
+.nc-ops-maint .nc-ops-card-head { align-items: center; margin-bottom: 16px; }
+.nc-ops-maint .nc-ops-new { flex: none; white-space: nowrap; }
+.nc-ops-maint .nc-ops-card > .nc-state { margin: 4px 0 14px; }
+
+/* The table runs edge to edge inside the card; its first and last columns
+   line up with the card's own padding. */
+.nc-ops-maint .nc-ops-table-wrap {
+  max-height: none;
+  overflow: visible;
+  margin: 0 -22px;
+  padding: 0;
+}
+.nc-ops-maint .nc-ops-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.nc-ops-maint .nc-ops-table thead { position: static; }
+.nc-ops-maint .nc-ops-table thead th {
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid var(--border-default);
+  background: transparent;
+  text-align: left;
+  white-space: nowrap;
+}
+.nc-ops-maint .nc-ops-table .ds-th-sort { color: var(--text-muted); transition: color var(--transition-fast); }
+.nc-ops-maint .nc-ops-table .ds-th-sort:hover { color: var(--text-primary); }
+.nc-ops-maint .nc-ops-table .ds-th-sort.active { color: var(--text-primary); }
+.nc-ops-maint .nc-ops-table .ds-th-sort.active .ds-th-arrow { color: var(--page-accent); }
+.nc-ops-maint .nc-ops-table .ds-th-sort:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 4px; border-radius: var(--radius-sm); }
+.nc-ops-maint .nc-ops-table td {
+  padding: 14px;
+  border-bottom: 1px solid var(--border-default);
+  vertical-align: middle;
+  font-size: var(--fs-body);
+  font-weight: 400;
+  color: var(--text-primary);
+}
+.nc-ops-maint .nc-ops-table :is(th, td):first-child { padding-left: 22px; }
+.nc-ops-maint .nc-ops-table :is(th, td):last-child { padding-right: 22px; }
+.nc-ops-maint .nc-ops-table tbody tr:last-child td { border-bottom: 0; }
+.nc-ops-maint .nc-ops-table tbody tr { transition: background-color var(--transition-fast); }
+.nc-ops-maint .nc-ops-table tbody tr:hover > td { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+.nc-ops-maint .nc-ops-td-status { width: 1%; white-space: nowrap; }
+.nc-ops-maint .nc-ops-td-work strong { display: block; font-weight: 600; color: var(--text-primary); }
+.nc-ops-maint .nc-ops-td-loc,
+.nc-ops-maint .nc-ops-td-window { white-space: nowrap; }
+.nc-ops-maint .nc-ops-sub {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* A description is prose, not a tag: body face, clipped to one line. */
+.nc-ops-maint .nc-ops-sub.is-clip {
+  max-width: 380px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-secondary);
+}
+
+.nc-ops .nc-ops-error {
+  margin: 8px 0 0;
+  font-size: var(--fs-body);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--color-danger);
+}
+.nc-ops .nc-ops-error.is-card { margin: 0; padding: 12px 0 10px; }
+.nc-ops .nc-ops-error.is-modal { margin: 0; padding: 0 22px 10px; }
+
+/* --- Status control (the pill IS the control) ------------------------------ */
+.nc-ops-maint .nc-ops-status-btn {
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+.nc-ops-maint .nc-ops-status-btn:hover:not(:disabled) { border-color: currentColor; }
+.nc-ops-maint .nc-ops-status-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.nc-ops-maint .nc-ops-status-btn:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+.nc-ops-maint .nc-ops-chevron { flex: none; transition: rotate var(--transition-fast); }
+.nc-ops-maint .nc-ops-status-btn[aria-expanded="true"] .nc-ops-chevron { rotate: 180deg; }
+.nc-ops-maint .nc-ops-status-menu { min-width: 210px; z-index: 40; }
+
+/* --- Custom select (exit, lane closure) ------------------------------------ */
+.nc-ops-maint .nc-ops-select { display: block; width: 100%; }
+.nc-ops-maint .nc-ops-select-btn {
+  width: 100%;
+  min-height: 44px;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 400;
+}
+.nc-ops-maint .nc-ops-select-btn:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+.nc-ops-maint .nc-ops-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.nc-ops-maint .nc-ops-select-value.is-placeholder { color: var(--text-muted); font-weight: 300; }
+.nc-ops-maint .nc-ops-select-menu { width: 100%; max-height: 240px; overflow-y: auto; }
+.nc-ops-maint .nc-ops-select-opt {
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: var(--fs-body);
+  font-variant-numeric: tabular-nums;
+}
+.nc-ops-maint .nc-ops-select-opt.is-danger,
+.nc-ops-maint .nc-ops-select-opt.is-danger:hover { color: var(--color-danger); }
+.nc-ops-maint .nc-ops-tick { flex: none; margin-left: auto; color: var(--page-accent); }
+.nc-ops-maint .nc-ops-tick.is-lead { margin-left: 0; }
+.nc-ops-maint .nc-ops-select-opt.is-danger .nc-ops-tick { color: currentColor; }
+
+/* --- Dialogs: one raised surface ------------------------------------------- */
+.nc-ops-maint .nc-ops-backdrop { z-index: 90; padding: 16px; }
+.nc-ops-maint .nc-ops-modal { width: min(100%, 440px); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; }
+.nc-ops-maint .nc-ops-modal.is-detail { width: min(100%, 580px); }
+.nc-ops-maint .nc-ops-modal.is-form { width: min(100%, 800px); }
+.nc-ops-maint .nc-ops-modal-head { align-items: center; gap: 14px; padding: 20px 22px 14px; }
+.nc-ops-maint .nc-ops-modal-head [class*="detailIcon"] { width: 40px; height: 40px; }
+.nc-ops-maint .nc-ops-modal-head [class*="detailTitles"] p { margin-top: 6px; }
+.nc-ops-maint .nc-ops-modal-head [class*="detailClose"] { border: 1px solid var(--border-strong); color: var(--text-secondary); }
+.nc-ops-maint .nc-ops-modal-head [class*="detailClose"]:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); border-color: var(--hairline-hover); color: var(--text-primary); }
+.nc-ops-maint .nc-ops-icon-danger { color: var(--color-danger); border-color: var(--color-danger-border); }
+
+.nc-ops-maint .nc-ops-modal [class*="detailBody"] { padding: 2px 22px 16px; overflow-y: auto; }
+.nc-ops-maint .nc-ops-detail-row { padding: 10px 12px; border-radius: var(--radius-sm); }
+.nc-ops-maint .nc-ops-detail-row:hover { background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+
+.nc-ops-maint .nc-ops-modal-body { padding: 2px 22px 4px; }
+.nc-ops-maint .nc-ops-prose {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.nc-ops-maint .nc-ops-prose strong { font-weight: 600; color: var(--text-primary); }
+
+.nc-ops-maint .nc-ops-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 22px 20px;
+}
+.nc-ops-maint .nc-ops-actions.is-wrap { flex-wrap: wrap; padding-top: 14px; border-top: 1px solid var(--border-default); }
+.nc-ops-maint .nc-ops-actions.is-form { border-top: 1px solid var(--border-default); padding-top: 16px; }
+.nc-ops-maint .nc-ops-push { margin-left: auto; }
+
+/* "This cannot be undone.": a warning set apart by a hairline, not a box. */
+.nc-ops-maint .nc-ops-modal-foot {
+  margin: 0;
+  padding: 12px 22px 16px;
+  align-items: center;
+  border: 0;
+  border-top: 1px solid var(--border-default);
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-danger);
+}
+.nc-ops-maint .nc-ops-modal-foot svg { flex: none; }
+.nc-ops-maint .nc-ops-modal-foot p { color: var(--text-secondary); }
+
+/* --- The form ----------------------------------------------------------------- */
+.nc-ops-maint .nc-ops-form-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  max-height: calc(100vh - 200px);
+  max-height: calc(100dvh - 200px);
+  padding: 4px 24px 18px;
+  overflow-y: auto;
+}
+.nc-ops-maint .ms-section-label {
+  margin: 8px 0 -2px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-default);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.nc-ops-maint .ms-input-group { gap: 8px; min-width: 0; }
+.nc-ops-maint .ms-input-group label {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.nc-ops-maint .ms-req { color: var(--color-danger); }
+.nc-ops-maint .ms-input { min-height: 44px; padding: 10px 14px; line-height: 1.4; }
+.nc-ops-maint .ms-textarea { min-height: 0; resize: vertical; line-height: 1.55; }
+.nc-ops-maint .ms-input[type="number"] { font-variant-numeric: tabular-nums; }
+.nc-ops-maint .ms-form-row { gap: 14px; }
+
+/* Direction: one pill, two segments. A thumb slides under the chosen side. */
+.nc-ops-maint .nc-ops-seg2 {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--bg-input);
+}
+.nc-ops-maint .nc-ops-seg2::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 6px);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--page-accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--page-accent);
+  transition: translate var(--transition-base);
+}
+.nc-ops-maint .nc-ops-seg2:has(> button:nth-child(2).active)::before { translate: calc(100% + 4px) 0; }
+.nc-ops-maint .nc-ops-seg2 button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+.nc-ops-maint .nc-ops-seg2 button:hover:not(.active) { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.nc-ops-maint .nc-ops-seg2 button.active { color: var(--text-primary); }
+.nc-ops-maint .nc-ops-seg2 button:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+.nc-ops-maint .nc-ops-seg2-name { font-weight: 400; color: var(--text-muted); }
+.nc-ops-maint .nc-ops-seg2 button.active .nc-ops-seg2-name { color: var(--text-secondary); }
+.nc-ops-maint .nc-ops-check { flex: none; color: var(--page-accent); }
+
+.nc-ops-maint .nc-ops-grid-loc {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.6fr) minmax(0, 1.5fr) minmax(0, 0.6fr);
+  gap: 12px;
+}
+.nc-ops-maint .nc-ops-grid-win {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.nc-ops-maint .nc-ops-segment-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 0;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.nc-ops-maint .nc-ops-segment-note svg { flex: none; color: var(--page-accent); }
+
+/* --- Narrow screens ------------------------------------------------------------ */
+@media (max-width: 760px) {
+  .nc-ops-maint .nc-ops-grid-loc { grid-template-columns: minmax(0, 1fr) minmax(0, 120px); }
+  .nc-ops-maint .nc-ops-grid-win { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .nc-ops-maint .ms-form-row { grid-template-columns: minmax(0, 1fr); }
+
+  /* The table becomes a list of rows. The sort headers stay, as a row of
+     pills above it, so sorting is not lost on a phone. */
+  .nc-ops-maint .nc-ops-table-wrap { margin: 0; }
+  .nc-ops-maint .nc-ops-table,
+  .nc-ops-maint .nc-ops-table thead,
+  .nc-ops-maint .nc-ops-table tbody,
+  .nc-ops-maint .nc-ops-table tr,
+  .nc-ops-maint .nc-ops-table td { display: block; }
+  .nc-ops-maint .nc-ops-table thead tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .nc-ops-maint .nc-ops-table thead th,
+  .nc-ops-maint .nc-ops-table thead th:first-child,
+  .nc-ops-maint .nc-ops-table thead th:last-child { display: block; padding: 0; border: 0; }
+  .nc-ops-maint .nc-ops-table .ds-th-sort {
+    min-height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-full);
+  }
+  .nc-ops-maint .nc-ops-table .ds-th-sort.active { border-color: var(--page-accent); background: color-mix(in srgb, var(--page-accent) 14%, transparent); }
+  .nc-ops-maint .nc-ops-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 12px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .nc-ops-maint .nc-ops-table tbody tr:last-child { border-bottom: 0; }
+  .nc-ops-maint .nc-ops-table td,
+  .nc-ops-maint .nc-ops-table td:first-child,
+  .nc-ops-maint .nc-ops-table td:last-child { padding: 0; border: 0; white-space: normal; }
+  .nc-ops-maint .nc-ops-table tbody tr:hover > td { background: transparent; }
+  .nc-ops-maint .nc-ops-td-work { grid-column: 1; grid-row: 1; }
+  .nc-ops-maint .nc-ops-td-status { grid-column: 2; grid-row: 1; width: auto; }
+  .nc-ops-maint .nc-ops-td-loc,
+  .nc-ops-maint .nc-ops-td-window { grid-column: 1 / -1; }
+  .nc-ops-maint .nc-ops-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 3px;
+    font-size: var(--fs-label);
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .nc-ops-maint .nc-ops-sub.is-clip { max-width: 100%; }
+  .nc-ops-maint .nc-ops-status-menu { right: 0; left: auto; }
+}
+
+@media (max-width: 640px) {
+  /* Wrapped onto three lines, a pinned shelf would hold a sixth of a phone
+     screen; here it scrolls away with the page instead. */
+  .nc-ops-maint .nc-ops-filters { position: relative; top: auto; }
+  .nc-ops-maint .nc-ops-search { flex: 1 1 100%; max-width: none; margin-left: 0; }
+  .nc-ops-maint .nc-ops-card { padding: 18px 16px 6px; }
+  .nc-ops-maint .nc-ops-card-head .nc-ops-new { width: 100%; }
+  .nc-ops-maint .nc-ops-modal-head,
+  .nc-ops-maint .nc-ops-actions,
+  .nc-ops-maint .nc-ops-modal-foot { padding-left: 18px; padding-right: 18px; }
+  .nc-ops-maint .nc-ops-form-body { padding-left: 18px; padding-right: 18px; }
+  .nc-ops-maint .nc-ops-modal [class*="detailBody"] { padding-left: 14px; padding-right: 14px; }
+  .nc-ops-maint .nc-ops-actions.is-form > * { flex: 1 1 auto; }
+}
+
+/* ===========================================================================
+   MOBILE APP CONTROL CENTRE  (/dashboard/mobile)
+   =========================================================================== */
+.nc-ops-mobile {
+  /* The handset is hardware, dark in both themes; its screen follows the
+     dashboard theme, as a phone in light or dark mode would. */
+  --ops-device: color-mix(in srgb, var(--expressway-blue) 7%, black);
+  --ops-device-edge: color-mix(in srgb, white 14%, transparent);
+  --ops-screen: var(--stage);
+  --ops-card: var(--bg-surface-solid);
+  /* The page grows with its content and the shell's <main> scrolls it, so a
+     tall header can never squeeze the list of switches to nothing. */
+  flex: none;
+}
+
+/* --- Provenance banner (built-in defaults) --------------------------------- */
+.nc-ops-mobile .nc-ops-banner {
+  display: block;
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
+.nc-ops-mobile .nc-ops-banner .nc-state.is-error {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-bg);
+}
+.nc-ops-mobile .nc-ops-banner code {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  font-size: 0.93em;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* --- Toasts (this page's own) ----------------------------------------------- */
+.nc-ops-mobile .ds-toast.is-ok,
+.nc-ops-mobile .ds-toast.is-error {
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.5;
+}
+.nc-ops-mobile .ds-toast.is-error { border-color: var(--color-danger-border); }
+.nc-ops-mobile .ds-toast > svg { flex: none; margin-top: 3px; }
+.nc-ops-mobile .ds-toast.is-ok > svg { color: var(--color-success); }
+.nc-ops-mobile .ds-toast.is-error > svg { color: var(--color-danger); }
+.nc-ops-mobile .ds-toast button { border-radius: 50%; color: var(--text-muted); opacity: 1; }
+.nc-ops-mobile .ds-toast button:hover { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--text-primary); }
+
+/* --- Advisory strip ----------------------------------------------------------- */
+.nc-ops-mobile .ds-mc-advisory-strip {
+  gap: 14px;
+  padding: 14px 16px 14px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  animation: nc-rise-12 0.6s cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+.nc-ops-mobile .ds-mc-advisory-strip.is-live {
+  border-color: color-mix(in srgb, var(--page-accent) 42%, transparent);
+  background: color-mix(in srgb, var(--page-accent) 6%, var(--bg-surface));
+}
+.nc-ops-mobile .ds-mc-advisory-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--text-muted);
+}
+.nc-ops-mobile .ds-mc-advisory-strip.is-live .ds-mc-advisory-icon {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page-accent) 55%, transparent);
+  color: var(--page-accent);
+}
+.nc-ops-mobile .ds-mc-advisory-text { gap: 4px; }
+.nc-ops-mobile .ds-mc-advisory-text b {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+.nc-ops-mobile .ds-mc-advisory-counts {
+  padding: 2px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.nc-ops-mobile .ds-mc-advisory-strip.is-live .ds-mc-advisory-counts {
+  border-color: color-mix(in srgb, var(--page-accent) 50%, transparent);
+  background: transparent;
+  color: var(--text-primary);
+}
+.nc-ops-mobile .ds-mc-advisory-text > span {
+  font-size: var(--fs-body);
+  font-weight: 300;
+  color: var(--text-secondary);
+}
+.nc-ops-mobile .ds-mc-advisory-chip { font-size: var(--fs-body); font-weight: 400; color: var(--text-primary); }
+
+/* Tone dots: the severity the app will show, from the semantic tokens. */
+.nc-ops-mobile .ds-mc-dot { width: 7px; height: 7px; }
+.nc-ops-mobile .ds-mc-dot.is-info { background: var(--color-info); }
+.nc-ops-mobile .ds-mc-dot.is-warning { background: var(--color-warning); }
+.nc-ops-mobile .ds-mc-dot.is-critical { background: var(--color-danger); }
+.nc-ops-mobile .ds-mc-dot.is-idle { background: var(--signal-none); }
+
+/* --- Grid and panels ------------------------------------------------------------ */
+.nc-ops-mobile .ds-mc-grid {
+  flex: none;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 384px);
+  gap: 16px;
+  margin-top: 16px;
+  align-items: stretch;
+}
+.nc-ops-mobile .ds-mc-panel {
+  margin-top: 0;
+  padding: 20px 22px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: none;
+  animation: nc-rise-12 0.6s cubic-bezier(0.25, 1, 0.5, 1) 40ms both;
+}
+.nc-ops-mobile aside .ds-mc-panel { animation-delay: 80ms; }
+.nc-ops-mobile .ds-mc-panel-head { margin-bottom: 14px; }
+.nc-ops-mobile .ds-mc-panel-head h2 { font-size: var(--fs-title); font-weight: 600; letter-spacing: 0; line-height: 1.25; }
+.nc-ops-mobile .ds-mc-panel-head p {
+  margin-top: 6px;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* Desktop: the switches and the phone sit side by side at one height. The
+   phone sets that height; the list of switches scrolls inside it (with its
+   edge fades) when an open tab makes it longer. */
+@media (min-width: 1101px) {
+  .nc-ops-mobile .ds-mc-grid > .ds-mc-col:first-child {
+    position: relative;
+    height: auto;
+    min-height: 520px;
+    align-self: stretch;
+  }
+  .nc-ops-mobile .ds-mc-grid > .ds-mc-col:first-child > .panel {
+    position: absolute;
+    inset: 0;
+  }
+  .nc-ops-mobile aside.ds-mc-col { align-self: start; height: auto; }
+}
+
+/* --- Tab rows (accordion) ------------------------------------------------------- */
+.nc-ops-mobile .ds-mc-features { gap: 8px; padding-right: 8px; }
+.nc-ops-mobile .ds-mc-features > li {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: transparent;
+  box-shadow: none;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+.nc-ops-mobile .ds-mc-features > li.is-open {
+  border-color: color-mix(in srgb, var(--page-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--page-accent) 4%, transparent);
+  box-shadow: none;
+}
+.nc-ops-mobile .ds-mc-feature-row { padding: 4px; }
+.nc-ops-mobile .ds-mc-disclosure {
+  gap: 14px;
+  padding: 10px 12px;
+  border-radius: calc(var(--radius-md) - 3px);
+  transition: background-color var(--transition-fast);
+}
+.nc-ops-mobile .ds-mc-disclosure:hover { background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+.nc-ops-mobile .ds-mc-disclosure:focus-visible { box-shadow: none; outline: 2px solid var(--page-accent); outline-offset: 0; }
+.nc-ops-mobile .ds-mc-feature-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--page-accent);
+}
+.nc-ops-mobile .ds-mc-features li.is-off .ds-mc-feature-icon { background: transparent; color: var(--text-muted); }
+.nc-ops-mobile .ds-mc-feature-text { gap: 2px; }
+.nc-ops-mobile .ds-mc-feature-text b { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); }
+.nc-ops-mobile .ds-mc-features li.is-off .ds-mc-feature-text b { color: var(--text-secondary); }
+.nc-ops-mobile .ds-mc-feature-text span { font-size: var(--fs-body); font-weight: 300; line-height: 1.45; color: var(--text-secondary); }
+.nc-ops-mobile .ds-mc-state { gap: 10px; color: var(--text-muted); }
+.nc-ops-mobile .ds-mc-state > svg { flex: none; transition: rotate var(--transition-fast); }
+.nc-ops-mobile .ds-mc-features li.is-open .ds-mc-state > svg { rotate: 180deg; }
+
+/* The tab's visibility readout. */
+.nc-ops-mobile .ds-mc-pill {
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.nc-ops-mobile .ds-mc-pill.is-shown {
+  border-color: color-mix(in srgb, var(--page-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--page-accent) 12%, transparent);
+  color: var(--text-primary);
+}
+.nc-ops-mobile .ds-mc-pill.is-hidden { color: var(--text-muted); background: transparent; }
+.nc-ops-mobile .ds-mc-pill.is-clickable {
+  min-height: 30px;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast), background-color var(--transition-fast);
+}
+.nc-ops-mobile .ds-mc-pill.is-clickable:hover { border-color: var(--hairline-hover); background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: var(--text-primary); }
+.nc-ops-mobile .ds-mc-pill.is-clickable:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+
+/* --- The open drawer: sections and their switches -------------------------------- */
+.nc-ops-mobile .ds-mc-sections {
+  padding: 0 16px 10px;
+  border-top: 1px solid var(--border-default);
+  background: transparent;
+}
+.nc-ops-mobile .ds-mc-sections-bulk {
+  gap: 12px;
+  margin: 0 0 4px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-default);
+  font-size: var(--fs-body);
+  font-weight: 300;
+  color: var(--text-secondary);
+}
+.nc-ops-mobile .ds-mc-linkbtn {
+  flex: none;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--text-primary);
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+.nc-ops-mobile .ds-mc-linkbtn:hover:not(:disabled) { border-color: var(--hairline-hover); background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.nc-ops-mobile .ds-mc-linkbtn:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+.nc-ops-mobile .ds-mc-sections ul { gap: 0; }
+.nc-ops-mobile .ds-mc-sections ul li {
+  gap: 12px;
+  padding: 9px 0;
+  border-radius: 0;
+}
+.nc-ops-mobile .ds-mc-sections ul li + li { border-top: 1px solid var(--border-default); }
+.nc-ops-mobile .ds-mc-section-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-default);
+  color: var(--text-muted);
+}
+.nc-ops-mobile .ds-mc-sections ul li:has(input:checked) .ds-mc-section-icon {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page-accent) 50%, transparent);
+  color: var(--page-accent);
+}
+/* Label and description share a line when there is room and wrap when there
+   is not, so no description is ever cut short. */
+.nc-ops-mobile .ds-mc-section-text { flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.nc-ops-mobile .ds-mc-section-text b { font-size: var(--fs-body); font-weight: 400; color: var(--text-primary); }
+.nc-ops-mobile .ds-mc-section-text > span {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.nc-ops-mobile .ds-mc-section-text > span::before { background: var(--text-muted); }
+@media (max-width: 760px) {
+  /* Too narrow to share a line: the description sits under its label, and the
+     separator dot (which would otherwise start the second line) goes. */
+  .nc-ops-mobile .ds-mc-section-text { flex-direction: column; align-items: flex-start; gap: 1px; }
+  .nc-ops-mobile .ds-mc-section-text > span::before { content: none; }
+}
+
+/* --- Switches: hairline track, warm-white thumb on the accent when on ------------- */
+.nc-ops-mobile .ds-switch-track {
+  width: 40px;
+  height: 22px;
+  padding: 3px;
+  border-radius: var(--radius-full);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.nc-ops-mobile .ds-switch-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--text-muted);
+  box-shadow: none;
+  transition: transform var(--transition-fast), background-color var(--transition-fast);
+}
+.nc-ops-mobile .ds-switch input:checked + .ds-switch-track { background: var(--page-accent); box-shadow: none; }
+.nc-ops-mobile .ds-switch input:checked + .ds-switch-track .ds-switch-thumb { transform: translateX(18px); background: var(--text-on-dark); }
+.nc-ops-mobile .ds-switch.is-small .ds-switch-track { width: 36px; height: 20px; }
+.nc-ops-mobile .ds-switch.is-small .ds-switch-thumb { width: 14px; height: 14px; }
+.nc-ops-mobile .ds-switch.is-small input:checked + .ds-switch-track .ds-switch-thumb { transform: translateX(16px); }
+.nc-ops-mobile .ds-switch:hover input:not(:disabled):not(:checked) + .ds-switch-track { box-shadow: inset 0 0 0 1px var(--hairline-hover); }
+.nc-ops-mobile .ds-switch input:focus-visible + .ds-switch-track { outline: 2px solid var(--page-accent); outline-offset: 2px; box-shadow: inset 0 0 0 1px var(--border-strong); }
+.nc-ops-mobile .ds-switch input:checked:focus-visible + .ds-switch-track { box-shadow: none; }
+
+/* --- The phone ---------------------------------------------------------------------- */
+.nc-ops-mobile .ds-mc-preview-panel { display: flex; flex-direction: column; }
+.nc-ops-mobile .ds-phone { padding: 6px 0 4px; }
+.nc-ops-mobile .ds-phone-frame {
+  width: 284px;
+  padding: 10px;
+  border-radius: 44px;
+  background: var(--ops-device);
+  box-shadow:
+    inset 0 0 0 1px var(--ops-device-edge),
+    inset 0 0 0 4px color-mix(in srgb, black 40%, transparent),
+    0 30px 60px -30px color-mix(in srgb, var(--expressway-blue) 55%, transparent);
+}
+/* Side keys: the power key right, the volume rocker left. */
+.nc-ops-mobile .ds-phone-frame::before,
+.nc-ops-mobile .ds-phone-frame::after {
+  content: "";
+  position: absolute;
+  width: 3px;
+  background: var(--ops-device);
+  box-shadow: inset 0 0 0 1px var(--ops-device-edge);
+}
+.nc-ops-mobile .ds-phone-frame::before { right: -3px; top: 132px; height: 62px; border-radius: 0 2px 2px 0; }
+.nc-ops-mobile .ds-phone-frame::after { left: -3px; top: 108px; height: 40px; border-radius: 2px 0 0 2px; }
+.nc-ops-mobile .ds-phone-notch {
+  top: 19px;
+  width: 78px;
+  height: 22px;
+  background: var(--ops-device);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 6%, transparent);
+}
+.nc-ops-mobile .ds-phone-screen {
+  height: clamp(380px, calc(100vh - 430px), 470px);
+  min-height: 0;
+  border-radius: 34px;
+  background: var(--ops-screen);
+}
+.nc-ops-mobile .ds-phone-status {
+  padding: 12px 24px 6px;
+  background: transparent;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.nc-ops-mobile .ds-phone-icons { gap: 4px; color: var(--text-primary); }
+.nc-ops-mobile .ds-phone-appbar {
+  padding: 12px 18px 12px;
+  background: transparent;
+  border-bottom: 1px solid var(--border-default);
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-primary);
+}
+.nc-ops-mobile .ds-phone-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px var(--color-success-bg);
+}
+.nc-ops-mobile .ds-phone-body { gap: 8px; padding: 14px 14px 16px; }
+.nc-ops-mobile .ds-phone-card {
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--ops-card);
+  box-shadow: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.nc-ops-mobile .ds-phone-card-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page-accent) 45%, transparent);
+  color: var(--page-accent);
+}
+.nc-ops-mobile .ds-phone-card-text { gap: 6px; padding-top: 3px; }
+.nc-ops-mobile .ds-phone-card-text b { font-size: var(--fs-label); font-weight: 600; line-height: 1.3; color: var(--text-primary); }
+.nc-ops-mobile .ds-phone-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text-primary) 12%, transparent); }
+
+/* An advisory, pinned at the top of Alerts, tinted by its tone. */
+.nc-ops-mobile .ds-phone-advisory {
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid;
+  border-radius: var(--radius-md);
+}
+.nc-ops-mobile .ds-phone-advisory b { font-size: var(--fs-micro); font-weight: 600; letter-spacing: 2px; text-transform: uppercase; }
+.nc-ops-mobile .ds-phone-advisory span { font-size: var(--fs-label); line-height: 1.45; color: var(--text-primary); }
+.nc-ops-mobile .ds-phone-advisory.is-info     { border-color: var(--color-info-border);    background: var(--color-info-bg); }
+.nc-ops-mobile .ds-phone-advisory.is-info b   { color: var(--color-info); }
+.nc-ops-mobile .ds-phone-advisory.is-warning  { border-color: var(--color-warning-border); background: var(--color-warning-bg); }
+.nc-ops-mobile .ds-phone-advisory.is-warning b { color: var(--color-warning); }
+.nc-ops-mobile .ds-phone-advisory.is-critical { border-color: var(--color-danger-border);  background: var(--color-danger-bg); }
+.nc-ops-mobile .ds-phone-advisory.is-critical b { color: var(--color-danger); }
+
+.nc-ops-mobile .ds-phone-blank { gap: 6px; padding: 24px 18px; color: var(--text-muted); }
+.nc-ops-mobile .ds-phone-blank svg { opacity: 1; }
+.nc-ops-mobile .ds-phone-blank b { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); }
+.nc-ops-mobile .ds-phone-blank span { font-size: var(--fs-label); line-height: 1.5; color: var(--text-secondary); }
+
+.nc-ops-mobile .ds-phone-tabs {
+  padding: 4px 4px 12px;
+  border-top: 1px solid var(--border-default);
+  background: transparent;
+}
+.nc-ops-mobile .ds-phone-tab {
+  gap: 3px;
+  padding: 8px 0 4px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+.nc-ops-mobile .ds-phone-tab small { font-size: var(--fs-micro); font-weight: 400; letter-spacing: 0; line-height: 1.2; }
+.nc-ops-mobile .ds-phone-tab:hover { color: var(--text-primary); }
+.nc-ops-mobile .ds-phone-tab.is-current { color: var(--page-accent); }
+.nc-ops-mobile .ds-phone-tab.is-current small { font-weight: 600; }
+.nc-ops-mobile .ds-phone-tab.is-current::before { width: 20px; background: var(--page-accent); }
+.nc-ops-mobile .ds-phone-tab:focus-visible { outline: 2px solid var(--page-accent); outline-offset: -2px; background: transparent; }
+
+.nc-ops-mobile .ds-phone-jump { gap: 8px; margin-top: 14px; }
+.nc-ops-mobile .ds-mc-note {
+  margin: 14px 0 0;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/* Pointing at a control lights up what commuters will see for it: a section
+   switch marks its card on the phone, a tab row marks its tab in the bar. */
+.nc-ops-mobile:has([data-mc-control="dashboard-statusSummary"]:is(:hover, :focus-within)) [data-mc-preview="dashboard-statusSummary"],
+.nc-ops-mobile:has([data-mc-control="dashboard-segmentForecast"]:is(:hover, :focus-within)) [data-mc-preview="dashboard-segmentForecast"],
+.nc-ops-mobile:has([data-mc-control="dashboard-corridorOutlook"]:is(:hover, :focus-within)) [data-mc-preview="dashboard-corridorOutlook"],
+.nc-ops-mobile:has([data-mc-control="dashboard-eventForecasts"]:is(:hover, :focus-within)) [data-mc-preview="dashboard-eventForecasts"],
+.nc-ops-mobile:has([data-mc-control="dashboard-mlHotspots"]:is(:hover, :focus-within)) [data-mc-preview="dashboard-mlHotspots"],
+.nc-ops-mobile:has([data-mc-control="map-liveStatus"]:is(:hover, :focus-within)) [data-mc-preview="map-liveStatus"],
+.nc-ops-mobile:has([data-mc-control="map-forecastView"]:is(:hover, :focus-within)) [data-mc-preview="map-forecastView"],
+.nc-ops-mobile:has([data-mc-control="community-shareUpdate"]:is(:hover, :focus-within)) [data-mc-preview="community-shareUpdate"],
+.nc-ops-mobile:has([data-mc-control="community-reportIncident"]:is(:hover, :focus-within)) [data-mc-preview="community-reportIncident"],
+.nc-ops-mobile:has([data-mc-control="community-filters"]:is(:hover, :focus-within)) [data-mc-preview="community-filters"],
+.nc-ops-mobile:has([data-mc-control="assistant-quickQuestions"]:is(:hover, :focus-within)) [data-mc-preview="assistant-quickQuestions"],
+.nc-ops-mobile:has([data-mc-control="assistant-capabilities"]:is(:hover, :focus-within)) [data-mc-preview="assistant-capabilities"],
+.nc-ops-mobile:has([data-mc-control="alerts-traffic"]:is(:hover, :focus-within)) [data-mc-preview="alerts-traffic"],
+.nc-ops-mobile:has([data-mc-control="alerts-maintenance"]:is(:hover, :focus-within)) [data-mc-preview="alerts-maintenance"] {
+  border-color: var(--page-accent);
+  box-shadow: 0 0 0 1px var(--page-accent), 0 0 20px -6px color-mix(in srgb, var(--page-accent) 70%, transparent);
+}
+.nc-ops-mobile:has([data-mc-control="tab-dashboard"]:is(:hover, :focus-within)) [data-mc-preview="tab-dashboard"],
+.nc-ops-mobile:has([data-mc-control="tab-map"]:is(:hover, :focus-within)) [data-mc-preview="tab-map"],
+.nc-ops-mobile:has([data-mc-control="tab-community"]:is(:hover, :focus-within)) [data-mc-preview="tab-community"],
+.nc-ops-mobile:has([data-mc-control="tab-assistant"]:is(:hover, :focus-within)) [data-mc-preview="tab-assistant"],
+.nc-ops-mobile:has([data-mc-control="tab-alerts"]:is(:hover, :focus-within)) [data-mc-preview="tab-alerts"] {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--page-accent) 16%, transparent);
+}
+
+/* --- Save bar: a raised shelf that rises from the foot of the page ------------------ */
+.nc-ops-mobile .ds-mc-savebar {
+  bottom: 16px;
+  z-index: 25;
+  border-radius: var(--radius-xl);
+  background: var(--bg-raised);
+}
+.nc-ops-mobile .ds-mc-savebar.is-open {
+  max-height: 96px;
+  margin-top: 16px;
+  padding: 12px 12px 12px 22px;
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+}
+.nc-ops-mobile .ds-mc-savebar-text { font-size: var(--fs-body); font-weight: 400; color: var(--text-primary); }
+.nc-ops-mobile .ds-mc-savebar-text .is-blocked { gap: 8px; color: var(--color-warning); }
+.nc-ops-mobile .ds-mc-savebar-actions { align-items: center; gap: 10px; }
+
+/* --- Advisory dialog ------------------------------------------------------------------ */
+.nc-ops-mobile .ds-modal.is-wide {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+}
+.nc-ops-mobile .ds-modal.is-wide .ds-modal-head {
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border-default);
+  background: transparent;
+}
+.nc-ops-mobile .ds-adv-title { gap: 12px; flex-wrap: wrap; }
+.nc-ops-mobile .ds-adv-title h2 { font-size: var(--fs-title); font-weight: 600; letter-spacing: 0; }
+.nc-ops-mobile .ds-adv-title-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page-accent) 50%, transparent);
+  color: var(--page-accent);
+}
+.nc-ops-mobile .ds-modal-close {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  transition: border-color var(--transition-fast), color var(--transition-fast), background-color var(--transition-fast);
+}
+.nc-ops-mobile .ds-modal-close:hover { border-color: var(--hairline-hover); background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
+.nc-ops-mobile .ds-modal-close:focus-visible { box-shadow: none; outline: 2px solid var(--page-accent); outline-offset: 2px; }
+.nc-ops-mobile .ds-modal.is-wide .ds-modal-body { gap: 12px; padding: 16px 22px 18px; }
+
+.nc-ops-mobile .ds-adv-empty {
+  gap: 8px;
+  padding: 30px 24px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+}
+.nc-ops-mobile .ds-adv-empty svg { color: var(--page-accent); opacity: 1; }
+.nc-ops-mobile .ds-adv-empty b { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); }
+.nc-ops-mobile .ds-adv-empty span { font-size: var(--fs-body); font-weight: 300; line-height: 1.55; }
+
+/* Each advisory: a hairline card tinted by its tone once it is published.
+   The tone shows as a dot and the tone control, not as a thick edge. */
+.nc-ops-mobile .ds-adv-list { gap: 10px; }
+.nc-ops-mobile .ds-adv-list li {
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: transparent;
+  box-shadow: none;
+}
+.nc-ops-mobile .ds-adv-list li::before { content: none; }
+.nc-ops-mobile .ds-adv-list li:hover { box-shadow: none; border-color: var(--border-strong); }
+.nc-ops-mobile .ds-adv-list li.tone-info { --tone: var(--color-info); }
+.nc-ops-mobile .ds-adv-list li.tone-warning { --tone: var(--color-warning); }
+.nc-ops-mobile .ds-adv-list li.tone-critical { --tone: var(--color-danger); }
+.nc-ops-mobile .ds-adv-list li.is-live {
+  border-color: color-mix(in srgb, var(--tone) 45%, transparent);
+  background: color-mix(in srgb, var(--tone) 6%, transparent);
+}
+.nc-ops-mobile .ds-adv-state {
+  gap: 8px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+}
+.nc-ops-mobile .ds-adv-state.is-live { color: var(--tone); }
+.nc-ops-mobile .ds-adv-list li.is-live .ds-mc-dot { background: var(--tone); }
+.nc-ops-mobile .ds-adv-pending {
+  min-height: 22px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--page-accent) 45%, transparent);
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-primary);
+}
+.nc-ops-mobile .ds-adv-delete {
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+}
+.nc-ops-mobile .ds-adv-delete:hover { color: var(--color-danger); border-color: var(--color-danger-border); background: var(--color-danger-bg); }
+.nc-ops-mobile .ds-adv-delete:focus-visible { box-shadow: none; outline: 2px solid var(--color-danger); outline-offset: 2px; opacity: 1; }
+.nc-ops-mobile .ds-adv-list textarea,
+.nc-ops-mobile .ds-adv-list li.is-live textarea {
+  padding: 10px 12px 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  font-size: var(--fs-body);
+  line-height: 1.55;
+}
+.nc-ops-mobile .ds-adv-counter {
+  right: 24px;
+  bottom: 8px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  opacity: 1;
+}
+.nc-ops-mobile .ds-adv-counter.is-near { color: var(--color-warning); }
+
+/* Tone: one segmented pill; the chosen tone wears its own colour. */
+.nc-ops-mobile .ds-mc-tones.is-inline {
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+}
+.nc-ops-mobile .ds-mc-tones.is-inline .ds-mc-tone {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+.nc-ops-mobile .ds-mc-tones.is-inline .ds-mc-tone b,
+.nc-ops-mobile .ds-mc-tones.is-inline .ds-mc-tone.is-active b {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.nc-ops-mobile .ds-mc-tones.is-inline .ds-mc-tone:not(.is-active):hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
+.nc-ops-mobile .ds-mc-tones.is-inline .ds-mc-tone:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+.nc-ops-mobile .ds-mc-tones.is-inline .ds-mc-tone.is-info.is-active     { color: var(--color-info);    border-color: var(--color-info-border);    background: var(--color-info-bg); }
+.nc-ops-mobile .ds-mc-tones.is-inline .ds-mc-tone.is-warning.is-active  { color: var(--color-warning); border-color: var(--color-warning-border); background: var(--color-warning-bg); }
+.nc-ops-mobile .ds-mc-tones.is-inline .ds-mc-tone.is-critical.is-active { color: var(--color-danger);  border-color: var(--color-danger-border);  background: var(--color-danger-bg); }
+
+.nc-ops-mobile .ds-adv-hint {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--color-warning);
+}
+.nc-ops-mobile .ds-adv-publish {
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 6px 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.nc-ops-mobile .ds-adv-list li.is-live .ds-adv-publish,
+.nc-ops-mobile .ds-adv-publish:has(input:checked) {
+  border-color: color-mix(in srgb, var(--page-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--page-accent) 10%, transparent);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.nc-ops-mobile .ds-adv-add {
+  width: 100%;
+  min-height: 44px;
+  border-style: dashed;
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+}
+.nc-ops-mobile .ds-adv-add:not(:disabled):hover {
+  border-color: var(--page-accent);
+  background: color-mix(in srgb, var(--page-accent) 8%, transparent);
+  color: var(--text-primary);
+}
+
+.nc-ops-mobile .ds-modal.is-wide .ds-modal-foot {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 14px 22px 16px;
+  border-top: 1px solid var(--border-default);
+  background: transparent;
+}
+.nc-ops-mobile .ds-modal-foot-note {
+  margin-right: auto;
+  font-size: var(--fs-body);
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+/* Something to send is said in the accent; nothing to send is not. */
+.nc-ops-mobile .ds-modal-foot:has(.nc-pill:not(:disabled)) .ds-modal-foot-note { color: var(--page-accent); }
+
+/* --- Narrow screens -------------------------------------------------------------------- */
+@media (max-width: 1100px) {
+  .nc-ops-mobile .ds-mc-grid { grid-template-columns: minmax(0, 1fr); }
+  /* One column: the list simply flows with the page rather than scrolling
+     inside it. */
+  .nc-ops-mobile .ds-mc-grid > .ds-mc-col,
+  .nc-ops-mobile .ds-mc-grid > .ds-mc-col > .panel { height: auto; flex: none; }
+  .nc-ops-mobile .ds-mc-features { flex: none; overflow: visible; padding-right: 0; }
+  .nc-ops-mobile .ds-phone-screen { height: 470px; }
+}
+@media (max-width: 640px) {
+  .nc-ops-mobile .ds-mc-advisory-strip { grid-template-columns: auto minmax(0, 1fr); padding: 14px; }
+  .nc-ops-mobile .ds-mc-advisory-strip .ds-mc-advisory-btn { grid-column: 1 / -1; justify-self: stretch; }
+  .nc-ops-mobile .ds-mc-panel { padding: 18px 14px; }
+  .nc-ops-mobile .ds-mc-disclosure { gap: 12px; padding: 10px 8px; }
+  .nc-ops-mobile .ds-mc-feature-icon { width: 34px; height: 34px; }
+  .nc-ops-mobile .ds-mc-sections { padding: 0 12px 8px; }
+  .nc-ops-mobile .ds-mc-sections-bulk { flex-wrap: wrap; }
+  .nc-ops-mobile .ds-phone-frame { width: min(284px, 100%); }
+  .nc-ops-mobile .ds-mc-savebar { bottom: 12px; }
+  .nc-ops-mobile .ds-mc-savebar.is-open { max-height: 200px; padding: 14px; }
+  .nc-ops-mobile .ds-modal.is-wide .ds-modal-head,
+  .nc-ops-mobile .ds-modal.is-wide .ds-modal-body,
+  .nc-ops-mobile .ds-modal.is-wide .ds-modal-foot { padding-left: 16px; padding-right: 16px; }
+  .nc-ops-mobile .ds-modal-foot-note { flex: 1 1 100%; }
+  .nc-ops-mobile .ds-adv-foot { gap: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nc-ops-maint .nc-ops-seg2::before,
+  .nc-ops-mobile .ds-mc-advisory-strip,
+  .nc-ops-mobile .ds-mc-panel { animation: none !important; transition: none !important; }
+}
+
+/* --- Phone proportions (5 Oct 2026, user request) ----------------------------------
+   The screen was a fixed 470 px tall at 264 px wide, squatter than any phone,
+   so the preview read as pinched. It now keeps a real phone's 9 : 19 screen,
+   a little wider so the five tab labels have room, and shrinks as a whole on
+   short windows instead of squashing. */
+.nc-ops-mobile .ds-phone-frame { width: min(300px, calc((100vh - 280px) * 0.4737 + 20px)); min-width: 236px; }
+.nc-ops-mobile .ds-phone-screen { height: auto; aspect-ratio: 9 / 19; }
+.nc-ops-mobile .ds-phone-tab small { white-space: nowrap; }

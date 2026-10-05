@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import AiModelInsight, { type InsightMetric } from "./AiModelInsight";
-import { Sparkles } from "lucide-react";
+import { FileText } from "lucide-react";
 import { createPortal } from "react-dom";
 import { META, type ModelKey, type ModelMetric } from "./incidentPredictive.shared";
 import { GenerateReportButton } from "./NarrativePanel";
@@ -117,7 +117,7 @@ export function MetricHint({ hint, children }: { hint: string; children: React.R
       onFocus={openTip}
       onBlur={closeTip}
       tabIndex={0}
-      style={{ cursor: "help", borderBottom: "1px dotted #94a3b8", outline: "none" }}
+      style={{ cursor: "help", borderBottom: "1px dotted var(--text-muted)", textDecoration: "none" }}
     >
       {children}
       {show &&
@@ -131,22 +131,24 @@ export function MetricHint({ hint, children }: { hint: string; children: React.R
               top: pos.top - 8,
               left: pos.left,
               transform: "translate(-50%, -100%)",
-              background: "#0f172a",
-              color: "#e2e8f0",
-              padding: "9px 11px",
-              borderRadius: 7,
-              fontSize: "0.7rem",
-              fontWeight: 400,
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              background: "var(--bg-raised)",
+              border: "1px solid var(--border-strong)",
+              color: "var(--text-primary)",
+              padding: "11px 14px",
+              borderRadius: 10,
+              fontSize: "var(--fs-body)",
+              fontWeight: 300,
+              fontFamily: "var(--font-ui)",
+              fontVariantNumeric: "tabular-nums",
               whiteSpace: "pre-line",
-              lineHeight: 1.55,
+              lineHeight: 1.5,
               width: "max-content",
-              maxWidth: 260,
+              maxWidth: 320,
               // Above any sticky/fixed page chrome (nav bar included) —
               // this renders in document.body, outside every ancestor
               // stacking context this component would otherwise inherit.
               zIndex: 2147483647,
-              boxShadow: "0 6px 18px rgba(0,0,0,0.3)",
+              boxShadow: "var(--shadow-lg)",
               textAlign: "left",
               textTransform: "none",
               letterSpacing: "normal",
@@ -162,9 +164,9 @@ export function MetricHint({ hint, children }: { hint: string; children: React.R
                 transform: "translateX(-50%)",
                 width: 0,
                 height: 0,
-                borderLeft: "5px solid transparent",
-                borderRight: "5px solid transparent",
-                borderTop: "5px solid #0f172a",
+                borderLeft: "6px solid transparent",
+                borderRight: "6px solid transparent",
+                borderTop: "6px solid var(--border-strong)",
               }}
             />
           </span>,
@@ -255,40 +257,23 @@ export default function IncidentNarrative({
   if (!open) return <GenerateReportButton onClick={() => setOpen(true)} />;
 
   return (
-    <section
-      style={{
-        border: "1px solid color-mix(in srgb, var(--page-accent, #4f46e5) 28%, transparent)",
-        borderRadius: 12,
-        background: "linear-gradient(135deg, color-mix(in srgb, var(--page-accent, #4f46e5) 11%, var(--bg-surface)), color-mix(in srgb, var(--page-accent, #4f46e5) 4%, var(--bg-surface)))",
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.5)",
-        padding: open ? "18px 20px" : "12px 18px",
-        display: "flex",
-        flexDirection: "column",
-        gap: open ? 14 : 0,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ minWidth: 190, display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: 9, flex: "none",
-            background: "linear-gradient(135deg, color-mix(in srgb, var(--page-accent, #4f46e5) 82%, white), var(--page-accent, #4f46e5))", color: "#fff", boxShadow: "0 1px 6px color-mix(in srgb, var(--page-accent, #4f46e5) 35%, transparent)" }}>
-            <Sparkles size={15} strokeWidth={2.4} />
-          </span>
-          <div>
-          <h4 style={{ margin: 0, fontSize: "0.98rem", fontWeight: 800, letterSpacing: "-0.01em", color: "#0f172a" }}>
-            Narrative Explanation
-          </h4>
+    <section className="nc-narrative">
+      <div className="nc-narrative-head">
+        <span className="nc-narrative-icon">
+          <FileText size={15} strokeWidth={2.2} aria-hidden="true" />
+        </span>
+        <div style={{ minWidth: 0 }}>
+          <h4>Narrative Explanation</h4>
           {!open && (
-            <p style={{ margin: "3px 0 0", fontSize: "0.78rem", color: "#64748b" }}>
+            <p className="nc-narrative-context" style={{ marginTop: 3 }}>
               Plain-language read-out of how {selected.length === 1 ? "the selected model" : `the ${selected.length} selected models`} performed
             </p>
           )}
-          </div>
         </div>
 
-        {/* Collapsed, the row was mostly dead space. These chips put the headline
-            verdict in it, so the strip is informative even before it is opened. */}
+        {/* Collapsed, the row carries the headline verdict as chips. */}
         {!open && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: 1, justifyContent: "flex-end" }}>
+          <div className="nc-narrative-chips" style={{ flex: 1, justifyContent: "flex-end" }}>
             {selected.map((k) => {
               const r = byModel.get(k);
               if (!r) return null;
@@ -296,26 +281,17 @@ export default function IncidentNarrative({
               return (
                 <span
                   key={k}
+                  className="inc-pill"
                   title={r.isChampion ? "Champion — the pipeline's selected model" : r.source === "holdout" ? "No scored days in the current view — showing the full-holdout numbers" : undefined}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 7,
-                    padding: "5px 11px", borderRadius: 8, fontSize: "0.735rem",
-                    background: r.isChampion ? "#f0fdf4" : "#f8fafc",
-                    border: `1px solid ${r.isChampion ? "#bbf7d0" : "#e6ebf3"}`,
-                  }}
                 >
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: META[k]?.color ?? "#64748b" }} />
-                  <b style={{ color: "#0f172a" }}>{META[k]?.label ?? k}</b>
-                  <span style={{ fontWeight: 700, fontSize: "0.66rem", color: r.isChampion ? "#15803d" : "#94a3b8" }}>
+                  <i style={{ background: META[k]?.color ?? "var(--text-muted)" }} />
+                  {META[k]?.label ?? k}
+                  <span style={{ color: r.isChampion ? "var(--color-purple)" : "var(--text-muted)" }}>
                     {r.isChampion ? "CHAMPION" : "CANDIDATE"}
                   </span>
-                  {r.WMAPE != null && (
-                    <span style={{ color: "#475569" }}>{r.WMAPE.toFixed(2)}%</span>
-                  )}
+                  {r.WMAPE != null && <span>{r.WMAPE.toFixed(2)}%</span>}
                   {mase != null && (
-                    <span style={{ color: mase < 1 ? "#15803d" : "#b91c1c", fontWeight: 600 }}>
-                      MASE {mase.toFixed(2)}
-                    </span>
+                    <span style={{ color: mase < 1 ? "var(--color-success)" : "var(--color-danger)" }}>MASE {mase.toFixed(2)}</span>
                   )}
                 </span>
               );
@@ -323,25 +299,14 @@ export default function IncidentNarrative({
           </div>
         )}
 
-        <button
-          onClick={() => setOpen((v) => !v)}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px",
-            marginLeft: open ? "auto" : 0, flexShrink: 0,
-            borderRadius: 999, cursor: "pointer", fontSize: "0.76rem", fontWeight: 600,
-            border: open ? "1px solid #cbd5e1" : "1px solid transparent",
-            background: open ? "#fff" : "linear-gradient(135deg, color-mix(in srgb, var(--page-accent, #4f46e5) 82%, white), var(--page-accent, #4f46e5))",
-            color: open ? "#475569" : "#fff",
-            boxShadow: open ? "none" : "0 1px 6px color-mix(in srgb, var(--page-accent, #4f46e5) 35%, transparent)",
-          }}
-        >
+        <button type="button" className="btn-muted nc-narrative-hide" onClick={() => setOpen((v) => !v)}>
           Hide report
         </button>
       </div>
 
       {open && (
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <p style={{ margin: 0, fontSize: "0.8rem", color: "#64748b" }}>
+      <div className="nc-narrative-body">
+        <p className="nc-narrative-context">
           {scoringCaption}
           {weather !== "all" ? ` · scored on ${weather} days only` : null}
         </p>

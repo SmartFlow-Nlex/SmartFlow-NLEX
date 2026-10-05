@@ -235,7 +235,11 @@ export default function ScenarioForecastPanel({
     <article className="sandbox-forecast">
       <div className="sandbox-forecast-head">
         <div className="sandbox-forecast-title">
-          <h3>Simulate a Forecast Day</h3>
+          <div className="sandbox-forecast-titlerow">
+            <h3>Simulate a Forecast Day</h3>
+            {/* What these tiles are: model output, not the simulation's own readings. */}
+            <span className="pill purple">Model forecast</span>
+          </div>
           <p>Starts the scenario from what the traffic, incident and emission models predict</p>
         </div>
 

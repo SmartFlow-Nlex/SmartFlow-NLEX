@@ -2,24 +2,15 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
-  Brain,
   Calendar,
-  Car,
   ChevronDown,
-  ClipboardList,
-  Home,
-  Leaf,
   LogOut,
-  Map,
   Menu,
-  Smartphone,
-  TrendingUp,
   User,
-  Wrench,
   X,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
@@ -35,31 +26,21 @@ import {
 import { SESSION_LOST_EVENT } from "../../lib/api";
 import { installBackendAuth, logActivity, logPageView } from "../../lib/backend-auth";
 import ThemeToggle from "../../components/dashboard/ThemeToggle";
+import EffectsToggle from "../../components/dashboard/EffectsToggle";
+import { NAV_TABS as tabs, NAV_GROUPS, navEntryFor, accentFor } from "../../lib/nav";
+import EditorialGrid from "../../components/stage/EditorialGrid";
+import SectionProgress from "../../components/stage/SectionProgress";
+import Mascot, { MascotFace } from "../../components/stage/Mascot";
+
+// The Night Corridor stage: one WebGL canvas behind the shell, client-only, and
+// mounted here once so it survives every navigation inside the dashboard.
+const NightCorridorStage = dynamic(() => import("../../components/stage/NightCorridorStage"), { ssr: false });
 
 // Before any page fetches: every request to the backend carries the signed-in user, for the audit log.
 if (typeof window !== "undefined") installBackendAuth();
 
-// The sidebar is the product's spine, so it is grouped by what the user is
-// trying to do rather than listed flat. Admin utilities sit in their own group
-// and are rendered pinned to the bottom, away from the daily-use links.
-const tabs = [
-  { label: "Overview", href: "/dashboard", icon: Home, group: "Analytics" },
-  { label: "Traffic", href: "/dashboard/traffic", icon: TrendingUp, group: "Analytics" },
-  { label: "Incidents", href: "/dashboard/incident", icon: AlertTriangle, group: "Analytics" },
-  { label: "Emissions", href: "/dashboard/sustainability", icon: Leaf, group: "Analytics" },
-
-  { label: "Live Map", href: "/dashboard/map-comparison", icon: Map, group: "Operations" },
-  { label: "Maintenance", href: "/dashboard/maintenance", icon: Wrench, group: "Operations" },
-  { label: "Mobile App", href: "/dashboard/mobile", icon: Smartphone, group: "Operations" },
-
-  { label: "Scenario Sandbox", href: "/dashboard/scenario-sandbox", icon: Car, group: "Planning" },
-
-  { label: "Data Management", href: "/dashboard/data-management", icon: Brain, group: "Admin" },
-  { label: "Audit Log", href: "/dashboard/audit-log", icon: ClipboardList, group: "Admin" },
-];
-
-/** Daily-use groups, in order. "Admin" is deliberately excluded — it renders last. */
-const NAV_GROUPS = ["Analytics", "Operations", "Planning"] as const;
+// The sidebar's tabs and groups live in lib/nav.ts (moved unchanged), so the
+// breadcrumb and the page headers read the same list.
 
 const MOBILE_BREAKPOINT = 980;
 
@@ -271,6 +252,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return "Administrator";
   }, [userRole]);
 
+  // Presentation only: where the topbar breadcrumb says the reader is.
+  const crumb = navEntryFor(pathname);
+  const onLiveMap = pathname.startsWith("/dashboard/map-comparison");
+
   /*
    * Nothing of the shell renders until the session and role are known, and a
    * page the role may not see is never rendered even once.
@@ -289,15 +274,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           ? "Redirecting to sign in…"
           : "You do not have access to that page. Returning to the overview…";
     return (
-      <div className="ds-auth-gate" role="status" aria-live="polite">
-        <span className="ds-auth-gate-spinner" aria-hidden="true" />
-        <p>{message}</p>
-      </div>
+      <>
+        <NightCorridorStage variant="dashboard" />
+        <div className="ds-auth-gate" role="status" aria-live="polite">
+          {/* The loader is the mascot's headlights, not a spinner. */}
+          <Mascot size={132} mood={authState === "authed" ? "error" : "loading"} />
+          <p>{message}</p>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className={shellClass}>
+    <>
+    <NightCorridorStage variant="dashboard" />
+    <div className={shellClass} data-accent={accentFor(pathname)}>
       {isMobile && sidebarOpen && (
         <div
           className="ds-sidebar-backdrop"
@@ -307,6 +298,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       )}
 
       <aside className="ds-sidebar">
+        {/* Brand mark: the wordmark when expanded, a crop of the mascot's face
+            and cap when the rail is collapsed to icons. */}
+        <div className="ds-sidebar-brand" aria-hidden="true">
+          <span className="ds-sidebar-wordmark">SmartFlow <b>NLEX</b></span>
+          <MascotFace size={28} />
+        </div>
 
         <nav className="ds-sidebar-nav">
           {NAV_GROUPS.map((group) => {
@@ -316,9 +313,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div key={group} className="ds-nav-group">
                 <span className="ds-nav-group-label">{group}</span>
                 {items.map((tab) => (
-                  <Link key={tab.href} href={tab.href} prefetch={true} className={`ds-sidebar-tab ${pathname === tab.href ? "active" : ""}`}>
+                  <Link key={tab.href} href={tab.href} prefetch={true} className={`ds-sidebar-tab ${pathname === tab.href ? "active" : ""}`} data-label={tab.label}>
                     <tab.icon size={18} strokeWidth={2} />
-                    {tab.label}
+                    <span className="ds-sidebar-tab-label">{tab.label}</span>
                   </Link>
                 ))}
               </div>
@@ -330,9 +327,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="ds-nav-group ds-nav-group-admin">
               <span className="ds-nav-group-label">Admin</span>
               {visibleTabs.filter((t) => t.group === "Admin").map((tab) => (
-                <Link key={tab.href} href={tab.href} prefetch={true} className={`ds-sidebar-tab ${pathname === tab.href ? "active" : ""}`}>
+                <Link key={tab.href} href={tab.href} prefetch={true} className={`ds-sidebar-tab ${pathname === tab.href ? "active" : ""}`} data-label={tab.label}>
                   <tab.icon size={18} strokeWidth={2} />
-                  {tab.label}
+                  <span className="ds-sidebar-tab-label">{tab.label}</span>
                 </Link>
               ))}
             </div>
@@ -347,13 +344,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <span className="ds-user-role">{displayRoleName}</span>
             </div>
           </div>
-          <button type="button" className="ds-logout-button" onClick={() => setShowLogoutConfirm(true)}>
-            <LogOut size={16} strokeWidth={2.5} /> Log out
+          <button type="button" className="ds-logout-button" onClick={() => setShowLogoutConfirm(true)} data-label="Log out">
+            <LogOut size={16} strokeWidth={2.2} /> <span className="ds-sidebar-tab-label">Log out</span>
           </button>
         </div>
       </aside>
 
       <main className="ds-main">
+        {/* Editorial grid hairlines; the Live Map has none (the map is the stage). */}
+        {!onLiveMap && <EditorialGrid variant="dashboard" />}
         <header className="ds-topbar" ref={topbarRef}>
           <div className="ds-topbar-left">
             <button type="button" className="ds-menu-button" aria-label="Toggle menu" onClick={toggleSidebar}>
@@ -386,9 +385,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               />
               SmartFlow NLEX
             </div>
+            {crumb && (
+              <nav className="ds-crumbs" aria-label="Breadcrumb">
+                <span>{crumb.group}</span>
+                <span className="ds-crumbs-dot" aria-hidden="true">·</span>
+                <span aria-current="page">{crumb.label}</span>
+              </nav>
+            )}
           </div>
 
           <div className="ds-topbar-right">
+            {!onLiveMap && <EffectsToggle />}
             <ThemeToggle />
             {/* Live clock differs between server render and first client tick;
                 suppress the expected hydration text mismatch on these nodes. */}
@@ -400,6 +407,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </header>
 
         {children}
+        <SectionProgress />
       </main>
 
       {showLogoutConfirm && (
@@ -417,7 +425,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           >
             <div className="ds-confirm-body">
               <span className="ds-confirm-icon" aria-hidden="true">
-                <LogOut size={20} strokeWidth={2.4} />
+                <Mascot size={78} mood={loggingOut ? "off" : "idle"} />
               </span>
               <div className="ds-confirm-text">
                 <h3 id="logout-title">Log out of SmartFlow?</h3>
@@ -458,5 +466,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       )}
     </div>
+    </>
   );
 }

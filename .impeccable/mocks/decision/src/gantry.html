@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lane Signal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --night: #081327;        /* gantry sky: deep navy, not black */
+    --steel: #0f1f3d;        /* panels */
+    --steel-2: #183062;      /* selected */
+    --rule: #22396b;
+    --text: #e8eefb;
+    --text-2: #a4b5d8;
+    --action: #5cc8ff;       /* the one colour that means "you can press or drag this" */
+    --clear: #34d17f;        /* lane-signal green arrow */
+    --slow: #ffb21e;         /* lane-signal amber */
+    --congested: #ff4f4f;    /* lane-signal red cross */
+    --sans: "Archivo", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 1440px; height: 900px; overflow: hidden; background: var(--night); color: var(--text); font: 400 15px var(--sans); display: grid; grid-template-columns: 224px 1fr; }
+  nav { background: #0a1730; border-right: 1px solid var(--rule); padding: 16px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .brand { font: 800 19px var(--sans); font-stretch: 85%; letter-spacing: 0.01em; padding: 4px 10px 18px; display: flex; align-items: center; gap: 8px; }
+  .brand svg { width: 22px; height: 22px; }
+  .grp { font: 650 12px var(--sans); font-stretch: 80%; letter-spacing: 0.08em; text-transform: uppercase; color: #8094bd; padding: 14px 10px 6px; }
+  .item { padding: 8px 10px; border-radius: 6px; font-weight: 550; color: #cfd9f0; display: flex; align-items: center; gap: 10px; }
+  .item.on { background: var(--steel-2); color: #fff; }
+  .item svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+  .who { margin-top: auto; font-size: 13px; color: #8ea0c6; padding: 10px; border-top: 1px solid var(--rule); }
+  main { display: flex; flex-direction: column; min-width: 0; }
+  header.top { height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 0 26px; border-bottom: 1px solid var(--rule); }
+  .title { display: flex; align-items: baseline; gap: 14px; }
+  h1 { font: 750 22px var(--sans); font-stretch: 90%; }
+  .guide { font: 600 14px var(--sans); font-stretch: 80%; color: var(--text-2); letter-spacing: 0.02em; }
+  .fresh { display: flex; align-items: center; gap: 18px; font: 600 14px var(--sans); font-stretch: 85%; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .fresh .live { color: var(--text); display: inline-flex; align-items: center; gap: 7px; }
+  .fresh .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--clear); }
+  select { font: 600 13px var(--sans); background: var(--steel); color: var(--text); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 8px; }
+  .page { padding: 16px 26px; display: flex; flex-direction: column; gap: 14px; }
+  .stage { position: relative; height: 548px; border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; background: #0b1934; }
+  .stage canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+  .stage .hint { position: absolute; left: 16px; top: 12px; font: 600 13px var(--sans); color: var(--text-2); }
+  .stage .hint b { color: var(--action); font-weight: 650; }
+  .lbl { position: absolute; transform: translate(-50%, -100%); font: 650 12px var(--sans); font-stretch: 82%; color: var(--text); white-space: nowrap; padding-bottom: 4px; pointer-events: none; }
+  .lbl em { font-style: normal; color: var(--text-2); font-weight: 600; margin-right: 4px; font-variant-numeric: tabular-nums; }
+  .readout { position: absolute; transform: translate(-50%, -100%); background: #f4f7ff; color: #0a1630; border-radius: 8px; padding: 10px 12px; width: 268px; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35); pointer-events: none; }
+  .readout .km { font: 800 13px var(--sans); font-stretch: 80%; letter-spacing: 0.06em; color: #3a4f80; }
+  .readout .nm { font: 750 18px var(--sans); font-stretch: 88%; margin: 1px 0 8px; }
+  .readout .dirs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .readout .d { display: flex; align-items: center; gap: 7px; font: 650 13px var(--sans); }
+  .sig { width: 22px; height: 22px; border-radius: 4px; background: #0a1630; display: inline-grid; place-items: center; flex: none; }
+  .sig svg { width: 14px; height: 14px; }
+  .readout:after { content: ""; position: absolute; left: 50%; bottom: -7px; margin-left: -7px; border: 7px solid transparent; border-bottom: 0; border-top-color: #f4f7ff; }
+  .ruler { position: relative; height: 34px; }
+  .ruler svg { width: 100%; height: 34px; display: block; }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr) 1.5fr; gap: 14px; }
+  .cnt { border: 1px solid var(--rule); background: var(--steel); border-radius: 10px; padding: 12px 16px; display: flex; align-items: center; gap: 14px; }
+  .cnt .sig { width: 40px; height: 40px; border-radius: 6px; }
+  .cnt .sig svg { width: 24px; height: 24px; }
+  .cnt .v { font: 800 36px var(--sans); font-stretch: 85%; line-height: 1; font-variant-numeric: tabular-nums; }
+  .cnt .l { font: 600 13.5px var(--sans); color: var(--text-2); margin-top: 3px; }
+  .plate { background: #f4f7ff; color: #0a1630; border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; justify-content: center; }
+  .plate .l { font: 650 13px var(--sans); color: #3a4f80; }
+  .plate .v { font: 800 22px var(--sans); font-stretch: 88%; margin-top: 2px; }
+  .plate .v span { color: #c81e1e; }
+  .note { font-size: 12.5px; color: var(--text-2); }
+  .mock { position: fixed; right: 12px; bottom: 10px; font: 600 12px var(--sans); color: #8094bd; letter-spacing: 0.04em; }
+</style>
+</head>
+<body>
+<nav>
+  <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="#5cc8ff" stroke-width="2"><path d="M3 20L10 4M21 20L14 4M12 8v2M12 13v2M12 18v2"/></svg>SmartFlow NLEX</div>
+  <div class="grp">Analytics</div>
+  <div class="item on"><svg viewBox="0 0 24 24"><path d="M3 12h18M3 6h18M3 18h12"/></svg>Overview</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/></svg>Traffic</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5"/></svg>Incidents</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M5 19c8 0 14-6 14-14C11 5 5 11 5 19z"/></svg>Emissions</div>
+  <div class="grp">Operations</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/></svg>Live Map</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M14 6l4 4-9 9H5v-4z"/></svg>Maintenance</div>
+  <div class="item"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/></svg>Mobile App</div>
+  <div class="grp">Planning</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M4 18V6M20 18V6M12 6v3M12 12v2M12 17v1"/></svg>Scenario Sandbox</div>
+  <div class="grp">Admin</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM4 10h16"/></svg>Data Management</div>
+  <div class="item"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6"/></svg>Audit Log</div>
+  <div class="who">qa.data-analyst · Data Analyst</div>
+</nav>
+<main>
+  <header class="top">
+    <div class="title"><h1>Corridor</h1><span class="guide">Balintawak Km 12 — Sta. Ines Km 88.25</span></div>
+    <div class="fresh"><span class="live"><i></i>Waze · 22:56 · 1 min old</span><span>Sat 3 Oct · 22:57</span>
+      <select aria-label="Theme"><option>Dark</option><option>Light</option><option>System</option></select></div>
+  </header>
+  <div class="page">
+    <section class="stage" aria-label="3D corridor">
+      <canvas id="c3"></canvas>
+      <div class="hint">Drag the <b>car</b> along the road to read any km</div>
+      <div id="labels"></div>
+      <div class="readout" id="ro">
+        <div class="km" id="ro-km">KM 15.4</div>
+        <div class="nm" id="ro-nm">Paso de Blas Valenzuela</div>
+        <div class="dirs" id="ro-dirs"></div>
+      </div>
+    </section>
+    <div class="ruler"><svg id="ruler"></svg></div>
+    <section class="row" aria-label="Corridor status, last 60 minutes">
+      <div class="cnt"><span class="sig" data-s="congested"></span><div><div class="v" style="color:var(--congested)">6</div><div class="l">exit-directions congested</div></div></div>
+      <div class="cnt"><span class="sig" data-s="slow"></span><div><div class="v">0</div><div class="l">slow</div></div></div>
+      <div class="cnt"><span class="sig" data-s="clear"></span><div><div class="v">34</div><div class="l">clear</div></div></div>
+      <div class="plate"><div class="l">Slowest reading, last 60 min</div><div class="v">Paso de Blas Valenzuela · <span>4 km/h</span></div></div>
+    </section>
+    <p class="note">Positions of the six congested exit-directions are read approximately off the 22:56 capture.</p>
+  </div>
+</main>
+<div class="mock">MOCK · OVERVIEW · COUNTS FROM LIVE CAPTURE 3 OCT 22:56</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="corridor.js"></script>
+<script src="scene3d.js"></script>
+<script>
+  const GLYPH = {
+    congested: '<svg viewBox="0 0 24 24" fill="none" stroke="#ff4f4f" stroke-width="3.4" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg>',
+    slow: '<svg viewBox="0 0 24 24" fill="none" stroke="#ffb21e" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 9v9H9"/></svg>',
+    clear: '<svg viewBox="0 0 24 24" fill="none" stroke="#34d17f" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M5 13l7 7 7-7"/></svg>',
+  };
+  document.querySelectorAll(".sig[data-s]").forEach((e) => (e.innerHTML = GLYPH[e.dataset.s]));
+  const M = window.MOCK;
+  const nearest = (km) => M.exits.reduce((a, b) => (Math.abs(b[0] - km) < Math.abs(a[0] - km) ? b : a));
+  const st = (dir, k) => (M.congestedAt[dir].includes(k) ? "congested" : "clear");
+  const SHOWN = [12.0, 20.2, 27.2, 38.5, 45.3, 56.9, 65.8, 81.2, 88.3];
+
+  document.fonts.ready.then(() => {
+    const canvas = document.getElementById("c3");
+    const stage = canvas.parentElement;
+    const ro = document.getElementById("ro");
+    const lab = document.getElementById("labels");
+    let api;
+    const place = (km, project) => {
+      const [k, n] = nearest(km);
+      document.getElementById("ro-km").textContent = `KM ${km.toFixed(1)} · NEAREST EXIT KM ${k.toFixed(1)}`;
+      document.getElementById("ro-nm").textContent = n;
+      document.getElementById("ro-dirs").innerHTML = ["NB", "SB"].map((d) => `<div class="d"><span class="sig">${GLYPH[st(d, k)]}</span>${d} ${st(d, k)}</div>`).join("");
+      const p = project(km, 8, -6.5);
+      ro.style.left = `${Math.max(150, Math.min(stage.clientWidth - 150, p.x))}px`;
+      ro.style.top = `${p.y - 10}px`;
+      // gantry labels for exits ahead of the car, nearest first, skipping any
+      // that would collide with one already placed
+      lab.innerHTML = "";
+      const placed = [];
+      M.exits.filter(([ek]) => ek > km + 0.3).slice(0, 8).forEach(([ek, en]) => {
+        const q = project(ek, 12.5, 0);
+        if (q.x < 40 || q.x > stage.clientWidth - 40 || q.y < 30) return;
+        const w = 9 * (en.length + 5);
+        if (placed.some((r) => Math.abs(r.x - q.x) < (r.w + w) / 2 && Math.abs(r.y - q.y) < 20)) return;
+        placed.push({ x: q.x, y: q.y, w });
+        const d = document.createElement("div");
+        d.className = "lbl";
+        d.style.left = `${q.x}px`;
+        d.style.top = `${q.y}px`;
+        d.innerHTML = `<em>${ek.toFixed(1)}</em>${en}`;
+        lab.appendChild(d);
+      });
+      drawRuler(km);
+    };
+    api = makeCorridorScene(canvas, {
+      ground: 0x0b1934, asphalt: 0x1d2c4c, laneLine: 0x7d93c4, median: 0x2c3f66, steel: 0x6176a3, signFace: 0x0a1630,
+      clear: 0x34d17f, congested: 0xff4f4f, car: 0x5cc8ff, carCabin: 0xdff3ff, grid: 0x15295a,
+      fog: 0x0b1934, fogNear: 120, fogFar: 520, unitsPerKm: 12, fov: 42,
+      follow: { back: 30, up: 26, side: 24, ahead: 70, lookZ: 0, kmPerPx: 0.04 },
+      carKm: 14.4, carLane: "NB", carScale: 2.1, gantryH: 10, ambient: 0.85, sun: 0.55,
+      onMove: place,
+    });
+    const ruler = document.getElementById("ruler");
+    let rDrag = false;
+    const rKm = (e) => { const r = ruler.getBoundingClientRect(); return 12 + ((e.clientX - r.left - 6) / (r.width - 12)) * 76.25; };
+    ruler.addEventListener("pointerdown", (e) => { rDrag = true; ruler.setPointerCapture(e.pointerId); api.setKm(rKm(e)); });
+    ruler.addEventListener("pointermove", (e) => rDrag && api.setKm(rKm(e)));
+    ruler.addEventListener("pointerup", () => (rDrag = false));
+  });
+
+  function drawRuler(carKm) {
+    const svg = document.getElementById("ruler");
+    const w = svg.getBoundingClientRect().width;
+    const x = (k) => 6 + ((k - 12) / 76.25) * (w - 12);
+    let s = `<line x1="${x(12)}" x2="${x(88.25)}" y1="12" y2="12" stroke="#2b4377" stroke-width="2"/>`;
+    for (let k = 15; k <= 85; k += 5) s += `<text x="${x(k)}" y="31" fill="#8094bd" font-family="Archivo" font-size="11" font-weight="600" text-anchor="middle">${k}</text>`;
+    for (const [k] of M.exits) {
+      const c = M.congestedAt.NB.includes(k) || M.congestedAt.SB.includes(k) ? "#ff4f4f" : "#4b6aa8";
+      s += `<line x1="${x(k)}" x2="${x(k)}" y1="6" y2="18" stroke="${c}" stroke-width="2"/>`;
+    }
+    s += `<circle cx="${x(carKm)}" cy="12" r="7" fill="#5cc8ff" stroke="#081327" stroke-width="2"/>`;
+    svg.innerHTML = s;
+  }
+</script>
+</body>
+</html>

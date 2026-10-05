@@ -1,29 +1,27 @@
-import { Home } from "lucide-react";
 import InteractiveRoadMap from "./components/InteractiveRoadMap";
 import OverviewLive from "../../components/overview/OverviewLive";
-import PageHeader from "../../components/dashboard/PageHeader";
 
 /**
  * Overview.
  *
- * Opens on the corridor itself: live freshness, a 3D corridor the operator
- * drives with a car (a km cursor) and a km ruler, and the corridor counts.
- * The Live Corridor Status panel follows, unchanged in what it shows.
+ * Opens on a hero (5 Oct 2026, at the user's request, after the reference
+ * they supplied): the 3D mascot centre-stage on the WebGL stage, the
+ * oversized "Overview" title, the corridor span and two short columns of live
+ * status. The hero is the page header here: it carries the group eyebrow, the
+ * h1 and the description the other pages get from PageHeader.
  *
- * The raster brand banner that used to fill the first screen was removed in
- * the Lane Signal redesign at the user's request (3 Oct 2026); the brand lives
- * in the shell. Its two images stay in /public in case it is wanted back.
+ * Scrolling down: the counts, every slow or congested exit-direction worst
+ * first, the corridor at true scale, then the Live Corridor Status panel,
+ * unchanged in what it shows. (The 3D corridor scene was removed at the
+ * user's request on 4 Oct 2026.)
  */
 export default function DashboardHomePage() {
   return (
     <section className="ds-content ov-page">
-      <PageHeader
-        icon={Home}
-        title="Overview"
-        subtitle="Balintawak Km 12 to Sta. Ines Km 88.25, both carriageways"
-      />
       <OverviewLive />
-      <InteractiveRoadMap />
+      <div data-section="Live Corridor Status" className="ov-corridor">
+        <InteractiveRoadMap />
+      </div>
     </section>
   );
 }

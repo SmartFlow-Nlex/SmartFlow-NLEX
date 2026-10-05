@@ -32,21 +32,22 @@ export type ThemeTokens = {
   tooltipText: string;
 };
 
+/* Night Corridor dark is the default theme, so the pre-mount fallback is dark. */
 const FALLBACK: ThemeTokens = {
-  isDark: false,
-  surface: "#ffffff",
-  surfaceHover: "#f4f6fa",
-  body: "#eef1f6",
-  border: "#d9e0ec",
-  borderStrong: "#b9c5da",
-  textPrimary: "#0a1630",
-  textSecondary: "#3b4d72",
-  textMuted: "#55678b",
-  chartText: "#3b4d72",
-  chartAxis: "#b9c5da",
-  chartSplit: "#e3e8f1",
-  tooltipBg: "#0a1630",
-  tooltipText: "#e8eefb",
+  isDark: true,
+  surface: "rgba(10, 16, 30, 0.86)",
+  surfaceHover: "rgba(16, 24, 44, 0.9)",
+  body: "#03060d",
+  border: "rgba(255, 255, 255, 0.08)",
+  borderStrong: "rgba(255, 255, 255, 0.12)",
+  textPrimary: "#f4f1ea",
+  textSecondary: "#b9c2d3",
+  textMuted: "#8590a6",
+  chartText: "#8590a6",
+  chartAxis: "rgba(255, 255, 255, 0)",
+  chartSplit: "rgba(255, 255, 255, 0.06)",
+  tooltipBg: "rgba(14, 22, 40, 0.96)",
+  tooltipText: "#f4f1ea",
 };
 
 function read(): ThemeTokens {
@@ -103,20 +104,20 @@ export function useThemeTokens(): ThemeTokens {
 
 /** Zone tints. The light values wash out on a dark card, so they are lifted. */
 export function zoneTints(isDark: boolean) {
-  // Lane Signal: one quiet ramp instead of blue / orange / green washes, which
-  // read as road states. Past is near-plain, the held-out test window a faint
-  // neutral, and the forecast a faint action-blue tint.
+  // One quiet ramp instead of blue / orange / green washes, which read as road
+  // states. Past is near-plain, the held-out test window a faint neutral, and
+  // the forecast a faint expressway-blue tint (Night Corridor values).
   return isDark
     ? {
-        past: "rgba(232, 238, 251, 0.025)",
-        present: "rgba(232, 238, 251, 0.06)",
-        future: "rgba(92, 200, 255, 0.10)",
-        divider: "#4a6396",
+        past: "rgba(244, 241, 234, 0.02)",
+        present: "rgba(244, 241, 234, 0.05)",
+        future: "rgba(92, 122, 255, 0.10)",
+        divider: "rgba(244, 241, 234, 0.4)",
       }
     : {
-        past: "rgba(10, 22, 48, 0.015)",
-        present: "rgba(10, 22, 48, 0.045)",
-        future: "rgba(10, 108, 194, 0.07)",
-        divider: "#8d9ab5",
+        past: "rgba(11, 18, 32, 0.015)",
+        present: "rgba(11, 18, 32, 0.045)",
+        future: "rgba(54, 96, 255, 0.07)",
+        divider: "rgba(11, 18, 32, 0.4)",
       };
 }

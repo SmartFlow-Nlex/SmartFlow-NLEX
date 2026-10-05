@@ -261,7 +261,7 @@
 .heroFilterDivider {
   width: 0;
   height: 24px;
-  border-left: 1px solid #cbd4e1;
+  border-left: 1px solid var(--border-strong);
   flex-shrink: 0;
 }
 
@@ -386,7 +386,7 @@
 }
 
 .customSelectOptionActive {
-  background: #edf3ff;
+  background: color-mix(in srgb, var(--page-accent) 14%, transparent);
   color: var(--brand-primary, #3e67ef);
   font-weight: 700;
 }
@@ -415,7 +415,7 @@
   width: 30px;
   height: 16px;
   border-radius: 999px;
-  background: #d0d5de;
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
   position: relative;
   transition: background var(--transition-fast);
   flex-shrink: 0;
@@ -496,17 +496,9 @@
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
-/* The leading bar. An inset pseudo-element rather than a border-left so the
-   card's rounded corner stays intact. */
-.kpiTile::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: var(--kpi-accent, var(--brand-primary));
-}
+/* (The 4px leading accent bar that sat here was retired in the Lane Signal
+   pass and removed in the Night Corridor pass: the tile is a readout, and
+   its accent lives in the icon ring.) */
 
 .kpiTile:hover {
   border-color: var(--border-strong);
@@ -738,7 +730,7 @@
 }
 
 .secondaryButton:active {
-  background: #edf1f8;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   box-shadow: none;
 }
 
@@ -860,7 +852,7 @@
   width: 40px;
   height: 40px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #edf3ff, #ece0ff);
+  background: transparent;
   display: grid;
   place-items: center;
   font-size: 18px;
@@ -926,7 +918,7 @@
 }
 
 .detailRow:hover {
-  background: #edf1f8;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
 .detailKey {
@@ -996,7 +988,7 @@
   letter-spacing: 0.04em;
   color: var(--text-secondary, #4b5e7d);
   background: var(--bg-surface, #fff);
-  border-bottom: 2px solid #e4eaf6;
+  border-bottom: 2px solid var(--border-default);
 }
 
 .plazaTable td {
@@ -1038,8 +1030,9 @@
 .clickableRow:hover td { background: var(--bg-surface-hover); }
 
 /* Deviation colors mirror the impact chart: above baseline = orange, below = blue */
-.devPos { color: #c85a38; font-weight: 600; }
-.devNeg { color: #3e67ef; font-weight: 600; }
+/* Above / below typical: warm vs cool, from theme tokens (AA in both themes). */
+.devPos { color: var(--accent-incident); font-weight: 600; }
+.devNeg { color: var(--accent-traffic); font-weight: 600; }
 
 /* Mobile: stack everything */
 @media (max-width: 980px) {
@@ -1307,122 +1300,437 @@
 }
 
 /* ===========================================================================
-   LANE SIGNAL
+   NIGHT CORRIDOR
    ---------------------------------------------------------------------------
-   The redesign's layer for this module. It lives here, not in globals.css,
-   because these are CSS-module classes: the build hashes .kpiTile into
-   traffic_kpiTile__x1y2z, so a global selector of the same name matches
-   nothing.
+   The redesign's layer for this module (4 Oct 2026), replacing the Lane
+   Signal layer. It lives here, not in globals.css, because these are
+   CSS-module classes: the build hashes .kpiTile into traffic_kpiTile__x1y2z,
+   so a global selector of the same name matches nothing.
 
-   Panels are flat steel: a 1px rule, a firm corner, no shadow, no wash, no
-   hover lift. A KPI tile is a readout, not a card: label, number, unit and a
-   qualifying line, with no icon square and no coloured edge, so the number
-   carries the tile. Selected controls take the one action colour.
+   Cards are near-opaque surfaces with a hairline over the WebGL stage. Every
+   card reads answer, context, evidence, method. The mode switch is one
+   segmented control under the page title with a sliding accent underline.
+   Filters are hairline pills in one sticky bar. Non-interactive cards never
+   react to hover.
    =========================================================================== */
 
-.kpiTile,
-.chartCard {
-  background: var(--bg-surface);
-  background-image: none;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  box-shadow: none;
-  transform: none;
+.page {
+  gap: 18px;
+  padding: 28px 32px 56px;
+  position: relative;
+}
+.page > :global(.ds-page-header) {
+  margin: 0 0 4px;
+  padding: 0;
 }
 
-.kpiTile { padding: 14px 16px 13px; gap: 6px; transition: border-color var(--transition-fast); }
-.kpiTile::before { content: none; }
-.kpiTile:hover { border-color: var(--border-strong); box-shadow: none; transform: none; }
-.kpiIcon { display: none; }
-
-.kpiTile h3 {
-  padding-right: 0;
-  font-size: var(--fs-label);
-  font-weight: 650;
-  font-stretch: var(--font-cond-stretch);
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  opacity: 1;
-}
-
-.kpiValue {
-  font-size: clamp(1.6rem, 1.1vw + 1rem, var(--fs-numeral));
-  font-weight: 750;
-  font-stretch: var(--font-cond-stretch);
-  letter-spacing: -0.01em;
-  line-height: 1.05;
-}
-
-.kpiHint { font-size: var(--fs-caption); color: var(--text-secondary); }
-
-.chartCard { padding: 18px 20px 14px; }
-.chartCard:hover { border-color: var(--border-strong); box-shadow: none; transform: none; }
-
-.chartHead h3 {
-  position: static;
-  padding-bottom: 0;
-  font-size: var(--fs-title);
-  font-weight: 650;
-}
-.chartHead h3::after { content: none; }
-.hero .chartHead h3 { font-size: 1.0625rem; font-weight: 700; }
-.subtitle { font-size: var(--fs-caption); color: var(--text-muted); }
-
-/* Selected states: the action colour, flat. */
-.segmented,
-.segmentedSmall,
+/* --- The mode switch ------------------------------------------------------ */
 .modeTabs {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  padding: 2px;
+  position: relative;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  flex: 0 0 auto;
+  width: min(100%, 720px);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border-default);
+  border-radius: 0;
+  box-shadow: none;
+}
+.modeTab {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 18px 14px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  text-align: left;
+  white-space: nowrap;
+  box-shadow: none;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+.modeTab:hover:not(.modeTabActive) { background: transparent; color: var(--text-primary); }
+.modeTabActive,
+.modeTab.modeTabActive {
+  background: transparent;
+  color: var(--text-primary);
+  box-shadow: none;
+}
+.modeTab > svg:first-child { display: none; } /* the old check mark */
+.modeName { display: inline-flex; align-items: center; gap: 8px; }
+.modeName svg { color: var(--text-muted); transition: color var(--transition-fast); }
+.modeTabActive .modeName svg { color: var(--page-accent); }
+.modeHint {
+  font-size: var(--fs-body);
+  font-weight: 300;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+}
+.modeTabActive .modeHint { color: var(--text-secondary); }
+/* The accent underline slides to the active mode (--mode-i on .modeTabs). */
+.modeIndicator {
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: calc(100% / 3);
+  height: 2px;
+  background: var(--page-accent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--page-accent) 70%, transparent);
+  transform: translateX(calc(var(--mode-i, 0) * 100%));
+  transition: transform 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+}
+/* Switching mode cross-fades the content in 200 ms. */
+.modeStage {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  gap: inherit;
+  row-gap: 18px;
+  min-width: 0;
+  animation: modeFade 200ms ease both;
+}
+@keyframes modeFade { from { opacity: 0; } to { opacity: 1; } }
+@media (max-width: 640px) {
+  .modeTab { padding: 10px 8px 12px 0; letter-spacing: 1px; }
+  .modeHint { display: none; }
+}
+
+/* --- The filter bar: one sticky shelf of hairline pills ------------------- */
+.filterRow {
+  background: color-mix(in srgb, var(--stage) 92%, transparent);
+  margin: 0 -32px;
+  padding: 12px 32px;
+  gap: 10px 14px;
+}
+.filterRow::after { opacity: 1; background: var(--border-default); }
+.filterLabel {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.filterGroup > svg { display: none; }
+.filterNote { font-size: var(--fs-body); font-weight: 300; color: var(--text-muted); letter-spacing: 0; }
+.updating { font-size: var(--fs-label); letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); }
+
+.segmented,
+.segmentedSmall {
+  gap: 4px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 .segmented button,
-.segmentedSmall button,
-.modeTab {
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-caption);
+.segmentedSmall button {
+  min-height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
   font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
 }
+.segmented button > svg { display: none; }
+.segmented button:hover:not(:disabled):not(.active),
+.segmentedSmall button:hover:not(:disabled):not(.active) { background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: var(--text-primary); border-color: var(--hairline-hover); }
 .segmented button.active,
-.segmentedSmall button.active,
-.modeTabActive {
-  background: var(--action);
-  color: var(--action-ink);
+.segmentedSmall button.active {
+  background: color-mix(in srgb, var(--page-accent) 16%, transparent);
+  border-color: var(--page-accent);
+  color: var(--text-primary);
   box-shadow: none;
 }
 .segmented button:focus-visible,
 .segmentedSmall button:focus-visible,
 .modeTab:focus-visible,
 .secondaryButton:focus-visible {
-  outline: 2px solid var(--action);
+  outline: 2px solid var(--page-accent);
   outline-offset: 2px;
 }
 
-.secondaryButton {
-  border-radius: var(--radius-md);
-  font-size: var(--fs-caption);
-  box-shadow: none;
+.dateInput {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: var(--fs-body);
 }
-.secondaryButton:hover { border-color: var(--border-strong); }
-.secondaryButton:active { background: var(--bg-surface-hover); }
+.dateSep { font-size: var(--fs-body); color: var(--text-muted); }
 
-/* Detail dialog: one lifted overlay, no gradient strip, no tinted icon tile. */
-.detailBackdrop { background: rgba(6, 14, 32, 0.6); backdrop-filter: none; -webkit-backdrop-filter: none; }
-.detailModal {
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-default);
+/* The dropdown used in the hero filter rows (CustomSelect). */
+.customSelectBtn {
+  min-height: 32px;
+  padding: 0 12px 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 400;
+}
+.customSelectBtn:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); border-color: var(--hairline-hover); }
+.customSelectBtn[aria-expanded="true"] { border-color: var(--page-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--page-accent) 20%, transparent); }
+.customSelectMenu {
+  min-width: 160px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
   box-shadow: var(--shadow-lg);
 }
+.customSelectOption { padding: 8px 10px; border-radius: var(--radius-sm); font-size: var(--fs-body); font-weight: 400; color: var(--text-secondary); }
+.customSelectOption:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
+.customSelectOptionActive { background: color-mix(in srgb, var(--page-accent) 14%, transparent); color: var(--text-primary); font-weight: 600; }
+
+.heroToggle { font-size: var(--fs-body); font-weight: 300; color: var(--text-secondary); }
+.heroToggleTrack { background: color-mix(in srgb, var(--text-primary) 14%, transparent); }
+.heroToggle input:checked + .heroToggleTrack { background: var(--page-accent); }
+.heroFilterLabel { font-size: var(--fs-label); letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); }
+.heroFilterDivider { background: var(--border-default); }
+
+/* --- KPI tiles: the answer first ----------------------------------------- */
+.kpiRow { gap: 14px; }
+.kpiTile {
+  padding: 18px 20px 18px;
+  gap: 10px;
+  background: var(--bg-surface);
+  background-image: none;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+  transform: none;
+  animation: tileRise 0.6s cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+.kpiRow > .kpiTile:nth-child(2) { animation-delay: 40ms; }
+.kpiRow > .kpiTile:nth-child(3) { animation-delay: 80ms; }
+.kpiRow > .kpiTile:nth-child(4) { animation-delay: 120ms; }
+.kpiRow > .kpiTile:nth-child(5) { animation-delay: 160ms; }
+.kpiRow > .kpiTile:nth-child(6) { animation-delay: 200ms; }
+@keyframes tileRise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.kpiTile::before { content: none; }
+.kpiTile:hover { border-color: var(--border-default); box-shadow: none; transform: none; }
+.kpiIcon {
+  display: grid;
+  top: 16px;
+  right: 16px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--page-accent);
+}
+.kpiTile h3 {
+  /* Label and its info icon side by side: the label wraps in its own column,
+     so the icon never drops onto a line of its own under the title. */
+  display: flex;
+  align-items: flex-start;
+  padding-right: 34px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  font-stretch: 100%;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+}
+.kpiValue {
+  font-size: var(--fs-numeral);
+  font-weight: 400;
+  font-stretch: 100%;
+  letter-spacing: 0;
+  line-height: 1.05;
+  color: var(--text-primary);
+}
+.kpiHint { font-size: var(--fs-body); font-weight: 300; line-height: 1.45; color: var(--text-secondary); }
+.deltaUp,
+.deltaDown {
+  padding: 1px 8px;
+  border: 1px solid;
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-weight: 600;
+}
+.deltaUp { color: var(--color-success); border-color: var(--color-success-border); background: var(--color-success-bg); }
+.deltaDown { color: var(--color-danger); border-color: var(--color-danger-border); background: var(--color-danger-bg); }
+
+/* --- Chart cards ---------------------------------------------------------- */
+.chartCard {
+  padding: 20px 22px 16px;
+  background: var(--bg-surface);
+  background-image: none;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+  transform: none;
+  animation: tileRise 0.6s cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+.chartCard:hover { border-color: var(--border-default); box-shadow: none; transform: none; }
+.chartHead { margin-bottom: 14px; align-items: flex-start; }
+.chartHead h3 {
+  position: static;
+  padding-bottom: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: normal;
+}
+.chartHead h3::after { content: none; }
+.hero .chartHead h3 { font-size: var(--fs-title); font-weight: 600; }
+.subtitle,
+.takeaway {
+  margin-top: 6px;
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  white-space: normal;
+}
+.subtitle { color: var(--text-muted); }
+.placeholder {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--fs-body);
+  font-weight: 300;
+}
+
+.secondaryButton {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  box-shadow: none;
+}
+.secondaryButton:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); border-color: var(--hairline-hover); color: var(--text-primary); }
+.secondaryButton:active { background: color-mix(in srgb, var(--text-primary) 10%, transparent); }
+.checkbox { font-size: var(--fs-body); font-weight: 300; color: var(--text-secondary); }
+
+.sortBtn { color: var(--text-muted); }
+.sortBtn:hover { color: var(--text-primary); }
+
+/* --- Skeletons: a hairline shimmer, not grey blocks ----------------------- */
+.skeleton {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-default);
+  border-radius: var(--radius-sm);
+}
+.skeleton::after {
+  background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--text-primary) 7%, transparent) 50%, transparent 100%);
+  animation-duration: 1.6s;
+}
+
+/* --- Tables in detail dialogs --------------------------------------------- */
+.plazaTable th,
+.plazaTable thead th {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-raised);
+}
+.plazaTable td { font-size: var(--fs-body); font-variant-numeric: tabular-nums; border-color: var(--border-default); }
+.plazaTable tbody tr:hover td,
+.clickableRow:hover td { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+
+/* --- Detail dialog: one raised surface ------------------------------------ */
+.detailBackdrop { background: rgba(3, 6, 13, 0.62); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.detailModal {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+}
 .detailAccent { display: none; }
-.detailIcon { background: var(--bg-surface-hover); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+.detailIcon {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--page-accent);
+}
+.detailTitles h3 { font-size: var(--fs-title); font-weight: 600; }
+.detailTitles p { font-size: var(--fs-body); font-weight: 300; color: var(--text-secondary); }
+.detailClose { border-radius: 50%; }
+.detailRow { border-color: var(--border-default); }
+.detailRowAlt { background: color-mix(in srgb, var(--text-primary) 2%, transparent); }
+.detailKey { font-size: var(--fs-label); font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); }
+.detailVal { font-size: var(--fs-body); font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.detailFooter p { font-size: var(--fs-body); font-weight: 300; color: var(--text-muted); }
 
-/* Entrance: cards appear in place, quickly, with no rise. */
+.rampKeyEnd,
+.rampKeyReadout { font-size: var(--fs-label); letter-spacing: 1px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
 @keyframes cardRise {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .chartCard { animation: none; }
+@media (max-width: 980px) {
+  .page { padding: 22px 20px 48px; }
+  .filterRow { margin: 0 -20px; padding: 10px 20px; }
 }
+@media (max-width: 640px) {
+  .page { padding: 18px 16px 40px; gap: 14px; }
+  .filterRow { margin: 0 -16px; padding: 10px 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chartCard, .kpiTile, .modeStage { animation: none; }
+  .modeIndicator { transition: none; }
+}
+
+/* Overlays opaque: the raised tone composited over the stage colour. */
+.detailModal,
+.customSelectMenu { background: linear-gradient(var(--bg-raised), var(--bg-raised)), var(--stage); }
+
+/* Shared layout fixes (found on Traffic, apply to every analytics page):
+   half-width slots go full width on narrow screens, and the hero filter strip
+   wraps instead of overflowing a phone. */
+.heroFilters > * { min-width: 0; }
+.heroFilterGroup { flex-wrap: wrap; row-gap: 6px; max-width: 100%; }
+@media (max-width: 980px) {
+  .spanHalf { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  .heroFilterDivider { display: none; }
+}
+@media (max-width: 640px) {
+  /* A clamp that cuts a number is worse than a third line. */
+  .kpiHint { display: block; -webkit-line-clamp: unset; line-clamp: none; overflow: visible; }
+  /* On a phone the filter bar would pin ~150px of the screen: it scrolls with
+     the page there (every filter still in it, one scroll away). */
+  .filterRow { position: static; }
+}
+
+/* Holidays — Full List (5 Oct 2026): wide enough for its five columns, so the
+   table never scrolls sideways on a desktop; taller, with tighter header
+   tracking so "Avg volume" stays on one line. */
+.holidayModal { width: min(94vw, 720px); }
+.holidayModal .plazaTableWrap,
+.impactModal .plazaTableWrap { max-height: 66vh; padding: 0 24px 22px; }
+.holidayModal .plazaTable th,
+.impactModal .plazaTable th { white-space: nowrap; letter-spacing: 1px; }
+.holidayModal .plazaTable td:first-child { min-width: 180px; }

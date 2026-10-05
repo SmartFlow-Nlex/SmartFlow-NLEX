@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useThemeTokens } from "./useThemeTokens";
+import { X } from "lucide-react";
 import InfoTooltip from "./InfoTooltip";
+import StateNote from "../stage/StateNote";
 import NarrativePanel from "./NarrativePanel";
 import type { CorridorForecastPoint, KmSegmentForecastPoint } from "./incidentPredictive.shared";
 import { fmtInt } from "./incidentPredictive.shared";
@@ -53,6 +54,18 @@ export function shadeFor(t: number): string {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
+// Night Corridor: the shade this card draws its ranked bars with. Same easing
+// and floor as shadeFor above, but on the incident magnitude ramp
+// (--inc-heat-lo -> --inc-heat-hi in app/styles/nc-incident.css), which is
+// violet rather than amber -- amber now reads as the "slow" road state -- and
+// is theme-aware: pale-to-deep on paper, dim-to-bright on the dark stage.
+// shadeFor stays exported, unchanged, for the panels that still import it.
+function barShade(t: number): string {
+  const clamped = Math.max(0, Math.min(1, t));
+  const scaled = 0.15 + Math.sqrt(clamped) * 0.85;
+  return `color-mix(in oklab, var(--inc-heat-hi) ${(scaled * 100).toFixed(1)}%, var(--inc-heat-lo))`;
+}
+
 // Inline rows shown before the reader has to reach for "See more" — kept
 // small enough that the card's height doesn't dominate the tab, with the
 // full ranking still one click away rather than gone.
@@ -101,33 +114,21 @@ export default function PredictiveCorridorChart({
 }: Props) {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [seeMoreOpen, setSeeMoreOpen] = useState(false);
-  // Read before the early returns below -- a hook cannot sit after one.
-  const T = useThemeTokens();
-
-  /* The accent, darkened for light backgrounds. Mixing toward #0b1020 is what
-     makes it readable on white, and exactly what makes it vanish on a dark
-     card, so on dark it mixes toward white instead. */
-  const accentInk = T.isDark
-    ? "color-mix(in srgb, var(--page-accent, var(--action)) 36%, #ffffff)"
-    : "color-mix(in srgb, var(--page-accent, var(--action)) 72%, #0b1020)";
 
   if (loading && corridorForecast === null) {
     return (
-      <article className="chart-card wide" style={{ height: "260px", padding: "20px", display: "grid", placeItems: "center" }}>
-        <div style={{ color: "var(--text-muted)" }}>Loading corridor breakdown…</div>
+      <article className="chart-card wide inc-card" style={{ minHeight: "260px", justifyContent: "center" }}>
+        <div className="inc-loading" role="status">Loading corridor breakdown…</div>
       </article>
     );
   }
 
   if (corridorForecast === null || corridorForecast.length === 0 || kmSegmentForecast == null || kmSegmentForecast.length === 0) {
     return (
-      <article className="chart-card wide" style={{ height: "260px", padding: "20px", display: "grid", placeItems: "center" }}>
-        <div style={{ textAlign: "center", maxWidth: "420px" }}>
-          <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: "6px" }}>Corridor breakdown unavailable</div>
-          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-            No incidents in the current Range had a location that could be matched to a corridor segment.
-          </div>
-        </div>
+      <article className="chart-card wide inc-card" style={{ minHeight: "260px", justifyContent: "center" }}>
+        <StateNote kind="nodata" title="Corridor breakdown unavailable">
+          No incidents in the current Range had a location that could be matched to a corridor segment.
+        </StateNote>
       </article>
     );
   }
@@ -158,9 +159,8 @@ export default function PredictiveCorridorChart({
 
   // A leaderboard, ranked by value (busiest first) — the card's whole job is
   // "ranking," so with only one grouping left, this is the natural order.
-  // Only the first INLINE_LIMIT rows show on the card itself (the first
-  // TOP_TIER of those in the bigger "Top 3" style); the rest sit behind
-  // "See more" rather than crowding the card with a 19-segment list.
+  // Only the first INLINE_LIMIT rows show on the card itself; the rest sit
+  // behind "See more" rather than crowding the card with a 19-segment list.
   const orderedRows = byValue;
   const inlineRows = orderedRows.slice(0, INLINE_LIMIT);
   const restRows = orderedRows.slice(INLINE_LIMIT);
@@ -172,87 +172,37 @@ export default function PredictiveCorridorChart({
     const pct = maxPredicted > 0 ? Math.max((row.predictedIncidents / maxPredicted) * 100, row.predictedIncidents > 0 ? 2 : 0) : 0;
     const isHighest = topRow != null && row.key === topRow.key;
     const isTop = tier === "top";
-    const barHeight = isTop ? 20 : 13;
     return (
       <div
         key={row.key}
         onMouseEnter={() => setHoveredKey(row.key)}
         onMouseLeave={() => setHoveredKey((k) => (k === row.key ? null : k))}
-        style={{
-          position: "relative",
-          display: "grid",
-          gridTemplateColumns: "26px minmax(120px, 240px) 1fr 64px",
-          columnGap: "10px",
-          alignItems: "center",
-          padding: isTop ? "6px 8px" : "3px 8px",
-          borderRadius: "8px",
-          background: hoveredKey === row.key ? "rgba(79,70,229,0.06)" : "transparent",
-          cursor: "default",
-        }}
+        className={`inc-rank-grid inc-rank-row${isTop ? "" : " is-compact"}${hoveredKey === row.key ? " is-hover" : ""}`}
       >
-        <span style={{ fontSize: isTop ? "0.9rem" : "0.74rem", fontWeight: isTop ? 800 : 600, color: isTop ? "var(--text-primary)" : "var(--text-muted)", textAlign: "right" }}>
-          {displayIndex}
-        </span>
-        <span
-          title={row.label}
-          style={{ fontSize: isTop ? "0.85rem" : "0.76rem", fontWeight: isTop ? 700 : 500, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-        >
+        <span className="inc-rank-n">{displayIndex}</span>
+        <span className="inc-rank-label" title={row.label}>
           {row.label}
         </span>
-        <div style={{ position: "relative" }}>
-          <div style={{ height: barHeight, borderRadius: "999px", background: "var(--bg-surface-hover)", overflow: "hidden" }}>
-            <div
-              style={{
-                height: "100%",
-                width: `${pct}%`,
-                borderRadius: "999px",
-                background: shadeFor(row.predictedIncidents / maxPredicted),
-                transition: "width 0.2s ease",
-              }}
-            />
+        <div className="inc-rank-track">
+          <div className="inc-rank-bar">
+            <div className="inc-rank-fill" style={{ width: `${pct}%`, background: barShade(row.predictedIncidents / maxPredicted) }} />
           </div>
           {isHighest && (
-            <div style={{ position: "absolute", left: `${pct}%`, top: -18, transform: "translateX(-50%)", pointerEvents: "none" }}>
-              <span
-                style={{
-                  fontSize: "0.6rem", fontWeight: 800,
-                  color: T.isDark ? "#fbbf24" : "var(--color-warning)",
-                  background: T.isDark ? "rgba(251,191,36,0.14)" : "var(--color-warning-bg)",
-                  border: `1px solid ${T.isDark ? "rgba(251,191,36,0.38)" : "var(--color-warning-border)"}`,
-                  borderRadius: "999px", padding: "1px 6px", whiteSpace: "nowrap",
-                }}
-              >
-                Highest
+            <span className="inc-rank-flag" style={{ left: `${Math.min(pct, 88)}%` }}>
+              Highest
+            </span>
+          )}
+          {hoveredKey === row.key && (
+            <div className="inc-rank-tip">
+              <b>{row.label}</b>
+              <div>{fmtInt(row.predictedIncidents)} predicted incidents · next {forecastHorizon}d</div>
+              <span>
+                Historical share: {(row.historicalShare * 100).toFixed(1)}% ({fmtInt(row.historicalCount)} logged)
               </span>
             </div>
           )}
-          {hoveredKey === row.key && (
-            <div
-              style={{
-                position: "absolute", right: 0, bottom: "calc(100% + 8px)", zIndex: 20, pointerEvents: "none",
-                background: T.isDark ? "#05080f" : "var(--text-primary)", color: "var(--bg-surface-hover)",
-                border: T.isDark ? "1px solid var(--border-strong)" : "none",
-                borderRadius: "8px", padding: "8px 10px",
-                fontSize: "0.72rem", lineHeight: 1.5, minWidth: "180px", boxShadow: "0 10px 24px rgba(15,23,42,0.28)",
-              }}
-            >
-              <div style={{ fontWeight: 700 }}>{row.label}</div>
-              <div>{fmtInt(row.predictedIncidents)} predicted incidents · next {forecastHorizon}d</div>
-              <div style={{ color: "var(--text-muted)" }}>
-                Historical share: {(row.historicalShare * 100).toFixed(1)}% ({fmtInt(row.historicalCount)} logged)
-              </div>
-            </div>
-          )}
         </div>
-        <span
-          style={{
-            justifySelf: "end", padding: isTop ? "4px 12px" : "2px 9px", borderRadius: "8px",
-            background: "var(--bg-surface)", border: `1.5px solid ${isTop ? "color-mix(in srgb, var(--page-accent, var(--action)) 34%, transparent)" : "var(--border-default)"}`,
-            fontSize: isTop ? "0.85rem" : "0.74rem", fontWeight: isTop ? 800 : 700, color: accentInk,
-          }}
-        >
-          {fmtInt(row.predictedIncidents)}
-        </span>
+        <span className="inc-rank-val">{fmtInt(row.predictedIncidents)}</span>
       </div>
     );
   };
@@ -260,95 +210,102 @@ export default function PredictiveCorridorChart({
   const unclassifiedPct = unclassifiedLocationShare != null ? (unclassifiedLocationShare * 100).toFixed(1) : null;
 
   const badge = (label: string, on: boolean) => (
-    <span
-      style={{
-        display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 9px",
-        borderRadius: "999px", fontSize: "0.7rem", fontWeight: 600,
-        background: on ? "color-mix(in srgb, var(--page-accent, var(--action)) 12%, transparent)" : "var(--bg-surface-hover)",
-        color: on ? accentInk : "var(--text-muted)",
-        border: `1px solid ${on ? "color-mix(in srgb, var(--page-accent, var(--action)) 28%, transparent)" : "var(--border-default)"}`,
-      }}
-    >
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: on ? "var(--page-accent, var(--action))" : "var(--border-strong)" }} />
+    <span className={`inc-pill${on ? " is-on" : ""}`}>
+      <i aria-hidden="true" />
       {label}: {on ? "ON" : "OFF"}
     </span>
   );
 
   return (
-    <article className="chart-card wide" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "14px" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
-        <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
-          Predicted Incidents Ranking
-          <InfoTooltip text="Derived, not separately modeled: splits the total forecast above across fixed 5km corridor segments by each one's historical share of incidents — there's no per-segment trained model behind this chart. Always apportioned from the pipeline's champion model; follows the Volume/Weather toggles above, so switching either re-derives it from that selection's own forecast." />
-        </h3>
-        {/* Controls pinned top-right, on the title's own row — kept off the
-            description below so a long description never has to compete
-            with them for width and get squeezed into a sliver. */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0, flexWrap: "wrap" }} title="Matches the Volume/Weather toggles on the forecast chart above">
-          {forecastModelLabel && (
-            <span
-              style={{
-                display: "inline-flex", alignItems: "center", padding: "2px 9px",
-                borderRadius: "999px", fontSize: "0.7rem", fontWeight: 600,
-                background: "var(--bg-surface-hover)", color: "var(--text-secondary)",
-                border: "1px solid var(--border-default)",
-              }}
-            >
-              Model: {forecastModelLabel}
-            </span>
-          )}
+    <article className="chart-card wide inc-card">
+      <div className="inc-card-head">
+        <div className="inc-card-titles">
+          <h3 className="inc-card-title">
+            Predicted Incidents Ranking
+            <InfoTooltip text="Derived, not separately modeled: splits the total forecast above across fixed 5km corridor segments by each one's historical share of incidents — there's no per-segment trained model behind this chart. Always apportioned from the pipeline's champion model; follows the Volume/Weather toggles above, so switching either re-derives it from that selection's own forecast." />
+          </h3>
+        </div>
+        {/* Which forecast this was apportioned from, pinned on the title row. */}
+        <div className="inc-pills" title="Matches the Volume/Weather toggles on the forecast chart above">
+          {forecastModelLabel && <span className="inc-pill">Model: {forecastModelLabel}</span>}
           {badge("Volume", showVolume)}
           {badge("Weather", showWeather)}
         </div>
       </div>
-      {unclassifiedPct != null && Number(unclassifiedPct) > 0 && (
-        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", margin: 0 }}>
-          {unclassifiedPct}% of logged locations in this Range couldn&apos;t be matched to a specific segment and are excluded from the split.
-        </p>
-      )}
+
+      {/* The answer: where the forecast is concentrated. */}
       {topRow && (
-        <div style={{ padding: "10px 14px", borderRadius: "10px", background: "color-mix(in srgb, var(--page-accent, var(--action)) 9%, transparent)", border: "1px solid color-mix(in srgb, var(--page-accent, var(--action)) 28%, transparent)" }}>
-          <p style={{ margin: 0, fontSize: "0.85rem", color: accentInk }}>
-            The <strong>{topRow.label}</strong> stretch leads the corridor at{" "}
-            <strong>{fmtInt(topRow.predictedIncidents)}</strong> predicted incidents —{" "}
-            <strong>{(topShare * 100).toFixed(0)}%</strong> of the {fmtInt(displayedTotal)}-incident total on its own.
-            {topN > 1 && (
-              <>
-                {" "}
-                The top {topN} segments together account for{" "}
-                <strong>{(topNShare * 100).toFixed(0)}%</strong> of the whole corridor&apos;s forecast —{" "}
-                {topNShare >= 0.5
-                  ? "response resources concentrated at just a few stretches would cover most of what's expected"
-                  : "risk is spread wider than a handful of hotspots"}.
-              </>
-            )}
+        <div>
+          <p className="inc-answer">
+            <span className="inc-answer-value">{fmtInt(topRow.predictedIncidents)}</span>
+            <span className="inc-answer-label">
+              predicted incidents on <b>{topRow.label}</b>, the leading stretch
+            </span>
           </p>
+          <dl className="inc-kv" style={{ marginTop: 12 }}>
+            <div>
+              <dt>Share of total</dt>
+              <dd>
+                <b>{(topShare * 100).toFixed(0)}%</b> <em>of {fmtInt(displayedTotal)}</em>
+              </dd>
+            </div>
+            {topN > 1 && (
+              <div>
+                <dt>Top {topN} share</dt>
+                <dd>
+                  <b>{(topNShare * 100).toFixed(0)}%</b>
+                </dd>
+              </div>
+            )}
+            {topN > 1 && (
+              <div>
+                <dt>Read</dt>
+                <dd>{topNShare >= 0.5 ? "Concentrated: a few stretches cover most" : "Spread wider than a few hotspots"}</dd>
+              </div>
+            )}
+          </dl>
+          <details className="nc-details">
+            <summary>Details</summary>
+            <p style={{ margin: 0 }}>
+              The <strong>{topRow.label}</strong> stretch leads the corridor at <strong>{fmtInt(topRow.predictedIncidents)}</strong> predicted
+              incidents — <strong>{(topShare * 100).toFixed(0)}%</strong> of the {fmtInt(displayedTotal)}-incident total on its own.
+              {topN > 1 && (
+                <>
+                  {" "}
+                  The top {topN} segments together account for <strong>{(topNShare * 100).toFixed(0)}%</strong> of the whole corridor&apos;s forecast —{" "}
+                  {topNShare >= 0.5
+                    ? "response resources concentrated at just a few stretches would cover most of what's expected"
+                    : "risk is spread wider than a handful of hotspots"}.
+                </>
+              )}
+            </p>
+          </details>
         </div>
       )}
+      {unclassifiedPct != null && Number(unclassifiedPct) > 0 && (
+        <p className="inc-caption">
+          {unclassifiedPct}% of logged locations matched no segment and are excluded from the split.
+        </p>
+      )}
+
       <div style={{ width: "100%" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", marginBottom: "6px" }}>
+        <div className="inc-rank-head">
           <div>
-            <div style={{ fontSize: "0.68rem", fontWeight: 800, color: "var(--page-accent, var(--action))", letterSpacing: "0.04em", textTransform: "uppercase" }}>
-              Segment forecast ranking
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-              Predicted incidents · next {forecastHorizon} days
-            </div>
+            <p className="inc-subhead">Segment forecast ranking</p>
+            <p className="inc-caption">Predicted incidents · next {forecastHorizon} days</p>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px", fontSize: "0.7rem", color: "var(--text-muted)" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-              <span style={{ width: 10, height: 10, borderRadius: "999px", background: `linear-gradient(90deg, color-mix(in srgb, var(--page-accent, var(--action)) 50%, ${T.isDark ? "#0d1117" : "white"}), var(--page-accent, var(--action)))`, display: "inline-block" }} />
-              darker = more predicted
+          <div className="inc-rank-key">
+            <span>
+              <i aria-hidden="true" />
+              stronger shade = more predicted
             </span>
-            <span>Hover a row to inspect its numbers</span>
+            <span>Hover a row for its numbers</span>
           </div>
         </div>
 
         {topTierRows.length > 0 && (
           <>
-            <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "var(--text-muted)", letterSpacing: "0.04em", textTransform: "uppercase", margin: "10px 0 2px 0" }}>
-              Top {topTierRows.length}
-            </div>
+            <p className="inc-rank-group">Top {topTierRows.length}</p>
             <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
               {topTierRows.map((row, i) => renderRow(row, i + 1, "top"))}
             </div>
@@ -357,43 +314,28 @@ export default function PredictiveCorridorChart({
 
         {remainingInlineRows.length > 0 && (
           <>
-            <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "var(--text-muted)", letterSpacing: "0.04em", textTransform: "uppercase", margin: topTierRows.length > 0 ? "12px 0 2px 0" : "10px 0 2px 0" }}>
-              Next {remainingInlineRows.length}
-            </div>
+            <p className="inc-rank-group">Next {remainingInlineRows.length}</p>
             <div style={{ display: "flex", flexDirection: "column", gap: "1px" }}>
               {remainingInlineRows.map((row, i) => renderRow(row, i + TOP_TIER + 1, "remaining"))}
             </div>
           </>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "26px minmax(120px, 240px) 1fr 64px", columnGap: "10px", marginTop: "6px" }}>
+        <div className="inc-rank-grid" style={{ marginTop: "6px", padding: "0 8px" }}>
           <span />
           <span />
-          <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid var(--border-default)", paddingTop: "4px" }}>
+          <div className="inc-rank-axis">
             {axisTicks.map((t, i) => (
-              <span key={i} style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>{fmtInt(t)}</span>
+              <span key={i}>{fmtInt(t)}</span>
             ))}
           </div>
           <span />
-          {/* Centered under the whole row (rank + label + track + value),
-              not just the narrow track column the ticks sit in — a caption
-              centered under only that sub-column reads as off-center
-              relative to the card a reader is actually looking at. */}
-          <div style={{ gridColumn: "1 / -1", textAlign: "center", fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "2px" }}>
-            Predicted incidents (next {forecastHorizon}d)
-          </div>
+          {/* Centered under the whole row (rank + label + track + value). */}
+          <div className="inc-rank-caption">Predicted incidents (next {forecastHorizon}d)</div>
         </div>
 
         {restRows.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setSeeMoreOpen(true)}
-            style={{
-              marginTop: "12px", width: "100%", padding: "8px 12px", borderRadius: "8px",
-              border: "1px dashed var(--border-default)", background: "var(--bg-surface-hover)",
-              color: accentInk, fontWeight: 600, fontSize: "0.78rem", cursor: "pointer",
-            }}
-          >
+          <button type="button" className="inc-more" onClick={() => setSeeMoreOpen(true)}>
             See {restRows.length} more segment{restRows.length === 1 ? "" : "s"}
           </button>
         )}
@@ -433,36 +375,21 @@ export default function PredictiveCorridorChart({
           aria-modal="true"
           aria-label="All ranked segments"
           onClick={() => setSeeMoreOpen(false)}
-          style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(15, 23, 42, 0.55)", display: "grid", placeItems: "center", padding: 24 }}
+          className="inc-dialog-backdrop"
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "min(720px, 100%)", maxHeight: "84vh", display: "flex", flexDirection: "column",
-              background: "var(--bg-surface)", borderRadius: 14, border: "1px solid var(--border-default)",
-              boxShadow: "0 24px 60px rgba(15,23,42,0.35)", overflow: "hidden",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "18px 22px", borderBottom: "1px solid var(--border-default)" }}>
+          <div onClick={(e) => e.stopPropagation()} className="inc-dialog">
+            <div className="inc-dialog-head">
               <div>
-                <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>All segments, ranked</h3>
-                <p style={{ margin: "4px 0 0 0", fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                <h3>All segments, ranked</h3>
+                <p>
                   Ranks {INLINE_LIMIT + 1}–{orderedRows.length} of {orderedRows.length} · predicted incidents, next {forecastHorizon}d
                 </p>
               </div>
-              <button
-                onClick={() => setSeeMoreOpen(false)}
-                aria-label="Close"
-                style={{
-                  flex: "none", width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border-default)",
-                  background: "var(--bg-surface)", color: "var(--text-secondary)", cursor: "pointer",
-                  display: "grid", placeItems: "center", fontSize: "1rem", lineHeight: 1,
-                }}
-              >
-                ✕
+              <button onClick={() => setSeeMoreOpen(false)} aria-label="Close" className="inc-dialog-close">
+                <X size={16} aria-hidden="true" />
               </button>
             </div>
-            <div style={{ overflowY: "auto", padding: "10px 22px 20px" }}>
+            <div className="inc-dialog-body">
               <div style={{ display: "flex", flexDirection: "column", gap: "1px" }}>
                 {restRows.map((row, i) => renderRow(row, i + INLINE_LIMIT + 1, "remaining"))}
               </div>
