@@ -181,7 +181,20 @@ export type Interventions = {
   incidents: { lane: number; x: number; secondary?: boolean; bornAt?: number }[];
   speedLimitKmh: number | null; // applies in the speed zone
   speedZone: [number, number]; // [from, to] metres
+  /* More lane closures and speed zones, beside the one of each above: scenario events running at the same time,
+   * each with its own lanes and stretch, or its own zone and limit. The road had one of each, so a second
+   * collision or a second shower could not be added while the first was on — at most two or three events at
+   * once. Every closure here acts exactly as the one above does (a wall at its start in its lanes, a merge
+   * ahead of it, the lanes beside it cautious), and where zones overlap the lowest limit applies. Optional, and
+   * empty when absent, so a run with one of each behaves exactly as it always did. */
+  closures?: readonly LaneClosure[];
+  speedZones?: readonly SpeedZone[];
 };
+
+/** One lane closure: which lanes (engine index), from where to where along the stretch (metres). */
+export type LaneClosure = { readonly lanes: readonly boolean[]; readonly from: number; readonly to: number };
+/** One speed limit over one stretch (metres). */
+export type SpeedZone = { readonly from: number; readonly to: number; readonly kmh: number };
 
 export type Metrics = {
   activeAgents: number;
@@ -1083,7 +1096,6 @@ export class TrafficSim {
     const openLanes = Array.from({ length: lanes }, (_, i) => i).filter(
       (i) => !this.interventions.closedLanes[i],
     );
-    const { closurePoint: cFrom, closureEnd: cTo } = this.interventions;
     if (openLanes.length === 0) return;
 
     // Equilibrium headway: seconds between vehicles in one lane at this flow.
@@ -1098,7 +1110,7 @@ export class TrafficSim {
         // A closed stretch starts empty even in an open lane's neighbour — a
         // vehicle seeded inside the works would be there before the closure
         // caused anything.
-        if (this.interventions.closedLanes[lane] && x >= cFrom && x <= cTo) {
+        if (this.closedHere(lane, x)) {
           x -= 10;
           continue;
         }
@@ -1252,12 +1264,47 @@ export class TrafficSim {
     return true;
   }
 
-  // Desired speed at a position, honouring an active speed-limit zone.
+  /* Every lane closure on the road now: the one in closedLanes / closurePoint / closureEnd (the operator's, or the
+   * first scenario event's laid over it), then each further one in `closures`. Built once per step and kept, since
+   * every vehicle asks several times a step; step() clears it, as interventions only change between steps. */
+  private closureCache: readonly LaneClosure[] | null = null;
+  private closureList(): readonly LaneClosure[] {
+    if (this.closureCache) return this.closureCache;
+    const iv = this.interventions;
+    const list: LaneClosure[] = [];
+    if (iv.closedLanes.some(Boolean)) list.push({ lanes: iv.closedLanes, from: iv.closurePoint, to: iv.closureEnd });
+    for (const c of iv.closures ?? []) if (c.lanes.some(Boolean) && c.to > c.from) list.push(c);
+    this.closureCache = list;
+    return list;
+  }
+  /** Is this point of this lane inside a closed stretch? */
+  private closedHere(lane: number, x: number): boolean {
+    return this.closureList().some((c) => c.lanes[lane] && x >= c.from && x <= c.to);
+  }
+  /** Is this lane closed somewhere a driver at x still has to get past? (What one closure used to mean: closed, and x short of its end.) */
+  private laneBlockedFor(lane: number, x: number): boolean {
+    return this.closureList().some((c) => c.lanes[lane] && x < c.to);
+  }
+  /** The nearest closure in this lane still to be reached from x (its start ahead), or null. */
+  private nextClosureIn(lane: number, x: number): LaneClosure | null {
+    let best: LaneClosure | null = null;
+    for (const c of this.closureList()) if (c.lanes[lane] && x < c.from && x < c.to && (best === null || c.from < best.from)) best = c;
+    return best;
+  }
+  /** The speed limit at x, km/h: the lowest of every zone it is in; null outside them all. */
+  private speedCapAt(x: number): number | null {
+    const { speedLimitKmh, speedZone, speedZones } = this.interventions;
+    let cap: number | null = speedLimitKmh != null && x >= speedZone[0] && x <= speedZone[1] ? speedLimitKmh : null;
+    for (const z of speedZones ?? []) if (x >= z.from && x <= z.to && (cap === null || z.kmh < cap)) cap = z.kmh;
+    return cap;
+  }
+
+  // Desired speed at a position, honouring every speed-limit zone it is in.
   private desiredSpeed(v: Vehicle): number {
-    const { speedLimitKmh, speedZone } = this.interventions;
+    const cap = this.speedCapAt(v.x);
     let v0 = v.v0;
-    if (speedLimitKmh != null && v.x >= speedZone[0] && v.x <= speedZone[1]) {
-      v0 = Math.min(v0, speedLimitKmh / 3.6);
+    if (cap != null) {
+      v0 = Math.min(v0, cap / 3.6);
     }
     v0 *= this.mergeCaution(v);
     v0 *= this.exitCaution(v);
@@ -1302,14 +1349,17 @@ export class TrafficSim {
    *  the disturbance propagates outward and upstream through ordinary
    *  car-following rather than being painted on lane by lane. */
   private mergeCaution(v: Vehicle): number {
-    const { closedLanes, closurePoint, closureEnd } = this.interventions;
-    if (v.x > closurePoint || v.x > closureEnd) return 1;
-    if (closedLanes[v.lane]) return 1; // the taper already governs this one
-    const adjacentClosed =
-      Boolean(closedLanes[v.lane - 1]) || Boolean(closedLanes[v.lane + 1]);
-    if (!adjacentClosed) return 1;
-    const urgency = Math.max(0, Math.min(1, 1 - (closurePoint - v.x) / MERGE_ZONE_M));
-    return 1 - (1 - MERGE_CAUTION) * urgency;
+    // Each closure ahead with a lane beside this one closed; the most cautious of them.
+    let factor = 1;
+    for (const c of this.closureList()) {
+      if (v.x > c.from || v.x > c.to) continue;
+      if (c.lanes[v.lane]) continue; // the taper already governs this one
+      const adjacentClosed = Boolean(c.lanes[v.lane - 1]) || Boolean(c.lanes[v.lane + 1]);
+      if (!adjacentClosed) continue;
+      const urgency = Math.max(0, Math.min(1, 1 - (c.from - v.x) / MERGE_ZONE_M));
+      factor = Math.min(factor, 1 - (1 - MERGE_CAUTION) * urgency);
+    }
+    return factor;
   }
 
   // Gap + relative speed to whatever is ahead in a given lane: real leader,
@@ -1341,15 +1391,12 @@ export class TrafficSim {
     // A closure acts as a stopped obstacle at its taper — but only for traffic
     // that has not already passed the far end. Without the second test a
     // vehicle that has cleared the works still braked for a barrier behind it.
-    if (
-      this.interventions.closedLanes[lane] &&
-      v.x < this.interventions.closureEnd &&
-      this.interventions.closurePoint > v.x &&
-      this.interventions.closurePoint < bestX
-    ) {
-      bestX = this.interventions.closurePoint;
-      leadV = 0;
-      leadLen = 0;
+    for (const c of this.closureList()) {
+      if (c.lanes[lane] && v.x < c.to && c.from > v.x && c.from < bestX) {
+        bestX = c.from;
+        leadV = 0;
+        leadLen = 0;
+      }
     }
     if (!isFinite(bestX)) return null;
     const gap = bestX - v.x - leadLen;
@@ -1431,9 +1478,20 @@ export class TrafficSim {
     if (v.laneShift < 1) return;
     const here = this.idmAccel(v, v.lane);
     // Blocked for THIS vehicle only while it is upstream of the works.
-    const blockedFor = (lane: number) =>
-      this.interventions.closedLanes[lane] && v.x < this.interventions.closureEnd;
-    const mustEscape = blockedFor(v.lane) && v.x < this.interventions.closurePoint;
+    // The nearest closure in this vehicle's own lane that it has still to reach: it has to get out before it.
+    const closing = this.nextClosureIn(v.lane, v.x);
+    const mustEscape = closing !== null;
+    /* A lane closed somewhere ahead is off limits, as it always was — except, while this vehicle's own lane is
+     * closing, a lane that closes FURTHER on: that is the way round staggered closures (lane 1 shut here, lane 2
+     * shut 300 m on), and without it a car behind the first waited for ever. With a single closure it never
+     * applies — every lane one closure shuts, it shuts at the same point — so that behaviour, and the capacity
+     * measured on it, are unchanged. Inside a closed stretch a lane is never a way round. */
+    const blockedFor = (lane: number) => {
+      if (!this.laneBlockedFor(lane, v.x)) return false;
+      if (this.closedHere(lane, v.x) || closing === null) return true;
+      const next = this.nextClosureIn(lane, v.x);
+      return !(next !== null && next.from > closing.from);
+    };
     let candidates = [v.lane - 1, v.lane + 1].filter(
       (l) => l >= 0 && l < this.cfg.laneCount && !blockedFor(l),
     );
@@ -1478,8 +1536,8 @@ export class TrafficSim {
      * it. Drives both how hard it may push the new follower and how strongly
      * the escape outweighs staying put, so the merge is polite while there is
      * road left and insistent once there is not. */
-    const urgency = mustEscape
-      ? Math.max(0, Math.min(1, 1 - (this.interventions.closurePoint - v.x) / MERGE_ZONE_M))
+    const urgency = closing !== null
+      ? Math.max(0, Math.min(1, 1 - (closing.from - v.x) / MERGE_ZONE_M))
       : 0;
 
     /* Working across for an exit.
@@ -1721,10 +1779,9 @@ export class TrafficSim {
       const rear = inc.x - INCIDENT_LENGTH;
       if (rear >= fromX && rear < wall) wall = rear;
     }
-    if (this.interventions.closedLanes[lane]) {
-      const cp = this.interventions.closurePoint;
+    for (const c of this.closureList()) {
       // Only a wall to traffic that still has to get past the works.
-      if (fromX < this.interventions.closureEnd && cp >= fromX && cp < wall) wall = cp;
+      if (c.lanes[lane] && fromX < c.to && c.from >= fromX && c.from < wall) wall = c.from;
     }
     return wall;
   }
@@ -2107,6 +2164,8 @@ export class TrafficSim {
   step(dt: number) {
     const before = this.time;
     this.time += dt;
+    // Interventions change only between steps (the scenario binding, the operator): the closure list is rebuilt once now.
+    this.closureCache = null;
     /* Discard everything collected during the warm-up.
      *
      * The rolling windows alone are not enough: at the instant the warm-up
@@ -2219,8 +2278,7 @@ export class TrafficSim {
       /* Each driver decides on their own cadence, not on the simulation's. A
        * driver whose lane is closing ahead of them is watching far more
        * closely, so their clock runs faster. */
-      const alert =
-        this.interventions.closedLanes[v.lane] && v.x < this.interventions.closureEnd;
+      const alert = this.laneBlockedFor(v.lane, v.x);
       // Patience runs down only while actually stuck: stopped, in a lane that
       // is closing. Any progress at all resets it.
       if (alert && v.v < CREEP_SPEED) v.stuckFor += dt;

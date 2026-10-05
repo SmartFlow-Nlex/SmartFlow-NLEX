@@ -10,6 +10,8 @@
     "init-db": "tsx scripts/init-db.ts",
     "verify-db": "tsx scripts/init-db.ts --verify-only",
     "seed-holidays": "tsx scripts/seed-holidays.ts",
+    "check-command": "tsx scripts/sandbox-command-check.ts",
+    "eval-command": "tsx scripts/sandbox-command-eval.ts",
     "lint": "echo \"add lint config\""
   },
   "dependencies": {

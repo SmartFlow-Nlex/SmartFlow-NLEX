@@ -47,19 +47,6 @@ type Props = {
   // weatherApplicable, so the page can disable the Weather chips when the
   // current Range has nothing for them to filter.
   onWeatherApplicableChange?: (applicable: boolean) => void;
-  // Legacy callback to power PredictiveCorridorChart from this component's fetch.
-  // Kept so the page can render PredictiveCorridorChart as its own card without this
-  // component fetching /api/incident/predictive a second time for the same
-  // Range/Weather-scoped data.
-  onCorridorForecastChange?: (corridor: {
-    corridorForecast: PredictiveData["corridorForecast"];
-    kmSegmentForecast: PredictiveData["kmSegmentForecast"];
-    unclassifiedLocationShare: number | null;
-    forecastHorizon: number;
-    forecastModelLabel: string | null;
-    showVolume: boolean;
-    showWeather: boolean;
-  }) => void;
 };
 
 const zoneLabel = (text: string, show: boolean, color: string) => ({
@@ -77,20 +64,24 @@ const zoneLabel = (text: string, show: boolean, color: string) => ({
 // still renders legibly, but a custom range can squeeze it much narrower.
 const MIN_ZONE_LABEL_FRACTION = 0.06;
 
-// How far into the Future band to draw, mirroring the Future control on the
-// traffic chart. `d` counts days from the first forecast row, and the control
-// only ever trims what is already on the response — it cannot ask the API for
-// a longer horizon, because the horizon is whatever the training run wrote
-// into ml_predictive_incidents.
+// How far into the Future band to draw, matching the traffic chart's own
+// Ahead control exactly (2wk/1mo/2mo/3mo) — `d` counts days from the first
+// forecast row, and the control only ever trims what is already on the
+// response — it cannot ask the API for a longer horizon, because the
+// horizon is whatever the training run wrote into ml_predictive_incidents.
 //
-// That pipeline currently writes 7 forecast days, so the wider presets render
-// disabled rather than hidden: a greyed "1 mo" states the ceiling, where an
-// absent button would read as a missing feature. They enable themselves once
-// the table holds that many days, with no change needed here.
+// train_incident_models.py now writes 90 forecast days (FUTURE_DAYS), the
+// same depth traffic's own retrain_honest.py + extend_future_volume.py
+// write to gold.ml_predictive_volume, so every preset below is backed by a
+// real forecast the same way traffic's is. A preset wider than what's
+// actually on the response still renders disabled rather than hidden,
+// exactly as before — the ceiling is stated, not hidden, if a future
+// retrain ever writes fewer days again.
 const FUTURE_PRESETS = [
-  { label: "1 wk", d: 7 },
   { label: "2 wk", d: 14 },
   { label: "1 mo", d: 28 },
+  { label: "2 mo", d: 60 },
+  { label: "3 mo", d: 90 },
 ] as const;
 
 // No defaults: with nothing passed the component sends no query params, so the
@@ -103,7 +94,6 @@ export default function PredictiveIncidentChart({
   weather,
   onDataBoundsChange,
   onWeatherApplicableChange,
-  onCorridorForecastChange,
 }: Props = {}) {
   const [data, setData] = useState<PredictiveData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -195,16 +185,6 @@ export default function PredictiveIncidentChart({
         setData(payload);
         onDataBoundsChange?.(payload.dataBounds);
         onWeatherApplicableChange?.(payload.weatherApplicable);
-        
-        onCorridorForecastChange?.({
-          corridorForecast: payload.corridorForecast,
-          kmSegmentForecast: payload.kmSegmentForecast,
-          unclassifiedLocationShare: payload.unclassifiedLocationShare,
-          forecastHorizon: payload.corridorForecastDays,
-          forecastModelLabel: payload.corridorForecast ? (META[payload.corridorForecastModel as ModelKey]?.label ?? payload.corridorForecastModel) : null,
-          showVolume,
-          showWeather,
-        });
 
         // Open on the champion so the default view matches the headline metrics,
         // but only on first load — re-seeding on every filter change would throw
@@ -226,7 +206,7 @@ export default function PredictiveIncidentChart({
     return () => {
       cancelled = true;
     };
-  }, [months, from, to, weather, showVolume, showWeather, onDataBoundsChange, onWeatherApplicableChange, onCorridorForecastChange]);
+  }, [months, from, to, weather, showVolume, showWeather, onDataBoundsChange, onWeatherApplicableChange]);
 
   // Only blank the card on the very first load. Changing Range or Weather
   // refetches, and swapping the whole chart out for a spinner each time made the
@@ -1035,6 +1015,18 @@ export default function PredictiveIncidentChart({
 
   const option: EChartsOption = splitOn ? splitOption : totalOption;
 
+  // Which horizon-accuracy bucket covers the currently-selected Ahead
+  // preset, so the caption row can quote the real measured error for THIS
+  // stretch instead of the day-1 figure in modelInfo.metrics (see
+  // measure_incident_horizon_accuracy.py — one-step-ahead validation cannot
+  // describe a 90-day recursive run). Picks the bucket whose range contains
+  // effectiveFutureDays; falls back to the widest stored bucket if the
+  // selection sits past everything measured so far.
+  const futureHorizonBucket =
+    data.horizonAccuracy.find((b) => effectiveFutureDays >= b.hLo && effectiveFutureDays <= b.hHi) ??
+    [...data.horizonAccuracy].sort((a, b) => b.hHi - a.hHi)[0] ??
+    null;
+
   const modelToolbar = (
     <div className="inc-models" role="group" aria-label="Models">
       <span className="inc-subhead">Models</span>
@@ -1374,7 +1366,12 @@ export default function PredictiveIncidentChart({
                 );
               })}
             </span>
-            <span className="fc-note">validated at {presentScoredDays}d</span>
+            {futureHorizonBucket && (
+              <span className={`fc-note${futureHorizonBucket.usable ? "" : " is-warn"}`} title={futureHorizonBucket.note ?? undefined}>
+                typical error {futureHorizonBucket.wmape != null ? `${futureHorizonBucket.wmape.toFixed(0)}%` : "n/a"}
+                {!futureHorizonBucket.usable ? " (beyond what this champion clears)" : ""}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -1407,7 +1404,10 @@ export default function PredictiveIncidentChart({
           <span className="fc-legend-item">
             <i className="inc-zone-swatch is-future" aria-hidden="true" />
             <b>Future</b>
-            <span>{effectiveFutureDays}d forecast shown</span>
+            <span>
+              {effectiveFutureDays}d forecast shown
+              {daily.length > 0 && <> · to {fmtDateFull(daily[daily.length - 1].date)}</>}
+            </span>
           </span>
         )}
         {isAggregated && (

@@ -21,7 +21,7 @@ import type { FacilityKind } from "../facilities";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
-export type PlaceMode = "data" | "pick" | "site" | "km";
+export type PlaceMode = "data" | "site" | "km";
 
 /** A plaza, ramp or service area an event can be put at. */
 export type SiteOption = {
@@ -193,7 +193,6 @@ export function resolvePlace(opts: {
   posKm: number | null;
   candidates: readonly Candidate[];
   choice: string | null;
-  pick: PickResult | null;
   sites: readonly SiteOption[];
   siteId: string | null;
   siteStations: readonly number[];
@@ -215,17 +214,6 @@ export function resolvePlace(opts: {
         incomplete: true,
       };
     }
-    case "pick":
-      if (!opts.pick) return { positionKm: opts.defaultKm, lane: null, site: null, note: "Click a lane, a booth or a pump on the road.", incomplete: true };
-      return {
-        positionKm: clampKm(opts.pick.km),
-        lane: opts.pick.lane,
-        site: opts.pick.site,
-        note: opts.pick.site
-          ? `Picked: ${opts.pick.site.facilityName} · ${opts.pick.site.kind === "approach" ? "on the ramp" : `${opts.pick.site.kind} ${opts.pick.site.stations.map((i) => i + 1).join(", ")}`}`
-          : `Picked: Km ${opts.pick.km.toFixed(2)}${opts.pick.lane != null ? `, Lane ${opts.pick.lane}` : ""}`,
-        incomplete: false,
-      };
     case "site": {
       const s = opts.sites.find((x) => x.id === opts.siteId) ?? opts.sites[0];
       if (!s) return { positionKm: opts.defaultKm, lane: null, site: null, note: "No toll plaza, ramp or service area on this stretch for this carriageway.", incomplete: true };

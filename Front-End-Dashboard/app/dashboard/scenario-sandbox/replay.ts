@@ -54,6 +54,9 @@ export type ReplayFrame = {
   closureEnd: number;
   speedLimitKmh: number | null;
   speedZone: [number, number];
+  /** The further closures and speed zones running at the time (Interventions.closures / speedZones). */
+  closures?: Interventions["closures"];
+  speedZones?: Interventions["speedZones"];
 };
 
 /** What the renderer needs; a frame is dressed up as this to be drawn. */
@@ -125,6 +128,9 @@ export class ReplayBuffer {
       closureEnd: iv.closureEnd,
       speedLimitKmh: iv.speedLimitKmh,
       speedZone: [iv.speedZone[0], iv.speedZone[1]],
+      // Each list is replaced (never mutated) when the scenario changes, so keeping the reference is a true snapshot.
+      closures: iv.closures,
+      speedZones: iv.speedZones,
     });
 
     if (this.frames.length > this.capacity) this.frames.shift();
@@ -196,6 +202,8 @@ export class ReplayBuffer {
         incidents: f.incidents,
         speedLimitKmh: f.speedLimitKmh,
         speedZone: f.speedZone,
+        closures: f.closures,
+        speedZones: f.speedZones,
         // Draft overlays are live-editing affordances; a recording has none.
         showClosurePreview: false,
         closureDraft: null,
@@ -215,7 +223,8 @@ export class ReplayBuffer {
    *  the incident list — they close a lane — so keying only on incidents left
    *  the one scenario family that lasts longest unreplayable. */
   lastEventIndex(): number | null {
-    const closedCount = (f: ReplayFrame) => f.closedLanes.reduce((n, c) => n + (c ? 1 : 0), 0);
+    const closedCount = (f: ReplayFrame) =>
+      f.closedLanes.reduce((n, c) => n + (c ? 1 : 0), 0) + (f.closures ?? []).reduce((n, c) => n + c.lanes.filter(Boolean).length, 0);
     for (let i = this.frames.length - 1; i > 0; i--) {
       const now = this.frames[i];
       const prev = this.frames[i - 1];

@@ -248,6 +248,12 @@ function plazasAway(exitName: string, movement: "exit" | "entry", direction: "NB
   return OSM_TOLL_PLAZAS_AWAY.filter((p) => sameExit(p.exit, exitName) && p.movement === movement && p.directions.includes(direction));
 }
 
+/** The name of the plaza a movement uses when it stands off NLEX on the road the interchange connects to, or null. */
+export function plazaAwayName(exitName: string, movement: "exit" | "entry", direction: "NB" | "SB"): string | null {
+  const away = plazasAway(exitName, movement, direction);
+  return away.length === 0 ? null : [...new Set(away.map((p) => p.name))].join(" and ");
+}
+
 function awayText(away: OsmTollPlaza[]): string {
   const names = [...new Set(away.map((p) => p.name))].join(" and ");
   const kms = away.map((p) => p.offsetM / 1000);

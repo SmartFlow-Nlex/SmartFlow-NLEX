@@ -49,6 +49,8 @@
   white-space: nowrap;
 }
 .fc-note { font-size: var(--fs-body); font-weight: 300; color: var(--text-secondary); white-space: nowrap; }
+/* The measured error is past what the champion clears: say so in the alert colour. */
+.fc-note.is-warn { color: var(--color-danger); }
 /* The models row: the chips' own wrapper sits flush, the toggles at the end. */
 .fc-models > .nct-toolbar,
 .fc-models > .nc-em-models,

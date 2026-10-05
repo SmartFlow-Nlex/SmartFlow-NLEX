@@ -9808,18 +9808,8 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
     align-items: start;
     margin-top: 10px;
   }
-  .sandbox-footbar[data-both] > [data-note="NB"],
-  .sandbox-footbar[data-both] > [data-compare="NB"],
-  .sandbox-footbar[data-both] > [data-compare-none="NB"],
-  .sandbox-footbar[data-both] > [data-reco="NB"] {
-    grid-column: 1;
-  }
-  .sandbox-footbar[data-both] > [data-note="SB"],
-  .sandbox-footbar[data-both] > [data-compare="SB"],
-  .sandbox-footbar[data-both] > [data-compare-none="SB"],
-  .sandbox-footbar[data-both] > [data-reco="SB"] {
-    grid-column: 2;
-  }
+  .sandbox-footbar[data-both] > .sandbox-dir-card[data-dir="NB"] { grid-column: 1; }
+  .sandbox-footbar[data-both] > .sandbox-dir-card[data-dir="SB"] { grid-column: 2; }
   /* The legend describes both roads, so it gets the full width and a rule
      above it to close off the pairs. */
   .sandbox-footbar[data-both] > .sandbox-legend {
@@ -9972,6 +9962,11 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   top: 0;
   right: 0;
   bottom: 0;
+  /* The docked rail's sticky rule sets align-self: start and a max-height. Browsers now align fixed boxes too,
+     so `start` shrank this panel to its content (with every section folded, a short white box with the page
+     showing beneath it), and the max-height stopped it 118 px short. Full screen is the full height. */
+  align-self: stretch;
+  max-height: none;
   width: 372px;
   max-width: 92vw;
   z-index: 56;
@@ -10185,6 +10180,87 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   grid-template-columns: 1fr 1fr;
 }
 
+/* One carriageway's notes: its recommendation, its status, its before/after. */
+.sandbox-dir-card {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+.sandbox-dir-card > .sandbox-live-note,
+.sandbox-dir-card > .sandbox-compare,
+.sandbox-dir-card > .sandbox-reco { margin: 0; }
+.sandbox-dir-card > .sandbox-compare-none {
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+/* Full screen: the notes are a narrow panel down the right side, between the top bar and the readout strip,
+   rather than a band across the bottom that covered a whole carriageway. Dark throughout. */
+.sandbox-page .sandbox-main.is-expanded .sandbox-footbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  top: calc(var(--fs-top, 96px) + 8px);
+  bottom: auto;
+  left: auto;
+  right: 14px;
+  width: min(440px, 34vw);
+  /* As tall as its content, never past the readout strip (it scrolls then). */
+  max-height: calc(100% - var(--fs-top, 96px) - 8px - var(--fs-strip) - 22px);
+  margin: 0;
+  padding: 10px;
+  overflow-y: auto;
+}
+.sandbox-page .sandbox-main.is-expanded .sandbox-footbar.is-folded { display: none; }
+.sandbox-main.is-expanded .sandbox-dir-card {
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.sandbox-main.is-expanded .sandbox-reco {
+  margin: 0;
+  padding: 2px 0 2px 10px;
+  border: 0;
+  border-left: 3px solid var(--reco-tone, #34d399);
+  border-radius: 0;
+  background: none;
+}
+.sandbox-main.is-expanded .sandbox-reco.good { --reco-tone: #34d399; }
+.sandbox-main.is-expanded .sandbox-reco.warn { --reco-tone: #fbbf24; }
+.sandbox-main.is-expanded .sandbox-reco.bad { --reco-tone: #f87171; }
+.sandbox-main.is-expanded .sandbox-reco strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.66rem;
+  color: var(--reco-tone, #34d399);
+}
+.sandbox-main.is-expanded .sandbox-reco p {
+  margin-top: 4px;
+  font-size: 0.86rem;
+  line-height: 1.4;
+  color: #eef3ff;
+}
+.sandbox-main.is-expanded .sandbox-dir-card > .sandbox-compare-none { color: #8fa1c2; }
+.sandbox-main.is-expanded .sandbox-compare {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #dce6fb;
+}
+.sandbox-main.is-expanded .sandbox-compare * { color: inherit; }
+.sandbox-main.is-expanded .sandbox-footbar > .sandbox-legend {
+  margin: 2px 0 0;
+  padding: 8px 2px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.10);
+  font-size: 0.7rem;
+  color: #9fb0cf;
+}
+
 .sandbox-live-note {
   margin: 8px 0 0;
   padding: 8px 10px;
@@ -10205,6 +10281,15 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 .sandbox-main.is-expanded .sandbox-live-note {
   padding: 6px 10px;
   line-height: 1.3;
+  /* Full screen is always dark; the page's own surface and text colours are the light theme's. */
+  color: #c9d5ee;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.sandbox-main.is-expanded .sandbox-live-note.warn {
+  color: #fde7c7;
+  background: color-mix(in srgb, #b45309 18%, transparent);
+  border-color: color-mix(in srgb, #f59e0b 45%, transparent);
 }
 /* Same legend, smaller footprint — reference information, not a primary block. */
 .sandbox-main.is-expanded .sandbox-legend {
@@ -10748,6 +10833,46 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 }
 
 /* Sampled-value readout: the number, then why it may be soft. */
+/* Duration: the four ways as one even row, and what they come to (minutes, the data behind them, Redraw for a
+   sampled one, the phases) together in one card under it. */
+.sandbox-scn-duration-seg {
+  display: flex;
+  width: 100%;
+  margin: 0 0 8px;
+}
+.sandbox-scn-duration-seg button {
+  flex: 1 1 0;
+  padding: 6px 4px;
+  text-align: center;
+  white-space: nowrap;
+}
+.sandbox-scn-manual { display: block; margin: 0 0 8px; }
+.sandbox-scn-duration-out {
+  padding: 8px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+.sandbox-scn-duration-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sandbox-scn-duration-head .sandbox-scn-res { flex: 1 1 auto; min-width: 0; }
+.sandbox-scn-redraw {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface-hover);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.sandbox-scn-redraw:hover { color: var(--text-primary); border-color: var(--text-muted); }
 .sandbox-scn-res {
   display: flex;
   align-items: baseline;
@@ -11283,23 +11408,63 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   .ds-auth-gate-spinner { animation: none; opacity: 0.5; }
 }
 
-/* Scenario sandbox: what lies along the chosen route, one row per place in km
-   order (components/PlacesList.tsx): km, name, and a button per facility there. */
+/* Scenario sandbox: what lies along the chosen route (components/PlacesList.tsx), in separate sections —
+   exits, entries, toll barriers, gas stations — one row per place in travel order: km, name, what stands there. */
 .sb-places {
   display: grid;
-  gap: 2px;
-  max-height: 320px;
+  gap: 10px;
+  max-height: 360px;
   overflow-y: auto;
   margin: 2px 0 6px;
   padding-right: 2px;
+}
+.sb-places-sec {
+  display: grid;
+  gap: 2px;
+  padding-left: 8px;
+  border-left: 3px solid var(--sec-color, var(--border-default));
+}
+.sb-places-sec.k-exit_ramp { --sec-color: var(--color-info); }
+.sb-places-sec.k-entry_ramp { --sec-color: var(--color-success); }
+.sb-places-sec.k-barrier { --sec-color: var(--color-purple); }
+.sb-places-sec.k-service_area { --sec-color: var(--color-warning); }
+.sb-places-sec-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 2px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sec-color, var(--text-secondary));
+}
+.sb-places-sec-count {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--bg-surface-hover);
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  letter-spacing: 0;
+}
+.sb-places-empty {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
 }
 .sb-place {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
+  width: 100%;
   padding: 4px 6px;
+  border: 0;
   border-radius: 8px;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .sb-place:hover { background: var(--bg-surface-hover); }
 .sb-place.is-on {
@@ -11314,63 +11479,25 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 }
 .sb-place-name {
   min-width: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
   font-size: 0.8rem;
   color: var(--text-primary);
-  text-align: left;
   line-height: 1.25;
   overflow-wrap: anywhere;
-  cursor: pointer;
 }
-.sb-place-name:hover { text-decoration: underline; }
-.sb-place-kinds {
-  display: inline-flex;
-  gap: 4px;
-}
-.sb-place-kind {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
+/* What stands there: a plaza in the section's colour; free, off-road or unmapped in grey. */
+.sb-place-toll {
   padding: 1px 8px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-full);
-  background: transparent;
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   font-weight: 600;
   white-space: nowrap;
-  cursor: pointer;
-}
-.sb-place-kind.k-entry_ramp { color: var(--color-success); border-color: var(--color-success-border); }
-.sb-place-kind.k-exit_ramp { color: var(--color-info); border-color: var(--color-info-border); }
-.sb-place-kind.k-service_area { color: var(--color-warning); border-color: var(--color-warning-border); }
-.sb-place-kind.k-barrier { color: var(--color-purple); border-color: var(--color-purple); }
-.sb-place-kind.is-on { background: var(--color-info-bg); }
-/* The first junction of a span being picked. */
-.sb-place.is-anchor {
-  background: var(--color-warning-bg);
-  box-shadow: inset 2px 0 0 var(--color-warning);
-}
-.sb-place.is-stop .sb-place-name { color: var(--text-secondary); }
-/* What the buttons mean, once, above the list. */
-.sb-places-key {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin: 4px 0 2px;
-  font-size: 0.68rem;
   color: var(--text-muted);
 }
-/* Each half wraps as a whole, never "service area" alone on a line. */
-.sb-places-key > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  white-space: nowrap;
+.sb-place-toll.t-plaza {
+  color: var(--sec-color);
+  border-color: var(--sec-color);
 }
-.sb-places-key .sb-place-kind { cursor: default; padding: 0 6px; }
 
 /* --- Narrative "Generate report": a quiet outlined control (Lane Signal) ---
    It spends a model call and is secondary to the forecast it sits under, so

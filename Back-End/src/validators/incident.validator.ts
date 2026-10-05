@@ -246,6 +246,32 @@ export const IncidentPredictiveResponseSchema = z.object({
     contextFrom: isoDate.nullable(),
     contextTo: isoDate.nullable(),
   }),
+  /**
+   * How the champion's error grows with how far ahead a day was — a separate
+   * rolling-origin study (measure_incident_horizon_accuracy.py), not derived
+   * from modelInfo.metrics, which is one-step-ahead only (see that script's
+   * own doc comment). Empty array, not null, when the study hasn't been run
+   * yet — the Future control still works, it just can't quote a bucketed
+   * error figure until this exists. Mirrors traffic's own
+   * HorizonAccuracy/gold.ml_horizon_accuracy exactly, one schema short of it
+   * only in that there is no "target" dimension (this pipeline has one
+   * series, not several).
+   */
+  horizonAccuracy: z.array(
+    z.object({
+      model: z.string(),
+      hLo: z.number().int().positive(),
+      hHi: z.number().int().positive(),
+      n: z.number().int().nonnegative(),
+      wmape: z.number().nullable(),
+      mape: z.number().nullable(),
+      mase: z.number().nullable(),
+      mae: z.number().nullable(),
+      baselineWmape: z.number().nullable(),
+      usable: z.boolean(),
+      note: z.string().nullable(),
+    })
+  ),
 });
 
 export type IncidentPredictiveResult = z.infer<typeof IncidentPredictiveResponseSchema>;

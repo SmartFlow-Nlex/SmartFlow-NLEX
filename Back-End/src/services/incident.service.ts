@@ -1472,7 +1472,10 @@ export function buildIncidentPredictiveResponse(
   locationRows: { location: string | null; src?: string | null }[] = [],
   // The corridor's authoritative exit list (see searchExitsInDb). Optional
   // for the same reason.
-  exitRows: { exit_id: number; exit_name: string; km: number }[] = []
+  exitRows: { exit_id: number; exit_name: string; km: number }[] = [],
+  // Rolling-origin long-horizon accuracy (measure_incident_horizon_accuracy.py).
+  // Optional/defaulted to [] for the same reason volumeByDate/locationRows are.
+  horizonAccuracy: IncidentPredictiveResult["horizonAccuracy"] = []
 ): IncidentPredictiveResult {
   const actualByDate = new Map(actuals.map((r) => [r.date, Number(r.total)]));
   const predByDate = new Map(predictions.map((r) => [r.date, r]));
@@ -1805,10 +1808,56 @@ export function buildIncidentPredictiveResponse(
       contextFrom: daily[0]?.date ?? null,
       contextTo: daily[daily.length - 1]?.date ?? null,
     },
+    horizonAccuracy,
   };
 }
 
 const INCIDENT_MODEL_COLUMNS_SQL = INCIDENT_MODELS.map((m) => m.column).join(", ");
+
+// How the champion's error grows with how far ahead a day was — a genuine
+// rolling-origin study (measure_incident_horizon_accuracy.py), not derived
+// from modelInfo.metrics, which scores only one-step-ahead validation (every
+// prediction there is handed the real previous day; see FUTURE_DAYS's own
+// comment in train_incident_models.py for why that can't describe day 60 of
+// a continuous blind forecast). Mirrors traffic.service.ts's own
+// getHorizonAccuracy against gold.ml_horizon_accuracy, one difference only:
+// this pipeline's own tables carry no schema prefix (see ensure_schema in
+// train_incident_models.py) and no "target" dimension (one series, not
+// several). Own try/catch and an empty-array (not null) fallback: the main
+// forecast must never go down because this optional study hasn't been run
+// yet or the table doesn't exist.
+async function getIncidentHorizonAccuracy(): Promise<IncidentPredictiveResult["horizonAccuracy"]> {
+  if (!db) return [];
+  try {
+    const { rows } = await db.query<{
+      model_name: string; h_lo: number; h_hi: number; n: number;
+      wmape: string | number | null; mape: string | number | null; mase: string | number | null;
+      mae: string | number | null; baseline_wmape: string | number | null;
+      usable: boolean; note: string | null;
+    }>(
+      `SELECT model_name, h_lo, h_hi, n, wmape, mape, mase, mae, baseline_wmape, usable, note
+       FROM ml_incident_horizon_accuracy
+       ORDER BY h_lo`
+    );
+    const num = (v: string | number | null) => (v === null ? null : Number(v));
+    return rows.map((r) => ({
+      model: r.model_name,
+      hLo: Number(r.h_lo),
+      hHi: Number(r.h_hi),
+      n: Number(r.n),
+      wmape: num(r.wmape),
+      mape: num(r.mape),
+      mase: num(r.mase),
+      mae: num(r.mae),
+      baselineWmape: num(r.baseline_wmape),
+      usable: Boolean(r.usable),
+      note: r.note,
+    }));
+  } catch (error) {
+    console.warn("Incident horizon-accuracy study unavailable (optional, main forecast unaffected):", (error as Error).message);
+    return [];
+  }
+}
 
 // The dedicated accident-only forecast written by `train_incident_models.py
 // --series accident` into ml_*_accident. Its own try/catch and a null return
@@ -1995,7 +2044,10 @@ export async function getIncidentPredictiveFromDb(
         .filter((r) => r.volume != null)
         .map((r) => [r.date, Number(r.volume)])
     );
-    const accidentSplit = await getAccidentSplit(historicalStart, historicalEnd);
+    const [accidentSplit, horizonAccuracy] = await Promise.all([
+      getAccidentSplit(historicalStart, historicalEnd),
+      getIncidentHorizonAccuracy(),
+    ]);
     const response = buildIncidentPredictiveResponse(
       actualsRes.rows,
       predsRes.rows,
@@ -2010,7 +2062,8 @@ export async function getIncidentPredictiveFromDb(
       holdoutPredsRes.rows,
       volumeByDate,
       locationsRes.rows,
-      exitRows ?? []
+      exitRows ?? [],
+      horizonAccuracy
     );
     return { ...response, accidentSplit };
   } catch (error) {

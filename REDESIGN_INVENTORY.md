@@ -5374,3 +5374,36 @@ A visual and UX theme upgrade only: no route, API call, calculation, data source
 - **Filter bar joins the header** (user requests): as the Range/Weather bar pins, the header gives up its shadow and hairline so the two read as one header with a single shadow; the strip behind the page scrollbar grows to cover the bar too, so no sliver of background shows at the right edge.
 - **Mascot wheel corners** (user request): the stair-stepped edge where the body curves into each wheel well and the thin line beside the tyres are gone: a finer body mesh, a smoothly curved, slightly roomier well, no separate arch rim, and tread blocks sitting flush so the tyres' outline stays smooth.
 - **Mascot fender flares** (user request, after a photo): the body swells out round each wheel and rolls in over the arch's edge, built into the body surface so it is one smooth piece; the body mesh is spent where it turns sharply (the arches) so the edge stays smooth; the tyre tread is now pressed into the rubber (a normal map) instead of separate blocks, so the tyre outline is clean.
+
+## Pulling groupmates' work into the redesign
+
+The groupmates build on `nlex-main/Main-Dashboard` (SmartFlow-NLEX repo) with the old design system. The
+redesign survives their merges because it lives mostly in its own layers: `app/styles/nlex-daylight.css`
+and `nlex-environment.css` load last and restyle through the shared tokens, so their new pages, cards and
+CSS pick up the new look on their own. The first merge (7 Oct 2026: Hans's sandbox update, Jertz's spatial
+incident models) is the worked example.
+
+1. **Commit or stash the redesign first**, and make a backup branch (`backup-redesign-before-group-merge`).
+2. `git fetch nlex-main`, then preview the merge without touching anything: snapshot the working tree
+   into an unreferenced commit and run `git merge-tree --write-tree <snapshot> nlex-main/Main-Dashboard`.
+3. `git merge --no-ff --no-commit nlex-main/Main-Dashboard`, then for each conflict:
+   - **Their logic, data and features win; our look goes back on top.** Keep their new props, fetches,
+     calculations, controls and copy; keep our class names, cards, `EvidenceModal`, `StateNote`, the
+     fc-kit forecast rows, label/id pairs and "Simulation"/"ILLUSTRATIVE" pills.
+   - **A component they rewrote from scratch:** take theirs whole, then restyle it: theme tokens for
+     colours (`--signal-*`, `--page-accent`, `--bg-raised`, `--shadow-lg`), `ds-modal-backdrop` for dialogs.
+   - **globals.css:** do not resolve its hunks by hand; git pairs unrelated blocks because the redesign
+     moved them. Start from ours and re-apply each hunk of their `base -> theirs` diff where its exact
+     before-text is found (it was found exactly once for all 8 hunks in the first merge).
+4. Type-check, lint (their code may carry lint errors that break `next build`), screenshot the pages they
+   touched in both themes, then commit the merge. The backend runs `tsx watch`, so their backend code
+   reloads by itself; check `Back-End/package.json` for new dependencies (`npm install`).
+
+**First merge, 7 Oct 2026:** 3 commits, 37 files; 7 conflicts. Incidents page and incident forecast
+chart kept the redesign's structure with Jertz's changes inside (corridor chart self-fetching and full
+width, 2 wk–3 mo forecast ranges, measured typical error per range, forecast end date); the corridor
+chart and the risk-models heatmap taken from Jertz whole and restyled (risk bands on the road-state
+tokens, dialogs on the shared backdrop and raised surface, heatmap borders on the dark surface colour);
+Maintenance kept our labelled fields with his no-past-dates rule; Sandbox took Hans's reorganised
+footbar and Segment control with our Simulation pills and ink colour; globals.css = ours + his 247 lines.
+One lint error in Jertz's corridor chart (an unescaped apostrophe) fixed.

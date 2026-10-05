@@ -188,6 +188,25 @@ export type PredictiveData = {
     windowEnd: string;
   };
   weatherApplicable: boolean;
+  /**
+   * How the champion's error grows with how far ahead a day was — a
+   * rolling-origin study (measure_incident_horizon_accuracy.py), not derived
+   * from modelInfo.metrics (one-step-ahead only). Empty when the study
+   * hasn't been run yet. Same shape as traffic's own HorizonAccuracy.
+   */
+  horizonAccuracy: {
+    model: string;
+    hLo: number;
+    hHi: number;
+    n: number;
+    wmape: number | null;
+    mape: number | null;
+    mase: number | null;
+    mae: number | null;
+    baselineWmape: number | null;
+    usable: boolean;
+    note: string | null;
+  }[];
 };
 
 export const fmtInt = (n: number) => Math.round(n).toLocaleString("en-US");

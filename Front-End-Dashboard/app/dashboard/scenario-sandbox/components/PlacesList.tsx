@@ -2,42 +2,39 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import type { FacilityKind } from "../facilities";
+import { plazaAwayName } from "../facilityLayout";
 import { displayExitName, type NlexExit } from "../../../../lib/nlex-exits";
 
 type Place = { id: string; name: string; kind: FacilityKind; km: number };
-type Junction = Pick<NlexExit, "exit_id" | "exit_name" | "km">;
+type Junction = Pick<NlexExit, "exit_id" | "exit_name" | "km" | "nb_entry" | "nb_exit" | "sb_entry" | "sb_exit" | "node_type">;
 type Span = { fromKm: number; toKm: number };
 
-const KIND_LABEL: Record<FacilityKind, string> = {
-  entry_ramp: "Entry",
-  exit_ramp: "Exit",
-  service_area: "Fuel",
-  barrier: "Barrier",
+/** What stands at a movement: booths on NLEX, none (open-system exits are free), booths on the road it
+ *  connects to, the Bocaue Barrier collecting for it, or booths the closed system must have that neither
+ *  OpenStreetMap nor the record shows. */
+type Toll = "plaza" | "free" | "away" | "barrier" | "unmapped";
+
+type Row = {
+  key: string;
+  km: number;
+  name: string;
+  toll: Toll | null;
+  /** The facility to frame, when one is drawn; otherwise the row frames the junction's km. */
+  place: Place | null;
+  title: string;
 };
 
-const KIND_ORDER: Record<FacilityKind, number> = { barrier: 0, exit_ramp: 1, entry_ramp: 2, service_area: 3 };
-
-/** "exit:4:NB" -> 4: a plaza's id names the junction it stands at (facilityLayout.corridorPlaces). */
-const junctionOf = (id: string) => {
-  const m = /^(?:exit|entry|barrier):(\d+):/.exec(id);
-  return m ? Number(m[1]) : null;
-};
+const TOLL_LABEL: Record<Toll, string> = { plaza: "Toll plaza", free: "Free", away: "Plaza off NLEX", barrier: "Pays at barrier", unmapped: "Not mapped" };
 
 /**
- * The road as one list, in km order: every junction with its toll plazas on
- * the same row, and the service areas between them.
+ * What lies along the chosen route on one carriageway, in separate sections: the exits traffic can leave
+ * by, the entries it joins from, toll barriers across the road, and gas stations. Each row is one place,
+ * in travel order, with what stands there; clicking it frames the drawn window on it.
  *
- * This used to be two lists, "Exits on route" (junction names) and "Toll
- * plazas & service areas" (the plazas AT those junctions), so Meycauayan
- * appeared in both and the difference was invisible. A junction is the place;
- * Entry / Exit / Barrier are the plazas there.
- *
- * Only the chosen route is listed: its junctions, origin to destination, and
- * the plazas and service areas the road between them actually draws. The
- * route is the operator's choice, so nothing here changes it.
- *
- * Clicking a junction frames it, and a second junction spans the road between
- * the two. A plaza or service area frames that facility.
+ * Exits and entries come from the exit list's own access flags (nb_exit, sb_entry ...), not only from the
+ * plazas: between Balintawak and the Bocaue Barrier NLEX is an open system, paid on entry, so its exits
+ * have no booths and a plaza-only list showed nothing but entries. An exit at the stretch's upstream end
+ * is left out (traffic leaves before the stretch begins), as is an entry at its downstream end.
  */
 export default function PlacesList<J extends Junction, P extends Place>({
   junctions,
@@ -45,8 +42,7 @@ export default function PlacesList<J extends Junction, P extends Place>({
   placesInView,
   view,
   route,
-  anchorKm,
-  directionName,
+  direction,
   onJunction,
   onPlace,
 }: {
@@ -58,38 +54,68 @@ export default function PlacesList<J extends Junction, P extends Place>({
   view: Span;
   /** The chosen origin -> destination: all that is listed. */
   route: Span;
-  /** The first junction of a span being picked, if any. */
-  anchorKm: number | null;
-  directionName: string;
+  direction: "NB" | "SB";
   onJunction: (junction: J) => void;
   onPlace: (place: P) => void;
 }) {
-  const rows = useMemo(() => {
-    // A facility is drawn only when it stands more than 0.02 km inside the
-    // window (planFacilities), so one at the very origin or destination never
-    // is: offering it would frame an empty road.
+  const sections = useMemo(() => {
+    const nb = direction === "NB";
+    const eps = 1e-6;
+    const onRoute = (km: number) => km >= route.fromKm - eps && km <= route.toKm + eps;
+    // A facility exactly at the route's end stands on the window's edge and is never drawn (planFacilities).
     const drawn = (km: number) => km > route.fromKm + 0.02 && km < route.toKm - 0.02;
-    const onRoute = junctions.filter((j) => j.km >= route.fromKm - 1e-6 && j.km <= route.toKm + 1e-6);
-    const plazas = new Map<number, P[]>();
-    const stops: P[] = [];
-    for (const p of places) {
-      if (!drawn(p.km)) continue;
-      if (p.kind === "service_area") { stops.push(p); continue; }
-      const id = junctionOf(p.id);
-      if (id == null) continue;
-      plazas.set(id, [...(plazas.get(id) ?? []), p]);
-    }
-    // One order on every row, whichever plaza's booths stand a few metres first.
-    for (const list of plazas.values()) list.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
+    const upstreamEnd = nb ? route.fromKm : route.toKm;
+    const downstreamEnd = nb ? route.toKm : route.fromKm;
+    const barrierKm = junctions.find((j) => j.node_type === "toll-barrier")?.km ?? Infinity;
+    // Closed system: north of the Bocaue Barrier, where both movements are tolled.
+    const closed = (km: number) => km > barrierKm + eps;
+    const placeOf = (id: string) => places.find((p) => p.id === id) ?? null;
+    const byKm = (a: Row, b: Row) => (nb ? a.km - b.km : b.km - a.km);
+
+    const movement = (j: J, m: "exit" | "entry"): Row | null => {
+      if (j.node_type === "toll-barrier" || !onRoute(j.km)) return null;
+      const has = m === "exit" ? (nb ? j.nb_exit : j.sb_exit) : nb ? j.nb_entry : j.sb_entry;
+      if (!has) return null;
+      if (m === "exit" && Math.abs(j.km - upstreamEnd) < eps) return null;
+      if (m === "entry" && Math.abs(j.km - downstreamEnd) < eps) return null;
+      const name = displayExitName(j.exit_name);
+      const plaza = placeOf(`${m}:${j.exit_id}:${direction}`);
+      // A plaza at the very start or end of the route stands on the window's edge and is not drawn.
+      const place = plaza && drawn(plaza.km) ? plaza : null;
+      const away = plaza ? null : plazaAwayName(j.exit_name, m, direction);
+      // Joining southbound just north of the Bocaue Barrier: the barrier takes the toll (its southbound entry fares).
+      const atBarrier = !nb && m === "entry" && closed(j.km) && j.km - barrierKm < 1;
+      const toll: Toll = plaza ? "plaza" : away ? "away" : atBarrier ? "barrier" : m === "exit" && !closed(j.km) ? "free" : "unmapped";
+      const what = m === "exit" ? "exit" : "entry";
+      const title =
+        toll === "plaza" && !place ? `The ${name} ${what} toll plaza stands at the end of your route, so it is not drawn; move the origin or destination past it to see it.`
+        : toll === "plaza" ? `Frame the window on the ${name} ${what} toll plaza`
+          : toll === "barrier" ? `Southbound traffic joining at ${name} pays at the Bocaue Barrier just south of it, so there are no booths at the interchange. Click to frame the entry.`
+          : toll === "free" ? `Open system (Balintawak to the Bocaue Barrier): you pay when you enter, so leaving at ${name} is free and there are no booths. Click to frame the ${what}.`
+            : toll === "away" ? `The ${what} toll plaza (${away}) stands off NLEX on the road ${name} connects to, so there are no booths on the expressway. Click to frame the ${what}.`
+              : `A toll plaza is expected here, but neither OpenStreetMap nor the toll record has one, so none is drawn. Click to frame the ${what}.`;
+      return { key: `${m}:${j.exit_id}`, km: plaza?.km ?? j.km, name, toll, place, title };
+    };
+
+    const exits = junctions.map((j) => movement(j, "exit")).filter((r): r is Row => r !== null).sort(byKm);
+    const entries = junctions.map((j) => movement(j, "entry")).filter((r): r is Row => r !== null).sort(byKm);
+    const of = (kind: FacilityKind): Row[] =>
+      places
+        .filter((p) => p.kind === kind && drawn(p.km))
+        .map((p) => ({ key: p.id, km: p.km, name: p.name, toll: null, place: p, title: `Frame the window on ${p.name}` }))
+        .sort(byKm);
     return [
-      ...onRoute.map((j) => ({ key: `j:${j.exit_id}`, km: j.km, junction: j, items: plazas.get(j.exit_id) ?? [] })),
-      ...stops.map((p) => ({ key: p.id, km: p.km, junction: null, items: [p] })),
-    ].sort((a, b) => a.km - b.km || (a.junction ? -1 : 1));
-  }, [junctions, places, route.fromKm, route.toKm]);
+      { id: "exits", title: "Exits", kind: "exit_ramp" as FacilityKind, rows: exits },
+      { id: "entries", title: "Entries", kind: "entry_ramp" as FacilityKind, rows: entries },
+      { id: "barriers", title: "Toll barriers", kind: "barrier" as FacilityKind, rows: of("barrier") },
+      { id: "fuel", title: "Gas stations", kind: "service_area" as FacilityKind, rows: of("service_area") },
+    ].filter((s) => s.rows.length > 0 || s.id === "exits" || s.id === "entries");
+  }, [junctions, places, route.fromKm, route.toKm, direction]);
 
   const within = (km: number, s: Span) => km >= s.fromKm - 1e-6 && km <= s.toKm + 1e-6;
+  const junctionAt = (r: Row) => junctions.find((j) => `exit:${j.exit_id}` === r.key || `entry:${j.exit_id}` === r.key) ?? null;
 
-  // Open on the stretch being looked at, not on Balintawak thirty rows above it.
+  // Open on the stretch being looked at, not at the top of a long list.
   const listRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const list = listRef.current;
@@ -98,65 +124,45 @@ export default function PlacesList<J extends Junction, P extends Place>({
   }, []);
 
   return (
-    <>
-      <p className="sb-places-key">
-        <span>
-          Toll plaza
-          <span className="sb-place-kind k-entry_ramp">Entry</span>
-          <span className="sb-place-kind k-exit_ramp">Exit</span>
-          <span className="sb-place-kind k-barrier">Barrier</span>
-        </span>
-        <span>
-          Service area
-          <span className="sb-place-kind k-service_area">Fuel</span>
-        </span>
-      </p>
-      <div ref={listRef} className="sb-places" role="list" aria-label={`Junctions and service areas, ${directionName}`}>
-        {rows.map((r) => {
-          const j = r.junction;
-          const name = j ? displayExitName(j.exit_name) : r.items[0].name;
-          const onScreen = (j != null && within(j.km, view)) || r.items.some((p) => placesInView.has(p.id));
-          const anchored = j != null && anchorKm === j.km;
-          const nameTitle = !j
-            ? `Frame the window on ${name} (Km ${r.km.toFixed(2)}, ${directionName})`
-            : anchorKm == null
-              ? `Frame the window on ${name} (Km ${j.km}). Then click a second junction to show the road between them.`
-              : anchored
-                ? "Click again to cancel"
-                : `Show the road from Km ${anchorKm} to Km ${j.km}`;
-          return (
-            <div
-              key={r.key}
-              role="listitem"
-              className={`sb-place${j ? "" : " is-stop"}${onScreen ? " is-on" : ""}${anchored ? " is-anchor" : ""}`}
-            >
-              <span className="sb-place-km">{r.km.toFixed(1)}</span>
-              <button
-                type="button"
-                className="sb-place-name"
-                onClick={() => (j ? onJunction(j) : onPlace(r.items[0]))}
-                title={nameTitle}
-              >
-                {name}
-              </button>
-              <span className="sb-place-kinds">
-                {r.items.map((p) => (
+    <div ref={listRef} className="sb-places" aria-label={`Exits, entries and gas stations, ${direction === "NB" ? "northbound" : "southbound"}`}>
+      {sections.map((sec) => (
+        <section key={sec.id} className={`sb-places-sec k-${sec.kind}`} data-places-section={sec.id}>
+          <h4 className="sb-places-sec-title">
+            {sec.title}
+            <span className="sb-places-sec-count">{sec.rows.length}</span>
+          </h4>
+          {sec.rows.length === 0 ? (
+            <p className="sb-places-empty">None on this route.</p>
+          ) : (
+            <div role="list">
+              {sec.rows.map((r) => {
+                const onScreen = r.place ? placesInView.has(r.place.id) : within(r.km, view);
+                return (
                   <button
-                    key={p.id}
+                    key={r.key}
                     type="button"
-                    data-place={p.id}
-                    className={`sb-place-kind k-${p.kind}${placesInView.has(p.id) ? " is-on" : ""}`}
-                    onClick={() => onPlace(p)}
-                    title={`Frame the window on ${p.name} (Km ${p.km.toFixed(2)}, ${directionName})`}
+                    role="listitem"
+                    data-place={r.place?.id}
+                    className={`sb-place${onScreen ? " is-on" : ""}`}
+                    title={r.title}
+                    onClick={() => {
+                      if (r.place) onPlace(r.place as P);
+                      else {
+                        const j = junctionAt(r);
+                        if (j) onJunction(j as J);
+                      }
+                    }}
                   >
-                    {KIND_LABEL[p.kind]}
+                    <span className="sb-place-km">{r.km.toFixed(1)}</span>
+                    <span className="sb-place-name">{r.name}</span>
+                    {r.toll && <span className={`sb-place-toll t-${r.toll}`}>{TOLL_LABEL[r.toll]}</span>}
                   </button>
-                ))}
-              </span>
+                );
+              })}
             </div>
-          );
-        })}
-      </div>
-    </>
+          )}
+        </section>
+      ))}
+    </div>
   );
 }

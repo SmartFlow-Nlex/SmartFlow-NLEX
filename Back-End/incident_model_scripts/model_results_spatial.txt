@@ -18,10 +18,11 @@
     holdout n        = 1220 exit-days across 20 exits
     epochs trained   = 25
 
-  Next-24h high-risk segments (top 5):
+  Next-24h high-risk segments (top 5 of 28-day rollout, day 1):
     #1  exit_id=3   predicted=12.687  last_observed=13
     #2  exit_id=14  predicted=12.534  last_observed=9
     #3  exit_id=13  predicted=12.410  last_observed=10
     #4  exit_id=1   predicted=11.629  last_observed=14
     #5  exit_id=4   predicted=11.622  last_observed=12
+  Day 28 top exit: exit_id=13 predicted=12.967 (recursive rollout -- compounded, treat with less confidence than day 1)
 ================================================================================

@@ -18,8 +18,11 @@ import calibrationJson from "./calibration.json";
 import { CLASS_META, TrafficSim, type Interventions, type Metrics } from "../simulation";
 import { combineBaselines, combineMetrics, flowWeightedSpeed } from "../bothMetrics";
 import { drawBorrowedLanes, drawScenes, drawWater, drawWeather, hasSceneArt, type SceneCtx, type SceneGeometry } from "../sceneArt";
+import { drawForecastEvents, expectedOnStretch, ON_CARRIAGEWAY_SHARE } from "./forecastIncidents";
 import { borrowedLanes, crossoverM, defaultStretch, planStretch, planZipper, REALLOCATION_NAME, zipperCounts, zipperHolds, type StretchLimits } from "../zipper";
 import { drawMotorcycle, type BikeCtx } from "../motorcycleArt";
+import { FacilityEngine, type FacilityHost, type FacilitySpec } from "../facilities";
+import { APRON_ROLES, BARRIER_ROLES, apronOutline, serviceSite, wAtU } from "../facilityArt";
 import { shapeForecastMix, type ClassShares } from "../forecastMix";
 import { getRecommendation, CLOSURE_LANE_CAPACITY_VEH_H, type Supply } from "../recommendation";
 import { BUS_PAINTS, CAB_PAINTS, CAR_PAINTS, MOTORCYCLE_PAINTS, PAINT_WHITE, TRAILER_PAINTS, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint } from "../vehiclePaint";
@@ -54,8 +57,6 @@ import {
   directionBucketsConsistent,
   inconsistentBucketMessage,
   wrongCarriagewayMessage,
-  MANUAL_CLOSURE_MESSAGE,
-  manualClosureMessage,
   SAME_STRETCH_TOL_M,
   describeActiveEvents,
   describeBoundary,
@@ -801,6 +802,11 @@ const shoulderSpec = (posM: number, startMin: number, duration: DurationMode, di
 const collisionSpec = (family: "minor_collision" | "multi_vehicle_collision" | "self_accident" | "overturned_vehicle" | "flood" | "scheduled_roadworks", lane: number, posM: number, startMin: number, duration: DurationMode, direction: Direction = "NB"): NewEventSpec => ({
   variant: family === "minor_collision" ? { family, label: "rear_end" } : { family }, direction, lane, positionKm: kmOf(posM), startMinutes: startMin, duration,
 });
+const boothSpec = (startMin: number, duration: DurationMode, direction: Direction = "NB", station = 0): NewEventSpec => ({
+  ...collisionSpec("minor_collision", 1, 330, startMin, duration, direction),
+  lane: null,
+  site: { facilityId: "plaza:test", facilityName: "Test Toll Plaza", kind: "booth", stations: [station] },
+});
 const rainSpec = (posM: number, startMin: number, duration: DurationMode, direction: Direction = "NB", intensity: RainIntensity = "heavy"): NewEventSpec => ({
   variant: { family: "rain", intensity }, direction, lane: null, positionKm: kmOf(posM), startMinutes: startMin, duration,
 });
@@ -921,7 +927,12 @@ check("event: phases tile the whole duration, start at 0, ascend, are labelled w
   const edge = composeInterventions({ ...idle, incidents: [] }, [must([], shoulderSpec(60, 0, manualMinutes(20)), 1).event], abs(1), road600);
   check("shoulder: the zone is clamped to the stretch, never moved", edge.interventions.speedZone[0] === 0 && edge.interventions.speedZone[1] === 160);
   const opLimit = composeInterventions({ ...idle, speedLimitKmh: 50, incidents: [] }, [event], abs(1), road600);
-  check("shoulder: yields when the operator has a limit set (the operator's limit and zone stand, the event is listed as yielded)", opLimit.interventions.speedLimitKmh === 50 && opLimit.interventions.speedZone[0] === 180 && opLimit.owners.speedZone === null && opLimit.owners.yielded.length === 1 && opLimit.owners.yielded[0].eventId === event.id);
+  check(
+    "shoulder: beside an operator limit, the operator's limit and zone stand and the event's zone runs as one of its own (70 km/h over its gawk zone); nothing yields",
+    opLimit.interventions.speedLimitKmh === 50 && opLimit.interventions.speedZone[0] === 180 && opLimit.owners.speedZone === null && opLimit.owners.yielded.length === 0 &&
+      opLimit.owners.extraSpeedZones.length === 1 && opLimit.owners.extraSpeedZones[0].eventId === event.id &&
+      opLimit.interventions.speedZones?.length === 1 && opLimit.interventions.speedZones[0].kmh === 70 && opLimit.interventions.speedZones[0].from === 330 - zone.upstream && opLimit.interventions.speedZones[0].to === 330 + zone.downstream,
+  );
   const later = composeInterventions({ ...idle, speedLimitKmh: null, incidents: [] }, [event], abs(5), road600);
   check("shoulder: takes the zone as soon as the operator no longer uses it, for the rest of its window", later.owners.speedZone !== null && later.interventions.speedLimitKmh === 70);
   const after = composeInterventions({ ...idle, incidents: [] }, [event], abs(21), road600);
@@ -946,18 +957,19 @@ check("event: phases tile the whole duration, start at 0, ascend, are labelled w
   check("lock: when the event ends the operator's lanes, stretch and preview come back exactly", after.interventions.closedLanes.join() === "false,false,true,false" && after.interventions.closurePoint === 100 && after.interventions.closureEnd === 200 && after.interventions.showClosurePreview === true && after.owners.closure === null);
   check("lock: the owner reads \"<event> — <phase>\"", during.owners.closure !== null && describeOwner(during.owners.closure) === `${event.name} — Lane blocked: awaiting response` && event.name === "Minor collision #1");
 
-  // No carry-over: a closure the operator ALREADY has elsewhere is never moved onto the event's stretch; the event stands aside.
+  // No carry-over: a closure the operator ALREADY has elsewhere is never moved onto the event's stretch; the event closes its own beside it.
   const elsewhere: ManualControls = { ...clean, closedLanes: [false, false, true, false] };
   const yielded = composeInterventions({ ...elsewhere, incidents: [] }, [event], abs(1), road600);
-  const y0 = yielded.owners.yielded[0];
+  const own = yielded.interventions.closures ?? [];
   check(
-    "no carry-over: an operator closure already on another stretch is left exactly as it is, and the event yields",
+    "no carry-over: an operator closure already on another stretch is left exactly as it is, and the event closes its own lane on its own stretch beside it (nothing yields)",
     yielded.interventions.closedLanes.join() === "false,false,true,false" && yielded.interventions.closurePoint === 100 && yielded.interventions.closureEnd === 200 && yielded.owners.closure === null &&
-      yielded.owners.yielded.length === 1 && y0.resource === "closure_stretch" && y0.eventId === event.id,
+      yielded.owners.yielded.length === 0 && yielded.owners.extraClosures.length === 1 && yielded.owners.extraClosures[0].eventId === event.id &&
+      own.length === 1 && own[0].lanes.join() === "true,false,false,false" && own[0].from === 230 && own[0].to === 370,
   );
-  check("no carry-over: the event row says why", describeYield(y0) === "Closure suspended — operator lane closure active");
+  check("no carry-over: the event's own lane is locked for the operator (they cannot reopen it), and only that one", scenarioLockedLanes(yielded.owners, 4).join() === "true,false,false,false");
   const stillYielding = composeInterventions({ ...elsewhere, incidents: [] }, [event], abs(2), road600, yielded.owners);
-  check("no carry-over: it keeps yielding for as long as the operator's closure stands", stillYielding.owners.closure === null && stillYielding.owners.yielded.length === 1);
+  check("no carry-over: it keeps its own closure for as long as the operator's stands", stillYielding.owners.closure === null && stillYielding.owners.extraClosures.length === 1);
   const released = composeInterventions({ ...clean, incidents: [] }, [event], abs(3), road600, yielded.owners);
   check("no carry-over: the moment the operator clears their closure the event takes the stretch, for the rest of its blocking phase", released.owners.closure !== null && released.interventions.closurePoint === 230 && released.interventions.closedLanes.join() === "true,false,false,false");
   const sameStretch = composeInterventions({ ...elsewhere, closurePoint: 230, closureEnd: 370, incidents: [] }, [event], abs(1), road600);
@@ -971,9 +983,9 @@ check("event: phases tile the whole duration, start at 0, ascend, are labelled w
   const limited = { ...clean, speedLimitKmh: 50, incidents: [] };
   const whileYielding = composeInterventions(limited, [yieldEvent], abs(1), road600).owners;
   const afterYield = composeInterventions(limited, [yieldEvent], abs(30), road600).owners;
-  check("ownership: the key changes when an event starts or stops yielding, nothing else changing (a suspended row must re-render)", whileYielding.yielded.length === 1 && afterYield.yielded.length === 0 && ownershipKey(whileYielding) !== ownershipKey(afterYield) && ownershipKey(noLimit) !== ownershipKey(whileYielding));
-  const shoulderY = composeInterventions({ ...clean, speedLimitKmh: 50, incidents: [] }, [must([], shoulderSpec(330, 0, manualMinutes(20)), 1).event], abs(1), road600).owners.yielded[0];
-  check("speed zone: while the operator's limit suspends a shoulder event, its row says \"Speed zone suspended — operator speed limit active\"", shoulderY.resource === "speed_zone" && describeYield(shoulderY) === "Speed zone suspended — operator speed limit active");
+  check("ownership: the key changes when an event's zone of its own starts or stops, nothing else changing", whileYielding.extraSpeedZones.length === 1 && afterYield.extraSpeedZones.length === 0 && ownershipKey(whileYielding) !== ownershipKey(afterYield) && ownershipKey(noLimit) !== ownershipKey(whileYielding));
+  const twoClosures = composeInterventions({ ...clean, incidents: [] }, [event, must([event], collisionSpec("self_accident", 3, 500, 0, manualMinutes(10)), 2).event], abs(1), road600).owners;
+  check("ownership: the key names the closures of their own too (a second collision changes it)", ownershipKey(twoClosures) !== ownershipKey(taken.owners) && twoClosures.extraClosures.length === 1);
 }
 
 // --- rain: the speed zone spans the WHOLE segment regardless of position, at RAIN_SPEED_KMH, blocking no lane
@@ -992,49 +1004,41 @@ check("event: phases tile the whole duration, start at 0, ascend, are labelled w
   check("rain: has no lane, whatever lane the spec was given (effectOf routes it to speed_zone, same as a shoulder breakdown)", must([], { ...rainSpec(330, 0, manualMinutes(5)), lane: 2 }, 1).event.lane === null);
 
   const opLimit = composeInterventions({ ...idle, speedLimitKmh: 50, incidents: [] }, [near0], abs(1), road600);
-  check("rain: yields when the operator has a speed limit set, same as a shoulder breakdown yielding", opLimit.interventions.speedLimitKmh === 50 && opLimit.owners.speedZone === null && opLimit.owners.yielded.length === 1 && opLimit.owners.yielded[0].reason === "operator_limit_active" && describeYield(opLimit.owners.yielded[0]) === "Speed zone suspended — operator speed limit active");
+  check(
+    "rain: beside an operator speed limit it runs as a zone of its own (the whole segment at its rain speed); the operator's limit stands, nothing yields",
+    opLimit.interventions.speedLimitKmh === 50 && opLimit.owners.speedZone === null && opLimit.owners.yielded.length === 0 && opLimit.owners.extraSpeedZones.length === 1 &&
+      opLimit.interventions.speedZones?.[0]?.from === 0 && opLimit.interventions.speedZones?.[0]?.to === 600 && opLimit.interventions.speedZones?.[0]?.kmh === ASSUMPTIONS.RAIN_SPEED_KMH.value.heavy,
+  );
 
-  // The engine's single speed zone: rain and a shoulder breakdown cannot both hold it.
+  // Rain and a shoulder breakdown at the same time: one takes the shared zone, the other runs a zone of its own.
   const rainAlone = must([], rainSpec(330, 5, manualMinutes(20)), 1);
-  const overlap = refused(rainAlone.events, shoulderSpec(200, 10, manualMinutes(20)), 2);
-  check("rain: conflicts with an overlapping shoulder breakdown (the engine's single speed zone), naming both", overlap !== null && overlap.includes("Heavy rain #1") && overlap.includes("Breakdown on the shoulder #2") && overlap.includes("speed zone"));
+  const withShoulder = addEvent(rainAlone.events, shoulderSpec(200, 10, manualMinutes(20)), road600, 2, noClosure);
+  const both = withShoulder.ok ? composeInterventions({ ...idle, incidents: [] }, withShoulder.events, abs(12), road600) : null;
+  check("rain: an overlapping shoulder breakdown is accepted and both run, rain on the shared zone and the breakdown on its own", withShoulder.ok && both !== null && both.owners.speedZone?.eventId === rainAlone.event.id && both.owners.extraSpeedZones.length === 1 && both.interventions.speedZones?.length === 1);
   const after = addEvent(rainAlone.events, shoulderSpec(200, 26, manualMinutes(20)), road600, 2, noClosure);
   check("rain: a shoulder breakdown starting after rain ends is accepted", after.ok);
   const alongCollision = addEvent(rainAlone.events, collisionSpec("minor_collision", 1, 330, 6, manualMinutes(10)), road600, 2, noClosure);
   check("rain: a collision may run alongside it (a different lever, closure_stretch)", alongCollision.ok);
 }
 
-// --- adding an event while the operator has a closure of their own elsewhere
+// --- adding an event while the operator has a closure of their own elsewhere: accepted, it closes its own
 {
   const elsewhere: ManualClosure = { closedLanes: [false, false, true, false], closurePoint: 100, closureEnd: 200 };
   const minor = collisionSpec("minor_collision", 1, 330, 5, manualMinutes(10));
-  check(
-    "manual closure: an event that needs the closure stretch is refused with exactly the stated message, named to its carriageway (all these fixtures default to NB)",
-    refused([], minor, 1, road600, elsewhere) === "NB: Clear your manual lane closure first — this event needs the closure stretch." &&
-      MANUAL_CLOSURE_MESSAGE === "Clear your manual lane closure first — this event needs the closure stretch." &&
-      manualClosureMessage("NB") === "NB: Clear your manual lane closure first — this event needs the closure stretch." &&
-      manualClosureMessage("SB") === "SB: Clear your manual lane closure first — this event needs the closure stretch.",
-  );
-  check("manual closure: ... for every closure family", (["minor_collision", "multi_vehicle_collision", "self_accident", "overturned_vehicle", "flood", "scheduled_roadworks"] as const).every((f) => refused([], collisionSpec(f, 1, 330, 5, manualMinutes(10)), 1, road600, elsewhere) === manualClosureMessage("NB")));
+  check("manual closure: an event that closes lanes is accepted while the operator has a closure of their own elsewhere, for every closure family (no limit, 2026-10-05)", (["minor_collision", "multi_vehicle_collision", "self_accident", "overturned_vehicle", "flood", "scheduled_roadworks"] as const).every((f) => refused([], collisionSpec(f, 1, 330, 5, manualMinutes(10)), 1, road600, elsewhere) === null));
   check("manual closure: rain does not use the closure stretch, so it is unaffected by one elsewhere", refused([], rainSpec(330, 5, manualMinutes(10)), 1, road600, elsewhere) === null);
   check("manual closure: events that do not use the closure stretch are not affected", refused([], inLaneSpec("truck", 3, 330, 5, manualMinutes(10)), 1, road600, elsewhere) === null && refused([], shoulderSpec(330, 5, manualMinutes(10)), 1, road600, elsewhere) === null);
-  check("manual closure: no lane closed by hand means no conflict, whatever stretch is set", refused([], minor, 1, road600, { ...elsewhere, closedLanes: [false, false, false, false] }) === null);
-  check("manual closure: a closure on exactly the event's stretch (230 to 370 m) is accepted", refused([], minor, 1, road600, { ...elsewhere, closurePoint: 230, closureEnd: 370 }) === null);
-  check("manual closure: the tolerance at each end decides", refused([], minor, 1, road600, { ...elsewhere, closurePoint: 230.4, closureEnd: 370 }) === null && refused([], minor, 1, road600, { ...elsewhere, closurePoint: 230, closureEnd: 370.6 }) === manualClosureMessage("NB"));
-  const multi = collisionSpec("multi_vehicle_collision", 1, 330, 5, manualMinutes(10));
-  check("manual closure: an event with several closure phases is judged on the stretch it takes first (multi-vehicle: 230 to 430 m)", refused([], multi, 1, road600, { ...elsewhere, closurePoint: 230, closureEnd: 430 }) === null && refused([], multi, 1, road600, { ...elsewhere, closurePoint: 230, closureEnd: 390 }) === manualClosureMessage("NB"));
-  check("manual closure: an invalid event is refused for its own reason first", (refused([], collisionSpec("minor_collision", 9, 330, 5, manualMinutes(10)), 1, road600, elsewhere) ?? "").includes("does not exist"));
-  const minorSb = collisionSpec("minor_collision", 1, 330, 5, manualMinutes(10), "SB");
+  check("manual closure: no lane closed by hand, or a closure on exactly the event's stretch, or one just off it — all accepted", refused([], minor, 1, road600, { ...elsewhere, closedLanes: [false, false, false, false] }) === null && refused([], minor, 1, road600, { ...elsewhere, closurePoint: 230, closureEnd: 370 }) === null && refused([], minor, 1, road600, { ...elsewhere, closurePoint: 230, closureEnd: 370.6 }) === null);
+  check("manual closure: an invalid event is still refused for its own reason", (refused([], collisionSpec("minor_collision", 9, 330, 5, manualMinutes(10)), 1, road600, elsewhere) ?? "").includes("does not exist"));
+  const minorSb = must([], collisionSpec("minor_collision", 1, 330, 5, manualMinutes(10), "SB"), 1, road600, elsewhere);
+  check("manual closure: an SB event beside an SB operator closure is accepted and stays SB's", minorSb.event.direction === "SB");
+  // The one refusal left: two scenes in one booth at once. Named to its carriageway.
+  const sbBooth = must([], boothSpec(10, manualMinutes(40), "SB"), 1);
   check(
-    "manual closure: an SB event's refusal names SB, not NB — the direction on the SPEC decides the message, not some ambient default",
-    refused([], minorSb, 1, road600, elsewhere) === manualClosureMessage("SB") && refused([], minorSb, 1, road600, elsewhere) !== manualClosureMessage("NB"),
-  );
-  const sbHost = must([], collisionSpec("multi_vehicle_collision", 1, 330, 10, manualMinutes(40), "SB"), 1);
-  check(
-    "conflict: an SB event's conflict message is named to SB, not NB",
+    "booth: a second event in a booth another event holds at the same time is refused, named to SB for an SB booth; another booth of the same plaza is free",
     (() => {
-      const r = refused(sbHost.events, collisionSpec("self_accident", 2, 200, 20, manualMinutes(30), "SB"), 2, road600, noClosure);
-      return r !== null && r.startsWith("SB: Cannot add") && !r.startsWith("NB:");
+      const r = refused(sbBooth.events, boothSpec(20, manualMinutes(30), "SB"), 2, road600, noClosure);
+      return r !== null && r.startsWith("SB: Cannot add") && r.includes("Test Toll Plaza") && refused(sbBooth.events, boothSpec(20, manualMinutes(30), "SB", 1), 2, road600, noClosure) === null;
     })(),
   );
 }
@@ -1081,8 +1085,8 @@ check("event: phases tile the whole duration, start at 0, ascend, are labelled w
     !wrongIntoNB.ok && wrongIntoNB.reason === wrongCarriagewayMessage("NB", "SB") && wrongIntoNB.reason.includes("NB") && wrongIntoNB.reason.includes("SB") && !("events" in wrongIntoNB) &&
       !wrongIntoSB.ok && wrongIntoSB.reason === wrongCarriagewayMessage("SB", "NB") && !("events" in wrongIntoSB),
   );
-  const held = must([], collisionSpec("multi_vehicle_collision", 1, 330, 10, manualMinutes(40), "NB"), 1);
-  const wouldAlsoConflict = collisionSpec("self_accident", 2, 200, 20, manualMinutes(30), "SB");
+  const held = must([], boothSpec(10, manualMinutes(40), "NB"), 1);
+  const wouldAlsoConflict = boothSpec(20, manualMinutes(30), "SB");
   check(
     "addEventToBucket: the wrong-carriageway refusal is reported even when the event would ALSO have been refused for another reason (a conflict) — it is checked first, never masked",
     refused(held.events, { ...wouldAlsoConflict, direction: "NB" }, 2) !== null && (() => {
@@ -1100,41 +1104,45 @@ check("event: phases tile the whole duration, start at 0, ascend, are labelled w
   check(
     "addEventToBucket: an ordinary refusal (a conflict inside the right list) passes through unchanged, so the panel keeps showing the reason it always did",
     (() => {
-      const dup = addEventToBucket("NB", held.events, collisionSpec("self_accident", 2, 200, 20, manualMinutes(30), "NB"), road600, 2, noClosure);
-      return !dup.ok && dup.reason.includes("Multi-vehicle collision #1") && dup.reason !== wrongCarriagewayMessage("NB", "NB");
+      const dup = addEventToBucket("NB", held.events, boothSpec(20, manualMinutes(30), "NB"), road600, 2, noClosure);
+      return !dup.ok && dup.reason.includes("Minor collision #1") && dup.reason !== wrongCarriagewayMessage("NB", "NB");
     })(),
   );
 }
 
-// --- conflicts: an exclusive lever cannot be held twice, and nothing is merged
+// --- no limit: events overlap freely, each closing its own lanes or running its own zone (adviser, 2026-10-05)
 {
   const a = must([], collisionSpec("multi_vehicle_collision", 1, 330, 10, manualMinutes(40)), 1);
-  const overlap = refused(a.events, collisionSpec("self_accident", 2, 200, 20, manualMinutes(30)), 2);
-  check("conflict: two collisions with overlapping closures are refused, naming BOTH events", overlap !== null && overlap.includes("Self accident #2") && overlap.includes("Multi-vehicle collision #1") && overlap.includes("closure stretch") && overlap.includes("Nothing was changed"), overlap ?? "was accepted");
+  const second = addEvent(a.events, collisionSpec("self_accident", 3, 200, 20, manualMinutes(30)), road600, 2, noClosure);
+  const runBoth = second.ok ? composeInterventions({ ...idle, incidents: [] }, second.events, abs(25), road600) : null;
+  check(
+    "no limit: two collisions with overlapping closures are both accepted and both close lanes, the first on the shared stretch, the second on its own",
+    second.ok && runBoth !== null && runBoth.owners.closure?.eventId === a.event.id && runBoth.owners.extraClosures.length === 1 && runBoth.owners.extraClosures[0].eventName === "Self accident #2" &&
+      (runBoth.interventions.closures ?? []).length === 1 && runBoth.interventions.closures![0].lanes.some(Boolean),
+  );
   const first = a.event;
   const blockingEnd = first.phases.filter((p) => !p.skipped && p.lanesBlocked > 0).reduce((m, p) => Math.max(m, first.startS + p.offsetS + p.durationS), 0);
-  const touching = addEvent(a.events, collisionSpec("self_accident", 2, 200, blockingEnd / 60 + 1e-9, manualMinutes(30)), road600, 2, noClosure);
-  check("conflict: an event starting as the other lets go of the stretch is accepted", touching.ok);
-  // Exactly touching, with numbers that are exact in floating point: 5 min minor collision from +10 min blocks [600, 840) s.
   const exactA = must([], collisionSpec("minor_collision", 1, 330, 10, manualMinutes(5)), 1);
   const exactWindow = resourceWindows(exactA.event)[0];
-  check("conflict: (fixture) that window is exactly [600, 840) seconds", exactWindow.fromS === 600 && exactWindow.toS === 840);
-  check("conflict: an event starting at exactly the second the other's window ends is accepted; one a second earlier is refused", addEvent(exactA.events, collisionSpec("minor_collision", 2, 200, 14, manualMinutes(5)), road600, 2, noClosure).ok && refused(exactA.events, collisionSpec("minor_collision", 2, 200, 14 - 1 / 60, manualMinutes(5)), 2) !== null);
-  const inClearing = addEvent(a.events, collisionSpec("minor_collision", 2, 200, blockingEnd / 60 + 0.5, manualMinutes(5)), road600, 3, noClosure);
-  check("conflict: the clearing phase holds nothing, so another collision may start in it", inClearing.ok && first.endS > blockingEnd + 30);
-  const during = refused(a.events, collisionSpec("minor_collision", 2, 200, blockingEnd / 60 - 0.5, manualMinutes(5)), 4);
-  check("conflict: the same half a minute earlier, inside the blocking phases, is refused", during !== null);
+  check("resource windows: (fixture) a 5 min minor collision from +10 min blocks [600, 840) seconds", exactWindow.fromS === 600 && exactWindow.toS === 840);
+  check("no limit: one starting a second before the other's blocking ends, or well inside it, is accepted too", refused(exactA.events, collisionSpec("minor_collision", 2, 200, 14 - 1 / 60, manualMinutes(5)), 2) === null && refused(a.events, collisionSpec("minor_collision", 2, 200, blockingEnd / 60 - 0.5, manualMinutes(5)), 4) === null);
   const shoulderAlong = addEvent(a.events, shoulderSpec(300, 12, manualMinutes(30)), road600, 5, noClosure);
-  check("conflict: a shoulder breakdown may run alongside a collision (a different lever)", shoulderAlong.ok);
+  check("no limit: a shoulder breakdown runs alongside a collision", shoulderAlong.ok);
   const s1 = must([], shoulderSpec(330, 5, manualMinutes(20)), 1);
-  const s2 = refused(s1.events, shoulderSpec(200, 10, manualMinutes(20)), 2);
-  check("conflict: two shoulder breakdowns overlapping are refused, naming both and the speed zone", s2 !== null && s2.includes("Breakdown on the shoulder #1") && s2.includes("Breakdown on the shoulder #2") && s2.includes("speed zone"));
-  check("conflict: a refusal returns no events (nothing to apply) and does not change the stored list", addEvent(a.events, collisionSpec("self_accident", 2, 200, 20, manualMinutes(30)), road600, 2, noClosure).ok === false && a.events.length === 1);
+  const s2 = addEvent(s1.events, shoulderSpec(200, 10, manualMinutes(20)), road600, 2, noClosure);
+  const zones = s2.ok ? composeInterventions({ ...idle, incidents: [] }, s2.events, abs(12), road600) : null;
+  check("no limit: two shoulder breakdowns at once are both accepted, one on the shared zone, one on a zone of its own", s2.ok && zones !== null && zones.owners.speedZone !== null && zones.owners.extraSpeedZones.length === 1 && zones.interventions.speedZones?.length === 1);
+  // Ten collisions on one carriageway, all at once, on lanes 1 and 4 along the stretch.
+  let many: readonly ScenarioEvent[] = [];
+  for (let k = 0; k < 10; k++) many = must(many, collisionSpec("minor_collision", k % 2 === 0 ? 1 : 4, 60 + k * 50, 1, manualMinutes(30)), k + 1).events;
+  const ten = composeInterventions({ ...idle, incidents: [] }, many, abs(3), road600);
+  check("no limit: ten collisions at once on one carriageway are all accepted, and all ten close their lanes", many.length === 10 && ten.owners.closure !== null && ten.owners.extraClosures.length === 9 && (ten.interventions.closures ?? []).length === 9 && ten.owners.suppressed.length === 0 && ten.owners.yielded.length === 0);
+  check("no limit: a refusal (here a lane that does not exist) returns no events and does not change the stored list", addEvent(a.events, collisionSpec("self_accident", 9, 200, 20, manualMinutes(30)), road600, 2, noClosure).ok === false && a.events.length === 1);
   check("event: a shoulder breakdown has no lane, whatever lane it was given", must([], { ...shoulderSpec(330, 0, manualMinutes(5)), lane: 2 }, 1).event.lane === null && must([], inLaneSpec("car", 3, 330, 0, manualMinutes(5)), 1).event.lane === 3);
   check("event: an id already in use is rejected (the caller's counter must not repeat)", throws(() => addEvent(a.events, collisionSpec("minor_collision", 2, 200, 100, manualMinutes(5)), road600, 1, noClosure)) && throws(() => addEvent([], inLaneSpec("car", 3, 330, 0, manualMinutes(5)), road600, 0, noClosure)));
-  check("conflict: an event whose phases all round to nothing is refused", refused([], inLaneSpec("car", 3, 330, 0, manualMinutes(1e-9)), 1) !== null);
-  check("conflict: bad input is refused with a reason, not thrown (negative start, zero duration, lane that does not exist)", refused([], inLaneSpec("car", 3, 330, -1, manualMinutes(5)), 1) !== null && refused([], inLaneSpec("car", 3, 330, 0, manualMinutes(0)), 1) !== null && refused([], inLaneSpec("car", 5, 330, 0, manualMinutes(5)), 1) !== null && refused([], inLaneSpec("car", 3, 9999, 0, manualMinutes(5)), 1) !== null);
-  check("conflict: resource windows: a collision's is its blocking phases, a shoulder's the whole event, an in-lane breakdown holds none", resourceWindows(first).length === 1 && resourceWindows(first)[0].resource === "closure_stretch" && resourceWindows(first)[0].toS === blockingEnd && resourceWindows(s1.event)[0].resource === "speed_zone" && resourceWindows(must([], inLaneSpec("car", 3, 330, 0, manualMinutes(5)), 1).event).length === 0);
+  check("event: an event whose phases all round to nothing is refused", refused([], inLaneSpec("car", 3, 330, 0, manualMinutes(1e-9)), 1) !== null);
+  check("event: bad input is refused with a reason, not thrown (negative start, zero duration, lane that does not exist)", refused([], inLaneSpec("car", 3, 330, -1, manualMinutes(5)), 1) !== null && refused([], inLaneSpec("car", 3, 330, 0, manualMinutes(0)), 1) !== null && refused([], inLaneSpec("car", 5, 330, 0, manualMinutes(5)), 1) !== null && refused([], inLaneSpec("car", 3, 9999, 0, manualMinutes(5)), 1) !== null);
+  check("resource windows: a collision's is its blocking phases, a shoulder's the whole event, an in-lane breakdown holds none", resourceWindows(first).length === 1 && resourceWindows(first)[0].resource === "closure_stretch" && resourceWindows(first)[0].toS === blockingEnd && resourceWindows(s1.event)[0].resource === "speed_zone" && resourceWindows(must([], inLaneSpec("car", 3, 330, 0, manualMinutes(5)), 1).event).length === 0);
 }
 
 // --- zero-length phases are skipped, still listed, never applied
@@ -1218,6 +1226,89 @@ function engineInSync(ts: TrafficSim, controls: ManualControls, events: readonly
   check("loop: it applies once at the start and once per boundary crossed, no more", applied === 1 + boundaryTimes(events, road600).length, `${applied} applies, ${boundaryTimes(events, road600).length} boundaries`);
   check("loop: the run passed through every state (lane closed alone, lane closed with the bus, the bus alone, nothing)", ["1/0", "1/2", "0/2", "0/0"].every((s) => seen.has(s)), [...seen].join(" "));
   check("loop: when everything has ended the engine is back to the operator's settings, with no scenario incident left", ts.interventions.incidents.length === 0 && ts.interventions.closedLanes.every((x) => !x) && ts.interventions.closurePoint === idle.closurePoint);
+}
+
+{
+  // A flood closes its lane with water; it crashes nobody. A collision on the same road still crashes real traffic.
+  const scene = (family: "flood" | "minor_collision") => {
+    const ts = newSim();
+    const binding = createEngineBinding();
+    const events = must([], collisionSpec(family, 2, 330, 0.5, manualMinutes(10)), 1).events;
+    let due = -Infinity;
+    while (scenarioTimeS(ts.time, frame) < 90) {
+      ts.step(0.05);
+      due = applyAtBoundary(binding, ts, idle, events, frame, due).dueS;
+    }
+    return { wrecks: ts.vehicles.filter((v) => v.role === "wreck").length, responders: ts.vehicles.filter((v) => v.role === "responder").length, closed: ts.interventions.closedLanes.filter(Boolean).length };
+  };
+  const flood = scene("flood");
+  const crash = scene("minor_collision");
+  check(
+    "flood: the water closes the lane and nothing else — no wrecked cars and no ambulance (it shares the closure lever with the collisions, which do crash traffic)",
+    flood.closed >= 1 && flood.wrecks === 0 && flood.responders === 0 && crash.wrecks >= 1,
+    `flood ${JSON.stringify(flood)}, collision ${JSON.stringify(crash)}`,
+  );
+}
+
+// --- no limit, on the real engine: several closures and speed zones at once
+{
+  const ts = new TrafficSim({ length: 600, laneCount: 4, inflowVehPerHour: 3000, seed: 77, warmupS: 30 }, engineIv(600, 4));
+  ts.interventions.closures = [
+    { lanes: [true, false, false, false], from: 150, to: 250 },
+    { lanes: [false, false, false, true], from: 380, to: 480 },
+  ];
+  ts.interventions.speedZones = [{ from: 0, to: 600, kmh: 60 }, { from: 250, to: 350, kmh: 40 }];
+  // The closures are set after the road was seeded, so the first seconds still have the seeded traffic driving out of
+  // them; from 10 s on nothing may be inside. A limit is a desired speed (drivers brake into it), so the speeds are
+  // read once the run has settled, at the far end of the 40 zone and in the stretch with only the 60 zone.
+  let inside = 0;
+  let top40 = 0;
+  let top60 = 0;
+  for (let i = 0; i < 6 * 60 * 20; i++) {
+    ts.step(0.05);
+    for (const v of ts.vehicles) {
+      if (v.role !== "traffic") continue;
+      if (ts.time > 10 && ((v.lane === 0 && v.x > 160 && v.x < 240) || (v.lane === 3 && v.x > 390 && v.x < 470))) inside++;
+      if (ts.time > 60 && v.x > 320 && v.x < 350) top40 = Math.max(top40, v.v * 3.6);
+      if (ts.time > 60 && v.x > 520 && v.x < 600) top60 = Math.max(top60, v.v * 3.6);
+    }
+  }
+  const m = ts.metrics();
+  check(
+    "no limit, engine: with two closures on different lanes and stretches at once, no vehicle drives through either and traffic still gets through",
+    inside === 0 && m.throughputPerMin > 20,
+    `${inside} vehicle-steps inside a closed stretch after 10 s, ${m.throughputPerMin.toFixed(0)}/min through`,
+  );
+  {
+    // Staggered: lane 1 shut first, lane 2 further on. A car behind the first takes lane 2 for now (it closes later)
+    // and leaves it again before its own closure; nothing is left waiting at the first taper.
+    const st = new TrafficSim({ length: 600, laneCount: 4, inflowVehPerHour: 3000, seed: 91, warmupS: 30 }, engineIv(600, 4));
+    st.interventions.closures = [
+      { lanes: [true, false, false, false], from: 100, to: 240 },
+      { lanes: [false, true, false, false], from: 350, to: 450 },
+    ];
+    const waited = new Map<number, number>();
+    let longest = 0;
+    for (let i = 0; i < 8 * 60 * 20; i++) {
+      st.step(0.05);
+      for (const v of st.vehicles) {
+        if (v.role !== "traffic") continue;
+        const stuck = v.lane === 0 && v.x > 60 && v.x <= 100 && v.v < 0.5;
+        const since = stuck ? waited.get(v.id) ?? st.time : null;
+        if (since === null) waited.delete(v.id);
+        else {
+          waited.set(v.id, since);
+          longest = Math.max(longest, st.time - since);
+        }
+      }
+    }
+    check(
+      "no limit, engine: staggered closures (lane 1, then lane 2 further on) — cars behind the first get round it through lane 2; none waits at its taper for more than a minute",
+      longest < 60 && st.metrics().throughputPerMin > 30,
+      `longest wait at the lane-1 taper ${longest.toFixed(0)} s, ${st.metrics().throughputPerMin.toFixed(0)}/min through`,
+    );
+  }
+  check("no limit, engine: where speed zones overlap the lowest limit applies (40 within 60), and the 60 holds outside it", top40 <= 40 * 1.03 && top40 > 30 && top60 <= 60 * 1.03 && top60 > 50, `fastest ${top40.toFixed(1)} km/h at the end of the 40 zone, ${top60.toFixed(1)} km/h in the 60`);
 }
 
 // --- binding isolation: NB and SB each get their OWN createEngineBinding() (see useDirectionSim);
@@ -1315,16 +1406,17 @@ function engineInSync(ts: TrafficSim, controls: ManualControls, events: readonly
   b.apply(ts, elsewhere, events, frame);
   b.apply(ts, elsewhere, events, frame);
   const iv = () => `${ts.interventions.closedLanes.join()}|${ts.interventions.closurePoint}|${ts.interventions.closureEnd}`;
-  check("engine: an operator closure on another stretch is left exactly as it was, and the event yields (applied repeatedly)", iv() === "false,false,true,false|100|200" && b.previousOwners().yielded.length === 1 && b.previousOwners().closure === null);
+  const own = () => (ts.interventions.closures ?? []).map((c) => `${c.lanes.join()}|${c.from}|${c.to}`).join(";");
+  check("engine: an operator closure on another stretch is left exactly as it was, and the event's own closure runs beside it (applied repeatedly)", iv() === "false,false,true,false|100|200" && own() === "true,false,false,false|230|370" && b.previousOwners().extraClosures.length === 1 && b.previousOwners().closure === null);
   b.apply(ts, idle, events, frame);
-  check("engine: the operator clears their closure and the event takes the stretch", iv() === "true,false,false,false|230|370" && b.previousOwners().yielded.length === 0);
+  check("engine: the operator clears their closure and the event takes the shared stretch (its own closure goes)", iv() === "true,false,false,false|230|370" && own() === "" && b.previousOwners().extraClosures.length === 0);
   b.apply(ts, rode, events, frame);
   check("engine: a lane the operator closes WHILE the event owns the stretch stays, on the event's stretch (the event keeps it)", iv() === "true,false,true,false|230|370" && b.previousOwners().closure !== null);
   ts.time = abs(11);
   b.apply(ts, rode, events, frame);
   check("engine: when the event ends the operator's lane and stretch are back exactly", iv() === "false,false,true,false|100|200");
   b.reset();
-  check("engine: a reset forgets who held what", b.previousOwners().closure === null && b.previousOwners().yielded.length === 0);
+  check("engine: a reset forgets who held what", b.previousOwners().closure === null && b.previousOwners().extraClosures.length === 0);
 }
 
 {
@@ -1526,9 +1618,9 @@ check(
   const runClosure = composeInterventions({ ...idle, incidents: [] }, events, abs(21), road600);
   const later = effectiveState(cleanManual, runClosure.owners, events, 21 * 60, 4);
   check("effective state: a running closure adds its lanes; only running events are listed, each with its phase", later.closedLanes.join() === "true,true,false,false" && later.scenarioIncidents === 0 && later.active.map((a) => a.name).join() === "Multi-vehicle collision #2" && describeActiveEvents(later.active)[0] === "Multi-vehicle collision #2 — Lanes blocked: awaiting response");
-  // The operator has a closure elsewhere: the event stands aside, and the readout must not claim it is acting.
-  const standingAside = at(21);
-  check("effective state: an event that stands aside for the operator's closure is listed as suspended, and adds no lane", standingAside.closedLanes.join() === "false,false,true,false" && standingAside.active[0].suspended && describeActiveEvents(standingAside.active)[0] === "Multi-vehicle collision #2 — Lanes blocked: awaiting response (suspended)");
+  // The operator has a closure elsewhere: the event closes its own lanes beside it, and the readout shows both.
+  const besideOperator = at(21);
+  check("effective state: an event beside the operator's closure on another stretch adds its own lanes and is not suspended", besideOperator.closedLanes.join() === "true,true,true,false" && !besideOperator.active[0].suspended && describeActiveEvents(besideOperator.active)[0] === "Multi-vehicle collision #2 — Lanes blocked: awaiting response");
   const shoulderEvents = must([], shoulderSpec(330, 0, manualMinutes(10)), 1).events;
   const sc = composeInterventions({ ...idle, incidents: [] }, shoulderEvents, abs(1), road600);
   check("effective state: a shoulder breakdown's speed zone shows as the limit in force", effectiveState({ closedLanes: [false, false, false, false], speedLimitKmh: null }, sc.owners, shoulderEvents, 60, 4).speedLimitKmh === 70);
@@ -1681,7 +1773,7 @@ check(
   );
   check(
     "hook: anyIntervention and the folded before/after / event-list summaries are built from the effective state, per direction",
-    /const anyIntervention = eff\.closedLanes\.some\(Boolean\) \|\| eff\.speedLimitKmh != null \|\| effIncidentCount > 0;/.test(hookSource) &&
+    /const anyIntervention = eff\.closedLanes\.some\(Boolean\) \|\| eff\.speedLimitKmh != null \|\| effIncidentCount > 0 \|\| boothsShut\.length > 0;/.test(hookSource) &&
       /\.\.\.activeScenarioText,\s*\]\s*\.filter\(Boolean\)\s*\.join\(" · "\) \|\| "a clear road"/.test(hookSource) &&
       /\.\.\.activeScenarioText,\s*\]\s*\.filter\(Boolean\)\s*\.join\(" · "\) \|\| "none applied"/.test(hookSource),
   );
@@ -1689,11 +1781,15 @@ check(
   const ctxEnd = pageSource.indexOf("exits: EXITS.map", ctxStart);
   const ctxSource = pageSource.slice(ctxStart, ctxEnd);
   const ctxKeys = [...ctxSource.matchAll(/^\s+(\w+):/gm)].map((m) => m[1]);
+  const ctxAll = pageSource.slice(ctxStart, pageSource.indexOf("}),\n      });", ctxStart));
   check(
-    // No new "direction" field (Phase D1 §4 / no backend change): the context always names the
-    // FOCUSED direction's effective state through the same 5 fields that existed before D2.
-    "page: the assistant's context carries the carriageway the command was SENT for (the focused one, pinned at send time as sentTo): its effective closed lanes, speed limit and incident count, in the EXISTING fields only",
+    // The five original fields still name the FOCUSED carriageway's effective state (pinned at send time as
+    // sentTo), for an older backend. Since 2026-10-05 the command parser also gets both carriageways, the route
+    // and window, places, events, reallocation, clock and forecast days, after them (the backend changed with it).
+    "page: the assistant's context carries the carriageway the command was SENT for (sentTo) in the five original fields, then both carriageways, the route, window, places, events, reallocation, clock and forecast days",
     ctxKeys.join() === "laneCount,segmentLengthM,closedLanes,speedLimitKmh,incidentCount" &&
+      /focus: sentDirection,/.test(ctxAll) && /directions: Object\.fromEntries\(activeDirections\.map\(\(d\) => \[d, commandDirState\(d\)\]\)\),/.test(ctxAll) &&
+      /places: commandPlaces\(\),/.test(ctxAll) && /forecastDays: forecast\.data\?\.availableDates \?\? \[\],/.test(ctxAll) &&
       /const sentTo = byDirection\[focusDirection\];/.test(pageSource) &&
       /closedLanes: sentTo\.eff\.closedLanes\.map/.test(pageSource) &&
       /speedLimitKmh: sentTo\.eff\.speedLimitKmh,/.test(pageSource) &&
@@ -1855,6 +1951,18 @@ check(
       /if \(both\) return;\s*if \(focused\.scenarioEvents\.length > 0\) return;/.test(pageSource) &&
       (pageSource.match(/= replicate\(/g) ?? []).length === 1,
   );
+  check(
+    "command: the parser gets every place on the corridor (marked on the route or not), so 'go to Shell Balagtas' works from any route",
+    /byDirection\[d\]\.places\.map\(\(p\) => \(\{/.test(pageSource) && /onRoute: p\.km >= routeFromKm - 0\.05 && p\.km <= routeToKm \+ 0\.05,/.test(pageSource),
+  );
+  check(
+    "command: a lane that is not there when Apply runs is reported, not skipped in silence (a lane count or a new window can change it after the proposal)",
+    /const missing = a\.lanes\.filter\(\(n\) => n < 1 \|\| n > h\.laneCount\);\s*if \(missing\.length > 0\) no\(/.test(pageSource),
+  );
+  check(
+    "command: while the model works the button shows the seconds, a Cancel button aborts the request, and it gives up after COMMAND_TIMEOUT_MS",
+    /signal: abort\.signal,/.test(pageSource) && /setTimeout\(\(\) => abort\.abort\("timeout"\), COMMAND_TIMEOUT_MS\)/.test(pageSource) && /data-cmd="cancel" onClick=\{\(\) => commandAbortRef\.current\?\.abort\("cancel"\)\}/.test(pageSource) && /`Interpreting… \$\{/.test(pageSource),
+  );
   const applyStart = pageSource.indexOf("const applyPlan = ");
   const applySource = pageSource.slice(applyStart, pageSource.indexOf("// clearIncidents, toggleLane", applyStart));
   check(
@@ -1930,7 +2038,7 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check("scene marks: the phase fraction is 0 at the start of a phase and rises toward 1 within it", roadMarks([ev], 5.02, owns)[0].phaseFraction < 0.05 && roadMarks([ev], 8, owns)[0].phaseFraction > roadMarks([ev], 6, owns)[0].phaseFraction);
   const yielded = composeInterventions({ ...idle, closedLanes: [true, false, false, false], closurePoint: 100, closureEnd: 200, incidents: [] }, [ev], abs(6), road600).owners;
   const [y] = roadMarks([ev], 6, yielded);
-  check("scene marks: an event that yielded its closure to the operator's own is still active but holds NO lanes and NO stretch (so no wreck is drawn where traffic is not blocked)", y.state === "active" && y.closedLanes.length === 0 && y.stretch === null && yielded.closure === null && hasSceneArt(y) === false);
+  check("scene marks: an event beside the operator's own closure holds its OWN lanes and stretch, so its wreck is drawn where it blocks", y.state === "active" && y.closedLanes.length > 0 && y.stretch !== null && y.stretch.fromM === yielded.extraClosures[0]?.closurePointM && yielded.closure === null && yielded.extraClosures.length === 1 && hasSceneArt(y) === true);
   check("scene marks: a finished event is gone", roadMarks([ev], 60, owns).length === 0);
   const rain = roadMarks([must([], rainSpec(330, 0, manualMinutes(30), "NB", "light"), 1).event], 1)[0];
   check("scene marks: rain carries its intensity and holds nothing on the road; other families carry none", rain.intensity === "light" && rain.closedLanes.length === 0 && rain.stretch === null && active.intensity === null);
@@ -2069,6 +2177,33 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check("reallocation art: borrowed lanes are marked (wash, chevrons, a line of traffic cones on the edge away from the median, and the scheme's name); none borrowed paints nothing", lanesR.count("fillRect") >= 1 && lanesR.count("fillText") === 1 && lanesR.count("stroke") > 5 && lanesR.count("arc") > 30 && noLanes.calls.length === 0);
 }
 
+// --- the incident forecast on a stretch: shared out, not dumped; drawn per day, not fixed
+{
+  // The forecast's per-exit shape (Jul 10, 2026), whole corridor 134 a day; 8 at 19:00.
+  const byExit = [
+    { km: 12, perDay: 39.3 }, { km: 13.63, perDay: 6 }, { km: 15.44, perDay: 15.7 }, { km: 20.21, perDay: 17.8 }, { km: 23.73, perDay: 13.3 },
+    { km: 27.2, perDay: 9 }, { km: 33.09, perDay: 5 }, { km: 45.33, perDay: 4 }, { km: 65.78, perDay: 9 }, { km: 88.25, perDay: 5 },
+  ];
+  const whole = (["NB", "SB"] as const).reduce((a, d) => a + expectedOnStretch({ hourly: 8, byExit, fromKm: 12, toKm: 88.25, direction: d }), 0);
+  const short = expectedOnStretch({ hourly: 8, byExit, fromKm: 12, toKm: 12.6, direction: "NB" });
+  check(
+    `forecast incidents: the corridor's hourly count is shared out — the whole corridor, both ways, gets back ${whole.toFixed(2)} (= 8 x the ${(ON_CARRIAGEWAY_SHARE * 100).toFixed(0)}% on the carriageway), and 600 m at Balintawak northbound ${short.toFixed(2)}, not 8`,
+    Math.abs(whole - 8 * ON_CARRIAGEWAY_SHARE) < 1e-6 && short > 0 && short < 1 && ON_CARRIAGEWAY_SHARE > 0.2 && ON_CARRIAGEWAY_SHARE < 0.35,
+  );
+  const draw = (seed: string) => drawForecastEvents({ expected: 3, seed, direction: "NB", fromKm: 12, toKm: 12.6, laneCount: 4, startFromMin: 0, byExit });
+  const a = draw("2026-07-10|19|NB");
+  const sameAgain = JSON.stringify(draw("2026-07-10|19|NB")) === JSON.stringify(a);
+  const days = ["2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06", "2026-07-07"].map((d) => JSON.stringify(draw(`${d}|19|NB`)));
+  const all = [a, ...days.map((x) => JSON.parse(x) as ReturnType<typeof draw>)].flat();
+  check(
+    "forecast incidents: the same day draws the same events and other days different ones, each inside the stretch, the road's lanes and the hour, as an ordinary scenario event with a sampled duration",
+    sameAgain && new Set(days).size === days.length &&
+      all.every((e) => e.positionKm >= 12 && e.positionKm <= 12.6 && e.startMinutes >= 0 && e.startMinutes < 60 && e.duration.kind === "sampled" && (e.lane === null || (e.lane >= 1 && e.lane <= 4))) &&
+      new Set(all.map((e) => e.variant.family)).size > 1,
+  );
+  check("forecast incidents: nothing expected draws nothing", drawForecastEvents({ expected: 0, seed: "x", direction: "SB", fromKm: 12, toKm: 13, laneCount: 4, startFromMin: 0, byExit }).length === 0);
+}
+
 // --- lane reallocation in the engine: lent lanes are entered and left only at the crossovers
 {
   check("lane reallocation: the crossover is the recorded 150 m, or a fifth of a stretch too short for two", crossoverM(1000) === 150 && crossoverM(500) === 100 && ASSUMPTIONS.ZIPPER_LANES.value.crossoverM === 150);
@@ -2103,17 +2238,16 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
 {
   const b44 = { NB: 4, SB: 4 } as const;
   const okNB1 = planZipper(b44, "NB", 1);
-  const okNB2 = planZipper(b44, "NB", 2);
-  const okSB2 = planZipper(b44, "SB", 2);
   check("lane reallocation: from 4 + 4, one lane moves either way (5 + 3, 3 + 5) and the total stays 8", okNB1.ok && okNB1.counts.NB === 5 && okNB1.counts.SB === 3 && planZipper(b44, "SB", 1).ok && (() => { const p = planZipper(b44, "SB", 1); return p.ok && p.counts.SB === 5 && p.counts.NB === 3; })());
-  check("lane reallocation: from 4 + 4, counterflow moves two lanes (6 + 2, 2 + 6), the most the limits allow, total kept", okNB2.ok && okNB2.counts.NB === 6 && okNB2.counts.SB === 2 && okSB2.ok && okSB2.counts.SB === 6 && okSB2.counts.NB === 2);
-  const tooFew = planZipper({ NB: 3, SB: 3 }, "NB", 2);
-  const tooMany = planZipper({ NB: 5, SB: 5 }, "NB", 2);
-  const nonsense = [planZipper(b44, "NB", 0), planZipper(b44, "NB", 3), planZipper(b44, "NB", 1.5)];
+  const two = planZipper(b44, "NB", 2);
+  check("lane reallocation: only one lane moves — two is refused, saying NLEX opens a single lane of the opposite bound", !two.ok && /single lane/.test(two.reason), two.ok ? "" : two.reason);
+  const tooFew = planZipper({ NB: 2, SB: 2 }, "NB", 1);
+  const tooMany = planZipper({ NB: 6, SB: 5 }, "NB", 1);
+  const nonsense = [planZipper(b44, "NB", 0), planZipper(b44, "NB", 2), planZipper(b44, "NB", 1.5)];
   check("lane reallocation: a transfer that would leave the donor below 2 lanes is refused, saying which carriageway and how many lanes", !tooFew.ok && tooFew.reason.includes("SB") && tooFew.reason.includes("1 lane") && tooFew.reason.includes("at least 2"), tooFew.ok ? "" : tooFew.reason);
   check("lane reallocation: a transfer that would take the recipient past 6 lanes is refused, saying so", !tooMany.ok && tooMany.reason.includes("NB") && tooMany.reason.includes("7") && tooMany.reason.includes("6"), tooMany.ok ? "" : tooMany.reason);
-  check("lane reallocation: 0, 3 or a fractional number of lanes is refused", nonsense.every((p) => !p.ok));
-  check("lane reallocation: the limits are the recorded assumption (min 2, max 6, at most 2 moved), not numbers scattered in the code", ASSUMPTIONS.ZIPPER_LANES.value.minLanes === 2 && ASSUMPTIONS.ZIPPER_LANES.value.maxLanes === 6 && ASSUMPTIONS.ZIPPER_LANES.value.maxTransfer === 2);
+  check("lane reallocation: 0, 2 or a fractional number of lanes is refused", nonsense.every((p) => !p.ok));
+  check("lane reallocation: the limits are the recorded assumption (min 2, max 6, one lane moved), not numbers scattered in the code", ASSUMPTIONS.ZIPPER_LANES.value.minLanes === 2 && ASSUMPTIONS.ZIPPER_LANES.value.maxLanes === 6 && ASSUMPTIONS.ZIPPER_LANES.value.maxTransfer === 1);
   check("lane reallocation: the lane total is conserved by every accepted transfer, over every base 2..5 + 2..5, both directions, 1 and 2 lanes", (() => {
     for (let a = 2; a <= 5; a++) for (let b = 2; b <= 5; b++) for (const to of ["NB", "SB"] as const) for (const n of [1, 2]) {
       const p = planZipper({ NB: a, SB: b }, to, n);
@@ -2124,8 +2258,8 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   if (!okNB1.ok) throw new Error("fixture");
   const held = { NB: 5, SB: 3 };
   check("lane reallocation: zipperCounts reproduces what the plan set, and zipperHolds is true only while the lane counts are exactly those", zipperCounts(okNB1.state).NB === 5 && zipperCounts(okNB1.state).SB === 3 && zipperHolds(okNB1.state, held) && !zipperHolds(okNB1.state, { NB: 4, SB: 3 }) && !zipperHolds(okNB1.state, { NB: 5, SB: 4 }) && !zipperHolds(okNB1.state, b44));
-  check("lane reallocation: only the carriageway that GAINED lanes has borrowed ones (the innermost n); the donor and 'no scheme' have none", borrowedLanes(okNB1.state, "NB") === 1 && borrowedLanes(okNB1.state, "SB") === 0 && borrowedLanes(okNB2.ok ? okNB2.state : null, "NB") === 2 && borrowedLanes(null, "NB") === 0);
-  check("lane reallocation: the scheme is called 'Lane reallocation' — one name for one or two lanes", REALLOCATION_NAME === "Lane reallocation");
+  check("lane reallocation: only the carriageway that GAINED lanes has borrowed ones (the innermost n); the donor and 'no scheme' have none", borrowedLanes(okNB1.state, "NB") === 1 && borrowedLanes(okNB1.state, "SB") === 0 && borrowedLanes(null, "NB") === 0);
+  check("lane reallocation: the scheme is called 'Lane reallocation'", REALLOCATION_NAME === "Lane reallocation");
   // the engine really does run at the lane counts a scheme produces (2 and 6), fills them and stays finite
   let runs = "";
   for (const lanes of [2, 6]) {
@@ -2292,7 +2426,7 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
       "stretch: the control asks for From km / To km before anything is applied, refuses an unusable stretch with its reason (options disabled), and choosing an option sets the simulated window to the stretch; Off puts the window back only if it has not been moved since",
       /data-km=\{testId\}/.test(pageSource) && /testId="realloc-from"/.test(pageSource) && /testId="realloc-to"/.test(pageSource) && /data-zipper-note="stretch-error"/.test(pageSource) &&
         /disabled=\{\(!plan\.ok \|\| !stretchOk\) && !on\}/.test(pageSource) &&
-        /const stretch = planStretch\(stretchNow\.fromKm, stretchNow\.toKm, stretchLimits\);\s*if \(!stretch\.ok\) \{\s*setReallocError\(stretch\.reason\);\s*return;\s*\}/.test(pageSource) &&
+        /const want = at \?\? stretchNow;\s*const stretch = planStretch\(want\.fromKm, want\.toKm, stretchLimits\);\s*if \(!stretch\.ok\) \{\s*setReallocError\(stretch\.reason\);\s*return stretch\.reason;\s*\}/.test(pageSource) &&
         /setSegFromKm\(stretch\.fromKm\);\s*setSegToKm\(stretch\.toKm\);\s*nb\.setLaneCount\(plan\.counts\.NB\);/.test(pageSource) &&
         /if \(before !== null && segFromKm === before\.setFrom && segToKm === before\.setTo\) \{\s*setSegFromKm\(before\.from\);\s*setSegToKm\(before\.to\);\s*\}/.test(pageSource),
     );
@@ -2302,7 +2436,7 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check("lane reallocation: nothing the operator can read still calls it a zipper lane or counterflow (UI strings, canvas labels, assumption text)", !/Zipper lane|ZIPPER LANE|Counterflow|COUNTERFLOW|zipper lane|counterflow/.test(operatorText));
   check(
     "lane reallocation: the control is titled with the name and its \"i\" states the model — the other carriageway's inner lanes, entered and left at a median opening at each end — and warns what a change restarts",
-    /<InfoLabel info=\{REALLOCATION_INFO\}>\{REALLOCATION_NAME\}<\/InfoLabel>/.test(pageSource) && /Its traffic crosses the median at an opening at each end of the stretch and drives the borrowed lanes coned off from the other carriageway's traffic/.test(pageSource) &&
+    /<InfoLabel info=\{REALLOCATION_INFO\}>\{REALLOCATION_NAME\}<\/InfoLabel>/.test(pageSource) && /Its traffic crosses the median at an opening at each end of the stretch and drives the borrowed lane coned off from the other carriageway's traffic/.test(pageSource) &&
       /Changing it restarts BOTH carriageways: clocks, baselines, and hand-set closures, speed limits and incidents are cleared\. Scenario events stay and replay from their start\./.test(pageSource) &&
       /\$\{REALLOCATION_NAME\.toUpperCase\(\)\} · /.test(pageSource),
   );
@@ -2536,6 +2670,86 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
     "recommendation: CLOSURE_LANE_CAPACITY_VEH_H is what the engine's open lanes carry past a closure (at or below it, within 10%), so 'absorbed' never promises room the road does not have",
     measured >= CLOSURE_LANE_CAPACITY_VEH_H && measured <= CLOSURE_LANE_CAPACITY_VEH_H * 1.1,
     `${measured.toFixed(0)} veh/h per open lane measured vs ${CLOSURE_LANE_CAPACITY_VEH_H}`,
+  );
+}
+
+/* ───────────────────────────── plaza aprons ───────────────────────────── */
+{
+  /* A ramp plaza (and a service area's forecourt) is paved as one apron. Its lanes leaving the booths join one at
+   * a time, each holding its line until its turn; stroked one by one over the verge they were separate strips with
+   * grass between — a five-booth plaza read as five roads merging into one (the operator's report, 2026-10-03). */
+  const spec = (id: string, kind: FacilitySpec["kind"], booths: number): FacilitySpec => ({ id, kind, name: id, x: 100, booths, serviceSec: 12 });
+  const engine = new FacilityEngine(
+    [spec("entry5", "entry_ramp", 5), spec("exit7", "exit_ramp", 7), spec("entry3", "entry_ramp", 3), spec("fuel", "service_area", 4), spec("barrier24", "barrier", 24)],
+    { laneCount: 4 } as unknown as FacilityHost,
+  );
+  for (const f of engine.list) {
+    // A barrier's apron is its lanes fanning out over the carriageway to the booths and back (Bocaue's 24).
+    const roles = f.laneEntries ? BARRIER_ROLES : APRON_ROLES;
+    const o = apronOutline(f, roles);
+    // Every lane of the apron, every quarter metre, lies inside the paved outline (vehicles never drawn on grass).
+    let worst = 0;
+    let holes = 0;
+    if (o) {
+      const lanes = f.paths.filter((p) => roles.has(p.role));
+      for (const p of lanes) {
+        for (let uu = p.pts[0].u; uu <= p.pts[p.pts.length - 1].u; uu += 0.25) {
+          const w = wAtU(p, uu);
+          const i = o.u.findIndex((x) => x >= uu - 1e-9);
+          if (w === null || i < 0) { holes++; continue; }
+          const t = i === 0 ? 0 : (uu - o.u[i - 1]) / (o.u[i] - o.u[i - 1]);
+          const lo = i === 0 ? o.lo[0] : o.lo[i - 1] + (o.lo[i] - o.lo[i - 1]) * t;
+          const hi = i === 0 ? o.hi[0] : o.hi[i - 1] + (o.hi[i] - o.hi[i - 1]) * t;
+          worst = Math.max(worst, lo - (w - f.pitch / 2), w + f.pitch / 2 - hi);
+        }
+      }
+    }
+    check(
+      `plaza apron (${f.spec.id}): one paved outline from the first lane fanning out to the last joining, containing every lane along its whole length`,
+      o !== null && holes === 0 && worst <= 1e-6,
+      o === null ? "no outline" : `${holes} points outside its span, worst overhang ${(worst / f.pitch).toFixed(3)} of a lane`,
+    );
+  }
+  // A service area is paved as its whole lot: the forecourt, then the shop and car park beside the acceleration lane.
+  const fuel = engine.list.find((f) => f.spec.kind === "service_area");
+  const lot = fuel ? serviceSite(fuel) : null;
+  let lotOver = Infinity;
+  let lotLen = 0;
+  if (fuel && lot) {
+    lotOver = 0;
+    lotLen = lot.uEnd - lot.uA;
+    for (const p of fuel.paths.filter((q) => q.role === "pumpIn" || q.role === "pump" || q.role === "pumpOut")) {
+      for (let uu = p.pts[0].u; uu <= p.pts[p.pts.length - 1].u; uu += 0.25) {
+        const w = wAtU(p, uu)!;
+        const i = Math.max(1, lot.u.findIndex((x) => x >= uu - 1e-9));
+        const tt = (uu - lot.u[i - 1]) / Math.max(1e-9, lot.u[i] - lot.u[i - 1]);
+        const hi = lot.hi[i - 1] + (lot.hi[i] - lot.hi[i - 1]) * Math.max(0, Math.min(1, tt));
+        lotOver = Math.max(lotOver, w + fuel.pitch / 2 - hi, lot.wIn - (w - fuel.pitch / 2));
+      }
+    }
+  }
+  check(
+    "service area: one paved lot holding every pump lane, running on past the pumps for the shop and car park (at least 200 m in all), no deeper than the forecourt",
+    !!fuel && !!lot && lotOver <= 1e-6 && lotLen >= 200 && Math.max(...lot.hi) <= fuel.wMax + 1e-9,
+    lot ? `overhang ${lotOver.toFixed(4)} lane, lot ${lotLen.toFixed(0)} m, deepest ${Math.max(...lot.hi).toFixed(2)} vs ${fuel?.wMax.toFixed(2)}` : "no lot",
+  );
+  const artSource = readFileSync(new URL("../facilityArt.ts", import.meta.url), "utf8");
+  check(
+    "plaza apron: the ground fills the apron outline, and its lanes get no edge line each (one kerb line round the apron), so they never read as separate roads",
+    /const apron = barrier \|\| site \? null : apronOutline\(f\);/.test(artSource) && /if \(APRON_ROLES\.has\(p\.role\)\) continue;/.test(artSource),
+  );
+  check(
+    "plaza apron: a barrier's apron is filled over the whole carriageway, so its lanes fanning out to the booths are not separate strips with road between",
+    /const barrierApron = barrier \? apronOutline\(f, BARRIER_ROLES\) : null;/.test(artSource) && /c\.lineTo\(g\.xPx\(o\.u\[0\]\), g\.roadInnerY\);/.test(artSource),
+  );
+  check(
+    "exit lane: a diverge is drawn only past the road edge, at the ramp's width — not as plaza asphalt stroked over the outer lane at the road's scale",
+    /const peel = p\.role === "diverge";\s*if \(peel\) \{\s*c\.save\(\);\s*clipToGutter\(g\);/.test(artSource) && /f\.pitch \* \(peel \? g\.gutterPx : scaleAt\(g, mid\)\)/.test(artSource),
+  );
+  const rampPage = readFileSync(new URL("../page.tsx", import.meta.url), "utf8");
+  check(
+    "ramp wedges: drawn only for the engine's own point ramps (an exit or entry not laid out as a plaza), never for every interchange in view",
+    /for \(const r of sim\.cfg\.ramps \?\? \[\]\) \{/.test(rampPage) && !/for \(const ex of exits\)/.test(rampPage),
   );
 }
 

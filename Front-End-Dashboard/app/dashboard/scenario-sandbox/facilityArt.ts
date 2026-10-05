@@ -1,5 +1,5 @@
 import type { Vehicle, VehicleClass, ResponderKind } from "./simulation";
-import type { Facility, FacilityEngine, FacilityStats, FPath } from "./facilities";
+import type { Facility, FacilityEngine, FacilityStats, FPath, PathRole } from "./facilities";
 import { DRAW_W_FRAC, poseAt } from "./facilities";
 import type { EventSite } from "./scenarios/adapter";
 import { drawPerson, type SceneGeometry } from "./sceneArt";
@@ -64,11 +64,15 @@ export function baseLengthPx(lengthM: number, mToPx: number, k: number): number 
   const m = lengthM <= CAR_REF_M ? lengthM * (carM / CAR_REF_M) : Math.min(lengthM * k, carM + (lengthM - CAR_REF_M));
   return m * mToPx;
 }
+/** The clear seam always left between a sprite and the one behind it: 1.5 px read as touching once vehicles
+ *  were drawn at a legible size (2026-10-03), so at least 3 px, and about 8% of the sprite for a long one. */
+const SPRITE_SEAM_MIN_PX = 3;
 /** Squeezed only where the real gap behind it is tighter than its size was chosen for, keeping 30% of that gap visible. */
 export function drawnLengthPx(basePx: number, lengthM: number, roomM: number, mToPx: number): number {
   if (!isFinite(roomM)) return Math.max(2, basePx);
   const gapM = Math.max(0, roomM - lengthM);
-  return Math.max(2, Math.min(basePx, (lengthM + gapM * SPRITE_GAP_EATEN) * mToPx - 1.5));
+  const seam = Math.max(SPRITE_SEAM_MIN_PX, basePx * 0.08);
+  return Math.max(2, Math.min(basePx, (lengthM + gapM * SPRITE_GAP_EATEN) * mToPx - seam));
 }
 /** Full width unless squeezed so short it would read as sideways; never under 6 px. */
 export function drawnWidthPx(baseWidthPx: number, lengthPx: number): number {
@@ -232,7 +236,238 @@ function clipToFacilitySide(g: FacGeom) {
   g.ctx.clip();
 }
 
+/** Clip to the gutter alone: past the carriageway's edge on the facility side. */
+function clipToGutter(g: FacGeom) {
+  const top = Math.min(g.roadEdgeY, g.gutterEdgeY);
+  const bottom = Math.max(g.roadEdgeY, g.gutterEdgeY);
+  g.ctx.beginPath();
+  g.ctx.rect(0, top, g.cssW, bottom - top);
+  g.ctx.clip();
+}
+
 /* ── ground ────────────────────────────────────────────────────────────────── */
+
+/** The lanes that make up a plaza's body (or a service area's forecourt): fanning out to the booths or pumps,
+ *  the booth lanes, and drawing back together after them. One paved surface, not separate roads. */
+export const APRON_ROLES: ReadonlySet<PathRole> = new Set<PathRole>(["fan", "booth", "converge", "pumpIn", "pump", "pumpOut"]);
+/** A barrier plaza's lanes: out from each carriageway lane to its booths, and back. */
+export const BARRIER_ROLES: ReadonlySet<PathRole> = new Set<PathRole>(["barrierIn", "booth", "barrierOut"]);
+
+/** A path's lateral position where it is `u` along the road, or null if it does not reach there.
+ *  Every apron lane runs forward along u. */
+export function wAtU(p: FPath, u: number): number | null {
+  const pts = p.pts;
+  if (u < pts[0].u - 1e-6 || u > pts[pts.length - 1].u + 1e-6) return null;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    if (u <= b.u + 1e-9) {
+      const t = b.u - a.u > 1e-9 ? (u - a.u) / (b.u - a.u) : 1;
+      return a.w + (b.w - a.w) * Math.max(0, Math.min(1, t));
+    }
+  }
+  return pts[pts.length - 1].w;
+}
+
+/* The outline of a plaza's apron: at each point along it, from the innermost of its lanes to the outermost.
+ * Stroked one by one, the lanes leaving the booths of a five-booth plaza were five strips curving into one
+ * with grass between them — they join one at a time (a staggered converge), and each holds its own line
+ * until its turn — which read as five roads merging, not one apron narrowing to the acceleration lane. */
+export function apronOutline(f: Facility, roles: ReadonlySet<PathRole> = APRON_ROLES): { u: number[]; lo: number[]; hi: number[] } | null {
+  const ps = f.paths.filter((p) => roles.has(p.role));
+  if (ps.length < 2) return null;
+  /* Sampled at every corner of every lane: between two corners each lane is straight, so the outermost of them
+   * bends outward and the straight edge drawn between samples stays outside it (and the innermost likewise) —
+   * the outline contains every lane exactly, rather than cutting the inside of a curve between samples. */
+  const at = [...new Set(ps.flatMap((p) => p.pts.map((q) => q.u)))].sort((x, y) => x - y);
+  const u: number[] = [];
+  const lo: number[] = [];
+  const hi: number[] = [];
+  for (const uu of at) {
+    let mn = Infinity;
+    let mx = -Infinity;
+    for (const p of ps) {
+      const w = wAtU(p, uu);
+      if (w === null) continue;
+      mn = Math.min(mn, w);
+      mx = Math.max(mx, w);
+    }
+    if (mn === Infinity) continue;
+    u.push(uu);
+    lo.push(mn - f.pitch / 2);
+    hi.push(mx + f.pitch / 2);
+  }
+  return u.length > 1 ? { u, lo, hi } : null;
+}
+
+/* A service area's site: the forecourt round its pumps and, past them beside the acceleration lane, the shop and
+ * its car park, all one paved lot. Drawn as the lens its four pump lanes make, the station was a small bump off
+ * the road beside plazas several times its size. Only the pumps and the lanes through them belong to the engine;
+ * the shop and car park are scenery. They are laid out within the depth the forecourt already takes and along
+ * the acceleration lane, so the canvas gets no deeper and the carriageway's lanes stay the height they were. */
+export type ServiceSite = {
+  /** Outer edge of the lot along the road (lane units), sampled at `u`. Its inner edge is `wIn` throughout. */
+  u: number[];
+  hi: number[];
+  wIn: number;
+  /** The outer edge of the slip road and acceleration lane; the outermost reach of the lot. */
+  wLane: number;
+  wOut: number;
+  uA: number;
+  uAcc: number;
+  uEnd: number;
+  /** Along the road: the shop building and the car park, both beside the acceleration lane. */
+  shop: [number, number];
+  park: [number, number];
+};
+const SITE_SHOP_M = 36;
+const SITE_PARK_M = 80;
+const ease = (t: number) => {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
+};
+export function serviceSite(f: Facility): ServiceSite | null {
+  if (f.spec.kind !== "service_area") return null;
+  const lanes = f.paths.filter((p) => p.role === "pumpIn" || p.role === "pump" || p.role === "pumpOut");
+  const ins = lanes.filter((p) => p.role === "pumpIn");
+  const accel = f.paths.find((p) => p.role === "accel");
+  if (ins.length === 0 || !accel) return null;
+  const uA = Math.min(...ins.map((p) => p.pts[0].u));
+  const uPump = Math.max(...ins.map((p) => p.pts[p.pts.length - 1].u));
+  const uAcc = accel.pts[0].u;
+  const w0 = accel.pts[0].w;
+  const wIn = w0 - f.pitch / 2;
+  const wLane = w0 + f.pitch / 2;
+  const wOut = Math.max(wLane, f.wMax);
+  /* The shop stands at the back of the lot, as soon as the lanes leaving the pumps have drawn in clear of it:
+   * beside the cars driving out, not past a stretch of empty forecourt. The car park follows. */
+  const shopW0 = shopFrontW(wLane, wOut);
+  const outs = lanes.filter((p) => p.role === "pumpOut");
+  let uShop = uAcc + 4;
+  for (let uu = Math.min(...outs.map((p) => p.pts[0].u)); uu < uAcc + 4; uu += 1) {
+    if (outs.every((p) => (wAtU(p, uu) ?? -Infinity) + f.pitch / 2 <= shopW0 - 0.05)) {
+      uShop = uu + 2;
+      break;
+    }
+  }
+  const shop: [number, number] = [uShop, uShop + SITE_SHOP_M];
+  const park: [number, number] = [shop[1] + 6, shop[1] + 6 + SITE_PARK_M];
+  const uEnd = park[1] + 5;
+  // In from the slip road a little faster than the outermost pump lane fans out, and squared off at the far end.
+  const rise = Math.max(6, (uPump - uA) * 0.75);
+  const fall = 14;
+  const outer = (uu: number) =>
+    uu < uA + rise ? wLane + (wOut - wLane) * ease((uu - uA) / rise)
+      : uu > uEnd - fall ? wLane + (wOut - wLane) * ease((uEnd - uu) / fall)
+        : wOut;
+  // Sampled on a grid and at every corner of every lane, and never inside a lane, so the lot contains them all.
+  const at = new Set<number>();
+  for (let uu = uA; uu < uEnd; uu += 1.5) at.add(uu);
+  at.add(uEnd);
+  for (const l of lanes) for (const q of l.pts) at.add(q.u);
+  const u = [...at].sort((x, y) => x - y);
+  const hi = u.map((uu) => {
+    let w = outer(uu);
+    for (const l of lanes) {
+      const lw = wAtU(l, uu);
+      if (lw !== null) w = Math.max(w, lw + f.pitch / 2);
+    }
+    return w;
+  });
+  return { u, hi, wIn, wLane, wOut, uA, uAcc, uEnd, shop, park };
+}
+
+/** Where the shop's front stands across the lot: most of the way back, leaving the forecourt in front of it. */
+function shopFrontW(wLane: number, wOut: number): number {
+  return wOut - Math.min(0.95, (wOut - wLane) * 0.62);
+}
+
+/** The brand on a service area's shop, from its basis; plain "SHOP" for an unbranded one. */
+function brandName(f: Facility): string {
+  const m = /^(Petron|Shell|Caltex|Total|Phoenix)/i.exec(f.spec.basis ?? "");
+  return m ? m[1].toUpperCase() : "SHOP";
+}
+
+/** Small integer hash, for scenery that has to look the same every frame. */
+function hashInt(a: number, b: number): number {
+  let h = (a * 374761393 + b * 668265263) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** The shop and the price sign of a service area — scenery on the lot. Its car park is drawn with the vehicles. */
+function drawServiceScenery(g: FacGeom, f: Facility, site: ServiceSite): void {
+  const c = g.ctx;
+  const brand = brandOf(f);
+  const night = Math.max(0, Math.min(1, 1 - g.dayFraction / 0.55));
+  const span = site.wOut - site.wLane;
+  if (span <= 0.2) return;
+
+  // The shop: a long low building along the back of the lot, its front (towards the road) in the brand's colour.
+  const sw0 = shopFrontW(site.wLane, site.wOut);
+  const sw1 = site.wOut - 0.07;
+  const sx0 = g.xPx(site.shop[0]);
+  const sx1 = g.xPx(site.shop[1]);
+  const sy0 = g.yOf(sw0);
+  const sy1 = g.yOf(sw1);
+  const L = Math.min(sx0, sx1);
+  const W = Math.abs(sx1 - sx0);
+  const T = Math.min(sy0, sy1);
+  const H = Math.abs(sy1 - sy0);
+  c.fillStyle = "rgba(0,0,0,0.30)";
+  rr(c, L + 3, T + 3, W, H, 3);
+  c.fill();
+  c.fillStyle = "#e7e5e4";
+  rr(c, L, T, W, H, 3);
+  c.fill();
+  // Roof detail: a darker panel inset from the edge, and the units on it.
+  c.fillStyle = "#d6d3d1";
+  rr(c, L + W * 0.06, T + H * 0.18, W * 0.88, H * 0.64, 2);
+  c.fill();
+  c.fillStyle = "#a8a29e";
+  for (const fx of [0.2, 0.32]) c.fillRect(L + W * fx, T + H * 0.32, Math.max(2, W * 0.06), Math.max(2, H * 0.22));
+  // The shopfront faces the forecourt: the side nearest the road.
+  const frontY = g.out > 0 ? T : T + H;
+  const band = Math.max(3, H * 0.2);
+  c.fillStyle = brand.body;
+  c.fillRect(L, g.out > 0 ? frontY : frontY - band, W, band);
+  c.fillStyle = brand.band;
+  c.fillRect(L, g.out > 0 ? frontY + band : frontY - band - Math.max(1, band * 0.35), W, Math.max(1, band * 0.35));
+  if (night > 0.02) {
+    c.save();
+    c.globalCompositeOperation = "lighter";
+    // Light spilling from the shopfront onto the forecourt, fading away from it (a flat band read as a grey stripe).
+    const reach = band * 2.4;
+    const glow = c.createLinearGradient(0, frontY, 0, frontY - g.out * reach);
+    glow.addColorStop(0, `rgba(255,230,170,${(0.32 * night).toFixed(3)})`);
+    glow.addColorStop(1, "rgba(255,230,170,0)");
+    c.fillStyle = glow;
+    c.fillRect(L - band, g.out > 0 ? frontY - reach : frontY, W + band * 2, reach);
+    c.restore();
+  }
+  if (W > 40 && H > 14) {
+    c.fillStyle = "#1f2937";
+    c.font = `800 ${Math.round(Math.min(12, H * 0.32))}px system-ui`;
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    c.fillText(brandName(f), L + W / 2, T + H / 2 + (g.out > 0 ? band * 0.45 : -band * 0.45));
+  }
+
+  // The price sign on the verge by the way in: a pylon in the brand's colours.
+  const sx = g.xPx(site.uA - 6);
+  const sy = g.yOf(site.wLane + Math.min(0.55, span * 0.4));
+  const sh = Math.max(12, Math.min(20, g.gutterPx * 0.42));
+  const swd = Math.max(7, sh * 0.5);
+  c.fillStyle = "rgba(0,0,0,0.3)";
+  c.fillRect(sx - swd / 2 + 2, sy - sh / 2 + 2, swd, sh);
+  c.fillStyle = brand.body;
+  rr(c, sx - swd / 2, sy - sh / 2, swd, sh, 1.5);
+  c.fill();
+  c.fillStyle = brand.band;
+  c.fillRect(sx - swd / 2, sy - sh / 2, swd, Math.max(2, sh * 0.25));
+  c.fillStyle = "rgba(255,255,255,0.85)";
+  for (let k = 0; k < 3; k++) c.fillRect(sx - swd / 2 + 1.5, sy - sh / 2 + sh * (0.36 + k * 0.2), swd - 3, Math.max(1, sh * 0.09));
+}
 
 export function drawFacilityGround(g: FacGeom, view: FacilityView): void {
   const c = g.ctx;
@@ -243,18 +478,41 @@ export function drawFacilityGround(g: FacGeom, view: FacilityView): void {
     // Booth lanes live in the gutter (or, at a barrier, mostly on the road): size by where they are.
     const pitchPx = f.pitch * scaleAt(g, f.stations.length ? f.stations[Math.floor(f.stations.length / 2)].w : 1);
 
-    // The plaza apron where a barrier bulges past the road edge.
-    if (barrier && f.wMax > 0.5) {
-      const p0 = f.u0;
-      const p1 = f.u1;
-      const bulgeIn = p0 + (p1 - p0) * 0.28;
-      const bulgeOut = p1 - (p1 - p0) * 0.28;
+    /* A barrier plaza's apron: one surface from the median to its outermost booth lane, over the whole
+     * carriageway and out past its edge as far as the lanes go. It used to be a trapezoid past the edge
+     * only, so over the road the lanes fanning out to the booths were each a strip of their own, with the
+     * carriageway's darker asphalt between them — a fan of fingers rather than a plaza. */
+    const barrierApron = barrier ? apronOutline(f, BARRIER_ROLES) : null;
+    if (barrierApron) {
+      const o = barrierApron;
       c.fillStyle = g.asphalt;
       c.beginPath();
-      c.moveTo(g.xPx(p0), g.yOf(0.5));
-      c.lineTo(g.xPx(bulgeIn), g.yOf(f.wMax));
-      c.lineTo(g.xPx(bulgeOut), g.yOf(f.wMax));
-      c.lineTo(g.xPx(p1), g.yOf(0.5));
+      o.u.forEach((uu, i) => (i === 0 ? c.moveTo(g.xPx(uu), g.yOf(Math.max(0.5, o.hi[i]))) : c.lineTo(g.xPx(uu), g.yOf(Math.max(0.5, o.hi[i])))));
+      c.lineTo(g.xPx(o.u[o.u.length - 1]), g.roadInnerY);
+      c.lineTo(g.xPx(o.u[0]), g.roadInnerY);
+      c.closePath();
+      c.fill();
+    }
+
+    // A service area: its whole lot, forecourt, shop and car park, paved as one.
+    const site = serviceSite(f);
+    if (site) {
+      c.fillStyle = g.asphalt;
+      c.beginPath();
+      site.u.forEach((uu, i) => (i === 0 ? c.moveTo(g.xPx(uu), g.yOf(site.hi[i])) : c.lineTo(g.xPx(uu), g.yOf(site.hi[i]))));
+      c.lineTo(g.xPx(site.uEnd), g.yOf(site.wIn));
+      c.lineTo(g.xPx(site.uA), g.yOf(site.wIn));
+      c.closePath();
+      c.fill();
+    }
+
+    // A ramp plaza's apron, paved as one surface from its innermost lane to its outermost.
+    const apron = barrier || site ? null : apronOutline(f);
+    if (apron) {
+      c.fillStyle = g.asphalt;
+      c.beginPath();
+      apron.u.forEach((uu, i) => (i === 0 ? c.moveTo(g.xPx(uu), g.yOf(apron.hi[i])) : c.lineTo(g.xPx(uu), g.yOf(apron.hi[i]))));
+      for (let i = apron.u.length - 1; i >= 0; i--) c.lineTo(g.xPx(apron.u[i]), g.yOf(apron.lo[i]));
       c.closePath();
       c.fill();
     }
@@ -262,13 +520,25 @@ export function drawFacilityGround(g: FacGeom, view: FacilityView): void {
     // Asphalt: every lane stroked at its own width, so curves and fans join up
     // into one surface without any of them being drawn twice in a different tone.
     c.strokeStyle = g.asphalt;
-    c.lineCap = "round";
+    // Square ends at a barrier: its lanes start and finish on the carriageway, where round ends stood out
+    // past the apron's edge as a row of scallops. Everywhere between, the apron is under them anyway.
+    c.lineCap = barrier ? "butt" : "round";
     c.lineJoin = "round";
     for (const p of f.paths) {
       const mid = p.pts[Math.floor(p.pts.length / 2)].w;
-      c.lineWidth = Math.max(3, f.pitch * scaleAt(g, mid) * (barrier ? 1.12 : 1.04));
+      /* A diverge starts in the outer lane and peels away from it: only the part past the road edge is
+       * drawn, at the width of the lane it becomes. Its midpoint sits on the edge, where the road's scale
+       * applied, and over the road that stroked half a lane's height of plaza asphalt across the outer lane
+       * — a pale blob at every exit and service area, biggest on two-lane stretches where lanes are tall. */
+      const peel = p.role === "diverge";
+      if (peel) {
+        c.save();
+        clipToGutter(g);
+      }
+      c.lineWidth = Math.max(3, f.pitch * (peel ? g.gutterPx : scaleAt(g, mid)) * (barrier ? 1.12 : 1.04));
       tracePath(g, p);
       c.stroke();
+      if (peel) c.restore();
     }
 
     /* An acceleration lane runs alongside the outer lane behind a broken line
@@ -306,12 +576,40 @@ export function drawFacilityGround(g: FacGeom, view: FacilityView): void {
     }
 
     // Edge lines along the outside of the ramps: what makes a strip of grey
-    // read as a road with a kerb rather than a smear.
+    // read as a road with a kerb rather than a smear. The apron has one kerb
+    // line on each side, around the whole surface; a line along each of its
+    // lanes ran white stripes across the plaza and drew it as separate roads.
     if (!barrier) {
       c.strokeStyle = `rgba(255,255,255,${(0.42 + 0.2 * g.dayFraction).toFixed(2)})`;
       c.lineWidth = 1;
+      if (site) {
+        c.beginPath();
+        site.u.forEach((uu, i) => {
+          const w = site.hi[i] - f.pitch * 0.01;
+          if (i === 0) c.moveTo(g.xPx(uu), g.yOf(w));
+          else c.lineTo(g.xPx(uu), g.yOf(w));
+        });
+        c.stroke();
+      }
+      if (apron) {
+        for (const edge of [apron.lo, apron.hi]) {
+          c.beginPath();
+          apron.u.forEach((uu, i) => {
+            const w = edge[i] + (edge === apron.hi ? -1 : 1) * f.pitch * 0.01;
+            if (i === 0) c.moveTo(g.xPx(uu), g.yOf(w));
+            else c.lineTo(g.xPx(uu), g.yOf(w));
+          });
+          c.stroke();
+        }
+      }
       for (const p of f.paths) {
-        if (p.role === "booth" || p.role === "pump") continue;
+        if (APRON_ROLES.has(p.role)) continue;
+        // A diverge's edge line starts where it leaves the road's edge line, not inside the outer lane.
+        const peel = p.role === "diverge";
+        if (peel) {
+          c.save();
+          clipToGutter(g);
+        }
         c.beginPath();
         p.pts.forEach((q, i) => {
           const x = g.xPx(q.u);
@@ -320,7 +618,19 @@ export function drawFacilityGround(g: FacGeom, view: FacilityView): void {
           else c.lineTo(x, y);
         });
         c.stroke();
+        if (peel) c.restore();
       }
+    } else if (barrierApron) {
+      // The kerb round the part of a barrier's apron that bulges past the carriageway.
+      c.strokeStyle = `rgba(255,255,255,${(0.42 + 0.2 * g.dayFraction).toFixed(2)})`;
+      c.lineWidth = 1;
+      c.beginPath();
+      barrierApron.u.forEach((uu, i) => {
+        const y = g.yOf(Math.max(0.5, barrierApron.hi[i] - f.pitch * 0.01));
+        if (i === 0) c.moveTo(g.xPx(uu), y);
+        else c.lineTo(g.xPx(uu), y);
+      });
+      c.stroke();
     }
 
     // Gore: the painted wedge where a ramp leaves or joins the outer lane.
@@ -434,35 +744,8 @@ export function drawFacilityGround(g: FacGeom, view: FacilityView): void {
       }
     }
 
-    // Service area: the shop at the far corner of the forecourt.
-    if (f.spec.kind === "service_area" && stations.length > 0) {
-      const last = stations[stations.length - 1];
-      const p = f.paths[last.path];
-      const uShop0 = p.pts[p.pts.length - 1].u + 14;
-      const uShop1 = uShop0 + 26;
-      const w0 = last.w - f.pitch * 0.45;
-      const w1 = last.w + f.pitch * 0.42;
-      const x0 = g.xPx(uShop0);
-      const x1 = g.xPx(uShop1);
-      const y0 = g.yOf(w0);
-      const y1 = g.yOf(w1);
-      const brand = brandOf(f);
-      c.fillStyle = "rgba(0,0,0,0.28)";
-      rr(c, Math.min(x0, x1) + 2, Math.min(y0, y1) + 2, Math.abs(x1 - x0), Math.abs(y1 - y0), 3);
-      c.fill();
-      c.fillStyle = "#e7e5e4";
-      rr(c, Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0), 3);
-      c.fill();
-      c.fillStyle = brand.body;
-      c.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.max(2, Math.abs(y1 - y0) * 0.22));
-      if (Math.abs(x1 - x0) > 34 && Math.abs(y1 - y0) > 12) {
-        c.fillStyle = "#334155";
-        c.font = "700 8px system-ui";
-        c.textAlign = "center";
-        c.textBaseline = "middle";
-        c.fillText("SHOP", (x0 + x1) / 2, (y0 + y1) / 2 + Math.abs(y1 - y0) * 0.1);
-      }
-    }
+    // Service area: the shop and the price sign.
+    if (site) drawServiceScenery(g, f, site);
   }
   c.restore();
 }
@@ -473,6 +756,64 @@ export function drawFacilityGround(g: FacGeom, view: FacilityView): void {
 export type SpriteFn = (agent: FacAgentView, len: number, wid: number, braking: boolean) => void;
 
 export type DrawnVehicle = { id: number; left: number; right: number; top: number; bottom: number; kmh: number; vClass: VehicleClass; born: number };
+
+/* A service area's car park: two rows of parallel bays along the lot, one at the back and one beside the
+ * acceleration lane, with cars in about six bays in ten. The cars are scenery, not agents, and are drawn with the
+ * traffic's own sprite at the traffic's own size, so a parked car is the same car as one driving past; each bay
+ * leaves room at both ends, so no two of them touch. */
+export function drawParkedCars(g: FacGeom, view: FacilityView, k: number, sprite: SpriteFn): void {
+  const c = g.ctx;
+  c.save();
+  clipToFacilitySide(g);
+  for (const f of view.list) {
+    const site = serviceSite(f);
+    if (!site) continue;
+    const lengthM = 4.5;
+    const len = baseLengthPx(lengthM, g.mToPx, k);
+    const wid = drawnWidthPx(Math.max(2, Math.min(f.pitch * DRAW_W_FRAC * g.gutterPx, 1.9 * g.mToPx * spriteWidthScale(g.mToPx, k) * 1.7)), len);
+    const bay = len + 10;
+    const xa = g.xPx(site.park[0]);
+    const xb = g.xPx(site.park[1]);
+    const left = Math.min(xa, xb);
+    const n = Math.floor(Math.abs(xb - xa) / bay);
+    if (n < 1 || wid < 3) continue;
+    const x0 = left + (Math.abs(xb - xa) - n * bay) / 2;
+    const backEdge = g.yOf(site.wOut - 0.07);
+    const frontEdge = g.yOf(site.wLane + 0.1);
+    const rows = [backEdge - g.out * (wid / 2 + 3)];
+    const front = frontEdge + g.out * (wid / 2 + 3);
+    if (Math.abs(rows[0] - front) >= wid + 6) rows.push(front);
+    const seed = hashInt(f.spec.id.length * 7919, Math.round((f.spec.km ?? 0) * 100));
+    rows.forEach((y, ri) => {
+      // The bays: a tick at each end, on the row's outside edge.
+      c.strokeStyle = `rgba(255,255,255,${(0.45 + 0.2 * g.dayFraction).toFixed(2)})`;
+      c.lineWidth = 1;
+      const edge = ri === 0 ? backEdge : frontEdge;
+      c.beginPath();
+      for (let b = 0; b <= n; b++) {
+        const x = x0 + b * bay;
+        c.moveTo(x, edge);
+        c.lineTo(x, y + (y - edge) * 0.6);
+      }
+      c.stroke();
+      for (let b = 0; b < n; b++) {
+        const h = hashInt(seed + ri * 131, b);
+        if (h % 10 >= 6) continue;
+        const nose = x0 + b * bay + bay / 2 + (g.fwd * len) / 2;
+        const fake: FacAgentView = {
+          id: 900_000_000 + (h % 1_000_000), fid: f.spec.id, u: 0, w: 0, tu: 0, tw: 0, v: 0, accel: 0,
+          vClass: 1, length: lengthM, role: "traffic", serving: false, stuck: false, spawnTime: 0,
+        };
+        c.save();
+        c.translate(nose, y);
+        c.rotate(g.fwd > 0 ? 0 : Math.PI);
+        sprite(fake, len, wid, false);
+        c.restore();
+      }
+    });
+  }
+  c.restore();
+}
 
 /**
  * Every facility vehicle, along its lane and turned to face where it is going.
@@ -570,13 +911,24 @@ export function drawFacilityOverlay(g: FacGeom, view: FacilityView, highlight: s
     if (f.spec.kind === "service_area") {
       // Forecourt canopy over the pumps, in the brand's colour.
       const brand = brandOf(f);
-      const x0 = g.xPx(stopU - 14);
-      const x1 = g.xPx(stopU + 8);
+      // Over the whole of each bay: a car at any pump stands under it.
+      const x0 = g.xPx(stopU - 19);
+      const x1 = g.xPx(stopU + 10);
       const y0 = g.yOf(wLo);
       const y1 = g.yOf(wHi);
       c.fillStyle = "rgba(248,250,252,0.30)";
       rr(c, Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0), 3);
       c.fill();
+      // At night the canopy's lights flood the forecourt under it.
+      const night = Math.max(0, Math.min(1, 1 - g.dayFraction / 0.55));
+      if (night > 0.02) {
+        c.save();
+        c.globalCompositeOperation = "lighter";
+        c.fillStyle = `rgba(255,244,214,${(0.22 * night).toFixed(3)})`;
+        rr(c, Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0), 3);
+        c.fill();
+        c.restore();
+      }
       c.strokeStyle = brand.body;
       c.lineWidth = Math.max(2, g.gutterPx * 0.08);
       c.stroke();
