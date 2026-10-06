@@ -1,4 +1,4 @@
-import { API_TIMEOUT_MS, CORRIDOR_API_BASE_URL } from '../config/api';
+import { API_TIMEOUT_MS, CORRIDOR_API_BASE_URL, TRAFFIC_SOURCE_URL } from '../config/api';
 
 export { CORRIDOR_API_BASE_URL };
 
@@ -109,6 +109,32 @@ export class CorridorApiError extends Error {
     this.kind = kind;
     this.url = url;
   }
+}
+
+let waking: Promise<void> | null = null;
+
+/**
+ * Wakes the team's dashboard, and resolves once it answers (or gives up).
+ *
+ * Our backend cannot do this: while the dashboard sleeps, Render refuses its
+ * requests with 429 instead of waking it, so every load after an idle spell
+ * failed until someone happened to open the dashboard. The phone is outside
+ * Render, so its request wakes it in the 20-25s a cold start takes. The answer
+ * is thrown away - only the wake matters. Callers at the same moment share one
+ * ping.
+ */
+export function wakeTrafficSource(): Promise<void> {
+  if (waking === null) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+    waking = fetch(`${TRAFFIC_SOURCE_URL}/api/map-comparison/exits`, { signal: controller.signal })
+      .then(() => undefined, () => undefined)
+      .finally(() => {
+        clearTimeout(timeoutId);
+        waking = null;
+      });
+  }
+  return waking;
 }
 
 export async function fetchCorridorStatus(signal?: AbortSignal): Promise<CorridorStatusData> {

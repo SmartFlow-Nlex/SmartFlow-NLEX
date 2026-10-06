@@ -47,3 +47,5 @@ dist/
 
 # Timestamped .env backups (contain real keys - never commit)
 .env.bak-*
+# Playwright CLI output (may contain credentials)
+.playwright-cli/

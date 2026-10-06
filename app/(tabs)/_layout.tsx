@@ -1,5 +1,5 @@
 import React from 'react';
-import { Tabs } from 'expo-router';
+import { Tabs, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAlerts } from '../../frontend/alerts';
 import { useMobileConfig } from '../../frontend/lib/mobileConfig';
 import { useTheme, useThemedStyles } from '../../frontend/theme';
+import TabPeekMascot from '../../frontend/components/TabPeekMascot';
 import type { ThemePalette } from '../../frontend/theme';
 
 /**
@@ -144,9 +145,17 @@ export default function TabLayout(): React.ReactElement {
 	// defaults leave every tab in place, so a slow network never blanks the bar.
 	const { config: mobileConfig } = useMobileConfig();
 	const insets = useSafeAreaInsets();
+	// The tab on screen: segments run ['(tabs)', 'map', ...].
+	const activeTab = (useSegments() as string[])[1] ?? 'dashboard';
+	// The tabs the bar shows, left to right - the dashboard can switch any off.
+	const visibleTabs = (['dashboard', 'map', 'community', 'assistant', 'alerts'] as const).filter(
+		(name) => mobileConfig.features[name],
+	);
 
 	return (
-		<>
+		// One container for the whole tab section, so the peeking mascot can sit
+		// over the tab bar rather than being added to each screen.
+		<View style={{ flex: 1 }}>
 			{/*
 			 * Every tab screen tops out in the brand navy, in both themes, so the
 			 * clock and battery need light icons here whichever style the root
@@ -235,7 +244,20 @@ export default function TabLayout(): React.ReactElement {
 					}}
 				/>
 			</Tabs>
-		</>
+
+			{/*
+			 * The car peeks up from behind the bar, over the tab you are on. Keyed
+			 * by the tab, so switching tabs moves it and starts the peek over with
+			 * the new page's content. The loop begins with the car out of sight, so
+			 * the restart never shows a jump.
+			 */}
+			<TabPeekMascot
+				key={activeTab}
+				tab={activeTab}
+				tabs={[...visibleTabs]}
+				barHeight={62 + insets.bottom}
+			/>
+		</View>
 	);
 }
 

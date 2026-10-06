@@ -20,7 +20,17 @@ import { MAPBOX_STYLE_URL, MAPBOX_TOKEN, useMapbox } from './mapboxConfig';
  */
 const SegmentMap: React.FC<SegmentMapProps> = (props) => {
   const { colors } = useTheme();
-  const { segment, nbColor, sbColor, jamColorFor, exitName, bottomInset } = props;
+  const {
+    segment,
+    overview,
+    stretchJams,
+    corridorColor,
+    nbColor,
+    sbColor,
+    jamColorFor,
+    exitName,
+    bottomInset,
+  } = props;
 
   const html = useMemo(
     () =>
@@ -30,6 +40,10 @@ const SegmentMap: React.FC<SegmentMapProps> = (props) => {
             token: MAPBOX_TOKEN,
             styleUrl: MAPBOX_STYLE_URL,
             segment,
+            overview,
+            stretchJams,
+            corridorColor: corridorColor ?? nbColor,
+            highlightColor: colors.accent,
             roadColor: { NB: nbColor, SB: sbColor },
             jamColor: jamColorFor,
             exitName,
@@ -39,6 +53,9 @@ const SegmentMap: React.FC<SegmentMapProps> = (props) => {
           }),
     [
       segment,
+      overview,
+      stretchJams,
+      corridorColor,
       nbColor,
       sbColor,
       jamColorFor,
@@ -46,6 +63,7 @@ const SegmentMap: React.FC<SegmentMapProps> = (props) => {
       bottomInset,
       colors.surfaceMuted,
       colors.textSecondary,
+      colors.accent,
     ],
   );
 

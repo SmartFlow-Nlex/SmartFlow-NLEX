@@ -137,6 +137,8 @@ function detailLineFor(status: CorridorDirectionStatus): string {
 
 type Bands = Record<DirectionKey, RoadDirectionReading['bands']>;
 
+const SEVERITY_ORDER: Record<CongestionLevel, number> = { low: 0, moderate: 1, high: 2, severe: 3 };
+
 function rowFor(exit: CorridorExit, bands: Bands): RoadRow {
   return {
     id: String(exit.exit_id),
@@ -199,13 +201,14 @@ const LiveCorridorStatus: React.FC = () => {
   const [problemsOnly, setProblemsOnly] = useState<boolean>(false);
 
   /*
-   * Where every queue on the corridor sits, per carriageway.
+   * Where the queues sit within each row, per carriageway.
    *
-   * Collected across ALL exits rather than per row, because a queue does not
-   * stop at the halfway line between interchanges - one attributed to NLEX
-   * Harbor Link ran well into its neighbours' stretches. Each row is then given
-   * the queues that actually reach into it, so a row shows traffic standing on
-   * it whether or not that traffic was booked to its own exit.
+   * Each exit's queues are already the traffic standing on its own stretch,
+   * whichever exit the backend booked them to (readTrafficByStretch, applied
+   * where the data arrives), so a row's bands come from its own list - the
+   * same list its chip was graded on, so the two cannot disagree. Collecting
+   * every queue on the corridor and looking each band up again was how the
+   * lanes once took their colour from the wrong queue.
    *
    * Only trusted when the backend's indices point into the same centreline this
    * app ships; otherwise there are no bands and the lanes take their stretch's
@@ -217,26 +220,23 @@ const LiveCorridorStatus: React.FC = () => {
       return out;
     }
 
-    const all: Record<DirectionKey, (CorridorJam & { index: number })[]> = { NB: [], SB: [] };
-    for (const exit of data.exits) {
-      for (const key of ['NB', 'SB'] as DirectionKey[]) {
-        const jams = exit.directions[key].jams;
-        if (jams === undefined) {
-          return out;   // a backend that predates queues: no bands at all
-        }
-        jams.forEach((jam, index) => all[key].push({ ...jam, index }));
-      }
-    }
-
     for (const exit of data.exits) {
       const forExit = { NB: undefined, SB: undefined } as Bands;
       for (const key of ['NB', 'SB'] as DirectionKey[]) {
-        const found = queueBandsForRow(data.exits, exit.exit_id, all[key]);
-        forExit[key] = found.map((band) => ({
-          start: band.start,
-          end: band.end,
-          level: jamTone(all[key][band.index]),
-        }));
+        const jams = exit.directions[key].jams;
+        if (jams === undefined) {
+          return new Map();   // a backend that predates queues: no bands at all
+        }
+        const indexed = jams.map((jam, index) => ({ ...jam, index }));
+        // Worst last, so where queues overlap the crawl is drawn over the
+        // slowdown rather than hidden under it.
+        forExit[key] = queueBandsForRow(data.exits, exit.exit_id, indexed)
+          .map((band) => ({
+            start: band.start,
+            end: band.end,
+            level: jamTone(jams[band.index]),
+          }))
+          .sort((a, b) => SEVERITY_ORDER[a.level] - SEVERITY_ORDER[b.level]);
       }
       out.set(exit.exit_id, forExit);
     }

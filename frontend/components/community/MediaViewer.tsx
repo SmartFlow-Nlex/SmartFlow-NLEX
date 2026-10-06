@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { PostMedia } from '@smartflow/shared';
+import { withAppFont } from '../../theme';
 
 /**
  * Inline player for a video attachment.
@@ -167,7 +168,9 @@ const MediaViewer: React.FC<MediaViewerProps> = ({ media, startIndex, visible, o
 
 export default MediaViewer;
 
-const styles = StyleSheet.create({
+// Built once rather than per theme (it is always on black), so the app font is
+// applied here instead of through useThemedStyles.
+const styles = withAppFont(StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.94)',
@@ -237,4 +240,4 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-});
+}));

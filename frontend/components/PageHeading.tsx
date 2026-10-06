@@ -1,8 +1,9 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, Text, View } from 'react-native';
-import { useTheme, useThemedStyles } from '../theme';
+import { Fonts, useTheme, useThemedStyles } from '../theme';
 import type { ThemePalette } from '../theme';
+import TitleSparkle from './TitleSparkle';
 
 /**
  * Which accent the icon tile wears. `ai` is the assistant's violet - the one
@@ -65,9 +66,14 @@ const PageHeading: React.FC<PageHeadingProps> = ({
       )}
 
       <View style={styles.text}>
-        <Text style={styles.title} numberOfLines={1}>
-          {title}
-        </Text>
+        {/* Shrinks a little rather than cutting off: the Assistant's language
+            switch and clear button left "Traffic Assist..." on narrow phones. */}
+        <View style={styles.titleRow}>
+          <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+            {title}
+          </Text>
+          <TitleSparkle size={16} style={styles.sparkle} />
+        </View>
         <Text style={styles.subtitle}>{subtitle}</Text>
       </View>
 
@@ -108,13 +114,26 @@ const makeStyles = (c: ThemePalette) =>
     text: {
       flex: 1,
     },
+    // Half the title's size, a hair above its cap height and just clear of the
+    // last letter: the dashboard's top -0.1em, right -0.62em at 0.5em.
+    sparkle: {
+      marginLeft: 3,
+      marginTop: -3,
+    },
+    // The title hugs its text so the sparkle lands just past the last letter,
+    // as on the dashboard, instead of at the far edge of the row.
+    titleRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
     title: {
+      flexShrink: 1,
       color: c.text,
-      // One size for every page title in the app. Sits a clear step above the
-      // 18pt section headings and well above 16pt card titles.
-      fontSize: 22,
-      fontWeight: '800',
-      letterSpacing: -0.2,
+      // One size for every page title in the app, in the dashboard's brand
+      // face (its Overview title): Nunito Black. "Smart Alerts" at 28pt is
+      // 176pt, with the sparkle, of the ~240 beside the icon.
+      fontFamily: Fonts.brand,
+      fontSize: 28,
     },
     subtitle: {
       color: c.textSecondary,

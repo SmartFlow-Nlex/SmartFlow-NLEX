@@ -2,9 +2,8 @@ import React, { useMemo } from 'react';
 import { useRouter } from 'expo-router';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../auth';
-import { useThemedStyles } from '../theme';
+import { Fonts, useThemedStyles } from '../theme';
 import type { ThemePalette } from '../theme';
-import { Typography } from '../constants/typography';
 import AvatarButton from './AvatarButton';
 
 /**
@@ -145,9 +144,10 @@ const makeStyles = (c: ThemePalette) =>
     },
     title: {
       color: c.textInverse,
-      fontSize: Typography.fontSize.lg,
-      fontWeight: '800',
-      letterSpacing: 0.2,
+      // The wordmark, in the dashboard's brand face (Nunito Black).
+      fontFamily: Fonts.brand,
+      fontSize: 18,
+      letterSpacing: 0.3,
     },
     tagline: {
       color: 'rgba(255,255,255,0.58)',

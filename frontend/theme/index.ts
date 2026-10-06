@@ -2,3 +2,4 @@ export { ThemeProvider, useTheme, useThemedStyles, themeModeKey } from './ThemeP
 export type { ThemeMode, ColorScheme, ThemeContextValue } from './ThemeProvider';
 export { lightPalette, darkPalette } from './palette';
 export type { ThemePalette } from './palette';
+export { Fonts, useAppFonts, withAppFont } from './fonts';

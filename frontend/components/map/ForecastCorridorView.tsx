@@ -1,106 +1,130 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
-import { addHours, describeHourOffset, formatLongDate, formatTime } from '../../lib/datetime';
+import { describeHourOffset, formatLongDate, formatTime, formatWeekday, isSameDay } from '../../lib/datetime';
+import type { CongestionLevel } from '../../lib/trafficModel';
+import { exitsInTravelOrder } from '../../constants/nlexSegments';
 import {
-  congestionLevelLabel,
-  corridorProbability,
-  levelFor,
-  predictSegment,
-  type SegmentPrediction,
-} from '../../lib/trafficModel';
-import { exitsInTravelOrder, type NlexDirectionId } from '../../constants/nlexSegments';
-import { toneFor } from '../dashboard/severity';
+  fetchForecastTimeline,
+  fetchStretchForecast,
+  type ForecastState,
+  type ForecastTimeline,
+  type StretchForecast,
+} from '../../lib/forecastApi';
 import CorridorRoad, { type RoadDirectionReading, type RoadRow } from './CorridorRoad';
 
-type ForecastStep = 'Now' | '+6h' | '+12h' | '+24h' | '+48h';
-const forecastSteps: ForecastStep[] = ['Now', '+6h', '+12h', '+24h', '+48h'];
+type RangeKey = '12h' | '24h' | '7d';
 
-/** Hours-ahead each forecast stop represents. */
-const forecastHours: Record<ForecastStep, number> = {
-  Now: 0,
-  '+6h': 6,
-  '+12h': 12,
-  '+24h': 24,
-  '+48h': 48,
-};
-
-const summaryDirections: {
-  id: NlexDirectionId;
-  label: string;
-  arrow: 'arrow-up' | 'arrow-down';
-}[] = [
-  { id: 'northbound', label: 'Northbound', arrow: 'arrow-up' },
-  { id: 'southbound', label: 'Southbound', arrow: 'arrow-down' },
+/*
+ * The same three ranges as the dashboard's forecast map. Hour by hour suits
+ * half a day; a week of hours is a list nobody reads, so the week shows each
+ * day's worst hour instead.
+ */
+const ranges: { key: RangeKey; label: string; span: number; step: number }[] = [
+  { key: '12h', label: 'Next 12 h', span: 12, step: 1 },
+  { key: '24h', label: 'Next 24 h', span: 24, step: 2 },
+  { key: '7d', label: 'Next 7 days', span: 168, step: 6 },
 ];
 
+/** Same colours as the live view: clear green, slow amber, congested red. */
+const stateLevel: Record<ForecastState, CongestionLevel> = {
+  clear: 'low',
+  slow: 'moderate',
+  congested: 'severe',
+};
+
+const stateLabel: Record<ForecastState, string> = {
+  clear: 'Clear',
+  slow: 'Slow',
+  congested: 'Congested',
+};
+
+interface HourOption {
+  hoursAhead: number;
+  at: Date;
+  /** "6:00 PM", or the day in the week view. */
+  label: string;
+  /** "Today", or "8:00 AM peak" in the week view. */
+  sub: string;
+}
+
+function dayName(at: Date, now: Date): string {
+  if (isSameDay(at, now)) {
+    return 'Today';
+  }
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  return isSameDay(at, tomorrow) ? 'Tomorrow' : formatWeekday(at);
+}
+
 /**
- * Northbound travel order is km ascending - Balintawak (0) up to Sta. Ines -
- * which is the same order the live feed returns its exits in. Using it here
- * means the forecast road and the live road list the corridor identically.
+ * The hours worth offering: only ones still to come, and only as far as the
+ * table reaches. The forecast counts from `timeline.base`, which is hours in
+ * the past, so the first upcoming hour is well past "1 hour ahead".
  */
+function optionsFor(range: RangeKey, timeline: ForecastTimeline, now: Date): HourOption[] {
+  const base = timeline.base.getTime();
+  const at = (hoursAhead: number): Date => new Date(base + hoursAhead * 3_600_000);
+
+  if (range === '7d') {
+    const upcoming = timeline.peaks.filter(
+      (peak) => peak.at > now && peak.hoursAhead <= timeline.maxHorizon,
+    );
+    if (upcoming.length > 0) {
+      return upcoming.map((peak) => ({
+        hoursAhead: peak.hoursAhead,
+        at: peak.at,
+        label: dayName(peak.at, now),
+        sub: `${formatTime(peak.at)} peak`,
+      }));
+    }
+  }
+
+  const { span, step } = ranges.find((r) => r.key === range) ?? ranges[0]!;
+  const first = Math.floor((now.getTime() - base) / 3_600_000) + 1;
+  const options: HourOption[] = [];
+  for (let h = Math.max(first, 1); h < first + span && h <= timeline.maxHorizon; h += step) {
+    options.push({ hoursAhead: h, at: at(h), label: formatTime(at(h)), sub: dayName(at(h), now) });
+  }
+  return options;
+}
+
 const orderedExits = exitsInTravelOrder('northbound');
 
-function readingFor(prediction: SegmentPrediction): RoadDirectionReading {
-  const delay = Math.round(prediction.delayMinutes);
-  return {
-    level: prediction.level,
-    // The delay is the one number the colour does not already carry.
-    value: delay >= 1 ? `+${delay} min` : 'No delay',
-  };
-}
-
-function detailFor(prediction: SegmentPrediction): string {
-  return [
-    `${congestionLevelLabel[prediction.level]} · ${prediction.probability}% risk`,
-    `+${Math.round(prediction.delayMinutes)} min over free flow`,
-    `${Math.round(prediction.averageSpeedKph)} km/h average`,
-    prediction.primaryDriver,
-  ].join('\n');
-}
-
 /**
- * The corridor as the model expects it to be at `at`.
+ * The road at the chosen hour.
  *
- * The model predicts per-SEGMENT, which is what a road diagram actually draws:
- * each row's pavement is the stretch leaving that interchange. The final row
- * has nothing leaving it, so it borrows the stretch arriving into it rather
- * than rendering a gap.
+ * Each row's pavement is the stretch leaving that interchange northward, which
+ * is how the dashboard names its segments ("Balintawak" is Balintawak to NLEX
+ * Harbor Link). The last row has nothing leaving it, so it borrows the stretch
+ * arriving into it. The model forecasts a stretch as a whole, not a direction,
+ * so both carriageways show the same prediction.
  */
-function forecastRows(at: Date): RoadRow[] {
+function forecastRows(stretches: StretchForecast[], at: Date): RoadRow[] {
+  const byExit = new Map(stretches.map((s) => [s.exitId, s]));
   return orderedExits.map((exit, index) => {
-    const nextIndex = index + 1 < orderedExits.length ? index + 1 : index - 1;
-    const other = orderedExits[nextIndex]!;
-    const lower = index < nextIndex ? exit : other;
-    const upper = index < nextIndex ? other : exit;
+    const own = byExit.get(exit.id);
+    const previous = orderedExits[index - 1];
+    const stretch = own ?? (index === orderedExits.length - 1 && previous ? byExit.get(previous.id) : undefined);
 
-    // Northbound runs km ascending, southbound km descending - so the two
-    // directions use the same pair of exits with from/to swapped.
-    const nb = predictSegment({
-      direction: 'northbound',
-      fromId: lower.id,
-      toId: upper.id,
-      at,
-    });
-    const sb = predictSegment({
-      direction: 'southbound',
-      fromId: upper.id,
-      toId: lower.id,
-      at,
-    });
+    const reading: RoadDirectionReading =
+      stretch === undefined
+        ? { level: null, value: 'No forecast' }
+        : { level: stateLevel[stretch.state], value: stateLabel[stretch.state] };
 
     return {
       id: exit.id,
       name: exit.name,
       km: exit.km,
-      NB: readingFor(nb),
-      SB: readingFor(sb),
+      NB: reading,
+      SB: reading,
       detail: [
-        { label: `Northbound · ${lower.name} to ${upper.name}`, value: detailFor(nb) },
-        { label: `Southbound · ${upper.name} to ${lower.name}`, value: detailFor(sb) },
+        stretch === undefined
+          ? { label: 'Forecast', value: 'No forecast for this stretch at this hour.' }
+          : { label: stretch.stretch, value: `${stateLabel[stretch.state]} predicted around ${formatTime(at)}` },
       ],
       detailFooter: `${exit.city} · KM ${exit.km}`,
     };
@@ -112,102 +136,115 @@ export interface ForecastCorridorViewProps {
 }
 
 /**
- * The forecast view: the same road, filled with modelled values.
+ * The forecast view: the same road as Live now, filled with the SmartFlow
+ * model's predictions - the dashboard's "Forecasted Traffic" map, for a phone.
  *
- * The horizon control used to sit above live-only data and change nothing but
- * a caption in its own card. It drives the whole road now - move the slider
- * and every stretch of pavement recolours - so the control and the picture
- * finally refer to the same thing.
+ * It used to run an on-device estimate (lib/trafficModel). That was a stand-in
+ * for exactly this; mixing the two would put two different forecasts on one
+ * screen, so this view now shows only the model's.
  */
 const ForecastCorridorView: React.FC<ForecastCorridorViewProps> = ({ now }) => {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const [selectedStep, setSelectedStep] = useState<ForecastStep>('Now');
 
-  const selectedIndex = forecastSteps.indexOf(selectedStep);
-  const lastIndex = forecastSteps.length - 1;
+  const [range, setRange] = useState<RangeKey>('12h');
+  const [hoursAhead, setHoursAhead] = useState<number | null>(null);
+  const [timeline, setTimeline] = useState<ForecastTimeline | null>(null);
+  /** The road as loaded, with the hour it is for - so it is never shown under another hour's label. */
+  const [loaded, setLoaded] = useState<{ hoursAhead: number; stretches: StretchForecast[] } | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [failed, setFailed] = useState<boolean>(false);
+  const [attempt, setAttempt] = useState<number>(0);
 
-  /**
-   * Drag support for the forecast track.
-   *
-   * Built on PanResponder rather than a slider package: this has to work in
-   * Expo Go without adding a native module, and on react-native-web for the
-   * browser build.
-   *
-   * Movement is derived from the gesture's `dx` against the index the drag
-   * started on, not from the touch's absolute position. `locationX` is
-   * measured against whatever element is under the finger, which on web stops
-   * being the track as soon as the pointer strays outside it - so a drag would
-   * jump erratically near the ends.
-   */
-  const trackWidthRef = useRef<number>(0);
-  const dragStartIndexRef = useRef<number>(0);
-  const selectedIndexRef = useRef<number>(selectedIndex);
-  selectedIndexRef.current = selectedIndex;
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    fetchForecastTimeline()
+      .then((value) => {
+        if (!cancelled) setTimeline(value);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFailed(true);
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
 
-  const setIndex = useCallback((index: number): void => {
-    const clamped = Math.min(Math.max(index, 0), forecastSteps.length - 1);
-    const next = forecastSteps[clamped];
-    if (next !== undefined) {
-      setSelectedStep(next);
+  const options = useMemo(
+    () => (timeline === null ? [] : optionsFor(range, timeline, now)),
+    [range, timeline, now],
+  );
+
+  // Keep the chosen hour while it is still on offer; otherwise - a new range,
+  // or the clock passing it - fall back to the first one that is.
+  const selected = options.find((option) => option.hoursAhead === hoursAhead) ?? options[0] ?? null;
+
+  useEffect(() => {
+    if (selected === null) {
+      if (timeline !== null) setLoading(false);
+      return;
     }
-  }, []);
+    let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+    fetchStretchForecast(selected.hoursAhead)
+      .then((value) => {
+        if (!cancelled) setLoaded({ hoursAhead: selected.hoursAhead, stretches: value });
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.hoursAhead, timeline, attempt]);
 
-  const panResponder = useMemo(
+  const retry = useCallback((): void => setAttempt((n) => n + 1), []);
+
+  const rows = useMemo(
     () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        // Claim the gesture before the enclosing ScrollView can treat a
-        // sideways drag as a scroll.
-        onMoveShouldSetPanResponderCapture: (_event, gesture) => Math.abs(gesture.dx) > 2,
-        onPanResponderGrant: (event) => {
-          const width = trackWidthRef.current;
-          const x = event.nativeEvent.locationX;
-          // Tap anywhere on the track to jump there; the drag then continues
-          // from wherever it landed.
-          if (width > 0 && Number.isFinite(x)) {
-            const tapped = Math.round((x / width) * lastIndex);
-            dragStartIndexRef.current = Math.min(Math.max(tapped, 0), lastIndex);
-            setIndex(tapped);
-          } else {
-            dragStartIndexRef.current = selectedIndexRef.current;
-          }
-        },
-        onPanResponderMove: (_event, gesture) => {
-          const width = trackWidthRef.current;
-          if (width <= 0) {
-            return;
-          }
-          const stepWidth = width / lastIndex;
-          const next = dragStartIndexRef.current + Math.round(gesture.dx / stepWidth);
-          if (next !== selectedIndexRef.current) {
-            setIndex(next);
-          }
-        },
-        onPanResponderTerminationRequest: () => false,
-      }),
-    [lastIndex, setIndex],
+      loaded === null || selected === null || loaded.hoursAhead !== selected.hoursAhead
+        ? []
+        : forecastRows(loaded.stretches, selected.at),
+    [loaded, selected],
   );
 
-  const offsetHours = forecastHours[selectedStep];
-  const forecastAt = useMemo(() => addHours(now, offsetHours), [now, offsetHours]);
-  const horizonLabel = describeHourOffset(offsetHours);
-  const timestampLabel = useMemo(() => formatLongDate(forecastAt), [forecastAt]);
-  const clockLabel = useMemo(() => formatTime(forecastAt), [forecastAt]);
+  if (timeline === null) {
+    return (
+      <View style={[styles.card, styles.stateCard]}>
+        {failed ? (
+          <>
+            <Ionicons name="cloud-offline-outline" size={22} color={colors.textTertiary} />
+            <Text style={styles.stateTitle}>Forecast unavailable</Text>
+            <Text style={styles.stateText}>
+              The SmartFlow forecast could not be reached. It may be waking up - try again in a moment.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={retry}
+              style={({ pressed }) => [styles.retryButton, pressed && styles.pressedDim]}
+            >
+              <Text style={styles.retryText}>Try again</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <ActivityIndicator color={colors.accent} />
+            <Text style={styles.stateText}>Loading the forecast...</Text>
+          </>
+        )}
+      </View>
+    );
+  }
 
-  const summary = useMemo(
-    () =>
-      summaryDirections.map((direction) => {
-        const probability = corridorProbability(direction.id, forecastAt);
-        return { ...direction, probability, level: levelFor(probability) };
-      }),
-    [forecastAt],
-  );
-
-  // 40 segment predictions per horizon - pure deterministic maths, but there is
-  // no reason to redo it on an unrelated re-render.
-  const rows = useMemo(() => forecastRows(forecastAt), [forecastAt]);
+  const hoursFromNow = selected === null ? 0 : Math.max(1, Math.round((selected.at.getTime() - now.getTime()) / 3_600_000));
 
   return (
     <View style={styles.wrap}>
@@ -221,122 +258,77 @@ const ForecastCorridorView: React.FC<ForecastCorridorViewProps> = ({ now }) => {
                 <Text style={styles.modelPillText}>MODEL</Text>
               </View>
             </View>
-            <Text style={styles.timestamp}>{timestampLabel}</Text>
-            <Text style={styles.horizon}>
-              {clockLabel} · {horizonLabel}
-            </Text>
-          </View>
-
-          {selectedStep === 'Now' ? null : (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Reset the forecast to now"
-              onPress={() => setSelectedStep('Now')}
-              style={({ pressed }) => [styles.resetButton, pressed && styles.pressedDim]}
-            >
-              <Ionicons name="refresh-outline" size={17} color={colors.textSecondary} />
-            </Pressable>
-          )}
-        </View>
-
-        {/* The whole strip is the grab area - a 14px dot is too small to drag
-            comfortably, so the padding gives it a proper touch target. */}
-        <View
-          accessibilityRole="adjustable"
-          accessibilityLabel="Forecast time"
-          accessibilityValue={{
-            min: 0,
-            max: lastIndex,
-            now: selectedIndex,
-            text: `${timestampLabel}, ${horizonLabel}`,
-          }}
-          accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
-          onAccessibilityAction={(event) => {
-            if (event.nativeEvent.actionName === 'increment') {
-              setIndex(selectedIndex + 1);
-            } else if (event.nativeEvent.actionName === 'decrement') {
-              setIndex(selectedIndex - 1);
-            }
-          }}
-          onLayout={(event) => {
-            trackWidthRef.current = event.nativeEvent.layout.width;
-          }}
-          style={styles.sliderTrack}
-          {...panResponder.panHandlers}
-        >
-          <View style={styles.sliderRail} />
-          <View style={[styles.sliderFill, { width: `${selectedIndex * 25}%` }]} />
-
-          {forecastSteps.map((step, index) => (
-            <View
-              key={step}
-              style={[
-                styles.sliderDot,
-                {
-                  left: `${index * 25}%`,
-                  backgroundColor: index <= selectedIndex ? colors.accent : colors.border,
-                },
-              ]}
-            />
-          ))}
-
-          {/* Drawn last so it sits above the ticks it overlaps. */}
-          <View style={[styles.sliderThumb, { left: `${selectedIndex * 25}%` }]} />
-        </View>
-
-        <View style={styles.tickRow}>
-          {forecastSteps.map((step) => (
-            <Pressable
-              key={step}
-              accessibilityRole="button"
-              accessibilityState={{ selected: step === selectedStep }}
-              hitSlop={10}
-              onPress={() => setSelectedStep(step)}
-              style={styles.tick}
-            >
-              <Text style={[styles.tickText, step === selectedStep && styles.tickTextActive]}>
-                {step}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <View style={styles.summaryRow}>
-          {summary.map((reading) => {
-            const tone = toneFor(reading.level, colors);
-            return (
-              <View key={reading.id} style={styles.summary}>
-                <View style={styles.summaryTop}>
-                  <Ionicons name={reading.arrow} size={12} color={colors.textSecondary} />
-                  <Text style={styles.summaryLabel}>{reading.label}</Text>
-                </View>
-                <Text style={[styles.summaryLevel, { color: tone.text }]}>
-                  {congestionLevelLabel[reading.level]}
+            {selected === null ? (
+              <Text style={styles.timestamp}>No upcoming hours</Text>
+            ) : (
+              <>
+                <Text style={styles.timestamp}>{formatLongDate(selected.at)}</Text>
+                <Text style={styles.horizon}>
+                  {formatTime(selected.at)} · {describeHourOffset(hoursFromNow)}
                 </Text>
-                <View style={styles.meterTrack}>
-                  <View
-                    style={[
-                      styles.meterFill,
-                      { width: `${reading.probability}%`, backgroundColor: tone.solid },
-                    ]}
-                  />
-                </View>
-                <Text style={styles.summaryMeta}>{reading.probability}% congestion risk</Text>
-              </View>
+              </>
+            )}
+          </View>
+          {loading ? <ActivityIndicator color={colors.accent} size="small" /> : null}
+        </View>
+
+        <View accessibilityRole="tablist" style={styles.rangeSwitch}>
+          {ranges.map((r) => {
+            const active = r.key === range;
+            return (
+              <Pressable
+                key={r.key}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                onPress={() => setRange(r.key)}
+                style={[styles.rangeTab, active && styles.rangeTabActive]}
+              >
+                <Text style={[styles.rangeText, active && styles.rangeTextActive]}>{r.label}</Text>
+              </Pressable>
             );
           })}
         </View>
 
-        <View style={styles.footer}>
-          <Ionicons name="information-circle-outline" size={12} color={colors.textTertiary} />
-          <Text style={styles.footerText}>
-            Modelled from historical patterns, not the live feed. Switch to Live now for
-            current readings.
+        {options.length === 0 ? (
+          <Text style={styles.stateText}>
+            The forecast does not reach any further yet. It is rewritten every few hours.
           </Text>
-        </View>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.hourRow}
+          >
+            {options.map((option) => {
+              const active = option.hoursAhead === selected?.hoursAhead;
+              return (
+                <Pressable
+                  key={option.hoursAhead}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={`${option.label}, ${option.sub}`}
+                  onPress={() => setHoursAhead(option.hoursAhead)}
+                  style={[styles.hourChip, active && styles.hourChipActive]}
+                >
+                  <Text style={[styles.hourLabel, active && styles.hourTextActive]}>{option.label}</Text>
+                  <Text style={[styles.hourSub, active && styles.hourTextActive]}>{option.sub}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
+
+        {failed ? (
+          <View style={styles.errorRow}>
+            <Text style={styles.errorText}>This hour could not be loaded.</Text>
+            <Pressable accessibilityRole="button" onPress={retry} hitSlop={8}>
+              <Text style={styles.retryInline}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
 
-      <CorridorRoad rows={rows} />
+      {rows.length > 0 ? <CorridorRoad rows={rows} /> : null}
     </View>
   );
 };
@@ -360,6 +352,35 @@ const makeStyles = (c: ThemePalette) =>
       shadowOffset: { width: 0, height: 5 },
       elevation: 3,
     },
+    stateCard: {
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 28,
+    },
+    stateTitle: {
+      color: c.text,
+      fontSize: Typography.fontSize.base,
+      fontWeight: '800',
+    },
+    stateText: {
+      color: c.textSecondary,
+      fontSize: Typography.fontSize.sm,
+      fontWeight: '500',
+      lineHeight: 19,
+      textAlign: 'center',
+    },
+    retryButton: {
+      marginTop: 4,
+      paddingHorizontal: 16,
+      paddingVertical: 9,
+      borderRadius: 10,
+      backgroundColor: c.primary,
+    },
+    retryText: {
+      color: c.textInverse,
+      fontSize: Typography.fontSize.sm,
+      fontWeight: '700',
+    },
     pressedDim: {
       opacity: 0.65,
     },
@@ -367,7 +388,7 @@ const makeStyles = (c: ThemePalette) =>
       flexDirection: 'row',
       alignItems: 'flex-start',
       gap: 12,
-      marginBottom: 16,
+      marginBottom: 14,
     },
     headerText: {
       flex: 1,
@@ -411,144 +432,83 @@ const makeStyles = (c: ThemePalette) =>
       fontWeight: '700',
       marginTop: 3,
     },
-    resetButton: {
-      width: 36,
-      height: 36,
+
+    rangeSwitch: {
+      flexDirection: 'row',
+      gap: 4,
+      padding: 3,
       borderRadius: 12,
-      alignItems: 'center',
-      justifyContent: 'center',
       backgroundColor: c.surfaceMuted,
       borderWidth: 1,
       borderColor: c.border,
+      marginBottom: 12,
     },
-
-    sliderTrack: {
-      height: 36,
-      justifyContent: 'center',
-      marginBottom: 6,
-    },
-    // The unfilled part of the track. Without it the control read as five loose
-    // dots rather than something with a range to drag along.
-    sliderRail: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      height: 5,
-      backgroundColor: c.track,
-      borderRadius: 999,
-    },
-    sliderFill: {
-      position: 'absolute',
-      left: 0,
-      height: 5,
-      backgroundColor: c.accent,
-      borderRadius: 999,
-    },
-    sliderDot: {
-      // In style rather than as a prop: the `pointerEvents` prop is deprecated
-      // in RN 0.86 and warns on every render.
-      pointerEvents: 'none',
-      position: 'absolute',
-      width: 10,
-      height: 10,
-      borderRadius: 5,
-      marginLeft: -5,
-    },
-    sliderThumb: {
-      pointerEvents: 'none',
-      position: 'absolute',
-      width: 26,
-      height: 26,
-      borderRadius: 13,
-      marginLeft: -13,
-      backgroundColor: c.surface,
-      borderWidth: 3,
-      borderColor: c.accent,
-      shadowColor: c.cardShadow,
-      shadowOpacity: 0.22,
-      shadowRadius: 5,
-      shadowOffset: { width: 0, height: 2 },
-      elevation: 4,
-    },
-    tickRow: {
-      flexDirection: 'row',
-      marginBottom: 16,
-    },
-    tick: {
+    rangeTab: {
       flex: 1,
-      paddingVertical: 5,
+      alignItems: 'center',
+      paddingVertical: 8,
+      borderRadius: 9,
     },
-    tickText: {
-      color: c.textTertiary,
+    rangeTabActive: {
+      backgroundColor: c.primary,
+    },
+    rangeText: {
+      color: c.textSecondary,
       fontSize: Typography.fontSize.xs,
-      fontWeight: '600',
-      textAlign: 'center',
+      fontWeight: '700',
     },
-    tickTextActive: {
-      color: c.accent,
-      fontWeight: '800',
+    rangeTextActive: {
+      color: c.textInverse,
     },
 
-    summaryRow: {
-      flexDirection: 'row',
-      gap: 10,
+    hourRow: {
+      gap: 8,
+      paddingRight: 4,
     },
-    summary: {
-      flex: 1,
-      gap: 6,
-      padding: 12,
-      borderRadius: 14,
+    hourChip: {
+      minWidth: 74,
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 12,
       backgroundColor: c.surfaceSubtle,
       borderWidth: 1,
       borderColor: c.hairline,
     },
-    summaryTop: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 5,
+    hourChipActive: {
+      backgroundColor: c.accent,
+      borderColor: c.accent,
     },
-    summaryLabel: {
-      color: c.textSecondary,
-      fontSize: 10,
+    hourLabel: {
+      color: c.text,
+      fontSize: Typography.fontSize.sm,
       fontWeight: '800',
-      letterSpacing: 0.4,
-      textTransform: 'uppercase',
     },
-    summaryLevel: {
-      fontSize: Typography.fontSize.lg,
-      fontWeight: '800',
-      letterSpacing: -0.2,
-    },
-    meterTrack: {
-      height: 6,
-      borderRadius: 999,
-      backgroundColor: c.track,
-      overflow: 'hidden',
-    },
-    meterFill: {
-      height: 6,
-      borderRadius: 999,
-    },
-    summaryMeta: {
+    hourSub: {
       color: c.textTertiary,
       fontSize: 10,
       fontWeight: '600',
+      marginTop: 2,
+    },
+    hourTextActive: {
+      color: c.textInverse,
     },
 
-    footer: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 6,
-      marginTop: 14,
-      paddingTop: 12,
-      borderTopWidth: 1,
-      borderTopColor: c.hairline,
-    },
-    footerText: {
+    errorText: {
       flex: 1,
-      color: c.textTertiary,
-      fontSize: 10,
+      color: c.statusHeavyText,
+      fontSize: Typography.fontSize.xs,
       fontWeight: '600',
-      lineHeight: 15,
+    },
+    errorRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginTop: 10,
+    },
+    retryInline: {
+      color: c.accent,
+      fontSize: Typography.fontSize.xs,
+      fontWeight: '800',
     },
   });

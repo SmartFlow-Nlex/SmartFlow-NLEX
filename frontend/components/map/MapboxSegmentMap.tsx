@@ -17,6 +17,9 @@ import { MAPBOX_STYLE_URL, MAPBOX_TOKEN } from './mapboxConfig';
  */
 const MapboxSegmentMap: React.FC<SegmentMapProps> = ({
   segment,
+  overview,
+  stretchJams,
+  corridorColor,
   nbColor,
   sbColor,
   jamColorFor,
@@ -38,6 +41,10 @@ const MapboxSegmentMap: React.FC<SegmentMapProps> = ({
         token: MAPBOX_TOKEN ?? '',
         styleUrl: MAPBOX_STYLE_URL,
         segment,
+        overview,
+        stretchJams,
+        corridorColor: corridorColor ?? nbColor,
+        highlightColor: colors.accent,
         roadColor: { NB: nbColor, SB: sbColor },
         jamColor: jamColorFor,
         exitName,
@@ -47,6 +54,9 @@ const MapboxSegmentMap: React.FC<SegmentMapProps> = ({
       }),
     [
       segment,
+      overview,
+      stretchJams,
+      corridorColor,
       nbColor,
       sbColor,
       jamColorFor,
@@ -54,6 +64,7 @@ const MapboxSegmentMap: React.FC<SegmentMapProps> = ({
       bottomInset,
       colors.surfaceMuted,
       colors.textSecondary,
+      colors.accent,
     ],
   );
 

@@ -9,6 +9,7 @@ import React, {
 import { useColorScheme } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { ThemePalette, darkPalette, lightPalette } from './palette';
+import { withAppFont } from './fonts';
 
 /**
  * How the user wants the theme chosen.
@@ -125,7 +126,8 @@ export function useTheme(): ThemeContextValue {
  */
 export function useThemedStyles<T>(factory: (colors: ThemePalette) => T): T {
   const { colors } = useTheme();
-  return useMemo(() => factory(colors), [factory, colors]);
+  // Every text style comes out in the app's font (theme/fonts.ts).
+  return useMemo(() => withAppFont(factory(colors)), [factory, colors]);
 }
 
 export const themeModeKey = THEME_MODE_KEY;

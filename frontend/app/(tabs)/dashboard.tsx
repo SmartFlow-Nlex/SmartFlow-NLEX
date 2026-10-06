@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
+  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -10,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useTheme, useThemedStyles } from '../../theme';
+import { Fonts, useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
 import {
@@ -18,23 +19,18 @@ import {
   exitsBetween,
   isValidPair,
 } from '../../constants/nlexSegments';
-import {
-  eventDate,
-  eventForecasts,
-  eventLoadForSegment,
-  mlHotspots,
-  compareHotspots,
-  EventForecastSeed,
-} from '../../constants/dashboardData';
-import { addHours, describeHourOffset } from '../../lib/datetime';
+import { EventForecast, Hotspot, eventLoadForSegment } from '../../lib/insightsApi';
+import { useDashboardInsights } from '../../hooks/useDashboardInsights';
+import { addHours, describeHourOffset, formatDayMonth } from '../../lib/datetime';
 import { SegmentPrediction, predictNetwork, predictSegment } from '../../lib/trafficModel';
 import { useLiveClock } from '../../hooks/useNow';
 import AppHeader from '../../components/AppHeader';
+import TitleSparkle from '../../components/TitleSparkle';
 import AIAssistantFAB, { FAB_CLEARANCE } from '../../components/community/AIAssistantFAB';
 import { Reveal } from '../../components/motion';
 import { useMobileConfig } from '../../lib/mobileConfig';
 import ViewAllSheet from '../../components/dashboard/ViewAllSheet';
-import { useAuth } from '../../auth';
+import { firstNameOf, useAuth } from '../../auth';
 import StatusSummaryCard from '../../components/dashboard/StatusSummaryCard';
 import SegmentForecastCard from '../../components/dashboard/SegmentForecastCard';
 import EventForecastCard from '../../components/dashboard/EventForecastCard';
@@ -44,12 +40,22 @@ import OutlookStrip from '../../components/dashboard/OutlookStrip';
 /**
  * How many cards each list section previews on the dashboard.
  *
- * The dashboard is a summary, not a archive: both of these lists are seeded
- * with three items today but are meant to grow, and at ten each the screen
- * would be a 3,000pt scroll with the status hero buried at the top of it. The
- * preview shows the most relevant few and "See all" opens the full list.
+ * The dashboard is a summary, not a archive: the event schedule runs a year
+ * ahead and the hotspot list is about half the corridor, and at that length
+ * the screen would be a 3,000pt scroll with the status hero buried at the top
+ * of it. The preview shows the most relevant few and "See all" opens the rest.
  */
 const PREVIEW_COUNT = 3;
+
+/** Stable empties, so the memos below do not re-run while a list is loading. */
+const NO_EVENTS: EventForecast[] = [];
+const NO_HOTSPOTS: Hotspot[] = [];
+
+/** The two lists behind the insights switcher. */
+const insightTabs: { key: 'events' | 'hotspots'; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'events', label: 'Event Forecasts', icon: 'calendar-outline' },
+  { key: 'hotspots', label: 'ML Hotspots', icon: 'alert-circle-outline' },
+];
 
 /** Both draw a strip - an option that rendered nothing has been removed. */
 const filterOptions = ['Today', 'This Week'] as const;
@@ -67,12 +73,6 @@ function greetingFor(at: Date): string {
   return 'Good evening';
 }
 
-/** Just the first name - a full "Kiarra Jem Dela Cruz" overruns the line. */
-function firstNameOf(fullName: string | undefined): string | null {
-  const first = (fullName ?? '').trim().split(/\s+/)[0];
-  return first !== undefined && first.length > 0 ? first : null;
-}
-
 export default function DashboardScreen(): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -84,6 +84,13 @@ export default function DashboardScreen(): React.ReactElement {
   const { config: mobileConfig } = useMobileConfig();
   const sections = mobileConfig.sections.dashboard;
   const { session } = useAuth();
+
+  // Event forecasts and ML hotspots, from the team dashboard's models.
+  const insights = useDashboardInsights();
+  /** Soonest first, as the dashboard sends them. */
+  const upcomingEvents = insights.events.data ?? NO_EVENTS;
+  /** Worst first - a hotspot list is only useful ranked by how bad it is. */
+  const hotspots = insights.hotspots.data?.hotspots ?? NO_HOTSPOTS;
 
   // Coarse ticker: the seconds-accurate clock lives inside StatusSummaryCard so
   // the whole screen is not re-rendered every second.
@@ -97,6 +104,12 @@ export default function DashboardScreen(): React.ReactElement {
   const [refreshing, setRefreshing] = useState(false);
   /** Which full list is open, if any. A sheet rather than a pushed screen. */
   const [viewAll, setViewAll] = useState<'events' | 'hotspots' | null>(null);
+  /*
+   * Which list the insights block shows. Event Forecasts and ML Hotspots were
+   * two sections stacked at the bottom of an already long page; one switcher,
+   * like Alerts / Maintenance, shows one at a time so the page stops there.
+   */
+  const [insight, setInsight] = useState<'events' | 'hotspots'>('events');
 
   /**
    * The horizon only means something once there is a segment to forecast.
@@ -130,14 +143,14 @@ export default function DashboardScreen(): React.ReactElement {
   }, [direction, fromId, toId]);
 
   const eventImpact = useMemo(
-    () => eventLoadForSegment(segmentExitIds, forecastAt, now),
-    [segmentExitIds, forecastAt, now],
+    () => eventLoadForSegment(segmentExitIds, forecastAt, upcomingEvents),
+    [segmentExitIds, forecastAt, upcomingEvents],
   );
 
   /** The same stretch at the present moment, so the forecast has a baseline. */
   const eventImpactNow = useMemo(
-    () => eventLoadForSegment(segmentExitIds, now, now),
-    [segmentExitIds, now],
+    () => eventLoadForSegment(segmentExitIds, now, upcomingEvents),
+    [segmentExitIds, now, upcomingEvents],
   );
 
   const predictionNow: SegmentPrediction | null = useMemo(() => {
@@ -166,17 +179,10 @@ export default function DashboardScreen(): React.ReactElement {
     });
   }, [direction, fromId, toId, forecastAt, eventImpact.load]);
 
-  const upcomingEvents = useMemo(() => {
-    return [...eventForecasts].sort(
-      (a, b) => eventDate(a, now).getTime() - eventDate(b, now).getTime(),
-    );
-  }, [now]);
-
-
   const affectsSelection = useCallback(
-    (event: EventForecastSeed): boolean =>
+    (event: EventForecast): boolean =>
       segmentExitIds.length > 0 &&
-      event.affectedExitIds.some((id) => segmentExitIds.includes(id)),
+      event.affected.some((exit) => exit.exitId !== null && segmentExitIds.includes(exit.exitId)),
     [segmentExitIds],
   );
 
@@ -188,18 +194,52 @@ export default function DashboardScreen(): React.ReactElement {
   const previewEvents = useMemo(() => {
     const scored = [...upcomingEvents].sort((a, b) => {
       const relevance = Number(affectsSelection(b)) - Number(affectsSelection(a));
-      return relevance !== 0
-        ? relevance
-        : eventDate(a, now).getTime() - eventDate(b, now).getTime();
+      return relevance !== 0 ? relevance : a.date.getTime() - b.date.getTime();
     });
     return scored.slice(0, PREVIEW_COUNT);
-  }, [upcomingEvents, affectsSelection, now]);
+  }, [upcomingEvents, affectsSelection]);
 
-  /** Worst first - a hotspot list is only useful ranked by how bad it is. */
-  const previewHotspots = useMemo(
-    () => [...mlHotspots].sort(compareHotspots).slice(0, PREVIEW_COUNT),
-    [],
+  const previewHotspots = useMemo(() => hotspots.slice(0, PREVIEW_COUNT), [hotspots]);
+  /** What the insights block has, and how much of it the preview shows. */
+  /*
+   * Only the lists the web dashboard has switched on. With one, it shows on its
+   * own under a plain heading; with none, the block is hidden.
+   */
+  const insightLists = insightTabs.filter((tab) =>
+    tab.key === 'events' ? sections.eventForecasts : sections.mlHotspots,
   );
+  const shownInsight = insightLists.some((tab) => tab.key === insight)
+    ? insight
+    : (insightLists[0]?.key ?? 'events');
+  const totalOf = (key: 'events' | 'hotspots'): number =>
+    key === 'events' ? upcomingEvents.length : hotspots.length;
+  /** A dash rather than "0" until the list has arrived - zero would be a claim. */
+  const countLabel = (key: 'events' | 'hotspots'): string =>
+    (key === 'events' ? insights.events.data : insights.hotspots.data) === null
+      ? '–'
+      : String(totalOf(key));
+  const shownState = shownInsight === 'events' ? insights.events : insights.hotspots;
+  const insightTotal = totalOf(shownInsight);
+  const insightShown = shownInsight === 'events' ? previewEvents.length : previewHotspots.length;
+
+  /** Which model the list came from, so a figure on a card can be traced back. */
+  const hotspotRanking = insights.hotspots.data;
+  const insightSource =
+    shownInsight === 'events'
+      ? 'Event-surge model · Philippine Arena schedule'
+      : hotspotRanking === null
+        ? ''
+        : [
+            'Spatial LSTM',
+            hotspotRanking.window !== null
+              ? `forecast ${formatDayMonth(hotspotRanking.window.from)} – ${formatDayMonth(hotspotRanking.window.to)}`
+              : null,
+            hotspotRanking.trainedAt !== null
+              ? `trained ${formatDayMonth(hotspotRanking.trainedAt)}`
+              : null,
+          ]
+            .filter((part): part is string => part !== null)
+            .join(' · ');
 
   /**
    * Reversing direction reverses the trip, so carry the endpoints over swapped
@@ -235,11 +275,13 @@ export default function DashboardScreen(): React.ReactElement {
     setOffsetHours(0);
   }, []);
 
+  const { refresh: refreshInsights } = insights;
   const handleRefresh = useCallback((): void => {
     setRefreshing(true);
     refresh();
+    refreshInsights();
     setRefreshing(false);
-  }, [refresh]);
+  }, [refresh, refreshInsights]);
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
@@ -278,10 +320,18 @@ export default function DashboardScreen(): React.ReactElement {
           */}
           <Reveal index={0}>
             <View style={styles.greeting}>
-              <Text style={styles.greetingText} numberOfLines={1}>
-                {greetingFor(now)}
-                {firstName === null ? '' : `, ${firstName}`}
-              </Text>
+              <View style={styles.greetingTitle}>
+                <Text
+                  style={styles.greetingText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  {greetingFor(now)}
+                  {firstName === null ? '' : `, ${firstName}`}
+                </Text>
+                <TitleSparkle size={16} style={styles.greetingSparkle} />
+              </View>
             </View>
           </Reveal>
 
@@ -362,47 +412,112 @@ export default function DashboardScreen(): React.ReactElement {
             </Reveal>
           )}
 
-          {sections.eventForecasts && (
+          {insightLists.length > 0 && (
             <Reveal index={4}>
-              <SectionTitle
-                icon="calendar"
-                title="Event Forecasts"
-                badge={String(upcomingEvents.length)}
-                total={upcomingEvents.length}
-                shown={previewEvents.length}
-                onSeeAll={() => setViewAll('events')}
-              />
-              <View style={styles.cardList}>
-                {previewEvents.map((event) => (
-                  <EventForecastCard
-                    key={event.id}
-                    event={event}
-                    now={now}
-                    affectsSelection={affectsSelection(event)}
-                  />
-                ))}
-              </View>
-            </Reveal>
-          )}
+              {insightLists.length > 1 ? (
+                <View accessibilityRole="tablist" style={styles.insightTabBar}>
+                  {insightLists.map((item) => {
+                    const active = shownInsight === item.key;
+                    const total = countLabel(item.key);
+                    return (
+                      <Pressable
+                        key={item.key}
+                        accessibilityRole="tab"
+                        accessibilityState={{ selected: active }}
+                        accessibilityLabel={`${item.label}, ${total === '–' ? 'loading' : total}`}
+                        onPress={() => setInsight(item.key)}
+                        style={({ pressed }) => [
+                          styles.insightTab,
+                          active && styles.insightTabActive,
+                          pressed && !active && styles.segmentPressed,
+                        ]}
+                      >
+                        <Ionicons
+                          name={item.icon}
+                          size={15}
+                          color={active ? colors.textInverse : colors.textSecondary}
+                        />
+                        <Text style={[styles.insightTabText, active && styles.insightTabTextActive]}>
+                          {item.label}
+                        </Text>
+                        <View style={[styles.insightTabCount, active && styles.insightTabCountActive]}>
+                          <Text
+                            style={[
+                              styles.insightTabCountText,
+                              active && styles.insightTabCountTextActive,
+                            ]}
+                          >
+                            {total}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : (
+                <SectionTitle
+                  icon={shownInsight === 'events' ? 'calendar' : 'alert-circle'}
+                  title={shownInsight === 'events' ? 'Event Forecasts' : 'ML Hotspots'}
+                  tone={shownInsight === 'events' ? 'primary' : 'danger'}
+                  badge={countLabel(shownInsight)}
+                />
+              )}
 
-          {sections.mlHotspots && (
-            <Reveal index={5}>
-              <SectionTitle
-                icon="alert-circle"
-                title="ML Hotspots"
-                tone="danger"
-                badge={String(mlHotspots.length)}
-                total={mlHotspots.length}
-                shown={previewHotspots.length}
-                onSeeAll={() => setViewAll('hotspots')}
-              />
-              {/* Last list in the scroll, so no trailing margin - the scroll
-                  view's own FAB clearance is the only space wanted below it. */}
-              <View style={[styles.cardList, styles.cardListLast]}>
-                {previewHotspots.map((hotspot) => (
-                  <MlHotspotCard key={hotspot.id} hotspot={hotspot} />
-                ))}
-              </View>
+              {shownState.data === null ? (
+                <InsightNotice
+                  kind={shownState.isLoading ? 'loading' : 'error'}
+                  message={
+                    shownState.isLoading
+                      ? 'Loading from the SmartFlow dashboard…'
+                      : (shownState.error ?? 'Could not reach the SmartFlow dashboard.')
+                  }
+                  onRetry={shownState.isLoading ? undefined : refreshInsights}
+                />
+              ) : insightTotal === 0 ? (
+                <InsightNotice
+                  kind="empty"
+                  message={
+                    shownInsight === 'events'
+                      ? 'No upcoming events on the dashboard’s schedule.'
+                      : 'The model has no exits above the corridor average.'
+                  }
+                />
+              ) : (
+                <>
+                  {insightSource.length > 0 ? (
+                    <Text style={styles.insightSource}>{insightSource}</Text>
+                  ) : null}
+                  {/* Last list in the scroll, so no trailing margin - the scroll
+                      view's own FAB clearance is the only space wanted below it. */}
+                  <View style={[styles.cardList, styles.cardListLast]}>
+                    {shownInsight === 'events'
+                      ? previewEvents.map((event) => (
+                          <EventForecastCard
+                            key={event.id}
+                            event={event}
+                            now={now}
+                            affectsSelection={affectsSelection(event)}
+                          />
+                        ))
+                      : previewHotspots.map((hotspot) => (
+                          <MlHotspotCard key={hotspot.id} hotspot={hotspot} />
+                        ))}
+                  </View>
+                </>
+              )}
+
+              {insightTotal > insightShown ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setViewAll(shownInsight)}
+                  style={({ pressed }) => [styles.insightViewAll, pressed && styles.seeAllPressed]}
+                >
+                  <Text style={styles.seeAllText}>
+                    View all {insightTotal} {shownInsight === 'events' ? 'event forecasts' : 'hotspots'}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={13} color={colors.accent} />
+                </Pressable>
+              ) : null}
             </Reveal>
           )}
         </ScrollView>
@@ -437,10 +552,10 @@ export default function DashboardScreen(): React.ReactElement {
           visible={viewAll === 'hotspots'}
           onClose={() => setViewAll(null)}
           title="ML Hotspots"
-          sortLabel="most severe first"
-          count={mlHotspots.length}
+          sortLabel="most incidents first"
+          count={hotspots.length}
         >
-          {[...mlHotspots].sort(compareHotspots).map((hotspot) => (
+          {hotspots.map((hotspot) => (
             <MlHotspotCard key={hotspot.id} hotspot={hotspot} />
           ))}
         </ViewAllSheet>
@@ -519,6 +634,47 @@ const SectionTitle: React.FC<SectionTitleProps> = ({
   );
 };
 
+interface InsightNoticeProps {
+  kind: 'loading' | 'error' | 'empty';
+  message: string;
+  onRetry?: () => void;
+}
+
+/**
+ * Stands in for a list that has not arrived. A sleeping dashboard takes about
+ * half a minute to wake, so the loading state has to read as deliberate
+ * rather than as an empty section.
+ */
+const InsightNotice: React.FC<InsightNoticeProps> = ({ kind, message, onRetry }) => {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
+  return (
+    <View style={styles.notice}>
+      {kind === 'loading' ? (
+        <ActivityIndicator size="small" color={colors.accent} />
+      ) : (
+        <Ionicons
+          name={kind === 'error' ? 'cloud-offline-outline' : 'checkmark-circle-outline'}
+          size={18}
+          color={colors.textSecondary}
+        />
+      )}
+      <Text style={styles.noticeText}>{message}</Text>
+      {onRetry !== undefined ? (
+        <Pressable
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={onRetry}
+          style={({ pressed }) => [styles.seeAll, pressed && styles.seeAllPressed]}
+        >
+          <Text style={styles.seeAllText}>Try again</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+};
+
 const makeStyles = (c: ThemePalette) =>
   StyleSheet.create({
     safeArea: {
@@ -540,12 +696,25 @@ const makeStyles = (c: ThemePalette) =>
       gap: 12,
       marginBottom: 16,
     },
-    greetingText: {
+    // Takes the row's width but lets the text hug its words, so the sparkle
+    // sits just past the last letter rather than at the far edge.
+    greetingTitle: {
       flex: 1,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
+    greetingText: {
+      flexShrink: 1,
       color: c.text,
-      fontSize: 24,
-      fontWeight: '800',
-      letterSpacing: -0.4,
+      // The dashboard's brand face, as its Overview title uses it: Nunito
+      // Black. A long greeting ("Good afternoon, Ysabelle" is 346pt at this
+      // size) shrinks to fit rather than cutting the name off.
+      fontFamily: Fonts.brand,
+      fontSize: 28,
+    },
+    greetingSparkle: {
+      marginLeft: 3,
+      marginTop: -3,
     },
     content: {
       paddingHorizontal: 16,
@@ -650,7 +819,90 @@ const makeStyles = (c: ThemePalette) =>
       gap: 12,
       marginBottom: 24,
     },
+    // The same switcher as Alerts / Maintenance, so the two read as one control.
+    insightTabBar: {
+      flexDirection: 'row',
+      gap: 4,
+      padding: 4,
+      marginTop: 8,
+      marginBottom: 12,
+      borderRadius: 14,
+      backgroundColor: c.surfaceMuted,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    insightTab: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      // 40pt of thumb target.
+      paddingVertical: 10,
+      borderRadius: 10,
+    },
+    insightTabActive: {
+      backgroundColor: c.primary,
+    },
+    insightTabText: {
+      color: c.textSecondary,
+      fontSize: Typography.fontSize.sm,
+      fontWeight: '700',
+    },
+    insightTabTextActive: {
+      color: c.textInverse,
+    },
+    insightTabCount: {
+      minWidth: 20,
+      paddingHorizontal: 6,
+      paddingVertical: 1,
+      borderRadius: 999,
+      alignItems: 'center',
+      backgroundColor: c.surface,
+    },
+    insightTabCountActive: {
+      backgroundColor: c.onPrimarySoft,
+    },
+    insightTabCountText: {
+      color: c.textSecondary,
+      fontSize: 10,
+      fontWeight: '800',
+    },
+    insightTabCountTextActive: {
+      color: c.textInverse,
+    },
+    insightViewAll: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-end',
+      gap: 2,
+      marginTop: 10,
+      paddingVertical: 4,
+    },
     cardListLast: {
       marginBottom: 0,
+    },
+    insightSource: {
+      color: c.textTertiary,
+      fontSize: 11,
+      fontWeight: '600',
+      marginTop: -4,
+      marginBottom: 10,
+    },
+    notice: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      padding: 14,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.surface,
+    },
+    noticeText: {
+      flex: 1,
+      color: c.textSecondary,
+      fontSize: Typography.fontSize.sm,
+      fontWeight: '600',
     },
   });

@@ -1,8 +1,9 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -15,12 +16,30 @@ import {
 import { useTheme, useThemedStyles } from '../../../theme';
 import AppHeader from '../../../components/AppHeader';
 import PageHeading from '../../../components/PageHeading';
-import AssistantMascot from '../../../components/AssistantMascot';
+import MoodMascot from '../../../components/MoodMascot';
+import MascotGreeting from '../../../components/MascotGreeting';
 import { PressableScale, Reveal } from '../../../components/motion';
 import type { ThemePalette } from '../../../theme';
 import { Typography } from '../../../constants/typography';
-import { AssistantError, ChatMessage, askAssistant, toolLabel } from '../../../lib/assistantApi';
+import {
+  AssistantError,
+  ChatMessage,
+  LanguageChoice,
+  askAssistant,
+  loadLanguageChoice,
+  nextGreeting,
+  saveLanguageChoice,
+  toolLabel,
+  wakeAssistant,
+} from '../../../lib/assistantApi';
 import { useMobileConfig } from '../../../lib/mobileConfig';
+import { firstNameOf, useAuth } from '../../../auth';
+
+/** Height of the mascot beside each reply. */
+const MASCOT_SIZE = 40;
+
+/** The car mascot, cut out of its white background, for the page heading. */
+const mascotCar = require('../../../assets/mascot-car.png');
 
 const quickQuestions = [
   'How is NLEX right now?',
@@ -28,21 +47,23 @@ const quickQuestions = [
   'Is Balintawak clear southbound?',
 ] as const;
 
-/**
- * Shown before the first question, as a panel rather than a chat bubble.
- *
- * It used to be seeded into the message list as an assistant message, which
- * made it look like the model had spoken when it had not. Every bubble in this
- * screen is now the model's own words and nothing else.
- */
-const INTRO_TEXT = 'Ask about traffic, exits or travel times along the NLEX corridor.';
-
 /** What the assistant can actually answer, so the empty screen is not a blank prompt. */
 const capabilities = [
   { icon: 'speedometer-outline', text: 'Live conditions at any of the 20 exits' },
   { icon: 'swap-vertical-outline', text: 'Northbound or southbound, by name' },
-  { icon: 'language-outline', text: 'Ask in English or Filipino' },
+  { icon: 'language-outline', text: 'Replies in English or Tagalog - pick EN or TL above' },
 ] as const;
+
+/** The reply-language switch in the heading, left to right. */
+const languageOptions: { value: LanguageChoice; label: string; name: string }[] = [
+  { value: 'english', label: 'EN', name: 'English' },
+  { value: 'tagalog', label: 'TL', name: 'Tagalog' },
+];
+
+/** What Lex says when the backend cannot be reached for a fresh welcome. */
+function offlineGreeting(name: string | null): string {
+  return `${name === null ? 'Hi!' : `Hi ${name}!`} I'm Lex. Ask me about NLEX traffic.`;
+}
 
 function formatTime(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -65,6 +86,50 @@ export default function AssistantScreen(): React.ReactElement {
   const [failedQuestion, setFailedQuestion] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
+  const { session } = useAuth();
+  const firstName = firstNameOf(session?.fullName);
+  /** Counts new chats: the screen opening is the first, every clear another. */
+  const [chatNumber, setChatNumber] = useState<number>(0);
+  /** Lex's welcome for this chat; null while it is being written. */
+  const [greeting, setGreeting] = useState<string | null>(null);
+  /** Which language Lex replies in, from the EN / TL switch. Remembered on the phone. */
+  const [language, setLanguage] = useState<LanguageChoice>('english');
+
+  useEffect(() => {
+    void loadLanguageChoice().then(setLanguage);
+  }, []);
+
+  const pickLanguage = useCallback((choice: LanguageChoice): void => {
+    setLanguage(choice);
+    void saveLanguageChoice(choice);
+  }, []);
+
+  // Wake the backend and the team's dashboard as soon as the screen opens, so
+  // they are up by the time a question is typed - see wakeAssistant.
+  useEffect(() => {
+    wakeAssistant();
+  }, []);
+
+  /*
+   * A new welcome for every new chat, written by the model itself, so it
+   * addresses the user by name and is never the same line twice. Usually it
+   * was written in advance and shows at once - see nextGreeting. If the backend
+   * cannot be reached, Lex still says hello with a fixed line rather than
+   * leaving the panel waiting.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    setGreeting(null);
+    void nextGreeting(firstName).then((text) => {
+      if (!cancelled) {
+        setGreeting(text ?? offlineGreeting(firstName));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chatNumber, firstName]);
+
   const send = useCallback(
     async (text: string): Promise<void> => {
       const question = text.trim();
@@ -83,13 +148,14 @@ export default function AssistantScreen(): React.ReactElement {
       // separately, so including it here would duplicate it.
       const history = messages;
 
+      wakeAssistant();
       setMessages((current) => [...current, userMessage]);
       setDraft('');
       setError(null);
       setIsThinking(true);
 
       try {
-        const { reply, toolsUsed } = await askAssistant(question, history);
+        const { reply, toolsUsed, mood } = await askAssistant(question, history, language);
         setMessages((current) => [
           ...current,
           {
@@ -98,6 +164,7 @@ export default function AssistantScreen(): React.ReactElement {
             text: reply,
             at: Date.now(),
             toolsUsed,
+            mood,
           },
         ]);
       } catch (caught) {
@@ -119,7 +186,7 @@ export default function AssistantScreen(): React.ReactElement {
         setIsThinking(false);
       }
     },
-    [isThinking, messages],
+    [isThinking, language, messages],
   );
 
   /** Resend whatever failed, straight from the error banner. */
@@ -136,6 +203,7 @@ export default function AssistantScreen(): React.ReactElement {
     setMessages([]);
     setError(null);
     setFailedQuestion(null);
+    setChatNumber((current) => current + 1);
   }, []);
 
   const canSend = draft.trim().length > 0 && !isThinking;
@@ -156,20 +224,50 @@ export default function AssistantScreen(): React.ReactElement {
         <AppHeader />
         <PageHeading
           icon="sparkles"
-          mark={<AssistantMascot size={42} />}
+          mark={
+            <Image
+              source={mascotCar}
+              resizeMode="contain"
+              style={styles.headingMascot}
+              accessibilityIgnoresInvertColors
+            />
+          }
           title="Traffic Assistant"
           subtitle="Answers from the live NLEX corridor feed"
           action={
-            hasConversation ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Clear the conversation"
-                onPress={clearConversation}
-                style={({ pressed }) => [styles.clearButton, pressed && styles.pressedDim]}
-              >
-                <Ionicons name="trash-outline" size={17} color={colors.textSecondary} />
-              </Pressable>
-            ) : undefined
+            <>
+              {/* Which language Lex replies in, whatever language the question is in. */}
+              <View accessibilityRole="radiogroup" accessibilityLabel="Reply language" style={styles.languageSwitch}>
+                {languageOptions.map((option) => {
+                  const selected = option.value === language;
+                  return (
+                    <Pressable
+                      key={option.value}
+                      accessibilityRole="radio"
+                      accessibilityLabel={`Reply in ${option.name}`}
+                      accessibilityState={{ selected }}
+                      hitSlop={4}
+                      onPress={() => pickLanguage(option.value)}
+                      style={[styles.languageOption, selected && styles.languageOptionSelected]}
+                    >
+                      <Text style={[styles.languageText, selected && styles.languageTextSelected]}>
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {hasConversation ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear the conversation"
+                  onPress={clearConversation}
+                  style={({ pressed }) => [styles.clearButton, pressed && styles.pressedDim]}
+                >
+                  <Ionicons name="trash-outline" size={17} color={colors.textSecondary} />
+                </Pressable>
+              ) : null}
+            </>
           }
         />
 
@@ -181,8 +279,20 @@ export default function AssistantScreen(): React.ReactElement {
         >
           {messages.length === 0 ? (
             <View style={styles.intro}>
-              <AssistantMascot size={76} />
-              <Text style={styles.introText}>{INTRO_TEXT}</Text>
+              <MascotGreeting size={150} />
+              {/* Lex's own words, so it gets a bubble like every reply. */}
+              {greeting === null ? (
+                <View style={[styles.greetingBubble, styles.thinkingBubble]}>
+                  <ActivityIndicator color={colors.accent} size="small" />
+                  <Text style={styles.thinkingText}>Lex is saying hi...</Text>
+                </View>
+              ) : (
+                <Reveal delay={0} key={greeting}>
+                  <View style={styles.greetingBubble}>
+                    <Text style={styles.introText}>{greeting}</Text>
+                  </View>
+                </Reveal>
+              )}
 
               {capabilitiesEnabled && (
               <View style={styles.capabilityList}>
@@ -204,11 +314,17 @@ export default function AssistantScreen(): React.ReactElement {
             it arrives. Staggering by index would make the tenth reply of a
             conversation wait behind nine that are already on screen.
           */}
-          {messages.map((message) =>
+          {messages.map((message, index) =>
             message.role === 'assistant' ? (
               <Reveal delay={0} key={message.id}>
               <View style={styles.chatRow}>
-                <AssistantMascot size={32} style={styles.assistantBadge} />
+                {/* Acts out the answer; only the newest one moves. */}
+                <MoodMascot
+                  mood={message.mood ?? 'alert'}
+                  size={MASCOT_SIZE}
+                  animate={index === messages.length - 1 && !isThinking}
+                  style={styles.assistantBadge}
+                />
                 <View style={styles.chatColumn}>
                   <View style={styles.chatBubble}>
                     <Text style={styles.chatText}>{message.text}</Text>
@@ -257,7 +373,7 @@ export default function AssistantScreen(): React.ReactElement {
 
           {isThinking ? (
             <View style={styles.chatRow}>
-              <AssistantMascot size={32} thinking style={styles.assistantBadge} />
+              <MoodMascot mood="thinking" size={MASCOT_SIZE} animate style={styles.assistantBadge} />
               <View style={styles.chatColumn}>
                 <View style={[styles.chatBubble, styles.thinkingBubble]}>
                   <ActivityIndicator color={colors.accent} size="small" />
@@ -393,13 +509,56 @@ const makeStyles = (c: ThemePalette) =>
       borderWidth: 1,
       borderColor: c.border,
     },
+    /* Same height and plate as the clear button beside it. */
+    languageSwitch: {
+      flexDirection: 'row',
+      height: 36,
+      padding: 3,
+      borderRadius: 12,
+      backgroundColor: c.surfaceMuted,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    languageOption: {
+      minWidth: 32,
+      paddingHorizontal: 7,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    languageOptionSelected: {
+      backgroundColor: c.primary,
+    },
+    languageText: {
+      color: c.textSecondary,
+      fontSize: Typography.fontSize.xs,
+      fontWeight: '800',
+      letterSpacing: 0.4,
+    },
+    languageTextSelected: {
+      color: c.textInverse,
+    },
 
+    /* 256x239 source, so this keeps the car's own proportions. */
+    headingMascot: {
+      width: 46,
+      height: 43,
+    },
     intro: {
       alignItems: 'center',
       gap: 14,
       paddingHorizontal: 28,
       paddingTop: 34,
       paddingBottom: 20,
+    },
+    /* Round on every corner: the mascot is above it, not beside it. */
+    greetingBubble: {
+      backgroundColor: c.surface,
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderWidth: 1,
+      borderColor: c.border,
     },
     introText: {
       color: c.text,

@@ -13,7 +13,7 @@ import {
   reachableExits,
 } from '../../constants/nlexSegments';
 import { SegmentPrediction, congestionLevelLabel } from '../../lib/trafficModel';
-import { EventForecastSeed } from '../../constants/dashboardData';
+import type { EventForecast } from '../../lib/insightsApi';
 import { formatLongDate, formatTime } from '../../lib/datetime';
 import Dropdown, { DropdownOption } from '../Dropdown';
 import { toneFor } from './severity';
@@ -33,7 +33,7 @@ export interface SegmentForecastCardProps {
   /** The same stretch as it is right now, for the "vs now" line. */
   predictionNow: SegmentPrediction | null;
   /** Event pushing extra load onto this segment at the forecast time, if any. */
-  eventDriver: EventForecastSeed | null;
+  eventDriver: EventForecast | null;
   /** e.g. "Right now" or "In 3 hours". */
   horizonLabel: string;
   /** Base time the horizon is measured from. */
@@ -271,7 +271,7 @@ interface CongestionResultProps {
   directionLabel: string;
   prediction: SegmentPrediction;
   predictionNow: SegmentPrediction | null;
-  eventDriver: EventForecastSeed | null;
+  eventDriver: EventForecast | null;
   horizonLabel: string;
   offsetHours: number;
 }

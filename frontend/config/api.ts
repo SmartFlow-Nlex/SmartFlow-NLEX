@@ -81,8 +81,35 @@ export const COMMUNITY_API_BASE_URL =
 export const BACKEND_API_BASE_URL =
   process.env.EXPO_PUBLIC_BACKEND_API_URL ?? COMMUNITY_API_BASE_URL;
 
-/** The assistant reasons and calls tools, so it needs longer than a data fetch. */
-export const ASSISTANT_TIMEOUT_MS = 45000;
+/**
+ * The team's dashboard, where our backend reads the traffic from.
+ *
+ * The app never reads data from it - only pings it awake. On Render's free
+ * tier it sleeps, and a request from our backend (another Render service) is
+ * refused with HTTP 429 rather than waking it, so the backend alone can never
+ * bring it back. A request from the phone does wake it. See wakeTrafficSource.
+ */
+export const TRAFFIC_SOURCE_URL =
+  process.env.EXPO_PUBLIC_TRAFFIC_SOURCE_URL ?? 'https://smartflow-nlex.onrender.com';
+
+/**
+ * The assistant reasons and calls tools, so it needs longer than a data fetch.
+ *
+ * 75s, not 45: a question asked after an idle spell waits for the team's
+ * dashboard to wake (about 23s) before the model even sees the traffic, and the
+ * model itself takes 3-22s. At 45s those cold questions timed out as "not
+ * responding" on a system that was about to answer.
+ */
+export const ASSISTANT_TIMEOUT_MS = 75000;
+
+/**
+ * How long Lex's welcome may take before the screen greets with its own line.
+ *
+ * Shorter than a question: the greeting never reads the traffic feed, so it
+ * waits only on our backend waking (20-25s) and a 2-3s generation. Past that,
+ * a greeting arriving after the user has started typing would be in the way.
+ */
+export const GREETING_TIMEOUT_MS = 35000;
 
 /**
  * How long to wait before declaring a backend unreachable, in milliseconds.

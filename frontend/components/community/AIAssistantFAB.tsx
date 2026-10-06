@@ -12,11 +12,18 @@ export interface AIAssistantFABProps {
   onPress: () => void;
 }
 
-const SIZE = 64;
+/** Width and height of the mascot button; its docking limits and FAB_CLEARANCE follow it. */
+const SIZE = 80;
 /** Gap kept between the button and the edge it docks against. */
 const MARGIN = 14;
-/** Clearance from the bottom of the screen area, which ends at the tab bar. */
-const BOTTOM_GAP = 18;
+/**
+ * Clearance from the bottom of the screen area, which ends at the tab bar.
+ *
+ * 70, not 18: the mascot peeking up over the active tab is 58pt tall, and on
+ * the rightmost tab it rose straight in front of the button. Resting above it
+ * keeps the two apart on every tab.
+ */
+const BOTTOM_GAP = 70;
 /** Keeps it from being dragged up under a screen's fixed header. */
 const TOP_GAP = 8;
 
@@ -64,10 +71,9 @@ let lastPosition: Point | null = null;
  * The mascot is the whole button - no plate, no shadow.
  *
  * A speech-bubble plate with a drop shadow was tried and rejected: it boxed
- * the artwork in and cost it the detail that makes it worth having. The
- * mascot is already a self-contained badge with its own navy outline, so the
- * light body carries it against the dark page and the outline carries it
- * against the light one - which is the whole job a backing plate would do.
+ * the artwork in and cost it the detail that makes it worth having. The car
+ * mascot's bright blue body and white cap stand out on the light page and the
+ * dark one alike - which is the whole job a backing plate would do.
  *
  * Note that a shadow is not available without that plate. The view is
  * transparent apart from the artwork; `box-shadow` under react-native-web
@@ -203,8 +209,10 @@ const AIAssistantFAB: React.FC<AIAssistantFABProps> = ({ onPress }) => {
         ]}
         {...panResponder.panHandlers}
       >
+        {/* The car mascot's face (the designer's ICON), cut out of its black
+            background so it sits on light and dark pages alike. */}
         <Image
-          source={require('../../assets/ai-mascot.png')}
+          source={require('../../assets/mascot-icon.png')}
           style={styles.mascot}
           resizeMode="contain"
         />

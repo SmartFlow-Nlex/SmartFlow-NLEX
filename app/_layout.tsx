@@ -8,9 +8,9 @@ import {
   useSegments,
 } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { AlertsProvider } from '../frontend/alerts';
+import { AlertBanner, AlertsProvider } from '../frontend/alerts';
 import { AuthProvider, useAuth } from '../frontend/auth';
-import { ThemeProvider, useTheme } from '../frontend/theme';
+import { ThemeProvider, useAppFonts, useTheme } from '../frontend/theme';
 
 const authRoutes = ['sign-in', 'sign-up'];
 
@@ -105,7 +105,14 @@ function ThemedStack(): React.ReactElement {
   );
 }
 
-export default function RootLayout(): React.ReactElement {
+export default function RootLayout(): React.ReactElement | null {
+  // Bundled, so this resolves in a frame or two. Rendering before it would
+  // paint every screen in the system font and then swap.
+  const fontsReady = useAppFonts();
+  if (!fontsReady) {
+    return null;
+  }
+
   return (
     <ThemeProvider>
       <AuthProvider>
@@ -116,6 +123,9 @@ export default function RootLayout(): React.ReactElement {
          */}
         <AlertsProvider>
           <ThemedStack />
+          {/* Over every screen: a new accident, hazard, police or community
+              incident report drops in here wherever the user is. */}
+          <AlertBanner />
         </AlertsProvider>
       </AuthProvider>
     </ThemeProvider>

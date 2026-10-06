@@ -130,6 +130,43 @@ export function describeDayOffset(target: Date, now: Date): string {
   return formatDate(target);
 }
 
+/** "4 Oct" */
+export function formatDayMonth(date: Date): string {
+  return `${date.getDate()} ${(monthLongNames[date.getMonth()] ?? '').slice(0, 3)}`;
+}
+
+/** "Saturday, 7 November", with the year added when it is not this year. */
+export function formatEventDay(date: Date, now: Date): string {
+  const day = formatLongDate(date);
+  return date.getFullYear() === now.getFullYear() ? day : `${day} ${date.getFullYear()}`;
+}
+
+/**
+ * "Today", "Tomorrow", "In 5 days", "In 3 weeks", "In 5 months".
+ *
+ * For dates months out, where describeDayOffset falls back to the date itself
+ * and would repeat what the card already says next to it.
+ */
+export function describeDaysAhead(target: Date, now: Date): string {
+  const startOfDay = (date: Date): number =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((startOfDay(target) - startOfDay(now)) / 86400000);
+
+  if (days <= 0) {
+    return 'Today';
+  }
+  if (days === 1) {
+    return 'Tomorrow';
+  }
+  if (days < 14) {
+    return `In ${days} days`;
+  }
+  if (days < 60) {
+    return `In ${Math.round(days / 7)} weeks`;
+  }
+  return `In ${Math.round(days / 30.44)} months`;
+}
+
 /** "Right now", "In 1 hour", "In 12 hours". */
 export function describeHourOffset(hours: number): string {
   if (hours <= 0) {

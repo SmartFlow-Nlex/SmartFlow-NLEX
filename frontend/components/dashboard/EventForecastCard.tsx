@@ -4,15 +4,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
-import { EventForecastSeed, eventDate } from '../../constants/dashboardData';
-import { getExit } from '../../constants/nlexSegments';
-import { describeDayOffset, formatEventDateTime } from '../../lib/datetime';
+import type { EventForecast } from '../../lib/insightsApi';
+import { describeDaysAhead, formatEventDay, formatLongDate } from '../../lib/datetime';
 
 export interface EventForecastCardProps {
-  event: EventForecastSeed;
+  event: EventForecast;
   now: Date;
   /** True when the event loads the segment the user currently has selected. */
   affectsSelection?: boolean;
+}
+
+function percentAbove(uplift: number): string {
+  return `+${Math.round((uplift - 1) * 100)}%`;
 }
 
 const EventForecastCard: React.FC<EventForecastCardProps> = ({
@@ -22,10 +25,9 @@ const EventForecastCard: React.FC<EventForecastCardProps> = ({
 }) => {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const date = eventDate(event, now);
-  const affectedNames = event.affectedExitIds
-    .map((id) => getExit(id)?.name)
-    .filter((name): name is string => name !== undefined);
+  // The hardest-hit exit, for the one figure a driver can picture.
+  const top = event.affected[0] ?? event.exits[0];
+  const weekday = formatLongDate(event.date).split(',')[0];
 
   return (
     <View style={[styles.card, affectsSelection && styles.cardHighlighted]}>
@@ -34,31 +36,65 @@ const EventForecastCard: React.FC<EventForecastCardProps> = ({
           <Text style={styles.title}>{event.title}</Text>
           <Text style={styles.venue}>{event.venue}</Text>
           <View style={styles.dateRow}>
-            <Text style={styles.date}>{formatEventDateTime(date)}</Text>
+            <Text style={styles.date}>{formatEventDay(event.date, now)}</Text>
             <View style={styles.whenPill}>
-              <Text style={styles.whenPillText}>{describeDayOffset(date, now)}</Text>
+              <Text style={styles.whenPillText}>{describeDaysAhead(event.date, now)}</Text>
             </View>
           </View>
         </View>
       </View>
 
-      <View style={styles.metaRow}>
-        <Text style={styles.affectedLabel}>Affected:</Text>
-        <View style={styles.chipRow}>
-          {affectedNames.map((name) => (
-            <View key={name} style={styles.chip}>
-              <Text style={styles.chipText}>{name}</Text>
-            </View>
-          ))}
+      {event.affected.length > 0 ? (
+        <View style={styles.metaRow}>
+          <Text style={styles.affectedLabel}>Expected surge:</Text>
+          <View style={styles.chipRow}>
+            {event.affected.map((exit) => (
+              <View key={exit.name} style={styles.chip}>
+                <Text style={styles.chipText}>
+                  {exit.name} <Text style={styles.chipSurge}>{percentAbove(exit.uplift)}</Text>
+                </Text>
+              </View>
+            ))}
+          </View>
         </View>
-      </View>
+      ) : null}
 
-      <View style={styles.footer}>
-        <Ionicons name="people-outline" size={13} color={colors.textSecondary} />
-        <Text style={styles.footerText}>
-          Expected attendance: {event.expectedAttendance.toLocaleString('en-US')}
-        </Text>
-      </View>
+      {top !== undefined ? (
+        <View style={styles.footer}>
+          <Ionicons name="car-outline" size={13} color={colors.textSecondary} />
+          <Text style={styles.footerText}>
+            {top.surge.toLocaleString('en-US')} vehicles forecast at {top.name}, vs{' '}
+            {top.baseline.toLocaleString('en-US')} on a normal {weekday}
+          </Text>
+        </View>
+      ) : null}
+
+      {event.capacity !== null ? (
+        <View style={styles.footer}>
+          <Ionicons name="people-outline" size={13} color={colors.textSecondary} />
+          <Text style={styles.footerText}>
+            Venue capacity: {event.capacity.toLocaleString('en-US')}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* The uplift was measured on Arena days; a smaller venue at the same
+          exit (BTS at the Philippine Sports Stadium) gets the same figures. */}
+      {event.venue !== 'Philippine Arena' ? (
+        <View style={styles.footer}>
+          <Ionicons name="information-circle-outline" size={13} color={colors.textSecondary} />
+          <Text style={styles.footerText}>
+            Surge measured on Philippine Arena event days; this venue holds fewer people
+          </Text>
+        </View>
+      ) : null}
+
+      {event.isDerived ? (
+        <View style={styles.footer}>
+          <Ionicons name="information-circle-outline" size={13} color={colors.textSecondary} />
+          <Text style={styles.footerText}>Recurring date, not yet announced</Text>
+        </View>
+      ) : null}
 
       {affectsSelection ? (
         <View style={styles.routeNote}>
@@ -158,13 +194,17 @@ const makeStyles = (c: ThemePalette) =>
     fontSize: Typography.fontSize.xs,
     fontWeight: '700',
   },
+  chipSurge: {
+    fontWeight: '900',
+  },
   footer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 5,
     marginTop: 10,
   },
   footerText: {
+    flex: 1,
     color: c.textSecondary,
     fontSize: Typography.fontSize.xs,
     fontWeight: '500',

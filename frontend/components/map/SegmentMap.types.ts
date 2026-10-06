@@ -1,4 +1,10 @@
-import type { CorridorSegment, DirectionKey, LatLng } from '../../lib/corridorGeometry';
+import type {
+  ColouredJamLine,
+  CorridorOverview,
+  CorridorSegment,
+  DirectionKey,
+  LatLng,
+} from '../../lib/corridorGeometry';
 
 /**
  * Shared by `SegmentMap.tsx` (native, real map tiles) and `SegmentMap.web.tsx`
@@ -8,6 +14,20 @@ import type { CorridorSegment, DirectionKey, LatLng } from '../../lib/corridorGe
  */
 export interface SegmentMapProps {
   segment: CorridorSegment;
+  /**
+   * The whole corridor with every queue on it, drawn under `segment` so the
+   * map shows all of NLEX with the tapped stretch highlighted. Only the Mapbox
+   * map draws it; the others still show the stretch alone.
+   */
+  overview?: CorridorOverview;
+  /**
+   * Every queue on the drawn stretch, whichever exit it belongs to, coloured
+   * and worst last. Drawn instead of `segment.jamLines` when given, so a
+   * neighbour's queue that runs into the stretch is not painted out by it.
+   */
+  stretchJams?: ColouredJamLine[];
+  /** Colour of corridor road with no queue on it. */
+  corridorColor?: string;
   /**
    * The carriageways' base colour.
    *

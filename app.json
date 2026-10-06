@@ -4,6 +4,8 @@
     "package": "com.anonymous.smartflownlexmonorepo"
   },
   "plugins": [
-    "expo-video"
+    "expo-video",
+    "expo-image",
+    "expo-asset"
   ]
 }

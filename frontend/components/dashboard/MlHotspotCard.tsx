@@ -4,29 +4,23 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
-import { HotspotSeed } from '../../constants/dashboardData';
+import type { Hotspot, HotspotTone } from '../../lib/insightsApi';
 import type { CongestionLevel } from '../../lib/trafficModel';
 import { toneFor } from './severity';
 
 export interface MlHotspotCardProps {
-  hotspot: HotspotSeed;
+  hotspot: Hotspot;
 }
 
-/**
- * The seed's own severity, mapped onto the app's one congestion scale.
- *
- * `tone` was already on every hotspot and nothing rendered it - the card was
- * entirely greyscale while the data it was showing knew perfectly well which
- * of these was the dangerous one.
- */
-const levelForTone: Record<HotspotSeed['tone'], CongestionLevel> = {
+/** The hotspot's severity, mapped onto the app's one congestion scale. */
+const levelForTone: Record<HotspotTone, CongestionLevel> = {
   critical: 'severe',
   warning: 'high',
   caution: 'moderate',
 };
 
 /**
- * One ML-identified hotspot.
+ * One exit the dashboard's Spatial LSTM forecasts above the corridor average.
  *
  * Severity is carried by colour - an edge rail and a tinted icon - rather than
  * by a "HIGH RISK" badge. The badges were removed from this app on purpose;
@@ -47,7 +41,9 @@ const MlHotspotCard: React.FC<MlHotspotCardProps> = ({ hotspot }) => {
 
         <View style={styles.textGroup}>
           <Text style={styles.name}>{hotspot.name}</Text>
-          <Text style={styles.description}>{hotspot.description}</Text>
+          <Text style={styles.description}>
+            {hotspot.vsAverage.toFixed(1)}× the corridor's average incident rate
+          </Text>
         </View>
       </View>
 
@@ -60,19 +56,20 @@ const MlHotspotCard: React.FC<MlHotspotCardProps> = ({ hotspot }) => {
       <View style={styles.statRow}>
         <View style={styles.stat}>
           <Text style={[styles.statValue, { color: tone.solid }]}>
-            {hotspot.incidents30Days}
+            {hotspot.predictedPerDay.toFixed(1)}
           </Text>
-          <Text style={styles.statLabel}>incidents / 30d</Text>
+          <Text style={styles.statLabel}>predicted incidents / day</Text>
         </View>
 
         <View style={styles.statDivider} />
 
         <View style={styles.stat}>
           <Text style={styles.statValue}>
-            {hotspot.averageResponseMinutes}
-            <Text style={styles.statUnit}> min</Text>
+            {hotspot.recordedIncidents !== null
+              ? hotspot.recordedIncidents.toLocaleString('en-US')
+              : '—'}
           </Text>
-          <Text style={styles.statLabel}>avg response</Text>
+          <Text style={styles.statLabel}>incidents on record</Text>
         </View>
       </View>
     </View>
@@ -150,11 +147,6 @@ const makeStyles = (c: ThemePalette) =>
       fontSize: Typography.fontSize.xl,
       fontWeight: '800',
       letterSpacing: -0.4,
-    },
-    statUnit: {
-      fontSize: Typography.fontSize.sm,
-      fontWeight: '700',
-      color: c.textSecondary,
     },
     statLabel: {
       color: c.textTertiary,

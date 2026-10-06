@@ -7,6 +7,7 @@ export {
   validatePassword,
   validateFullName,
   displayNameFromEmail,
+  firstNameOf,
   MIN_PASSWORD_LENGTH,
 } from './authApi';
 export type { Credentials, Registration, AuthResult } from './authApi';

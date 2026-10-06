@@ -1,5 +1,11 @@
 import centreline from './nlexCentreline.json';
-import type { CorridorExit } from './corridorApi';
+import type {
+  CorridorDirectionStatus,
+  CorridorExit,
+  CorridorJam,
+  CorridorStatusData,
+  CorridorStatusValue,
+} from './corridorApi';
 
 /**
  * The NLEX centreline, cut into the stretch that belongs to one exit.
@@ -23,6 +29,18 @@ import type { CorridorExit } from './corridorApi';
  * copy of it to keep in step. To regenerate after the geometry or the exit list
  * changes, re-run corridorGuard over nlexGeometry.json and write out
  * `guard.centreline`.
+ *
+ * Its vertices were then moved onto the real road, keeping all 725 in their
+ * order. corridorGuard's line ran along one carriageway and, at 15
+ * interchanges, cut through the ramps - up to 281 m off NLEX at CDV/PH Arena -
+ * so the map drew the corridor across fields. Each vertex now sits midway
+ * between the two OpenStreetMap carriageways of the "North Luzon Expressway"
+ * mainline, the off-road runs first spread evenly between their on-road
+ * neighbours. Because the count and order are unchanged, the backend's queue
+ * indices still point at the same stretch; they just land on the road now.
+ * Offset by CARRIAGEWAY_OFFSET_M, each ribbon is within 13 m of its real
+ * carriageway (1.9 m median). A regenerated guard.centreline must go through
+ * the same correction: `node scripts/snap-centreline.js <guard.json>`.
  *
  * Ordered south to north - [121.0002, 14.6790] at Balintawak through to
  * [120.5879, 15.2222] at Sta. Ines - the same direction as km ascending, so an
@@ -94,6 +112,8 @@ export interface CorridorSegment {
   /** Only the queues - the part of the road that is actually in traffic. */
   jamLines: JamLine[];
   bounds: Bounds;
+  /** The centreline vertices drawn, so other queues can be clipped to them. */
+  range: { from: number; to: number };
 }
 
 /*
@@ -114,13 +134,13 @@ const M_PER_DEG_LON = 111320 * Math.cos((15 * Math.PI) / 180);
 /**
  * Half the gap between the two carriageways, in metres.
  *
- * NLEX's carriageways sit roughly 20-30m apart centre to centre, so this is
- * close to true. It was 55 while the map had no basemap and the only job was
- * legibility; over real tiles that was plainly wrong - the two ribbons
- * straddled the actual road with map showing between them, reading as three
- * roads rather than one divided highway.
+ * NLEX's carriageways sit roughly 20-30m apart centre to centre, and the
+ * centreline now runs midway between them, so half of that puts each ribbon
+ * on its own carriageway. It was 55 while the map had no basemap, then 28 -
+ * which was the whole gap rather than half of it, and drew the two ribbons
+ * either side of the real road.
  */
-const CARRIAGEWAY_OFFSET_M = 28;
+const CARRIAGEWAY_OFFSET_M = 12;
 
 function metresBetween(a: LngLat, b: LngLat): number {
   return Math.hypot((a[0] - b[0]) * M_PER_DEG_LON, (a[1] - b[1]) * M_PER_DEG_LAT);
@@ -434,7 +454,203 @@ export function segmentForExit(
     widenedForJams: from < stretchFrom || to > stretchTo,
     jamLines,
     bounds: boundsOf([NB, SB]),
+    range: { from, to },
   };
+}
+
+/** A queue ready to draw, coloured by the caller. */
+export interface ColouredJamLine {
+  direction: DirectionKey;
+  coords: LatLng[];
+  color: string;
+}
+
+export type ColouredJam = JamRange & { direction: DirectionKey; color: string };
+
+/** The whole corridor, for drawing around the stretch a screen is about. */
+export interface CorridorOverview {
+  NB: LatLng[];
+  SB: LatLng[];
+  /** Every queue on the corridor, in the order given - pass the worst last. */
+  jamLines: ColouredJamLine[];
+  exits: { name: string; position: LatLng }[];
+}
+
+/** Queues clipped to vertices lo..hi and offset onto their carriageways. */
+function colouredJamLines(jams: ColouredJam[], lo: number, hi: number): ColouredJamLine[] {
+  return jams
+    .filter(
+      (jam) =>
+        Number.isFinite(jam.startIndex) &&
+        Number.isFinite(jam.endIndex) &&
+        jam.startIndex >= 0 &&
+        jam.endIndex < points.length,
+    )
+    .map((jam) => {
+      const from = Math.max(lo, Math.min(jam.startIndex, jam.endIndex));
+      const to = Math.min(hi, Math.max(jam.startIndex, jam.endIndex));
+      return to - from < 1
+        ? null
+        : {
+            direction: jam.direction,
+            color: jam.color,
+            coords: offsetLine(points.slice(from, to + 1), jam.direction === 'NB' ? -1 : 1),
+          };
+    })
+    .filter((line): line is ColouredJamLine => line !== null);
+}
+
+/**
+ * Every queue on the road a segment draws, whichever exit it was booked to.
+ *
+ * The segment's own jamLines are only the queues attributed to its exit, but a
+ * neighbour's queue can run into the drawn stretch - and the stretch's green
+ * road, drawn over the corridor, would then paint it out. The list shows those
+ * queues on the row, so the map must too.
+ */
+export function stretchJamLines(segment: CorridorSegment, jams: ColouredJam[]): ColouredJamLine[] {
+  return colouredJamLines(jams, segment.range.from, segment.range.to);
+}
+
+/**
+ * All of NLEX, Balintawak to Sta. Ines, with every queue on it.
+ *
+ * The interchange map used to draw only the tapped exit's stretch, floating on
+ * its own, so there was no telling what the road did either side of it. This
+ * is the rest of the road, drawn under that stretch.
+ *
+ * Offset exactly as segmentForExit offsets its slice - same line, same sides -
+ * so the stretch sits precisely on top of the corridor rather than beside it.
+ */
+export function corridorOverview(exits: CorridorExit[], jams: ColouredJam[]): CorridorOverview {
+  return {
+    NB: offsetLine(points, -1),
+    SB: offsetLine(points, 1),
+    jamLines: colouredJamLines(jams, 0, points.length - 1),
+    exits: exits.map((exit) => ({
+      name: exit.display_name,
+      position: { latitude: exit.latitude, longitude: exit.longitude },
+    })),
+  };
+}
+
+/**
+ * A neighbour's queue must cover at least this much of a stretch to count
+ * there. Measured inside the vertex two stretches share, so a queue that only
+ * touches the boundary does not turn the next exit amber.
+ */
+const MIN_BORROWED_QUEUE_M = 100;
+
+/** Waze's bands, exactly as the backend's deriveStatus applies them. */
+function classifyStretch(level: number | null, speedKmh: number | null): CorridorStatusValue {
+  if ((level === null && speedKmh === null) || level === 0) {
+    return 'clear';
+  }
+  if ((level !== null && level >= 3) || (speedKmh !== null && speedKmh < 10)) {
+    return 'congested';
+  }
+  return 'slow';
+}
+
+/**
+ * Re-reads every exit from the traffic actually standing on its stretch.
+ *
+ * The backend books each queue to the one exit nearest the queue's midpoint.
+ * A long queue therefore sits across two or three stretches but counts at only
+ * one: NLEX Harbor Link's 4.1 km slowdown covered most of Paso de Blas's road,
+ * and Paso de Blas still read "Clear" beside a map that drew the queue on it.
+ *
+ * Here each exit and direction takes the part of every queue that lies on its
+ * stretch, whichever exit it was booked to, and is graded on those with the
+ * backend's own bands. Every screen reads this one answer, so the list, the
+ * map, the pills and the counts cannot disagree. Delay is shared out by how
+ * much of each queue is on the stretch.
+ *
+ * Returned unchanged when the queues cannot be placed - an older backend, or
+ * a centreline that is not the one the indices point into.
+ */
+export function readTrafficByStretch(data: CorridorStatusData): CorridorStatusData {
+  const directions: DirectionKey[] = ['NB', 'SB'];
+  if (
+    !centrelineMatches(data.geometry?.centrelineVertices) ||
+    data.exits.some((exit) => directions.some((key) => exit.directions[key].jams === undefined))
+  ) {
+    return data;
+  }
+
+  const along = (from: number, to: number): number => cumulative[to] - cumulative[from];
+  const all: Record<DirectionKey, CorridorJam[]> = { NB: [], SB: [] };
+  for (const exit of data.exits) {
+    for (const key of directions) {
+      all[key].push(...(exit.directions[key].jams ?? []));
+    }
+  }
+
+  const exits = data.exits.map((exit): CorridorExit => {
+    const stretch = stretchRangeForExit(data.exits, exit.exit_id);
+    if (stretch === null) {
+      return exit;
+    }
+
+    const readDirection = (key: DirectionKey): CorridorDirectionStatus => {
+      const own = exit.directions[key];
+      if (!own.hasRamp) {
+        return own;
+      }
+
+      const pieces: CorridorJam[] = [];
+      for (const jam of all[key]) {
+        const start = Math.max(0, Math.min(jam.startIndex, jam.endIndex));
+        const end = Math.min(points.length - 1, Math.max(jam.startIndex, jam.endIndex));
+        const lo = Math.max(stretch.from, start);
+        const hi = Math.min(stretch.to, end);
+        if (hi <= lo) {
+          continue;
+        }
+        const isOwn = own.jams?.includes(jam) ?? false;
+        const inside = along(Math.max(lo, stretch.from + 1), Math.min(hi, stretch.to - 1));
+        if (!isOwn && inside < MIN_BORROWED_QUEUE_M) {
+          continue;
+        }
+        const whole = along(start, end);
+        const share = whole > 0 ? along(lo, hi) / whole : 1;
+        pieces.push({
+          ...jam,
+          startIndex: lo,
+          endIndex: hi,
+          lengthMetres: Math.round(jam.lengthMetres * share),
+          delaySeconds: jam.delaySeconds === null ? null : Math.round(jam.delaySeconds * share),
+        });
+      }
+
+      const levels = pieces.map((jam) => jam.level).filter((v): v is number => v !== null);
+      const speeds = pieces.map((jam) => jam.speedKmh).filter((v): v is number => v !== null);
+      const level = levels.length > 0 ? Math.max(...levels) : null;
+      const speedKmh = speeds.length > 0 ? Math.min(...speeds) : null;
+      const delays = pieces.map((jam) => jam.delaySeconds).filter((v): v is number => v !== null);
+
+      return {
+        ...own,
+        status: classifyStretch(level, speedKmh),
+        level,
+        speedKmh,
+        jamCount: pieces.length,
+        jams: pieces.sort((a, b) => a.startIndex - b.startIndex),
+        queueMetres: pieces.reduce((total, jam) => total + jam.lengthMetres, 0),
+        delaySeconds: delays.length > 0 ? delays.reduce((total, v) => total + v, 0) : null,
+      };
+    };
+
+    return { ...exit, directions: { NB: readDirection('NB'), SB: readDirection('SB') } };
+  });
+
+  const counts = { congested: 0, slow: 0, clear: 0 };
+  for (const exit of exits) {
+    for (const key of directions) {
+      counts[exit.directions[key].status] += 1;
+    }
+  }
+  return { ...data, exits, counts };
 }
 
 /** True when the app's centreline is the one the backend's indices refer to. */

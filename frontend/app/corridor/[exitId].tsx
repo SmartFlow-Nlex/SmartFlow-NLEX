@@ -9,7 +9,12 @@ import { Typography } from '../../constants/typography';
 import { toneFor } from '../../components/dashboard/severity';
 import BottomSheet from '../../components/BottomSheet';
 import SegmentMap from '../../components/map/SegmentMap';
-import { centrelineMatches, segmentForExit } from '../../lib/corridorGeometry';
+import {
+  centrelineMatches,
+  corridorOverview,
+  segmentForExit,
+  stretchJamLines,
+} from '../../lib/corridorGeometry';
 import type { DirectionKey } from '../../lib/corridorGeometry';
 import { useCorridorStatus } from '../../hooks/useCorridorStatus';
 import type {
@@ -97,6 +102,8 @@ function jamTone(jam: CorridorJam): CongestionLevel {
   }
   return 'moderate';
 }
+
+const SEVERITY_ORDER: Record<CongestionLevel, number> = { low: 0, moderate: 1, high: 2, severe: 3 };
 
 /** "3 mins ago" from the feed's own timestamp, or null when it has none. */
 function formatObserved(observedAt: string | null): string | null {
@@ -326,6 +333,36 @@ export default function CorridorExitScreen(): React.ReactElement {
     return segmentForExit(data.exits, exitId, jams);
   }, [data, exitId, hasJamDetail]);
 
+  /*
+   * The rest of NLEX, drawn under the tapped stretch with every queue on it,
+   * so the map shows the whole corridor's state and not just one exit's. Only
+   * when the queues can be placed: without them there is nothing to say about
+   * the road beyond the stretch but a status per exit, which the list has.
+   */
+  const { overview, stretchJams } = useMemo(() => {
+    if (data === null || !hasJamDetail) {
+      return { overview: undefined, stretchJams: undefined };
+    }
+    // Worst last, so where queues overlap the crawl is drawn over the slowdown.
+    const jams = data.exits
+      .flatMap((candidate) =>
+        (['NB', 'SB'] as DirectionKey[]).flatMap((direction) =>
+          (candidate.directions[direction].jams ?? []).map((jam) => ({
+            direction,
+            startIndex: jam.startIndex,
+            endIndex: jam.endIndex,
+            tone: jamTone(jam),
+          })),
+        ),
+      )
+      .sort((a, b) => SEVERITY_ORDER[a.tone] - SEVERITY_ORDER[b.tone])
+      .map(({ tone, ...jam }) => ({ ...jam, color: toneFor(tone, colors).solid }));
+    return {
+      overview: corridorOverview(data.exits, jams),
+      stretchJams: segment === null ? undefined : stretchJamLines(segment, jams),
+    };
+  }, [data, hasJamDetail, colors, segment]);
+
   const header = (title: string): React.ReactElement => (
     <View style={styles.topBar}>
       <Pressable
@@ -452,6 +489,9 @@ export default function CorridorExitScreen(): React.ReactElement {
       <View style={StyleSheet.absoluteFill}>
         <SegmentMap
           segment={segment}
+          overview={overview}
+          stretchJams={stretchJams}
+          corridorColor={toneFor('low', colors).solid}
           nbColor={baseColourFor(nb)}
           sbColor={baseColourFor(sb)}
           jamColorFor={jamColourFor}

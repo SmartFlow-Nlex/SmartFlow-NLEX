@@ -51,7 +51,7 @@ export default function MapScreen(): React.ReactElement {
   const activeView: CorridorView =
     allowed.some((v) => v.key === view) ? view : (allowed[0]?.key ?? 'live');
 
-  // Coarse ticker: minute-level precision is plenty for a 6h/12h/24h/48h horizon.
+  // Coarse ticker: minute-level precision is plenty for an hourly forecast.
   const now = useNow(30000);
 
   return (
@@ -68,7 +68,7 @@ export default function MapScreen(): React.ReactElement {
           subtitle={
             view === 'live'
               ? 'Live status at all 20 NLEX interchanges'
-              : 'Modelled outlook up to 48 hours ahead'
+              : 'SmartFlow model forecast, up to 7 days ahead'
           }
           divider={false}
         />

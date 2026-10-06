@@ -5,3 +5,4 @@ export {
   type AlertItem,
   type AlertTone,
 } from './AlertsProvider';
+export { default as AlertBanner } from './AlertBanner';

@@ -242,3 +242,63 @@ export async function setLiked(postId: string, liked: boolean): Promise<void> {
     throw new Error(error.message);
   }
 }
+
+/** A community incident report, as the Alerts tab shows it to everyone else. */
+export interface CommunityIncidentAlert {
+  id: string;
+  authorName: string;
+  location: string;
+  direction: TravelDirection | null;
+  message: string;
+  status: TrafficStatus;
+  createdAt: Date;
+}
+
+/**
+ * How long a driver's incident report stays an alert. Long enough to outlast
+ * the clearing of a typical crash, short enough that yesterday's report is not
+ * telling anyone about today's road. The Community tab keeps the full history.
+ */
+const INCIDENT_ALERT_HOURS = 3;
+
+/**
+ * Recent incident reports by OTHER drivers, newest first.
+ *
+ * Your own reports are left out - you do not need alerting to something you
+ * just told everyone. Reading needs a signed-in session (the table's row-level
+ * security), so a signed-out app gets an empty list rather than an error.
+ */
+export async function fetchCommunityIncidentAlerts(): Promise<CommunityIncidentAlert[]> {
+  const supabase = getSupabase();
+  // The cached session, not getUser(): this runs every minute, and getUser()
+  // is a round trip to the auth server each time.
+  const { data: sessionData } = await supabase.auth.getSession();
+  const viewerId = sessionData.session?.user.id ?? null;
+  if (viewerId === null) {
+    return [];
+  }
+
+  const since = new Date(Date.now() - INCIDENT_ALERT_HOURS * 3_600_000).toISOString();
+  const { data, error } = await supabase
+    .from(POSTS_TABLE)
+    .select('id, created_at, author_id, author_name, location, direction, message, status')
+    .eq('kind', 'incident')
+    .neq('author_id', viewerId)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+
+  return ((data ?? []) as unknown as PostRow[]).map((row) => ({
+    id: row.id,
+    authorName: row.author_name,
+    location: row.location,
+    direction: row.direction,
+    message: row.message,
+    status: row.status,
+    createdAt: new Date(row.created_at),
+  }));
+}

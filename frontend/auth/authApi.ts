@@ -76,6 +76,23 @@ export function displayNameFromEmail(email: string): string {
   return words.length > 0 ? words.join(' ') : 'NLEX Traveler';
 }
 
+/**
+ * The first real name in a full name, for greeting someone.
+ *
+ * Skips initials and short forms - "J. Ysabela Cruz" and "Ma. Ysabela Cruz"
+ * give "Ysabela", not "J." or "Ma." - because taking the first word made Lex
+ * greet people by a single letter. A name made only of initials is returned
+ * whole rather than cut down to one of them.
+ */
+export function firstNameOf(fullName: string | undefined): string | null {
+  const words = (fullName ?? '').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) {
+    return null;
+  }
+  const isInitial = (word: string): boolean => word.endsWith('.') || word.replace(/\W/g, '').length <= 1;
+  return words.find((word) => !isInitial(word)) ?? words.join(' ');
+}
+
 /** Supabase's own wording is aimed at developers; these are aimed at commuters. */
 function friendlyAuthMessage(error: AuthError): string {
   const raw = error.message.toLowerCase();

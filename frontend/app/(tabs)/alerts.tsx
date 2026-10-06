@@ -1,34 +1,18 @@
-import React, { useMemo, useState } from 'react';
-import { useRouter } from 'expo-router';
+import React, { useCallback, useMemo, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import AIAssistantFAB, { FAB_CLEARANCE } from '../../components/community/AIAssistantFAB';
 import { Reveal } from '../../components/motion';
-import { useAlerts, type AlertCategory, type AlertItem, type AlertTone } from '../../alerts';
+import { useAlerts, type AlertCategory, type AlertItem } from '../../alerts';
+import { alertTone } from '../../alerts/tone';
 import { useMobileConfig } from '../../lib/mobileConfig';
 import { useTheme, useThemedStyles } from '../../theme';
 import AppHeader from '../../components/AppHeader';
 import PageHeading from '../../components/PageHeading';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
-
-/** Alert tints come from the palette so they stay legible in both themes. */
-function alertTone(
-  tone: AlertTone,
-  c: ThemePalette,
-): { solid: string; background: string; text: string } {
-  if (tone === 'critical') {
-    return { solid: c.statusHeavySolid, background: c.statusHeavyBg, text: c.statusHeavyText };
-  }
-  // An operator-published notice at the lowest level. Brand blue rather than a
-  // third warm tint: red and orange already mean "act", and a third shade of
-  // orange would read as a severity between them instead of below both.
-  if (tone === 'info') {
-    return { solid: c.primary, background: c.primarySoft, text: c.primaryDark };
-  }
-  return { solid: c.statusHighSolid, background: c.statusHighBg, text: c.statusHighText };
-}
 
 const alertFeatures = [
   'Predictive congestion alerts',
@@ -57,7 +41,16 @@ export default function AlertsScreen(): React.ReactElement {
   const { colors } = useTheme();
   const router = useRouter();
   const styles = useThemedStyles(makeStyles);
-  const { alerts, markAsRead, markAllAsRead } = useAlerts();
+  const { alerts, markAsRead, markAllAsRead, maintenanceStatus, reportsStatus, refresh } =
+    useAlerts();
+
+  // The background poll keeps the tab badge within a minute; opening the tab
+  // re-reads at once, so the list you are looking at is never a poll behind.
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh]),
+  );
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(false);
   const [category, setCategory] = useState<AlertCategory>('traffic');
 
@@ -93,6 +86,66 @@ export default function AlertsScreen(): React.ReactElement {
   // "Mark all as read" means all of them, so it stays available while anything
   // is unread - including something in the category you are not looking at.
   const totalUnread = useMemo(() => alerts.filter((item) => item.unread).length, [alerts]);
+
+  /*
+   * Maintenance comes from the dashboard, so an empty list only means "no
+   * roadworks" once it has actually loaded. Before that, saying so would tell
+   * a driver the road is clear when the app simply has not heard back.
+   */
+  const emptyState: {
+    icon: keyof typeof Ionicons.glyphMap;
+    color: string;
+    title: string;
+    text: string;
+  } =
+    activeCategory === 'traffic'
+      ? reportsStatus === 'loading'
+        ? {
+            icon: 'cloud-download-outline',
+            color: colors.textSecondary,
+            title: 'Loading alerts',
+            text: 'Checking for accidents, hazards and police reports on NLEX.',
+          }
+        : reportsStatus === 'error'
+          ? {
+              icon: 'cloud-offline-outline',
+              color: colors.textSecondary,
+              title: 'Couldn’t load alerts',
+              text: 'The SmartFlow dashboard did not answer. Pull down to try again.',
+            }
+          : {
+              icon: 'checkmark-done-circle-outline',
+              color: colors.success,
+              title: 'No alerts right now',
+              text: 'Accidents, hazards and police reported on NLEX - by Waze drivers or in Community - appear here.',
+            }
+      : maintenanceStatus === 'loading'
+        ? {
+            icon: 'cloud-download-outline',
+            color: colors.textSecondary,
+            title: 'Loading maintenance notices',
+            text: 'Checking the SmartFlow dashboard for scheduled roadworks.',
+          }
+        : maintenanceStatus === 'error'
+          ? {
+              icon: 'cloud-offline-outline',
+              color: colors.textSecondary,
+              title: 'Couldn’t load maintenance notices',
+              text: 'The SmartFlow dashboard did not answer. Pull down to try again.',
+            }
+          : {
+              icon: 'checkmark-done-circle-outline',
+              color: colors.success,
+              title: 'No maintenance notices',
+              text: 'No roadworks are scheduled on NLEX right now. New ones appear here as operators post them.',
+            };
+
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = (): void => {
+    setRefreshing(true);
+    refresh();
+    setRefreshing(false);
+  };
 
   const handleMarkAllAsRead = (): void => {
     markAllAsRead();
@@ -210,7 +263,18 @@ export default function AlertsScreen(): React.ReactElement {
         </View>
         )}
 
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor={colors.accent}
+              colors={[colors.accent]}
+            />
+          }
+        >
           <View style={styles.body}>
             <View style={styles.listHeader}>
               <Text style={styles.listHeaderText}>
@@ -250,20 +314,10 @@ export default function AlertsScreen(): React.ReactElement {
             ) : (
               <View style={styles.emptyCard}>
                 <View style={styles.emptyIcon}>
-                  <Ionicons
-                    name="checkmark-done-circle-outline"
-                    size={22}
-                    color={colors.success}
-                  />
+                  <Ionicons name={emptyState.icon} size={22} color={emptyState.color} />
                 </View>
-                <Text style={styles.emptyTitle}>
-                  {activeCategory === 'traffic' ? 'No traffic alerts' : 'No maintenance notices'}
-                </Text>
-                <Text style={styles.emptyText}>
-                  {activeCategory === 'traffic'
-                    ? 'Congestion, event and incident alerts will appear here.'
-                    : 'Scheduled roadworks and lane closures will appear here.'}
-                </Text>
+                <Text style={styles.emptyTitle}>{emptyState.title}</Text>
+                <Text style={styles.emptyText}>{emptyState.text}</Text>
               </View>
             )}
 
