@@ -22,8 +22,8 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 
 ### Get the code
 ```powershell
-git clone https://github.com/SmartFlow-Nlex/Mobile-Application.git
-cd Mobile-Application
+git clone https://github.com/SmartFlow-Nlex/SmartFlow-NLEX.git
+cd SmartFlow-NLEX
 git checkout Main-Mobile
 # put the .env file in this folder (the repo root)
 npm install
