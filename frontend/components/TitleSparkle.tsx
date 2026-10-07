@@ -38,9 +38,11 @@ export interface TitleSparkleProps {
   /** Edge of the square it is drawn in; the dashboard uses half the title's size. */
   size: number;
   style?: StyleProp<ViewStyle>;
+  /** The strokes' colour; the brand gold unless a state has its own (Alerts' green "all clear"). */
+  color?: string;
 }
 
-const TitleSparkle: React.FC<TitleSparkleProps> = ({ size, style }) => {
+const TitleSparkle: React.FC<TitleSparkleProps> = ({ size, style, color }) => {
   const { colors } = useTheme();
   const enter = useRef(new Animated.Value(0)).current;
   const twinkle = useRef(new Animated.Value(0)).current;
@@ -132,7 +134,7 @@ const TitleSparkle: React.FC<TitleSparkleProps> = ({ size, style }) => {
             width: stroke.length * k,
             height: STROKE * k,
             borderRadius: (STROKE * k) / 2,
-            backgroundColor: colors.brandGold,
+            backgroundColor: color ?? colors.brandGold,
             transform: [{ rotate: stroke.angle }],
           }}
         />

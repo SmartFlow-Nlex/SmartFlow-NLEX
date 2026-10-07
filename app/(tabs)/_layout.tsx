@@ -1,5 +1,5 @@
 import React from 'react';
-import { Tabs, useSegments } from 'expo-router';
+import { Tabs } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -8,7 +8,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAlerts } from '../../frontend/alerts';
 import { useMobileConfig } from '../../frontend/lib/mobileConfig';
 import { useTheme, useThemedStyles } from '../../frontend/theme';
-import TabPeekMascot from '../../frontend/components/TabPeekMascot';
 import type { ThemePalette } from '../../frontend/theme';
 
 /**
@@ -109,8 +108,8 @@ const TabButton: React.FC<TabButtonProps> = ({
 					<View style={styles.iconWrap}>
 						<Ionicons
 							name={tabIcons[name][focused ? 1 : 0]}
-							size={21}
-							color={focused ? colors.accent : colors.textTertiary}
+							size={22}
+							color={focused ? colors.navy : colors.textTertiary}
 						/>
 						{/*
 							Capped at "9+": the badge sits on a 21pt glyph and a
@@ -137,7 +136,7 @@ const TabButton: React.FC<TabButtonProps> = ({
 };
 
 export default function TabLayout(): React.ReactElement {
-	const { colors } = useTheme();
+	const { colors, isDark } = useTheme();
 	const { unreadCount } = useAlerts();
 
 	// Which tabs this build may show is set by an operator in the dashboard's
@@ -145,44 +144,41 @@ export default function TabLayout(): React.ReactElement {
 	// defaults leave every tab in place, so a slow network never blanks the bar.
 	const { config: mobileConfig } = useMobileConfig();
 	const insets = useSafeAreaInsets();
-	// The tab on screen: segments run ['(tabs)', 'map', ...].
-	const activeTab = (useSegments() as string[])[1] ?? 'dashboard';
-	// The tabs the bar shows, left to right - the dashboard can switch any off.
-	const visibleTabs = (['dashboard', 'map', 'community', 'assistant', 'alerts'] as const).filter(
-		(name) => mobileConfig.features[name],
-	);
 
 	return (
-		// One container for the whole tab section, so the peeking mascot can sit
-		// over the tab bar rather than being added to each screen.
-		<View style={{ flex: 1 }}>
+		<View style={{ flex: 1, backgroundColor: colors.background }}>
 			{/*
-			 * Every tab screen tops out in the brand navy, in both themes, so the
-			 * clock and battery need light icons here whichever style the root
-			 * layout picked for the rest of the app. Declared once for the whole
-			 * tab section rather than per screen, so it does not depend on which
-			 * tab happens to be mounted.
+			 * Every tab tops out in its own sky now, not the old navy bar: a pale
+			 * sky by day needs dark status icons, the night scene light ones.
 			 */}
-			<StatusBar style="light" />
+			<StatusBar style={isDark ? 'light' : 'dark'} />
 
 			<Tabs
 				screenOptions={{
 					headerShown: false,
+					// The page colour behind the bar's rounded corners.
+					sceneStyle: { backgroundColor: colors.background },
 					tabBarStyle: {
 						/*
-						 * The height was a flat 64, which on a phone with a gesture
-						 * bar put the labels underneath the home indicator. Adding
-						 * the bottom inset keeps the row itself 62pt tall and pushes
-						 * the whole bar clear of the system UI. On web and on older
+						 * The row itself is 66pt; the bottom inset is added under it
+						 * so the labels clear the home indicator. On web and older
 						 * phones the inset is 0 and nothing changes.
 						 */
-						height: 62 + insets.bottom,
+						height: 66 + insets.bottom,
 						paddingBottom: insets.bottom,
 						paddingTop: 0,
-						paddingHorizontal: 6,
-						backgroundColor: colors.surface,
+						paddingHorizontal: 8,
+						backgroundColor: colors.glassStrong,
 						borderTopWidth: 1,
-						borderTopColor: colors.border,
+						borderTopColor: colors.glassBorder,
+						borderTopLeftRadius: 26,
+						borderTopRightRadius: 26,
+						// Lifted off the page with a soft upward haze.
+						shadowColor: colors.cardShadow,
+						shadowOpacity: 0.1,
+						shadowRadius: 20,
+						shadowOffset: { width: 0, height: -6 },
+						elevation: 12,
 					},
 					// TabButton owns the icon, the label and the highlight, so none
 					// of the navigator's own tint or background options apply.
@@ -244,19 +240,12 @@ export default function TabLayout(): React.ReactElement {
 					}}
 				/>
 			</Tabs>
-
 			{/*
-			 * The car peeks up from behind the bar, over the tab you are on. Keyed
-			 * by the tab, so switching tabs moves it and starts the peek over with
-			 * the new page's content. The loop begins with the car out of sight, so
-			 * the restart never shows a jump.
+			 * The car that peeked up over the active tab is retired: each page now
+			 * has Lex in its hero and the assistant shortcut, and a third copy on
+			 * every screen was the "mascot stickers everywhere" the redesign set
+			 * out to avoid. TabPeekMascot is kept, should it come back.
 			 */}
-			<TabPeekMascot
-				key={activeTab}
-				tab={activeTab}
-				tabs={[...visibleTabs]}
-				barHeight={62 + insets.bottom}
-			/>
 		</View>
 	);
 }
@@ -275,8 +264,8 @@ const makeStyles = (c: ThemePalette) =>
 			flex: 1,
 			alignItems: 'center',
 			justifyContent: 'center',
-			gap: 3,
-			borderRadius: 14,
+			gap: 4,
+			borderRadius: 18,
 			// A plain View, so the radius actually clips - which was the whole
 			// problem with letting the navigator paint this.
 			backgroundColor: 'transparent',
@@ -293,11 +282,12 @@ const makeStyles = (c: ThemePalette) =>
 		},
 		label: {
 			color: c.textTertiary,
-			fontSize: 10,
+			fontSize: 11,
 			fontWeight: '700',
 		},
 		labelActive: {
-			color: c.accent,
+			color: c.navy,
+			fontWeight: '800',
 		},
 		badge: {
 			position: 'absolute',

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
-import { useTheme, useThemedStyles } from '../../theme';
+import { useTheme, useThemedStyles, Radius } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
 import type { CongestionLevel } from '../../lib/trafficModel';
@@ -733,6 +733,9 @@ const ExitRow: React.FC<ExitRowProps> = ({ row, first, last, expanded, onToggle,
   const shown = BOTH.filter((key) => isWorthShowing(row[key]));
   const hasDetail = row.detail !== undefined && row.detail.length > 0;
   const opens = onOpen !== undefined;
+  // Congested either way: the interchange's own signage turns a soft red, so a
+  // jam is visible from the names column too, not only on the pavement.
+  const congested = BOTH.some((key) => row[key].level === 'severe' || row[key].level === 'high');
 
   return (
     <Pressable
@@ -758,14 +761,21 @@ const ExitRow: React.FC<ExitRowProps> = ({ row, first, last, expanded, onToggle,
         ranged beside them; centring the whole assembly is what makes it read
         as a road rather than a table with a decorative stripe.
       */}
-      <View style={styles.median}>
-        <Text style={styles.exitName} numberOfLines={2}>
-          {row.name}
-        </Text>
+      <View style={[styles.median, congested && styles.medianCongested]}>
+        <View style={styles.nameRow}>
+          {congested ? (
+            <Ionicons name="warning" size={16} color={colors.statusHeavySolid} />
+          ) : null}
+          <Text style={[styles.exitName, congested && styles.exitNameCongested]} numberOfLines={2}>
+            {row.name}
+          </Text>
+        </View>
 
         <View style={styles.medianMeta}>
-          <View style={styles.kmBadge}>
-            <Text style={styles.kmBadgeText}>KM {row.km.toFixed(1)}</Text>
+          <View style={[styles.kmBadge, congested && styles.kmBadgeCongested]}>
+            <Text style={[styles.kmBadgeText, congested && styles.kmBadgeTextCongested]}>
+              KM {row.km.toFixed(1)}
+            </Text>
           </View>
           {/* Forward chevron where the row navigates, up/down where it expands
               in place - the glyph is the only thing telling the two apart. */}
@@ -1018,7 +1028,7 @@ const CorridorRoad: React.FC<CorridorRoadProps> = ({
 
   const cap = (key: DirectionKey): React.ReactElement => (
     <View style={styles.laneCol}>
-      <Ionicons name={directionArrow[key]} size={13} color={colors.accent} />
+      <Ionicons name={directionArrow[key]} size={18} color={colors.navy} />
       <Text style={styles.laneCapText}>{directionLabel[key]}</Text>
     </View>
   );
@@ -1111,10 +1121,10 @@ export default CorridorRoad;
 const makeStyles = (c: ThemePalette) =>
   StyleSheet.create({
     frame: {
-      backgroundColor: c.surface,
-      borderRadius: 18,
+      backgroundColor: c.glass,
+      borderRadius: Radius.card,
       borderWidth: 1,
-      borderColor: c.border,
+      borderColor: c.glassBorder,
       paddingHorizontal: 12,
       paddingBottom: 12,
       overflow: 'hidden',
@@ -1135,19 +1145,21 @@ const makeStyles = (c: ThemePalette) =>
       borderBottomColor: c.hairline,
     },
     laneCapText: {
-      color: c.textSecondary,
-      fontSize: 9,
+      color: c.navy,
+      fontSize: 13,
       fontWeight: '800',
-      letterSpacing: 0.5,
+      letterSpacing: 0.4,
+      marginTop: 1,
     },
     headerHint: {
       flex: 1,
       maxWidth: MEDIAN_MAX,
       textAlign: 'center',
-      color: c.textTertiary,
-      fontSize: 10,
-      fontWeight: '700',
+      color: c.textSecondary,
+      fontSize: 13.5,
+      fontWeight: '600',
     },
+
 
     /** Positioning context for the two lane overlays. */
     roadStack: {
@@ -1245,6 +1257,17 @@ const makeStyles = (c: ThemePalette) =>
     medianMeta: {
       flexDirection: 'row',
       alignItems: 'center',
+      gap: 6,
+    },
+    medianCongested: {
+      backgroundColor: c.statusHeavyBg,
+      borderRadius: Radius.control,
+      marginVertical: 5,
+    },
+    nameRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
       gap: 6,
     },
     /*
@@ -1549,25 +1572,36 @@ const makeStyles = (c: ThemePalette) =>
       backgroundColor: 'rgba(255,255,255,0.9)',
     },
     kmBadge: {
-      paddingHorizontal: 8,
+      paddingHorizontal: 10,
       paddingVertical: 3,
-      borderRadius: 8,
+      borderRadius: Radius.pill,
       borderWidth: 1,
       borderColor: c.border,
       backgroundColor: c.surfaceMuted,
       alignItems: 'center',
     },
+    kmBadgeCongested: {
+      backgroundColor: c.surface,
+      borderColor: c.statusHeavyBg,
+    },
     kmBadgeText: {
       color: c.textSecondary,
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: '800',
+    },
+    kmBadgeTextCongested: {
+      color: c.statusHeavyText,
     },
 
     exitName: {
-      color: c.text,
-      fontSize: Typography.fontSize.base,
-      fontWeight: '700',
+      flexShrink: 1,
+      color: c.navy,
+      fontSize: 17,
+      fontWeight: '800',
       textAlign: 'center',
+    },
+    exitNameCongested: {
+      color: c.statusHeavyText,
     },
     readingRow: {
       flexDirection: 'row',

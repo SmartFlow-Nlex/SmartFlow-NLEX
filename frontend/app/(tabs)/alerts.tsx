@@ -1,18 +1,20 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import AIAssistantFAB, { FAB_CLEARANCE } from '../../components/community/AIAssistantFAB';
+import { Pressable, RefreshControl, StyleSheet, Switch, Text, View } from 'react-native';
+import AIAssistantFAB from '../../components/community/AIAssistantFAB';
 import { Reveal } from '../../components/motion';
 import { useAlerts, type AlertCategory, type AlertItem } from '../../alerts';
 import { alertTone } from '../../alerts/tone';
 import { useMobileConfig } from '../../lib/mobileConfig';
-import { useTheme, useThemedStyles } from '../../theme';
-import AppHeader from '../../components/AppHeader';
-import PageHeading from '../../components/PageHeading';
+import { Radius, softShadow, useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
-import { Typography } from '../../constants/typography';
+import ScreenShell from '../../components/ui/ScreenShell';
+import PageHero from '../../components/ui/PageHero';
+import HeroMascot from '../../components/ui/HeroMascot';
+import SegmentedControl from '../../components/ui/SegmentedControl';
+import { GlassCard } from '../../components/ui/Cards';
+import TitleSparkle from '../../components/TitleSparkle';
 
 const alertFeatures = [
   'Predictive congestion alerts',
@@ -205,284 +207,170 @@ export default function AlertsScreen(): React.ReactElement {
     );
   };
 
-  return (
-    <SafeAreaView edges={['top']} style={styles.safeArea}>
-      <View style={styles.screen}>
-        {/* Fixed chrome, like every other tab. */}
-        <AppHeader />
-        <PageHeading
-          icon="notifications-outline"
-          title="Smart Alerts"
-          subtitle="Proactive notifications for traffic events"
-          divider={false}
-          action={
-            <View style={styles.headingBadge}>
-              <Text style={styles.headingBadgeText}>{totalUnread}</Text>
-            </View>
-          }
+  /** "3 unread" or "2 notices", and the way to clear the unread marks. */
+  const listHeader = (
+    <View style={styles.listHeader}>
+      <Text style={styles.listHeaderText}>
+        {unreadHere > 0
+          ? `${unreadHere} unread`
+          : `${visible.length} ${visible.length === 1 ? 'notice' : 'notices'}`}
+      </Text>
+
+      <Pressable
+        accessibilityRole="button"
+        disabled={totalUnread === 0}
+        onPress={handleMarkAllAsRead}
+        style={({ pressed }) => [
+          styles.markReadButton,
+          totalUnread === 0 && styles.markReadButtonDisabled,
+          pressed && totalUnread > 0 && styles.pressedDim,
+        ]}
+      >
+        <Ionicons
+          name="checkmark-done"
+          size={16}
+          color={totalUnread === 0 ? colors.textTertiary : colors.accent}
         />
-
-        {/* Pinned with the header: the tab you are on should not scroll away. */}
-        {allowedCategories.length > 1 && (
-        <View style={styles.tabShell}>
-          <View accessibilityRole="tablist" style={styles.tabBar}>
-            {allowedCategories.map((item) => {
-              const active = activeCategory === item.key;
-              const tally = tallies[item.key];
-              return (
-                <Pressable
-                  key={item.key}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: active }}
-                  accessibilityLabel={`${item.label}, ${tally.total} total, ${tally.unread} unread`}
-                  onPress={() => setCategory(item.key)}
-                  style={({ pressed }) => [
-                    styles.tab,
-                    active && styles.tabActive,
-                    pressed && !active && styles.pressedDim,
-                  ]}
-                >
-                  <Ionicons
-                    name={item.icon}
-                    size={15}
-                    color={active ? colors.textInverse : colors.textSecondary}
-                  />
-                  <Text style={[styles.tabText, active && styles.tabTextActive]}>
-                    {item.label}
-                  </Text>
-                  <View style={[styles.tabCount, active && styles.tabCountActive]}>
-                    <Text style={[styles.tabCountText, active && styles.tabCountTextActive]}>
-                      {tally.total}
-                    </Text>
-                  </View>
-                  {tally.unread > 0 && !active ? <View style={styles.tabUnreadDot} /> : null}
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-        )}
-
-        <ScrollView
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              tintColor={colors.accent}
-              colors={[colors.accent]}
-            />
-          }
-        >
-          <View style={styles.body}>
-            <View style={styles.listHeader}>
-              <Text style={styles.listHeaderText}>
-                {unreadHere > 0
-                  ? `${unreadHere} unread`
-                  : `${visible.length} ${visible.length === 1 ? 'notice' : 'notices'}`}
-              </Text>
-
-              <Pressable
-                accessibilityRole="button"
-                disabled={totalUnread === 0}
-                onPress={handleMarkAllAsRead}
-                style={({ pressed }) => [
-                  styles.markReadButton,
-                  totalUnread === 0 && styles.markReadButtonDisabled,
-                  pressed && totalUnread > 0 && styles.pressedDim,
-                ]}
-              >
-                <Ionicons
-                  name="checkmark-done"
-                  size={14}
-                  color={totalUnread === 0 ? colors.textTertiary : colors.accent}
-                />
-                <Text
-                  style={[
-                    styles.markReadText,
-                    totalUnread === 0 && styles.markReadTextDisabled,
-                  ]}
-                >
-                  Mark all read
-                </Text>
-              </Pressable>
-            </View>
-
-            {visible.length > 0 ? (
-              <View style={styles.alertList}>{visible.map(renderAlert)}</View>
-            ) : (
-              <View style={styles.emptyCard}>
-                <View style={styles.emptyIcon}>
-                  <Ionicons name={emptyState.icon} size={22} color={emptyState.color} />
-                </View>
-                <Text style={styles.emptyTitle}>{emptyState.title}</Text>
-                <Text style={styles.emptyText}>{emptyState.text}</Text>
-              </View>
-            )}
-
-            {/*
-              A setting you touch once, at the bottom. It used to be the first
-              card on the screen and took the whole opening screenful before a
-              single alert.
-            */}
-            <View style={styles.settingsCard}>
-              <View style={styles.settingsTopRow}>
-                <View style={styles.settingsTitleGroup}>
-                  <Text style={styles.settingsTitle}>Push Notifications</Text>
-                  <View style={styles.settingsStatusRow}>
-                    <View
-                      style={[
-                        styles.statusDot,
-                        {
-                          backgroundColor: notificationsEnabled
-                            ? colors.success
-                            : colors.textTertiary,
-                        },
-                      ]}
-                    />
-                    <Text style={styles.settingsStatus}>
-                      {notificationsEnabled ? 'Enabled' : 'Disabled'}
-                    </Text>
-                  </View>
-                </View>
-
-                <Switch
-                  onValueChange={setNotificationsEnabled}
-                  value={notificationsEnabled}
-                  // Was a hardcoded light-grey/pale-blue pair, so on the dark
-                  // theme the track was a bright slab either way and the off
-                  // state looked enabled.
-                  trackColor={{ false: colors.switchTrackOff, true: colors.switchTrackOn }}
-                  thumbColor={notificationsEnabled ? colors.accent : colors.switchThumb}
-                />
-              </View>
-
-              <View style={styles.featuresList}>
-                {alertFeatures.map((feature) => (
-                  <View key={feature} style={styles.featureRow}>
-                    <Ionicons name="checkmark-circle" size={15} color={colors.success} />
-                    <Text style={styles.featureText}>{feature}</Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          </View>
-        </ScrollView>
-
-        <AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />
-      </View>
-    </SafeAreaView>
+        <Text style={[styles.markReadText, totalUnread === 0 && styles.markReadTextDisabled]}>
+          Mark all read
+        </Text>
+      </Pressable>
+    </View>
   );
+
+  return (
+    <ScreenShell
+      scene="alerts"
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor={colors.accent}
+          colors={[colors.accent]}
+        />
+      }
+      overlay={<AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />}
+    >
+      <PageHero
+        // Placed to the mockup: Lex up by the bell, the title low under him,
+        // and the Alerts / Maintenance switch 205pt below the header.
+        title="Smart Alerts"
+        subtitle={'Proactive notifications\nfor traffic events'}
+        titleScale={0.0845}
+        offsetTop={116}
+        mascot={<HeroMascot size={132} />}
+        mascotWidth={138}
+        mascotPlacement={{ top: 47, bleed: 7 }}
+        minHeight={205}
+      />
+
+      {allowedCategories.length > 1 && (
+        <SegmentedControl
+          accessibilityLabel="Alert lists"
+          items={allowedCategories.map((item) => ({
+            key: item.key,
+            label: item.label,
+            icon: item.icon,
+            count: tallies[item.key].total,
+            // Only on the list you are NOT on - the count beside the one you
+            // are on already says it, and two markers on one chip is noise.
+            dot: tallies[item.key].unread > 0,
+          }))}
+          value={activeCategory}
+          onChange={setCategory}
+          style={styles.switcher}
+        />
+      )}
+
+      {visible.length > 0 ? (
+        <>
+          {listHeader}
+          <View style={styles.alertList}>{visible.map(renderAlert)}</View>
+        </>
+      ) : (
+        // Nothing to show: the count and the illustration share one card,
+        // rather than a heading floating over an empty box.
+        <GlassCard style={styles.emptyCard}>
+          {listHeader}
+          {/* As in the mockup: a pale disc, small clouds either side, and
+              sparkles in the state's own colour. */}
+          <View style={styles.emptyArt}>
+            <Ionicons name="cloud" size={44} color={colors.primarySoftBorder} style={styles.emptyCloudLeft} />
+            <Ionicons name="cloud" size={34} color={colors.primarySoftBorder} style={styles.emptyCloudRight} />
+            <View style={[styles.emptyRingOuter, { backgroundColor: emptyRing(emptyState.color) }]}>
+              <Ionicons name={emptyState.icon} size={34} color={emptyState.color} />
+            </View>
+            <TitleSparkle size={22} color={emptyState.color} style={styles.emptySparkle} />
+            <View style={styles.emptySparkleLow}>
+              <TitleSparkle size={18} color={emptyState.color} />
+            </View>
+          </View>
+          <Text style={styles.emptyTitle}>{emptyState.title}</Text>
+          <Text style={styles.emptyText}>{emptyState.text}</Text>
+        </GlassCard>
+      )}
+
+      {/*
+        A setting you touch once, at the bottom - not the first card on the
+        screen, where it used to take the whole opening screenful.
+      */}
+      <GlassCard style={styles.settingsCard}>
+        <View style={styles.settingsTopRow}>
+          <View style={styles.settingsTitleGroup}>
+            <Text style={styles.settingsTitle}>Push Notifications</Text>
+            <View style={styles.settingsStatusRow}>
+              <View
+                style={[
+                  styles.statusDot,
+                  { backgroundColor: notificationsEnabled ? colors.success : colors.textTertiary },
+                ]}
+              />
+              <Text style={styles.settingsStatus}>
+                {notificationsEnabled ? 'Enabled' : 'Disabled'}
+              </Text>
+            </View>
+          </View>
+
+          <Switch
+            onValueChange={setNotificationsEnabled}
+            value={notificationsEnabled}
+            trackColor={{ false: colors.switchTrackOff, true: colors.switchTrackOn }}
+            // A white knob on both tracks: the "on" track is the brand blue, so
+            // a blue knob there would vanish into it.
+            thumbColor={colors.switchThumb}
+          />
+        </View>
+
+        <View style={styles.featuresList}>
+          {alertFeatures.map((feature) => (
+            <View key={feature} style={styles.featureRow}>
+              <Ionicons name="checkmark-circle" size={22} color={colors.success} />
+              <Text style={styles.featureText}>{feature}</Text>
+            </View>
+          ))}
+        </View>
+      </GlassCard>
+    </ScreenShell>
+  );
+}
+
+/** A soft wash of the empty state's own colour, for the ring behind its icon. */
+function emptyRing(color: string): string {
+  const hex = color.replace('#', '');
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
+    return 'transparent';
+  }
+  const n = parseInt(hex, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},0.14)`;
 }
 
 const makeStyles = (c: ThemePalette) =>
   StyleSheet.create({
-    safeArea: {
-      // Brand colour so the status-bar inset runs into the header instead of
-      // leaving a white strip above it.
-      flex: 1,
-      backgroundColor: c.primary,
-    },
-    screen: {
-      // Was c.surfaceMuted, the only tab not on c.background - so switching to
-      // Alerts shifted the page colour under you for no reason.
-      flex: 1,
-      backgroundColor: c.background,
-    },
-    content: {
-      paddingBottom: FAB_CLEARANCE,
-    },
-    body: {
-      paddingHorizontal: 16,
-      paddingTop: 16,
-    },
     pressedDim: {
       opacity: 0.62,
     },
-    headingBadge: {
-      minWidth: 26,
-      height: 26,
-      borderRadius: 13,
-      paddingHorizontal: 8,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: c.primarySoft,
-      borderWidth: 1,
-      borderColor: c.primarySoftBorder,
-    },
-    headingBadgeText: {
-      color: c.accent,
-      fontSize: 12,
-      fontWeight: '800',
-    },
-
-    tabShell: {
-      paddingHorizontal: 16,
-      paddingBottom: 14,
-      backgroundColor: c.surface,
-      borderBottomWidth: 1,
-      borderBottomColor: c.border,
-    },
-    tabBar: {
-      flexDirection: 'row',
-      gap: 4,
-      padding: 4,
-      borderRadius: 14,
-      backgroundColor: c.surfaceMuted,
-      borderWidth: 1,
-      borderColor: c.border,
-    },
-    tab: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 6,
-      // 40pt of thumb target.
-      paddingVertical: 10,
-      borderRadius: 10,
-    },
-    tabActive: {
-      backgroundColor: c.primary,
-    },
-    tabText: {
-      color: c.textSecondary,
-      fontSize: Typography.fontSize.sm,
-      fontWeight: '700',
-    },
-    tabTextActive: {
-      color: c.textInverse,
-    },
-    tabCount: {
-      minWidth: 20,
-      paddingHorizontal: 6,
-      paddingVertical: 1,
-      borderRadius: 999,
-      alignItems: 'center',
-      backgroundColor: c.surface,
-    },
-    tabCountActive: {
-      backgroundColor: c.onPrimarySoft,
-    },
-    tabCountText: {
-      color: c.textSecondary,
-      fontSize: 10,
-      fontWeight: '800',
-    },
-    tabCountTextActive: {
-      color: c.textInverse,
-    },
-    // Only on the tab you are NOT on - otherwise the count beside it already
-    // tells you, and two markers on one chip is noise.
-    tabUnreadDot: {
-      position: 'absolute',
-      top: 7,
-      right: 7,
-      width: 7,
-      height: 7,
-      borderRadius: 3.5,
-      backgroundColor: c.danger,
+    switcher: {
+      marginBottom: 13,
     },
 
     listHeader: {
@@ -490,22 +378,22 @@ const makeStyles = (c: ThemePalette) =>
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: 12,
-      marginBottom: 12,
+      marginBottom: 14,
     },
     listHeaderText: {
       flex: 1,
-      color: c.text,
-      fontSize: Typography.fontSize.lg,
+      color: c.navy,
+      fontSize: 22,
       fontWeight: '800',
-      letterSpacing: -0.2,
+      letterSpacing: -0.3,
     },
     markReadButton: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      paddingHorizontal: 11,
-      paddingVertical: 8,
-      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderRadius: Radius.pill,
       backgroundColor: c.primarySoft,
       borderWidth: 1,
       borderColor: c.primarySoftBorder,
@@ -515,11 +403,8 @@ const makeStyles = (c: ThemePalette) =>
       borderColor: c.border,
     },
     markReadText: {
-      // Was a literal #1D5CFF: a saturated blue that on the dark page sat at
-      // roughly 2.5:1 against the background - technically visible, not
-      // readable. c.accent is the token that inverts for this.
       color: c.accent,
-      fontSize: Typography.fontSize.xs,
+      fontSize: 14,
       fontWeight: '700',
     },
     markReadTextDisabled: {
@@ -531,42 +416,38 @@ const makeStyles = (c: ThemePalette) =>
     },
     alertCard: {
       flexDirection: 'row',
-      gap: 12,
-      backgroundColor: c.surface,
-      borderRadius: 16,
+      alignItems: 'flex-start',
+      gap: 14,
+      padding: 16,
+      paddingLeft: 18,
+      borderRadius: Radius.card - 2,
+      backgroundColor: c.glass,
       borderWidth: 1,
-      borderColor: c.border,
-      padding: 14,
-      // Room for the unread stripe so text never sits on top of it.
-      paddingLeft: 17,
+      borderColor: c.glassBorder,
       overflow: 'hidden',
-      shadowColor: c.cardShadow,
-      shadowOpacity: 0.04,
-      shadowRadius: 10,
-      shadowOffset: { width: 0, height: 4 },
-      elevation: 2,
+      ...softShadow(c),
     },
     alertCardUnread: {
-      backgroundColor: c.surfaceHighlight,
-      borderColor: c.borderLight,
+      backgroundColor: c.surface,
     },
     alertCardPressed: {
-      opacity: 0.82,
+      backgroundColor: c.pressed,
     },
+    // Unread is marked by a stripe in the alert's own severity colour, which
+    // carries the same weight in both themes and says the severity at a glance.
     unreadStripe: {
       position: 'absolute',
       left: 0,
       top: 0,
       bottom: 0,
-      width: 4,
+      width: 5,
     },
     alertIconWrap: {
-      width: 36,
-      height: 36,
-      borderRadius: 12,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       alignItems: 'center',
       justifyContent: 'center',
-      marginTop: 1,
     },
     alertContent: {
       flex: 1,
@@ -574,91 +455,101 @@ const makeStyles = (c: ThemePalette) =>
     alertTopRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
-      marginBottom: 5,
+      gap: 8,
     },
     alertTitle: {
       flex: 1,
-      color: c.text,
-      fontSize: Typography.fontSize.base,
-      fontWeight: '700',
+      color: c.navy,
+      fontSize: 16.5,
+      fontWeight: '800',
     },
     unreadDot: {
-      width: 8,
-      height: 8,
-      borderRadius: 4,
-      backgroundColor: c.accent,
+      width: 9,
+      height: 9,
+      borderRadius: 5,
+      backgroundColor: c.danger,
     },
     alertMessage: {
-      // Was c.text at full weight, the same colour as the title, so the card
-      // had two equally loud lines and no clear first read.
       color: c.textSecondary,
-      fontSize: Typography.fontSize.sm,
+      fontSize: 14.5,
+      fontWeight: '500',
       lineHeight: 21,
-      marginBottom: 10,
+      marginTop: 4,
     },
     timeRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 4,
+      gap: 5,
+      marginTop: 8,
     },
     timeText: {
       color: c.textTertiary,
-      fontSize: Typography.fontSize.xs,
+      fontSize: 12.5,
       fontWeight: '600',
     },
 
     emptyCard: {
       alignItems: 'center',
-      gap: 9,
-      paddingVertical: 32,
-      paddingHorizontal: 22,
-      borderRadius: 16,
-      backgroundColor: c.surface,
-      borderWidth: 1,
-      borderColor: c.border,
     },
-    emptyIcon: {
-      width: 46,
-      height: 46,
-      borderRadius: 23,
+    // The success mark: the state's colour as a soft ring around a white disc.
+    emptyArt: {
+      marginTop: 10,
+      marginBottom: 16,
+    },
+    emptyRingOuter: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: c.statusSmoothBg,
+    },
+    emptyCloudLeft: {
+      position: 'absolute',
+      left: -92,
+      top: 18,
+    },
+    emptyCloudRight: {
+      position: 'absolute',
+      right: -78,
+      top: 22,
+    },
+    emptySparkle: {
+      position: 'absolute',
+      top: -14,
+      right: -16,
+    },
+    // The same mark turned round, at the lower left.
+    emptySparkleLow: {
+      position: 'absolute',
+      bottom: -12,
+      left: -14,
+      transform: [{ rotate: '180deg' }],
     },
     emptyTitle: {
-      color: c.text,
-      fontSize: Typography.fontSize.base,
+      color: c.navy,
+      fontSize: 20,
       fontWeight: '800',
+      textAlign: 'center',
     },
     emptyText: {
       color: c.textSecondary,
-      fontSize: Typography.fontSize.sm,
+      fontSize: 15,
       fontWeight: '500',
-      lineHeight: 20,
+      lineHeight: 22,
       textAlign: 'center',
+      marginTop: 6,
+      paddingHorizontal: 6,
     },
 
     settingsCard: {
-      backgroundColor: c.surface,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: c.border,
-      padding: 16,
-      marginTop: 24,
-      shadowColor: c.cardShadow,
-      shadowOpacity: 0.06,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 4 },
-      elevation: 3,
+      marginTop: 20,
     },
     settingsTopRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: 12,
-      marginBottom: 14,
-      paddingBottom: 14,
+      paddingBottom: 16,
       borderBottomWidth: 1,
       borderBottomColor: c.hairline,
     },
@@ -666,39 +557,40 @@ const makeStyles = (c: ThemePalette) =>
       flex: 1,
     },
     settingsTitle: {
-      // Was hardcoded black, which is invisible on the dark theme's card. Every
-      // other title on this screen already uses the palette.
-      color: c.text,
-      fontSize: Typography.fontSize.base,
-      fontWeight: '700',
+      color: c.navy,
+      fontSize: 21,
+      fontWeight: '800',
+      letterSpacing: -0.3,
     },
     settingsStatusRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
-      marginTop: 5,
+      gap: 7,
+      marginTop: 4,
     },
     statusDot: {
-      width: 7,
-      height: 7,
-      borderRadius: 3.5,
+      width: 9,
+      height: 9,
+      borderRadius: 5,
     },
     settingsStatus: {
       color: c.textSecondary,
-      fontSize: Typography.fontSize.sm,
+      fontSize: 15,
       fontWeight: '600',
     },
     featuresList: {
-      gap: 10,
+      gap: 14,
+      paddingTop: 16,
     },
     featureRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 9,
+      gap: 12,
     },
     featureText: {
+      flex: 1,
       color: c.textSecondary,
-      fontSize: Typography.fontSize.sm,
+      fontSize: 15.5,
       fontWeight: '500',
     },
   });

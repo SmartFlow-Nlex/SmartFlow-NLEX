@@ -2,10 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme, useThemedStyles } from '../../theme';
+import { Radius, softShadow, useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
 import { Pulse } from '../motion';
+import { BlueStatusCard } from '../ui/Cards';
 import { CongestionLevel } from '../../lib/trafficModel';
 import {
   CorridorDirectionStatus,
@@ -330,20 +331,15 @@ const LiveCorridorStatus: React.FC = () => {
       : counts.slow > 0
         ? `${counts.slow} exit${counts.slow === 1 ? '' : 's'} slowing`
         : 'Corridor is running clear';
-  const headlineTone = toneFor(
-    counts.congested > 0 ? 'severe' : counts.slow > 0 ? 'moderate' : 'low',
-    colors,
-  );
-
   return (
     <View style={styles.wrap}>
-      <View style={styles.healthCard}>
+      <BlueStatusCard style={styles.healthCard}>
         <View style={styles.healthTop}>
           <View style={styles.healthTitleGroup}>
             <Text style={styles.eyebrow}>RIGHT NOW</Text>
-            <Text style={[styles.headline, { color: headlineTone.text }]}>{headline}</Text>
+            <Text style={styles.headline}>{headline}</Text>
           </View>
-          <View style={[styles.livePill, { backgroundColor: feedTone.background }]}>
+          <View style={styles.livePill}>
             {/*
               The one pulsing thing in the app. It breathes only while the feed
               is actually live - on STALE or OFFLINE it holds still, because a
@@ -353,7 +349,7 @@ const LiveCorridorStatus: React.FC = () => {
             <Pulse active={feedState === 'live'}>
               <View style={[styles.liveDot, { backgroundColor: feedTone.solid }]} />
             </Pulse>
-            <Text style={[styles.liveText, { color: feedTone.text }]}>
+            <Text style={styles.liveText}>
               {feedState === 'offline' ? 'OFFLINE' : feedState === 'stale' ? 'STALE' : 'LIVE'}
             </Text>
           </View>
@@ -383,7 +379,7 @@ const LiveCorridorStatus: React.FC = () => {
         </View>
 
         <View style={styles.healthFooter}>
-          <Ionicons name="time-outline" size={12} color={colors.textTertiary} />
+          <Ionicons name="time-outline" size={16} color={colors.textInverse} />
           <Text style={styles.healthFooterText}>{formatFeedAge(feed.ageMinutes)}</Text>
           <Pressable
             accessibilityRole="button"
@@ -391,10 +387,10 @@ const LiveCorridorStatus: React.FC = () => {
             onPress={refresh}
             style={({ pressed }) => [styles.refreshButton, pressed && styles.pressedDim]}
           >
-            <Ionicons name="refresh" size={14} color={colors.accent} />
+            <Ionicons name="refresh" size={18} color={colors.textInverse} />
           </Pressable>
         </View>
-      </View>
+      </BlueStatusCard>
 
       {feed.stale ? (
         <View style={styles.staleBanner}>
@@ -457,18 +453,9 @@ const makeStyles = (c: ThemePalette) =>
       opacity: 0.65,
     },
 
+    // The blue panel: the corridor's headline, like Current Status on the dashboard.
     healthCard: {
-      backgroundColor: c.surface,
-      borderRadius: 18,
-      borderWidth: 1,
-      borderColor: c.border,
-      padding: 16,
-      gap: 14,
-      shadowColor: c.cardShadow,
-      shadowOpacity: 0.07,
-      shadowRadius: 14,
-      shadowOffset: { width: 0, height: 5 },
-      elevation: 3,
+      gap: 16,
     },
     healthTop: {
       flexDirection: 'row',
@@ -479,42 +466,49 @@ const makeStyles = (c: ThemePalette) =>
       flex: 1,
     },
     eyebrow: {
-      color: c.textTertiary,
-      fontSize: 10,
+      color: 'rgba(255,255,255,0.75)',
+      fontSize: 12.5,
       fontWeight: '800',
-      letterSpacing: 1,
+      letterSpacing: 1.4,
       marginBottom: 4,
     },
     headline: {
-      fontSize: 21,
+      color: c.textInverse,
+      fontSize: 27,
       fontWeight: '800',
-      letterSpacing: -0.3,
-      lineHeight: 26,
+      letterSpacing: -0.5,
+      lineHeight: 32,
     },
     livePill: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 5,
-      paddingHorizontal: 9,
-      paddingVertical: 5,
-      borderRadius: 999,
+      gap: 7,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: Radius.pill,
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.22)',
     },
     liveDot: {
-      width: 6,
-      height: 6,
-      borderRadius: 3,
+      width: 8,
+      height: 8,
+      borderRadius: 4,
     },
     liveText: {
-      fontSize: 9,
+      color: c.textInverse,
+      fontSize: 12,
       fontWeight: '800',
-      letterSpacing: 0.6,
+      letterSpacing: 0.8,
     },
     proportionBar: {
       flexDirection: 'row',
-      height: 10,
-      borderRadius: 999,
+      height: 12,
+      borderRadius: Radius.pill,
       overflow: 'hidden',
-      backgroundColor: c.track,
+      backgroundColor: 'rgba(255,255,255,0.22)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.3)',
     },
     legendRow: {
       flexDirection: 'row',
@@ -532,36 +526,38 @@ const makeStyles = (c: ThemePalette) =>
       borderRadius: 4,
     },
     legendCount: {
-      color: c.text,
-      fontSize: Typography.fontSize.sm,
+      color: c.textInverse,
+      fontSize: 17,
       fontWeight: '800',
     },
     legendLabel: {
-      color: c.textSecondary,
-      fontSize: Typography.fontSize.xs,
+      color: 'rgba(255,255,255,0.82)',
+      fontSize: 14,
       fontWeight: '600',
     },
     healthFooter: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
-      paddingTop: 12,
+      gap: 8,
+      paddingTop: 14,
       borderTopWidth: 1,
-      borderTopColor: c.hairline,
+      borderTopColor: 'rgba(255,255,255,0.18)',
     },
     healthFooterText: {
       flex: 1,
-      color: c.textTertiary,
-      fontSize: Typography.fontSize.xs,
+      color: 'rgba(255,255,255,0.8)',
+      fontSize: 14,
       fontWeight: '600',
     },
     refreshButton: {
-      width: 32,
-      height: 32,
-      borderRadius: 11,
+      width: 42,
+      height: 42,
+      borderRadius: 14,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: c.primarySoft,
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.22)',
     },
 
     staleBanner: {
@@ -583,13 +579,14 @@ const makeStyles = (c: ThemePalette) =>
       alignSelf: 'flex-start',
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 7,
-      paddingHorizontal: 13,
-      paddingVertical: 10,
-      borderRadius: 999,
-      backgroundColor: c.surface,
+      gap: 8,
+      paddingHorizontal: 16,
+      paddingVertical: 11,
+      borderRadius: Radius.pill,
+      backgroundColor: c.glass,
       borderWidth: 1,
-      borderColor: c.border,
+      borderColor: c.glassBorder,
+      ...softShadow(c),
     },
     toggleChipActive: {
       backgroundColor: c.primary,

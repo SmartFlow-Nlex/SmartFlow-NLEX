@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
-import { API_TIMEOUT_MS, CORRIDOR_API_BASE_URL } from '../config/api';
+import { API_TIMEOUT_MS, TRAFFIC_SOURCE_URL } from '../config/api';
 
 /**
  * Which screens this build is allowed to show, and any advisory an operator has
  * published, both set from the dashboard's Mobile Control Centre.
  *
- * Served by the SmartFlow dashboard backend at GET /api/mobile-config — the same
- * host the corridor feed comes from, so if the corridor map can load, so can
- * this. The dashboard writes it at /dashboard/mobile; the contract lives in
+ * Served by the team's dashboard at GET /api/mobile-config. It used to be asked
+ * of the corridor host, which was the dashboard until the corridor feed moved
+ * behind our own backend - and that has no such route, so every switch and
+ * advisory set in the dashboard was silently ignored. The dashboard writes it
+ * at /dashboard/mobile; the contract lives in
  * Back-End/src/validators/mobile-config.validator.ts.
  */
 
@@ -153,7 +155,7 @@ function parseConfig(raw: unknown): MobileConfig {
 }
 
 export async function fetchMobileConfig(signal?: AbortSignal): Promise<MobileConfig> {
-	const url = `${CORRIDOR_API_BASE_URL}${MOBILE_CONFIG_PATH}`;
+	const url = `${TRAFFIC_SOURCE_URL}${MOBILE_CONFIG_PATH}`;
 
 	// A dead host does not refuse the connection, it just never answers; without
 	// our own deadline the app would sit on the splash screen waiting for the

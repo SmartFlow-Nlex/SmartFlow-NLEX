@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { CommunityPost, TrafficStatus } from '@smartflow/shared';
-import { useTheme, useThemedStyles } from '../../theme';
+import { useTheme, useThemedStyles, Radius, softShadow } from '../../theme';
 import type { CongestionLevel } from '../../lib/trafficModel';
 import { toneFor } from '../dashboard/severity';
 import type { ThemePalette } from '../../theme';
@@ -52,7 +52,17 @@ const CommunityPostCard: React.FC<CommunityPostCardProps> = ({ post, onLike }) =
           </View>
 
           <View style={styles.authorMeta}>
-            <Text style={styles.authorName}>{post.authorName}</Text>
+            {/* The age shares the name's line only, so the place and both
+                chips get the whole width beneath, as in the mockup. */}
+            <View style={styles.nameRow}>
+              <Text style={styles.authorName} numberOfLines={1}>
+                {post.authorName}
+              </Text>
+              <View style={styles.timeGroup}>
+                <Ionicons name="time-outline" size={12} color={colors.textTertiary} />
+                <Text style={styles.timeText}>{post.timeAgo}</Text>
+              </View>
+            </View>
             <View style={styles.infoRow}>
               <Ionicons name="location-outline" size={12} color={colors.textTertiary} />
               <Text style={styles.metaText}>{post.location}</Text>
@@ -86,18 +96,6 @@ const CommunityPostCard: React.FC<CommunityPostCardProps> = ({ post, onLike }) =
               </View>
             </View>
           </View>
-        </View>
-
-        {/*
-          Pinned to the card's right edge rather than buried mid-line. It used
-          to sit between the direction chip and the condition chip, competing
-          with two coloured pills for one row - and on a narrow phone that row
-          wrapped, breaking "9d ago" away from its own clock icon. Top-right is
-          where a reader looks for a post's age anyway.
-        */}
-        <View style={styles.timeGroup}>
-          <Ionicons name="time-outline" size={12} color={colors.textTertiary} />
-          <Text style={styles.timeText}>{post.timeAgo}</Text>
         </View>
       </View>
 
@@ -153,19 +151,15 @@ export default CommunityPostCard;
 const makeStyles = (c: ThemePalette) =>
   StyleSheet.create({
   card: {
-    backgroundColor: c.surface,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
+    backgroundColor: c.glass,
+    borderRadius: Radius.card,
+    padding: 18,
+    marginBottom: 14,
     // A drawn edge as well as the shadow: shadows carry the card on a light
     // background but contribute almost nothing on a dark one.
     borderWidth: 1,
-    borderColor: c.hairline,
-    shadowColor: c.cardShadow,
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    borderColor: c.glassBorder,
+    ...softShadow(c),
   },
   topRow: {
     flexDirection: 'row',
@@ -178,12 +172,12 @@ const makeStyles = (c: ThemePalette) =>
     flex: 1,
   },
   avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
+    marginRight: 12,
   },
   avatarText: {
     color: c.textInverse,
@@ -193,22 +187,29 @@ const makeStyles = (c: ThemePalette) =>
   authorMeta: {
     flex: 1,
   },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 5,
+  },
   authorName: {
-    color: c.text,
-    fontSize: Typography.fontSize.sm,
-    fontWeight: Typography.fontWeight.bold,
-    marginBottom: 4,
+    flexShrink: 1,
+    color: c.navy,
+    fontSize: 16.5,
+    fontWeight: '800',
   },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 4,
+    gap: 6,
   },
   metaText: {
     color: c.textSecondary,
-    fontSize: Typography.fontSize.xs,
-    fontWeight: Typography.fontWeight.normal,
+    fontSize: 14,
+    fontWeight: '500',
   },
   timeGroup: {
     flexDirection: 'row',
@@ -224,43 +225,43 @@ const makeStyles = (c: ThemePalette) =>
     // A step quieter than the location: it is the least actionable fact on the
     // card, and it now sits alone where nothing else competes for the eye.
     color: c.textTertiary,
-    fontSize: Typography.fontSize.xs,
-    fontWeight: Typography.fontWeight.normal,
+    fontSize: 13,
+    fontWeight: '500',
   },
   conditionChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 999,
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: Radius.pill,
   },
   conditionDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
   },
   conditionChipText: {
-    fontSize: 10,
+    fontSize: 12.5,
     fontWeight: '800',
   },
   directionChip: {
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
     backgroundColor: c.primarySoft,
   },
   directionChipText: {
     color: c.accent,
-    fontSize: 10,
-    fontWeight: Typography.fontWeight.bold,
+    fontSize: 12,
+    fontWeight: '800',
   },
   message: {
     color: c.text,
-    fontSize: Typography.fontSize.sm,
-    fontWeight: Typography.fontWeight.normal,
-    lineHeight: 21,
-    marginTop: 14,
+    fontSize: 16,
+    fontWeight: '400',
+    lineHeight: 23,
+    marginTop: 16,
     marginBottom: 14,
   },
   mediaRow: {
@@ -270,27 +271,27 @@ const makeStyles = (c: ThemePalette) =>
     marginBottom: 14,
   },
   mediaThumbWrap: {
-    width: 78,
-    height: 78,
+    width: 104,
+    height: 104,
   },
   mediaThumbPressed: {
     opacity: 0.75,
   },
   expandBadge: {
     position: 'absolute',
-    right: 4,
-    bottom: 4,
-    width: 18,
-    height: 18,
-    borderRadius: 5,
+    right: 6,
+    bottom: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 8,
     backgroundColor: 'rgba(0,0,0,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   mediaThumb: {
-    width: 78,
-    height: 78,
-    borderRadius: 10,
+    width: 104,
+    height: 104,
+    borderRadius: 16,
     backgroundColor: c.surfaceMuted,
   },
   mediaVideo: {

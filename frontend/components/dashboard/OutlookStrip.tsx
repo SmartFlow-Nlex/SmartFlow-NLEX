@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { useTheme, useThemedStyles } from '../../theme';
+import { useTheme, useThemedStyles, Radius } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
 import { NlexDirectionId, getDirection } from '../../constants/nlexSegments';
@@ -111,12 +111,12 @@ export default OutlookStrip;
 const makeStyles = (c: ThemePalette) =>
   StyleSheet.create({
   card: {
-    backgroundColor: c.surface,
-    borderRadius: 18,
+    backgroundColor: c.glass,
+    borderRadius: Radius.card,
     padding: 16,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: c.border,
+    borderColor: c.glassBorder,
     shadowColor: c.cardShadow,
     shadowOpacity: 0.05,
     shadowRadius: 14,

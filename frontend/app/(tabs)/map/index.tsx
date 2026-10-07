@@ -1,15 +1,13 @@
 import React, { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import AIAssistantFAB, { FAB_CLEARANCE } from '../../../components/community/AIAssistantFAB';
+import { StyleSheet } from 'react-native';
+import AIAssistantFAB from '../../../components/community/AIAssistantFAB';
 import { Reveal } from '../../../components/motion';
-import { useTheme, useThemedStyles } from '../../../theme';
-import AppHeader from '../../../components/AppHeader';
-import PageHeading from '../../../components/PageHeading';
-import type { ThemePalette } from '../../../theme';
-import { Typography } from '../../../constants/typography';
+import { useThemedStyles } from '../../../theme';
+import ScreenShell from '../../../components/ui/ScreenShell';
+import PageHero from '../../../components/ui/PageHero';
+import SegmentedControl from '../../../components/ui/SegmentedControl';
 import useNow from '../../../hooks/useNow';
 import ForecastCorridorView from '../../../components/map/ForecastCorridorView';
 import LiveCorridorStatus from '../../../components/map/LiveCorridorStatus';
@@ -31,7 +29,6 @@ const views: { key: CorridorView; label: string; icon: keyof typeof Ionicons.gly
  * 48-hour slider sat directly above live data it had no effect on.
  */
 export default function MapScreen(): React.ReactElement {
-  const { colors } = useTheme();
   const router = useRouter();
   const styles = useThemedStyles(makeStyles);
   const [view, setView] = useState<CorridorView>('live');
@@ -55,134 +52,51 @@ export default function MapScreen(): React.ReactElement {
   const now = useNow(30000);
 
   return (
-    <SafeAreaView edges={['top']} style={styles.safeArea}>
-      <View style={styles.screen}>
-        {/* Outside the ScrollView: the brand bar, the screen's name and the
-            view switch stay put while the corridor scrolls under them. */}
-        <AppHeader />
-        <PageHeading
-          // The same glyph the tab wears, so the tab and the screen it opens
-          // are recognisably the same place.
-          icon="map-outline"
-          title="Corridor"
-          subtitle={
-            view === 'live'
-              ? 'Live status at all 20 NLEX interchanges'
-              : 'SmartFlow model forecast, up to 7 days ahead'
-          }
-          divider={false}
+    <ScreenShell
+      scene="corridor"
+      overlay={<AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />}
+    >
+      {/* No Lex here: the corridor is the data-heaviest tab, and its network
+          scene is the identity. The assistant shortcut is the one mascot. */}
+      <PageHero
+        // Placed to the mockup: a large title 46pt under the header, the
+        // Live / Forecast switch 128pt down.
+        title="Corridor"
+        subtitle={
+          activeView === 'live'
+            ? 'Live status at all 20 NLEX interchanges'
+            : 'SmartFlow model forecast, up to 7 days ahead'
+        }
+        titleScale={0.104}
+        offsetTop={46}
+        minHeight={128}
+      />
+
+      {allowed.length > 1 && (
+        <SegmentedControl
+          accessibilityLabel="Corridor view"
+          items={allowed.map((item) => ({ key: item.key, label: item.label, icon: item.icon }))}
+          value={activeView}
+          onChange={setView}
+          style={styles.switcher}
         />
+      )}
 
-        {allowed.length > 1 && (
-        <View style={styles.switchShell}>
-          <View accessibilityRole="tablist" style={styles.viewSwitch}>
-            {allowed.map((item) => {
-              const active = activeView === item.key;
-              return (
-                <Pressable
-                  key={item.key}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: active }}
-                  onPress={() => setView(item.key)}
-                  style={({ pressed }) => [
-                    styles.viewTab,
-                    active && styles.viewTabActive,
-                    pressed && !active && styles.viewTabPressed,
-                  ]}
-                >
-                  <Ionicons
-                    name={item.icon}
-                    size={15}
-                    color={active ? colors.textInverse : colors.textSecondary}
-                  />
-                  <Text style={[styles.viewTabText, active && styles.viewTabTextActive]}>
-                    {item.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-        )}
-
-        <ScrollView
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-        >
-          {/*
-            Keyed on the active view so switching Live/Forecast remounts and
-            replays the entrance. Without the key React reuses the subtree and
-            the toggle swaps content with no acknowledgement at all, which is
-            what made the switch feel unresponsive.
-          */}
-          <Reveal delay={0} key={activeView}>
-            {activeView === 'live' ? <LiveCorridorStatus /> : <ForecastCorridorView now={now} />}
-          </Reveal>
-        </ScrollView>
-
-        <AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />
-      </View>
-    </SafeAreaView>
+      {/*
+        Keyed on the active view so switching Live/Forecast remounts and
+        replays the entrance - without the key the toggle swaps content with
+        no acknowledgement at all, and feels unresponsive.
+      */}
+      <Reveal delay={0} key={activeView}>
+        {activeView === 'live' ? <LiveCorridorStatus /> : <ForecastCorridorView now={now} />}
+      </Reveal>
+    </ScreenShell>
   );
 }
 
-const makeStyles = (c: ThemePalette) =>
+const makeStyles = () =>
   StyleSheet.create({
-    safeArea: {
-      // Brand colour so the status-bar inset runs into the header instead of
-      // leaving a white strip above it.
-      flex: 1,
-      backgroundColor: c.primary,
-    },
-    screen: {
-      flex: 1,
-      backgroundColor: c.background,
-    },
-    switchShell: {
-      paddingHorizontal: 16,
-      paddingBottom: 14,
-      backgroundColor: c.surface,
-      borderBottomWidth: 1,
-      borderBottomColor: c.border,
-    },
-    // Wider and taller than the filters inside each view, because this one
-    // changes what the whole screen is about rather than filtering a list.
-    viewSwitch: {
-      flexDirection: 'row',
-      gap: 4,
-      padding: 4,
-      borderRadius: 14,
-      backgroundColor: c.surfaceMuted,
-      borderWidth: 1,
-      borderColor: c.border,
-    },
-    viewTab: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 7,
-      paddingVertical: 10,
-      borderRadius: 10,
-    },
-    viewTabActive: {
-      backgroundColor: c.primary,
-    },
-    viewTabPressed: {
-      backgroundColor: c.pressed,
-    },
-    viewTabText: {
-      color: c.textSecondary,
-      fontSize: Typography.fontSize.sm,
-      fontWeight: '700',
-    },
-    viewTabTextActive: {
-      color: c.textInverse,
-    },
-    content: {
-      paddingHorizontal: 16,
-      paddingTop: 16,
-      // Clears the floating assistant button.
-      paddingBottom: FAB_CLEARANCE,
+    switcher: {
+      marginBottom: 12,
     },
   });

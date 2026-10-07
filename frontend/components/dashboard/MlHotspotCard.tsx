@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme, useThemedStyles } from '../../theme';
+import { useTheme, useThemedStyles, Radius } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
 import type { Hotspot, HotspotTone } from '../../lib/insightsApi';
@@ -81,11 +81,11 @@ export default MlHotspotCard;
 const makeStyles = (c: ThemePalette) =>
   StyleSheet.create({
     card: {
-      backgroundColor: c.surface,
-      borderRadius: 16,
+      backgroundColor: c.glass,
+      borderRadius: Radius.card - 4,
       padding: 14,
       borderWidth: 1,
-      borderColor: c.border,
+      borderColor: c.glassBorder,
       // The severity rail. Its colour is set per card from the tone, so the
       // list reads as a ranked set at a glance rather than as five identical
       // white rectangles.

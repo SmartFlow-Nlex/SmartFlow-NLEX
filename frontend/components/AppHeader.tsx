@@ -1,10 +1,9 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { useRouter } from 'expo-router';
-import { Image, StyleSheet, Text, View } from 'react-native';
-import { useAuth } from '../auth';
-import { Fonts, useThemedStyles } from '../theme';
+import { Ionicons } from '@expo/vector-icons';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Fonts, GUTTER, softShadow, useTheme, useThemedStyles } from '../theme';
 import type { ThemePalette } from '../theme';
-import AvatarButton from './AvatarButton';
 
 /**
  * Initials for the avatar, from whatever the account actually has.
@@ -27,37 +26,28 @@ export function initialsFor(fullName: string | undefined): string {
 
 export interface AppHeaderProps {
   /**
-   * Extra controls between the brand and the avatar. The avatar stays the
-   * rightmost element on every tab so its position never moves.
+   * Extra controls between the brand and the settings button. The settings
+   * button stays the rightmost element on every tab so its position never
+   * moves.
    */
   children?: React.ReactNode;
 }
 
 /**
- * The brand bar every tab wears.
+ * The brand row every tab wears: logo, wordmark, settings.
  *
- * Deliberately NOT inside the page's ScrollView: it used to be, on four of the
- * five tabs, so the app's identity and the only route to the profile scrolled
- * away the moment you read anything. Render it as a sibling above the scroll
- * area and it stays put, which is also what the Dashboard already did - this
- * makes the other four agree with it.
+ * See-through - it sits in the tab's sky rather than on a navy slab, and
+ * ScreenShell frosts a backing in behind it once content scrolls under. It
+ * stays put while the page scrolls, so the app's identity and the way to
+ * settings never scroll away.
  */
 const AppHeader: React.FC<AppHeaderProps> = ({ children }) => {
+  const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const router = useRouter();
-  const { session } = useAuth();
-
-  const initials = useMemo(() => initialsFor(session?.fullName), [session?.fullName]);
 
   return (
     <View style={styles.bar}>
-      {/*
-        A lit edge along the top. One hairline of white at 9% is the whole
-        trick: it catches where the bar meets the status area and gives the
-        navy a surface, instead of a flat rectangle of colour.
-      */}
-      <View pointerEvents="none" style={styles.topSheen} />
-
       <View style={styles.brandGroup}>
         <View style={styles.logoWrap}>
           <Image
@@ -71,11 +61,6 @@ const AppHeader: React.FC<AppHeaderProps> = ({ children }) => {
           <Text style={styles.title} numberOfLines={1}>
             SmartFlow NLEX
           </Text>
-          {/*
-            The bar was one short word floating in a very wide empty field. The
-            line says what the app is for, and gives the title something to sit
-            against so the brand reads as a lockup rather than a stray label.
-          */}
           <Text style={styles.tagline} numberOfLines={1}>
             TRAFFIC INTELLIGENCE
           </Text>
@@ -84,16 +69,17 @@ const AppHeader: React.FC<AppHeaderProps> = ({ children }) => {
 
       <View style={styles.actions}>
         {children}
-        <AvatarButton initials={initials} onPress={() => router.push('/profile')} />
+        {/* Profile is where the settings live - theme, account, sign out. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Settings and profile"
+          hitSlop={6}
+          onPress={() => router.push('/profile')}
+          style={({ pressed }) => [styles.settings, pressed && styles.settingsPressed]}
+        >
+          <Ionicons name="settings-sharp" size={20} color={colors.navy} />
+        </Pressable>
       </View>
-
-      {/*
-        The gold rule. The logo is half gold road and half navy circuitry, but
-        only the navy had ever made it into the UI - which is most of why every
-        screen read as one flat blue. This is the other half, used as brand
-        furniture and nowhere near a status colour.
-      */}
-      <View pointerEvents="none" style={styles.brandRule} />
     </View>
   );
 };
@@ -102,80 +88,81 @@ export default AppHeader;
 
 const makeStyles = (c: ThemePalette) =>
   StyleSheet.create({
+    // Sized to the mockups: a 34pt tile, a 17pt wordmark, a 40pt button.
     bar: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      backgroundColor: c.primary,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingHorizontal: GUTTER,
+      paddingVertical: 6,
     },
     brandGroup: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: 12,
       flex: 1,
     },
     /*
-     * Solid white in both themes, deliberately.
-     *
-     * The mark is half gold road and half navy circuitry, and the navy half
-     * disappears against anything dark - which is what the previous 16%-white
-     * tile was, once composited over the navy bar. `app/sign-in.tsx` already
-     * plates it in white for this exact reason; this matches it.
+     * Solid white in both themes, deliberately: the mark is half gold road and
+     * half navy circuitry, and the navy half disappears against anything dark.
      */
     logoWrap: {
       width: 34,
       height: 34,
-      borderRadius: 11,
+      borderRadius: 10,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: '#FFFFFF',
-      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: c.glassBorder,
+      ...softShadow(c),
     },
     logo: {
-      // ~4.5pt of white around the art on each side, so it is plated rather
-      // than cropped tight to the tile.
-      width: 25,
-      height: 25,
+      width: 26,
+      height: 26,
     },
     brandText: {
       flex: 1,
     },
+    // White over the deep-blue sky every tab now has, as in the mockups.
     title: {
-      color: c.textInverse,
-      // The wordmark, in the dashboard's brand face (Nunito Black).
+      color: c.onScene,
       fontFamily: Fonts.brand,
-      fontSize: 18,
-      letterSpacing: 0.3,
+      fontSize: 17,
+      letterSpacing: 0.2,
+      textShadowColor: c.onSceneShadow,
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 6,
     },
     tagline: {
-      color: 'rgba(255,255,255,0.58)',
-      fontSize: 9.5,
+      color: c.onSceneSoft,
+      textShadowColor: c.onSceneShadow,
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 4,
+      fontSize: 7.5,
       fontWeight: '700',
-      // Wide tracking, because at this size a lowercase-height line of text
-      // under a bold title just looks like a wrapped second line otherwise.
+      // Wide tracking, so a small line under a bold title reads as a lockup
+      // rather than a wrapped second line.
       letterSpacing: 1.6,
-      marginTop: 1,
-    },
-    topSheen: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      height: 1,
-      backgroundColor: 'rgba(255,255,255,0.09)',
-    },
-    brandRule: {
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      right: 0,
-      height: 2,
-      backgroundColor: c.brandGold,
+      marginTop: 3,
     },
     actions: {
       flexDirection: 'row',
       alignItems: 'center',
+      gap: 8,
+    },
+    settings: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: c.glassStrong,
+      borderWidth: 1,
+      borderColor: c.glassBorder,
+      ...softShadow(c),
+    },
+    settingsPressed: {
+      backgroundColor: c.pressed,
     },
   });

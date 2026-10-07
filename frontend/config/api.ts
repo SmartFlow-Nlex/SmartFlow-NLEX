@@ -84,7 +84,8 @@ export const BACKEND_API_BASE_URL =
 /**
  * The team's dashboard, where our backend reads the traffic from.
  *
- * The app never reads data from it - only pings it awake. On Render's free
+ * The app reads the dashboard's own data from it directly - forecasts, hotspots,
+ * maintenance, road reports and the mobile settings - and pings it awake. On Render's free
  * tier it sleeps, and a request from our backend (another Render service) is
  * refused with HTTP 429 rather than waking it, so the backend alone can never
  * bring it back. A request from the phone does wake it. See wakeTrafficSource.

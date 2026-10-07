@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme, useThemedStyles } from '../../theme';
+import { useTheme, useThemedStyles, Radius } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
 import type { EventForecast } from '../../lib/insightsApi';
@@ -111,11 +111,11 @@ export default EventForecastCard;
 const makeStyles = (c: ThemePalette) =>
   StyleSheet.create({
   card: {
-    backgroundColor: c.surface,
-    borderRadius: 16,
+    backgroundColor: c.glass,
+    borderRadius: Radius.card - 4,
     padding: 14,
     borderWidth: 1,
-    borderColor: c.border,
+    borderColor: c.glassBorder,
     shadowColor: c.cardShadow,
     shadowOpacity: 0.05,
     shadowRadius: 14,

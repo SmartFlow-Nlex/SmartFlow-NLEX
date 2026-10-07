@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme, useThemedStyles } from '../../theme';
+import { useTheme, useThemedStyles, Radius, softShadow } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
 import {
@@ -414,29 +414,29 @@ const makeStyles = (c: ThemePalette) =>
       marginBottom: 12,
     },
     stepIndex: {
-      width: 20,
-      height: 20,
-      borderRadius: 10,
+      width: 28,
+      height: 28,
+      borderRadius: 14,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: c.primary,
+      backgroundColor: c.primaryDark,
     },
     stepIndexLocked: {
       backgroundColor: c.surfaceMuted,
     },
     stepIndexText: {
       color: c.textInverse,
-      fontSize: 10,
+      fontSize: 13,
       fontWeight: '800',
     },
     stepIndexTextLocked: {
       color: c.textTertiary,
     },
     stepTitle: {
-      color: c.text,
-      fontSize: Typography.fontSize.sm,
+      color: c.navy,
+      fontSize: 15,
       fontWeight: '800',
-      letterSpacing: 0.3,
+      letterSpacing: 0.6,
       textTransform: 'uppercase',
     },
     stepTitleLocked: {
@@ -503,8 +503,8 @@ const makeStyles = (c: ThemePalette) =>
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 9,
-      borderRadius: 10,
+      paddingVertical: 10,
+      borderRadius: Radius.chip,
       backgroundColor: c.surfaceMuted,
       borderWidth: 1,
       borderColor: c.border,
@@ -521,25 +521,21 @@ const makeStyles = (c: ThemePalette) =>
     chipTextActive: {
       color: c.textInverse,
     },
+    // The glass card every dashboard section sits on.
     card: {
-      backgroundColor: c.surface,
-      borderRadius: 18,
-      padding: 16,
+      backgroundColor: c.glass,
+      borderRadius: Radius.card,
+      padding: 20,
       borderWidth: 1,
-      borderColor: c.border,
-      shadowColor: c.cardShadow,
-      shadowOpacity: 0.05,
-      shadowRadius: 16,
-      shadowOffset: { width: 0, height: 8 },
-      elevation: 3,
-      marginBottom: 20,
+      borderColor: c.glassBorder,
+      ...softShadow(c),
     },
     emptyState: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
       backgroundColor: c.surfaceSubtle,
-      borderRadius: 14,
+      borderRadius: Radius.control,
       borderWidth: 1,
       borderColor: c.hairline,
       borderStyle: 'dashed',
@@ -554,7 +550,7 @@ const makeStyles = (c: ThemePalette) =>
       lineHeight: 17,
     },
     result: {
-      borderRadius: 14,
+      borderRadius: Radius.control + 2,
       borderWidth: 1,
       borderColor: c.border,
       backgroundColor: c.field,

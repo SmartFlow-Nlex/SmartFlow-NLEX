@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useTheme, useThemedStyles } from '../../theme';
+import { useTheme, useThemedStyles, Radius } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
 import { describeHourOffset, formatLongDate, formatTime, formatWeekday, isSameDay } from '../../lib/datetime';
@@ -341,10 +341,10 @@ const makeStyles = (c: ThemePalette) =>
       gap: 14,
     },
     card: {
-      backgroundColor: c.surface,
-      borderRadius: 18,
+      backgroundColor: c.glass,
+      borderRadius: Radius.card,
       borderWidth: 1,
-      borderColor: c.border,
+      borderColor: c.glassBorder,
       padding: 16,
       shadowColor: c.cardShadow,
       shadowOpacity: 0.07,

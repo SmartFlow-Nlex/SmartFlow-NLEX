@@ -1,11 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Image,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,14 +10,14 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useTheme, useThemedStyles } from '../../../theme';
-import AppHeader from '../../../components/AppHeader';
-import PageHeading from '../../../components/PageHeading';
+import { GUTTER, Radius, softShadow, useTheme, useThemedStyles } from '../../../theme';
+import ScreenShell from '../../../components/ui/ScreenShell';
+import PageHero from '../../../components/ui/PageHero';
+import { GlassCard, SectionTitle } from '../../../components/ui/Cards';
 import MoodMascot from '../../../components/MoodMascot';
 import MascotGreeting from '../../../components/MascotGreeting';
 import { PressableScale, Reveal } from '../../../components/motion';
 import type { ThemePalette } from '../../../theme';
-import { Typography } from '../../../constants/typography';
 import {
   AssistantError,
   ChatMessage,
@@ -38,13 +35,14 @@ import { firstNameOf, useAuth } from '../../../auth';
 /** Height of the mascot beside each reply. */
 const MASCOT_SIZE = 40;
 
-/** The car mascot, cut out of its white background, for the page heading. */
-const mascotCar = require('../../../assets/mascot-car.png');
+/** Lex's head, small, inside the chat field - the one other place he appears. */
+const mascotIcon = require('../../../assets/mascot-icon.png');
 
 const quickQuestions = [
   'How is NLEX right now?',
   'May traffic ba sa Bocaue?',
-  'Is Balintawak clear southbound?',
+  'Show traffic at Balintawak',
+  'Northbound conditions',
 ] as const;
 
 /** What the assistant can actually answer, so the empty screen is not a blank prompt. */
@@ -209,329 +207,345 @@ export default function AssistantScreen(): React.ReactElement {
   const canSend = draft.trim().length > 0 && !isThinking;
   const hasConversation = messages.length > 0;
 
-  return (
-    <SafeAreaView edges={['top']} style={styles.safeArea}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.screen}
-      >
-        {/*
-          Both of these used to live INSIDE the scroll area, on a screen that
-          calls scrollToEnd on every new message - so asking a question threw
-          the brand bar and the screen's own title off the top of the display.
-          A chat log scrolls; the chrome around it does not.
-        */}
-        <AppHeader />
-        <PageHeading
-          icon="sparkles"
-          mark={
-            <Image
-              source={mascotCar}
-              resizeMode="contain"
-              style={styles.headingMascot}
-              accessibilityIgnoresInvertColors
-            />
-          }
-          title="Traffic Assistant"
-          subtitle="Answers from the live NLEX corridor feed"
-          action={
-            <>
-              {/* Which language Lex replies in, whatever language the question is in. */}
-              <View accessibilityRole="radiogroup" accessibilityLabel="Reply language" style={styles.languageSwitch}>
-                {languageOptions.map((option) => {
-                  const selected = option.value === language;
-                  return (
-                    <Pressable
-                      key={option.value}
-                      accessibilityRole="radio"
-                      accessibilityLabel={`Reply in ${option.name}`}
-                      accessibilityState={{ selected }}
-                      hitSlop={4}
-                      onPress={() => pickLanguage(option.value)}
-                      style={[styles.languageOption, selected && styles.languageOptionSelected]}
-                    >
-                      <Text style={[styles.languageText, selected && styles.languageTextSelected]}>
-                        {option.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              {hasConversation ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Clear the conversation"
-                  onPress={clearConversation}
-                  style={({ pressed }) => [styles.clearButton, pressed && styles.pressedDim]}
-                >
-                  <Ionicons name="trash-outline" size={17} color={colors.textSecondary} />
-                </Pressable>
-              ) : null}
-            </>
-          }
-        />
-
-        <ScrollView
-          contentContainerStyle={styles.content}
-          onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
-          ref={scrollRef}
-          showsVerticalScrollIndicator={false}
-        >
-          {messages.length === 0 ? (
-            <View style={styles.intro}>
-              <MascotGreeting size={150} />
-              {/* Lex's own words, so it gets a bubble like every reply. */}
-              {greeting === null ? (
-                <View style={[styles.greetingBubble, styles.thinkingBubble]}>
-                  <ActivityIndicator color={colors.accent} size="small" />
-                  <Text style={styles.thinkingText}>Lex is saying hi...</Text>
-                </View>
-              ) : (
-                <Reveal delay={0} key={greeting}>
-                  <View style={styles.greetingBubble}>
-                    <Text style={styles.introText}>{greeting}</Text>
-                  </View>
-                </Reveal>
-              )}
-
-              {capabilitiesEnabled && (
-              <View style={styles.capabilityList}>
-                {capabilities.map((item) => (
-                  <View key={item.text} style={styles.capabilityRow}>
-                    <View style={styles.capabilityIcon}>
-                      <Ionicons name={item.icon} size={14} color={colors.accent} />
-                    </View>
-                    <Text style={styles.capabilityText}>{item.text}</Text>
-                  </View>
-                ))}
-              </View>
-              )}
-            </View>
-          ) : null}
-
-          {/*
-            `delay={0}`, not a stagger: each bubble mounts once and fades in as
-            it arrives. Staggering by index would make the tenth reply of a
-            conversation wait behind nine that are already on screen.
-          */}
-          {messages.map((message, index) =>
-            message.role === 'assistant' ? (
-              <Reveal delay={0} key={message.id}>
-              <View style={styles.chatRow}>
-                {/* Acts out the answer; only the newest one moves. */}
-                <MoodMascot
-                  mood={message.mood ?? 'alert'}
-                  size={MASCOT_SIZE}
-                  animate={index === messages.length - 1 && !isThinking}
-                  style={styles.assistantBadge}
-                />
-                <View style={styles.chatColumn}>
-                  <View style={styles.chatBubble}>
-                    <Text style={styles.chatText}>{message.text}</Text>
-                  </View>
-
-                  {/*
-                    Provenance, not decoration: this says the answer came from
-                    the live feed rather than the model's own recollection.
-                    Absent when the model answered without checking anything,
-                    which is itself worth knowing.
-                  */}
-                  {message.toolsUsed !== undefined && message.toolsUsed.length > 0 ? (
-                    <View style={styles.groundedRow}>
-                      {message.toolsUsed.map((tool) => (
-                        <View key={tool} style={styles.groundedChip}>
-                          <Ionicons
-                            name="shield-checkmark"
-                            size={10}
-                            color={colors.statusSmoothText}
-                          />
-                          <Text style={styles.groundedText}>
-                            {toolLabel(tool)}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  ) : null}
-
-                  <Text style={styles.timeText}>{formatTime(message.at)}</Text>
-                </View>
-              </View>
-              </Reveal>
-            ) : (
-              <Reveal delay={0} key={message.id}>
-                <View style={styles.userRow}>
-                  <View style={styles.userColumn}>
-                    <View style={styles.userBubble}>
-                      <Text style={styles.userText}>{message.text}</Text>
-                    </View>
-                    <Text style={styles.userTimeText}>{formatTime(message.at)}</Text>
-                  </View>
-                </View>
-              </Reveal>
-            ),
-          )}
-
-          {isThinking ? (
-            <View style={styles.chatRow}>
-              <MoodMascot mood="thinking" size={MASCOT_SIZE} animate style={styles.assistantBadge} />
-              <View style={styles.chatColumn}>
-                <View style={[styles.chatBubble, styles.thinkingBubble]}>
-                  <ActivityIndicator color={colors.accent} size="small" />
-                  <Text style={styles.thinkingText}>Checking live NLEX data...</Text>
-                </View>
-              </View>
-            </View>
-          ) : null}
-
-          {error !== null ? (
-            <View style={styles.errorBanner}>
-              <Ionicons name="cloud-offline-outline" size={16} color={colors.statusHeavyText} />
-              <Text style={styles.errorText}>{error}</Text>
-              {/* Only offered when there is something to resend - a
-                  configuration error would fail the same way every time. */}
-              {failedQuestion !== null ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Try again"
-                  disabled={isThinking}
-                  hitSlop={8}
-                  onPress={retryFailed}
-                  style={({ pressed }) => [
-                    styles.errorRetry,
-                    pressed && styles.errorRetryPressed,
-                  ]}
-                >
-                  <Text style={styles.errorRetryText}>Try again</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ) : null}
-        </ScrollView>
-
-        <View style={styles.composerShell}>
-          {/*
-            The quick questions were flanked by two caret glyphs standing in
-            for "this scrolls sideways". They read as broken buttons; the row
-            being cut off at the edge already says the same thing.
-          */}
-          {quickQuestionsEnabled && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.quickQuestionsRow}
-          >
-            {quickQuestions.map((item) => (
-              <PressableScale
-                activeScale={0.96}
-                disabled={isThinking}
-                key={item}
-                onPress={() => void send(item)}
-                style={({ pressed }) => [
-                  styles.quickChip,
-                  pressed && styles.quickChipPressed,
-                  isThinking && styles.quickChipDisabled,
-                ]}
-              >
-                <Ionicons name="flash-outline" size={12} color={colors.accent} />
-                <Text numberOfLines={1} style={styles.quickChipText}>
-                  {item}
-                </Text>
-              </PressableScale>
-            ))}
-          </ScrollView>
-          )}
-
-          <View style={styles.inputRow}>
-            <TextInput
-              editable={!isThinking}
-              onChangeText={setDraft}
-              onSubmitEditing={() => void send(draft)}
-              placeholder="Ask about traffic at any NLEX exit"
-              placeholderTextColor={colors.textTertiary}
-              returnKeyType="send"
-              style={styles.input}
-              testID="assistant-input"
-              value={draft}
-            />
+  /** EN / TL, and - once there is a conversation - a way to start over. */
+  const heroControls = (
+    <>
+      {/* Which language Lex replies in, whatever language the question is in. */}
+      <View accessibilityRole="radiogroup" accessibilityLabel="Reply language" style={styles.languageSwitch}>
+        {languageOptions.map((option) => {
+          const selected = option.value === language;
+          return (
             <Pressable
-              accessibilityLabel="Send message"
-              accessibilityRole="button"
-              disabled={!canSend}
-              onPress={() => void send(draft)}
-              style={({ pressed }) => [
-                styles.sendButton,
-                canSend && styles.sendButtonActive,
-                pressed && canSend && styles.pressedDim,
-              ]}
-              testID="assistant-send"
+              key={option.value}
+              accessibilityRole="radio"
+              accessibilityLabel={`Reply in ${option.name}`}
+              accessibilityState={{ selected }}
+              hitSlop={4}
+              onPress={() => pickLanguage(option.value)}
+              style={[styles.languageOption, selected && styles.languageOptionSelected]}
             >
-              <Ionicons
-                name="arrow-up"
-                size={20}
-                color={canSend ? colors.textInverse : colors.textTertiary}
-              />
+              <Text style={[styles.languageText, selected && styles.languageTextSelected]}>
+                {option.label}
+              </Text>
             </Pressable>
+          );
+        })}
+      </View>
+      {hasConversation ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Clear the conversation"
+          onPress={clearConversation}
+          style={({ pressed }) => [styles.clearButton, pressed && styles.pressedDim]}
+        >
+          <Ionicons name="trash-outline" size={18} color={colors.textSecondary} />
+        </Pressable>
+      ) : null}
+    </>
+  );
+
+  /** Pinned under the page and kept above the keyboard by ScreenShell. */
+  const composer = (
+    <View style={styles.composerShell}>
+      {/* Mid-conversation the suggestions ride above the field; on the empty
+          chat they are the "Try asking" grid instead. */}
+      {hasConversation && quickQuestionsEnabled ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.quickQuestionsRow}
+        >
+          {quickQuestions.map((item) => (
+            <PressableScale
+              activeScale={0.96}
+              disabled={isThinking}
+              key={item}
+              onPress={() => void send(item)}
+              style={({ pressed }) => [
+                styles.quickChip,
+                pressed && styles.quickChipPressed,
+                isThinking && styles.quickChipDisabled,
+              ]}
+            >
+              <Ionicons name="flash-outline" size={13} color={colors.accent} />
+              <Text numberOfLines={1} style={styles.quickChipText}>
+                {item}
+              </Text>
+            </PressableScale>
+          ))}
+        </ScrollView>
+      ) : null}
+
+      <View style={styles.inputRow}>
+        <View style={styles.inputPill}>
+          <TextInput
+            editable={!isThinking}
+            onChangeText={setDraft}
+            onSubmitEditing={() => void send(draft)}
+            placeholder="Ask about traffic at any NLEX exit…"
+            placeholderTextColor={colors.textTertiary}
+            returnKeyType="send"
+            style={styles.input}
+            testID="assistant-input"
+            value={draft}
+          />
+          <Image
+            source={mascotIcon}
+            resizeMode="contain"
+            style={styles.inputMascot}
+            accessibilityIgnoresInvertColors
+          />
+        </View>
+        <Pressable
+          accessibilityLabel="Send message"
+          accessibilityRole="button"
+          disabled={!canSend}
+          onPress={() => void send(draft)}
+          style={({ pressed }) => [
+            styles.sendButton,
+            canSend && styles.sendButtonActive,
+            pressed && canSend && styles.pressedDim,
+          ]}
+          testID="assistant-send"
+        >
+          <Ionicons
+            name="arrow-up"
+            size={22}
+            color={canSend ? colors.textInverse : colors.textTertiary}
+          />
+        </Pressable>
+      </View>
+    </View>
+  );
+
+  return (
+    <ScreenShell
+      scene="assistant"
+      keyboardAvoiding
+      scrollRef={scrollRef}
+      // Follow the conversation as it grows. Before the first question the
+      // page is Lex's welcome, which should stay where it starts.
+      onContentSizeChange={() => {
+        if (hasConversation) {
+          scrollRef.current?.scrollToEnd({ animated: true });
+        }
+      }}
+      // No assistant shortcut on the assistant itself, so no room kept for one.
+      bottomPadding={24}
+      footer={composer}
+    >
+      <PageHero
+        // Placed to the mockup: two lines right under the header, the
+        // language switch level with the first.
+        title={'Traffic\nAssistant'}
+        subtitle={'Answers from the live\nNLEX corridor feed'}
+        titleScale={0.089}
+        offsetTop={19}
+        topRight={heroControls}
+      />
+
+      {messages.length === 0 ? (
+        <View style={styles.intro}>
+          {/* The one big Lex in the app: this is his page. */}
+          <MascotGreeting size={196} />
+
+          {/* Lex's own words, so they get a bubble pointing back at him. */}
+          {greeting === null ? (
+            <View style={[styles.greetingBubble, styles.greetingWaiting]}>
+              <View style={styles.greetingTail} />
+              <ActivityIndicator color={colors.accent} size="small" />
+              <Text style={styles.thinkingText}>Lex is saying hi...</Text>
+            </View>
+          ) : (
+            <Reveal delay={0} key={greeting} style={styles.greetingReveal}>
+              <View style={styles.greetingBubble}>
+                <View style={styles.greetingTail} />
+                <Text style={styles.introText}>{greeting}</Text>
+              </View>
+            </Reveal>
+          )}
+
+          {capabilitiesEnabled && (
+            <GlassCard padding={16} style={styles.capabilityCard}>
+              {capabilities.map((item) => (
+                <View key={item.text} style={styles.capabilityRow}>
+                  <View style={styles.capabilityIcon}>
+                    <Ionicons name={item.icon} size={19} color={colors.navy} />
+                  </View>
+                  <Text style={styles.capabilityText}>{item.text}</Text>
+                </View>
+              ))}
+            </GlassCard>
+          )}
+
+          {quickQuestionsEnabled && (
+            <View style={styles.tryAsking}>
+              <SectionTitle icon="flash" title="Try asking" sparkle />
+              {/* One row that scrolls sideways, two in view, as in the mockup. */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                style={styles.suggestionScroller}
+                contentContainerStyle={styles.suggestionRow}
+              >
+                {quickQuestions.map((item) => (
+                  <PressableScale
+                    activeScale={0.97}
+                    disabled={isThinking}
+                    key={item}
+                    onPress={() => void send(item)}
+                    style={({ pressed }) => [
+                      styles.suggestion,
+                      pressed && styles.suggestionPressed,
+                      isThinking && styles.quickChipDisabled,
+                    ]}
+                  >
+                    <Ionicons name="flash-outline" size={16} color={colors.accent} />
+                    <Text numberOfLines={1} style={styles.suggestionText}>
+                      {item}
+                    </Text>
+                  </PressableScale>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+        </View>
+      ) : null}
+
+      {/*
+        `delay={0}`, not a stagger: each bubble mounts once and fades in as it
+        arrives. Staggering by index would make the tenth reply of a
+        conversation wait behind nine that are already on screen.
+      */}
+      {messages.map((message, index) =>
+        message.role === 'assistant' ? (
+          <Reveal delay={0} key={message.id}>
+            <View style={styles.chatRow}>
+              {/* Acts out the answer; only the newest one moves. */}
+              <MoodMascot
+                mood={message.mood ?? 'alert'}
+                size={MASCOT_SIZE}
+                animate={index === messages.length - 1 && !isThinking}
+                style={styles.assistantBadge}
+              />
+              <View style={styles.chatColumn}>
+                <View style={styles.chatBubble}>
+                  <Text style={styles.chatText}>{message.text}</Text>
+                </View>
+
+                {/*
+                  Provenance, not decoration: this says the answer came from the
+                  live feed rather than the model's own recollection. Absent when
+                  the model answered without checking anything, which is itself
+                  worth knowing.
+                */}
+                {message.toolsUsed !== undefined && message.toolsUsed.length > 0 ? (
+                  <View style={styles.groundedRow}>
+                    {message.toolsUsed.map((tool) => (
+                      <View key={tool} style={styles.groundedChip}>
+                        <Ionicons name="shield-checkmark" size={11} color={colors.statusSmoothText} />
+                        <Text style={styles.groundedText}>{toolLabel(tool)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+
+                <Text style={styles.timeText}>{formatTime(message.at)}</Text>
+              </View>
+            </View>
+          </Reveal>
+        ) : (
+          <Reveal delay={0} key={message.id}>
+            <View style={styles.userRow}>
+              <View style={styles.userColumn}>
+                <View style={styles.userBubble}>
+                  <Text style={styles.userText}>{message.text}</Text>
+                </View>
+                <Text style={styles.userTimeText}>{formatTime(message.at)}</Text>
+              </View>
+            </View>
+          </Reveal>
+        ),
+      )}
+
+      {isThinking ? (
+        <View style={styles.chatRow}>
+          <MoodMascot mood="thinking" size={MASCOT_SIZE} animate style={styles.assistantBadge} />
+          <View style={styles.chatColumn}>
+            <View style={[styles.chatBubble, styles.thinkingBubble]}>
+              <ActivityIndicator color={colors.accent} size="small" />
+              <Text style={styles.thinkingText}>Checking live NLEX data...</Text>
+            </View>
           </View>
         </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      ) : null}
+
+      {error !== null ? (
+        <View style={styles.errorBanner}>
+          <Ionicons name="cloud-offline-outline" size={18} color={colors.statusHeavyText} />
+          <Text style={styles.errorText}>{error}</Text>
+          {/* Only offered when there is something to resend - a configuration
+              error would fail the same way every time. */}
+          {failedQuestion !== null ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Try again"
+              disabled={isThinking}
+              hitSlop={8}
+              onPress={retryFailed}
+              style={({ pressed }) => [styles.errorRetry, pressed && styles.errorRetryPressed]}
+            >
+              <Text style={styles.errorRetryText}>Try again</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+    </ScreenShell>
   );
 }
 
 const makeStyles = (c: ThemePalette) =>
   StyleSheet.create({
-    safeArea: {
-      // Brand colour so the status-bar inset runs into the header instead of
-      // leaving a white strip above it.
-      flex: 1,
-      backgroundColor: c.primary,
-    },
-    screen: {
-      // Same reason as the Community tab: the chat bubbles are c.surface, so a
-      // c.surface page made them invisible in dark mode.
-      flex: 1,
-      backgroundColor: c.background,
-    },
-    content: {
-      paddingBottom: 18,
-      flexGrow: 1,
-    },
     pressedDim: {
       opacity: 0.7,
     },
     clearButton: {
-      width: 36,
-      height: 36,
-      borderRadius: 12,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: c.surfaceMuted,
+      backgroundColor: c.glassStrong,
       borderWidth: 1,
-      borderColor: c.border,
+      borderColor: c.glassBorder,
+      ...softShadow(c),
     },
-    /* Same height and plate as the clear button beside it. */
+    /* A frosted pill track with the chosen language as a navy pill. */
     languageSwitch: {
       flexDirection: 'row',
-      height: 36,
-      padding: 3,
-      borderRadius: 12,
-      backgroundColor: c.surfaceMuted,
+      height: 46,
+      padding: 4,
+      borderRadius: Radius.pill,
+      backgroundColor: c.glassStrong,
       borderWidth: 1,
-      borderColor: c.border,
+      borderColor: c.glassBorder,
+      ...softShadow(c),
     },
     languageOption: {
-      minWidth: 32,
-      paddingHorizontal: 7,
-      borderRadius: 9,
+      minWidth: 44,
+      paddingHorizontal: 10,
+      borderRadius: Radius.pill,
       alignItems: 'center',
       justifyContent: 'center',
     },
     languageOptionSelected: {
-      backgroundColor: c.primary,
+      backgroundColor: c.primaryDark,
     },
     languageText: {
       color: c.textSecondary,
-      fontSize: Typography.fontSize.xs,
+      fontSize: 15,
       fontWeight: '800',
       letterSpacing: 0.4,
     },
@@ -539,144 +553,190 @@ const makeStyles = (c: ThemePalette) =>
       color: c.textInverse,
     },
 
-    /* 256x239 source, so this keeps the car's own proportions. */
-    headingMascot: {
-      width: 46,
-      height: 43,
-    },
+    // Lex rises into the hero's lower edge, where the mockup has him.
     intro: {
       alignItems: 'center',
-      gap: 14,
-      paddingHorizontal: 28,
-      paddingTop: 34,
-      paddingBottom: 20,
+      gap: 16,
+      marginTop: -30,
     },
-    /* Round on every corner: the mascot is above it, not beside it. */
+    greetingReveal: {
+      alignSelf: 'stretch',
+    },
+    /* Speech bubble under Lex, its tail pointing up at him. */
     greetingBubble: {
+      alignSelf: 'stretch',
       backgroundColor: c.surface,
-      borderRadius: 16,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
+      borderRadius: Radius.card,
+      paddingHorizontal: 20,
+      paddingVertical: 16,
       borderWidth: 1,
-      borderColor: c.border,
+      borderColor: c.glassBorder,
+      ...softShadow(c),
+    },
+    greetingWaiting: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+    },
+    greetingTail: {
+      position: 'absolute',
+      top: -8,
+      left: '50%',
+      marginLeft: -8,
+      width: 16,
+      height: 16,
+      backgroundColor: c.surface,
+      borderTopWidth: 1,
+      borderLeftWidth: 1,
+      borderColor: c.glassBorder,
+      transform: [{ rotate: '45deg' }],
     },
     introText: {
-      color: c.text,
-      fontSize: Typography.fontSize.base,
-      fontWeight: '600',
+      color: c.navy,
+      fontSize: 17,
+      fontWeight: '700',
       lineHeight: 23,
       textAlign: 'center',
     },
     /*
      * Three concrete things it can do. An empty chat that only says "ask me
      * something" puts the whole burden of guessing the scope on the user.
-     *
-     * Brand navy, not the assistant violet this started as. The violet was
-     * introduced to give the assistant its own identity; the mascot does that
-     * now, and its blues and orange had nothing to do with a lavender panel.
      */
-    capabilityList: {
+    // Sky-tinted rather than white, so it reads apart from the greeting.
+    capabilityCard: {
       alignSelf: 'stretch',
-      gap: 10,
-      marginTop: 4,
-      padding: 14,
-      borderRadius: 14,
+      gap: 12,
       backgroundColor: c.primarySoft,
-      borderWidth: 1,
       borderColor: c.primarySoftBorder,
     },
     capabilityRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: 12,
     },
     capabilityIcon: {
-      width: 24,
-      height: 24,
-      borderRadius: 8,
+      width: 40,
+      height: 40,
+      borderRadius: 12,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: c.surface,
+      borderWidth: 1,
+      borderColor: c.glassBorder,
     },
     capabilityText: {
       flex: 1,
       color: c.textSecondary,
-      fontSize: Typography.fontSize.sm,
+      fontSize: 15.5,
       fontWeight: '500',
+      lineHeight: 21,
+    },
+    tryAsking: {
+      alignSelf: 'stretch',
+      marginTop: 10,
+    },
+    // Edge to edge, so a chip scrolls in from the screen's side.
+    suggestionScroller: {
+      marginHorizontal: -GUTTER,
+    },
+    suggestionRow: {
+      gap: 10,
+      paddingHorizontal: GUTTER,
+      paddingBottom: 4,
+    },
+    suggestion: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      height: 46,
+      paddingHorizontal: 16,
+      borderRadius: Radius.pill,
+      backgroundColor: c.surface,
+      borderWidth: 1,
+      borderColor: c.glassBorder,
+      ...softShadow(c),
+    },
+    suggestionPressed: {
+      backgroundColor: c.primarySoft,
+    },
+    suggestionText: {
+      color: c.navy,
+      fontSize: 14.5,
+      fontWeight: '600',
     },
 
     chatRow: {
       flexDirection: 'row',
       alignItems: 'flex-start',
-      paddingHorizontal: 16,
       paddingTop: 18,
     },
-    // The mascot itself, not a tinted circle - it needs no plate, and at 32pt
-    // the hard hat and the glowing eyes both still read.
+    // The mascot itself, not a tinted circle - it needs no plate, and at 40pt
+    // the cap and the eyes both still read.
     assistantBadge: {
-      marginRight: 9,
+      marginRight: 10,
     },
     chatColumn: {
       flex: 1,
     },
     chatBubble: {
-      maxWidth: '92%',
+      maxWidth: '94%',
+      alignSelf: 'flex-start',
       backgroundColor: c.surface,
-      borderRadius: 16,
+      borderRadius: 20,
       // Flattened corner on the side the avatar is on, so the bubble points
       // back at who said it.
-      borderTopLeftRadius: 4,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
+      borderTopLeftRadius: 6,
+      paddingHorizontal: 16,
+      paddingVertical: 13,
       borderWidth: 1,
-      borderColor: c.border,
+      borderColor: c.glassBorder,
+      ...softShadow(c),
     },
     thinkingBubble: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
-      alignSelf: 'flex-start',
     },
     thinkingText: {
       color: c.textSecondary,
-      fontSize: Typography.fontSize.sm,
+      fontSize: 15,
       fontWeight: '500',
     },
     chatText: {
       color: c.text,
-      fontSize: Typography.fontSize.base,
+      fontSize: 16,
       lineHeight: 24,
     },
     groundedRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 6,
-      marginTop: 7,
+      marginTop: 8,
       marginLeft: 2,
     },
     groundedChip: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 4,
-      paddingHorizontal: 7,
-      paddingVertical: 3,
-      borderRadius: 7,
+      paddingHorizontal: 9,
+      paddingVertical: 4,
+      borderRadius: Radius.pill,
       backgroundColor: c.statusSmoothBg,
     },
     groundedText: {
       color: c.statusSmoothText,
-      fontSize: 9,
+      fontSize: 11,
       fontWeight: '800',
       letterSpacing: 0.2,
     },
     timeText: {
       color: c.textTertiary,
-      fontSize: Typography.fontSize.xs,
+      fontSize: 12,
       marginTop: 6,
       marginLeft: 6,
     },
     userRow: {
-      paddingHorizontal: 16,
       paddingTop: 16,
       alignItems: 'flex-end',
     },
@@ -686,37 +746,37 @@ const makeStyles = (c: ThemePalette) =>
     },
     userBubble: {
       backgroundColor: c.primary,
-      borderRadius: 16,
-      borderBottomRightRadius: 4,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
+      borderRadius: 20,
+      borderBottomRightRadius: 6,
+      paddingHorizontal: 16,
+      paddingVertical: 13,
+      ...softShadow(c, 'lifted'),
     },
     userText: {
       color: c.textInverse,
-      fontSize: Typography.fontSize.base,
-      lineHeight: 22,
+      fontSize: 16,
+      lineHeight: 23,
     },
     userTimeText: {
       color: c.textTertiary,
-      fontSize: Typography.fontSize.xs,
+      fontSize: 12,
       marginTop: 6,
       marginRight: 4,
     },
     errorBanner: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      marginHorizontal: 16,
+      gap: 10,
       marginTop: 16,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: Radius.control,
       backgroundColor: c.statusHeavyBg,
     },
     errorRetry: {
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: Radius.pill,
       backgroundColor: c.surface,
       borderWidth: 1,
       borderColor: c.statusHeavyText,
@@ -726,43 +786,40 @@ const makeStyles = (c: ThemePalette) =>
     },
     errorRetryText: {
       color: c.statusHeavyText,
-      fontSize: Typography.fontSize.sm,
-      fontWeight: Typography.fontWeight.bold,
+      fontSize: 14,
+      fontWeight: '700',
     },
     errorText: {
-      // Was c.danger on c.statusHeavyBg. In dark mode that is #FF6B61 on
-      // #3A1717 - a red on a red, right at the edge of legibility. The paired
-      // `statusHeavyText` token is what that background is designed against.
+      // statusHeavyText is what statusHeavyBg is designed against; c.danger on
+      // it was a red on a red in dark mode.
       color: c.statusHeavyText,
-      fontSize: Typography.fontSize.sm,
+      fontSize: 14,
       fontWeight: '600',
       flex: 1,
     },
 
     composerShell: {
-      borderTopWidth: 1,
-      borderTopColor: c.border,
-      paddingTop: 12,
-      paddingHorizontal: 14,
-      paddingBottom: 14,
-      backgroundColor: c.surface,
+      paddingTop: 10,
+      paddingHorizontal: GUTTER,
+      paddingBottom: 12,
+      backgroundColor: c.background,
     },
     quickQuestionsRow: {
       gap: 8,
-      paddingBottom: 12,
+      paddingBottom: 10,
       paddingRight: 6,
     },
     quickChip: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      height: 32,
-      borderRadius: 16,
-      backgroundColor: c.surfaceMuted,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: c.glass,
       borderWidth: 1,
-      borderColor: c.border,
+      borderColor: c.glassBorder,
       justifyContent: 'center',
-      paddingHorizontal: 12,
+      paddingHorizontal: 14,
     },
     quickChipPressed: {
       backgroundColor: c.primarySoft,
@@ -771,40 +828,52 @@ const makeStyles = (c: ThemePalette) =>
       opacity: 0.5,
     },
     quickChipText: {
-      color: c.text,
-      fontSize: Typography.fontSize.xs,
-      fontWeight: '600',
+      color: c.navy,
+      fontSize: 13.5,
+      fontWeight: '700',
     },
     inputRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
+      gap: 10,
+    },
+    /* The field as one rounded pill, Lex's head tucked inside its right end. */
+    inputPill: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      height: 50,
+      borderRadius: 25,
+      borderWidth: 1,
+      borderColor: c.glassBorder,
+      backgroundColor: c.surface,
+      paddingLeft: 18,
+      paddingRight: 8,
+      ...softShadow(c),
     },
     input: {
       flex: 1,
-      height: 48,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: c.border,
-      // Had no background at all, so it inherited the composer's surface and
-      // the only thing marking it as a field was a 1px border.
-      backgroundColor: c.field,
-      paddingHorizontal: 14,
+      height: '100%',
       color: c.text,
-      fontSize: Typography.fontSize.base,
+      fontSize: 16,
+    },
+    inputMascot: {
+      width: 38,
+      height: 38,
     },
     sendButton: {
-      width: 48,
-      height: 48,
-      borderRadius: 14,
+      width: 50,
+      height: 50,
+      borderRadius: 25,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: c.surfaceDisabled,
       borderWidth: 1,
-      borderColor: c.border,
+      borderColor: c.glassBorder,
     },
     sendButtonActive: {
       backgroundColor: c.primary,
       borderColor: c.primary,
+      ...softShadow(c, 'lifted'),
     },
   });
