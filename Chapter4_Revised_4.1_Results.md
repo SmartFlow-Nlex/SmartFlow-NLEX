@@ -504,18 +504,28 @@ These are collected rather than scattered, because each is individually checkabl
 | Gaussian Mixture Model regimes; Underwood speed-flow fit; critical density | Not rendered on any page |
 | Getis-Ord Gi\* hotspot significance; network-constrained KDE | Segments ranked by count |
 | Geographically Weighted Regression for segment risk | Corridor forecast split by historical share |
-| Linear-programming **toll lane staffing** optimiser | Not implemented; nearest panel is a throughput-gain comparison |
-| TOPSIS closeness coefficients | Secondary Risk Priority Matrix (quadrant) |
-| Fuzzy rule-based Variable Speed Limit (Fig. 4.1.25) | No corresponding panel |
-| Weather-triggered / surge alert rules (Fig. 4.1.26) | No corresponding panel |
-| Monte Carlo emission scenario bands (Fig. 4.1.29) | Not implemented |
-| Emission reduction strategy evaluation (Fig. 4.1.30) | **Strategy A / B / C are hardcoded illustrative values, labelled ILLUSTRATIVE in the build** |
+| Linear-programming **toll lane staffing** optimiser | **Now delivered** as the Booth Staffing Plan panel |
+| TOPSIS closeness coefficients | Not implemented; prioritisation is delivered as Resource Staging and the Patrol Alert Schedule |
+| Fuzzy rule-based Variable Speed Limit | **Now delivered** as the Congestion Response Advisory panel |
+| Weather-triggered / surge alert rules | Delivered within the Congestion Response Advisory and the Patrol Alert Schedule |
+| Monte Carlo emission scenario bands | Not implemented |
+| Emission reduction strategy evaluation | **Now computed**, not illustrative — see below |
 
-**The last row is the one to resolve before the defence.** Figure 4.1.24 in the draft reproduces the
-"Projected Impact of Strategies (Throughput Gain)" card showing Strategy A, B and C. Those three bars
-are **not computed from corridor data** — they are placeholder constants. Presenting them as a
-prescriptive result would misrepresent the system. Either the panel is labelled illustrative in the
-caption, or the figure is removed.
+**The emission panel has been rebuilt since the draft was written, and the draft's screenshot is
+stale.** The old "Projected Impact of Strategies (Throughput Gain)" card showed three placeholder
+bars labelled Strategy A, B and C. It is gone. The delivered panel is *Projected % Emission Reduction
+by Strategy*, computed in `emissions-prescriptive.service.ts` from corridor data, and it reports:
+heavy-vehicle share reduced by one percentage point at **3.39 %** of corridor CO₂, faster incident
+clearance at **0.48 %**, and added response capacity at the busiest hours at **0.33 %**.
+
+The first bar is drawn dashed because it is a **policy target the reader sets**, not an observation —
+the panel accepts a heavy-share shift of up to 4.2 percentage points and recomputes. The other two
+are derived from the delay-carbon figures reported in Section 4.1.3.3. The figure should therefore be
+reproduced from the current build, and the sentence that called it illustrative withdrawn.
+
+The honest reading of the magnitudes is still worth stating: the largest modelled intervention moves
+**3.39 %** of corridor carbon, and the two operational levers move well under one percent each. The
+prescriptive tier's value is in ranking interventions, not in promising large reductions.
 
 ### A disclosure the chapter does not currently make
 
@@ -546,7 +556,7 @@ a chapter that states it plainly loses one claim and keeps its credibility.
 | 10 | "Time to clear" | Built from **report-to-response**; no scene-cleared timestamp exists | Definition stated |
 | 11 | CO₂ seven-day forecast satisfies threshold | Holdout MAPE 9.63 % passes; **7-day horizon MASE 1.176, marked unusable** | Horizon caveat added |
 | 12 | Corridor CO₂ total | **161,224.7 t** (CY2025); earlier 143k and 188k figures are stale | Figure replaced |
-| 13 | Emission reduction strategies | Strategy A/B/C hardcoded, labelled ILLUSTRATIVE | Must be captioned or removed |
+| 13 | Emission reduction strategies called a mock | **Rebuilt and now computed**: 3.39 % / 0.48 % / 0.33 %, Strategy A a user-set policy target | Criticism withdrawn; screenshot re-taken |
 | 14 | Weather-triggered advisory | 14.0 %→14.3 % across 0–100 mm rain | Claim withdrawn |
 | 15 | Apprehension and Undercap Table; mobile community reports | Neither present in the warehouse | Remove from Tables 4.1.1–4.1.2 |
 | 16 | Speed analyses presented as empirical | Non-Waze speed is **synthetic capstone data** per the warehouse's own records | Disclosure added |
@@ -567,9 +577,12 @@ a chapter that states it plainly loses one claim and keeps its credibility.
    move to Chapter 5 as future work. The proponents recommend rewording, since every one of these is
    checkable against the screenshots already embedded in the chapter.
 
-9. **The emission reduction strategy panel is illustrative, not computed.** It should be captioned as
-   such or removed before submission. This is the only figure in the chapter that would misrepresent
-   the system rather than merely overstate it.
+9. **Three panels named as missing in an earlier review have since been built** — Booth Staffing Plan,
+   Congestion Response Advisory, and the computed emission-reduction strategies. Any review note
+   predating 8 October that calls these absent or illustrative is stale. Conversely, the Secondary
+   Incident Risk and Time to Clear cards reproduced in the draft's Figures 4.1.20 and 4.1.21 **no
+   longer exist as separate panels**; that material is now consolidated into Response Time Breakdown
+   and Predicted Median Response Time, so those two screenshots must be replaced.
 
 10. **Speed data that does not come from Waze is synthetic**, per the warehouse's own evaluation
     records. The proponents recommend stating this once, plainly, in 4.1.3.1. A limitation disclosed
