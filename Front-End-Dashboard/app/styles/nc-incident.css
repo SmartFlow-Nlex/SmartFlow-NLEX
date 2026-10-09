@@ -826,8 +826,33 @@ html:root .viz-incident.viz-incident { --kpi-1: var(--page-accent); }
 .inc-sched td.is-widest { color: var(--page-accent); font-weight: 600; }
 .inc-sched td.is-none { color: var(--text-muted); font-style: italic; text-align: left; }
 .inc-shape { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; align-items: end; height: 24px; min-width: 168px; }
-.inc-shape > div { height: 100%; display: flex; align-items: flex-end; }
+.inc-shape > div { position: relative; height: 100%; display: flex; align-items: flex-end; }
 .inc-shape i { display: block; width: 100%; border-radius: 2px 2px 0 0; }
+/* Same recipe as .inc-rank-tip, centered over the hovered cell instead of
+   right-anchored — a 24-cell row has no fixed "right edge" to anchor to. */
+.inc-shape-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  z-index: 20;
+  width: max-content;
+  max-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 300;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.inc-shape-tip b { display: block; font-weight: 600; }
+.inc-shape-tip span { display: block; color: var(--text-muted); }
+.inc-shape-tip span.is-elevated { color: var(--page-accent); font-weight: 600; }
 
 /* --- Heat grids ----------------------------------------------------------- */
 .inc-heat-key {

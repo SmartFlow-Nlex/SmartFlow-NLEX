@@ -2,7 +2,19 @@ import { z } from "zod";
 
 export const MAINTENANCE_STATUSES = ["scheduled", "in_progress", "completed", "cancelled"] as const;
 export const MAINTENANCE_DIRECTIONS = ["NB", "SB", "Both"] as const;
-export const MAINTENANCE_LANE_CLOSURES = ["None", "Shoulder only", "1 lane", "2 lanes", "Full closure"] as const;
+/*
+ * Which lanes are closed, as text the mobile app and map popups show verbatim:
+ * "None", "Shoulder only", "Full closure", or specific lanes joined with " + ",
+ * e.g. "Lane 1 + Lane 2" (Lane 1 is the inner lane). The older "1 lane" and
+ * "2 lanes" are still accepted so existing rows can be saved again.
+ */
+export const MAINTENANCE_LANE_CLOSURES_PATTERN =
+  /^(None|Shoulder only|Full closure|1 lane|2 lanes|(Lane [1-3]|Shoulder)( \+ (Lane [1-3]|Shoulder))*)$/;
+
+// The corridor runs Balintawak (Km 12) to Sta. Ines (Km 88.25); the API is the
+// authority on this, not the dashboard form.
+export const MAINTENANCE_KM_MIN = 12;
+export const MAINTENANCE_KM_MAX = 88.25;
 
 // POST /api/maintenance/schedule — consumed by the dashboard AND the mobile app;
 // keep this shape stable.
@@ -10,12 +22,15 @@ export const MaintenanceScheduleSchema = z
   .object({
     title: z.string().trim().min(3).max(120),
     description: z.string().trim().max(2000).optional(),
-    startKm: z.number().min(0).max(100),
-    endKm: z.number().min(0).max(100),
+    startKm: z.number().min(MAINTENANCE_KM_MIN).max(MAINTENANCE_KM_MAX),
+    endKm: z.number().min(MAINTENANCE_KM_MIN).max(MAINTENANCE_KM_MAX),
     direction: z.enum(MAINTENANCE_DIRECTIONS).default("Both"),
-    laneClosure: z.enum(MAINTENANCE_LANE_CLOSURES).default("Shoulder only"),
+    laneClosure: z.string().trim().regex(MAINTENANCE_LANE_CLOSURES_PATTERN, "Unrecognised lane closure").default("Shoulder only"),
     startsAt: z.string().datetime({ offset: true }),
     endsAt: z.string().datetime({ offset: true }),
+    // Not stored. The caller's explicit "I know this overlaps existing work".
+    // Without it an overlapping schedule is refused with 409.
+    allowOverlap: z.boolean().optional(),
   })
   .refine((v) => new Date(v.endsAt) > new Date(v.startsAt), {
     message: "endsAt must be after startsAt",

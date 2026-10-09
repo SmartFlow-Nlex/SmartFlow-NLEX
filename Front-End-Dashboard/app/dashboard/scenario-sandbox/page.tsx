@@ -2921,11 +2921,15 @@ export default function AiSandboxPage() {
                   scenario. {Math.max(0, Math.ceil(WARMUP_S - focused.metrics.elapsedS))}s to go.
                 </p>
               )}
-              {focused.metrics && focused.metrics.warm && focused.metrics.unmetVehPerHour > 1 && (
+              {/* Keyed off the peak, not the live reading alone — see the matching
+                  comment in DirectionNotes — so a backup that has since cleared
+                  still shows that it happened, not just that the road is clear now. */}
+              {focused.metrics && focused.metrics.warm && focused.peakUnmetVehPerHour > 1 && (
                 <p className="sandbox-live-note warn">
-                  {Math.round(focused.metrics.unmetVehPerHour).toLocaleString()} veh/h of demand cannot
-                  enter: the segment is at capacity and the queue for it forms upstream, outside
-                  this model. The speeds shown describe only the traffic that got on.
+                  Peak {Math.round(focused.peakUnmetVehPerHour).toLocaleString()} veh/h of demand couldn&rsquo;t
+                  enter this run (currently {Math.round(focused.metrics.unmetVehPerHour).toLocaleString()} veh/h):
+                  the segment was at capacity and the queue for it forms upstream, outside this model. The speeds
+                  shown describe only the traffic that got on.
                 </p>
               )}
               <CompareBlock d={focused} direction={null} />
@@ -3326,17 +3330,40 @@ export default function AiSandboxPage() {
               UI: three steps that tick themselves off, with the button sitting
               inside the step it belongs to, and only the current step carrying
               its explanation so the panel stays short. Per carriageway in Both
-              mode: each direction has its own warm-up, its own capture and its
-              own before/after. */}
+              mode: each direction still shows its own warm-up and before/after
+              (the two clocks are independent — see useDirectionSim — so one can
+              genuinely be ready before the other), but one button captures both
+              at once rather than making the operator click twice for what is, in
+              practice, always the same action done on both roads together. */}
           <p className="sandbox-baseline-lede">
             Measures what an intervention costs, by comparing the road before and after it.
           </p>
           {both ? (
-            activeDirections.map((dn) => (
-              <DirectionPanel key={dn} direction={dn} note="its own warm-up, baseline and before/after">
-                <BaselineSteps d={byDirection[dn]} />
-              </DirectionPanel>
-            ))
+            <>
+              <div className="sandbox-btn-row">
+                <button
+                  className="btn-primary"
+                  onClick={() => { nb.captureBaseline(); sb.captureBaseline(); }}
+                  disabled={!nb.metrics || !sb.metrics}
+                  style={{ marginLeft: 0 }}
+                >
+                  {nb.baseline && sb.baseline ? "Re-capture both" : "Capture baseline (both)"}
+                </button>
+                {(nb.baseline || sb.baseline) && (
+                  <button
+                    className="btn-muted"
+                    onClick={() => { nb.setBaseline(null); sb.setBaseline(null); }}
+                  >
+                    Clear both
+                  </button>
+                )}
+              </div>
+              {activeDirections.map((dn) => (
+                <DirectionPanel key={dn} direction={dn} note="its own warm-up and before/after — captured together with the other carriageway by the button above">
+                  <BaselineSteps d={byDirection[dn]} hideCapture />
+                </DirectionPanel>
+              ))}
+            </>
           ) : (
             <BaselineSteps d={focused} />
           )}
@@ -3898,7 +3925,7 @@ function InterventionControls({
  * reads as a miracle. Hence the settling step, which is the one an operator
  * would never guess at.
  */
-function BaselineSteps({ d }: { d: DirectionApi }) {
+function BaselineSteps({ d, hideCapture }: { d: DirectionApi; hideCapture?: boolean }) {
   const elapsedS = d.metrics?.elapsedS ?? 0;
   const warmedUp = elapsedS >= WARMUP_S;
   const stepDone = [warmedUp, d.baseline != null, d.baseline != null && d.anyIntervention];
@@ -3932,16 +3959,22 @@ function BaselineSteps({ d }: { d: DirectionApi }) {
           ) : activeStep === 2 ? (
             <i>Freezes the current numbers for comparison. Nothing in the simulation changes.</i>
           ) : null}
-          <div className="sandbox-btn-row">
-            <button className="btn-primary" onClick={d.captureBaseline} disabled={!d.metrics} style={{ marginLeft: 0 }}>
-              {d.baseline ? "Re-capture" : "Capture baseline"}
-            </button>
-            {d.baseline && (
-              <button className="btn-muted" onClick={() => d.setBaseline(null)}>
-                Clear
+          {/* In Both mode this button lives once, above both panels, and
+              captures both carriageways together — see the combined button
+              in the Baseline comparison section. Each panel still shows its
+              own recorded numbers above; it just doesn't repeat the button. */}
+          {!hideCapture && (
+            <div className="sandbox-btn-row">
+              <button className="btn-primary" onClick={d.captureBaseline} disabled={!d.metrics} style={{ marginLeft: 0 }}>
+                {d.baseline ? "Re-capture" : "Capture baseline"}
               </button>
-            )}
-          </div>
+              {d.baseline && (
+                <button className="btn-muted" onClick={() => d.setBaseline(null)}>
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </li>
 
@@ -4039,11 +4072,18 @@ function DirectionNotes({ d, direction }: { d: DirectionApi; direction: Directio
           scenario. {Math.max(0, Math.ceil(WARMUP_S - m.elapsedS))}s to go.
         </p>
       )}
-      {m.warm && m.unmetVehPerHour > 1 && (
+      {/* unmetVehPerHour alone is a cumulative average since warm-up: it fades
+          as the run goes on rather than resetting, so a brief backup could
+          clear the current reading with nothing left on screen to show it
+          happened. Keying this off the peak instead — see peakUnmetVehPerHour
+          in useDirectionSim — keeps the note up (naming both figures) for the
+          rest of the run even once the live number drops back near zero. */}
+      {m.warm && d.peakUnmetVehPerHour > 1 && (
         <p className="sandbox-live-note warn" data-note={direction}>
-          {Math.round(m.unmetVehPerHour).toLocaleString()} veh/h of demand cannot
-          enter: the segment is at capacity and the queue for it forms upstream, outside
-          this model. The speeds shown describe only the traffic that got on.
+          Peak {Math.round(d.peakUnmetVehPerHour).toLocaleString()} veh/h of demand couldn&rsquo;t enter this run
+          (currently {Math.round(m.unmetVehPerHour).toLocaleString()} veh/h): the segment was at capacity and
+          the queue for it forms upstream, outside this model. The speeds shown describe only the traffic
+          that got on.
         </p>
       )}
     </>

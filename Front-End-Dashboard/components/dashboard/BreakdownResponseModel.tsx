@@ -166,7 +166,7 @@ export default function BreakdownResponseModel() {
       <div className="inc-card-head">
         <div className="inc-card-titles">
           <h3 className="inc-card-title">
-            Response Time Breakdown
+            Predicted Response Time Breakdown
             <InfoTooltip text="Predicted dispatch response time (AAP, Patrol Vehicle, RAMFA, and others), by cause or by service -- a trained model (Cox PH vs XGBoost, whichever scores lower held-out error) predicting a deployment's response_time_min from pre-dispatch context, scored against the actual measured median on a chronological, event-grouped holdout. The descriptive counterpart to this card (Descriptive tab) shows the same two groupings from measured history alone, with no model behind it." />
           </h3>
         </div>

@@ -101,6 +101,7 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
   const [data, setData] = useState<AnalyticsSlice | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hoveredCell, setHoveredCell] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -242,13 +243,35 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
                       <div className="inc-shape">
                         {r.profile.hours.map((v, h) => {
                           const pct = Math.max((v / maxHour) * 100, 6);
+                          const key = `${r.dow}-${h}`;
+                          // Shade is by RANK among all 168 cells, computed against the
+                          // table's shared allHours so a shade means the same relative
+                          // rank in every row (see percentileOf) — reused here so the
+                          // tooltip can say exactly what the color means, not just
+                          // repeat the raw value.
+                          const rank = percentileOf(v, allHours);
+                          const inWindow = r.profile.windows.some(([s, e]) => h >= s && h < e);
+                          const vsMean = r.profile.mean > 0 ? ((v - r.profile.mean) / r.profile.mean) * 100 : 0;
                           return (
-                            <div key={h} title={`${fmtHour(h)}: ${v.toFixed(2)} incidents/day avg`}>
-                              {/* Height is linear (true magnitude); shade is by RANK
-                                  among all 168 cells, computed against the table's
-                                  shared allHours so a shade means the same relative
-                                  rank in every row (see percentileOf). */}
-                              <i style={{ height: `${pct}%`, background: heatShade(percentileOf(v, allHours)) }} />
+                            <div
+                              key={h}
+                              onMouseEnter={() => setHoveredCell(key)}
+                              onMouseLeave={() => setHoveredCell((k) => (k === key ? null : k))}
+                            >
+                              {/* Height is linear (true magnitude). */}
+                              <i style={{ height: `${pct}%`, background: heatShade(rank) }} />
+                              {hoveredCell === key && (
+                                <div className="inc-shape-tip" role="tooltip">
+                                  <b>{r.label}, {fmtHour(h)}</b>
+                                  <span>{v.toFixed(2)} incidents/day avg</span>
+                                  <span>Busier than {Math.round(rank * 100)}% of hours this week</span>
+                                  <span className={inWindow ? "is-elevated" : undefined}>
+                                    {inWindow
+                                      ? "Elevated — inside this day's alert window"
+                                      : `${vsMean >= 0 ? "+" : ""}${vsMean.toFixed(0)}% vs ${r.label}'s own average`}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           );
                         })}

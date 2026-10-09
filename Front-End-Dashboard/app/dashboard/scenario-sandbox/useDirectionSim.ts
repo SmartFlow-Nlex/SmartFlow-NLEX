@@ -196,6 +196,16 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
 
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [baseline, setBaseline] = useState<Baseline | null>(null);
+  /* unmetVehPerHour (Metrics) is a cumulative average since warm-up, not a
+     history: it decays as the run goes on rather than resetting, so a brief
+     burst of over-capacity demand can fade out of it with nothing left to
+     show it ever happened. This tracks the high-water mark separately, so
+     "it eased off" and "it never got backed up" stay distinguishable — reset
+     only on rebuild (a real new run), never by the live figure falling. */
+  const [peakUnmetVehPerHour, setPeakUnmetVehPerHour] = useState(0);
+  useEffect(() => {
+    if (metrics) setPeakUnmetVehPerHour((p) => Math.max(p, metrics.unmetVehPerHour));
+  }, [metrics]);
 
   /* ── Demand, plaza flows, mainline volume: all per direction (see D1 §2 / D2 correction #3).
      Fetched in parallel with the OTHER direction's identical fetches (each hook instance issues
@@ -495,6 +505,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     setSpeedLimit(null);
     setIncidentCount(0);
     setBaseline(null);
+    setPeakUnmetVehPerHour(0);
     scenarioBinding.reset();
     scenarioDueRef.current = -Infinity;
     if (skipRef.current) skipRef.current.cancel = true;
@@ -800,7 +811,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     placingIncident, setPlacingIncident, placingClosure, setPlacingClosure, closureDraftKm, setClosureDraftKm,
     scenarioEvents, owners, skip, cancelSkip, skipToNextPhase,
     addScenarioEvent, removeScenarioEvent,
-    metrics, setMetrics, baseline, setBaseline, captureBaseline,
+    metrics, setMetrics, baseline, setBaseline, captureBaseline, peakUnmetVehPerHour,
     eff, effIncidentCount, activeScenarioText, anyIntervention, interventionSummary,
     manualControls, scenarioFrame, scenarioRoad, scenarioNowS,
     kmAt, mAt, clampKm, spanM,

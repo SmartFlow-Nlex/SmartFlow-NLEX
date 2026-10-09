@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import {
+  type MaintenanceConflict,
   createMaintenanceScheduleInDb,
   getMaintenanceSchedulesFromDb,
   updateMaintenanceScheduleInDb,
@@ -29,6 +30,25 @@ const audit = (req: Request, action: string, targetId: string, details: Record<s
 // NOTE: these endpoints are also consumed by the mobile app — no mock fallbacks;
 // a database failure must surface as an error, never as fake success.
 
+const kmText = (a: number, b: number) => (a === b ? `Km ${a}` : `Km ${Math.min(a, b)}–${Math.max(a, b)}`);
+
+// 409 body for an overlap: a readable message plus the rows it collides with, so
+// the dashboard can list them and the mobile app can show its own wording.
+const conflictResponse = (res: Response, conflicts: MaintenanceConflict[]) =>
+  res.status(409).json({
+    success: false,
+    code: "conflict",
+    message:
+      `This closes the same lane as existing work: ` +
+      conflicts.slice(0, 3).map((c) => `"${c.title}" (${c.direction} ${kmText(c.start_km, c.end_km)})`).join(", ") +
+      (conflicts.length > 3 ? ` and ${conflicts.length - 3} more` : "") +
+      `. Resend with allowOverlap: true to schedule it anyway.`,
+    conflicts,
+  });
+
+const pastStartResponse = (res: Response) =>
+  res.status(400).json({ success: false, code: "past_start", message: "The start can't be in the past" });
+
 // POST /api/maintenance/schedule
 export const createSchedule = async (req: Request, res: Response) => {
   const parsed = MaintenanceScheduleSchema.safeParse(req.body);
@@ -36,10 +56,15 @@ export const createSchedule = async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, message: parsed.error.issues[0]?.message ?? "Invalid parameters" });
   }
 
-  const dbRow = await createMaintenanceScheduleInDb(parsed.data);
-  if (!dbRow) {
+  const { allowOverlap, ...fields } = parsed.data;
+  const result = await createMaintenanceScheduleInDb(fields, allowOverlap === true);
+  if (!result) {
     return res.status(503).json({ success: false, message: "Could not save schedule: database not reachable" });
   }
+  if ("error" in result) {
+    return result.error === "conflict" ? conflictResponse(res, result.conflicts) : pastStartResponse(res);
+  }
+  const dbRow = result.row;
   audit(req, "maintenance.schedule_created", dbRow.id, {
     title: parsed.data.title,
     startKm: parsed.data.startKm,
@@ -76,11 +101,14 @@ export const updateSchedule = async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, message: parsed.error.issues[0]?.message ?? "Invalid parameters" });
   }
 
-  const result = await updateMaintenanceScheduleInDb(req.params.id, parsed.data);
+  const { allowOverlap, ...fields } = parsed.data;
+  const result = await updateMaintenanceScheduleInDb(req.params.id, fields, allowOverlap === true);
   if (!result) {
     return res.status(503).json({ success: false, message: "Could not update schedule: database not reachable" });
   }
   if ("error" in result) {
+    if (result.error === "conflict") return conflictResponse(res, result.conflicts);
+    if (result.error === "past_start") return pastStartResponse(res);
     return res.status(404).json({ success: false, message: "Schedule not found" });
   }
   audit(req, "maintenance.schedule_edited", req.params.id, {
