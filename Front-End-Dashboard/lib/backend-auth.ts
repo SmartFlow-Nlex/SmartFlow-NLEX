@@ -49,6 +49,7 @@ export function installBackendAuth(): void {
 export type Activity =
   | { type: "page.viewed"; path: string }
   | { type: "session.login" }
+  | { type: "session.authenticator_added" }
   | { type: "session.logout" }
   | { type: "audit.exported"; rows: number; format: "json" | "csv" };
 

@@ -85,7 +85,9 @@
 
 /* KPI strip touches. A plaza name is a word, not a figure, so it sits a step
    down from the numerals and may wrap. */
-.viz-traffic .nct-kpi-name { font-size: var(--fs-title); line-height: 1.25; font-weight: 600; }
+/* The plaza name: close to the other tiles' 32 px values, a little smaller and tighter so it stays clear of the
+   tile's corner icon (user requests); a long name wraps to two balanced lines. */
+.viz-traffic .nct-kpi-name { font-size: 28px; line-height: 1.14; font-weight: var(--numeral-weight); letter-spacing: -0.03em; text-wrap: balance; padding-right: 8px; }
 .viz-traffic .nct-kpi-note { margin-top: 2px; font-size: var(--fs-label); letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); }
 
 /* Empty and error states inside a fixed-height chart body. */
@@ -941,3 +943,20 @@ select.nct-select.is-warn { color: var(--color-warning); border-color: var(--col
 /* One line: the label and its figure stay together beside the title. */
 .nct-answer-line.is-one-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nct-answer-line.nct-answer-row { margin: -4px 0 0; }
+
+/* A chart that takes the card's spare height: the wrapper grows as a flex item and the chart is laid
+   over it, so "100%" has a real height to resolve against. Capped so a few bars never become slabs. */
+.nct-fill-chart { position: relative; flex: 1 1 auto; width: 100%; max-height: 560px; }
+.nct-fill-chart > div { position: absolute; inset: 0; }
+
+/* --- Predictive tab: full-width cards that split inside (8 Oct 2026, user request) -----------
+   The congestion card puts its grid on the left and "What to act on" on the right; the event card
+   puts its four figures beside its chart. Below 1100 px each goes back to one column. */
+.nct-split { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 16px 28px; align-items: start; }
+.nct-split > * { min-width: 0; }
+.nct-split.is-event { grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); align-items: stretch; }
+.nct-split.is-event > .nct-stats { align-content: start; }
+@media (max-width: 1100px) {
+  .nct-split,
+  .nct-split.is-event { grid-template-columns: minmax(0, 1fr); }
+}

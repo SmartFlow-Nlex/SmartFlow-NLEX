@@ -25,6 +25,7 @@ import {
 } from "../../lib/auth-access";
 import { SESSION_LOST_EVENT } from "../../lib/api";
 import { installBackendAuth, logActivity, logPageView } from "../../lib/backend-auth";
+import { dropPasswordOnlySession, isFullySignedIn } from "../../lib/mfa";
 import ThemeToggle from "../../components/dashboard/ThemeToggle";
 import EffectsToggle from "../../components/dashboard/EffectsToggle";
 import { NAV_TABS as tabs, NAV_GROUPS, navEntryFor, accentFor } from "../../lib/nav";
@@ -77,6 +78,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Fetch logged-in user details from Supabase
   useEffect(() => {
     function adopt(session: Session | null) {
+      // A session that passed the password but not the authenticator code is
+      // not a sign-in (lib/mfa.ts). It is ended and treated as no session, so
+      // the shell goes back to the login screen rather than opening on half a
+      // credential. The backend refuses such a token as well; this only keeps
+      // the interface from showing a dashboard whose panels would never fill.
+      if (session?.user && !isFullySignedIn(session)) {
+        dropPasswordOnlySession();
+        session = null;
+      }
       if (session?.user) {
         setUserEmail(session.user.email || "");
         const metadata = session.user.user_metadata;
@@ -217,12 +227,33 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const apply = () => {
       main.style.setProperty("--ds-topbar-h", `${Math.round(bar.getBoundingClientRect().height)}px`);
       if (shelf) main.style.setProperty("--ds-shelf-h", `${Math.round(shelf.getBoundingClientRect().height)}px`);
+      // The scroll area's full width, scrollbar included: the pinned bar's backing spans it in one piece.
+      main.style.setProperty("--ds-main-w", `${Math.round(main.getBoundingClientRect().width)}px`);
+      pin();
     };
+    // Whether the filter row is pinned under the header right now, measured rather than assumed from
+    // a scroll distance (pages pin at different depths): data-shelf-pinned on <main> colours the row
+    // and its scrollbar-corner piece together (nlex-daylight.css).
+    const pin = () => {
+      const pinned =
+        !!shelf &&
+        getComputedStyle(shelf).position === "sticky" &&
+        main.scrollTop > 0 &&
+        shelf.getBoundingClientRect().top <= bar.getBoundingClientRect().bottom + 1;
+      if (pinned) main.setAttribute("data-shelf-pinned", "");
+      else main.removeAttribute("data-shelf-pinned");
+    };
+    let queued = 0;
+    const onScroll = () => {
+      if (!queued) queued = requestAnimationFrame(() => { queued = 0; pin(); });
+    };
+    main.addEventListener("scroll", onScroll, { passive: true });
     const ro = new ResizeObserver(apply);
     ro.observe(bar);
+    ro.observe(main);
     // The page renders after this layout, so look for its filter row for a moment.
     const find = () => {
-      const row = main.querySelector('[class*="_filterRow_"]');
+      const row = main.querySelector('[class*="filterRow"]');
       if (row && row !== shelf) {
         shelf = row;
         ro.observe(row);
@@ -234,6 +265,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => {
       ro.disconnect();
       timers.forEach((t) => window.clearTimeout(t));
+      main.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(queued);
+      main.removeAttribute("data-shelf-pinned");
     };
     // Re-run once the shell is shown (the bar does not exist behind the session check) and per page.
   }, [authState, pathname]);

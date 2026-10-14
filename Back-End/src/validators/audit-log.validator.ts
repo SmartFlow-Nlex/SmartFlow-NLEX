@@ -24,6 +24,7 @@ export const AuditEventSchema = z.object({
 export const ActivitySchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("page.viewed"), path: z.string().regex(/^\/[A-Za-z0-9/_-]{0,120}$/) }),
   z.object({ type: z.literal("session.login") }),
+  z.object({ type: z.literal("session.authenticator_added") }),
   z.object({ type: z.literal("session.logout") }),
   z.object({ type: z.literal("audit.exported"), rows: z.number().int().min(0).max(1_000_000), format: z.enum(["json", "csv"]) }),
 ]);

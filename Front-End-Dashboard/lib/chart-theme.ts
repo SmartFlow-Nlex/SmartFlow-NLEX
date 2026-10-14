@@ -187,10 +187,49 @@ export function applyChartTheme<T extends Record<string, any>>(option: T, t: Cha
     out.xAxis = underlay(x, base.axisCommon);
   }
   if (option.yAxis) out.yAxis = underlay(option.yAxis, base.axisCommon);
+
+  /* Room between the axis labels and the plot (user request): at ECharts' default 8 px the lowest
+     y label sat almost on the first x label. Every chart on the three analytics tabs comes through
+     here, so they all get the same spacing; a chart that set its own margin keeps it. The plot's
+     bottom edge moves up by the same amount, so the x labels are never pushed out of the card. */
+  const X_LABEL_GAP = 14;
+  const Y_LABEL_GAP = 12;
+  let lifted = false;
+  const roomy = (axis: any, gap: number, isX: boolean) => {
+    if (!axis || typeof axis !== "object" || axis.axisLabel?.margin != null) return axis;
+    if (isX && axis.position !== "top") lifted = true;
+    return { ...axis, axisLabel: { ...(axis.axisLabel ?? {}), margin: gap } };
+  };
+  const each = (axes: any, gap: number, isX: boolean) => (Array.isArray(axes) ? axes.map((a) => roomy(a, gap, isX)) : roomy(axes, gap, isX));
+  if (out.xAxis) out.xAxis = each(out.xAxis, X_LABEL_GAP, true);
+  if (out.yAxis) out.yAxis = each(out.yAxis, Y_LABEL_GAP, false);
+  if (lifted) {
+    const lift = (g: any) => (g && typeof g === "object" && typeof g.bottom === "number" && !g.containLabel ? { ...g, bottom: g.bottom + (X_LABEL_GAP - 8) } : g);
+    if (out.grid) out.grid = Array.isArray(out.grid) ? out.grid.map(lift) : lift(out.grid);
+  }
   // A chart with no tooltip configured should not gain one.
   if (option.tooltip) {
     const tip = underlay(option.tooltip, base.tooltip);
-    if (!Array.isArray(tip) && tip.trigger === "axis") tip.axisPointer = underlay(tip.axisPointer, base.axisPointer);
+    if (!Array.isArray(tip) && tip.trigger === "axis") {
+      tip.axisPointer = underlay(tip.axisPointer, base.axisPointer);
+      /* The crosshair's value label: the pointer's height on the value axis is a raw float
+         ("2308.7248322147652"), and a chart's own formatter is written for its category labels. Value
+         axes get a rounded figure; category axes keep whatever the chart asked for. */
+      const own = tip.axisPointer.label?.formatter;
+      tip.axisPointer = {
+        ...tip.axisPointer,
+        label: {
+          ...(tip.axisPointer.label ?? {}),
+          formatter: (o: any) => {
+            if (typeof o?.value === "number") {
+              const v = o.value as number;
+              return Math.abs(v) >= 100 ? Math.round(v).toLocaleString("en-US") : v.toLocaleString("en-US", { maximumFractionDigits: 1 });
+            }
+            return typeof own === "function" ? own(o) : String(o?.value ?? "");
+          },
+        },
+      };
+    }
     out.tooltip = tip;
   }
   if (option.legend) out.legend = underlay(option.legend, base.legend);

@@ -39,10 +39,10 @@ colors:
 typography:
   story:
     fontFamily: "Inter, system-ui, sans-serif"
-    fontSize: "clamp(50px, 6.4vw, 100px)"
-    fontWeight: 560
-    lineHeight: 0.98
-    letterSpacing: "-0.035em"
+    fontSize: "clamp(46px, min(6.3vw, 10.6vh), 108px)"
+    fontWeight: 800
+    lineHeight: 0.97
+    letterSpacing: "-0.04em"
   brand-display:
     fontFamily: "Saira, sans-serif"
     fontSize: "clamp(44px, 5.9vw, 88px)"
@@ -253,7 +253,9 @@ All self-hosted from `Front-End-Dashboard/app/fonts` through `@font-face` in `gl
 (`--numeral-weight` 650, `--numeral-tracking` −0.02em), like "360.5 km/h" and "12 PTS".
 
 ### Scale (snap to these; add no sizes)
-- **Story** (Inter 560, `clamp(50px, 6.4vw, 100px)`, 0.98, −0.035em): the sign-in story titles.
+- **Story** (Inter 800, `clamp(46px, min(6.3vw, 10.6vh), 108px)`, 0.97, −0.04em): the sign-in story titles,
+  two lines, the first in NLEX blue and the second in navy with one word set bright blue beside the gold
+  strokes (white and light blue at night).
 - **Brand display** (Saira 700 expanded, `clamp(44px, 5.9vw, 88px)`): the Overview hero.
 - **Page title** (Inter 700, `clamp(34px, 3.8vw, 58px)`, −0.035em): every page header, blurred up letter by
   letter on arrival.
@@ -288,8 +290,25 @@ Every card reads top to bottom as **answer** (one number or state, with its unit
 comparison the data supports, and its freshness), **evidence** (the chart), and **method** (behind
 `InfoTooltip` or a "How this is measured" disclosure).
 
-Sign-in is one viewport on a 25vw column grid with 60 px side padding over the NLEX environment: the
-sign-in card in column 4, the story bottom-left, the expressway artwork between.
+Sign-in (redesigned 7 Oct 2026 after the user's reference) is one viewport over its own finished
+artwork, `public/light_login.png` by day and `dark_login.png` at night (WebP copies served), the mascot
+driving toward the reader with traffic behind it, framed like `object-fit: cover` with the mascot always
+in view. The two artworks are aligned to each other and drawn as two stacked layers with one box, one size
+and one transform (`components/environment/SigninScene.tsx`), so a theme change is a 750 ms opacity
+cross-fade, like a day-to-night timelapse, in which nothing moves. Over them, a living illustration at a
+third of the usual strength: by day, sunlight from the upper left moving by about 4%, a sky haze drifting
+about 12 px, an occasional glint travelling down the wet road (bottom third, left of the card) and a 1.5%
+breath of brightness; by night, the six street lamps glowing (0.75 to 0.9, never out), soft halos on the
+car headlights, blue road glints, and a faint skyline haze and tower glow. The night lights come on just
+after the night art starts fading in and go out before the day returns. The scene does not follow the cursor
+(tried and removed at the user's request); it fades up from 1.015 on load and holds still under reduced
+motion or with Effects off. Top bar: logo and wordmark, the effects and theme toggles. Left, above
+the mascot: the story title (two lines, one highlighted word, the gold strokes), its line of copy, and the
+four story dashes (each fills over its 7 s) with a small round pause. Right, a little in from the edge: a
+frosted glass card (gold accent bar, "Sign In to Dashboard", tall 14 px-rounded fields with icons, a custom
+checkbox, a blue pill button with an arrow) that rises in with its contents 60 ms apart, the copyright on
+a frosted backing beneath. The button lights the mascot's painted headlamps: a flash on hover or focus, a
+pulse while signing in, a double blink on an error. Styles: `app/styles/nlex-signin.css`.
 
 The Overview opens on a full-height hero after the user's mascot reference. Left: the "ANALYTICS"
 eyebrow, "Overview" in heavy wide Saira in NLEX blue with three gold accent strokes, the corridor span,
@@ -338,8 +357,8 @@ a soft glow.
 
 ### Buttons
 - **Primary:** NLEX-blue gradient fill (`#2f74f5` → `#1f5fe0`), white uppercase 11 px text, a soft blue
-  shadow; hover lifts 2 px and brightens a touch; pressed scales to 97%. (The sign-in button and the
-  `.nc-pill` keep their ring mark, now NLEX blue.)
+  shadow; hover lifts 2 px and brightens a touch; pressed scales to 97%. (The `.nc-pill` keeps its ring mark;
+  the sign-in button is a taller pill with an arrow that turns into a spinner while signing in.)
 - **Secondary:** white fill, blue border and text; hover fills sky blue and lifts. In a filter group the
   active choice fills NLEX blue.
 - **Danger:** coral outline, coral fill on hover.
@@ -367,7 +386,7 @@ for the glossy toy-plastic reflections; its exposure is 1.35 so the paint keeps 
 rest with their hub "N" upright and spin only on a story change or a pending sign-in. The design is
 v2 made cuter (6 Oct 2026): the drawn face blinks, follows the pointer and changes expression;
 the car drives in and turns to the reader, rocks up onto two wheels now and then and on hover,
-twinkles with sparkles, and hops when clicked. The 3D car is on the Overview only (sign-in shows no mascot). Since 7 Oct 2026 it is v8, rebuilt to the
+twinkles with sparkles, and hops when clicked. The 3D car is on the Overview only (on sign-in the mascot is painted into the artwork). Since 7 Oct 2026 it is v8, rebuilt to the
 user's two reference sheets (circled-"N" cap badge, round peeking eyes, a small rounded smile), and it
 arrives by driving toward the reader along the road painted in the background art, then turns to face
 the reader and settles. It falls back to the
@@ -391,5 +410,6 @@ below the cap.
 - **Don't** put `backdrop-filter` over the environment on data pages, or make the artwork move.
 - **Don't** use toll amber anywhere but the brand mark, the mascot's lights and the sign-in story.
 - **Don't** set the wide Saira on body text or a label.
-- **Don't** add a custom cursor inside the dashboard; the double-ring cursor is sign-in only.
+- **Don't** add a custom cursor anywhere; the pointer is the system's own (the sign-in's double-ring
+  cursor was removed on 7 Oct 2026 at the user's request).
 - **Don't** animate on data refresh, or let decorative motion imitate live data.

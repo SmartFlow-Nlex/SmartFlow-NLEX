@@ -599,12 +599,7 @@ button.chart-card:hover {
   .ov-hero-title::after { opacity: 1; }
 }
 
-/* ===========================================================================
-   SIGN-IN, in daylight
-   =========================================================================== */
-.si-story-title { color: var(--text-primary); }
-:root[data-theme="light"] .si-brand .brand-copy h1,
-:root[data-theme="light"] .si-brand h1 { color: var(--nlex-blue); }
+/* Sign-in has its own stylesheet since 7 Oct 2026: nlex-signin.css. */
 
 /* ===========================================================================
    Microinteractions shared across pages
@@ -612,28 +607,28 @@ button.chart-card:hover {
 /* The analytics pages' KPI tiles and filter dropdowns live in a CSS module
    (app/dashboard/traffic/traffic.module.css); its hashed names all keep the
    original class name, so they are matched by substring. */
-[class*="_kpiTile_"] {
+[class*="kpiTile"] {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
   transition: box-shadow var(--transition-base), border-color var(--transition-base);
 }
-[class*="_kpiTile_"]:hover { box-shadow: var(--shadow-card-hover); border-color: var(--border-strong); }
+[class*="kpiTile"]:hover { box-shadow: var(--shadow-card-hover); border-color: var(--border-strong); }
 /* Dropdowns open with a small spring. */
-[class*="_customSelectMenu_"] {
+[class*="customSelectMenu"] {
   border-color: var(--border-default);
   border-radius: 14px;
   box-shadow: var(--shadow-lg);
   transform-origin: top center;
   animation: nlex-pop 260ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
 }
-[class*="_customSelectOptionActive_"] { background: var(--nlex-sky); color: var(--nlex-blue); }
-:root[data-theme="dark"] [class*="_customSelectOptionActive_"] { background: rgba(91, 141, 255, 0.18); color: #cfe0ff; }
+[class*="customSelectOptionActive"] { background: var(--nlex-sky); color: var(--nlex-blue); }
+:root[data-theme="dark"] [class*="customSelectOptionActive"] { background: rgba(91, 141, 255, 0.18); color: #cfe0ff; }
 @keyframes nlex-pop {
   from { opacity: 0; transform: translateY(-6px) scale(0.96); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
-  [class*="_customSelectMenu_"] { animation: none; }
+  [class*="customSelectMenu"] { animation: none; }
 }
 
 /* --- The page scrollbar ----------------------------------------------------------
@@ -661,49 +656,53 @@ main.ds-main::before {
 }
 
 /* --- Sticky filter bars ----------------------------------------------------------
-   The analytics pages' filter row (Range, Weather, …) used to paint a solid
-   full-width band of page colour over the background. It is clear while it
-   sits in place, and fades to the header's colour only as it pins under the
-   header and cards begin to scroll beneath it. */
-@supports (animation-timeline: scroll()) {
-  [class*="_filterRow_"] {
-    background: transparent;
-    animation: nlex-shelf linear both;
-    animation-timeline: scroll(nearest block);
-    animation-range: 190px 245px; /* it pins at about 250 px on every analytics page */
-  }
-  [class*="_filterRow_"]::after { opacity: 0; animation: nlex-shelf-rule linear both; animation-timeline: scroll(nearest block); animation-range: 190px 245px; }
-  /* As the bar pins, the header gives up its own shadow and hairline, so the two read as one
-     header with a single shadow under the bar, with no band where they meet (user request). */
-  .ds-main:has([class*="_filterRow_"]) > .ds-topbar {
-    animation: nlex-join linear both;
-    animation-timeline: scroll(nearest block);
-    animation-range: 190px 245px;
-  }
+   The analytics pages' filter row (Range, Weather, ...) is clear while it sits in place and takes
+   the header's solid colour once it is pinned under the header, so the two read as one header with
+   a single shadow under the row.
+
+   The selectors match the class by its plain name ("filterRow"), not the "_filterRow_" the webpack
+   build writes: Turbopack names module classes "traffic-module__hash__filterRow", so the older
+   pattern matched nothing in dev and the row fell back to its semi-solid band.
+
+   "Pinned" is measured (dashboard/layout.tsx sets data-shelf-pinned on <main>), not assumed from a
+   scroll distance: pages pin at different depths, and a fixed range left the row see-through while
+   stuck to the top on some of them. The row cannot paint behind the page scrollbar, so a matching
+   piece (main::after) sits there, below the header's own corner strip; the row, its hairline and
+   that piece fade together on one timing, so the bar always reaches the window edge in one piece. */
+main.ds-main [class*="filterRow"] { background: transparent; box-shadow: none; }
+main.ds-main [class*="filterRow"]::after { opacity: 0; transition: opacity 0.18s ease; }
+main.ds-main[data-shelf-pinned] [class*="filterRow"]::after { opacity: 1; }
+/* The pinned bar's backing is ONE piece (main::after): fixed under the header, as wide as the whole
+   scroll area including the strip behind the scrollbar, slightly see-through with a blur (user
+   request). The row itself stays clear and sits on it. Two pieces (the row, plus a corner piece
+   behind the scrollbar) could never match, because each showed something different through it. It
+   sits above the cards (which scroll under it) and below the row's controls and the header. */
+main.ds-main::after {
+  content: "";
+  position: fixed;
+  top: var(--ds-topbar-h, 64px);
+  right: 0;
+  z-index: 9;
+  width: var(--ds-main-w, 100%);
+  height: var(--ds-shelf-h, 54px);
+  /* See-through over the cards, easing to solid at both ends: the page's side margins and the
+     scrollbar strip have no card under them, only the bright scene, and showed as a lighter band. */
+  --shelf-glass: color-mix(in srgb, var(--bg-topbar) 80%, transparent);
+  background: linear-gradient(90deg, var(--bg-topbar) 0, var(--bg-topbar) 26px, var(--shelf-glass) 76px, var(--shelf-glass) calc(100% - 92px), var(--bg-topbar) calc(100% - 40px), var(--bg-topbar) 100%);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 10px 30px -22px rgba(31, 95, 224, 0.45);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.18s ease, visibility 0s linear 0.18s;
+  pointer-events: none;
 }
-/* The strip behind the page scrollbar grows down past the pinned filter bar, in step with it,
-   so the joined header reaches the window edge with no sliver of background showing. */
-@supports (animation-timeline: scroll()) {
-  main.ds-main { scroll-timeline: --ds-main block; }
-  main.ds-main:has([class*="_filterRow_"])::before {
-    animation: nlex-gutter linear both;
-    animation-timeline: --ds-main;
-    animation-range: 190px 245px;
-  }
-}
-@keyframes nlex-gutter {
-  from { height: var(--ds-topbar-h, 64px); }
-  to { height: calc(var(--ds-topbar-h, 64px) + var(--ds-shelf-h, 54px)); }
-}
-@keyframes nlex-join {
-  from { box-shadow: 0 10px 30px -22px rgba(31, 95, 224, 0.45); border-bottom-color: var(--rule-topbar); }
-  to { box-shadow: 0 10px 30px -22px rgba(31, 95, 224, 0); border-bottom-color: transparent; }
-}
-@keyframes nlex-shelf {
-  from { background-color: transparent; box-shadow: none; }
-  to { background-color: var(--bg-topbar); box-shadow: 0 10px 30px -22px rgba(31, 95, 224, 0.45); }
-}
-@keyframes nlex-shelf-rule { from { opacity: 0; } to { opacity: 1; } }
+main.ds-main[data-shelf-pinned]::after { opacity: 1; visibility: visible; transition: opacity 0.18s ease; }
+/* The header gives up its own shadow and hairline while the row is joined to it. */
+.ds-main > .ds-topbar { transition: box-shadow 0.18s ease, border-bottom-color 0.18s ease; }
+main.ds-main[data-shelf-pinned] > .ds-topbar { box-shadow: none; border-bottom-color: transparent; }
+main.ds-main::before { transition: border-bottom-color 0.18s ease; }
+main.ds-main[data-shelf-pinned]::before { border-bottom-color: transparent; }
 
 /* --- "Slow and congested now" (Overview) -------------------------------------
    The card still matches the counts column's height, but its rows keep their
@@ -712,17 +711,6 @@ main.ds-main::before {
    "See all" stays pinned to the bottom when there are more than three. */
 .ov-hot > .ov-hot-list:not(.is-all) { flex: 0 0 auto; justify-content: flex-start; }
 .ov-hot > .ov-hot-list:not(.is-all) > .ov-hot-row { flex: none; }
-
-/* --- Sign-in card (user request, 7 Oct 2026) --------------------------------------
-   A little bigger, and the copyright line centred under it. */
-.login-panel { width: min(440px, calc(25vw + 72px)); }
-.login-card { padding: 36px 34px 32px; }
-.login-card h2 { font-size: 24px; margin-bottom: 26px; }
-.copyright { text-align: center; }
-@media (max-width: 760px) {
-  .login-panel { width: 100%; }
-  .login-card { padding: 26px 22px 24px; }
-}
 
 /* --- Collapsed rail: no brand mark (the mascot face was removed, user request) ---- */
 .ds-shell-collapsed .ds-sidebar-brand { display: none; }

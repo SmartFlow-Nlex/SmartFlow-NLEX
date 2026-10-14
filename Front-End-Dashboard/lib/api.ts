@@ -20,6 +20,7 @@ type AuthCode =
   | "token_missing"
   | "token_expired"
   | "token_invalid"
+  | "mfa_required"
   | "role_missing"
   | "role_denied"
   | "auth_unconfigured"
@@ -74,6 +75,15 @@ async function currentToken(): Promise<string | null> {
   return data.session?.access_token ?? null;
 }
 
+/** The backend's reason for a refusal, read from a copy so the caller can still read the body. */
+async function refusalCode(res: Response): Promise<AuthCode | undefined> {
+  try {
+    return (await res.clone().json())?.code;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * fetch with the current access token attached.
  *
@@ -89,6 +99,14 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   };
 
   let res = await send(await currentToken());
+
+  // The one 401 a refresh cannot cure: the token is genuine but the session
+  // never passed the authenticator code, and a renewed token keeps that level.
+  // Only signing in again, both steps, changes the answer.
+  if (res.status === 401 && (await refusalCode(res)) === "mfa_required") {
+    announceSessionLost();
+    return res;
+  }
 
   if (res.status === 401 && isReplayable(init.body)) {
     const { data, error } = await supabase.auth.refreshSession();

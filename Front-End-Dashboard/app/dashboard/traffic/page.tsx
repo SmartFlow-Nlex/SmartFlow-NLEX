@@ -19,7 +19,7 @@ import PredictiveCongestionChart from "../../../components/dashboard/PredictiveC
 import PredictiveEventChart from "../../../components/dashboard/PredictiveEventChart";
 import styles from "./traffic.module.css";
 import DateRangePicker from "./components/DateRangePicker";
-import { rangeDays, grainBlockedReason, bestGrainFor, axisLabelFor, bucketLabelFor } from "../../../lib/granularity";
+import { rangeDays, grainBlockedReason, bestGrainFor, bucketLabelFor, timeAxisLabels } from "../../../lib/granularity";
 import CountUpValue from "../../../components/dashboard/CountUpValue";
 import ModeTabLabel, { modeIndex } from "../../../components/dashboard/ModeTabLabel";
 import StateNote from "../../../components/stage/StateNote";
@@ -269,13 +269,8 @@ export default function TrafficPage() {
     const window = ROLLING_WINDOW[grain];
     const labels = rows.map((r) => r.label);
 
-    // Show an x label only where the period changes (month for daily/weekly,
-    // day for hourly) — no repeated labels.
-    const boundaryKey =
-      grain === "hourly" ? (l: string) => l.slice(0, 10) : grain === "monthly" ? (l: string) => l : (l: string) => l.slice(0, 7);
-    const labelInterval = (index: number) =>
-      index === 0 || boundaryKey(labels[index]) !== boundaryKey(labels[index - 1]);
-    const axisFmt = axisLabelFor(grain);
+    // Evenly stepped labels with the year said once; shared by the three analytics tabs.
+    const axis = timeAxisLabels(labels, grain);
 
     // The raw series behind a moving average is context, not a second identity,
     // so it takes the ramp's lightest step rather than a hue of its own.
@@ -303,7 +298,7 @@ export default function TrafficPage() {
       xAxis: {
         type: "category",
         data: labels,
-        axisLabel: { formatter: axisFmt, interval: labelInterval, fontSize: 11, hideOverlap: true },
+        axisLabel: { formatter: axis.formatter, interval: axis.interval, fontSize: 11, hideOverlap: true },
         axisTick: { show: false },
       },
       // scale:true so the weekly rhythm is visible instead of a flat line on a zero base
@@ -1184,8 +1179,11 @@ export default function TrafficPage() {
                 weather={weather}
               />
             </div>
-            <div className={`${styles.spanHalf} nct-span-half`}><PredictiveCongestionChart /></div>
-            <div className={`${styles.spanHalf} nct-span-half`}><PredictiveEventChart /></div>
+            {/* Each on its own full row (8 Oct 2026, user request): side by side, the congestion card was
+                twice the height of the event card and one of them always ended in blank space. Each card
+                splits itself into two columns inside instead (.nct-split). */}
+            <div className={styles.spanFull}><PredictiveCongestionChart /></div>
+            <div className={styles.spanFull}><PredictiveEventChart /></div>
           </>
         )}
 

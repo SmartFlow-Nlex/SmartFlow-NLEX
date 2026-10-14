@@ -175,7 +175,16 @@ function everyDay(data: Insights): { day: string; actions: number; views: number
   });
 }
 
-function InsightsSection({ data }: { data: Insights }) {
+/** "Sep 9" for a yyyy-mm-dd day. */
+function dayLabel(day: string): string {
+  const d = new Date(`${day}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? day : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/** The congestion model the hourly refresh trains, as /api/map-comparison/forecast reports it. */
+type HourlyModel = { name: string | null; trainedAt: string | null; maxHorizon: number | null };
+
+function InsightsSection({ data, hourly }: { data: Insights; hourly: HourlyModel | null }) {
   const days = everyDay(data);
   const peak = Math.max(1, ...days.map((d) => d.actions + d.views));
   const m = data.maintenance;
@@ -183,7 +192,10 @@ function InsightsSection({ data }: { data: Insights }) {
   return (
     <div className="audit-insights">
       <article className="audit-card">
-        <h3>Activity per day</h3>
+        <h3 className="audit-card-head">
+          Activity per day
+          <span className="audit-legend"><span className="audit-key actions" /> actions <span className="audit-key views" /> page views</span>
+        </h3>
         {data.daily.length === 0 ? (
           <p className="audit-empty">Nothing recorded yet.</p>
         ) : (
@@ -196,7 +208,9 @@ function InsightsSection({ data }: { data: Insights }) {
             ))}
           </div>
         )}
-        <p className="audit-note"><span className="audit-key actions" /> actions <span className="audit-key views" /> page views</p>
+        {data.daily.length > 0 && (
+          <p className="audit-axis"><span>{dayLabel(days[0].day)}</span><span>{dayLabel(days[days.length - 1].day)}</span></p>
+        )}
       </article>
 
       <article className="audit-card">
@@ -213,7 +227,7 @@ function InsightsSection({ data }: { data: Insights }) {
         <h3>Where maintenance waits</h3>
         <Bars rows={m.dwell.map((d) => ({ label: cap(status(d.status)), value: d.avgMs ?? 0, text: `${span(d.avgMs)} avg` }))} />
         <p className="audit-note">
-          Scheduled to completed: <b>{span(m.turnaround.avgMs)}</b> ({m.turnaround.completed}) · {m.open} open
+          {m.turnaround.completed > 0 && <>Scheduled to completed: <b>{span(m.turnaround.avgMs)}</b> ({m.turnaround.completed}) · </>}{m.open} open
           {m.overrunning > 0 && <> · <b className="audit-warn">{m.overrunning} past planned end</b></>}
           {m.lateToStart > 0 && <> · <b className="audit-warn">{m.lateToStart} late to start</b></>}
         </p>
@@ -225,7 +239,7 @@ function InsightsSection({ data }: { data: Insights }) {
       <article className="audit-card">
         <h3>Uploads &amp; retraining</h3>
         <p className="audit-line"><b>{n(u.loaded)}</b> loaded · {n(u.failed)} failed · {n(u.undone)} undone · {n(u.checked)} checked</p>
-        <p className="audit-line">Average load: <b>{span(u.avgLoadMs)}</b></p>
+        {u.avgLoadMs != null && <p className="audit-line">Average load: <b>{span(u.avgLoadMs)}</b></p>}
         <p className="audit-line">
           Waiting for the weekly retrain: <b>{n(u.waitingForRetrain)}</b>
           {u.oldestWaiting && <> (oldest {ago(u.oldestWaiting)})</>} · next {when(u.nextRetrain)}
@@ -234,6 +248,12 @@ function InsightsSection({ data }: { data: Insights }) {
           <p className="audit-line">Last batch {when(data.models.lastBatch.started_at)}: <b>{data.models.lastBatch.status}</b></p>
         ) : (
           <p className="audit-line audit-muted">No weekly batch has run yet.</p>
+        )}
+        {hourly?.trainedAt && (
+          <p className="audit-line">
+            Hourly traffic model: <b>{hourly.name ?? "model"}</b> trained {when(hourly.trainedAt)}
+            {hourly.maxHorizon != null && <>, forecasting {hourly.maxHorizon} h ahead</>}
+          </p>
         )}
         {data.models.groups.slice(0, 4).map((g) => (
           <p key={g.group} className="audit-line audit-muted">{g.title ?? g.group}: {g.outcome}, {when(g.at)}</p>
@@ -288,6 +308,15 @@ export default function AuditLogPage() {
       })
       .catch((e) => setInsightsError(e instanceof Error ? e.message : "Failed to load"));
   }, [days]);
+
+  // The hourly traffic (congestion) training is not in the audit tables; its latest run rides on the
+  // forecast the Live Map reads. Shown in the retraining card; left out quietly if it cannot be read.
+  const [hourly, setHourly] = useState<HourlyModel | null>(null);
+  useEffect(() => {
+    cachedJson<{ model?: HourlyModel | null }>(`${BACKEND}/api/map-comparison/forecast?hours=1`, 60_000)
+      .then((json) => setHourly(json.model ?? null))
+      .catch(() => setHourly(null));
+  }, []);
 
   const categories = useMemo(
     () => [...new Set(auditLogs.map((l) => l.category))].sort(),
@@ -405,7 +434,7 @@ export default function AuditLogPage() {
           </StateNote>
         </div>
       )}
-      {insights && <InsightsSection data={insights} />}
+      {insights && <InsightsSection data={insights} hourly={hourly} />}
 
       <section className="table-card audit-log-table" style={{ marginTop: 16 }}>
         <div className="table-toolbar">

@@ -19,7 +19,7 @@ import PredictiveEmissionChart from "../../../components/dashboard/PredictiveEmi
 import FleetMixForecastChart from "../../../components/dashboard/FleetMixForecastChart";
 import PrescriptiveEmissionsPanel from "../../../components/dashboard/PrescriptiveEmissionsPanel";
 import DateRangePicker from "../traffic/components/DateRangePicker";
-import { rangeDays, grainBlockedReason, bestGrainFor, axisLabelFor, bucketLabelFor } from "../../../lib/granularity";
+import { rangeDays, grainBlockedReason, bestGrainFor, bucketLabelFor, timeAxisLabels } from "../../../lib/granularity";
 import styles from "../traffic/traffic.module.css";
 import CountUpValue from "../../../components/dashboard/CountUpValue";
 
@@ -228,8 +228,7 @@ export default function SustainabilityPage() {
   const trendOption = useMemo<EChartsOption | null>(() => {
     if (trendRows.length === 0) return null;
     const labels = trendRows.map((r) => r.label);
-    const boundaryKey = grain === "monthly" ? (l: string) => l : (l: string) => l.slice(0, 7);
-    const labelInterval = (i: number) => i === 0 || boundaryKey(labels[i]) !== boundaryKey(labels[i - 1]);
+    const timeAxis = timeAxisLabels(labels, grain);
 
     const mk = (name: string, key: "c1" | "c2" | "c3", color: string) => ({
       name,
@@ -245,7 +244,7 @@ export default function SustainabilityPage() {
 
     return {
       grid: { left: 62, right: 16, top: 22, bottom: classView === "All" ? 52 : 26 },
-      xAxis: { type: "category", data: labels, axisLabel: { formatter: axisLabelFor(grain), interval: labelInterval, hideOverlap: true }, axisTick: { show: false } },
+      xAxis: { type: "category", data: labels, axisLabel: { formatter: timeAxis.formatter, interval: timeAxis.interval, hideOverlap: true }, axisTick: { show: false } },
       yAxis: { type: "value", name: "tonnes CO₂", nameGap: 12, nameTextStyle: { align: "left" }, splitNumber: 3, axisLabel: { formatter: (v: number) => `${fmtCompact(v)} t` } },
       tooltip: {
         trigger: "axis",

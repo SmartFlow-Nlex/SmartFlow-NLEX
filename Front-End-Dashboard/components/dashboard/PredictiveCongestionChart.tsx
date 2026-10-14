@@ -123,9 +123,11 @@ const jamWhere = (exit: string, j: Jam) =>
   j.distM == null ? `near ${plazaLabel(exit)}`
   : j.distM < 80 ? `at ${plazaLabel(exit)}`
   : `~${fmtM(j.distM)} from ${plazaLabel(exit)}`;
-/** One line, for the episode rows and the headline. */
+/** One line, for the headline and the episode rows' tooltips. */
 const jamSummary = (exit: string, j: Jam) =>
   `~${fmtM(j.queueM)} queue ${jamWhere(exit, j)} · ~${fmtDelay(j.delayS)} delay`;
+/** The short form for an episode row, whose title already names the exit: queue and delay only. */
+const jamBrief = (j: Jam) => `~${fmtM(j.queueM)} queue · ~${fmtDelay(j.delayS)} delay`;
 
 /** Traffic volume for the cell's hour, and what it says about a predicted
  *  jam: a jam in a peak hour is demand; one in a quiet hour is the kind an
@@ -1466,12 +1468,12 @@ export default function PredictiveCongestionChart() {
           {/* The same three things the live map's jam card leads with, as
               typical figures for this exit at the episode's surest hour. */}
           {a.jam && (
-            <span title="Typical for this exit at this hour, from four years of Waze jam history"
+            <span title={`${jamSummary(a.segment, a.jam)}. Typical for this exit at this hour, from four years of Waze jam history.`}
                   className="nct-episode-jam">
-              {jamSummary(a.segment, a.jam)}
+              {jamBrief(a.jam)}
               {a.volRel != null && (
                 <span className={a.volRel < 0.7 ? "nct-warn" : "nct-dim"}>
-                  {" · "}{a.volRel < 0.7 ? "quiet hour, check for incidents" : `${a.volRel.toFixed(1)}× usual traffic`}
+                  {" · "}{a.volRel < 0.7 ? "quiet hour, check for incidents" : `${a.volRel.toFixed(1)}× usual`}
                 </span>
               )}
             </span>
@@ -1724,6 +1726,8 @@ export default function PredictiveCongestionChart() {
         })()}
       </div>
 
+      {/* Rows 4 and 5 side by side on a wide card: the grid on the left, what to act on beside it. */}
+      <div className="nct-split">
       {/* Row 4: the grid, with its legend and its exit picker attached to it. */}
       <div>
         <div className="nct-grid-bar">
@@ -1796,7 +1800,7 @@ export default function PredictiveCongestionChart() {
               {shownSegments.some((sg) => KMI.get(sg)?.est) && (
                 <span className="nct-key-dim" style={{ whiteSpace: "nowrap" }}
                       title="No surveyed km-post for this exit; the distance is interpolated from its neighbours.">
-                  <b>*</b> km-post estimated
+                  <b>*</b> est. km
                 </span>
               )}
             </>
@@ -1839,6 +1843,7 @@ export default function PredictiveCongestionChart() {
           )}
         </div>
       </div>
+      </div>
 
       {/* Row 6: the model's own read-out, in the open. The control that asks
           for it has to be visible, and the panel is the same one the forecast
@@ -1874,8 +1879,8 @@ export default function PredictiveCongestionChart() {
             <span className="nct-trust-pill" style={{ order: 4 }}>
               {(() => {
                 const a0 = hzFirst.accuracy ?? 0; const a1 = hzLast.accuracy ?? 0;
-                return a1 < a0 - 0.03 ? "accuracy fades with distance" : a1 > a0 + 0.03 ? "accuracy improves with distance" : "accuracy holds across the horizon";
-              })()} · {pct(hzFirst.accuracy)} at +1h → {pct(hzLast.accuracy)} at +{hzLast.horizon}h
+                return a1 < a0 - 0.03 ? "fades" : a1 > a0 + 0.03 ? "improves" : "holds";
+              })()}: {pct(hzFirst.accuracy)} at +1h → {pct(hzLast.accuracy)} at +{hzLast.horizon}h
               {" · "}{beatsFrom ? "beats no-change" : "no better than no-change"}
             </span>
           }

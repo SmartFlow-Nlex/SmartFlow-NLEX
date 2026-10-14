@@ -5,7 +5,7 @@ import { env } from "../config/env.js";
 /*
  * Session verification and role authorization.
  *
- * Three things changed here, each for a reason worth keeping written down.
+ * Four things changed here, each for a reason worth keeping written down.
  *
  * 1. The project URL and anon key were hardcoded as fallbacks. A deployment
  *    that set neither variable therefore started cleanly and verified operator
@@ -24,6 +24,15 @@ import { env } from "../config/env.js";
  *
  * 3. The role fell back to "data-analyst", the most privileged role, whenever
  *    user_metadata carried none. Least privilege now applies instead.
+ *
+ * 4. A password alone no longer opens a protected route (7 Oct 2026). Sign-in
+ *    has a second step, a code from an authenticator app, and Supabase records
+ *    which steps a session has passed in the token's `aal` claim: "aal1" after
+ *    the password, "aal2" after the code. The sign-in page asks for the code,
+ *    but that page runs in the operator's browser and can be skipped by anyone
+ *    who calls Supabase directly with a stolen password. So the claim is
+ *    checked here, where it cannot be skipped: a token that is genuine but
+ *    still at "aal1" is answered 401 `mfa_required`.
  */
 
 /** Mirrors Front-End-Dashboard/lib/auth-access.ts. Keep the two in step. */
@@ -54,14 +63,32 @@ export interface AuthenticatedRequest extends Request {
 const ACCEPTED_TTL_MS = 60_000;
 const accepted = new Map<string, { until: number; user: any; role: string }>();
 
+/**
+ * The token's payload, or {} when it cannot be read. Decoded, not verified: a
+ * claim read here means something only for a token Supabase has accepted.
+ */
+function claimsOf(token: string): Record<string, unknown> {
+  try {
+    const claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
+    return claims && typeof claims === "object" ? claims : {};
+  } catch {
+    return {};
+  }
+}
+
 /** The token's own expiry in ms (the JWT's exp claim), or 0 when it cannot be read. */
 function expiryOf(token: string): number {
-  try {
-    const exp = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")).exp;
-    return typeof exp === "number" ? exp * 1000 : 0;
-  } catch {
-    return 0;
-  }
+  const exp = claimsOf(token).exp;
+  return typeof exp === "number" ? exp * 1000 : 0;
+}
+
+/**
+ * Whether the session behind this token passed the authenticator code as well
+ * as the password. Anything other than an explicit "aal2" is a no, including a
+ * token with no `aal` claim at all.
+ */
+function passedSecondStep(token: string): boolean {
+  return claimsOf(token).aal === "aal2";
 }
 
 /**
@@ -116,6 +143,18 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
       });
     }
 
+    // Supabase accepted the token, so its claims can be believed. A session
+    // that stopped after the password is authentic and still not enough.
+    // 401 rather than 403: the caller can fix it, by finishing sign-in. Not
+    // by refreshing, though; a refreshed token keeps the level it had.
+    if (!passedSecondStep(token)) {
+      return res.status(401).json({
+        success: false,
+        code: "mfa_required",
+        message: "Sign-in is not complete: an authenticator code is required",
+      });
+    }
+
     req.user = user;
     req.userRole = user.user_metadata?.role || FALLBACK_ROLE;
     const until = Math.min(Date.now() + ACCEPTED_TTL_MS, expiryOf(token));
@@ -139,7 +178,9 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
  * in time. For the audit log, which must name who did something without ever
  * slowing the action down: answers are cached for five minutes per token, and a
  * lookup gives up after four seconds. Same client and same least-privilege
- * fallback role as authenticateToken.
+ * fallback role as authenticateToken, and the same second-step rule: a session
+ * that stopped after the password names nobody, so knowing a password is not
+ * enough to write log entries under that operator's name.
  */
 const verified = new Map<string, { at: number; user: { email: string; role: string } | null }>();
 export async function verifiedUser(token: string | undefined): Promise<{ email: string; role: string } | null> {
@@ -148,7 +189,9 @@ export async function verifiedUser(token: string | undefined): Promise<{ email: 
   const hit = verified.get(token);
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.user;
   const lookup = supabase.auth.getUser(token).then(({ data, error }) =>
-    error || !data.user ? null : { email: data.user.email ?? data.user.id, role: data.user.user_metadata?.role || FALLBACK_ROLE });
+    error || !data.user || !passedSecondStep(token)
+      ? null
+      : { email: data.user.email ?? data.user.id, role: data.user.user_metadata?.role || FALLBACK_ROLE });
   const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 4_000));
   const user = await Promise.race([lookup.catch(() => null), timeout]);
   if (verified.size > 500) verified.clear();

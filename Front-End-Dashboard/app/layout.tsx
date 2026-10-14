@@ -12,6 +12,7 @@ import './styles/nc-forecast.css';
 // The NLEX daylight theme and its environment (7 Oct 2026) load last, over the layers above.
 import './styles/nlex-environment.css';
 import './styles/nlex-daylight.css';
+import './styles/nlex-signin.css';
 import { ThemeProvider, THEME_INIT_SCRIPT } from '../lib/theme';
 
 const EFFECTS_INIT_SCRIPT = `(function(){try{if(localStorage.getItem('smartflow-effects')==='off')document.documentElement.setAttribute('data-effects','off');}catch(e){}})();`;

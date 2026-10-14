@@ -1456,7 +1456,35 @@ section.nc-ops-maint { gap: 12px; padding-top: 16px; padding-bottom: 36px; }
 .nc-ops-maint .nc-ops-alerts-row:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 1px; }
 .nc-ops-maint .nc-ops-alerts-n { min-width: 18px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .nc-ops-maint .nc-ops-alerts-reason { color: var(--text-secondary); }
-.nc-ops-maint .nc-ops-alerts-row .nc-ops-sub { margin-left: auto; }
+/* Where each flagged window is: a readable tag right after its reason, the same NB/SB and km the
+   table shows. It used to be the table's faint all-caps sub-label pushed to the banner's far edge,
+   which left it floating over the background art and away from the row it belongs to. */
+.nc-ops-maint .nc-ops-alerts-row .nc-ops-sub {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 1px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+/* A see-through card under the amber tint: the artwork stays faintly visible, but blurred and
+   veiled enough that the text never sits on its detail (the banner's 9 % tint alone let the road
+   art show through its text; a fully solid card was too heavy, user request 14 Oct 2026). */
+.nc-ops-maint .nc-ops-alerts {
+  background:
+    linear-gradient(var(--color-warning-bg), var(--color-warning-bg)),
+    color-mix(in srgb, var(--bg-raised) 68%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  backdrop-filter: blur(12px) saturate(1.1);
+  box-shadow: var(--shadow-card);
+}
 .nc-ops-maint .nc-ops-alerts-ok {
   display: inline-flex;
   align-items: center;

@@ -418,3 +418,29 @@
 @media (min-width: 761px) {
   .ds-main .dm-page .ds-steps li:first-child { box-shadow: none; }
 }
+
+/* --- Audit log insights: a planned grid, not auto-fit (user request, 8 Oct 2026) ---------------
+   Auto-fit left a row of four and an orphan row of two with half the width empty, and cards of very
+   different content stretched to one height. Two full rows instead: the daily chart beside the
+   longest list (pages), then the four short cards side by side. The chart grows to fill its card.
+   Order in the page: day, module, pages, maintenance, uploads, users. */
+.ds-main .audit-page .audit-insights { grid-template-columns: repeat(12, minmax(0, 1fr)); align-items: stretch; }
+.ds-main .audit-page .audit-insights > .audit-card { grid-column: span 3; order: 3; }
+.ds-main .audit-page .audit-insights > .audit-card:nth-child(1) { grid-column: span 7; order: 1; }
+.ds-main .audit-page .audit-insights > .audit-card:nth-child(3) { grid-column: span 5; order: 2; }
+.ds-main .audit-page .audit-insights > .audit-card:nth-child(1) .audit-days { flex: 1 1 auto; height: auto; min-height: 150px; }
+@media (max-width: 1280px) {
+  .ds-main .audit-page .audit-insights > .audit-card { grid-column: span 6; }
+  .ds-main .audit-page .audit-insights > .audit-card:nth-child(1) { grid-column: span 12; }
+  .ds-main .audit-page .audit-insights > .audit-card:nth-child(3) { grid-column: span 12; }
+  .ds-main .audit-page .audit-insights > .audit-card:nth-child(1) .audit-days { min-height: 120px; }
+}
+@media (max-width: 700px) {
+  .ds-main .audit-page .audit-insights > .audit-card { grid-column: span 12; }
+}
+/* The chart's legend sits on its heading line, and its first and last days are named under it. */
+.ds-main .audit-page .audit-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ds-main .audit-page .audit-legend { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; letter-spacing: 0.3px; text-transform: none; color: var(--text-secondary); }
+.ds-main .audit-page .audit-legend .audit-key + .audit-key,
+.ds-main .audit-page .audit-legend .audit-key:nth-of-type(2) { margin-left: 8px; }
+.ds-main .audit-page .audit-axis { display: flex; justify-content: space-between; margin: 0; font-size: var(--fs-micro); letter-spacing: 0.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }

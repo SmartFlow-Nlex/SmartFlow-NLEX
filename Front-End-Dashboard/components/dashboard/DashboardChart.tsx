@@ -6,7 +6,8 @@ import { useChartTheme, applyChartTheme } from "../../lib/chart-theme";
 
 type Props = {
   option: EChartsOption;
-  height?: number;
+  /** Pixels, or "100%" to fill a sized parent. */
+  height?: number | string;
   /** ECharts event handlers, e.g. `{ click: (p) => ... }` for drill-downs. */
   onEvents?: Record<string, (params: never) => void>;
 };

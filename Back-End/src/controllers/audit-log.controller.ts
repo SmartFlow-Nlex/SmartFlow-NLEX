@@ -39,6 +39,11 @@ export const recordActivity = async (req: Request, res: Response) => {
     case "session.login":
       audit(req, { action: "session.login", module: "session", entityType: "session", outcome: "success" });
       break;
+    case "session.authenticator_added":
+      // An authenticator app was bound to the account at sign-in. Worth its own entry: on an
+      // account that had none, it is the one thing a stolen password would let someone do.
+      audit(req, { action: "session.authenticator_added", module: "session", entityType: "session", outcome: "success" });
+      break;
     case "session.logout": {
       // Awaited: the page signs out once this answers, and the token has to still be valid to name the user.
       // How long the session lasted: since this user's last sign-in.

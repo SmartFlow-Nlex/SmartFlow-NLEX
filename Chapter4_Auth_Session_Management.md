@@ -152,6 +152,7 @@ The server distinguishes two refusals, which the client depends on:
 | No token presented | 401 | `token_missing` | Treat as signed out |
 | Token expired | 401 | `token_expired` | Refresh once, replay request |
 | Token invalid | 401 | `token_invalid` | Refresh once, replay request |
+| Token genuine, second step not passed | 401 | `mfa_required` | Treat as signed out; do not refresh (Section 4.2.4.9) |
 | Role not permitted | 403 | `role_denied` | Stop; do not retry |
 | Provider not configured | 503 | `auth_unconfigured` | Stop; server fault |
 
@@ -244,6 +245,71 @@ for the reason given in Section 4.2.4.2.
 One identity project serves all environments, consistent with the single
 warehouse described in Section 4.2.2.1. An account created for testing is
 therefore an account that exists in the environment the panel will see.
+
+### 4.2.4.9 Two-Step Sign-In (added 7 October 2026)
+
+A password is no longer sufficient to sign in. After the password is accepted,
+the operator must enter a six-digit, time-based code (TOTP, RFC 6238) from an
+authenticator application on their phone. An account that has no authenticator
+is made to add one at its first sign-in, by scanning a QR code or typing a setup
+key, and does not reach the dashboard until the first code from the new
+application is accepted. No account is left on a password alone.
+
+The identity provider records how far a session has progressed in the token's
+`aal` claim: `aal1` after the password, `aal2` after the code. The rule is
+applied in three places, which are not equivalent:
+
+| Where | What it does | Is it a control? |
+| --- | --- | --- |
+| Sign-in page | Asks for the code, or runs first-time setup | No. Runs in the operator's browser |
+| Dashboard shell | Ends and refuses a session still at `aal1` | No. Runs in the operator's browser |
+| Application server | Refuses a token whose `aal` is not `aal2`, with 401 `mfa_required` | **Yes** |
+
+The first two exist so that the interface behaves; the third is the boundary,
+for the reason given in Section 4.2.4.5. A person who holds a stolen password
+can obtain an `aal1` token from the provider directly, without ever loading the
+sign-in page. The server check is what makes that token worthless.
+
+A session that stopped after the password is never resumed. Reloading the
+sign-in page, or being returned to it from the dashboard, ends that session and
+starts again from the password, so a half-finished sign-in left on a shared
+workstation cannot be completed by the next person.
+
+The audit log follows the same rule: an entry is attributed to an operator only
+when the token presented is at `aal2`. Adding an authenticator is itself
+recorded (`session.authenticator_added`), because on an account that has none
+it is the one action a stolen password would permit.
+
+**Table 4.2.13** *Two-Step Sign-In Test Results (both accounts, real provider and server)*
+
+| # | Scenario | Expected | Observed |
+| --- | --- | --- | --- |
+| 1 | Password accepted | Token at `aal1` | `aal1` |
+| 2 | Protected endpoint, genuine `aal1` token | 401, refused | 401 `mfa_required` |
+| 3 | Token edited to claim `aal2`, signature unchanged | 401, refused | 401 `token_invalid` |
+| 4 | Wrong code | Refused; session stays `aal1` | `mfa_verification_failed`; `aal1` |
+| 5 | Right code | Token at `aal2`, methods password and TOTP | `aal2`; `password+totp` |
+| 6 | Protected endpoint, `aal2` token, permitted role | 200 | 200 |
+| 7 | Protected endpoint, `aal2` token, wrong role | 403, refused | 403 `role_denied` |
+| 8 | Earlier `aal1` token, after the same user reached `aal2` | Still refused | 401 `mfa_required` |
+| 9 | Second sign-in | Code requested; setup not offered again | Code step shown |
+| 10 | `aal1` session opened at `/dashboard` (provider replies simulated in the test browser) | Returned to sign-in, session ended | Returned; no session left |
+| 11 | QR code on the card, read back by a decoder at both card sizes | Same key as printed | Matched at 140 px and 104 px |
+
+Scenario 11 records a defect found in testing. The provider's own QR picture is
+69 squares across, which at the size of the sign-in card is under two pixels a
+square and could not be read back at all. The card now draws its own code from
+the same address, omitting only the settings that restate the standard, which
+yields a code of about 41 squares that reads at both sizes.
+
+Three limitations are specific to this feature. First enrolment is trust on
+first use: until an account's owner has added their authenticator, whoever
+holds its password can add theirs, so new accounts should complete a first
+sign-in promptly. The provider issues no recovery codes, so a lost phone is
+resolved by an administrator removing the authenticator in the provider's
+console, after which the operator sets up again at the next sign-in. And the
+second step protects only what the server requires a token for; the routes
+that are served without one are unaffected by it.
 
 ---
 

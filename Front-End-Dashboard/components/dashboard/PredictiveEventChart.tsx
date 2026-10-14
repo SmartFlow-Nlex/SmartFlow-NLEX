@@ -487,6 +487,7 @@ export default function PredictiveEventChart() {
       {/* Row 4: the numbers, once each, on one line. */}
       {/* Two by two, not auto-fit: in a half-width card four stats wrapped 3+1
           and left the last one orphaned on its own line. */}
+      <div className="nct-split is-event">
       <div className="nct-stats">
         {stat(`+${fmtVeh(totalAdded)}`, "extra vehicles")}
         {stat(`${affected.length} of ${totalPlazas}`, "exits with a material rise")}
@@ -495,8 +496,11 @@ export default function PredictiveEventChart() {
       </div>
 
       {/* Row 5: the chart, with the room the strip and tiles were taking. */}
-      <div style={{ width: "100%", height: `${impactHeight}px` }}>
-        <DashboardChart option={impactOption} height={impactHeight} />
+      {/* At least its natural height, and it grows into whatever the card has spare: beside the taller
+          congestion card this one used to end in a large blank area (user request). */}
+      <div className="nct-fill-chart" style={{ minHeight: `${impactHeight}px` }}>
+        <div><DashboardChart option={impactOption} height="100%" /></div>
+      </div>
       </div>
 
       {/* Row 6: what a reviewer needs and an operator does not need first.
@@ -538,8 +542,8 @@ export default function PredictiveEventChart() {
         strip={<>
           {champ?.wmape != null && (
             <span className="nct-trust-pill" style={{ order: 4 }}>
-              {champ.model} · {champ.wmape.toFixed(2)}% on held-out events
-              {noAdj?.wmape != null && <> · vs {noAdj.wmape.toFixed(2)}% ignoring the event</>}
+              {champ.model} · {champ.wmape.toFixed(1)}% error on held-out events
+              {noAdj?.wmape != null && <> ({noAdj.wmape.toFixed(1)}% without it)</>}
             </span>
           )}
           {(minorAffected.length > 0 || otherExits.length > 0) && (

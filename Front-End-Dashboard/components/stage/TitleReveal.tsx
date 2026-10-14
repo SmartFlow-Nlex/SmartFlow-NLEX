@@ -32,13 +32,17 @@ export default function TitleReveal({
   className,
   id,
   delay = 0,
+  accent,
 }: {
+  /** A "\n" starts a new line (each line is its own block, `.tr-line`). */
   text: string;
   as?: ElementType;
   className?: string;
   id?: string;
   /** Seconds before the first letter moves. */
   delay?: number;
+  /** A word to set apart (`.tr-word.is-accent`), matched without its punctuation. */
+  accent?: string;
 }) {
   const ref = useRef<HTMLElement | null>(null);
   const [ready, setReady] = useState(false);
@@ -74,23 +78,38 @@ export default function TitleReveal({
   }, []);
 
   let index = 0;
-  const words = text.split(" ");
+  const lines = text.split("\n");
+  const label = lines.join(" ");
   const classes = ["tr-title", className, ready ? "tr-ready" : null].filter(Boolean).join(" ");
+  const renderWords = (line: string) => {
+    const words = line.split(" ");
+    return words.map((word, w) => (
+      <span
+        key={w}
+        className={accent && word.replace(/[^\p{L}\p{N}]/gu, "") === accent ? "tr-word is-accent" : "tr-word"}
+        aria-hidden="true"
+      >
+        {Array.from(word).map((ch, c) => {
+          const i = index++;
+          return (
+            <span key={c} className="tr-char" style={{ animationDelay: `${delay + i * 0.035}s` }}>
+              {ch}
+            </span>
+          );
+        })}
+        {w < words.length - 1 ? <span className="tr-space"> </span> : null}
+      </span>
+    ));
+  };
   return (
-    <Tag ref={ref} className={classes} aria-label={text} id={id} style={{ ["--tr-letters" as string]: Array.from(text.replace(/ /g, "")).length }}>
-      {words.map((word, w) => (
-        <span key={w} className="tr-word" aria-hidden="true">
-          {Array.from(word).map((ch, c) => {
-            const i = index++;
-            return (
-              <span key={c} className="tr-char" style={{ animationDelay: `${delay + i * 0.035}s` }}>
-                {ch}
-              </span>
-            );
-          })}
-          {w < words.length - 1 ? <span className="tr-space"> </span> : null}
-        </span>
-      ))}
+    <Tag ref={ref} className={classes} aria-label={label} id={id} style={{ ["--tr-letters" as string]: Array.from(label.replace(/ /g, "")).length }}>
+      {lines.length === 1
+        ? renderWords(lines[0])
+        : lines.map((line, l) => (
+            <span key={l} className="tr-line" aria-hidden="true">
+              {renderWords(line)}
+            </span>
+          ))}
     </Tag>
   );
 }

@@ -121,3 +121,37 @@ export function bucketLabelFor(grain: Grain): (key: string) => string {
     return d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
   };
 }
+
+/**
+ * Which labels a time axis shows, and how, the same on every analytics tab.
+ *
+ * Labelling every period boundary and letting the chart drop whichever ones collided left ragged
+ * gaps on long ranges (Jan, Feb, a gap, Apr, a gap, Jun ...). The boundaries are thinned instead to
+ * a regular step that keeps about a dozen: every 1, 2, 3, 6 or 12 months, counted from January so
+ * the same months are named in every year, or every nth day for the hourly view. The year is said
+ * once, on January and on the first label; "Apr" is enough between them.
+ */
+export function timeAxisLabels(labels: string[], grain: Grain): { interval: (index: number) => boolean; formatter: (key: string, index: number) => string } {
+  const boundaryKey = grain === "hourly" ? (l: string) => l.slice(0, 10) : grain === "monthly" ? (l: string) => l : (l: string) => l.slice(0, 7);
+  const boundaries = labels.map((_, i) => i).filter((i) => i === 0 || boundaryKey(labels[i]) !== boundaryKey(labels[i - 1]));
+  const MAX_LABELS = 12;
+  const rawStep = Math.max(1, Math.ceil(boundaries.length / MAX_LABELS));
+  const monthStep = [1, 2, 3, 6, 12].find((n) => n >= rawStep) ?? 12 * Math.ceil(rawStep / 12);
+  const monthIndex = (l: string) => Number(l.slice(0, 4)) * 12 + (Number(l.slice(5, 7)) - 1);
+  const shown = new Set(
+    grain === "hourly" ? boundaries.filter((_, n) => n % rawStep === 0) : boundaries.filter((i) => monthIndex(labels[i]) % monthStep === 0),
+  );
+  if (shown.size === 0 && boundaries.length > 0) shown.add(boundaries[0]);
+  const first = shown.size > 0 ? Math.min(...shown) : 0;
+  const base = axisLabelFor(grain);
+  return {
+    interval: (index) => shown.has(index),
+    formatter:
+      grain === "hourly"
+        ? (key) => base(key)
+        : (key, index) => {
+            const full = base(key);
+            return index === first || key.slice(5, 7) === "01" ? full : full.replace(/\s*\d{4}$/, "");
+          },
+  };
+}

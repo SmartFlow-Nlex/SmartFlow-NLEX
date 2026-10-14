@@ -22,7 +22,7 @@ import PatrolAlertWindowPanel from "../../../components/dashboard/PatrolAlertWin
 import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import EventBreakdownPanel from "../../../components/dashboard/EventBreakdownPanel";
 import DateRangePicker from "../traffic/components/DateRangePicker";
-import { rangeDays, grainBlockedReason, bestGrainFor, axisLabelFor, bucketLabelFor } from "../../../lib/granularity";
+import { rangeDays, grainBlockedReason, bestGrainFor, bucketLabelFor, timeAxisLabels } from "../../../lib/granularity";
 import styles from "../traffic/traffic.module.css";
 import CountUpValue from "../../../components/dashboard/CountUpValue";
 
@@ -280,8 +280,7 @@ export default function IncidentPage() {
   const trendOption = useMemo<EChartsOption | null>(() => {
     if (trendRows.length === 0) return null;
     const labels = trendRows.map((r) => r.label);
-    const boundaryKey = grain === "monthly" ? (l: string) => l : (l: string) => l.slice(0, 7);
-    const labelInterval = (i: number) => i === 0 || boundaryKey(labels[i]) !== boundaryKey(labels[i - 1]);
+    const timeAxis = timeAxisLabels(labels, grain);
 
     /* Small multiples, one panel per type, rather than three lines on one
        scale.
@@ -328,7 +327,7 @@ export default function IncidentPage() {
         // is noise, and it costs the panels the height instead.
         axisLabel:
           i === last
-            ? { formatter: axisLabelFor(grain), interval: labelInterval, hideOverlap: true }
+            ? { formatter: timeAxis.formatter, interval: timeAxis.interval, hideOverlap: true }
             : { show: false },
       })),
       yAxis: PANELS.map((_, i) => ({

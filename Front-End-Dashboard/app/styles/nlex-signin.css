@@ -1,0 +1,921 @@
+/* ===========================================================================
+   SIGN-IN (app/page.tsx), redesigned 7 Oct 2026 after the user's reference.
+
+   The scene is the user's own artwork (public/light_login.png by day,
+   dark_login.png at night, served as the WebP copies beside them): the mascot
+   driving toward the reader with traffic behind it. It covers the screen with
+   the mascot always in view. Over it: the story on the left, set above the
+   mascot, and a frosted glass sign-in card on the right, copied from the
+   reference (gold accent bar, big title, tall rounded
+   fields, a blue pill button with an arrow).
+
+   The one authored moment is the headline's letter-by-letter blur-up; the
+   card rises in once, and the mascot's headlights answer the sign-in button
+   (a flash when it is pointed at, a pulse while signing in, a double blink on
+   an error). Loaded after nlex-daylight.css.
+   =========================================================================== */
+
+.si-shell {
+  /* Day. */
+  --si-title-lead: #1a52d6;
+  --si-title-ink: #0b1d58;
+  --si-title-accent: #1f6cf5;
+  --si-body-ink: #364d7c;
+  --si-card-bg: linear-gradient(162deg, rgba(255, 255, 255, 0.8) 0%, rgba(240, 247, 255, 0.66) 55%, rgba(225, 239, 255, 0.6) 100%);
+  --si-card-line: rgba(255, 255, 255, 0.92);
+  --si-card-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 2px 6px rgba(16, 39, 90, 0.05),
+    0 44px 90px -38px rgba(14, 50, 140, 0.5);
+  --si-card-title: #0b1d58;
+  --si-label-ink: #3e5683;
+  --si-field-bg: rgba(255, 255, 255, 0.78);
+  --si-field-bg-focus: #ffffff;
+  --si-field-line: rgba(31, 95, 224, 0.17);
+  --si-field-line-hover: rgba(31, 95, 224, 0.34);
+  --si-icon: #6d80a6;
+  --si-placeholder: #7486aa;
+  --si-copy-ink: #2f4677;
+  --si-copy-glow: 0 1px 8px rgba(255, 255, 255, 0.9);
+  --si-copy-bg: rgba(255, 255, 255, 0.5);
+  /* Error text. The corridor's "congested" red is a map colour, too light for 13 px type on this
+     card (3.5:1); this is the same red taken dark enough to read (above 4.5:1). */
+  --si-error-ink: #b4233f;
+
+  position: relative;
+  isolation: isolate;
+  height: 100vh;
+  height: 100svh;
+  min-height: 640px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(400px, 34vw, 580px);
+  grid-template-rows: auto minmax(0, 1fr);
+  column-gap: clamp(28px, 4vw, 72px);
+  padding: 0 clamp(24px, 4.2vw, 64px) clamp(14px, 2.6vh, 30px);
+  color: var(--text-primary);
+}
+
+/* Night: the same page after dark. Two identical blocks, as everywhere: the
+   explicit choice, and "System" on a dark OS. */
+:root[data-theme="dark"] .si-shell {
+  --si-title-lead: #ffffff;
+  --si-title-ink: #ffffff;
+  --si-title-accent: #8cc2ff;
+  --si-body-ink: #dbe6ff;
+  --si-card-bg: linear-gradient(162deg, rgba(18, 40, 96, 0.74) 0%, rgba(11, 28, 74, 0.66) 55%, rgba(8, 22, 62, 0.62) 100%);
+  --si-card-line: rgba(150, 190, 255, 0.26);
+  --si-card-shadow:
+    inset 0 1px 0 rgba(180, 210, 255, 0.16),
+    0 2px 6px rgba(0, 6, 24, 0.2),
+    0 44px 90px -34px rgba(0, 6, 24, 0.75);
+  --si-card-title: #ffffff;
+  --si-label-ink: #b8c7e6;
+  --si-field-bg: rgba(4, 16, 48, 0.5);
+  --si-field-bg-focus: rgba(4, 16, 48, 0.72);
+  --si-field-line: rgba(150, 190, 255, 0.22);
+  --si-field-line-hover: rgba(150, 190, 255, 0.42);
+  --si-icon: #9aaed6;
+  --si-placeholder: #93a6cf;
+  --si-copy-ink: #d2def8;
+  --si-copy-glow: 0 1px 10px rgba(2, 10, 34, 0.8);
+  --si-copy-bg: rgba(4, 16, 48, 0.55);
+  --si-error-ink: #ffa39b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .si-shell {
+    --si-title-lead: #ffffff;
+    --si-title-ink: #ffffff;
+    --si-title-accent: #8cc2ff;
+    --si-body-ink: #dbe6ff;
+    --si-card-bg: linear-gradient(162deg, rgba(18, 40, 96, 0.74) 0%, rgba(11, 28, 74, 0.66) 55%, rgba(8, 22, 62, 0.62) 100%);
+    --si-card-line: rgba(150, 190, 255, 0.26);
+    --si-card-shadow:
+      inset 0 1px 0 rgba(180, 210, 255, 0.16),
+      0 2px 6px rgba(0, 6, 24, 0.2),
+      0 44px 90px -34px rgba(0, 6, 24, 0.75);
+    --si-card-title: #ffffff;
+    --si-label-ink: #b8c7e6;
+    --si-field-bg: rgba(4, 16, 48, 0.5);
+    --si-field-bg-focus: rgba(4, 16, 48, 0.72);
+    --si-field-line: rgba(150, 190, 255, 0.22);
+    --si-field-line-hover: rgba(150, 190, 255, 0.42);
+    --si-icon: #9aaed6;
+    --si-placeholder: #93a6cf;
+    --si-copy-ink: #d2def8;
+    --si-copy-glow: 0 1px 10px rgba(2, 10, 34, 0.8);
+    --si-copy-bg: rgba(4, 16, 48, 0.55);
+    --si-error-ink: #ffa39b;
+  }
+}
+
+.si-shell ::selection { background: rgba(31, 95, 224, 0.22); }
+.si-topbar,
+.si-story,
+.login-panel { position: relative; z-index: 2; }
+
+/* --- The scene ---------------------------------------------------------------
+   Covers the screen like object-fit: cover, with the focal point on the mascot
+   (about a third across, three quarters down). */
+.nlex-env[data-scene="signin"] {
+  --env-base: linear-gradient(180deg, #62b2fd, #9dc8fb);
+  --env-veil: rgba(246, 250, 255, 0.4);
+  /* The mascot's lamps, as a share of the artwork, the same by day and by night: the night art is
+     aligned onto the day art when its WebP is made (see the comment at .env-art). */
+  --hl-lx: 28.53%;
+  --hl-ly: 73.35%;
+  --hl-rx: 39.2%;
+  --hl-ry: 74.22%;
+  --beam-y: 83.5%;
+}
+:root[data-theme="dark"] .nlex-env[data-scene="signin"] {
+  --env-base: linear-gradient(180deg, #01134a, #1a4aa8);
+  --env-veil: rgba(3, 14, 46, 0.45);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .nlex-env[data-scene="signin"] {
+    --env-base: linear-gradient(180deg, #01134a, #1a4aa8);
+    --env-veil: rgba(3, 14, 46, 0.45);
+  }
+}
+.nlex-env[data-scene="signin"] .env-bg {
+  --art-ratio: 1.77683; /* 1672 / 941 */
+  --art-w: max(100vw, calc(100vh * var(--art-ratio)));
+  inset: auto;
+  translate: none; /* the environment's small-screen shift does not apply here */
+  left: calc((100vw - var(--art-w)) * var(--art-fx, 0.3));
+  top: calc((100vh - var(--art-w) / var(--art-ratio)) * var(--art-fy, 0.72));
+  width: var(--art-w);
+  height: auto;
+  aspect-ratio: 1672 / 941;
+  -webkit-mask-image: none;
+  mask-image: none;
+  background: none;
+}
+/* --- The scene's layers (SigninScene.tsx) -----------------------------------------------------
+   Load wrapper -> day art, night art, day light, night light, the mascot's lamps. Everything sits
+   inside the art frame and is placed as a share of the artwork, so each effect stays on its lamp,
+   car or stretch of road at any screen size. */
+.ss-scene,
+.ss-fx,
+.ss-fx > i,
+.env-art { position: absolute; inset: 0; pointer-events: none; }
+/* The entrance: the scene fades up from the sky colour and settles from 1.015 to 1, once both
+   artworks have decoded. */
+.ss-scene {
+  opacity: 0;
+  transform: scale(1.015);
+  transition: opacity 1.6s cubic-bezier(0.22, 1, 0.36, 1), transform 1.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ss-scene[data-ready] { opacity: 1; transform: none; }
+
+/* Day and night: two layers with the same box, the same sizing and the same transform, so the scene
+   cannot move when the theme changes; the night cross-fades in over the day like a timelapse. Both
+   artworks are 1672 x 941 and aligned to each other (the current pair came aligned, lamps within
+   2 px; an earlier pair needed the night PNG cropped and moved onto the day art when its WebP was
+   made). Check the alignment again whenever either artwork changes. The images are set inline from
+   SigninScene's ART, which carries their cache tags. */
+.env-art { background: center / 100% 100% no-repeat; }
+.env-art.is-night { opacity: 0; transition: opacity 750ms cubic-bezier(0.4, 0, 0.2, 1); }
+:root[data-theme="dark"] .env-art.is-night { opacity: 1; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .env-art.is-night { opacity: 1; } }
+
+/* Each theme's light fades with it. Turning dark, the night lights come on a moment after the night
+   picture starts to fade in; turning light, they go out before the day picture is fully back. */
+.ss-day { opacity: 1; transition: opacity 600ms cubic-bezier(0.4, 0, 0.2, 1) 200ms; }
+.ss-night { opacity: 0; transition: opacity 420ms cubic-bezier(0.4, 0, 0.2, 1); }
+:root[data-theme="dark"] .ss-day { opacity: 0; transition: opacity 400ms cubic-bezier(0.4, 0, 0.2, 1); }
+:root[data-theme="dark"] .ss-night { opacity: 1; transition: opacity 700ms cubic-bezier(0.4, 0, 0.2, 1) 180ms; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ss-day { opacity: 0; transition: opacity 400ms cubic-bezier(0.4, 0, 0.2, 1); }
+  :root:not([data-theme="light"]) .ss-night { opacity: 1; transition: opacity 700ms cubic-bezier(0.4, 0, 0.2, 1) 180ms; }
+}
+
+/* Day: sunlight from the upper left, as if through thin cloud; its strength moves by about 4%. */
+.ss-fx > .ss-sun {
+  inset: -4%;
+  background: radial-gradient(52% 58% at 6% 2%, rgba(255, 251, 236, 0.34), rgba(255, 251, 236, 0.12) 42%, transparent 70%);
+  opacity: 0.6;
+  animation: ss-sun 16s ease-in-out infinite alternate;
+}
+/* Day: a soft haze over the sky that drifts about 12 px; the painted clouds themselves never move. */
+.ss-fx > .ss-haze {
+  inset: -3%;
+  background:
+    radial-gradient(20% 11% at 20% 20%, rgba(255, 255, 255, 0.2), transparent 70%),
+    radial-gradient(24% 12% at 58% 12%, rgba(255, 255, 255, 0.16), transparent 70%),
+    radial-gradient(18% 10% at 86% 26%, rgba(255, 255, 255, 0.14), transparent 70%),
+    radial-gradient(30% 9% at 40% 34%, rgba(255, 255, 255, 0.1), transparent 70%);
+  animation: ss-drift 28s ease-in-out infinite alternate;
+}
+/* Day: the whole scene breathes, about 1.5% brighter at most. */
+.ss-breath { background: #ffffff; opacity: 0; animation: ss-breath 18s ease-in-out infinite alternate; }
+
+/* Glints on the wet road: a soft highlight now and then travels toward the reader along the lanes,
+   in the bottom third and left of the card. The day ones are white, the night ones blue-white. */
+.ss-fx > .ss-glint {
+  inset: auto;
+  border-radius: 50%;
+  opacity: 0;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.95), rgba(220, 235, 255, 0.5) 45%, transparent);
+  --glint-max: 0.05;
+}
+.ss-night > .ss-glint {
+  background: radial-gradient(closest-side, rgba(205, 228, 255, 0.95), rgba(120, 170, 255, 0.45) 45%, transparent);
+  --glint-max: 0.045;
+}
+.ss-fx > .ss-glint.is-a { left: 33%; top: 84.5%; width: 15%; height: 4.4%; animation: ss-glint 11s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.ss-fx > .ss-glint.is-b { left: 12%; top: 86%; width: 12%; height: 3.6%; animation: ss-glint 13s cubic-bezier(0.45, 0, 0.55, 1) -6s infinite; }
+.ss-night > .ss-glint.is-a { animation-duration: 12s; }
+.ss-night > .ss-glint.is-b { animation-duration: 14.5s; }
+
+/* Night: a faint blue haze along the skyline, and a soft glow over each cluster of towers. */
+.ss-skyhaze {
+  background: linear-gradient(180deg, transparent 32%, rgba(70, 130, 255, 0.09) 44%, rgba(95, 155, 255, 0.13) 53%, rgba(70, 130, 255, 0.07) 60%, transparent 66%);
+  opacity: 0.75;
+  animation: ss-skyhaze 14s ease-in-out infinite alternate;
+}
+.ss-city {
+  background:
+    radial-gradient(15% 9% at 15% 47%, rgba(110, 170, 255, 0.16), transparent 72%),
+    radial-gradient(17% 10% at 77% 44%, rgba(110, 170, 255, 0.16), transparent 72%);
+  opacity: 0.75;
+  animation: ss-city 11s ease-in-out -4s infinite alternate;
+}
+/* Night: the street lamps glow, breathing between 0.75 and 0.9 and never going out. Two layers of
+   alternate lamps on different periods, so they never breathe in step. Each glow is an ellipse
+   whose radii keep it round on the 1672 x 941 artwork; centres measured on dark_login.png, and to be
+   measured again whenever the artwork changes (as must the car lights below and --hl-* above). */
+.ss-lamps { mix-blend-mode: screen; opacity: 0.75; }
+.ss-lamps.is-a {
+  background:
+    radial-gradient(3.4% 6.04% at 61.11% 20.67%, rgba(230, 240, 255, 0.5), rgba(150, 195, 255, 0.18) 40%, transparent 72%),
+    radial-gradient(1.8% 3.2% at 52.7% 45.02%, rgba(230, 240, 255, 0.5), rgba(150, 195, 255, 0.18) 40%, transparent 72%);
+  animation: ss-lamp 6.4s ease-in-out infinite alternate;
+}
+.ss-lamps.is-b {
+  background:
+    radial-gradient(2.4% 4.26% at 55.67% 37.07%, rgba(230, 240, 255, 0.5), rgba(150, 195, 255, 0.18) 40%, transparent 72%),
+    radial-gradient(1.3% 2.31% at 50.88% 49.78%, rgba(230, 240, 255, 0.46), rgba(150, 195, 255, 0.16) 40%, transparent 72%);
+  animation: ss-lamp 7.6s ease-in-out -3s infinite alternate;
+}
+/* Night: a soft halo on the headlights of the mascot and the cars, varying by about 10%. */
+.ss-carlights {
+  mix-blend-mode: screen;
+  opacity: 0.9;
+  background:
+    radial-gradient(2.5% 4.44% at 28.53% 73.35%, rgba(225, 238, 255, 0.36), transparent 70%),
+    radial-gradient(2.5% 4.44% at 39.2% 74.22%, rgba(225, 238, 255, 0.36), transparent 70%),
+    radial-gradient(1.6% 2.84% at 14.26% 69.02%, rgba(225, 238, 255, 0.32), transparent 70%),
+    radial-gradient(1.6% 2.84% at 21.12% 69.07%, rgba(225, 238, 255, 0.32), transparent 70%),
+    radial-gradient(1.6% 2.84% at 54.37% 68.26%, rgba(225, 238, 255, 0.32), transparent 70%),
+    radial-gradient(1.6% 2.84% at 61.17% 68.35%, rgba(225, 238, 255, 0.32), transparent 70%),
+    radial-gradient(1% 1.78% at 46.95% 67.91%, rgba(225, 238, 255, 0.28), transparent 70%),
+    radial-gradient(1% 1.78% at 50.29% 68.03%, rgba(225, 238, 255, 0.28), transparent 70%);
+  animation: ss-carlight 7s ease-in-out infinite alternate;
+}
+
+@keyframes ss-sun { from { opacity: 0.6; transform: translate3d(0, 0, 0); } to { opacity: 0.74; transform: translate3d(5px, 3px, 0); } }
+@keyframes ss-drift { from { transform: translate3d(-5px, 0, 0); } to { transform: translate3d(7px, -2px, 0); } }
+@keyframes ss-breath { from { opacity: 0; } to { opacity: 0.018; } }
+@keyframes ss-glint {
+  0% { opacity: 0; transform: translate(0, 0) rotate(122deg) scale(0.7); }
+  16% { opacity: var(--glint-max); }
+  50% { opacity: calc(var(--glint-max) * 0.7); transform: translate(-28%, 210%) rotate(122deg) scale(1.05); }
+  62%, 100% { opacity: 0; transform: translate(-36%, 270%) rotate(122deg) scale(1.2); }
+}
+@keyframes ss-skyhaze { from { opacity: 0.72; } to { opacity: 0.95; } }
+@keyframes ss-city { from { opacity: 0.7; } to { opacity: 1; } }
+@keyframes ss-lamp { from { opacity: 0.75; } to { opacity: 0.9; } }
+@keyframes ss-carlight { from { opacity: 0.9; } to { opacity: 1; } }
+
+/* Effects off (the reader's switch): the light holds still and the glints step aside. */
+.nlex-env[data-motion="off"] .ss-fx > i { animation-play-state: paused; }
+.nlex-env[data-motion="off"] .ss-fx > .ss-glint { display: none; }
+/* Reduced motion: nothing drifts, breathes, travels or scales; the theme change is a short fade. */
+@media (prefers-reduced-motion: reduce) {
+  .ss-fx > i { animation: none !important; }
+  .ss-fx > .ss-glint { display: none; }
+  .ss-lamps { opacity: 0.82; }
+  .ss-scene { transform: none; transition: opacity 0.4s ease; }
+  .env-art.is-night,
+  .ss-fx { transition-duration: 250ms !important; transition-delay: 0s !important; }
+}
+
+/* The veil sits under the story only, and fades out before the mascot. */
+.nlex-env[data-scene="signin"] .env-veil {
+  background: linear-gradient(90deg, var(--env-veil) 0%, color-mix(in srgb, var(--env-veil) 55%, transparent) 30%, transparent 54%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 42%, transparent 64%);
+  mask-image: linear-gradient(to bottom, #000 42%, transparent 64%);
+}
+
+/* The headlights, laid on the painted lamps; dark until the button asks for them. */
+.env-headlight,
+.env-beam {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  mix-blend-mode: screen;
+}
+.env-headlight {
+  left: var(--hl-x);
+  top: var(--hl-y);
+  width: 6.4%;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffffff 0 9%, rgba(220, 236, 255, 0.8) 22%, rgba(150, 196, 255, 0.3) 44%, transparent 70%);
+}
+.env-headlight.is-left { --hl-x: var(--hl-lx); --hl-y: var(--hl-ly); }
+.env-headlight.is-right { --hl-x: var(--hl-rx); --hl-y: var(--hl-ry); }
+.env-beam {
+  left: 33.9%;
+  top: var(--beam-y);
+  width: 25%;
+  height: 12%;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(228, 240, 255, 0.75), rgba(170, 205, 255, 0.24) 60%, transparent);
+  filter: blur(6px);
+}
+.si-shell[data-lights="flash"] .env-headlight { animation: si-lamp-flash 0.95s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.si-shell[data-lights="flash"] .env-beam { animation: si-beam-flash 0.95s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.si-shell[data-lights="pending"] .env-headlight { animation: si-lamp-pulse 0.9s ease-in-out infinite alternate; }
+.si-shell[data-lights="pending"] .env-beam { animation: si-beam-pulse 0.9s ease-in-out infinite alternate; }
+.si-shell[data-lights="error"] .env-headlight { animation: si-lamp-blink 1.4s linear both; }
+@keyframes si-lamp-flash {
+  0% { opacity: 0; scale: 0.55; }
+  24% { opacity: 1; scale: 1.15; }
+  100% { opacity: 0; scale: 1; }
+}
+@keyframes si-beam-flash { 0% { opacity: 0; } 26% { opacity: 0.9; } 100% { opacity: 0; } }
+@keyframes si-lamp-pulse { from { opacity: 0.45; scale: 0.9; } to { opacity: 1; scale: 1.1; } }
+@keyframes si-beam-pulse { from { opacity: 0.25; } to { opacity: 0.85; } }
+@keyframes si-lamp-blink {
+  0%, 26%, 54%, 100% { opacity: 0; }
+  10%, 16%, 38%, 44% { opacity: 0.95; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .si-shell[data-lights] .env-headlight,
+  .si-shell[data-lights] .env-beam { animation: none; }
+  .si-shell[data-lights="pending"] .env-headlight { opacity: 0.85; }
+  .si-shell[data-lights="pending"] .env-beam { opacity: 0.6; }
+}
+
+/* --- Top bar ------------------------------------------------------------------ */
+.si-topbar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  height: clamp(76px, 10.4vh, 104px);
+}
+.si-brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.si-brand .brand-logo { width: 40px; height: auto; aspect-ratio: 1; object-fit: contain; flex: none; }
+.si-brand .brand-logo.is-dark { border-radius: 10px; object-fit: cover; }
+.si-wordmark {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-stretch: var(--brand-stretch);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--nlex-blue);
+}
+:root[data-theme="dark"] .si-wordmark { color: #ffffff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .si-wordmark { color: #ffffff; } }
+.si-topbar-end { justify-self: end; display: inline-flex; align-items: center; gap: 10px; }
+
+/* The stories: four thin dashes under the description, the current one filling over its 7 s, then a
+   small round pause. Each dash is a button named for its story. */
+.si-tabs { display: flex; align-items: center; gap: 8px; margin-top: clamp(16px, 2.6vh, 26px); }
+.si-tab {
+  display: grid;
+  align-items: center;
+  width: 44px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--si-title-ink);
+  cursor: pointer;
+}
+.si-tab:focus-visible,
+.si-story-pause:focus-visible { outline: 2px solid var(--nlex-blue); outline-offset: 2px; border-radius: 4px; }
+.si-tab-track {
+  display: block;
+  height: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  transition: background-color 0.2s ease;
+}
+.si-tab:hover .si-tab-track { background: color-mix(in srgb, currentColor 36%, transparent); }
+.si-tab-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+.si-tab.is-done .si-tab-fill { transform: scaleX(1) !important; }
+.si-tab:not(.is-current):not(.is-done) .si-tab-fill { transform: scaleX(0) !important; }
+@media (prefers-reduced-motion: reduce) { .si-tab.is-current .si-tab-fill { transform: scaleX(1) !important; } }
+.si-story-pause {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+.si-story-pause:hover { border-color: var(--hairline-hover, var(--nlex-blue)); color: var(--text-primary); }
+
+/* --- The story ---------------------------------------------------------------- */
+.si-story {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: start;
+  max-width: 880px;
+  padding-top: clamp(8px, 5.2vh, 64px);
+}
+.si-story-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(46px, min(6.3vw, 10.6vh), 108px);
+  font-weight: 800;
+  font-stretch: 100%;
+  line-height: 0.97;
+  letter-spacing: -0.04em;
+  color: var(--si-title-ink);
+}
+.si-story-title .tr-line { display: block; }
+.si-story-title .tr-line:first-child { color: var(--si-title-lead); }
+.si-story-title .is-accent { position: relative; color: var(--si-title-accent); }
+:root[data-theme="dark"] .si-story-title { text-shadow: 0 8px 36px rgba(2, 12, 44, 0.55); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .si-story-title { text-shadow: 0 8px 36px rgba(2, 12, 44, 0.55); } }
+/* The mascot's gold strokes beside the accent word, after the last letter lands. */
+.si-story-title .is-accent::after {
+  content: "";
+  position: absolute;
+  top: -0.14em;
+  right: -0.5em;
+  width: 0.44em;
+  height: 0.44em;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cg stroke='%23ffc531' stroke-width='5' stroke-linecap='round' fill='none'%3E%3Cpath d='M8 20 L14 6'/%3E%3Cpath d='M20 24 L32 14'/%3E%3Cpath d='M22 34 L36 33'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat;
+  opacity: 0;
+  pointer-events: none;
+}
+.si-story-title.tr-ready .is-accent::after {
+  animation:
+    ov-spark-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) calc(var(--tr-letters, 12) * 0.035s + 0.55s) both,
+    ov-spark 3.6s ease-in-out calc(var(--tr-letters, 12) * 0.035s + 1.05s) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .si-story-title .is-accent::after { opacity: 1; animation: none !important; }
+}
+.si-story-body {
+  margin: clamp(14px, 2.2vh, 24px) 0 0;
+  max-width: 52ch;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--si-body-ink);
+  text-wrap: pretty;
+  transform-origin: left top;
+  animation: nc-wipe 1.8s cubic-bezier(0.16, 1, 0.3, 1) 0.25s both, nc-unscale 1.8s cubic-bezier(0.16, 1, 0.3, 1) 0.25s both;
+}
+
+/* --- The sign-in card ------------------------------------------------------------ */
+.login-panel {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: center;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.login-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: clamp(24px, 4.6vh, 50px) clamp(24px, 3.1vw, 52px) clamp(24px, 4.4vh, 46px);
+  border-radius: clamp(24px, 2vw, 32px);
+  border: 1.5px solid var(--si-card-line);
+  background: var(--si-card-bg);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  backdrop-filter: blur(22px) saturate(1.35);
+  box-shadow: var(--si-card-shadow);
+  animation: si-card-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.2s backwards;
+}
+.login-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: clamp(12px, 2.6vh, 30px);
+}
+.login-accent { width: 44px; height: 5px; border-radius: 3px; background: var(--nlex-gold); }
+.login-card h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(28px, 2.55vw, 44px);
+  font-weight: 750;
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+  color: var(--si-card-title);
+}
+
+.login-form { display: flex; flex-direction: column; gap: clamp(13px, 2.3vh, 24px); margin-top: clamp(16px, 3.4vh, 38px); }
+.field-group { display: flex; flex-direction: column; gap: clamp(7px, 1.1vh, 11px); }
+.field-group > span {
+  font-size: 12.5px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: 2.2px;
+  text-transform: uppercase;
+  color: var(--si-label-ink);
+}
+.input-with-icon { position: relative; }
+.input-with-icon input {
+  width: 100%;
+  height: clamp(50px, 6.6vh, 62px);
+  padding: 0 56px 0 54px;
+  border: 1px solid var(--si-field-line);
+  border-radius: 14px;
+  background: var(--si-field-bg);
+  color: var(--text-primary);
+  caret-color: var(--nlex-blue);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 400;
+  box-shadow: inset 0 1px 2px rgba(16, 39, 90, 0.04);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+}
+/* Only the password field carries a button on its right. */
+.input-with-icon:not(:has(.icon-button-right)) input { padding-right: 18px; }
+.input-with-icon input::placeholder { color: var(--si-placeholder); font-weight: 400; opacity: 1; }
+.input-with-icon input:hover:not(:disabled) { border-color: var(--si-field-line-hover); }
+.input-with-icon input:focus {
+  outline: none;
+  border-color: var(--nlex-blue);
+  background: var(--si-field-bg-focus);
+  box-shadow: 0 0 0 4px rgba(31, 95, 224, 0.16);
+}
+.input-with-icon input:disabled { opacity: 0.65; cursor: progress; }
+.input-icon-left {
+  position: absolute;
+  left: 19px;
+  top: 50%;
+  translate: 0 -50%;
+  color: var(--si-icon);
+  pointer-events: none;
+  transition: color 0.18s ease;
+}
+.input-with-icon:focus-within .input-icon-left { color: var(--nlex-blue); }
+.icon-button-right {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--si-icon);
+  cursor: pointer;
+  transition: color 0.18s ease, background-color 0.18s ease;
+}
+.icon-button-right:hover:not(:disabled) { color: var(--text-primary); background: color-mix(in srgb, var(--nlex-blue) 8%, transparent); }
+.icon-button-right:focus-visible { outline: 2px solid var(--nlex-blue); outline-offset: 1px; }
+
+.login-options { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.remember-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  font-size: clamp(14.5px, 1.1vw, 16px);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.remember-row input {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  flex: none;
+  border-radius: 6px;
+  border: 1.5px solid var(--si-field-line-hover);
+  background: var(--si-field-bg);
+  cursor: pointer;
+  transition: background-color 0.18s ease, border-color 0.18s ease;
+}
+.remember-row input::after {
+  content: "";
+  width: 12px;
+  height: 12px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12.5l5 5L20 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
+  scale: 0;
+  transition: scale 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.remember-row input:checked { background: var(--nlex-blue); border-color: var(--nlex-blue); }
+.remember-row input:checked::after { scale: 1; }
+.remember-row input:focus-visible { outline: 2px solid var(--nlex-blue); outline-offset: 2px; }
+.remember-row input:disabled { opacity: 0.6; }
+/* The card's text links: "Forgot password?", and the two on the authenticator step. */
+.forgot-link,
+.si-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--font-ui);
+  font-size: clamp(14.5px, 1.1vw, 16px);
+  font-weight: 500;
+  color: var(--nlex-blue);
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+  cursor: pointer;
+  transition: color 0.18s ease;
+}
+.forgot-link:hover:not(:disabled),
+.si-link:hover:not(:disabled) { color: var(--nlex-blue-deep); }
+.forgot-link:focus-visible,
+.si-link:focus-visible { outline: 2px solid var(--nlex-blue); outline-offset: 3px; border-radius: 4px; }
+.si-link:disabled { opacity: 0.6; cursor: progress; }
+:root[data-theme="dark"] .forgot-link,
+:root[data-theme="dark"] .si-link { color: #8cc2ff; }
+:root[data-theme="dark"] .si-link:hover:not(:disabled) { color: #b9d9ff; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .forgot-link,
+  :root:not([data-theme="light"]) .si-link { color: #8cc2ff; }
+  :root:not([data-theme="light"]) .si-link:hover:not(:disabled) { color: #b9d9ff; }
+}
+
+/* The one action: a blue pill with its arrow. */
+.submit-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: clamp(54px, 7.4vh, 72px);
+  margin-top: clamp(2px, 0.8vh, 8px);
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #3b8cff 0%, #2470f2 52%, #1a5ad8 100%);
+  color: #ffffff;
+  font-family: var(--font-ui);
+  font-size: clamp(14px, 1.05vw, 17px);
+  font-weight: 650;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32), 0 18px 34px -16px rgba(31, 95, 224, 0.8);
+  transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1), box-shadow 0.25s ease, filter 0.25s ease;
+}
+.submit-button > span { padding-left: 0.26em; } /* the tracking's trailing space, so the word sits centred */
+.submit-arrow { position: absolute; right: clamp(22px, 2vw, 30px); top: 50%; translate: 0 -50%; transition: translate 0.3s cubic-bezier(0.25, 1, 0.5, 1); }
+.submit-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  filter: brightness(1.05);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36), 0 24px 40px -16px rgba(31, 95, 224, 0.85);
+}
+.submit-button:hover:not(:disabled) .submit-arrow { translate: 5px -50%; }
+.submit-button:active:not(:disabled) { transform: translateY(0) scale(0.98); }
+.submit-button:focus-visible { outline: 3px solid color-mix(in srgb, var(--nlex-blue) 45%, transparent); outline-offset: 3px; }
+.submit-button:disabled { cursor: progress; filter: saturate(0.85); }
+.submit-spinner {
+  position: absolute;
+  right: clamp(22px, 2vw, 30px);
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-right-color: transparent;
+  animation: nc-ring 0.9s linear infinite;
+}
+
+.login-alert {
+  padding: 12px 14px;
+  border: 1px solid;
+  border-radius: 12px;
+  font-size: 14.5px;
+  font-weight: 450;
+  line-height: 1.45;
+}
+.login-alert.danger { color: var(--si-error-ink); background: var(--color-danger-bg); border-color: var(--color-danger-border); }
+.login-alert.success { color: var(--color-success); background: var(--color-success-bg); border-color: var(--color-success-border); }
+
+/* --- The second step: a code from an authenticator app (lib/mfa.ts) ----------------
+   Same card, same fields and button. Two versions: "Enter Your Code" is one line of
+   guidance and the field; "Set Up Authenticator" (an account's first sign-in) adds the
+   QR code to scan and the key to type when scanning is not possible. */
+.mfa-lead {
+  margin: 0;
+  font-size: clamp(14px, 1.02vw, 15.5px);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  text-wrap: pretty;
+}
+/* The QR code beside its instructions; the key to type runs the card's full width beneath them,
+   which is what lets its 32 characters sit on one line. */
+.mfa-setup {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(10px, 1.6vh, 16px) clamp(14px, 1.3vw, 20px);
+}
+/* White in both themes: a phone camera needs dark squares on a light ground with a
+   clear margin round them, whatever the card behind is doing. */
+.mfa-qr {
+  padding: 9px;
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid var(--si-field-line);
+  box-shadow: 0 10px 22px -14px rgba(14, 50, 140, 0.45);
+}
+.mfa-qr img {
+  display: block;
+  width: clamp(104px, 15.5vh, 146px);
+  height: auto;
+  aspect-ratio: 1;
+}
+.mfa-key {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 3px 12px;
+}
+.mfa-key-label { font-size: 13px; font-weight: 500; line-height: 1.35; color: var(--si-label-ink); }
+.mfa-key code {
+  grid-column: 1 / -1;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  user-select: all;
+}
+.mfa-key .si-link { font-size: 13px; }
+/* "Use a different account", on the card's top row opposite the gold bar. */
+.login-card-head .si-link { font-size: 14px; }
+
+/* The code itself: larger, evenly spaced digits, so six of them can be checked at a glance. */
+.input-with-icon input.mfa-code {
+  font-size: clamp(19px, 1.5vw, 22px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.32em;
+}
+.input-with-icon input.mfa-code::placeholder { font-size: 16px; font-weight: 400; letter-spacing: normal; }
+/* A refused code is said under the field it concerns, and the field shows it too. */
+.mfa-field { display: flex; flex-direction: column; gap: 8px; }
+.mfa-error {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--si-error-ink);
+  text-wrap: pretty;
+}
+.input-with-icon input.mfa-code[aria-invalid="true"] { border-color: var(--si-error-ink); }
+.input-with-icon input.mfa-code[aria-invalid="true"]:focus { box-shadow: 0 0 0 4px var(--color-danger-bg); }
+/* On a small frosted backing: below the card it crosses the road's bright lane lines. */
+.copyright {
+  align-self: center;
+  margin: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--si-copy-bg);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--si-copy-ink);
+  text-shadow: var(--si-copy-glow);
+}
+
+/* The card rises 12 px into place after the scene starts; inside it the title, the two fields, the
+   options and the button follow 60 ms apart. "backwards" so hover and press transforms still apply
+   once each entrance is over. */
+@keyframes si-card-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes si-item-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes si-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.login-card-head,
+.login-card h2,
+.login-form > .field-group,
+.login-options,
+.submit-button { animation: si-item-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+.login-card-head { animation-delay: 0.26s; }
+.login-card h2 { animation-delay: 0.31s; }
+.login-form > .field-group:nth-of-type(1) { animation-delay: 0.37s; }
+.login-form > .field-group:nth-of-type(2) { animation-delay: 0.43s; }
+.login-options { animation-delay: 0.49s; }
+.submit-button { animation-delay: 0.55s; }
+/* Moving between the password and the code is a step inside the card, not a page arriving: once
+   the card has changed step, each form's contents come in together and at once, with none of the
+   opening sequence's delays. (Selectors weighted to outrank the per-field delays above.) */
+.login-card .login-form.mfa-form > *,
+.login-card[data-stepped] .login-form > * {
+  animation: si-item-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: 0s;
+}
+/* The logo and toggles come in with a plain fade. */
+.si-topbar { animation: si-fade-in 0.6s ease 0.15s backwards; }
+@media (prefers-reduced-motion: reduce) {
+  .login-card,
+  .login-card-head,
+  .login-card h2,
+  .login-form > .field-group,
+  .login-options,
+  .submit-button,
+  .login-card .login-form.mfa-form > *,
+  .login-card[data-stepped] .login-form > *,
+  .si-story-body { animation: none; }
+}
+
+/* --- Smaller screens ---------------------------------------------------------- */
+/* The card sits a little in from the right edge, toward the middle (user request). */
+@media (min-width: 861px) {
+  .login-panel { right: clamp(0px, 2.5vw, 56px); }
+}
+@media (max-width: 1440px) {
+  .si-shell { column-gap: clamp(28px, 3vw, 56px); }
+}
+@media (max-width: 1240px) {
+  .si-story { padding-top: clamp(8px, 3.4vh, 40px); }
+}
+@media (max-width: 1100px) {
+  .si-shell { grid-template-columns: minmax(0, 1fr) clamp(360px, 40vw, 440px); }
+}
+
+/* Phones and narrow tablets: one column that scrolls; the scene stays fixed behind it. */
+@media (max-width: 860px) {
+  /* The card covers the road here, and the glints must never cross it. */
+  .ss-fx > .ss-glint { display: none; }
+  .si-shell {
+    height: auto;
+    min-height: 100svh;
+    overflow: visible;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    padding: 0 20px 28px;
+  }
+  .nlex-env[data-scene="signin"] .env-bg { --art-fx: 0.27; }
+  .nlex-env[data-scene="signin"] .env-veil {
+    background: linear-gradient(180deg, var(--env-veil), color-mix(in srgb, var(--env-veil) 40%, transparent) 50%, transparent 70%);
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .si-story { grid-column: 1; grid-row: auto; padding-top: 22px; max-width: none; }
+  .si-story-title { font-size: clamp(40px, 11.2vw, 64px); }
+  .login-panel { grid-column: 1; grid-row: auto; margin-top: 26px; }
+}
+@media (max-width: 560px) {
+  /* The logo stands for the wordmark; the name stays the page's heading for screen readers. */
+  .si-wordmark {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .login-card { padding: 24px 20px 22px; }
+  /* The QR code above its instructions, centred, and big enough to scan off a phone-width card. */
+  .mfa-setup { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+  .mfa-qr img { width: 148px; }
+  .mfa-key { justify-self: stretch; }
+  .copyright { font-size: 9.5px; letter-spacing: 1px; white-space: nowrap; }
+  .input-with-icon input { padding-left: 48px; }
+  .input-icon-left { left: 16px; }
+  .submit-arrow,
+  .submit-spinner { right: 20px; }
+}
