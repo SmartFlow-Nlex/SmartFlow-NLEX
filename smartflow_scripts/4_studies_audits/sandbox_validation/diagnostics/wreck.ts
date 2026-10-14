@@ -8,6 +8,12 @@
  *
  * This checks the property that matters: after a crash, the wrecked vehicles
  * are agents that existed BEFORE it, and the responders arrive by driving.
+ *
+ * Since 2026-10-06 a crash is not instant: crashAt picks the vehicles out of
+ * the traffic approaching the point and they are seen to crash there over the
+ * next few seconds (the first stops, the next fails to). So the scene is given
+ * a minute to come together before it is counted, and the responders, which
+ * come up the hard shoulder, are looked for there too.
  */
 import { TrafficSim } from "../../../../Front-End-Dashboard/app/dashboard/scenario-sandbox/simulation";
 
@@ -29,26 +35,27 @@ function run(want: number) {
   const before = new Map<number, number>();
   for (const v of sim.vehicles) before.set(v.id, v.x);
 
+  const t0 = sim.time;
   sim.crashAt(2, 700, want);
+  const everyone = () => [...sim.vehicles, ...sim.shoulder];
 
-  const wrecks = sim.vehicles.filter((v: any) => v.role === "wreck");
-  const fromTraffic = wrecks.filter((w: any) => before.has(w.id)).length;
-
-  // Let the response come in.
+  // The scene comes together out of the traffic, then the response comes in.
   const seen = new Set<string>();
   const arrivedAt = new Map<string, number>();
-  for (let i = 0; i < 120 / DT; i++) {
+  const wreckIds = new Set<number>();
+  for (let i = 0; i < 180 / DT; i++) {
     sim.step(DT);
-    for (const v of sim.vehicles) {
+    for (const v of everyone()) {
+      if (v.role === "wreck") wreckIds.add(v.id);
       if (v.role !== "responder") continue;
       seen.add(v.responderKind);
-      if (v.v === 0 && v.holdAtX != null && v.x >= v.holdAtX - 1 && !arrivedAt.has(v.responderKind)) {
-        arrivedAt.set(v.responderKind, sim.time);
-      }
+      if (v.stillSince != null && !arrivedAt.has(v.responderKind)) arrivedAt.set(v.responderKind, sim.time - t0);
     }
   }
+  const wrecks = [...wreckIds];
+  const fromTraffic = wrecks.filter((id) => before.has(id)).length;
 
-  const stillWrecked = sim.vehicles.filter((v: any) => v.role === "wreck").length;
+  const stillWrecked = everyone().filter((v: any) => v.role === "wreck").length;
   return { want, wrecks: wrecks.length, fromTraffic, stillWrecked, seen: [...seen].sort(), arrivedAt };
 }
 
@@ -63,11 +70,12 @@ function runLifecycle() {
   for (let i = 0; i < 90 / DT; i++) sim.step(DT);
   sim.crashAt(2, 700, 2, "evt-1");
   for (let i = 0; i < 90 / DT; i++) sim.step(DT);
-  const atPeak = sim.vehicles.filter((v: any) => v.sceneKey === "evt-1").length;
+  const all = () => [...sim.vehicles, ...sim.shoulder];
+  const atPeak = all().filter((v: any) => v.sceneKey === "evt-1").length;
   sim.releaseScene("evt-1");
   for (let i = 0; i < 180 / DT; i++) sim.step(DT);
-  const left = sim.vehicles.filter((v: any) => v.sceneKey === "evt-1").length;
-  const stuck = sim.vehicles.filter((v: any) => v.role === "wreck" && v.v === 0).length;
+  const left = all().filter((v: any) => v.sceneKey === "evt-1").length;
+  const stuck = all().filter((v: any) => v.role === "wreck" && v.v === 0).length;
   console.log(`
 LIFECYCLE  scene agents at peak: ${atPeak}   still present 3 min after release: ${left}   wrecks still frozen: ${stuck}`);
   console.log(`           ${left === 0 && stuck === 0 ? "ok - the scene drove away and the lane is clear" : "<-- SOMETHING IS STILL BLOCKING"}`);
@@ -84,6 +92,6 @@ for (const want of [1, 2, 4]) {
     `            responders that drove in: ${r.seen.join(", ") || "none"}` +
       `   parked: ${[...r.arrivedAt.entries()].map(([k, t]) => `${k}@${t.toFixed(0)}s`).join(", ") || "none"}`,
   );
-  console.log(`            wrecks still blocking after 2 min: ${r.stillWrecked}`);
+  console.log(`            wrecks still there 3 min on (no event to end it, so they should be): ${r.stillWrecked}`);
 }
 runLifecycle();

@@ -136,7 +136,7 @@ export async function getEmissionsAnalyticsFromDb(filters: EmissionsAnalyticsFil
         params
       ),
       db.query(`SELECT COUNT(DISTINCT exit_canonical)::int AS n FROM ${EMISSIONS_TABLE} e WHERE ${WHERE}`, params),
-      // Delay-induced carbon: the idling of the queues behind cleared accidents in the Range.
+      // Delay-induced carbon: the idling of the queues behind accidents that blocked a lane in the Range.
       delayCarbon(lo, hi),
     ]);
 

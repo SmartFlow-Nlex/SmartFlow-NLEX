@@ -96,10 +96,11 @@ paid per token (approved 2026-10-05).
   reallocation; then everything that acts on the road — each step after both runs have been rebuilt and
   settled. A lane that is not there when Apply runs is reported. While the model works, the button counts
   the seconds and Cancel stops it; it gives up after 2½ minutes.
-- **Tests.** `npm run check-command` (Back-End): 35 offline checks of the server's checks with hand-written
-  model answers — sound, incomplete, wrong and hostile; free. `npm run eval-command` (Back-End): 74 commands
-  in English, Tagalog, Taglish, with typos and in Bisaya, through GLM (paid, about 74 calls), with the pass
-  rate per language and the answer times. Last full run 70/71 (the one miss, "alas-siyete" read as 8:00,
+- **Tests.** `npm run check-command` (Back-End): 54 offline checks of the server's checks with hand-written
+  model answers — sound, incomplete, wrong and hostile; free. `npm run eval-command` (Back-End): 80 commands
+  in English, Tagalog, Taglish, with typos and in Bisaya, through GLM (paid, about 80 calls), with the pass
+  rate per language and the answer times. Last full run 80/80 (2026-10-07, with the stretch and clock-window
+  cases S1-S4); the one before, 70/71 (the one miss, "alas-siyete" read as 8:00,
   fixed by spelling out the Spanish hours; the time cases then 9/9). Also checked end to end in the page
   against the running backend: forecast day and clock, "kung saan madalas", a booth shut, pause, play at
   5×, full screen, inflow, closures with a speed limit, "ibalik sa dati", lane reallocation on and off, a
@@ -207,6 +208,37 @@ case and the corrupted-list case, both directions) and checks that the hook has 
 left to bypass it. `addEvent` on its own still stamps the direction from the spec and does not check it
 (it does not know which list it is for), so anything new that stores events must go through
 `addEventToBucket`.
+
+### A stretch, not a point (2026-10-07)
+
+"Put a crash within 12.30 - 12.40" used to come out as one km (12.35). An event was a point, and its closure
+was laid out round the point by the assumptions — `UPSTREAM_BUFFER_M` (100 m) before it and
+`CLOSURE_LENGTH_M` after it — so most of a "12.30–12.40" crash was drawn and simulated outside 12.30–12.40.
+
+- **An event may carry a stretch** (`ScenarioEvent.stretchKm`, low km first). When it does, the stretch *is*
+  where the event is: every phase that blocks a lane closes exactly it (for every family, on both
+  carriageways), and a shoulder breakdown slows traffic over exactly it. Without one, nothing changed.
+- **The point inside it** (`positionInStretch`): a collision's vehicles come to rest just downstream of its
+  point and its police, ambulance and cones stand upstream, so the point is 45 m in from the end traffic
+  comes from (the low km northbound, the high km southbound), never so far that the pile runs past the far
+  end. Roadworks are 60% along; anything else the middle. On the engine (verify.ts, both carriageways,
+  minor, pile-up, overturned): everything parked for the scene stands inside the stretch.
+- **Limits.** At least 20 m (`MIN_EVENT_STRETCH_M`; shorter is a point) and inside the simulated window;
+  rain (the whole road) and an event at a plaza (its booths) keep none.
+- **Where it comes from.** The Scenario panel's typed-km mode has **Over a stretch** (From / To); the
+  Copilot sends `fromKm`/`toKm` on `add_event`. The event row reads "Km 12.30–12.40".
+- **The Copilot reads it as km.** Rule 4: "within Km 12.30–12.40", "between 12.30 and 12.40",
+  "mula 12.30 hanggang 12.40" are a stretch, never one km. Numbers with a decimal point and no time word are
+  km. A colon, am/pm, nn, "alas" or ng umaga/hapon/gabi makes a time (rule 5). The server also reads the
+  range from the operator's own words (`rangesInWords`). It puts the range back on the one event when the
+  model dropped it, or read it as a time. It does not do this when a closure or speed limit in the same
+  command owns the range. A stretch off screen gets a window covering all of it.
+- **A clock window.** "From 12:30 to 12:40" is `at`/`until`. The length is the difference (manual, exactly
+  10 min). The page measures the start from its own clock, to the second (`atClock`; the server's copy of
+  the clock is a minute-rounded snapshot). A start already gone by, or more than 4 h ahead, sets the clock to
+  it first, which builds a new run at that hour. Within the hour the run already started, there is no going
+  back: it is refused and says so. Events already on the road keep their place in the run, so a clock change
+  moves them with it, as it always has.
 
 ### Adding to one carriageway or both
 
@@ -319,10 +351,11 @@ its family, phase and how far through the phase it is, and — the important par
 the engine's closure owner actually holds**. An event is drawn holding lanes only if it *owns* the closure,
 so the picture never shows a wreck, flood or work zone the engine is not honouring. An event on a closure
 of its own (a second collision, or one beside the operator's closure) draws its own lanes and stretch. `sceneArt.ts` then draws, in this
-order: flood water (under the traffic), the vehicles, the scenes (breakdown with hazards and cones,
-collision with skid marks, debris and smoke, the responders arriving and leaving by phase, roadworks
-with taper, barrels, work truck and arrow board), rain over everything, then the event labels — which
-sit on the seam just past the lanes an event holds rather than on top of it.
+order: flood water and what a crash leaves on the road (skid marks, glass, a spilled load — under the
+traffic), the vehicles, the scenes (the people round the scene's vehicles, the police cones, smoke, the
+roadworks' taper, barrels and arrow board), rain over everything, then the event labels — which sit on the
+seam just past the lanes an event holds rather than on top of it. The scene's *vehicles* are not drawn
+here: they are agents, drawn with the traffic (next section).
 
 - **Rain**: two layers of falling drops (density, speed, length and brightness set by intensity), rings
   where drops land, a cool wet tint on the asphalt, and a speed-limit roundel showing the cap. The
@@ -351,6 +384,51 @@ sit on the seam just past the lanes an event holds rather than on top of it.
 
 The scenes are illustrations of the engine's state, not measurements: the wreck's angle, the debris and the
 number of responders are decoration. Wreck *length*, lanes and duration are still the recorded assumptions.
+
+### Scenes made of the traffic (2026-10-06)
+
+Every vehicle in a scene is a vehicle that was on the road — nothing is put down on it, and nothing is
+painted over it.
+
+- **The run-up.** `SCENE_LEAD_S` (12 s) before an event with vehicles in it starts, the binding asks the
+  engine for its scene (`crashAt`) and the engine picks the vehicle approaching the spot in that lane that
+  will get there about on time — a truck or a bus for an overturn, the class asked for in a breakdown,
+  waited for up to 20 s if none is near. It drives on as everyone does (it is `doom`ed, not scripted to a
+  path), so the event is seen coming. `boundaryTimes` includes this lead-in.
+- **How it happens.** A collision: the first vehicle brakes hard and stops; the one behind follows without
+  seeing it stop, brakes when it is already too late (at a rate fixed the moment it reacts, so it really
+  meets it) and runs into it; a pile-up repeats that down the line, taking the next vehicle from the lane
+  beside it if its own lane is empty. A self accident skids round as it brakes; an overturn goes onto its
+  side part-way through. A breakdown loses power, slows with its hazards on and stops straight; a shoulder
+  breakdown pulls onto the hard shoulder first. Its obstacle (the engine's incident slots) is not an
+  obstacle until the vehicle is there, and only where the vehicle actually is.
+- **The response**, once everything has come to rest: the police (the patrol, for a breakdown) and, for a
+  crash, an ambulance. They come up the **hard shoulder** (`TrafficSim.shoulder`, a list outside every lane)
+  past the queue — entering in their lane at the entrance meant waiting for a gap that never came behind a
+  closure, so the ambulance was dispatched and never seen — and cross into the lane at the scene, traffic
+  holding back to let them in (`yieldTo`). The police car blocks furthest back and sets its cones out
+  behind it; the ambulance stands between it and the wreck. A scene that closes nothing (an operator's
+  accident, a breakdown in a lane) has traffic queued right behind it, so they stop on the shoulder beside
+  it instead. The recovery truck goes at the tow (or service) phase and parks in front of the casualty.
+- **The end.** At the clearing phase (lanes reopened) or the end: the truck winches the casualty up and
+  tows it off, the other wrecks are driven away slowly, the responders fall in. A vehicle still on its way
+  into a scene that ends simply carries on.
+- **At a booth, a pump or a plaza approach** the same rule holds (`facilities.ts`): a vehicle standing at
+  the booth is taken as it is, one still moving brakes to a stop first, and an empty booth lane waits for the
+  next vehicle to drive up — the booth shuts once it is there (or after 90 s with nobody). Nothing is put down.
+  At a barrier the responders keep the lane that feeds the booth and, if its lane is full, park in the booth
+  beside it (which shuts with them); on a single-file approach they stop in the queue behind the scene.
+- **On the canvas** the wrecks keep their own paint, at the angle they came to rest (no further round than
+  keeps them in their lane), crumpled for a crash, on its side for an overturn, hazards flashing; a scene's
+  resting vehicles are laid out at one scale, nose to tail, so a crash is not a big car hitting a small one.
+  The responders have their liveries and light bars. People are sized from the vehicles round them: drivers
+  get out once they have stopped and stand beside their cars, paramedics walk from the ambulance to the
+  casualties, an officer stands behind the police car, the recovery crew go to the hitch.
+- **Checked** in `verify.ts` ("scenes from traffic"): the wrecks were ordinary traffic a moment before and
+  nothing appeared at the spot; it happens within seconds of the start; a wreck never changes lane or
+  creeps; the responders park in the shut lane, police behind the ambulance; a truck breakdown is a truck
+  with a patrol on the shoulder and a tow in front, no ambulance; nothing is left once it is over; no two
+  vehicles are drawn through each other.
 
 ## Forecast incidents on the stretch
 

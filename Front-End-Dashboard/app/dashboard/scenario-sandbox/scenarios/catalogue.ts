@@ -120,11 +120,14 @@ export type PhaseDef<Id extends string> = {
 
 /**
  * How far one scenario reaches across a divided carriageway. "one": it happens on one carriageway (a
- * collision, a breakdown, works), so the operator names which. "one_or_both": weather and flooding are
- * not one carriageway's business, so the panel offers Both (one event on each, at the same place and time,
- * the default) as well as either carriageway alone. Only matters when both carriageways are on screen.
+ * collision, a breakdown, works), so the operator names which. "one_or_both": flooding is not one
+ * carriageway's business but can be (one side's drainage fails), so the panel offers Both (one event on
+ * each, at the same place and time, the default) as well as either carriageway alone, when both are on
+ * screen. "both": rain — the two carriageways are a median apart, so it rains on both or on neither; it is
+ * always added to each, whichever view is open and whichever carriageway was named (the operator's rule,
+ * 2026-10-06).
  */
-export type CarriagewayReach = "one" | "one_or_both";
+export type CarriagewayReach = "one" | "one_or_both" | "both";
 
 type TemplateCommon<F extends FamilyKey> = {
   readonly family: F;
@@ -306,7 +309,7 @@ const BREAKDOWN_IN_LANE: BreakdownInLaneTemplate = {
   carriageways: "one",
   displayName: "Breakdown in a lane",
   description:
-    "A vehicle stalls in a running lane and stays there until the patrol has finished with it: first waiting for the responder, then service or tow. Modelled as a stopped obstacle in that lane (a bus or truck uses several of the engine's 5 m obstacle slots) for the whole event, removed when it ends. Traffic behind it queues and works around it.",
+    "A vehicle stalls in a running lane and stays there until the patrol has finished with it: first waiting for the responder, then service or tow. Modelled as a stopped obstacle in that lane (a bus or truck uses several of the engine's 5 m obstacle slots) for the whole event, removed when it ends. Traffic behind it queues and works around it. The vehicle is one from the traffic, of the kind chosen if one is coming: it slows with its hazards on and stops in its lane. A patrol stops on the shoulder beside it, and when the service phase begins a recovery truck pulls in in front and tows it away at the end.",
   phases: breakdownPhases(),
   defaultLane: { kind: "operator_lane", lane: 3 },
   defaultPlacement: DEFAULT_PLACEMENT,
@@ -325,7 +328,7 @@ const BREAKDOWN_SHOULDER: BreakdownShoulderTemplate = {
   carriageways: "one",
   displayName: "Breakdown on the shoulder",
   description:
-    "A vehicle stops on the shoulder and waits for the responder, then is served or towed. No lane is blocked, but passing traffic slows to look. Modelled as a speed zone around the location for the whole event. The engine has a single speed zone, so this cannot run alongside a hand-set speed limit.",
+    "A vehicle stops on the shoulder and waits for the responder, then is served or towed. No lane is blocked, but passing traffic slows to look. Modelled as a speed zone around the location for the whole event; it runs alongside any other limit or event (where zones overlap, the lower limit holds). The vehicle is one from the traffic in the outer lane: it slows, pulls onto the shoulder and stops there. A patrol stops behind it, and for the service phase a recovery truck comes up the shoulder, stops in front and tows it away along the shoulder.",
   phases: breakdownPhases(),
   defaultLane: { kind: "outermost" },
   defaultPlacement: DEFAULT_PLACEMENT,
@@ -344,7 +347,7 @@ const MINOR_COLLISION: MinorCollisionTemplate = {
   carriageways: "one",
   displayName: "Minor collision",
   description:
-    "A rear-end, side-swipe or hit-and-run that blocks its lane until the vehicles are moved, then clears the scene. Modelled by closing the lane from a short distance upstream of the wreck to its far end, and reopening it when the lane-blocked share of the duration has passed. The engine has a single closure stretch, so it cannot overlap another collision.",
+    "A rear-end, side-swipe or hit-and-run that blocks its lane until the vehicles are moved, then clears the scene. Modelled by closing the lane from a short distance upstream of the wreck to its far end, and reopening it when the lane-blocked share of the duration has passed. The two vehicles are from the traffic: the first brakes hard and stops, the one behind sees it too late and runs into it. Police and an ambulance come up the shoulder and park in the closed lane behind them; the cars are driven off as the lane reopens. Any number can run at once, each with its own closure.",
   phases: buildAccidentPhases("minor_collision", {
     blocked: "Lane blocked: awaiting response",
     clearing: "Scene clearing: lane reopened",
@@ -367,7 +370,7 @@ const MULTI_VEHICLE_COLLISION: MultiVehicleCollisionTemplate = {
   carriageways: "one",
   displayName: "Multi-vehicle collision",
   description:
-    "Three or more vehicles. Two lanes are blocked at first, reduced to one while the tow works, then reopened while the scene is cleared. Modelled through the engine's single closure stretch, so it cannot overlap another collision.",
+    "Three or more vehicles. Two lanes are blocked at first, reduced to one while the tow works, then reopened while the scene is cleared. The vehicles are four from the traffic, each piling into the one ahead. Police and an ambulance park in the closed lane behind them, and a recovery truck pulls in in front for the tow phase and takes the first away when the lanes reopen. Any number can run at once, each with its own closure.",
   phases: buildAccidentPhases("multi_vehicle_collision", {
     blocked: "Lanes blocked: awaiting response",
     tow: "Tow in progress",
@@ -385,7 +388,7 @@ const SELF_ACCIDENT: SelfAccidentTemplate = {
   carriageways: "one",
   displayName: "Self accident",
   description:
-    "A single vehicle loses control. The slowest accident family to clear in the data. The lane stays blocked while awaiting response and during the tow, then reopens while the scene is cleared. Modelled through the engine's single closure stretch, so it cannot overlap another collision.",
+    "A single vehicle loses control. The slowest accident family to clear in the data. The lane stays blocked while awaiting response and during the tow, then reopens while the scene is cleared. The vehicle is one from the traffic: it brakes, skids round and stops at an angle. Police and an ambulance attend, and a recovery truck comes for the tow phase. Any number can run at once, each with its own closure.",
   phases: buildAccidentPhases("self_accident", {
     blocked: "Vehicle in lane: awaiting response",
     tow: "Tow in progress",
@@ -403,7 +406,7 @@ const OVERTURNED_VEHICLE: OverturnedVehicleTemplate = {
   carriageways: "one",
   displayName: "Overturned vehicle",
   description:
-    "A vehicle has rolled or come to rest on its side, blocking a lane until it is righted and towed. NLEX's own accident logs have no category for this (no \"Overturned\" or \"Rollover\" event type exists in the data), so there is no calibrated duration to sample from: the operator enters the duration directly. Modelled through the engine's single closure stretch, like the other collision families, so it cannot overlap another collision.",
+    "A vehicle has rolled or come to rest on its side, blocking a lane until it is righted and towed. NLEX's own accident logs have no category for this (no \"Overturned\" or \"Rollover\" event type exists in the data), so there is no calibrated duration to sample from: the operator enters the duration directly. The vehicle is a bus or a truck from the traffic if one is coming (a car otherwise): it skids and goes over onto its side, spilling its load. Police, an ambulance and a heavy recovery attend; it is righted and towed away when the lane reopens. Any number can run at once, each with its own closure.",
   phases: buildAccidentPhases("overturned_vehicle", {
     blocked: "Vehicle overturned: awaiting response",
     tow: "Righting and tow in progress",
@@ -443,10 +446,10 @@ const SCHEDULED_ROADWORKS: ScheduledRoadworksTemplate = {
 
 const RAIN: RainTemplate = {
   family: "rain",
-  carriageways: "one_or_both",
+  carriageways: "both",
   displayName: "Rain",
   description:
-    "Light, moderate or heavy rain: a speed zone across the WHOLE simulated stretch, for a duration the operator enters directly. The caps are scaled from free-flow speeds measured on the NLEx in rain (Mejia & Sigua 2018; heavy is lowest, and the study does not separate light from moderate). NLEX does record weather on accidents, but checked properly (the same population and exclusion rules the calibration file itself uses) it shows no real difference in how long anything takes to clear during rain, so there is no calibrated duration. A speed cap is a proxy: rain mostly lengthens following headways, which the engine cannot vary, so capacity loss is understated. No lane is blocked. The engine has a single speed zone, so this cannot run alongside a hand-set speed limit or a shoulder breakdown's gawk zone.",
+    "Light, moderate or heavy rain: a speed zone across the WHOLE simulated stretch, for a duration the operator enters directly. The caps are scaled from free-flow speeds measured on the NLEx in rain (Mejia & Sigua 2018; heavy is lowest, and the study does not separate light from moderate). NLEX does record weather on accidents, but checked properly (the same population and exclusion rules the calibration file itself uses) it shows no real difference in how long anything takes to clear during rain, so there is no calibrated duration. A speed cap is a proxy: rain mostly lengthens following headways, which the engine cannot vary, so capacity loss is understated. No lane is blocked. It falls on both carriageways, and runs alongside any other limit or event (where zones overlap, the lowest limit holds).",
   phases: singlePhase("Raining"),
   defaultLane: { kind: "outermost" },
   defaultPlacement: DEFAULT_PLACEMENT,

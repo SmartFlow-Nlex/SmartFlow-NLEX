@@ -28,16 +28,28 @@ function scene(label: string, spec: FacilitySpec, inflow: number, site: { kind: 
   );
   const f = sim.fac.list[0];
   for (let i = 0; i < 240 / DT; i++) sim.step(DT);
-  const before = new Set(f.agents.map((a: any) => a.id));
+  /* Since 2026-10-06 nothing is put down at the booth: the vehicles there are brought to rest (braking first if
+     moving), and an empty lane waits for the next one to drive up. So a scene vehicle is checked to have been SEEN
+     driving — in the plaza or on the road — before it became the scene, over the whole run. */
+  const seen = new Set<number>([...f.agents, ...sim.vehicles].map((a: any) => a.id));
   const ok = sim.facilityEventStart("evt-1", { facilityId: spec.id, ...site }, family);
-  const wrecks = f.agents.filter((a: any) => a.sceneKey === "evt-1" && a.role === "wreck");
-  const fromTraffic = wrecks.filter((w: any) => before.has(w.id)).length;
+  const wreckIds = new Set<number>();
+  let fromTraffic = 0;
+  let restedAt: number | null = null;
   let maxQueued = 0, overlapTicks = 0, ticks = 0, diverted = 0;
   const responderArrived = new Map<string, number>();
   const pathAt = new Map<number, number>();
   for (const a of f.agents) pathAt.set(a.id, a.fac.path);
   for (let i = 0; i < 300 / DT; i++) {
     sim.step(DT);
+    for (const a of [...f.agents, ...sim.vehicles]) {
+      if (a.sceneKey === "evt-1" && a.role === "wreck" && !wreckIds.has(a.id)) {
+        wreckIds.add(a.id);
+        if (seen.has(a.id)) fromTraffic++;
+        if (restedAt === null) restedAt = sim.time - 240;
+      }
+      seen.add(a.id);
+    }
     if (i % 4) continue;
     ticks++;
     const st = sim.facilityStats()[0];
@@ -62,7 +74,8 @@ function scene(label: string, spec: FacilitySpec, inflow: number, site: { kind: 
   const left = f.agents.filter((a: any) => a.sceneKey === "evt-1").length + sim.vehicles.filter((v: any) => v.sceneKey === "evt-1" && v.role === "wreck" && !v.departing).length;
   const after = sim.facilityStats()[0];
   console.log(`\n${label}: ${family} at ${site.kind} ${site.stations.join(",")}`);
-  console.log(`   started ${ok}; scene vehicles ${wrecks.length}, ${fromTraffic} of them were already in the plaza${wrecks.length && fromTraffic === wrecks.length ? "  ok" : wrecks.length ? "  (lane was empty: one brought in at the booth)" : "  <-- NOTHING STRANDED"}`);
+  const n = wreckIds.size;
+  console.log(`   started ${ok}; scene vehicles ${n}, ${fromTraffic} of them seen driving first${restedAt !== null ? `, at rest +${restedAt.toFixed(0)}s` : ""}${n && fromTraffic === n ? "  ok" : n ? "  <-- ONE APPEARED" : family === "scheduled_roadworks" ? "  ok (works: no vehicle of its own)" : "  <-- NOBODY CAME"}`);
   console.log(`   during: open ${during.openStations}/${during.stations}, max queued ${maxQueued}, squeezed across ${diverted}, responders parked: ${[...responderArrived].map(([k, t]) => `${k} +${t.toFixed(0)}s`).join(", ") || "none"}, overlap ticks ${((100 * overlapTicks) / ticks).toFixed(2)}%`);
   console.log(`   5 min after release: scene vehicles still there ${left}, open ${after.openStations}/${after.stations}, queued ${after.queued}  ${left === 0 && after.openStations === after.stations ? "ok" : "<-- NOT CLEARED"}`);
 }

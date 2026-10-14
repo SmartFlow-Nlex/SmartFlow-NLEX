@@ -70,20 +70,28 @@ idle_CO₂_kg(incident) = (λ / 60) × T² / 2 × φ
 
 `λ` = vehicles per hour on **one exit-segment in one direction** at the hour the
 incident started (the record's hourly volume ÷ days ÷ exits ÷ 2 carriageways);
-`T` = that incident's clearance minutes; `φ` = 0.0192 kg CO₂ per
+`T` = the minutes that incident **blocked a lane** (`blockage_cleared − event_start_date`); `φ` = 0.0192 kg CO₂ per
 vehicle-minute (Climatiq's petrol-car factor × 0.10 for idling, held as a
 constant so runs are reproducible and cost no API quota).
 
-**Quadratic in T**, so the long tail carries it: in 2025, 62 accidents of three
-hours or more were 73% of the delay-induced carbon. Each incident is charged at
+**T is blockage time, not site-clearance time** (corrected 2026-10-12). Until then
+`T` was `clearance_min`, the time to *site* cleared: a vehicle off the road that
+never blocked a lane and was recovered hours later counted as hours of queueing.
+On 2025, 18 of the 61 "over three hours" incidents had no blockage at all, and
+ΣT² on blockage time is 29.6% of what it was. Incidents with no blockage, or
+with a blockage longer than 24 hours (one record of 10,085 minutes, a date
+typing error), are left out.
+
+**Quadratic in T**, so the long tail carries it: in 2025, 26 blockages of three
+hours or more were 65% of the delay-induced carbon. Each incident is charged at
 **its own** T — squaring a band's mean would understate the tail.
 
 The old per-incident calculator (`calculateRow`) charged every vehicle the full
 delay (λ × T², no /2) over the corridor-wide volume — 40× high — and called
 Climatiq live. Nothing called it; it is removed.
 
-**Shown on the Descriptive view** as the *Delay-Induced CO₂* KPI: 1,152 t in
-2025, 0.71% of the corridor's CO₂.
+**Shown on the Descriptive view** as the *Delay-Induced CO₂* KPI: 377 t in
+2025, 0.23% of the corridor's CO₂ (1,152 t before the blockage-time correction).
 
 ---
 
@@ -111,17 +119,22 @@ target chosen.
 
 ---
 
-## 4. Strategy B — Incident clearance time
+## 4. Strategy B — Lane-blockage time
 
 | | |
 |---|---|
-| **Decision variable** | `τ_b,h` — target clearance minutes for each band `b` and start hour `h` |
-| **Objective** | minimise `Σ_i idle_CO₂(λ_h(i), min(T_i, τ_b(i),h(i)))` over the Range's cleared accidents |
+| **Decision variable** | `τ_b,h` — target blockage minutes for each band `b` and start hour `h` |
+| **Objective** | minimise `Σ_i idle_CO₂(λ_h(i), min(T_i, τ_b(i),h(i)))` over the Range's lane-blocking accidents |
 | **Constraints** | `τ_b,h = floor_b,h`, the **10th percentile actually achieved** in that band and hour — you cannot beat your own best observed response. An incident already faster than its floor keeps its own time. |
-| **Data** | `silver.nlex_accident_events_clean` (`clearance_min`, `event_start_date`), λ from `gold.fact_emissions_hourly` |
+| **Data** | `silver.nlex_accident_events_clean` (`blockage_cleared`, `event_start_date`, `direction`, `km_value`), λ from `gold.fact_emissions_hourly` |
 
-Bands: under 15 min, 15–60, 60–180, over 180. Clearance is heavily
-right-skewed (median 5 min, p90 59), so one floor for all would be meaningless.
+Bands: under 15 min, 15–60, 60–180, over 180. Blockage is heavily
+right-skewed (median 4 min, p90 about 33), so one floor for all would be meaningless.
+
+Each incident strategy also reports **where and when** its saving is: the three
+10-km stretches (per carriageway) and the hours that hold most of it, the share
+from blockages of an hour or more, and a warning when a single incident is 20%
+or more of the figure (2025: one 18.8-hour blockage at Southbound Km 60.1 is 47%).
 
 ---
 
@@ -148,8 +161,8 @@ B and C depend on *which* incidents happen in a Range — and, being quadratic,
 on how many long ones. One figure overstates how well that is known. The
 Range's incidents are resampled with replacement 400 times (a seeded bootstrap,
 so the same Range gives the same range), both savings recomputed against the
-same observed floors, and the **5th–95th percentile** reported. 2025: faster
-clearance 780 t, likely 512–1,104 t.
+same observed floors, and the **5th–95th percentile** reported. 2025: shorter
+blockages 204 t, likely 89–391 t; busiest-hours deployment 167 t, likely 52–359 t.
 
 ---
 

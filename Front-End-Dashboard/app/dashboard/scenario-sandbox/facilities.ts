@@ -282,6 +282,11 @@ export type FacState = {
   exempt: boolean;
   /** Broken down or crashed here; going nowhere until the scene is released. */
   stuck: boolean;
+  /** Taken into a scene while still moving: braking to a stop, then stuck (crashed or not). */
+  stopping?: string;
+  stopCrashed?: boolean;
+  /** A responder standing in the queue for its own scene: for how long (s). */
+  standS?: number;
   /** Responders: the station they are heading for. */
   target: number | null;
   /** Sideways slide when squeezing out of a closed booth lane. */
@@ -792,6 +797,9 @@ export type FacilityStats = {
   pending: number;
 };
 
+/** How long a scene at a booth waits for a vehicle to come to it before the booth is shut with nobody in it, s. */
+const PENDING_STRAND_S = 90;
+
 export class FacilityEngine {
   readonly list: Facility[];
   private readonly byId = new Map<string, Facility>();
@@ -904,9 +912,17 @@ export class FacilityEngine {
     const all = f.laneEntries[lane] ?? [];
     // Sent to a scene: that booth lane, shut or not, if it is reachable from here.
     const aimed = target == null ? null : all.find((id) => f.paths[id].group === target) ?? null;
+    const fits = (id: number): boolean => {
+      const last = this.lastOn(f, id);
+      return !last || last.fac!.s - last.length - this.host.minClear >= Math.max(0, ahead);
+    };
     if (aimed != null) {
-      const last = this.lastOn(f, aimed);
-      return !last || last.fac!.s - last.length - this.host.minClear >= Math.max(0, ahead) ? aimed : null;
+      if (fits(aimed)) return aimed;
+      /* The scene's own booth lane is full — the wrecks and whoever got there first. A responder takes the booth
+         lane beside it, as a patrol blocks the next booth along; held at the fan instead, it stood in the
+         carriageway for the rest of the event, and let through, it paid and drove away. */
+      const beside = all.find((id) => Math.abs(f.paths[id].group - target!) === 1 && fits(id));
+      if (beside != null) return beside;
     }
     const options = all;
     let best: { id: number; score: number } | null = null;
@@ -974,61 +990,138 @@ export class FacilityEngine {
     for (const f of this.list) for (const st of f.stations) st.closedBy = st.closedBy.filter((x) => x !== by);
   }
 
-  /* Strand vehicles at a station — the breakdown or crash AT the booth.
+  /* Scenes in a plaza or a service area, made of the traffic in it — never of a vehicle put there.
    *
-   * Taken from whoever is there: the vehicle at the stop line, then the ones
-   * queued behind it, in that order, so the scene is made of the traffic that
-   * was in the plaza. Only if the lane is empty is one brought in — it is then
-   * placed at the stop line itself, never on top of anyone. */
-  strandAt(fid: string, station: number, want: number, sceneKey: string, synth: (u: number) => Vehicle, crashed = true): Vehicle[] {
-    const f = this.byId.get(fid);
-    const st = f?.stations[station];
-    if (!f || !st) return [];
-    const p = f.paths[st.path];
-    const inLane = f.agents
-      .filter((a) => a.fac!.path === p.id && !a.fac!.stuck && a.role === "traffic")
-      .sort((a, b) => b.fac!.s - a.fac!.s)
-      .slice(0, Math.max(1, want));
-    const out: Vehicle[] = [];
-    for (const a of inLane) {
-      this.makeStuck(a, sceneKey, crashed);
-      out.push(a);
-    }
-    if (out.length === 0 && this.roomAt(f, p.id, p.stop ?? p.len * 0.5, 4.6)) {
-      const v = synth(st.u);
-      this.take(f, v, p.id, p.stop ?? p.len * 0.5);
-      this.makeStuck(v, sceneKey, crashed);
-      out.push(v);
-    }
-    this.closeStation(fid, station, sceneKey);
-    return out;
+   * These used to take whoever was in the booth lane and stop them dead where they were (mid-stride, if they were
+   * still moving), and if the lane was empty they put a car down at the booth: a vehicle out of nowhere. Now a
+   * vehicle that is standing at the booth is taken as it is; one still moving brakes to a stop (hard for a crash,
+   * gently for a breakdown) and becomes the scene when it is at rest; and an empty lane waits for the next vehicle
+   * to drive up to the booth and stop there. The booth shuts once its vehicle is there — shut before, nobody would
+   * ever come to it — or, if nobody has come in PENDING_STRAND_S, with no vehicle in it at all. */
+  private pendingStrands: { fid: string; station: number | null; want: number; sceneKey: string; crashed: boolean; since: number; got?: number; gotAt?: number }[] = [];
+
+  /** How long a collision at a booth waits for the vehicle behind to run into it before it is a one-vehicle scene. */
+  private static readonly FOLLOWER_WAIT_S = 30;
+
+  /** Is a responder of this scene standing at it, inside a facility? */
+  sceneAttended(sceneKey: string): boolean {
+    for (const f of this.list) for (const a of f.agents) if (a.sceneKey === sceneKey && a.role === "responder" && a.fac!.stuck && !a.departing) return true;
+    return false;
   }
 
-  /* Strand vehicles on the approach — a crash on the ramp itself, before the
-   * plaza. Single file, so this one stops the whole facility. */
-  strandOnApproach(fid: string, want: number, sceneKey: string, synth: (u: number) => Vehicle, crashed = true): Vehicle[] {
-    const f = this.byId.get(fid);
-    if (!f) return [];
-    const role: PathRole = f.spec.kind === "entry_ramp" ? "approach" : f.spec.kind === "barrier" ? "barrierIn" : "ramp";
-    const candidates = f.paths.filter((p) => p.role === role);
-    if (candidates.length === 0) return [];
-    const ids = new Set(candidates.map((p) => p.id));
-    const there = f.agents
-      .filter((a) => ids.has(a.fac!.path) && !a.fac!.stuck && a.role === "traffic")
-      .sort((a, b) => b.fac!.s - a.fac!.s)
-      .slice(0, Math.max(1, want));
-    for (const a of there) this.makeStuck(a, sceneKey, crashed);
-    if (there.length === 0) {
-      const p = candidates[Math.floor(candidates.length / 2)];
-      const s = p.len * 0.6;
-      if (this.roomAt(f, p.id, s, 4.6)) {
-        const v = synth(poseAt(p, s).u);
-        this.take(f, v, p.id, s);
-        this.makeStuck(v, sceneKey, crashed);
-        there.push(v);
+  /** The booth lane (station group) this scene's first vehicle is standing in: undefined while it has no vehicle at
+   *  rest yet, null when it has one but not in a booth lane (a ramp). */
+  sceneLane(sceneKey: string): number | null | undefined {
+    for (const f of this.list) {
+      for (const a of f.agents) {
+        if (a.sceneKey !== sceneKey || a.role !== "wreck" || !a.fac!.stuck) continue;
+        const g = f.paths[a.fac!.path].group;
+        return g >= 0 ? g : null;
       }
     }
-    return there;
+    return undefined;
+  }
+
+  /** A scene at a booth or pump: the vehicles queued there, front first; or the next to arrive. */
+  strandAt(fid: string, station: number, want: number, sceneKey: string, crashed = true): void {
+    const f = this.byId.get(fid);
+    const st = f?.stations[station];
+    if (!f || !st) return;
+    const p = f.paths[st.path];
+    const inLane = f.agents
+      .filter((a) => a.fac!.path === p.id && !a.fac!.stuck && !a.fac!.stopping && a.role === "traffic")
+      .sort((a, b) => b.fac!.s - a.fac!.s)
+      .slice(0, Math.max(1, want));
+    for (const a of inLane) this.bringToRest(a, sceneKey, crashed);
+    const need = Math.max(1, want);
+    /* A collision is as many vehicles as it says. With one car at the booth, a "two-vehicle collision" used to be
+       that one car: the booth shut at once, so nobody else ever came into its lane. The booth stays open until the
+       ones behind have arrived (or FOLLOWER_WAIT_S has passed with nobody coming), and each is taken as it stops
+       behind the last. */
+    if (inLane.length >= need) this.closeStation(fid, station, sceneKey);
+    else this.pendingStrands.push({ fid, station, want: need, sceneKey, crashed, since: this.host.now(), got: inLane.length, gotAt: inLane.length > 0 ? this.host.now() : undefined });
+  }
+
+  /* A scene on the approach — a crash on the ramp itself, before the plaza. Single file, so this one stops the
+   * whole facility. The vehicles on it brake to a stop; with nobody on it, the next to come along does. */
+  strandOnApproach(fid: string, want: number, sceneKey: string, crashed = true): void {
+    const f = this.byId.get(fid);
+    if (!f) return;
+    const ids = new Set(this.approachPaths(f).map((p) => p.id));
+    if (ids.size === 0) return;
+    const there = f.agents
+      .filter((a) => ids.has(a.fac!.path) && !a.fac!.stuck && !a.fac!.stopping && a.role === "traffic")
+      .sort((a, b) => b.fac!.s - a.fac!.s)
+      .slice(0, Math.max(1, want));
+    for (const a of there) this.bringToRest(a, sceneKey, crashed);
+    if (there.length < Math.max(1, want)) this.pendingStrands.push({ fid, station: null, want: Math.max(1, want) - there.length, sceneKey, crashed, since: this.host.now() });
+  }
+
+  private approachPaths(f: Facility): FPath[] {
+    const role: PathRole = f.spec.kind === "entry_ramp" ? "approach" : f.spec.kind === "barrier" ? "barrierIn" : "ramp";
+    return f.paths.filter((p) => p.role === role);
+  }
+
+  /** Taken into a scene: at rest already, it is the scene now; still moving, it brakes to a stop first. */
+  private bringToRest(a: Vehicle, sceneKey: string, crashed: boolean): void {
+    if (a.v < 0.5 || a.fac!.serving) this.makeStuck(a, sceneKey, crashed);
+    else {
+      a.fac!.stopping = sceneKey;
+      a.fac!.stopCrashed = crashed;
+    }
+  }
+
+  /** Each step: a scene still waiting for its vehicle takes the next one to arrive. */
+  private stepPendingStrands(f: Facility): void {
+    if (this.pendingStrands.length === 0) return;
+    const now = this.host.now();
+    this.pendingStrands = this.pendingStrands.filter((ps) => {
+      if (ps.fid !== f.spec.id) return true;
+      if (ps.station !== null) {
+        const st = f.stations[ps.station];
+        if (!st) return false;
+        const p = f.paths[st.path];
+        // At the booth: drawn up to the line (or being served there).
+        const got = ps.got ?? 0;
+        if (got === 0) {
+          /* Nobody yet: the first to draw up to the booth is it — however long that takes. It used to give up after
+             PENDING_STRAND_S and shut the booth with nothing in it, which on a quiet plaza was an "incident" with no
+             vehicle, attended by three responders. */
+          const arrived = f.agents.find((a) => a.fac!.path === p.id && a.role === "traffic" && !a.fac!.stuck && !a.fac!.stopping &&
+            (a.fac!.serving || (p.stop != null && a.fac!.s >= p.stop - 3 && a.v < 1)));
+          if (!arrived) return true;
+          this.makeStuck(arrived, ps.sceneKey, ps.crashed);
+          ps.got = 1;
+          ps.gotAt = now;
+        } else {
+          // The next one: whoever comes to a stand right behind the last vehicle of the scene in this lane.
+          const mine = f.agents.filter((a) => a.fac!.path === p.id && a.sceneKey === ps.sceneKey && (a.fac!.stuck || a.fac!.stopping === ps.sceneKey));
+          const rear = mine.length ? Math.min(...mine.map((a) => a.fac!.s - a.length)) : null;
+          const next = rear === null ? undefined : f.agents
+            .filter((a) => a.fac!.path === p.id && a.role === "traffic" && !a.fac!.stuck && !a.fac!.stopping && a.fac!.s <= rear + 0.5 && rear - a.fac!.s < 12 && a.v < 2.5)
+            .sort((x, y) => y.fac!.s - x.fac!.s)[0];
+          if (next) {
+            this.makeStuck(next, ps.sceneKey, ps.crashed);
+            ps.got = got + 1;
+            ps.gotAt = now;
+          }
+        }
+        if ((ps.got ?? 0) >= ps.want || now - (ps.gotAt ?? now) > FacilityEngine.FOLLOWER_WAIT_S) {
+          this.closeStation(f.spec.id, ps.station, ps.sceneKey);
+          return false;
+        }
+        return true;
+      }
+      // On the approach: whoever is well onto it brakes to a stop there.
+      const ids = new Set(this.approachPaths(f).map((p) => p.id));
+      const next = f.agents
+        .filter((a) => ids.has(a.fac!.path) && a.role === "traffic" && !a.fac!.stuck && !a.fac!.stopping && a.fac!.s >= f.paths[a.fac!.path].len * 0.25)
+        .sort((x, y) => y.fac!.s - x.fac!.s);
+      for (const a of next.slice(0, ps.want)) this.bringToRest(a, ps.sceneKey, ps.crashed);
+      ps.want -= Math.min(ps.want, next.length);
+      // Until somebody has come: an approach nobody drives down has no crash on it (see the booth case above).
+      return ps.want > 0;
+    });
   }
 
   /* A collision leaves the vehicle at an angle; a breakdown leaves it
@@ -1047,7 +1140,12 @@ export class FacilityEngine {
 
   /** The scene is over: wrecks are recovered and everything drives on. */
   releaseScene(sceneKey: string) {
+    // Still waiting for its vehicle, or one still braking into it: it never happened to them.
+    this.pendingStrands = this.pendingStrands.filter((ps) => ps.sceneKey !== sceneKey);
     for (const f of this.list) {
+      for (const a of f.agents) {
+        if (a.fac!.stopping === sceneKey) a.fac!.stopping = undefined;
+      }
       for (const a of f.agents) {
         if (a.sceneKey !== sceneKey) continue;
         a.fac!.stuck = false;
@@ -1142,6 +1240,7 @@ export class FacilityEngine {
       }
     }
     if (f.agents.length === 0) return;
+    this.stepPendingStrands(f);
 
     // Who is on which path, front to back.
     const byPath: Vehicle[][] = f.paths.map(() => []);
@@ -1262,6 +1361,8 @@ export class FacilityEngine {
         if (!sib.hard) zip = Math.max(zip, -ZIP_SOFT_DECEL);
         a.accel = Math.min(a.accel, zip);
       }
+      // Taken into a scene: braking to a stop — hard for a crash, gently for a breakdown.
+      if (fa.stopping) a.accel = Math.min(a.accel, a.v > 0.3 ? -(fa.stopCrashed ? 6 : 2.5) : 0);
     }
 
     // Move. A vehicle standing at a booth is still running its engine, and
@@ -1283,6 +1384,16 @@ export class FacilityEngine {
       if (p.role === "accel") s = Math.min(s, p.len);
       host.emit(a, Math.max(0, s - fa.s), dt);
       fa.s = s;
+    }
+
+    // Come to rest after braking into a scene: it is the scene now.
+    for (const a of f.agents) {
+      const fa = a.fac!;
+      if (fa.stopping && a.v < 0.3) {
+        const key = fa.stopping;
+        this.makeStuck(a, key, fa.stopCrashed ?? true);
+        fa.stopping = undefined;
+      }
     }
 
     // Nobody inside the vehicle ahead in the same lane.
@@ -1308,12 +1419,53 @@ export class FacilityEngine {
       /* A responder at its scene stays there until the scene is released: on
        * the booth line if the lane is otherwise empty (a works crew shutting a
        * booth), or wherever it came to a stand behind the wreck it is for. */
-      if (a.role === "responder" && !a.departing && fa.target != null && p.station === fa.target) {
+      // Its scene's booth, or the one beside it when that was full (barrierEntry).
+      /* A scene on the approach has no booth, and the approach is single file: the crash stops it, and whoever is
+         sent to it comes to a stand in the queue behind it — there is no getting past. That is where they are at the
+         scene, lights on, until it is cleared; they used to wait there like anyone and never counted as arrived. */
+      if (a.role === "responder" && !a.departing && fa.target == null && a.sceneKey && a.v < 0.3 &&
+          f.agents.some((b) => b.sceneKey === a.sceneKey && b.role === "wreck" && b.fac!.stuck)) {
+        a.accel = 0;
+        fa.stuck = true;
+        continue;
+      }
+      /* And for one that cannot get that near: stopped in the queue of ordinary traffic behind its scene (a crash on
+         the approach stops everything behind it). After a few seconds standing there, that is where it attends
+         from — as near as it can get. */
+      if (a.role === "responder" && !a.departing && a.sceneKey && this.sceneLane(a.sceneKey) !== undefined) {
+        fa.standS = a.v < 0.3 && fa.s > 2 ? (fa.standS ?? 0) + dt : 0;
+        if (fa.standS > 5 && !(p.station >= 0 && fa.target != null && p.station === fa.target && p.stop != null && fa.s < p.stop - 1 && !f.agents.some((b) => b !== a && b.fac!.path === fa.path && b.fac!.s > fa.s))) {
+          a.accel = 0;
+          fa.stuck = true;
+          continue;
+        }
+      }
+      /* The same for one sent to a booth lane that has no room left for it: it has come to a stand right behind
+         its own scene — the wreck, or the responders who got there first — in the lane, or at the mouth of it. That
+         is where it attends from. It used to count as still on its way, wait there like any driver, and when the
+         lane's last place went to somebody else, take another booth, pay and drive off. */
+      if (a.role === "responder" && !a.departing && fa.target != null && a.sceneKey && a.v < 0.3 && fa.s > 2) {
+        const ahead = (path: number, from: number) => f.agents
+          .filter((b) => b !== a && b.fac!.path === path && b.fac!.s > from)
+          .sort((x, y) => x.fac!.s - y.fac!.s)[0];
+        const inLane = ahead(fa.path, fa.s);
+        const lead = inLane ?? (fa.next != null && f.paths[fa.path].len - fa.s < 14 ? ahead(fa.next, -1) : undefined);
+        const gap = lead === undefined ? Infinity : inLane ? lead.fac!.s - lead.length - fa.s : f.paths[fa.path].len - fa.s + lead.fac!.s - lead.length;
+        if (lead !== undefined && lead.sceneKey === a.sceneKey && lead.fac!.stuck && gap < 9) {
+          a.accel = 0;
+          fa.stuck = true;
+          continue;
+        }
+      }
+      const beside = f.laneEntries != null && p.role === "booth" && p.station >= 0 && fa.target != null && Math.abs(p.station - fa.target) === 1;
+      if (a.role === "responder" && !a.departing && fa.target != null && (p.station === fa.target || beside)) {
         const behindSomething = p.stop != null && a.v < 0.3 && fa.s > 2;
         if ((p.stop != null && fa.s >= p.stop - 1) || behindSomething) {
           a.v = 0;
           a.accel = 0;
           fa.stuck = true;
+          // Parked in the booth beside the scene: that booth is shut with it, until the scene is released.
+          if (p.station !== fa.target && a.sceneKey) this.closeStation(f.spec.id, p.station, a.sceneKey);
           continue;
         }
       }
@@ -1550,7 +1702,7 @@ export class FacilityEngine {
     const fa = a.fac!;
     const p = f.paths[fa.path];
     if (p.role !== "booth" || p.station < 0 || !this.isClosed(f, p.station)) return;
-    if (fa.stuck || fa.serving || fa.target != null || fa.wShift < 1) return;
+    if (fa.stuck || fa.stopping || fa.serving || fa.target != null || fa.wShift < 1) return;
     if (p.stop != null && fa.s > p.stop - 1) return;
     const here = f.stations[p.station];
     const sideways = f.stations

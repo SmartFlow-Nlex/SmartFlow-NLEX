@@ -42,7 +42,7 @@ type Analytics = {
   kpis: {
     totalCo2T: number;
     prevCo2T: number;
-    /** Idling CO2 behind cleared accidents in the Range (Back-End emissions-source.ts). */
+    /** Idling CO2 behind accidents that blocked a lane in the Range (Back-End emissions-source.ts). */
     delayCarbonT?: number;
     delayCarbonPct?: number;
     delayIncidents?: number;
@@ -986,11 +986,11 @@ export default function SustainabilityPage() {
             </article>
             <article className={styles.kpiTile}>
               <span className={styles.kpiIcon} aria-hidden="true"><Timer size={15} /></span>
-              <h3>Delay-Induced CO₂<InfoTooltip text="Idling CO₂ from the queues behind accidents in the Range. Each queue builds while the incident is live and drains as it clears (area λ×T²/2 at that segment's vehicles per hour), so long incidents carry most of it. Moving vehicles' CO₂ does not change with speed in this model: this is the part a delay adds." /></h3>
+              <h3>Delay-Induced CO₂<InfoTooltip text="Idling CO₂ from the queues behind accidents that blocked a lane in the Range. Each queue builds for as long as the lane is blocked (not for as long as the site takes to clear) and drains as it reopens (area λ×T²/2 at that segment's vehicles per hour), so long incidents carry most of it. Moving vehicles' CO₂ does not change with speed in this model: this is the part a delay adds." /></h3>
               <div className={styles.kpiValue}>{kpiValue(data?.kpis.delayCarbonT != null ? `${fmtInt(data.kpis.delayCarbonT)} t` : null)}</div>
               <p className={styles.kpiHint}>
                 {data?.kpis.delayCarbonT != null
-                  ? `${(data.kpis.delayCarbonPct ?? 0).toFixed(2)}% of CO₂ · ${(data.kpis.delayLongSharePct ?? 0).toFixed(0)}% from ${fmtInt(data.kpis.delayLongIncidents ?? 0)} incidents over 3\u00a0h`
+                  ? `${(data.kpis.delayCarbonPct ?? 0).toFixed(2)}% of CO₂ · ${(data.kpis.delayLongSharePct ?? 0).toFixed(0)}% from ${fmtInt(data.kpis.delayLongIncidents ?? 0)} lane blockages over 3\u00a0h`
                   : "—"}
               </p>
             </article>

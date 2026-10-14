@@ -50,29 +50,30 @@ const LEGIBLE_CAR_PX = 14;
 /** A squeezed sprite keeps at least this length-to-width ratio, or it reads as a vehicle turned sideways. */
 const MIN_SPRITE_ASPECT = 1.2;
 
-/** How many metres of road a car's sprite stands for, at this zoom. */
-function carSpriteM(mToPx: number, k: number): number {
-  return Math.min(CAR_REF_M * k, Math.max(CAR_REF_M + SPRITE_GAP_EATEN * SPRITE_GAP_REF_M, LEGIBLE_CAR_PX / Math.max(1e-6, mToPx)));
+/* TRUE SIZE (2026-10-08). Everything above describes sprites drawn three to four times their real length so a
+ * car was legible with 600 m on screen — and then squeezed back wherever the real gap behind them was shorter
+ * than the picture, which is every queue. However the squeeze was eased, a vehicle changed size as traffic
+ * round it changed, and the operator's objection was to exactly that. A sprite drawn at the vehicle's real
+ * length needs no squeeze at all: it fits the room the engine gives it by construction, in a standing queue
+ * and at any length of window, so it never shrinks and never overlaps. Legibility comes from zooming the road
+ * in (page.tsx's roadView), not from inflating the vehicles. `k` and the room are still passed by every
+ * caller and are ignored. */
+/** The one factor every vehicle's width is drawn at: true width (callers add their own slight exaggeration). */
+export function spriteWidthScale(_mToPx: number, _k: number): number {
+  return 1;
 }
-/** The one factor every vehicle's width is drawn at — the car's — so a bus is never narrower than a car. */
-export function spriteWidthScale(mToPx: number, k: number): number {
-  return carSpriteM(mToPx, k) / CAR_REF_M;
-}
-/** A vehicle's steady drawn length (px): smaller ones in proportion to a car, longer ones a car plus their extra length. */
-export function baseLengthPx(lengthM: number, mToPx: number, k: number): number {
-  const carM = carSpriteM(mToPx, k);
-  const m = lengthM <= CAR_REF_M ? lengthM * (carM / CAR_REF_M) : Math.min(lengthM * k, carM + (lengthM - CAR_REF_M));
-  return m * mToPx;
+/** A vehicle's drawn length (px): its real length, less a hair so two standing MIN_CLEARANCE apart show a seam. */
+export function baseLengthPx(lengthM: number, mToPx: number, _k: number): number {
+  const px = lengthM * mToPx;
+  return Math.max(2, px - Math.min(1.5, px * 0.06));
 }
 /** The clear seam always left between a sprite and the one behind it: 1.5 px read as touching once vehicles
  *  were drawn at a legible size (2026-10-03), so at least 3 px, and about 8% of the sprite for a long one. */
 const SPRITE_SEAM_MIN_PX = 3;
 /** Squeezed only where the real gap behind it is tighter than its size was chosen for, keeping 30% of that gap visible. */
-export function drawnLengthPx(basePx: number, lengthM: number, roomM: number, mToPx: number): number {
-  if (!isFinite(roomM)) return Math.max(2, basePx);
-  const gapM = Math.max(0, roomM - lengthM);
-  const seam = Math.max(SPRITE_SEAM_MIN_PX, basePx * 0.08);
-  return Math.max(2, Math.min(basePx, (lengthM + gapM * SPRITE_GAP_EATEN) * mToPx - seam));
+export function drawnLengthPx(basePx: number, _lengthM: number, _roomM: number, _mToPx: number): number {
+  // Never squeezed: the base length is the true length, which always fits (see TRUE SIZE above).
+  return Math.max(2, basePx);
 }
 /** Full width unless squeezed so short it would read as sideways; never under 6 px. */
 export function drawnWidthPx(baseWidthPx: number, lengthPx: number): number {

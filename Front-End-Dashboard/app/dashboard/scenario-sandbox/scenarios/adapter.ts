@@ -167,6 +167,15 @@ export type ScenarioEvent = {
   readonly extraLanes: readonly number[];
   /** App km-post. Converted to metres against the current stretch when used, so a route change moves nothing silently. */
   readonly positionKm: number;
+  /**
+   * The stretch the operator gave — "within Km 12.30–12.40" — low km to high, or null/absent when a single km was
+   * given. When set it IS where the event is: a collision, flood or roadworks closes exactly this stretch (every
+   * phase that blocks a lane), a shoulder breakdown slows traffic over exactly this stretch, and positionKm — the
+   * wreck, the stalled vehicle — is placed inside it (positionInStretch). Without it the event is a point and its
+   * closure is laid out round the point by the assumptions (UPSTREAM_BUFFER_M before it, CLOSURE_LENGTH_M after),
+   * which put most of a "12.30–12.40" collision outside 12.30–12.40.
+   */
+  readonly stretchKm?: KmStretch | null;
   /** Seconds after the end of warm-up. */
   readonly startS: number;
   /** How the duration was chosen, kept so the operator can see it (a sampled event keeps its seed). */
@@ -186,6 +195,54 @@ export type ScenarioEvent = {
   readonly site: EventSite | null;
 };
 
+/** A stretch of road, app km, `fromKm` the lower. */
+export type KmStretch = { readonly fromKm: number; readonly toKm: number };
+
+/** The shortest stretch an event may be given, m: below this it is a point, and should be given as one. */
+export const MIN_EVENT_STRETCH_M = 20;
+
+/**
+ * Where inside a stretch an event's own point goes (the wreck's front, the stalled vehicle's nose), app km.
+ *
+ * A collision's vehicles come to rest just DOWNSTREAM of its point — a pile about six metres a vehicle long
+ * (the engine's crashAt) — and its police, ambulance and cones stand UPSTREAM of it, so the point is a little
+ * before the middle, leaving the pile inside the stretch's far end. Roadworks park two trucks at the point and
+ * 26 m behind it, so theirs is further on. Anything else is the middle. "Upstream" is the end traffic comes in
+ * at: the low km northbound, the high km southbound.
+ */
+export function positionInStretch(variant: ScenarioVariant, direction: Direction, s: KmStretch): number {
+  const lo = Math.min(s.fromKm, s.toKm);
+  const hi = Math.max(s.fromKm, s.toKm);
+  const len = (hi - lo) * 1000;
+  let along: number;
+  switch (variant.family) {
+    case "minor_collision":
+    case "multi_vehicle_collision":
+    case "self_accident":
+    case "overturned_vehicle": {
+      const pile = (sceneOf(variant)?.want ?? 1) * 6 + 4;
+      along = Math.max(0, Math.min(Math.max(len * 0.45, Math.min(30, len * 0.3)), len - pile - 2));
+      break;
+    }
+    case "scheduled_roadworks":
+      along = len * 0.6;
+      break;
+    default:
+      along = len / 2;
+  }
+  const km = direction === "NB" ? lo + along / 1000 : hi - along / 1000;
+  return Number(km.toFixed(4));
+}
+
+/** An event's own stretch in metres along the run, low to high; null when it has none. */
+export function eventStretchM(event: Pick<ScenarioEvent, "stretchKm">, road: Pick<Road, "metresAt">): { readonly fromM: number; readonly toM: number } | null {
+  const s = event.stretchKm;
+  if (!s) return null;
+  const a = road.metresAt(s.fromKm);
+  const b = road.metresAt(s.toKm);
+  return { fromM: Math.min(a, b), toM: Math.max(a, b) };
+}
+
 export type NewEventSpec = {
   readonly variant: ScenarioVariant;
   readonly direction: Direction;
@@ -194,6 +251,8 @@ export type NewEventSpec = {
   /** Extra operator lane numbers (1-based), beyond `lane`. See ScenarioEvent.extraLanes. Optional — every caller that doesn't care about multi-lane events (which is most of them) can omit it and gets none, same as before this field existed. */
   readonly extraLanes?: readonly number[];
   readonly positionKm: number;
+  /** A stretch instead of a point (see ScenarioEvent.stretchKm). positionKm is then worked out from it. Ignored for rain and at a plaza. */
+  readonly stretchKm?: KmStretch | null;
   /** Minutes after the end of warm-up. */
   readonly startMinutes: number;
   readonly duration: DurationMode;
@@ -293,6 +352,97 @@ function effectOf(family: FamilyKey): Effect {
   }
 }
 
+/**
+ * Seconds before an event with vehicles in it starts that the engine picks them out of the traffic approaching the
+ * spot. They drive on as everyone does and it happens to them on time — so the event is seen coming, and made of
+ * cars that were already on the road, rather than appearing.
+ */
+export const SCENE_LEAD_S = 12;
+
+/** The engine classes of the breakdown vehicle kinds (the engine's own: car 1, bus 2, truck 3). */
+const ENGINE_CLASS: Readonly<Record<VehicleKind, 1 | 2 | 3>> = { car: 1, bus: 2, truck: 3 };
+
+/** How a family's scene is made of the traffic (the engine's crashAt), or null for one with no vehicles in it. */
+export type SceneSpec = {
+  readonly kind: "collision" | "pileup" | "self" | "overturn" | "breakdown" | "shoulder";
+  /** How many vehicles. */
+  readonly want: number;
+  /** The class to pick if one is coming: the one that broke down, or a truck to overturn. */
+  readonly prefer: 1 | 2 | 3 | null;
+  /** Whether a recovery truck is sent (at the tow or service phase). A minor collision's cars are driven off. */
+  readonly tow: boolean;
+};
+
+/** A breakdown's lead: it coasts to a stop with its hazards on, which from expressway speed takes about a quarter of
+ *  a minute, and a little more is allowed for a vehicle of the kind asked for to come along. Picked SCENE_LEAD_S
+ *  ahead like a crash, every breakdown came to rest half a minute after its start time. */
+export const BREAKDOWN_LEAD_S = 40;
+/** A works convoy's pace up the shoulder (m/s, door to door), and how far short of its place it decides where to park. */
+const WORKS_PACE_MPS = 12.5;
+const WORKS_DECIDES_M = 110;
+
+/**
+ * How long before its start an event has to begin being set up on the road, seconds; 0 for one that needs nothing.
+ *
+ *   - a crash: SCENE_LEAD_S, to pick its vehicles out of the approaching traffic;
+ *   - a breakdown: BREAKDOWN_LEAD_S;
+ *   - roadworks: the works trucks' drive from the entrance, so that they reach the lane as it closes. Sent at the
+ *     start, they arrived half a minute later on a short window and three minutes later on a long one, and until
+ *     then the "works" were a closed lane with nothing in it. Capped: on a very long window they are simply late.
+ */
+export function sceneLeadS(event: Pick<ScenarioEvent, "variant" | "site" | "positionKm">, road: Pick<Road, "metresAt">): number {
+  if (event.site) return 0;
+  if (event.variant.family === "scheduled_roadworks") {
+    const at = road.metresAt(event.positionKm);
+    return Number.isFinite(at) ? Math.max(0, Math.min(240, Math.round((at - WORKS_DECIDES_M) / WORKS_PACE_MPS))) : 0;
+  }
+  const scene = sceneOf(event.variant);
+  if (scene === null) return 0;
+  return scene.kind === "breakdown" || scene.kind === "shoulder" ? BREAKDOWN_LEAD_S : SCENE_LEAD_S;
+}
+
+/**
+ * When the first responder should be AT the scene, seconds after the event's start — read off the event's own
+ * phases, which is where its response time is.
+ *
+ *   - Followed by a tow or service phase: three-quarters of a minute before that phase begins, so the label's
+ *     "awaiting response" is true for nearly all of it and the police are there when the recovery is called.
+ *   - Not followed by one (a minor collision: blocked, then cleared): half way through the blocked phase — they
+ *     are what gets the lane cleared, so they are there for the second half of it.
+ * Never under 20 s: nobody is on scene the instant it happens.
+ */
+export function responseArrivalS(event: Pick<ScenarioEvent, "phases">): number {
+  const live = event.phases.filter((p) => !p.skipped);
+  if (live.length === 0) return 20;
+  const first = live[0];
+  const next = live[1];
+  const recovery = next !== undefined && (next.id === "tow" || next.id === "service");
+  return Math.max(20, recovery ? first.durationS - 45 : first.durationS * 0.5);
+}
+
+export function sceneOf(variant: ScenarioVariant): SceneSpec | null {
+  switch (variant.family) {
+    case "minor_collision":
+      return { kind: "collision", want: 2, prefer: null, tow: false };
+    case "multi_vehicle_collision":
+      return { kind: "pileup", want: 4, prefer: null, tow: true };
+    case "self_accident":
+      return { kind: "self", want: 1, prefer: null, tow: true };
+    case "overturned_vehicle":
+      return { kind: "overturn", want: 1, prefer: 3, tow: true };
+    case "breakdown_in_lane":
+      return { kind: "breakdown", want: 1, prefer: ENGINE_CLASS[variant.vehicle], tow: true };
+    case "breakdown_shoulder":
+      return { kind: "shoulder", want: 1, prefer: ENGINE_CLASS[variant.vehicle], tow: true };
+    case "flood":
+    case "scheduled_roadworks":
+    case "rain":
+      return null;
+    default:
+      return assertNever(variant);
+  }
+}
+
 /** The vehicle a breakdown variant is about, for its obstacle length. Null for the accident families. */
 function breakdownVehicle(variant: ScenarioVariant): VehicleKind | null {
   switch (variant.family) {
@@ -364,7 +514,15 @@ export function eventProblems(event: ScenarioEvent, road: Road): readonly string
   }
   const effect = effectOf(event.variant.family);
   const positionM = road.metresAt(event.positionKm);
-  if (!Number.isFinite(positionM) || positionM < 0 || positionM > road.segmentLengthM) {
+  const own = eventStretchM(event, road);
+  if (own !== null && event.stretchKm) {
+    const range = `Km ${event.stretchKm.fromKm.toFixed(2)}–${event.stretchKm.toKm.toFixed(2)}`;
+    if (!Number.isFinite(own.fromM) || !Number.isFinite(own.toM) || own.fromM < -1 || own.toM > road.segmentLengthM + 1) {
+      problems.push(`${range} runs outside the simulated stretch`);
+    } else if (own.toM - own.fromM < MIN_EVENT_STRETCH_M - 0.5) {
+      problems.push(`${range} is shorter than ${MIN_EVENT_STRETCH_M} m; give a single km instead`);
+    }
+  } else if (!Number.isFinite(positionM) || positionM < 0 || positionM > road.segmentLengthM) {
     problems.push(`Km ${event.positionKm.toFixed(2)} is outside the simulated stretch`);
   }
   if (effect !== "speed_zone") {
@@ -391,7 +549,7 @@ export function eventProblems(event: ScenarioEvent, road: Road): readonly string
       if (p.skipped || p.lanesBlocked <= 0) continue;
       const count = manualCount ?? p.lanesBlocked;
       if (count >= road.laneCount) problems.push(`"${p.label}" blocks ${count} lane${count === 1 ? "" : "s"}, which is every lane of a ${road.laneCount}-lane road`);
-      else if (p.wreckLengthM !== null && Number.isFinite(positionM) && closureStretch(positionM, p.wreckLengthM, road.segmentLengthM) === null) {
+      else if (own === null && p.wreckLengthM !== null && Number.isFinite(positionM) && closureStretch(positionM, p.wreckLengthM, road.segmentLengthM) === null) {
         problems.push(`"${p.label}" leaves no closure stretch at Km ${event.positionKm.toFixed(2)}`);
       }
     }
@@ -458,6 +616,9 @@ export function boundaryTimes(events: readonly ScenarioEvent[], road: Road): rea
   for (const e of events) {
     if (eventProblems(e, road).length > 0) continue;
     out.add(e.startS);
+    // A scene made of vehicles starts picking them out of the traffic a little early, and a works convoy sets off early (sceneLeadS).
+    const lead = sceneLeadS(e, road);
+    if (lead > 0) out.add(e.startS - lead);
     for (const p of e.phases) if (!p.skipped) out.add(e.startS + p.offsetS);
     out.add(e.endS);
   }
@@ -573,6 +734,11 @@ export function addEvent(events: readonly ScenarioEvent[], spec: NewEventSpec, r
     throw e;
   }
   const startS = spec.startMinutes * 60;
+  // A stretch, where the operator gave one: it decides the point. Rain is the whole road; a plaza has its booths.
+  const stretchKm: KmStretch | null =
+    spec.stretchKm && !spec.site && spec.variant.family !== "rain"
+      ? { fromKm: Math.min(spec.stretchKm.fromKm, spec.stretchKm.toKm), toKm: Math.max(spec.stretchKm.fromKm, spec.stretchKm.toKm) }
+      : null;
   const event: ScenarioEvent = {
     id: `ev${seq}`,
     name,
@@ -580,7 +746,8 @@ export function addEvent(events: readonly ScenarioEvent[], spec: NewEventSpec, r
     variant: spec.variant,
     lane: spec.site ? null : effectOf(spec.variant.family) === "speed_zone" ? null : spec.lane,
     extraLanes: !spec.site && effectOf(spec.variant.family) === "closure" ? (spec.extraLanes ?? []) : [],
-    positionKm: spec.positionKm,
+    positionKm: stretchKm ? positionInStretch(spec.variant, spec.direction, stretchKm) : spec.positionKm,
+    stretchKm,
     startS,
     duration: spec.duration,
     resolved,
@@ -622,6 +789,8 @@ const DIRECTIONS = ["NB", "SB"] as const;
  * carriageway alone. Pure; the panel calls it and verify.ts pins every combination.
  */
 export function addTargets(reach: CarriagewayReach, view: readonly Direction[], focus: Direction, wantBoth: boolean): readonly Direction[] {
+  // Rain falls on the whole road: both carriageways, even the one not on screen.
+  if (reach === "both") return ["NB", "SB"];
   if (view.length < 2) return [view[0] ?? focus];
   return reach === "one_or_both" && wantBoth ? [...view] : [focus];
 }
@@ -902,7 +1071,11 @@ export function composeInterventions(
       case "closure": {
         if (phase.lanesBlocked <= 0 || phase.wreckLengthM === null || event.lane === null) break;
         const base = operatorLaneToEngineIndex(event.lane, road.laneCount);
-        const stretch = closureStretch(positionM, phase.wreckLengthM, road.segmentLengthM);
+        // The operator's own stretch, exactly, where they gave one; otherwise laid out round the point.
+        const own = eventStretchM(event, road);
+        const stretch: ClosureStretch | null = own
+          ? { closurePointM: Math.max(0, own.fromM), closureEndM: Math.min(road.segmentLengthM, own.toM), clampedStart: own.fromM < 0, clampedEnd: own.toM > road.segmentLengthM }
+          : closureStretch(positionM, phase.wreckLengthM, road.segmentLengthM);
         if (base === null || stretch === null) break;
         const held: ClosureOwnership = {
           ...ownerOf(event, phase),
@@ -919,8 +1092,11 @@ export function composeInterventions(
         break;
       }
       case "speed_zone": {
-        const window = speedZoneWindow(event.variant, positionM, road);
-        if (window === null) break;
+        const found = speedZoneWindow(event.variant, positionM, road);
+        if (found === null) break;
+        // A shoulder breakdown given a stretch slows traffic over exactly that stretch (rain is always the whole road).
+        const own = event.variant.family === "rain" ? null : eventStretchM(event, road);
+        const window = own ? { zone: [Math.max(0, own.fromM), Math.min(road.segmentLengthM, own.toM)] as const, limitKmh: found.limitKmh } : found;
         const held: SpeedZoneOwnership = { ...ownerOf(event, phase), zone: window.zone, limitKmh: window.limitKmh };
         // The shared zone if the operator has no limit of their own and no event has it; otherwise a zone of its own.
         if (manual.speedLimitKmh === null && speedZone === null) speedZone = held;
@@ -975,15 +1151,17 @@ export type EngineLike = {
   readonly cfg: { readonly length: number; readonly laneCount: number };
   interventions: Interventions;
   addIncident(lane: number, x: number): void;
-  /** Crash the traffic that is there, and dispatch the response to it.
-   *  Used by closure-family events, which place no incident of their own. */
-  crashAt?(lane: number, x: number, want: number, sceneKey?: string): void;
+  /** Make a scene out of the traffic approaching (lane, x): `want` vehicles, of `kind`, due in `inS` seconds; the
+   *  response follows once they are at rest. Once per scene key. */
+  crashAt?(lane: number, x: number, want: number, sceneKey?: string, kind?: SceneSpec["kind"], prefer?: 1 | 2 | 3 | null, inS?: number, stopAt?: number, respondS?: number): unknown;
+  /** The scene's tow (or service) phase has begun: send the recovery truck. */
+  dispatchTow?(sceneKey: string): void;
   /** Send a scenario vehicle to drive in and hold station. */
   dispatchResponder?(kind: "ambulance" | "police" | "tow" | "works", lane: number, holdAtX: number, delayS: number, sceneKey?: string): void;
   /** Everything this scene put on the road packs up and drives away. */
   releaseScene?(sceneKey: string): void;
   /** Start a scene at a plaza or service area: strand the vehicles there, shut the booths, send a tow. */
-  facilityEventStart?(sceneKey: string, site: EventSite, family: string): boolean;
+  facilityEventStart?(sceneKey: string, site: EventSite, family: string, respondS?: number): boolean;
   /** End it: the booths reopen and the scene is recovered. */
   facilityEventEnd?(sceneKey: string): void;
   /** Which facilities exist, for checking a site event can run. */
@@ -1087,14 +1265,12 @@ export function stepToScenarioTime(
 export function createEngineBinding(): EngineBinding {
   const owned = new Map<string, Incident>();
   let previous: Ownership = NO_OWNERS;
-  /* Events whose collision has already happened. A crash is a one-off: apply()
-     runs on every phase boundary and on every operator edit, and without this
-     a four-car pile-up would acquire four more cars each time. */
-  const crashed = new Set<string>();
-
-  /** How many vehicles a family puts into the wreck. */
-  const crashSize = (family: string): number =>
-    family === "multi_vehicle_collision" ? 4 : family === "self_accident" ? 1 : 2;
+  /* Events whose scene has been started: "on" while it stands on the road, "site" for one in a plaza or service area,
+     "off" once it has been cleared. A scene is a one-off: apply() runs on every phase boundary and on every operator
+     edit, and without this a four-car pile-up would acquire four more cars each time. */
+  const scenes = new Map<string, "on" | "site" | "off">();
+  /** Scenes whose recovery truck has been sent for. */
+  const towed = new Set<string>();
 
   const isOwned = (i: Incident): boolean => {
     for (const o of owned.values()) if (o === i) return true;
@@ -1118,6 +1294,91 @@ export function createEngineBinding(): EngineBinding {
       sim.interventions.closures = next.closures;
       sim.interventions.speedZones = next.speedZones;
 
+      /* The vehicles of each event's scene — made of the traffic, never put down on the road.
+       *
+       * Done BEFORE the incidents below: an in-lane breakdown's incident slots ARE the vehicle its scene is bringing to
+       * a stop there, and the engine knows that only if the scene exists when they arrive. Otherwise it takes them for
+       * an accident of their own and makes one there. */
+      const now = scenarioTimeS(sim.time, road);
+      const listed = new Set(events.map((e) => e.id));
+      // An event taken off the list mid-scene: its vehicles pack up and leave, as they would at its end.
+      for (const [id, where] of [...scenes]) {
+        if (listed.has(id)) continue;
+        if (where === "on") sim.releaseScene?.(id);
+        if (where === "site") sim.facilityEventEnd?.(id);
+        scenes.delete(id);
+        towed.delete(id);
+      }
+      for (const e of events) {
+        const state = eventState(e, now);
+
+        /* At a plaza or service area: the scene is the facility's. It starts
+           once, with the vehicles that are actually in the booth lane, and it
+           ends by being recovered — the booth reopens and the queue drains. */
+        if (e.site) {
+          if (state === "active" && !scenes.has(e.id) && typeof sim.facilityEventStart === "function") {
+            if (sim.facilityEventStart(e.id, e.site, e.variant.family, responseArrivalS(e))) scenes.set(e.id, "site");
+          }
+          if (state === "done" && scenes.get(e.id) === "site" && typeof sim.facilityEventEnd === "function") {
+            sim.facilityEventEnd(e.id);
+            scenes.set(e.id, "off");
+          }
+          continue;
+        }
+
+        const family = e.variant.family;
+        const lane = e.lane === null ? null : operatorLaneToEngineIndex(e.lane, road.laneCount);
+        const scene = sceneOf(e.variant);
+        const startsIn = e.startS - now;
+        const lead = sceneLeadS(e, road);
+        // Moved back to the future after it ran: it can run again.
+        if (state === "pending" && startsIn > lead && scenes.get(e.id) === "off") {
+          scenes.delete(e.id);
+          towed.delete(e.id);
+        }
+
+        /* Starting — SCENE_LEAD_S early for a scene made of vehicles: that is when they are picked out of the traffic
+         * approaching the spot, so they are seen driving into it and it happens on time.
+         *
+         * A collision crashes the traffic that is there (the first vehicle stops hard, the next fails to). A breakdown
+         * slows with its hazards on and stops. Roadworks are not a crash — nothing collides — so they get a works
+         * convoy that drives in and parks in the lane it is closing, which is what makes the closure appear to be set
+         * up rather than to switch on. A flood is not a crash either: the water closes the lane (drawn by drawWater)
+         * and traffic moves out of it. Rain has no vehicles in it at all. */
+        const due = state === "active" || (state === "pending" && lead > 0 && startsIn <= lead + 1e-6);
+        if (due && !scenes.has(e.id) && eventProblems(e, road).length === 0) {
+          if (family === "scheduled_roadworks") {
+            if (lane !== null && typeof sim.dispatchResponder === "function") {
+              const at = road.metresAt(e.positionKm);
+              // Timed to reach the lane as it closes (sceneLeadS); close to the entrance that is no head start at all.
+              const wait = Math.max(0, startsIn - lead);
+              sim.dispatchResponder("works", lane, at, wait, e.id);
+              sim.dispatchResponder("works", lane, at - 26, wait + 14, e.id);
+              scenes.set(e.id, "on");
+            }
+          } else if (scene !== null && typeof sim.crashAt === "function") {
+            sim.crashAt(lane ?? road.laneCount - 1, road.metresAt(e.positionKm), scene.want, e.id, scene.kind, scene.prefer, Math.max(0, startsIn), undefined, responseArrivalS(e));
+            scenes.set(e.id, "on");
+          }
+        }
+
+        // The recovery truck goes out when the tow (or, for a breakdown, the service) phase begins.
+        const phase = state === "active" ? phaseAt(e, now) : null;
+        if (scene?.tow && phase !== null && (phase.id === "tow" || phase.id === "service") && scenes.get(e.id) === "on" && !towed.has(e.id)) {
+          sim.dispatchTow?.(e.id);
+          towed.add(e.id);
+        }
+
+        /* Finished — or, for a collision, its lanes reopened (the clearing phase): the scene packs up and drives away
+           rather than being deleted where it stands, and the lane is free again as the label says. Without the second
+           a wreck stood in a lane the engine had reopened, and traffic queued behind it for the rest of the event. */
+        const reopened = phase !== null && scene !== null && effectOf(family) === "closure" && phase.lanesBlocked === 0;
+        if ((state === "done" || reopened) && scenes.get(e.id) === "on") {
+          sim.releaseScene?.(e.id);
+          scenes.set(e.id, "off");
+        }
+      }
+
       // Scenario incidents: drop the ones no longer wanted, add or repair the ones wanted.
       const wanted = new Map(composition.owners.incidents.map((i) => [i.key, i] as const));
       for (const [key, obj] of [...owned]) {
@@ -1137,68 +1398,6 @@ export function createEngineBinding(): EngineBinding {
         const added = list[list.length - 1];
         if (added !== undefined && added.lane === w.lane && added.x === w.x) owned.set(w.key, added);
       }
-      /* Closure-family events crash real traffic.
-       *
-       * They do not appear in owners.incidents — a collision closes lanes
-       * rather than placing an obstacle — so nothing above touches the
-       * vehicle list for them, and after the drawn wreck was removed they had
-       * no cars in them at all. Done once per event, the first time it is
-       * seen active, and only where the engine supports it. */
-      const now = scenarioTimeS(sim.time, road);
-      for (const e of events) {
-        const state = eventState(e, now);
-
-        /* At a plaza or service area: the scene is the facility's. It starts
-           once, with the vehicles that are actually in the booth lane, and it
-           ends by being recovered — the booth reopens and the queue drains. */
-        if (e.site) {
-          if (state === "active" && !crashed.has(e.id) && typeof sim.facilityEventStart === "function") {
-            if (sim.facilityEventStart(e.id, e.site, e.variant.family)) crashed.add(e.id);
-          }
-          if (state === "done" && crashed.has(e.id) && typeof sim.facilityEventEnd === "function") {
-            sim.facilityEventEnd(e.id);
-            crashed.delete(e.id);
-          }
-          continue;
-        }
-
-        const lane = e.lane === null ? null : operatorLaneToEngineIndex(e.lane, road.laneCount);
-
-        /* Starting: put something real on the road for it.
-         *
-         * A collision crashes the traffic that is there. Roadworks are not a
-         * crash — nothing collides — so they get a works convoy that drives
-         * in and parks in the lane it is closing, which is what makes the
-         * closure appear to be set up rather than to switch on. A flood is not
-         * a crash either: the water closes the lane (drawn by drawWater) and
-         * traffic moves out of it. It shares the closure lever with the
-         * collisions, and through that it used to crash two cars into the water
-         * and send an ambulance to them. */
-        if (state === "active" && !crashed.has(e.id) && lane !== null) {
-          const family = e.variant.family;
-          if (family === "scheduled_roadworks") {
-            if (typeof sim.dispatchResponder === "function") {
-              const at = road.metresAt(e.positionKm);
-              sim.dispatchResponder("works", lane, at, 0, e.id);
-              sim.dispatchResponder("works", lane, at - 26, 14, e.id);
-              crashed.add(e.id);
-            }
-          } else if (effectOf(family) === "closure" && family !== "flood" && typeof sim.crashAt === "function") {
-            sim.crashAt(lane, road.metresAt(e.positionKm), crashSize(family), e.id);
-            crashed.add(e.id);
-          }
-        }
-
-        /* Finished: the scene packs up and drives away rather than being
-           deleted where it stands. Without this a wreck blocked its lane for
-           the rest of the run — the owned-incident bookkeeping above tracks
-           incidents, and these are vehicles. */
-        if (state === "done" && crashed.has(e.id) && typeof sim.releaseScene === "function") {
-          sim.releaseScene(e.id);
-          crashed.delete(e.id);
-        }
-      }
-
       return composition;
     },
     operatorIncidents,
@@ -1209,7 +1408,8 @@ export function createEngineBinding(): EngineBinding {
     previousOwners: () => previous,
     reset() {
       owned.clear();
-      crashed.clear();
+      scenes.clear();
+      towed.clear();
       previous = NO_OWNERS;
     },
   };
