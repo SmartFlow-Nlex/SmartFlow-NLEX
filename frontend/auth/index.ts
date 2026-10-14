@@ -11,3 +11,5 @@ export {
   MIN_PASSWORD_LENGTH,
 } from './authApi';
 export type { Credentials, Registration, AuthResult } from './authApi';
+export { groupKey, secondStepProblem, signInTimedOut } from './mfa';
+export type { SecondStep } from './mfa';

@@ -12,8 +12,21 @@ import * as SecureStore from 'expo-secure-store';
 import { Session } from '@supabase/supabase-js';
 import { AuthResult, authenticate, nameForUser, register, signOutRemote } from './authApi';
 import { getSupabase, isSupabaseConfigured } from './supabaseClient';
+import {
+  type SecondStep,
+  beginSecondStep,
+  dropPasswordOnlySession,
+  isFullySignedIn,
+  secondStepProblem,
+  submitCode,
+} from './mfa';
 
-export type AuthStatus = 'loading' | 'signedIn' | 'signedOut';
+/**
+ * `secondStep` is a password accepted but the authenticator code still owed.
+ * It is deliberately NOT a kind of signed in: nothing past the sign-in screen
+ * is reachable from it.
+ */
+export type AuthStatus = 'loading' | 'signedIn' | 'signedOut' | 'secondStep';
 
 export interface AuthSession {
   token: string;
@@ -33,6 +46,15 @@ export interface AuthContextValue {
   signIn: (input: { email: string; password: string; remember: boolean }) => Promise<void>;
   signUp: (input: { fullName: string; email: string; password: string }) => Promise<void>;
   signOut: () => Promise<void>;
+  /**
+   * What the sign-in screen must collect once the password is accepted: a code
+   * from an authenticator already added, or the enrolment of a new one.
+   */
+  secondStep: SecondStep | null;
+  /** Finish the second step. Only on success does the app become reachable. */
+  submitSecondStep: (code: string) => Promise<void>;
+  /** Abandon a half-finished sign-in and end the password-only session. */
+  cancelSecondStep: () => Promise<void>;
 }
 
 const AUTH_TOKEN_KEY = 'authToken';
@@ -105,6 +127,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * set, that is not treated as being signed in.
    */
   const signedInThisRun = useRef(false);
+  /** The authenticator step owed by the password-session just opened. */
+  const [secondStep, setSecondStep] = useState<SecondStep | null>(null);
+  /** "Remember me" from the password screen, applied once the code is accepted. */
+  const pendingRemember = useRef(false);
   /** Ending the session left over from the last run; a new sign-in waits for it. */
   const endingLastRun = useRef<Promise<void>>(Promise.resolve());
 
@@ -120,6 +146,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const apply = (session: Session | null): void => {
       if (cancelled) {
+        return;
+      }
+      /*
+       * A session that has only passed the password is not signed in.
+       *
+       * This is the gate that matters on the client: the token refreshing, or
+       * Supabase handing back a session from anywhere, can only ever reach
+       * `signedIn` once its `aal` claim says the code was accepted too.
+       */
+      if (session !== null && !isFullySignedIn(session)) {
+        setSession(null);
+        setStatus('secondStep');
         return;
       }
       setSession(session === null ? null : toAuthSession(session));
@@ -212,11 +250,72 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       remember: boolean;
     }): Promise<void> => {
       await endingLastRun.current;
-      const result = await authenticate({ email, password });
-      await startSession(result, remember);
+      /*
+       * The password no longer signs anyone in; it only opens the session the
+       * code step then has to raise. `startSession` is NOT called here - it is
+       * called from `submitSecondStep`, once the authenticator has answered.
+       */
+      await authenticate({ email, password });
+      pendingRemember.current = remember;
+
+      /*
+       * Translated, because this is the one failure that can lock everyone
+       * out. The password alone no longer signs anyone in, so if TOTP is not
+       * switched on for the Supabase project this throws on every attempt -
+       * and a raw library message would leave nobody knowing why. The mapped
+       * text names the setting and who can change it.
+       */
+      let step: SecondStep;
+      try {
+        step = await beginSecondStep();
+      } catch (caught) {
+        await dropPasswordOnlySession();
+        throw new Error(secondStepProblem(caught));
+      }
+      setSecondStep(step);
+      setStatus('secondStep');
     },
-    [startSession],
+    [],
   );
+
+  const submitSecondStep = useCallback(
+    async (code: string): Promise<void> => {
+      if (secondStep === null) {
+        throw new Error('Enter your password again.');
+      }
+      const token = await submitCode(secondStep.factorId, code);
+
+      /*
+       * The account details come from the session the password opened; only
+       * the token changes, and it is the raised one that gets stored.
+       *
+       * A missing user here would mean the session vanished between the code
+       * being accepted and this call - rare, but it must not sign someone in
+       * under a blank name, so it is treated as the sign-in having lapsed.
+       */
+      const { data } = await getSupabase().auth.getUser();
+      if (data.user === null) {
+        throw new Error('Your sign-in timed out. Enter your password again.');
+      }
+      await startSession(
+        {
+          token,
+          fullName: nameForUser(data.user),
+          email: data.user.email ?? '',
+        },
+        pendingRemember.current,
+      );
+      setSecondStep(null);
+    },
+    [secondStep, startSession],
+  );
+
+  const cancelSecondStep = useCallback(async (): Promise<void> => {
+    setSecondStep(null);
+    setStatus('signedOut');
+    setSession(null);
+    await dropPasswordOnlySession();
+  }, []);
 
   const signUp = useCallback(
     async ({
@@ -229,17 +328,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       password: string;
     }): Promise<void> => {
       await endingLastRun.current;
-      const result = await register({ fullName, email, password });
+      await register({ fullName, email, password });
+
+      /*
+       * A new account goes through the same second step, and this is the hole
+       * that would otherwise sink the whole feature: signing up used to call
+       * `startSession` directly, so anyone could skip two-step sign-in simply
+       * by registering. A brand new account has no authenticator, so this
+       * always enrols one before the app opens.
+       *
+       * `register` throws when the project has email confirmation on and no
+       * session comes back, so by here there is always an aal1 session to
+       * raise - the same state a password sign-in leaves behind.
+       */
       // A brand new account's email is kept for the next sign-in.
-      await startSession(result, true);
+      pendingRemember.current = true;
+      let step: SecondStep;
+      try {
+        step = await beginSecondStep();
+      } catch (caught) {
+        await dropPasswordOnlySession();
+        throw new Error(secondStepProblem(caught));
+      }
+      setSecondStep(step);
+      setStatus('secondStep');
     },
-    [startSession],
+    [],
   );
 
   const signOut = useCallback(async (): Promise<void> => {
     signedInThisRun.current = false;
     setSession(null);
     setStatus('signedOut');
+    // Drop any half-finished enrolment too, so the next person to sign in on
+    // this phone is never handed the previous account's pending factor.
+    setSecondStep(null);
     // The remembered email stays: logging out is not asking to be forgotten.
     await signOutRemote();
     await removeItem(AUTH_SESSION_KEY);
@@ -247,8 +370,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, session, rememberedEmail, signIn, signUp, signOut }),
-    [status, session, rememberedEmail, signIn, signUp, signOut],
+    () => ({
+      status,
+      session,
+      rememberedEmail,
+      signIn,
+      signUp,
+      signOut,
+      secondStep,
+      submitSecondStep,
+      cancelSecondStep,
+    }),
+    [
+      status,
+      session,
+      rememberedEmail,
+      signIn,
+      signUp,
+      signOut,
+      secondStep,
+      submitSecondStep,
+      cancelSecondStep,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

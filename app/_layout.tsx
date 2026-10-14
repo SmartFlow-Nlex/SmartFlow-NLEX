@@ -37,7 +37,16 @@ function useAuthRedirect(): void {
 
     const onAuthScreen = authRoutes.includes(first);
 
-    if (status === 'signedOut' && !onAuthScreen) {
+    /*
+     * `secondStep` is a password accepted and the authenticator code still
+     * owed. It is grouped with `signedOut` deliberately: an incomplete sign-in
+     * belongs on the sign-in screen, and must not reach anything behind it.
+     * Only an explicit `signedIn` - which the provider grants solely on an
+     * "aal2" token - opens the app.
+     */
+    const halfway = status === 'signedOut' || status === 'secondStep';
+
+    if (halfway && !onAuthScreen) {
       router.replace('/sign-in');
     } else if (status === 'signedIn' && onAuthScreen) {
       router.replace('/(tabs)/dashboard');

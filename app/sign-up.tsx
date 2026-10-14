@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { MIN_PASSWORD_LENGTH, useAuth } from '../frontend/auth';
 import AuthField from '../frontend/components/auth/AuthField';
+import SecondStepForm from '../frontend/components/auth/SecondStepForm';
 import AuthScreen, {
   AuthError,
   AuthFooter,
@@ -19,7 +20,7 @@ export default function SignUpScreen(): React.ReactElement {
   const styles = useThemedStyles(makeStyles);
   const m = useAuthMetrics();
   const router = useRouter();
-  const { signUp } = useAuth();
+  const { signUp, status } = useAuth();
 
   const [fullName, setFullName] = useState<string>('');
   const [email, setEmail] = useState<string>('');
@@ -39,8 +40,12 @@ export default function SignUpScreen(): React.ReactElement {
     setError(null);
     setIsSubmitting(true);
     try {
+      /*
+       * No navigation: a new account still owes the authenticator step, so the
+       * provider moves to `secondStep` and this screen swaps to the code form.
+       * Routing happens once the first code is accepted.
+       */
       await signUp({ fullName, email, password });
-      router.replace('/(tabs)/dashboard');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not create your account.');
     } finally {
@@ -55,6 +60,15 @@ export default function SignUpScreen(): React.ReactElement {
     }
     router.replace('/sign-in');
   };
+
+  if (status === 'secondStep') {
+    return (
+      <AuthScreen>
+        <Stack.Screen options={{ headerShown: false }} />
+        <SecondStepForm />
+      </AuthScreen>
+    );
+  }
 
   return (
     <AuthScreen>

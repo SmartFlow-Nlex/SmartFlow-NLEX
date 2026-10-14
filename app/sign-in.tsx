@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../frontend/auth';
 import AuthField from '../frontend/components/auth/AuthField';
+import SecondStepForm from '../frontend/components/auth/SecondStepForm';
 import AuthScreen, {
   AuthError,
   AuthFooter,
@@ -19,7 +20,7 @@ export default function SignInScreen(): React.ReactElement {
   const styles = useThemedStyles(makeStyles);
   const m = useAuthMetrics();
   const router = useRouter();
-  const { signIn, rememberedEmail } = useAuth();
+  const { signIn, rememberedEmail, status } = useAuth();
 
   // Filled in already if the last person to sign in ticked "Remember me".
   const [email, setEmail] = useState<string>(rememberedEmail ?? '');
@@ -40,8 +41,12 @@ export default function SignInScreen(): React.ReactElement {
     setError(null);
     setIsSubmitting(true);
     try {
+      /*
+       * No navigation here any more. The password only opens the session; the
+       * provider moves to `secondStep` and this screen swaps to the code form.
+       * Routing to the dashboard happens once the code is accepted.
+       */
       await signIn({ email, password, remember });
-      router.replace('/(tabs)/dashboard');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not sign in.');
     } finally {
@@ -57,6 +62,15 @@ export default function SignInScreen(): React.ReactElement {
   };
 
   const checkbox = Math.round(Math.min(22, Math.max(20, 38 * m.scale)));
+
+  if (status === 'secondStep') {
+    return (
+      <AuthScreen>
+        <Stack.Screen options={{ headerShown: false }} />
+        <SecondStepForm />
+      </AuthScreen>
+    );
+  }
 
   return (
     <AuthScreen>
