@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import {
-  ActivityIndicator,
   Image,
   Modal,
   Pressable,
@@ -13,6 +12,7 @@ import {
 } from 'react-native';
 import { PostMedia } from '@smartflow/shared';
 import { withAppFont } from '../../theme';
+import LoadingMascot from '../ui/LoadingMascot';
 
 /**
  * Inline player for a video attachment.
@@ -99,7 +99,7 @@ const MediaViewer: React.FC<MediaViewerProps> = ({ media, startIndex, visible, o
         {item.type === 'image' ? (
           <View style={styles.stage}>
             {isLoading && !failed ? (
-              <ActivityIndicator color="#FFFFFF" size="large" style={styles.spinner} />
+              <LoadingMascot size={104} label="Loading the image" style={styles.spinner} />
             ) : null}
             <Image
               onLoadEnd={() => setIsLoading(false)}

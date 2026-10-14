@@ -25,6 +25,26 @@ export interface StretchForecast {
   /** "Balintawak to NLEX Harbor Link". */
   stretch: string;
   state: ForecastState;
+  /**
+   * 0-1: the model's chance of a queue (slow or congested) here in this hour.
+   * `state` is this figure against 50%. Null from a dashboard that predates it,
+   * as is everything below - none of it may be read as zero.
+   */
+  chance: number | null;
+  /**
+   * What a queue here usually costs at this hour and severity, from the
+   * dashboard's Waze history. The model predicts that a queue forms, not how
+   * long it is; these are the typical queue for the hour it predicts.
+   */
+  delaySeconds: number | null;
+  queueMetres: number | null;
+  /**
+   * Share of this exit's queue-hours on each carriageway at this time of day.
+   * The model predicts a queue at an exit, not on a side, and most exits are
+   * lopsided - Balintawak's queues are 98% northbound.
+   */
+  nbShare: number | null;
+  sbShare: number | null;
 }
 
 export interface ForecastModel {
@@ -51,6 +71,29 @@ export interface ForecastTimeline {
 }
 
 const STATES: Record<string, ForecastState> = { Low: 'clear', Med: 'slow', High: 'congested' };
+
+/** Manila is UTC+8 all year. */
+const MANILA_OFFSET_MS = 8 * 3_600_000;
+
+/**
+ * The instant a dashboard forecast timestamp really means.
+ *
+ * The forecast table keeps Manila wall-clock time in a column with no zone,
+ * and the dashboard's server, which runs in UTC, sends it out with a "Z" on
+ * the end: 1:00 PM in Manila arrives as "13:00Z", eight hours late. Read as
+ * written, every prediction landed eight hours after the hour it was made for
+ * - the afternoon's forecast shown as tonight's. If the dashboard starts
+ * sending true instants, this is the one place to change.
+ */
+function manilaInstant(stamp: string): Date {
+  return new Date(new Date(stamp).getTime() - MANILA_OFFSET_MS);
+}
+
+/** A finite number, or null - never a zero standing in for "not sent". */
+function numberOrNull(value: unknown): number | null {
+  const parsed = typeof value === 'string' && value.length > 0 ? Number(value) : value;
+  return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : null;
+}
 
 /** GET a path on the team's dashboard. Shared with insightsApi. */
 export async function getDashboardJson(path: string): Promise<unknown> {
@@ -101,6 +144,12 @@ export function exitIdForSegment(segment: string): string | null {
 let timelineCache: { at: number; value: ForecastTimeline } | null = null;
 const stretchCache = new Map<number, { at: number; value: StretchForecast[] }>();
 
+/** Drops what is cached, so the next read asks the dashboard again. */
+export function forgetForecast(): void {
+  timelineCache = null;
+  stretchCache.clear();
+}
+
 export async function fetchForecastTimeline(): Promise<ForecastTimeline> {
   if (timelineCache !== null && Date.now() - timelineCache.at < CACHE_MS) {
     return timelineCache.value;
@@ -112,7 +161,7 @@ export async function fetchForecastTimeline(): Promise<ForecastTimeline> {
   const peaks = Array.isArray(rawPeaks)
     ? rawPeaks
         .map((row: { at?: unknown; hoursAhead?: unknown; congested?: unknown }) => ({
-          at: new Date(String(row.at)),
+          at: manilaInstant(String(row.at)),
           hoursAhead: Number(row.hoursAhead),
           congested: Number(row.congested),
         }))
@@ -137,6 +186,12 @@ export async function fetchForecastTimeline(): Promise<ForecastTimeline> {
         };
   const reportedMax = typeof rawModel?.maxHorizon === 'number' ? rawModel.maxHorizon : null;
   const maxHorizon = reportedMax ?? Math.max(...peaks.map((row) => row.hoursAhead));
+
+  // Hours ahead count from the base, so once the pipeline has run again the
+  // hours already held belong to the old count.
+  if (timelineCache !== null && timelineCache.value.base.getTime() !== base.getTime()) {
+    stretchCache.clear();
+  }
 
   const value: ForecastTimeline = { base, maxHorizon, peaks, model };
   timelineCache = { at: Date.now(), value };
@@ -163,16 +218,27 @@ export async function fetchStretchForecast(hoursAhead: number): Promise<StretchF
     if (state === undefined || exitId === null) {
       continue;
     }
+    const delaySeconds = numberOrNull(props.jam_delay_s);
     value.push({
       exitId,
       stretch: typeof props.corridor_segment === 'string' ? props.corridor_segment : String(props.segment_id),
       state,
+      chance: numberOrNull(props.p_congested),
+      // Waze marks a delay it could not measure as -1.
+      delaySeconds: delaySeconds !== null && delaySeconds >= 0 ? delaySeconds : null,
+      queueMetres: numberOrNull(props.jam_queue_m),
+      nbShare: numberOrNull(props.nb_share),
+      sbShare: numberOrNull(props.sb_share),
     });
   }
   if (value.length === 0 && features.length > 0) {
     throw new Error('The forecast came back without predictions.');
   }
 
-  stretchCache.set(hoursAhead, { at: Date.now(), value });
+  // An hour with no rows is not kept: the table is sometimes rewritten with
+  // fewer hours than it had, and gets them back on the pipeline's next run.
+  if (value.length > 0) {
+    stretchCache.set(hoursAhead, { at: Date.now(), value });
+  }
   return value;
 }

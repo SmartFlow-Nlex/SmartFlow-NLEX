@@ -15,7 +15,7 @@ import ScreenShell from '../../../components/ui/ScreenShell';
 import PageHero from '../../../components/ui/PageHero';
 import { GlassCard, SectionTitle } from '../../../components/ui/Cards';
 import MoodMascot from '../../../components/MoodMascot';
-import MascotGreeting from '../../../components/MascotGreeting';
+import WavingMascot from '../../../components/ui/WavingMascot';
 import { PressableScale, Reveal } from '../../../components/motion';
 import type { ThemePalette } from '../../../theme';
 import {
@@ -348,7 +348,7 @@ export default function AssistantScreen(): React.ReactElement {
       {messages.length === 0 ? (
         <View style={styles.intro}>
           {/* The one big Lex in the app: this is his page. */}
-          <MascotGreeting size={196} />
+          <WavingMascot size={190} />
 
           {/* Lex's own words, so they get a bubble pointing back at him. */}
           {greeting === null ? (

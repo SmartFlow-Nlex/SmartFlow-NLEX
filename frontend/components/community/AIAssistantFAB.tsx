@@ -1,31 +1,29 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import {
-  Animated,
-  Image,
-  LayoutChangeEvent,
-  PanResponder,
-  StyleSheet,
-  View,
-} from 'react-native';
+import React from 'react';
+import { Image, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Canvas, LinearGradient, Path, vec } from '@shopify/react-native-skia';
+import { useTheme } from '../../theme';
+import type { ThemePalette } from '../../theme';
 
 export interface AIAssistantFABProps {
   onPress: () => void;
 }
 
-/** Width and height of the mascot button; its docking limits and FAB_CLEARANCE follow it. */
-const SIZE = 80;
-/** Gap kept between the button and the edge it docks against. */
-const MARGIN = 14;
 /**
- * Clearance from the bottom of the screen area, which ends at the tab bar.
- *
- * 70, not 18: the mascot peeking up over the active tab is 58pt tall, and on
- * the rightmost tab it rose straight in front of the button. Resting above it
- * keeps the two apart on every tab.
+ * The button is the designer's "Cheerful Traffic Guide Car": Lex with a
+ * "Check traffic along your route!" bubble, as in the dashboard mockup. The
+ * artwork is about twice as wide as it is tall, so the button is too.
  */
-const BOTTOM_GAP = 70;
-/** Keeps it from being dragged up under a screen's fixed header. */
-const TOP_GAP = 8;
+const GUIDE_ASPECT = 1738 / 857;
+// 156pt, its size in the mockup, so the road shows beside it.
+const WIDTH = 156;
+const HEIGHT = Math.round(WIDTH / GUIDE_ASPECT);
+/** Gap between the artwork and the screen's right edge. */
+const MARGIN = 10;
+/** How far above the tab bar the car's wheels rest - on the road drawn under it, as in the mockup. */
+const BOTTOM_GAP = 14;
+/** The road under the car: from the tab bar up past the car's wheels. */
+const ROAD_HEIGHT = 52;
+const ROAD_WIDTH = 182;
 
 /**
  * Bottom padding a scrolling screen needs so its last card clears the button.
@@ -33,198 +31,96 @@ const TOP_GAP = 8;
  * Exactly the button's footprint and not a point more. Every screen already
  * ends with a section's own trailing margin, so any bonus here lands on top
  * of that and shows up as a hole between the last card and the tab bar.
- *
- * Exported because the tabs were hardcoding it, and a hardcoded number went
- * stale the moment the button changed: they reserved 148pt for a 56pt button
- * sitting 84pt up, long after it became a 64pt button sitting 18pt up.
  */
-export const FAB_CLEARANCE = BOTTOM_GAP + SIZE;
+export const FAB_CLEARANCE = BOTTOM_GAP + HEIGHT;
 
-/**
- * A drag of less than this is a tap.
- *
- * PanResponder claims the touch, so a `Pressable` underneath would never see
- * the press - the tap has to be recognised here instead. Six points is enough
- * to absorb the wobble of a thumb without swallowing a deliberate flick.
- */
-const TAP_SLOP = 6;
-
-interface Point {
-  x: number;
-  y: number;
+/** `#RRGGBB` at an opacity. */
+function alpha(hex: string, a: number): string {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
 /**
- * Where the button was left, shared by every screen's copy.
- *
- * Each tab renders its own FAB, so without this, dragging it out of the way on
- * the Corridor tab and switching to Alerts would snap it back to the corner.
- * Module scope rather than state: it should survive the unmount, but it is a
- * session preference and not worth persisting to storage.
+ * The road the guide car stands on, drawn to the dashboard mockup: a lane
+ * receding to the left behind the bubble, bending down toward the viewer
+ * under the car, with a bold white edge rising from the bottom to his left
+ * wheel and a second one curving past his right. Pale blue with white edges
+ * by day, a quiet navy road with soft blue edges at night.
  */
-let lastPosition: Point | null = null;
+const GuideRoad: React.FC<{ c: ThemePalette }> = ({ c }) => {
+  const w = ROAD_WIDTH;
+  const h = ROAD_HEIGHT;
+  const X = (f: number): string => (f * w).toFixed(1);
+  const Y = (f: number): string => (f * h).toFixed(1);
+  const R = (w + 8).toFixed(1);
+  // The far lane, faint, fading in from under the bubble.
+  const far =
+    `M 0 ${Y(0.36)} C ${X(0.25)} ${Y(0.3)} ${X(0.55)} ${Y(0.2)} ${X(0.86)} ${Y(0.1)} ` +
+    `L ${X(0.86)} ${Y(0.3)} C ${X(0.55)} ${Y(0.36)} ${X(0.25)} ${Y(0.44)} 0 ${Y(0.5)} Z`;
+  const farEdge = `M 0 ${Y(0.5)} C ${X(0.25)} ${Y(0.44)} ${X(0.55)} ${Y(0.36)} ${X(0.8)} ${Y(0.31)}`;
+  // The near road, bending down toward the viewer, and its two white edges.
+  const inner = `M ${X(0.34)} ${Y(1.02)} C ${X(0.43)} ${Y(0.66)} ${X(0.6)} ${Y(0.38)} ${X(0.86)} ${Y(0.2)}`;
+  const near = `${inner} L ${R} ${Y(0.06)} L ${R} ${Y(1.02)} Z`;
+  const outer = `M ${X(0.8)} ${Y(0.46)} C ${X(0.86)} ${Y(0.6)} ${X(0.885)} ${Y(0.8)} ${X(0.9)} ${Y(1.02)}`;
+  const shoulder = `${outer} L ${R} ${Y(1.02)} L ${R} ${Y(0.34)} Z`;
+  const fadeIn = (color: string, a: number): React.ReactElement => (
+    <LinearGradient start={vec(0, 0)} end={vec(w * 0.6, 0)} colors={[alpha(color, 0), alpha(color, a)]} />
+  );
+  return (
+    <Canvas style={styles.road}>
+      <Path path={far}>{fadeIn(c.sceneRoadEdge, 0.25)}</Path>
+      <Path path={near}>
+        <LinearGradient
+          start={vec(0, 0)}
+          end={vec(0, h)}
+          colors={[alpha(c.sceneRoadEdge, 0.55), alpha(c.sceneRoadEdge, 0.85)]}
+        />
+      </Path>
+      <Path path={shoulder} color={alpha(c.sceneGlow, c.sceneCloudAlpha * 0.55)} />
+      <Path path={farEdge} style="stroke" strokeWidth={1.8} strokeCap="round">
+        {fadeIn(c.sceneGlow, 0.55)}
+      </Path>
+      <Path path={inner} style="stroke" strokeWidth={3.6} strokeCap="round" color={alpha(c.sceneGlow, 0.95)} />
+      <Path path={outer} style="stroke" strokeWidth={2.8} strokeCap="round" color={alpha(c.sceneGlow, 0.95)} />
+    </Canvas>
+  );
+};
 
 /**
- * Floating shortcut to the Traffic Assistant - draggable, and docks to
- * whichever side it is released nearest.
+ * Shortcut to the Traffic Assistant: the guide car, standing on its road just
+ * above the tab bar at the bottom right. Fixed in place - it used to be
+ * draggable, and Ysa asked for it to stay put.
  *
- * The mascot is the whole button - no plate, no shadow.
- *
- * A speech-bubble plate with a drop shadow was tried and rejected: it boxed
- * the artwork in and cost it the detail that makes it worth having. The car
- * mascot's bright blue body and white cap stand out on the light page and the
- * dark one alike - which is the whole job a backing plate would do.
- *
- * Note that a shadow is not available without that plate. The view is
- * transparent apart from the artwork; `box-shadow` under react-native-web
- * follows the element's BOX rather than its alpha, and Android's `elevation`
- * needs an opaque background before it draws at all. So a shadow here would
- * be a square grey haze behind a round mascot on web, and nothing on Android.
+ * The artwork is the whole button - no plate, no shadow: the car's bright
+ * blue and the bubble stand out on the light page and the dark one alike.
  */
 const AIAssistantFAB: React.FC<AIAssistantFABProps> = ({ onPress }) => {
-  const [bounds, setBounds] = useState<{ width: number; height: number } | null>(null);
-  const [pressed, setPressed] = useState(false);
-
-  // The committed position. `pan` follows the finger during a drag and is
-  // sprung back to this on release, so there is no offset bookkeeping.
-  const base = useRef<Point>(lastPosition ?? { x: 0, y: 0 });
-  const pan = useRef(new Animated.ValueXY(base.current)).current;
-  const didLayout = useRef(false);
-
-  const clamp = useCallback(
-    (point: Point, area: { width: number; height: number }): Point => ({
-      x: Math.min(Math.max(point.x, MARGIN), Math.max(area.width - SIZE - MARGIN, MARGIN)),
-      y: Math.min(Math.max(point.y, TOP_GAP), Math.max(area.height - SIZE - BOTTOM_GAP, TOP_GAP)),
-    }),
-    [],
-  );
-
-  const handleLayout = useCallback(
-    (event: LayoutChangeEvent): void => {
-      const { width, height } = event.nativeEvent.layout;
-      if (width <= 0 || height <= 0) {
-        return;
-      }
-      const area = { width, height };
-      setBounds(area);
-
-      if (!didLayout.current) {
-        didLayout.current = true;
-        // First measurement decides the resting spot: bottom-right, or
-        // wherever it was left earlier in the session.
-        const start = lastPosition ?? {
-          x: width - SIZE - MARGIN,
-          y: height - SIZE - BOTTOM_GAP,
-        };
-        const clamped = clamp(start, area);
-        base.current = clamped;
-        pan.setValue(clamped);
-        lastPosition = clamped;
-        return;
-      }
-
-      // A rotation or a window resize can leave it outside the new area.
-      const corrected = clamp(base.current, area);
-      base.current = corrected;
-      pan.setValue(corrected);
-      lastPosition = corrected;
-    },
-    [clamp, pan],
-  );
-
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        // Claim the gesture before the ScrollView underneath reads it as a
-        // scroll, but only once it is clearly a drag.
-        onMoveShouldSetPanResponder: (_event, gesture) =>
-          Math.abs(gesture.dx) > 2 || Math.abs(gesture.dy) > 2,
-        onPanResponderGrant: () => {
-          setPressed(true);
-        },
-        onPanResponderMove: (_event, gesture) => {
-          pan.setValue({
-            x: base.current.x + gesture.dx,
-            y: base.current.y + gesture.dy,
-          });
-        },
-        onPanResponderRelease: (_event, gesture) => {
-          setPressed(false);
-
-          const travelled = Math.hypot(gesture.dx, gesture.dy);
-          if (travelled <= TAP_SLOP) {
-            // Never moved: it was a tap. Put it back exactly where it was, in
-            // case the finger drifted a pixel or two.
-            pan.setValue(base.current);
-            onPress();
-            return;
-          }
-
-          if (bounds === null) {
-            return;
-          }
-
-          const loose = clamp(
-            { x: base.current.x + gesture.dx, y: base.current.y + gesture.dy },
-            bounds,
-          );
-          // Dock to the nearer side - a FAB left mid-screen reads as a bug.
-          const rightEdge = Math.max(bounds.width - SIZE - MARGIN, MARGIN);
-          const docked: Point = {
-            x: loose.x + SIZE / 2 < bounds.width / 2 ? MARGIN : rightEdge,
-            y: loose.y,
-          };
-
-          base.current = docked;
-          lastPosition = docked;
-          Animated.spring(pan, {
-            toValue: docked,
-            useNativeDriver: false,
-            friction: 8,
-            tension: 90,
-          }).start();
-        },
-        onPanResponderTerminate: () => {
-          setPressed(false);
-          pan.setValue(base.current);
-        },
-        onPanResponderTerminationRequest: () => false,
-      }),
-    [bounds, clamp, onPress, pan],
-  );
+  const { colors } = useTheme();
 
   return (
-    // box-none so the overlay itself never intercepts a touch meant for the
-    // content underneath - only the button does.
-    <View style={styles.overlay} onLayout={handleLayout}>
-      <Animated.View
-        accessibilityRole="button"
-        accessibilityLabel="Ask the traffic assistant. Drag to move."
-        accessibilityHint="Double tap to open the assistant, or drag to reposition."
-        style={[
-          styles.fab,
-          pressed && styles.fabPressed,
-          { transform: pan.getTranslateTransform() },
-        ]}
-        {...panResponder.panHandlers}
-      >
-        {/* The car mascot's face (the designer's ICON), cut out of its black
-            background so it sits on light and dark pages alike. */}
-        <Image
-          source={require('../../assets/mascot-icon.png')}
-          style={styles.mascot}
-          resizeMode="contain"
-        />
-      </Animated.View>
+    // box-none so the overlay never intercepts a touch meant for the content
+    // underneath - only the button does.
+    <View style={styles.overlay}>
+      <View style={styles.corner}>
+        {/* The web build has no Skia loaded; it just goes without the road. */}
+        {Platform.OS !== 'web' ? <GuideRoad c={colors} /> : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Check traffic along your route: ask the traffic assistant."
+          onPress={onPress}
+          style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
+        >
+          {/* Lex and his "Check traffic along your route!" bubble, on a
+              transparent background, so it sits on light and dark pages alike. */}
+          <Image source={require('../../assets/mascot-guide.png')} style={styles.mascot} resizeMode="contain" />
+        </Pressable>
+      </View>
     </View>
   );
 };
 
 export default AIAssistantFAB;
 
-// Not `useThemedStyles`: nothing here takes a colour from the palette any
-// more, because the artwork supplies all of it.
 const styles = StyleSheet.create({
   overlay: {
     // RN 0.86 removed StyleSheet.absoluteFillObject; absoluteFill is the
@@ -234,14 +130,28 @@ const styles = StyleSheet.create({
     // in RN 0.86 and warns on every render.
     pointerEvents: 'box-none',
   },
+  corner: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: ROAD_WIDTH,
+    height: HEIGHT + BOTTOM_GAP,
+    pointerEvents: 'box-none',
+  },
+  road: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: ROAD_WIDTH,
+    height: ROAD_HEIGHT,
+    pointerEvents: 'none',
+  },
   fab: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    width: SIZE,
-    height: SIZE,
-    alignItems: 'center',
-    justifyContent: 'center',
+    right: MARGIN,
+    bottom: BOTTOM_GAP,
+    width: WIDTH,
+    height: HEIGHT,
   },
   fabPressed: {
     // A dark page cannot show a pressed shadow, so shrink the opacity
@@ -249,7 +159,7 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
   mascot: {
-    width: SIZE,
-    height: SIZE,
+    width: WIDTH,
+    height: HEIGHT,
   },
 });

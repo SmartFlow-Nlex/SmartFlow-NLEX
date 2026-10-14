@@ -49,9 +49,16 @@ function useAuthRedirect(): void {
  * The navigator itself. Split out from `RootLayout` because it calls
  * `useTheme()`, which only works inside the provider below it.
  */
-function ThemedStack(): React.ReactElement {
-  const { colors, isDark } = useTheme();
+function ThemedStack(): React.ReactElement | null {
+  const { colors, isDark, isReady } = useTheme();
   useAuthRedirect();
+
+  // Wait the few milliseconds it takes to read the saved choice. Drawing
+  // before it showed the phone's theme first and then flipped - light, then
+  // dark - every time the app opened with Dark Mode set to On or Off.
+  if (!isReady) {
+    return null;
+  }
 
   // React Navigation paints its own background behind every screen and
   // defaults to light. Without this the dark theme flashes white on every

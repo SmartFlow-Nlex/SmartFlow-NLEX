@@ -38,6 +38,7 @@
     "@supabase/supabase-js": "^2.115.0",
     "expo": "^57.0.0",
     "expo-asset": "~57.0.18",
+    "expo-blur": "~57.0.3",
     "expo-image": "~57.0.5",
     "expo-linking": "~57.0.9",
     "expo-router": "~57.0.18",

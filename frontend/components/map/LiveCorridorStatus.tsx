@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Radius, softShadow, useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
 import { Pulse } from '../motion';
 import { BlueStatusCard } from '../ui/Cards';
+import LoadingMascot from '../ui/LoadingMascot';
 import { CongestionLevel } from '../../lib/trafficModel';
 import {
   CorridorDirectionStatus,
@@ -285,7 +286,7 @@ const LiveCorridorStatus: React.FC = () => {
   if (data === null && isLoading) {
     return (
       <View style={styles.stateCard}>
-        <ActivityIndicator color={colors.accent} />
+        <LoadingMascot size={96} label="Connecting to the live corridor feed" />
         <Text style={styles.stateText}>Connecting to the live corridor feed...</Text>
       </View>
     );

@@ -64,6 +64,13 @@ export interface AlertItem {
    * when a new one arrives.
    */
   reported?: boolean;
+  /**
+   * Something on the road itself: an accident or a hazard from Waze, or a
+   * driver's incident report. What the Dashboard's status card counts as an
+   * incident - a police sighting or an operator's advisory is an alert, but
+   * not one of these.
+   */
+  incident?: boolean;
   /** When it was reported, for newest-first ordering. */
   at?: number;
 }
@@ -234,6 +241,7 @@ function roadReportAlert(report: RoadReport, read: string[]): AlertItem {
     unread: !read.includes(id),
     category: 'traffic',
     reported: true,
+    incident: report.type !== 'POLICE',
     at: report.reportedAt.getTime(),
   };
 }
@@ -264,6 +272,7 @@ function communityAlert(report: CommunityIncidentAlert, read: string[]): AlertIt
     unread: !read.includes(id),
     category: 'traffic',
     reported: true,
+    incident: true,
     at: report.createdAt.getTime(),
   };
 }

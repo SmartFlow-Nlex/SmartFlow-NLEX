@@ -13,7 +13,8 @@ import { useMobileConfig } from '../../../lib/mobileConfig';
 import { Radius, softShadow, useTheme, useThemedStyles } from '../../../theme';
 import ScreenShell from '../../../components/ui/ScreenShell';
 import PageHero from '../../../components/ui/PageHero';
-import HeroMascot from '../../../components/ui/HeroMascot';
+import WavingMascot from '../../../components/ui/WavingMascot';
+import LoadingMascot from '../../../components/ui/LoadingMascot';
 import { CountBadge, SectionTitle } from '../../../components/ui/Cards';
 import { SkeletonPostCard } from '../../../components/Skeleton';
 import type { ThemePalette } from '../../../theme';
@@ -80,7 +81,7 @@ export default function CommunityScreen(): React.ReactElement {
         subtitle={'Share what you see and help\nthe people behind you.'}
         titleScale={0.082}
         offsetTop={76}
-        mascot={<HeroMascot size={124} />}
+        mascot={<WavingMascot size={124} />}
         mascotWidth={140}
         mascotPlacement={{ top: 67, bleed: 8 }}
         minHeight={191}
@@ -110,7 +111,7 @@ export default function CommunityScreen(): React.ReactElement {
         */}
         {isSubmitting ? (
           <View style={styles.pendingStrip}>
-            <Ionicons name="cloud-upload-outline" size={15} color={colors.accent} />
+            <LoadingMascot size={34} label="Publishing your post" />
             <Text style={styles.pendingText}>Publishing your post...</Text>
           </View>
         ) : null}
@@ -123,6 +124,11 @@ export default function CommunityScreen(): React.ReactElement {
         */}
         {isLoading ? (
           <View accessibilityLabel="Loading community feed">
+            {/* Lex says it is loading; the skeletons say how much is coming. */}
+            <View style={styles.loadingLex}>
+              <LoadingMascot size={88} label="Loading community feed" />
+              <Text style={styles.stateText}>Loading the community feed...</Text>
+            </View>
             <SkeletonPostCard />
             <SkeletonPostCard />
             <SkeletonPostCard />
@@ -225,6 +231,11 @@ const makeStyles = (c: ThemePalette) =>
       color: c.accent,
       fontSize: 14,
       fontWeight: '600',
+    },
+    loadingLex: {
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 14,
     },
 
     // One shared shell for "nothing here" and "it broke", so the two states

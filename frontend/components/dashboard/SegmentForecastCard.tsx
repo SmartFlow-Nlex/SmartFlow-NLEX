@@ -12,14 +12,42 @@ import {
   nlexDirections,
   reachableExits,
 } from '../../constants/nlexSegments';
-import { SegmentPrediction, congestionLevelLabel } from '../../lib/trafficModel';
+import type { CongestionLevel } from '../../lib/trafficModel';
+import type { ForecastState } from '../../lib/forecastApi';
+import type { RouteForecast } from '../../lib/routeForecast';
+import type { RouteForecastStatus } from '../../hooks/useRouteForecast';
 import type { EventForecast } from '../../lib/insightsApi';
 import { formatLongDate, formatTime } from '../../lib/datetime';
 import Dropdown, { DropdownOption } from '../Dropdown';
+import LoadingMascot from '../ui/LoadingMascot';
 import { toneFor } from './severity';
 
 /** Hours ahead the chips offer. No zero - "Reset" is the way back to now. */
 export const forecastPresets = [1, 3, 6, 12, 24] as const;
+
+/** The same words and colours as the Map tab's forecast, which draws the same model. */
+const stateLevel: Record<ForecastState, CongestionLevel> = {
+  clear: 'low',
+  slow: 'moderate',
+  congested: 'severe',
+};
+
+const stateLabel: Record<ForecastState, string> = {
+  clear: 'Clear',
+  slow: 'Slow',
+  congested: 'Congested',
+};
+
+/**
+ * Never "100%": scored against what happened, the hours the model put at 100%
+ * queued 86% of the time. The dashboard words its own chances the same way.
+ */
+function chanceLabel(probability: number): string {
+  if (probability >= 95) {
+    return '>95%';
+  }
+  return probability <= 5 ? '<5%' : `${probability}%`;
+}
 
 export interface SegmentForecastCardProps {
   direction: NlexDirectionId;
@@ -28,11 +56,16 @@ export interface SegmentForecastCardProps {
   onChangeDirection: (direction: NlexDirectionId) => void;
   onChangeFrom: (id: string) => void;
   onChangeTo: (id: string) => void;
-  /** Null until both endpoints are chosen. */
-  prediction: SegmentPrediction | null;
-  /** The same stretch as it is right now, for the "vs now" line. */
-  predictionNow: SegmentPrediction | null;
-  /** Event pushing extra load onto this segment at the forecast time, if any. */
+  /** Where the model's forecast stands: 'idle' until both endpoints are chosen. */
+  forecastStatus: RouteForecastStatus;
+  /** The SmartFlow model's forecast for the route. Null until it has arrived. */
+  prediction: RouteForecast | null;
+  /** The same route at the hour nearest now, for the "vs now" line. */
+  predictionNow: RouteForecast | null;
+  /** The start of the hour the forecast covers; the model does not work in minutes. */
+  forecastHour: Date | null;
+  onRetryForecast: () => void;
+  /** An event on the forecast day at an exit this route passes, if any. */
   eventDriver: EventForecast | null;
   /** e.g. "Right now" or "In 3 hours". */
   horizonLabel: string;
@@ -78,8 +111,11 @@ const SegmentForecastCard: React.FC<SegmentForecastCardProps> = ({
   onChangeDirection,
   onChangeFrom,
   onChangeTo,
+  forecastStatus,
   prediction,
   predictionNow,
+  forecastHour,
+  onRetryForecast,
   eventDriver,
   horizonLabel,
   offsetHours,
@@ -110,7 +146,9 @@ const SegmentForecastCard: React.FC<SegmentForecastCardProps> = ({
 
   const from = getExit(fromId);
   const to = getExit(toId);
-  const routeReady = prediction !== null && from !== null && to !== null;
+  // On the route alone, not on the forecast having arrived: the hour chips
+  // must not lock while the dashboard is still answering.
+  const routeReady = forecastStatus !== 'idle' && from !== null && to !== null;
 
   return (
     <View style={styles.card}>
@@ -224,17 +262,49 @@ const SegmentForecastCard: React.FC<SegmentForecastCardProps> = ({
             forecast for that stretch.
           </Text>
         </View>
-      ) : (
+      ) : forecastStatus === 'ready' && prediction !== null ? (
         <CongestionResult
           fromName={from.name}
           toName={to.name}
           directionLabel={getDirection(direction).label}
           prediction={prediction}
           predictionNow={predictionNow}
+          forecastHour={forecastHour}
           eventDriver={eventDriver}
           horizonLabel={horizonLabel}
           offsetHours={offsetHours}
         />
+      ) : (
+        // A sleeping dashboard takes about half a minute to wake, so the wait
+        // has to read as deliberate rather than as an empty step.
+        <View style={styles.emptyState}>
+          {forecastStatus === 'loading' ? (
+            <LoadingMascot size={48} label="Loading the SmartFlow forecast" />
+          ) : (
+            <Ionicons
+              name={forecastStatus === 'failed' ? 'cloud-offline-outline' : 'help-circle-outline'}
+              size={22}
+              color={colors.textTertiary}
+            />
+          )}
+          <Text style={styles.emptyStateText}>
+            {forecastStatus === 'loading'
+              ? 'Loading the SmartFlow forecast…'
+              : forecastStatus === 'failed'
+                ? 'The SmartFlow forecast could not be reached. It may be waking up.'
+                : 'The model has no forecast for this route at that hour.'}
+          </Text>
+          {forecastStatus === 'failed' ? (
+            <Pressable
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={onRetryForecast}
+              style={({ pressed }) => [styles.resetPill, pressed && styles.pressedDim]}
+            >
+              <Text style={styles.resetPillText}>Try again</Text>
+            </Pressable>
+          ) : null}
+        </View>
       )}
     </View>
   );
@@ -269,11 +339,23 @@ interface CongestionResultProps {
   fromName: string;
   toName: string;
   directionLabel: string;
-  prediction: SegmentPrediction;
-  predictionNow: SegmentPrediction | null;
+  prediction: RouteForecast;
+  predictionNow: RouteForecast | null;
+  forecastHour: Date | null;
   eventDriver: EventForecast | null;
   horizonLabel: string;
   offsetHours: number;
+}
+
+/** What the model expects along the route, in a sentence. */
+function describeQueues(prediction: RouteForecast): string {
+  if (prediction.queued === 0) {
+    return 'No queues predicted on this side';
+  }
+  const where = prediction.likeliest === null ? '' : `, likeliest from ${prediction.likeliest}`;
+  return prediction.stretches === 1
+    ? 'A queue is predicted on this stretch'
+    : `Queues predicted on ${prediction.queued} of ${prediction.stretches} stretches${where}`;
 }
 
 const CongestionResult: React.FC<CongestionResultProps> = ({
@@ -282,13 +364,17 @@ const CongestionResult: React.FC<CongestionResultProps> = ({
   directionLabel,
   prediction,
   predictionNow,
+  forecastHour,
   eventDriver,
   horizonLabel,
   offsetHours,
 }) => {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const tone = toneFor(prediction.level, colors);
+  const tone = toneFor(stateLevel[prediction.state], colors);
+  // Compared only when both hours came with a delay; a missing one is not zero.
+  const delay = prediction.delayMinutes;
+  const delayNow = predictionNow?.delayMinutes ?? null;
 
   return (
     <View style={styles.result}>
@@ -302,44 +388,53 @@ const CongestionResult: React.FC<CongestionResultProps> = ({
 
         <View style={[styles.levelPill, { backgroundColor: tone.background }]}>
           <Text style={[styles.levelPillText, { color: tone.text }]}>
-            {congestionLevelLabel[prediction.level]}
+            {stateLabel[prediction.state]}
           </Text>
         </View>
       </View>
 
-      <Text style={styles.resultRoute}>{directionLabel}</Text>
+      {/* The hour is the model's, which is whole; the step above shows the minute asked for. */}
+      <Text style={styles.resultRoute}>
+        {directionLabel}
+        {forecastHour === null ? '' : ` · model forecast for the ${formatTime(forecastHour)} hour`}
+      </Text>
 
-      <View style={styles.probabilityRow}>
-        <Text style={styles.probabilityLabel}>Congestion Probability</Text>
-        <Text style={[styles.probabilityValue, { color: tone.text }]}>
-          {prediction.probability}%
-        </Text>
-      </View>
+      {prediction.probability === null ? null : (
+        <>
+          <View style={styles.probabilityRow}>
+            <Text style={styles.probabilityLabel}>Congestion Probability</Text>
+            <Text style={[styles.probabilityValue, { color: tone.text }]}>
+              {chanceLabel(prediction.probability)}
+            </Text>
+          </View>
 
-      <View
-        style={styles.track}
-        accessibilityRole="progressbar"
-        accessibilityValue={{ min: 0, max: 100, now: prediction.probability }}
-      >
-        <View
-          style={[
-            styles.trackFill,
-            { width: `${prediction.probability}%`, backgroundColor: tone.solid },
-          ]}
-        />
-      </View>
+          <View
+            style={styles.track}
+            accessibilityRole="progressbar"
+            accessibilityValue={{ min: 0, max: 100, now: prediction.probability }}
+          >
+            <View
+              style={[
+                styles.trackFill,
+                { width: `${prediction.probability}%`, backgroundColor: tone.solid },
+              ]}
+            />
+          </View>
+        </>
+      )}
 
       <View style={styles.statRow}>
-        <Stat icon="time-outline" label={`+${prediction.delayMinutes} min delay`} />
-        <Stat icon="speedometer-outline" label={`${prediction.travelMinutes} min travel`} />
+        {delay === null ? null : <Stat icon="time-outline" label={`+${delay} min delay`} />}
+        {prediction.travelMinutes === null ? null : (
+          <Stat icon="speedometer-outline" label={`${prediction.travelMinutes} min travel`} />
+        )}
         <Stat icon="git-commit-outline" label={`${prediction.distanceKm} km`} />
       </View>
 
       <View style={styles.driverRow}>
         <Ionicons name="analytics-outline" size={13} color={colors.textSecondary} />
-        <Text style={styles.driverText} numberOfLines={2}>
-          {prediction.primaryDriver} - {horizonLabel.toLowerCase()}, averaging{' '}
-          {prediction.averageSpeedKph} km/h
+        <Text style={styles.driverText} numberOfLines={3}>
+          {describeQueues(prediction)} - {horizonLabel.toLowerCase()}
         </Text>
       </View>
 
@@ -347,34 +442,29 @@ const CongestionResult: React.FC<CongestionResultProps> = ({
         The one thing the stats above cannot say: whether the hour you picked
         is better or worse than setting off now, on this same stretch.
       */}
-      {offsetHours > 0 && predictionNow !== null ? (
+      {offsetHours > 0 && delay !== null && delayNow !== null ? (
         <View style={styles.driverRow}>
           <Ionicons
-            name={
-              prediction.delayMinutes > predictionNow.delayMinutes
-                ? 'trending-up'
-                : prediction.delayMinutes < predictionNow.delayMinutes
-                  ? 'trending-down'
-                  : 'remove'
-            }
+            name={delay > delayNow ? 'trending-up' : delay < delayNow ? 'trending-down' : 'remove'}
             size={13}
             color={colors.textSecondary}
           />
           <Text style={styles.driverText}>
-            {prediction.delayMinutes === predictionNow.delayMinutes
+            {delay === delayNow
               ? 'About the same as leaving now'
-              : `${Math.abs(prediction.delayMinutes - predictionNow.delayMinutes)} min ${
-                  prediction.delayMinutes > predictionNow.delayMinutes ? 'worse' : 'better'
+              : `${Math.abs(delay - delayNow)} min ${
+                  delay > delayNow ? 'worse' : 'better'
                 } than leaving now`}
           </Text>
         </View>
       ) : null}
 
+      {/* Named, not claimed: nothing says the model counted the event in. */}
       {eventDriver !== null ? (
         <View style={styles.eventNote}>
           <Ionicons name="calendar" size={13} color={colors.accent} />
           <Text style={styles.eventNoteText} numberOfLines={2}>
-            Includes added load from {eventDriver.title}
+            Event near this route that day: {eventDriver.title}
           </Text>
         </View>
       ) : null}

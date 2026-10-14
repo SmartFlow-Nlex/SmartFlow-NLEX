@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -21,9 +22,14 @@ export interface AuthSession {
 }
 
 export interface AuthContextValue {
-  /** `loading` until the stored session has been read back on launch. */
+  /**
+   * `loading` for the moment launch takes, then always `signedOut`: every
+   * time the app opens it starts at the sign-in screen.
+   */
   status: AuthStatus;
   session: AuthSession | null;
+  /** The email to fill in on the sign-in screen, if the last user ticked "Remember me". */
+  rememberedEmail: string | null;
   signIn: (input: { email: string; password: string; remember: boolean }) => Promise<void>;
   signUp: (input: { fullName: string; email: string; password: string }) => Promise<void>;
   signOut: () => Promise<void>;
@@ -31,7 +37,7 @@ export interface AuthContextValue {
 
 const AUTH_TOKEN_KEY = 'authToken';
 const AUTH_SESSION_KEY = 'authSession';
-const REMEMBER_ME_KEY = 'authRememberMe';
+const REMEMBERED_EMAIL_KEY = 'authRememberedEmail';
 
 /**
  * expo-secure-store is unsupported on web and throws there, so every call is
@@ -49,35 +55,32 @@ async function writeItem(key: string, value: string): Promise<void> {
 }
 
 /**
- * The "remember me" flag lives in AsyncStorage, deliberately alongside the
- * Supabase session rather than in SecureStore.
+ * What "Remember me" keeps: the email address, so it is already filled in the
+ * next time the app opens. Not the session - every launch starts at the sign-in
+ * screen - and never the password.
  *
- * It is not a secret, and keeping the two in the same store means they cannot
- * disagree. When it lived in SecureStore the flag was lost on every web reload
- * (SecureStore is unsupported there and falls back to memory), so a remembered
- * user was silently signed out on refresh while their session was still valid.
+ * In AsyncStorage rather than SecureStore: an email is not a secret, and
+ * SecureStore is unsupported on web, where it falls back to memory and would
+ * forget it on every reload.
  */
-async function readRemembered(): Promise<boolean> {
+async function readRememberedEmail(): Promise<string | null> {
   try {
-    return (await AsyncStorage.getItem(REMEMBER_ME_KEY)) === 'true';
+    const email = await AsyncStorage.getItem(REMEMBERED_EMAIL_KEY);
+    return email !== null && email.length > 0 ? email : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
-async function writeRemembered(remember: boolean): Promise<void> {
+async function writeRememberedEmail(email: string | null): Promise<void> {
   try {
-    await AsyncStorage.setItem(REMEMBER_ME_KEY, remember ? 'true' : 'false');
+    if (email === null) {
+      await AsyncStorage.removeItem(REMEMBERED_EMAIL_KEY);
+    } else {
+      await AsyncStorage.setItem(REMEMBERED_EMAIL_KEY, email);
+    }
   } catch {
-    // Worst case the next cold start treats the session as not remembered.
-  }
-}
-
-async function clearRemembered(): Promise<void> {
-  try {
-    await AsyncStorage.removeItem(REMEMBER_ME_KEY);
-  } catch {
-    // Nothing to clear.
+    // Worst case the field starts empty next time.
   }
 }
 
@@ -95,6 +98,15 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>('loading');
+  const [rememberedEmail, setRememberedEmail] = useState<string | null>(null);
+  /**
+   * True once someone has signed in during this run of the app. Supabase keeps
+   * the last session on the phone and hands it back at launch; until this is
+   * set, that is not treated as being signed in.
+   */
+  const signedInThisRun = useRef(false);
+  /** Ending the session left over from the last run; a new sign-in waits for it. */
+  const endingLastRun = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     let cancelled = false;
@@ -115,6 +127,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const restore = async (): Promise<void> => {
+      const email = await readRememberedEmail();
+      if (!cancelled) {
+        setRememberedEmail(email);
+      }
+
       if (!isSupabaseConfigured) {
         // Nothing to restore from, and every call would throw anyway. Land on
         // the sign-in screen so the error is shown where it can be read.
@@ -127,15 +144,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const { data } = await getSupabase().auth.getSession();
 
-      // Supabase always persists. "Remember me" is honoured here instead: an
-      // unremembered session is ended the next time the app cold-starts.
-      if (data.session !== null && !(await readRemembered())) {
-        await signOutRemote();
-        apply(null);
-        return;
+      // Every launch starts at the sign-in screen, so a session left over from
+      // the last run is ended rather than resumed. Not waited for: revoking it
+      // is a network call, and the sign-in screen should not hang on it.
+      if (data.session !== null) {
+        endingLastRun.current = signOutRemote().catch(() => undefined);
       }
 
-      apply(data.session);
+      apply(null);
     };
 
     void restore();
@@ -144,6 +160,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // from somewhere other than the Log Out button.
     const { data: subscription } = isSupabaseConfigured
       ? getSupabase().auth.onAuthStateChange((_event, nextSession) => {
+          // The session Supabase restores from storage at launch is not a
+          // sign-in. Acting on it flashed the dashboard before the sign-in
+          // screen, and kept a user in if ending it failed offline.
+          if (nextSession !== null && !signedInThisRun.current) {
+            return;
+          }
           if (nextSession !== null) {
             void writeItem(AUTH_TOKEN_KEY, nextSession.access_token);
           }
@@ -164,13 +186,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fullName: result.fullName,
         email: result.email,
       };
+      signedInThisRun.current = true;
       setSession(next);
       setStatus('signedIn');
 
-      // The session itself is Supabase's to store. We keep the flag that
-      // decides whether it survives a restart, plus a copy of the access token
-      // for the API helpers that build Authorization headers.
-      await writeRemembered(remember);
+      // "Remember me" keeps the email for next time; the session itself ends
+      // when the app is next opened. The access token is copied for the API
+      // helpers that build Authorization headers.
+      const kept = remember ? result.email : null;
+      setRememberedEmail(kept);
+      await writeRememberedEmail(kept);
       await writeItem(AUTH_TOKEN_KEY, next.token);
     },
     [],
@@ -186,6 +211,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       password: string;
       remember: boolean;
     }): Promise<void> => {
+      await endingLastRun.current;
       const result = await authenticate({ email, password });
       await startSession(result, remember);
     },
@@ -202,26 +228,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email: string;
       password: string;
     }): Promise<void> => {
+      await endingLastRun.current;
       const result = await register({ fullName, email, password });
-      // A brand new account stays signed in; there is nothing to "remember"
-      // beyond the account the user just made.
+      // A brand new account's email is kept for the next sign-in.
       await startSession(result, true);
     },
     [startSession],
   );
 
   const signOut = useCallback(async (): Promise<void> => {
+    signedInThisRun.current = false;
     setSession(null);
     setStatus('signedOut');
+    // The remembered email stays: logging out is not asking to be forgotten.
     await signOutRemote();
-    await clearRemembered();
     await removeItem(AUTH_SESSION_KEY);
     await removeItem(AUTH_TOKEN_KEY);
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, session, signIn, signUp, signOut }),
-    [status, session, signIn, signUp, signOut],
+    () => ({ status, session, rememberedEmail, signIn, signUp, signOut }),
+    [status, session, rememberedEmail, signIn, signUp, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

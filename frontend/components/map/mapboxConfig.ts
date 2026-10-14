@@ -29,3 +29,10 @@ export const useMapbox = (): boolean => MAPBOX_TOKEN !== null;
  */
 export const MAPBOX_STYLE_URL =
   process.env.EXPO_PUBLIC_MAPBOX_STYLE ?? 'mapbox://styles/mapbox/light-v11';
+
+/** Mapbox's dark counterpart, so the map is not a bright panel in dark mode. */
+const MAPBOX_DARK_STYLE_URL =
+  process.env.EXPO_PUBLIC_MAPBOX_DARK_STYLE ?? 'mapbox://styles/mapbox/dark-v11';
+
+export const mapboxStyleUrl = (isDark: boolean): string =>
+  isDark ? MAPBOX_DARK_STYLE_URL : MAPBOX_STYLE_URL;

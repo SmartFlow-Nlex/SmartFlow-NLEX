@@ -1,8 +1,8 @@
 import React from 'react';
-import { Platform, type ImageSourcePropType } from 'react-native';
+import { Platform, StyleSheet, View, type ImageSourcePropType } from 'react-native';
 import { useAssets } from 'expo-asset';
 import { Image } from 'expo-image';
-import { useDerivedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useDerivedValue } from 'react-native-reanimated';
 import {
   Canvas,
   Fill,
@@ -11,6 +11,7 @@ import {
   ImageShader,
   MipmapMode,
   Shader,
+  Shadow,
   Skia,
   useVideo,
 } from '@shopify/react-native-skia';
@@ -70,6 +71,18 @@ export interface AlphaVideoProps {
   /** Drawn height in points; the width follows the frame's proportions. */
   height: number;
   accessibilityLabel?: string;
+  /**
+   * A faint shadow hugging the outline. On a pale page the car's white cap
+   * and face otherwise melt into the background and look cut away.
+   */
+  edgeColor?: string;
+  /**
+   * The video's first frame, shown until the video itself has one to draw.
+   * Without it the space stays empty for the moment the decoder takes to
+   * start - unnoticed in a greeting, but a loading indicator would often be
+   * gone again before anything had appeared.
+   */
+  poster?: ImageSourcePropType;
 }
 
 const Player: React.FC<{
@@ -79,8 +92,13 @@ const Player: React.FC<{
   frameWidth: number;
   frameHeight: number;
   label?: string;
-}> = ({ uri, width, height, frameWidth, frameHeight, label }) => {
+  edgeColor?: string;
+  poster?: ImageSourcePropType;
+}> = ({ uri, width, height, frameWidth, frameHeight, label, edgeColor, poster }) => {
   const { currentFrame } = useVideo(uri, { looping: true, volume: 0 });
+  // Gone the instant a frame arrives: left in place, the still car would show
+  // behind the moving one whenever it jumps clear of it.
+  const posterStyle = useAnimatedStyle(() => ({ opacity: currentFrame.value === null ? 1 : 0 }));
   /*
    * Hidden until the first frame is decoded. Before that there is no image
    * for the shader, and a Fill without a working shader paints its own colour
@@ -93,7 +111,7 @@ const Player: React.FC<{
   if (recombine === null) {
     return null;
   }
-  return (
+  const canvas = (
     <Canvas style={{ width, height }} accessibilityLabel={label}>
       <Group opacity={shown}>
         <Fill>
@@ -105,9 +123,21 @@ const Player: React.FC<{
               sampling={{ filter: FilterMode.Linear, mipmap: MipmapMode.None }}
             />
           </Shader>
+          {edgeColor !== undefined ? <Shadow dx={0} dy={0.6} blur={1.4} color={edgeColor} /> : null}
         </Fill>
       </Group>
     </Canvas>
+  );
+  if (poster === undefined) {
+    return canvas;
+  }
+  return (
+    <View style={{ width, height }}>
+      <Animated.View style={[StyleSheet.absoluteFill, posterStyle]}>
+        <Image source={poster} style={{ width, height }} contentFit="contain" />
+      </Animated.View>
+      {canvas}
+    </View>
   );
 };
 
@@ -118,6 +148,8 @@ const AlphaVideo: React.FC<AlphaVideoProps> = ({
   frameHeight,
   height,
   accessibilityLabel,
+  edgeColor,
+  poster,
 }) => {
   const width = (height * frameWidth) / frameHeight;
   const useFallback = Platform.OS === 'web' || recombine === null;
@@ -138,7 +170,7 @@ const AlphaVideo: React.FC<AlphaVideoProps> = ({
   }
   // Holds the space while the file is prepared, so nothing jumps when it appears.
   return uri === null ? (
-    <Image style={{ width, height }} />
+    <Image source={poster} style={{ width, height }} contentFit="contain" />
   ) : (
     <Player
       uri={uri}
@@ -147,6 +179,8 @@ const AlphaVideo: React.FC<AlphaVideoProps> = ({
       frameWidth={frameWidth}
       frameHeight={frameHeight}
       label={accessibilityLabel}
+      edgeColor={edgeColor}
+      poster={poster}
     />
   );
 };

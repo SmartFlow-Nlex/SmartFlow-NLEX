@@ -1,4 +1,4 @@
-# SmartFlow NLEX Mobile — Handoff (8 Oct 2026)
+# SmartFlow NLEX Mobile — Handoff (14 Oct 2026)
 
 How to run the app on another laptop, what has been built, the decisions behind it, and what is still open.
 The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date from May 2026 and are out of date — use this one.
@@ -18,10 +18,12 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - They work from **mockup screenshots** and expect the app to match them closely ("make it identical"), then send phone screenshots of what is wrong.
 
 ### How Ysa wants things done
-- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-4**, so next is **Ysa-Commit-5**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
+- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-5**, so next is **Ysa-Commit-6**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
 - **"Make the server up":** start Metro from the **repo root**, then give the `exp://` address and a QR code (see §1). Check the phone can really load the bundle, not just the manifest.
 - Never commit `.env` (it holds keys; it is in `.gitignore`).
 - Use real data only — no mock traffic data, no fake posts.
+- **Check mascot art properly before saying it is done:** every frame, on the dark *and* the light theme, and the motion (Ysa asked "did u check it on dark mode on and off, is it smooth"). White studio background left in the gaps beside the mirrors and cap is the usual flaw.
+- **Ask before swapping one mascot animation for another** — "fix this animation" means fix it, not replace it.
 
 ### Design decisions from our chats (do not undo these)
 | Decision | Why / when |
@@ -31,7 +33,12 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 | Hero titles, Lex's position, header size and card positions were **measured from the mockups** on a 414 pt grid — each tab has its own title size (~31–43 pt) | "make it identical", 7 Oct. Numbers live in each screen's `<PageHero>` props. |
 | Fonts: **Inter** for text, **Nunito Black** for titles/wordmark, gold **sparkle** after titles | Copied from the dashboard, 5 Oct. *Saira was tried and rejected* — Nunito Black was identified from Ysa's screenshot. |
 | The dashboard's **"Night Corridor" colours were rejected** ("i don't like the colour", 5 Oct). The later blue palette was explicitly requested. | |
-| **Lex stays the app's own mascot** (`mascot-car.png`, the "NLEX"-cap car), even though the mockups show the dashboard's "N"-cap mascot | Ysa said early on: copy the dashboard's design/font, *not its mascot*. Ask before switching. |
+| **Lex is now the "N"-cap car from Ysa's own videos** (`Downloadsmascot`): the waving Lex in the hero of Dashboard, Community, Alerts and the Assistant (`WavingMascot.tsx`), and the hopping Lex as the loading indicator everywhere (`LoadingMascot.tsx`). The old still `mascot-car.png` is no longer shown. | Ysa supplied `waving.mp4` / `loading.mp4`, 11–13 Oct. The Assistant's `hello.mp4` greeting was re-cut twice and still looked glitchy (the video itself morphs), so Ysa chose the wave there too. |
+| **No yellow sparkle strokes behind the mascot** in the tab backgrounds (the `Twinkle` motif was deleted from `SceneArt.tsx`). The gold sparkle after titles stays. | "remove the yellow lines behind the mascot in every tab", 12 Oct. |
+| **The app always opens on Sign In** — a session left from the last run is ended, never resumed; "Remember me" now only keeps the email filled in. Side effect: every reload in Expo Go means signing in again. | "the user need to sign in first", 13 Oct. |
+| Sign-in background is Ysa's **`sign in.png`** (Lex driving up the expressway). The picture is **slid down, not zoomed**, so Lex shows whole under the card; the strip above is the same sky mirrored. Drawn at 0.88 of screen-filling. No "Decision-Intelligence System" tagline. The card is compact (28 pt margins). | 13–14 Oct: "can u not zoom in too much", "zoom it out a little more", "make the glass card little smaller". |
+| Dashboard has **no Corridor Outlook** (Today / This Week graph) | Removed at Ysa's request, 12 Oct. |
+| **Exception — the floating assistant button** (bottom right) is the designer's "Cheerful Traffic Guide Car" (`frontend/assets/mascot-guide.png`, from Ysa's `Downloads\mascot` folder): the N-cap car with a "Check traffic along your route!" bubble, as in the Dashboard mockup | Ysa asked for it, 8 Oct. It is **fixed** at the bottom right (no longer draggable — Ysa's request) and stands on a Skia road drawn to the mockup's shape (a lane receding left behind the bubble, bending down toward the viewer under the car, two white edges). Size/position measured from the mockup in `AIAssistantFAB.tsx` (156 pt wide, 10 pt from the right, 14 pt above the tab bar). |
 | On Community, Lex is **fully visible**, standing on the post card (the mockup tucks him behind it) | "the mascot is not seen here", 7 Oct. |
 | **No art inside the Corridor road panel** (behind the two carriageways) — it stays plain white | "can u not put the background here", 7 Oct. |
 | Settings gear (top right) replaced the avatar and opens Profile; the tab-bar peek mascot is retired; the Dashboard's "Heaviest right now" row opens Corridor; the Assistant shows the spec's four quick questions in one sideways row | Redesign, 7 Oct. |
@@ -43,15 +50,18 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - `frontend/components/ui/SceneArt.tsx` + `SceneBackground.tsx` — the backgrounds. `FRAMES` in SceneArt holds each tab's framing, clouds and icons; the art is decoded once (`useExpresswayArt`). Drawn vector scenes remain as the fallback while the art loads.
 - `frontend/components/ui/Cards.tsx` (GlassCard, BlueStatusCard, StatusPill, MetricCard, SectionTitle, CountBadge), `SegmentedControl.tsx` (`tone="white"` on Community), `HeroMascot.tsx`.
 - Theme: `frontend/theme/palette.ts` (all colours, light + dark), `frontend/theme/tokens.ts` (spacing, radii, shadows).
+- Mascots: `AlphaVideo.tsx` (packed colour + alpha video through a Skia shader; `poster` shows the first frame until the video starts), `ui/WavingMascot.tsx` (two sizes; only the focused tab plays), `ui/LoadingMascot.tsx` (two sizes; system spinner under Reduce Motion).
+- Live data on the Dashboard: `lib/corridorSummary.ts` (Current Status card, from the shared corridor feed + Alerts' incident list), `lib/routeForecast.ts` + `hooks/useRouteForecast.ts` (Traffic Forecast card, from the dashboard's model — the same feed as the Map tab's forecast).
 
 ### Repo traps (each one cost a debugging cycle)
 1. **The router entry is root `app/`**, whose files re-export the real screens in `frontend/app/`. A new screen needs both. **Run Expo from the repo root** — `npm run frontend` / `npm run dev` start a stale second app.
 2. **Never hardcode colours** or import `Colors`; use `useThemedStyles(makeStyles)` + palette tokens. `primary` is a brand *surface*, `accent` is brand *text/icons*, `textInverse` is text *on* a brand surface.
 3. `frontend/constants/nlexSegments.ts` is the canonical 20-exit list (north→south). `nlexExits.ts` is an older, different list.
-4. React Native 0.86: `StyleSheet.absoluteFillObject` is gone — use `...StyleSheet.absoluteFill`.
+4. React Native 0.86: `StyleSheet.absoluteFillObject` is gone — use `...StyleSheet.absoluteFill`. The **root** `app.json` is the real config (`frontend/app.json` is stale); it must keep `"userInterfaceStyle": "automatic"` or dark mode breaks.
 5. Two type-checks: `npx tsc --noEmit -p .` (what Expo uses, must be clean) and `npx tsc --noEmit -p frontend` (strict; two old unused-variable warnings are known — `worst`, `here`).
 6. The mascot animations are alpha-packed H.264 videos recombined by a Skia shader (`AlphaVideo.tsx`, `MascotGreeting.tsx`, `MoodMascot.tsx`) — animated WebP stuttered on the iPhone.
-7. Visual checks without a phone: the scenes were rendered offline with Skia's headless build + `canvaskit-wasm` in Node (get `Skia` from `getSkiaExports()`, shim `vec`), then composed against the mockups with Python/PIL.
+7. **The dashboard's forecast times are Manila clock times sent with a "Z"** (a naive column on a UTC server): read literally, every forecast hour is 8 h late. `manilaInstant` in `frontend/lib/forecastApi.ts` corrects it — if forecast hours ever look 8 h off the other way, the dashboard fixed its side.
+8. Visual checks without a phone: the scenes were rendered offline with Skia's headless build + `canvaskit-wasm` in Node (get `Skia` from `getSkiaExports()`, shim `vec`), then composed against the mockups with Python/PIL.
 
 ### Servers and networks (non-obvious)
 - **Render free tier sleeps after ~15 min.** First request takes 20–45 s. Our backend **cannot** wake the dashboard (it gets HTTP 429); a request from the phone does — the app pings it.
@@ -145,13 +155,47 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - Corridor: winding road + light trail in the hero, bigger SB / NB labels in the road panel.
 - **Fix:** the Mobile Control Centre settings (`/api/mobile-config`) are now read from the dashboard directly. They were asked of our own backend, which has no such route, so every switch and advisory set in the dashboard was ignored.
 
+### 8 Oct — dark mode fixed (after Ysa-Commit-4)
+- **Root cause:** the root `app.json` had no `userInterfaceStyle`, and Expo's default is `light` — the app was locked to light, so **Profile → Dark Mode → System never followed the phone** into dark, and the keyboard/alerts stayed light. Now `"userInterfaceStyle": "automatic"`. (`frontend/app.json` says `"dark"` but is the stale copy — ignore it.)
+- On / Off / System now also set the phone's appearance for the app (`Appearance.setColorScheme` in `frontend/theme/ThemeProvider.tsx`), so the keyboard, alerts and switches match the choice; System hands control back to the phone and follows it live.
+- No more light-then-dark flash at launch: the app waits for the saved choice (`isReady`) before drawing.
+- The interchange map uses Mapbox's dark style in dark mode; the picker says what each option does and which way System is right now.
+- Dark-mode backgrounds showed the **daylight** art after switching from light: Skia's `useImage` keeps its last image for a render after its source changes, and the shared cache stored that day picture as the night one. Day and night now have one `useImage` each (`useExpresswayArt` in `SceneBackground.tsx`). At night the clouds are faint (`sceneCloudAlpha`) and the light accents glow soft blue (`sceneGlow`) instead of turning dark.
+- Faster, more reliable switching: both the day and night art load as soon as the first tab opens, so switching is instant; and the phone's setting is tracked with an `Appearance` listener plus a re-read whenever the app returns to the front (iOS flips appearance while backgrounded for snapshots, so `useColorScheme` sometimes missed a change until a JS reload).
+- An `app.json` change needs a full reload in Expo Go (close the project and reopen it), not just a refresh.
+
+### 8 Oct — Sign In / Sign Up redesign
+- Both screens sit on Ysa's artwork **"Cheerful NLEX Mascot City Drive"** (from `Downloads\mascot`): blue sky, clouds, soft skyline, a ground-level road and Lex peeking over the kerb — Lex is painted into the picture, so there is no separate mascot layer. Day: `frontend/assets/scenes/auth-day.jpg`; dark mode uses `auth-night.jpg`, the same picture graded to night (Lex kept bright).
+- Shared frame: `frontend/components/auth/AuthScreen.tsx` (art scaled to cover and pinned to the bottom, logo + "SmartFlow NLEX" + "Decision-Intelligence System", white card, copyright; `useAuthMetrics` scales every size from the mockup measured over the art, with comfortable minimums). The form is placed to end above Lex's cap; on a short phone (iPhone SE) the page scrolls and the card passes in front of him. iOS keeps the focused field above the keyboard (`automaticallyAdjustKeyboardInsets`).
+- The card is **frosted glass** (Ysa's second brief, same day): `expo-blur` BlurView (Apple's `systemUltraThinMaterial` on iOS; Android shows the tint without blur) under a white-to-sky tint (~75% opaque), a 1 pt edge that brightens along the top, a fine blue accent line, a drawn soft shadow and faint light halo, compact spacing (20 pt margins, 18–20 pt between rows). Tokens `authGlass*`, `authField*`, `authFocus*`, `authButton*` in `palette.ts`.
+- `AuthField`: fields a little more solid than the glass (82% white), 18 pt corners, blue border + faint ring while focused. The button is a horizontal blue gradient with a soft blue shadow. Sign-in/up logic, remember-me, the forgot-password message and navigation are unchanged.
+- **New package:** `expo-blur` (~57.0.3, in Expo Go). After pulling, run `npm install`.
+- The blue gear in Ysa's mockup is Expo Go's developer button, not part of the app — there is no settings button on these screens.
+
+### 8 Oct — Assistant's waving Lex re-cut
+- `frontend/assets/mascot-hello.mp4` was rebuilt from the original cut-out frames: pale background blocks on the cap's sides (white in dark mode) and bites out of the cap's top (missing parts in light mode) are fixed, sparkle/floor crumbs along the lower outline removed, and the loop now runs frames 30–179 with a 3-frame blend (the old 8-frame cross-fade showed a see-through double car). Same 300×318 frames, 147 frames at 24 fps.
+- In light mode Lex gets a faint edge shadow (`edgeColor` on `AlphaVideo`, palette `mascotEdge`) so the white cap doesn't melt into the pale sky.
+- The working frames and scripts (`v24/combined`, `fix_hello.py`, ffmpeg) are on the old laptop's temp folder only — not in the repo.
+
+### 9–14 Oct — Ysa-Commit-5 (live data, mascots, sign-in)
+- **Dashboard → Current Status is live:** congestion pill, Avg Delay and "Heaviest right now" from the live corridor feed (the Corridor tab's own reading), Active Incidents from Waze accidents/hazards + Community incident reports. The ticking clock was replaced by the feed's real update time. Tapping "Heaviest right now" opens that interchange.
+- **Dashboard → Traffic Forecast is live:** the team's model forecast for the chosen route and hour, per carriageway (the dashboard's side rule: a side counts at ≥40% of an exit's queue-hours). Shows chance of a queue, typical delay, travel time and where the likeliest queue is.
+- **Forecast times fixed** for the Map tab too (§0 trap 7): its forecast had been showing each prediction 8 hours late.
+- **Corridor Outlook removed** from the Dashboard (`OutlookStrip.tsx` deleted; the web Control Centre's switch for it now does nothing).
+- **Mascots:** loading Lex replaces the spinners; waving Lex in the heroes (Assistant uses a larger copy); the small reply mascots in the Assistant were cleaned (white rim, studio-white patches). All mascot videos were checked frame by frame on dark and light.
+- **Sign In / Sign Up:** always the first screen; new background; tagline removed; smaller card; "Remember me" keeps the email.
+- **Tab backgrounds:** yellow sparkle strokes behind the mascot removed.
+
 ---
 
 ## 3. Open issues
 
 | Issue | Who / what fixes it |
 |---|---|
-| **Not yet seen on the phone after the last pass:** Dashboard, Alerts and Assistant (Community and Corridor were checked by screenshot). | Ask Ysa for screenshots of all five tabs and fine-tune against the mockups. |
+| The **Map tab's forecast paints both carriageways the same**, while the Dashboard's Traffic Forecast counts a predicted queue only on the side the dashboard would draw it. The two can disagree for one direction. | Apply the same side rule in `ForecastCorridorView.tsx` if Ysa wants them to match (offered, not asked for yet). |
+| The dashboard's forecast table is sometimes rewritten with **only 12 hours** (a teammate's older trainer), and for ~10 min after a run its cache mixes runs: +12h/+24h can say "no forecast". | Dashboard team (`train_congestion_horizon.py` checkouts). |
+| Two small Assistant reply mascots (clear, alert) have a blended "ghost" frame near the end of their loop. | Re-loop them from the source videos if anyone notices. |
+| Unused, kept for now: `MascotGreeting.tsx` + `mascot-hello.*` (the re-cut greeting), `HeroMascot.tsx` + `mascot-car.png`, and the old `trafficModel.ts` functions (only its `CongestionLevel` type is used). | Delete when sure nothing needs them. |
 | **ML Hotspots forecast still covers Jul 1–28**, not today (checked 8 Oct): the dashboard's incident data ends 30 Jun 2026. | Teammate: upload newer NLEX accident + breakdown logs on the dashboard's upload page, then retrain (`python weekly_retrain.py --only incident_spatial`, or the Sunday 22:00 run). The app updates by itself. |
 | **Profile shows "Loading profile…" then an error** under the name: `useUserProfile` calls an old local community server (`EXPO_PUBLIC_API_HOST:3000`) that does not exist. The name still shows. | Point it at Supabase or drop the request. Predates the redesign. |
 | **Southbound maintenance notices likely fail to save on the dashboard**: its form makes the end km lower than the start; its API rejects that. | Dashboard team. |

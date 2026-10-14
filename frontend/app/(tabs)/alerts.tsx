@@ -11,7 +11,8 @@ import { Radius, softShadow, useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import ScreenShell from '../../components/ui/ScreenShell';
 import PageHero from '../../components/ui/PageHero';
-import HeroMascot from '../../components/ui/HeroMascot';
+import WavingMascot from '../../components/ui/WavingMascot';
+import LoadingMascot from '../../components/ui/LoadingMascot';
 import SegmentedControl from '../../components/ui/SegmentedControl';
 import { GlassCard } from '../../components/ui/Cards';
 import TitleSparkle from '../../components/TitleSparkle';
@@ -142,6 +143,9 @@ export default function AlertsScreen(): React.ReactElement {
               text: 'No roadworks are scheduled on NLEX right now. New ones appear here as operators post them.',
             };
 
+  const isLoadingList =
+    (activeCategory === 'traffic' ? reportsStatus : maintenanceStatus) === 'loading';
+
   const [refreshing, setRefreshing] = useState(false);
   const handleRefresh = (): void => {
     setRefreshing(true);
@@ -258,7 +262,7 @@ export default function AlertsScreen(): React.ReactElement {
         subtitle={'Proactive notifications\nfor traffic events'}
         titleScale={0.0845}
         offsetTop={116}
-        mascot={<HeroMascot size={132} />}
+        mascot={<WavingMascot size={132} />}
         mascotWidth={138}
         mascotPlacement={{ top: 47, bleed: 7 }}
         minHeight={205}
@@ -297,13 +301,21 @@ export default function AlertsScreen(): React.ReactElement {
           <View style={styles.emptyArt}>
             <Ionicons name="cloud" size={44} color={colors.primarySoftBorder} style={styles.emptyCloudLeft} />
             <Ionicons name="cloud" size={34} color={colors.primarySoftBorder} style={styles.emptyCloudRight} />
-            <View style={[styles.emptyRingOuter, { backgroundColor: emptyRing(emptyState.color) }]}>
-              <Ionicons name={emptyState.icon} size={34} color={emptyState.color} />
-            </View>
-            <TitleSparkle size={22} color={emptyState.color} style={styles.emptySparkle} />
-            <View style={styles.emptySparkleLow}>
-              <TitleSparkle size={18} color={emptyState.color} />
-            </View>
+            {isLoadingList ? (
+              // Still waiting: Lex between the clouds, and no sparkles - they
+              // mark an answer, and there is not one yet.
+              <LoadingMascot size={92} label={emptyState.title} />
+            ) : (
+              <>
+                <View style={[styles.emptyRingOuter, { backgroundColor: emptyRing(emptyState.color) }]}>
+                  <Ionicons name={emptyState.icon} size={34} color={emptyState.color} />
+                </View>
+                <TitleSparkle size={22} color={emptyState.color} style={styles.emptySparkle} />
+                <View style={styles.emptySparkleLow}>
+                  <TitleSparkle size={18} color={emptyState.color} />
+                </View>
+              </>
+            )}
           </View>
           <Text style={styles.emptyTitle}>{emptyState.title}</Text>
           <Text style={styles.emptyText}>{emptyState.text}</Text>

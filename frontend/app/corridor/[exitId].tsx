@@ -2,12 +2,13 @@ import React, { useMemo, useState } from 'react';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
 import { toneFor } from '../../components/dashboard/severity';
 import BottomSheet from '../../components/BottomSheet';
+import LoadingMascot from '../../components/ui/LoadingMascot';
 import SegmentMap from '../../components/map/SegmentMap';
 import {
   centrelineMatches,
@@ -385,7 +386,7 @@ export default function CorridorExitScreen(): React.ReactElement {
         <Stack.Screen options={{ headerShown: false }} />
         {header('Loading')}
         <View style={styles.stateCard}>
-          <ActivityIndicator color={colors.accent} />
+          <LoadingMascot size={96} label="Loading this stretch of the corridor" />
           <Text style={styles.stateText}>Loading this stretch of the corridor...</Text>
         </View>
       </SafeAreaView>

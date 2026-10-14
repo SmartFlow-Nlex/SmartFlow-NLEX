@@ -325,12 +325,12 @@ const MapPin: React.FC<{
   glyph?: 'dot' | 'alert';
   white?: boolean;
 }> = ({ x, y, s, c, o = 1, glyph = 'dot', white = false }) => {
-  const top = white ? c.sceneCloud : mix(c.sceneMotif, '#FFFFFF', 0.35);
-  const bottom = white ? mix(c.sceneCloud, c.sceneMotif, 0.18) : mix(c.sceneMotif, '#0B3C9E', 0.35);
+  const top = white ? c.sceneGlow : mix(c.sceneMotif, '#FFFFFF', 0.35);
+  const bottom = white ? mix(c.sceneGlow, c.sceneMotif, 0.18) : mix(c.sceneMotif, '#0B3C9E', 0.35);
   return (
     <Group transform={[{ translateX: x }, { translateY: y }, { scale: s }]} opacity={o}>
       {/* The glow it sits in. */}
-      <Circle cx={0} cy={-15} r={15} color={alpha(white ? c.sceneMotif : c.sceneCloud, 0.35)}>
+      <Circle cx={0} cy={-15} r={15} color={alpha(white ? c.sceneMotif : c.sceneGlow, 0.35)}>
         <BlurMask blur={7} style="normal" />
       </Circle>
       <Path path="M 0 0 C -2.5 -4 -10 -8.5 -10 -15 A 10 10 0 1 1 10 -15 C 10 -8.5 2.5 -4 0 0 Z">
@@ -340,14 +340,14 @@ const MapPin: React.FC<{
         <Circle cx={0} cy={-15} r={4.4} color={c.sceneMotif} />
       ) : glyph === 'alert' ? (
         <>
-          <RoundedRect x={-1.5} y={-21.5} width={3} height={8} r={1.5} color={c.sceneCloud} />
-          <Circle cx={0} cy={-10.6} r={1.7} color={c.sceneCloud} />
+          <RoundedRect x={-1.5} y={-21.5} width={3} height={8} r={1.5} color={c.sceneGlow} />
+          <Circle cx={0} cy={-10.6} r={1.7} color={c.sceneGlow} />
         </>
       ) : (
-        <Circle cx={0} cy={-15} r={4.2} color={c.sceneCloud} />
+        <Circle cx={0} cy={-15} r={4.2} color={c.sceneGlow} />
       )}
       {/* A highlight on the upper left of the head. */}
-      <Circle cx={-4.2} cy={-19.5} r={2.6} color={alpha(c.sceneCloud, white ? 0 : 0.45)} />
+      <Circle cx={-4.2} cy={-19.5} r={2.6} color={alpha(c.sceneGlow, white ? 0 : 0.45)} />
     </Group>
   );
 };
@@ -369,7 +369,7 @@ const ChatBubble: React.FC<{
     `M ${l + r} ${tp} H ${rt - r} A ${r} ${r} 0 0 1 ${rt} ${tp + r} V ${bt - r} A ${r} ${r} 0 0 1 ${rt - r} ${bt} ` +
     `H ${l + w * 0.38} L ${l + w * 0.12} ${bt + h * 0.34} L ${l + w * 0.2} ${bt} ` +
     `H ${l + r} A ${r} ${r} 0 0 1 ${l} ${bt - r} V ${tp + r} A ${r} ${r} 0 0 1 ${l + r} ${tp} Z`;
-  const dot = solid ? c.sceneCloud : c.sceneMotif;
+  const dot = solid ? c.sceneGlow : c.sceneMotif;
   return (
     <Group
       transform={[{ translateX: x }, { translateY: y }, { scaleX: tail === 'right' ? -1 : 1 }]}
@@ -402,7 +402,7 @@ const ChatBubble: React.FC<{
 /** The Alerts bell, ringed by radar circles. */
 const RadarBell: React.FC<{ x: number; y: number; s: number; c: ThemePalette }> = ({ x, y, s, c }) => (
   <Group transform={[{ translateX: x }, { translateY: y }, { scale: s }]}>
-    <Circle cx={0} cy={0} r={46} color={alpha(c.sceneCloud, 0.14)}>
+    <Circle cx={0} cy={0} r={46} color={alpha(c.sceneGlow, 0.14)}>
       <BlurMask blur={9} style="normal" />
     </Circle>
     {[44, 33, 23].map((r, i) => (
@@ -413,15 +413,15 @@ const RadarBell: React.FC<{ x: number; y: number; s: number; c: ThemePalette }> 
         r={r}
         style="stroke"
         strokeWidth={i === 2 ? 1.8 : 1.3}
-        color={alpha(c.sceneCloud, [0.38, 0.55, 0.8][i])}
+        color={alpha(c.sceneGlow, [0.38, 0.55, 0.8][i])}
       />
     ))}
-    <Circle cx={0} cy={0} r={22} color={alpha(c.sceneCloud, 0.3)} />
-    <Path path="M -8 5 C -8 -2 -6.5 -8.5 0 -8.5 C 6.5 -8.5 8 -2 8 5 L 10.5 8.5 L -10.5 8.5 Z" color={alpha(c.sceneCloud, 0.95)} />
-    <Circle cx={0} cy={-10} r={1.9} color={alpha(c.sceneCloud, 0.95)} />
-    <Circle cx={0} cy={11} r={2.6} color={alpha(c.sceneCloud, 0.95)} />
+    <Circle cx={0} cy={0} r={22} color={alpha(c.sceneGlow, 0.3)} />
+    <Path path="M -8 5 C -8 -2 -6.5 -8.5 0 -8.5 C 6.5 -8.5 8 -2 8 5 L 10.5 8.5 L -10.5 8.5 Z" color={alpha(c.sceneGlow, 0.95)} />
+    <Circle cx={0} cy={-10} r={1.9} color={alpha(c.sceneGlow, 0.95)} />
+    <Circle cx={0} cy={11} r={2.6} color={alpha(c.sceneGlow, 0.95)} />
     {/* A bright point riding the outer ring. */}
-    <Circle cx={-36} cy={-25} r={2.4} color={c.sceneCloud}>
+    <Circle cx={-36} cy={-25} r={2.4} color={c.sceneGlow}>
       <BlurMask blur={1.4} style="solid" />
     </Circle>
   </Group>
@@ -430,13 +430,13 @@ const RadarBell: React.FC<{ x: number; y: number; s: number; c: ThemePalette }> 
 /** A small road sign on a post, with a car on it. */
 const RoadSign: React.FC<{ x: number; y: number; s: number; c: ThemePalette }> = ({ x, y, s, c }) => (
   <Group transform={[{ translateX: x }, { translateY: y }, { scale: s }]}>
-    <Rect x={-0.9} y={0} width={1.8} height={13} color={alpha(c.sceneCloud, 0.95)} />
-    <Circle cx={0} cy={-7} r={11} color={alpha(c.sceneCloud, 0.4)}>
+    <Rect x={-0.9} y={0} width={1.8} height={13} color={alpha(c.sceneGlow, 0.95)} />
+    <Circle cx={0} cy={-7} r={11} color={alpha(c.sceneGlow, 0.4)}>
       <BlurMask blur={5} style="normal" />
     </Circle>
     <RoundedRect x={-7.5} y={-15} width={15} height={15} r={3.5} color={mix(c.sceneMotif, '#0B3C9E', 0.25)} />
-    <RoundedRect x={-4.6} y={-8.6} width={9.2} height={4.4} r={1.6} color={c.sceneCloud} />
-    <Path path="M -3 -8.4 L -1.8 -11.6 L 1.8 -11.6 L 3 -8.4 Z" color={c.sceneCloud} />
+    <RoundedRect x={-4.6} y={-8.6} width={9.2} height={4.4} r={1.6} color={c.sceneGlow} />
+    <Path path="M -3 -8.4 L -1.8 -11.6 L 1.8 -11.6 L 3 -8.4 Z" color={c.sceneGlow} />
   </Group>
 );
 
@@ -449,7 +449,7 @@ const LightTrail: React.FC<{ d: string; c: ThemePalette }> = ({ d, c }) => (
     <Path path={d} style="stroke" strokeWidth={3.4} strokeCap="round" color={alpha(c.sceneTrail, 0.85)}>
       <BlurMask blur={1.4} style="solid" />
     </Path>
-    <Path path={d} style="stroke" strokeWidth={1.3} strokeCap="round" color={alpha(c.sceneCloud, 0.95)} />
+    <Path path={d} style="stroke" strokeWidth={1.3} strokeCap="round" color={alpha(c.sceneGlow, 0.95)} />
   </>
 );
 
@@ -541,35 +541,9 @@ const WindingRoad: React.FC<{ pts: [number, number][]; widths: number[]; c: Them
 
 /** A white motion streak, for the Assistant's Lex. */
 const Swoosh: React.FC<{ d: string; c: ThemePalette; w?: number; o?: number }> = ({ d, c, w = 3, o = 0.85 }) => (
-  <Path path={d} style="stroke" strokeWidth={w} strokeCap="round" color={alpha(c.sceneCloud, o)}>
+  <Path path={d} style="stroke" strokeWidth={w} strokeCap="round" color={alpha(c.sceneGlow, o)}>
     <BlurMask blur={0.8} style="solid" />
   </Path>
-);
-
-/** Lex's little yellow sparkle: three short strokes fanning out from (x, y). */
-const Twinkle: React.FC<{ x: number; y: number; angle: number; c: ThemePalette; s?: number }> = ({
-  x,
-  y,
-  angle,
-  c,
-  s = 1,
-}) => (
-  <Group transform={[{ translateX: x }, { translateY: y }, { scale: s }]}>
-    {[-38, 0, 38].map((spread) => {
-      const a = ((angle + spread) * Math.PI) / 180;
-      const [r0, r1] = spread === 0 ? [5, 14] : [6, 12];
-      return (
-        <Path
-          key={spread}
-          path={`M ${Math.cos(a) * r0} ${Math.sin(a) * r0} L ${Math.cos(a) * r1} ${Math.sin(a) * r1}`}
-          style="stroke"
-          strokeWidth={2.6}
-          strokeCap="round"
-          color={c.brandGold}
-        />
-      );
-    })}
-  </Group>
 );
 
 /** A soft wash behind a hero's words, fading out every way. */
@@ -613,7 +587,6 @@ const FRAMES: Record<SceneVariant, ArtFrame> = {
       { x: 150, y: 46, s: 0.5, o: 0.55 },
     ],
     haze: { x: 40, y: 140, r: 170 },
-    Motifs: ({ c, t }) => <Twinkle x={360} y={t + 129} angle={-20} c={c} />,
   },
   // Monitoring: the bell ringing out over the header, alerts along the road.
   alerts: {
@@ -632,8 +605,6 @@ const FRAMES: Record<SceneVariant, ArtFrame> = {
         <RadarBell x={284.5} y={t - 7.5} s={0.95} c={c} />
         <MapPin x={80} y={t + 56} s={1.2} c={c} glyph="alert" />
         <RoadSign x={188} y={t + 53} s={0.95} c={c} />
-        <Twinkle x={222} y={t + 109} angle={200} c={c} />
-        <Twinkle x={372} y={t + 70} angle={-25} c={c} />
       </>
     ),
   },
@@ -655,7 +626,6 @@ const FRAMES: Record<SceneVariant, ArtFrame> = {
         <MapPin x={238} y={t + 58} s={0.7} c={c} white />
         <ChatBubble x={175} y={t + 51} w={24.5} h={19} c={c} />
         <ChatBubble x={350} y={t + 34} w={47} h={36} c={c} solid />
-        <Twinkle x={368} y={t + 72} angle={-30} c={c} />
       </>
     ),
   },
@@ -677,7 +647,6 @@ const FRAMES: Record<SceneVariant, ArtFrame> = {
         <Swoosh d={`M 112 ${t + 200} Q 100 ${t + 210} 106 ${t + 222}`} c={c} w={2.2} o={0.7} />
         <Swoosh d={`M 330 ${t + 188} Q 352 ${t + 204} 342 ${t + 232}`} c={c} />
         <Swoosh d={`M 346 ${t + 228} Q 366 ${t + 246} 354 ${t + 270}`} c={c} w={2.4} o={0.75} />
-        <Twinkle x={299} y={t + 170} angle={-30} c={c} />
       </>
     ),
   },
@@ -740,7 +709,7 @@ const ArtScene: React.FC<SceneProps & { art: SkImage; frame: ArtFrame }> = ({ d,
       </Rect>
       {frame.haze !== undefined ? <Haze x={frame.haze.x} y={t + frame.haze.y} r={frame.haze.r} c={c} /> : null}
       {frame.clouds.map((cl, i) => (
-        <PuffCloud key={i} x={cl.x} y={t + cl.y} s={cl.s} c={c} o={cl.o} />
+        <PuffCloud key={i} x={cl.x} y={t + cl.y} s={cl.s} c={c} o={(cl.o ?? 1) * c.sceneCloudAlpha} />
       ))}
       {Motifs !== undefined ? <Motifs c={c} t={t} /> : null}
       {/* Into the page, so the cards below sit on a calm ground. */}

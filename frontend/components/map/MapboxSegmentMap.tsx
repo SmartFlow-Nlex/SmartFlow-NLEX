@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
+import LoadingMascot from '../ui/LoadingMascot';
 import { useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { buildMapboxHtml } from './mapboxHtml';
 import type { SegmentMapProps } from './SegmentMap.types';
-import { MAPBOX_STYLE_URL, MAPBOX_TOKEN } from './mapboxConfig';
+import { MAPBOX_TOKEN, mapboxStyleUrl } from './mapboxConfig';
 
 /**
  * The interchange map, drawn with Mapbox GL JS inside a WebView.
@@ -26,7 +27,7 @@ const MapboxSegmentMap: React.FC<SegmentMapProps> = ({
   exitName,
   bottomInset,
 }) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
 
@@ -39,7 +40,7 @@ const MapboxSegmentMap: React.FC<SegmentMapProps> = ({
     () =>
       buildMapboxHtml({
         token: MAPBOX_TOKEN ?? '',
-        styleUrl: MAPBOX_STYLE_URL,
+        styleUrl: mapboxStyleUrl(isDark),
         segment,
         overview,
         stretchJams,
@@ -65,6 +66,7 @@ const MapboxSegmentMap: React.FC<SegmentMapProps> = ({
       colors.surfaceMuted,
       colors.textSecondary,
       colors.accent,
+      isDark,
     ],
   );
 
@@ -95,7 +97,7 @@ const MapboxSegmentMap: React.FC<SegmentMapProps> = ({
 
       {state === 'loading' ? (
         <View style={styles.overlay} pointerEvents="none">
-          <ActivityIndicator color={colors.accent} />
+          <LoadingMascot size={88} label="Loading the map" />
         </View>
       ) : null}
 

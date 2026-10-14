@@ -87,6 +87,26 @@ export interface ThemePalette {
   blueCardFrom: string;
   /** Deep corner of the panel gradient. */
   blueCardTo: string;
+  // The sign-in card's frosted glass (components/auth/AuthScreen), laid over a
+  // native blur: a white-to-sky gradient, a bright edge and a thin blue accent.
+  authGlassTop: string;
+  authGlassBottom: string;
+  /** The glass's thin edge, all round. */
+  authGlassEdge: string;
+  /** The brighter line along its top edge. */
+  authGlassShine: string;
+  authGlassShadow: string;
+  /** A faint light halo round the card, as in the mockup (none at night). */
+  authGlassGlow: string;
+  authAccentFrom: string;
+  authAccentTo: string;
+  /** Fields: a little more solid than the glass, so they stay readable. */
+  authField: string;
+  authFieldBorder: string;
+  authFocus: string;
+  authFocusRing: string;
+  authButtonFrom: string;
+  authButtonTo: string;
   /** The chosen option in a segmented switch: the mockups' deep NLEX blue. */
   segmentActive: string;
   /** A segmented switch's frosted, sky-tinted track. */
@@ -170,6 +190,12 @@ export interface ThemePalette {
   sceneCloud: string;
   /** The underside of a cloud. */
   sceneCloudShade: string;
+  /** A faint edge around the animated mascot, so his white cap does not melt into a pale page (none at night). */
+  mascotEdge: string;
+  /** How strongly clouds show: full by day, faint at night so they do not read as smoke. */
+  sceneCloudAlpha: number;
+  /** The light accents on a scene - radar rings, pin dots, streaks, the trail's core: white by day, a soft blue glow at night. */
+  sceneGlow: string;
   /** The sky at the top edge of the dashboard's painted backdrop, to extend it upward. */
   sceneArtSky: string;
   /** Header text over the sky. */
@@ -230,6 +256,20 @@ export const lightPalette: ThemePalette = {
 
   blueCardFrom: '#1D5FB8',
   blueCardTo: '#0C3A80',
+  authGlassTop: 'rgba(255,255,255,0.56)',
+  authGlassBottom: 'rgba(238,247,255,0.46)',
+  authGlassEdge: 'rgba(255,255,255,0.75)',
+  authGlassShine: 'rgba(255,255,255,0.98)',
+  authGlassShadow: 'rgba(31,82,145,0.16)',
+  authGlassGlow: 'rgba(255,255,255,0.55)',
+  authAccentFrom: '#39C4FF',
+  authAccentTo: '#1269EA',
+  authField: 'rgba(255,255,255,0.82)',
+  authFieldBorder: 'rgba(155,190,225,0.55)',
+  authFocus: '#4AA8FF',
+  authFocusRing: 'rgba(74,168,255,0.14)',
+  authButtonFrom: '#1473F3',
+  authButtonTo: '#0763E6',
   segmentActive: '#1B57B9',
   segmentTrack: 'rgba(222,236,252,0.92)',
 
@@ -275,6 +315,9 @@ export const lightPalette: ThemePalette = {
   sceneSkyBottom: '#EDF6FE',
   sceneCloud: '#FFFFFF',
   sceneCloudShade: '#D5E9FD',
+  sceneCloudAlpha: 1,
+  mascotEdge: 'rgba(16,40,76,0.45)',
+  sceneGlow: '#FFFFFF',
   sceneArtSky: '#5CB3FD',
   onScene: '#FFFFFF',
   onSceneSoft: 'rgba(255,255,255,0.86)',
@@ -325,6 +368,20 @@ export const darkPalette: ThemePalette = {
 
   blueCardFrom: '#1A5BD0',
   blueCardTo: '#0C2350',
+  authGlassTop: 'rgba(24,40,68,0.62)',
+  authGlassBottom: 'rgba(12,24,44,0.72)',
+  authGlassEdge: 'rgba(255,255,255,0.10)',
+  authGlassShine: 'rgba(255,255,255,0.26)',
+  authGlassShadow: 'rgba(0,0,0,0.38)',
+  authGlassGlow: 'rgba(0,0,0,0)',
+  authAccentFrom: '#39C4FF',
+  authAccentTo: '#1269EA',
+  authField: 'rgba(14,26,46,0.74)',
+  authFieldBorder: 'rgba(125,176,255,0.22)',
+  authFocus: '#5AAEFF',
+  authFocusRing: 'rgba(74,168,255,0.24)',
+  authButtonFrom: '#1473F3',
+  authButtonTo: '#0763E6',
   segmentActive: '#2A63C4',
   segmentTrack: 'rgba(18,32,56,0.9)',
 
@@ -377,6 +434,9 @@ export const darkPalette: ThemePalette = {
   sceneSkyBottom: '#0A1424',
   sceneCloud: '#1A3359',
   sceneCloudShade: '#142A4C',
+  sceneCloudAlpha: 0.35,
+  mascotEdge: 'rgba(0,0,0,0)',
+  sceneGlow: '#A9CBFF',
   sceneArtSky: '#041F57',
   onScene: '#F3F7FC',
   onSceneSoft: 'rgba(233,239,247,0.74)',

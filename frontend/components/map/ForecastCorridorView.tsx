@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles, Radius } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import { Typography } from '../../constants/typography';
@@ -15,6 +15,7 @@ import {
   type StretchForecast,
 } from '../../lib/forecastApi';
 import CorridorRoad, { type RoadDirectionReading, type RoadRow } from './CorridorRoad';
+import LoadingMascot from '../ui/LoadingMascot';
 
 type RangeKey = '12h' | '24h' | '7d';
 
@@ -236,7 +237,7 @@ const ForecastCorridorView: React.FC<ForecastCorridorViewProps> = ({ now }) => {
           </>
         ) : (
           <>
-            <ActivityIndicator color={colors.accent} />
+            <LoadingMascot size={96} label="Loading the forecast" />
             <Text style={styles.stateText}>Loading the forecast...</Text>
           </>
         )}
@@ -269,7 +270,7 @@ const ForecastCorridorView: React.FC<ForecastCorridorViewProps> = ({ now }) => {
               </>
             )}
           </View>
-          {loading ? <ActivityIndicator color={colors.accent} size="small" /> : null}
+          {loading ? <LoadingMascot size={40} label="Loading this hour" /> : null}
         </View>
 
         <View accessibilityRole="tablist" style={styles.rangeSwitch}>

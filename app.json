@@ -1,5 +1,6 @@
 {
   "scheme": "smartflow",
+  "userInterfaceStyle": "automatic",
   "android": {
     "package": "com.anonymous.smartflownlexmonorepo"
   },

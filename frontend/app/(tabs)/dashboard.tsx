@@ -1,14 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import {
-  ActivityIndicator,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { Radius, useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import {
@@ -19,12 +12,16 @@ import {
 import { EventForecast, Hotspot, eventLoadForSegment } from '../../lib/insightsApi';
 import { useDashboardInsights } from '../../hooks/useDashboardInsights';
 import { addHours, describeHourOffset, formatDayMonth } from '../../lib/datetime';
-import { SegmentPrediction, predictNetwork, predictSegment } from '../../lib/trafficModel';
+import { summariseCorridor } from '../../lib/corridorSummary';
+import { useAlerts } from '../../alerts';
+import { useCorridorStatus } from '../../hooks/useCorridorStatus';
+import { useRouteForecast } from '../../hooks/useRouteForecast';
 import { useLiveClock } from '../../hooks/useNow';
 import AIAssistantFAB from '../../components/community/AIAssistantFAB';
 import ScreenShell from '../../components/ui/ScreenShell';
 import PageHero from '../../components/ui/PageHero';
-import HeroMascot from '../../components/ui/HeroMascot';
+import WavingMascot from '../../components/ui/WavingMascot';
+import LoadingMascot from '../../components/ui/LoadingMascot';
 import SegmentedControl from '../../components/ui/SegmentedControl';
 import { CountBadge, GlassCard, SectionTitle } from '../../components/ui/Cards';
 import { Reveal } from '../../components/motion';
@@ -35,7 +32,6 @@ import StatusSummaryCard from '../../components/dashboard/StatusSummaryCard';
 import SegmentForecastCard from '../../components/dashboard/SegmentForecastCard';
 import EventForecastCard from '../../components/dashboard/EventForecastCard';
 import MlHotspotCard from '../../components/dashboard/MlHotspotCard';
-import OutlookStrip from '../../components/dashboard/OutlookStrip';
 
 /**
  * How many cards each list section previews on the dashboard.
@@ -56,10 +52,6 @@ const insightTabs: { key: 'events' | 'hotspots'; label: string; icon: keyof type
   { key: 'events', label: 'Event Forecasts', icon: 'calendar-outline' },
   { key: 'hotspots', label: 'ML Hotspots', icon: 'alert-circle-outline' },
 ];
-
-/** Both draw a strip - an option that rendered nothing has been removed. */
-const filterOptions = ['Today', 'This Week'] as const;
-type FilterOption = (typeof filterOptions)[number];
 
 /** Morning / afternoon / evening, by the phone's own clock. */
 function greetingFor(at: Date): string {
@@ -96,7 +88,6 @@ export default function DashboardScreen(): React.ReactElement {
   // the whole screen is not re-rendered every second.
   const { now, refresh } = useLiveClock(15000);
 
-  const [activeFilter, setActiveFilter] = useState<FilterOption>('Today');
   const [offsetHours, setOffsetHours] = useState(0);
   const [direction, setDirection] = useState<NlexDirectionId>('northbound');
   const [fromId, setFromId] = useState<string | null>(null);
@@ -130,7 +121,19 @@ export default function DashboardScreen(): React.ReactElement {
   );
   const horizonLabel = describeHourOffset(effectiveOffset);
 
-  const networkStatus = useMemo(() => predictNetwork(now), [now]);
+  // The headline card, live: the corridor feed the Corridor tab draws, and the
+  // incidents the Alerts tab lists. Both are shared with those tabs, so this
+  // screen asks for nothing they have not already fetched.
+  const corridor = useCorridorStatus();
+  const corridorSummary = useMemo(
+    () => (corridor.data === null ? null : summariseCorridor(corridor.data)),
+    [corridor.data],
+  );
+  const { alerts, reportsStatus, refresh: refreshAlerts } = useAlerts();
+  const activeIncidents = useMemo(
+    () => (reportsStatus === 'ready' ? alerts.filter((alert) => alert.incident === true).length : null),
+    [alerts, reportsStatus],
+  );
 
   const firstName = firstNameOf(session?.fullName);
 
@@ -147,37 +150,9 @@ export default function DashboardScreen(): React.ReactElement {
     [segmentExitIds, forecastAt, upcomingEvents],
   );
 
-  /** The same stretch at the present moment, so the forecast has a baseline. */
-  const eventImpactNow = useMemo(
-    () => eventLoadForSegment(segmentExitIds, now, upcomingEvents),
-    [segmentExitIds, now, upcomingEvents],
-  );
-
-  const predictionNow: SegmentPrediction | null = useMemo(() => {
-    if (fromId === null || toId === null || !isValidPair(direction, fromId, toId)) {
-      return null;
-    }
-    return predictSegment({
-      direction,
-      fromId,
-      toId,
-      at: now,
-      eventLoad: eventImpactNow.load,
-    });
-  }, [direction, fromId, toId, now, eventImpactNow.load]);
-
-  const prediction: SegmentPrediction | null = useMemo(() => {
-    if (fromId === null || toId === null || !isValidPair(direction, fromId, toId)) {
-      return null;
-    }
-    return predictSegment({
-      direction,
-      fromId,
-      toId,
-      at: forecastAt,
-      eventLoad: eventImpact.load,
-    });
-  }, [direction, fromId, toId, forecastAt, eventImpact.load]);
+  // The SmartFlow model's own forecast for the trip - what the Map tab's
+  // forecast draws - at the chosen hour, and at this hour as its baseline.
+  const routeForecast = useRouteForecast(direction, fromId, toId, now, forecastAt);
 
   const affectsSelection = useCallback(
     (event: EventForecast): boolean =>
@@ -276,12 +251,17 @@ export default function DashboardScreen(): React.ReactElement {
   }, []);
 
   const { refresh: refreshInsights } = insights;
+  const { refresh: refreshForecast } = routeForecast;
+  const { refresh: refreshCorridor } = corridor;
   const handleRefresh = useCallback((): void => {
     setRefreshing(true);
     refresh();
+    refreshCorridor();
+    refreshAlerts();
     refreshInsights();
+    refreshForecast();
     setRefreshing(false);
-  }, [refresh, refreshInsights]);
+  }, [refresh, refreshCorridor, refreshAlerts, refreshInsights, refreshForecast]);
 
   return (
     <ScreenShell
@@ -349,7 +329,7 @@ export default function DashboardScreen(): React.ReactElement {
           subtitle={'Here’s the latest traffic\nupdate on NLEX.'}
           titleScale={0.075}
           offsetTop={65}
-          mascot={<HeroMascot size={128} />}
+          mascot={<WavingMascot size={128} />}
           mascotWidth={135}
           mascotPlacement={{ top: 76, bleed: 2 }}
           minHeight={208}
@@ -358,7 +338,12 @@ export default function DashboardScreen(): React.ReactElement {
 
       {sections.statusSummary && (
         <Reveal index={1}>
-          <StatusSummaryCard status={networkStatus} />
+          <StatusSummaryCard
+            summary={corridorSummary}
+            isLoading={corridor.isLoading}
+            incidents={activeIncidents}
+            onRetry={refreshCorridor}
+          />
         </Reveal>
       )}
 
@@ -374,8 +359,11 @@ export default function DashboardScreen(): React.ReactElement {
             onChangeDirection={handleDirectionChange}
             onChangeFrom={handleFromChange}
             onChangeTo={setToId}
-            prediction={prediction}
-            predictionNow={predictionNow}
+            forecastStatus={routeForecast.status}
+            prediction={routeForecast.forecast}
+            predictionNow={routeForecast.baseline}
+            forecastHour={routeForecast.forecastHour}
+            onRetryForecast={refreshForecast}
             eventDriver={eventImpact.source}
             horizonLabel={horizonLabel}
             now={now}
@@ -387,26 +375,8 @@ export default function DashboardScreen(): React.ReactElement {
         </Reveal>
       )}
 
-      {sections.corridorOutlook && (
-        <Reveal index={3} style={styles.section}>
-          <SectionTitle icon="calendar-outline" title="Corridor Outlook" />
-          <SegmentedControl
-            accessibilityLabel="Outlook range"
-            items={filterOptions.map((option) => ({ key: option, label: option }))}
-            value={activeFilter}
-            onChange={setActiveFilter}
-            style={styles.switcher}
-          />
-          <OutlookStrip
-            scope={activeFilter === 'Today' ? 'today' : 'week'}
-            direction={direction}
-            now={now}
-          />
-        </Reveal>
-      )}
-
       {insightLists.length > 0 && (
-        <Reveal index={4} style={styles.section}>
+        <Reveal index={3} style={styles.section}>
           {insightLists.length > 1 ? (
             <SegmentedControl
               accessibilityLabel="Forecast lists"
@@ -506,7 +476,7 @@ const InsightNotice: React.FC<InsightNoticeProps> = ({ kind, message, onRetry })
   return (
     <GlassCard padding={16} style={styles.notice}>
       {kind === 'loading' ? (
-        <ActivityIndicator size="small" color={colors.accent} />
+        <LoadingMascot size={48} label={message} />
       ) : (
         <Ionicons
           name={kind === 'error' ? 'cloud-offline-outline' : 'checkmark-circle-outline'}

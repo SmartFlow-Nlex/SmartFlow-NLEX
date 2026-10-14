@@ -14,16 +14,23 @@ const EXPRESSWAY_NIGHT = require('../../assets/scenes/expressway-night.jpg');
 const decoded: { day: SkImage | null; night: SkImage | null } = { day: null, night: null };
 
 export function useExpresswayArt(isDark: boolean): SkImage | null {
-  const key = isDark ? 'night' : 'day';
-  const cached = decoded[key];
-  // Ask Skia for it only until one tab has it; the rest reuse that copy.
-  const loaded = useImage(
-    Platform.OS !== 'web' && cached === null ? (isDark ? EXPRESSWAY_NIGHT : EXPRESSWAY_DAY) : null,
-  );
-  if (cached === null && loaded !== null) {
-    decoded[key] = loaded;
+  const native = Platform.OS !== 'web';
+  // One hook per picture, each only ever given its own source. Skia's
+  // useImage keeps its last image for a render after the source changes, so a
+  // single hook switched day -> night handed back the DAY picture, which was
+  // then cached as the night one: dark mode showed the daylight art.
+  // BOTH load as soon as the first tab opens, whichever theme is on, so
+  // switching Dark Mode is instant instead of waiting for the other picture
+  // to download and decode. Once one tab has them, the rest reuse that copy.
+  const day = useImage(native && decoded.day === null ? EXPRESSWAY_DAY : null);
+  const night = useImage(native && decoded.night === null ? EXPRESSWAY_NIGHT : null);
+  if (decoded.day === null && day !== null) {
+    decoded.day = day;
   }
-  return decoded[key] ?? loaded;
+  if (decoded.night === null && night !== null) {
+    decoded.night = night;
+  }
+  return isDark ? decoded.night : decoded.day;
 }
 
 export interface SceneBackgroundProps {

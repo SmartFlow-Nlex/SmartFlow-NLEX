@@ -33,7 +33,6 @@ export interface MobileSections {
 	dashboard: {
 		statusSummary: boolean;
 		segmentForecast: boolean;
-		corridorOutlook: boolean;
 		eventForecasts: boolean;
 		mlHotspots: boolean;
 	};
@@ -65,7 +64,6 @@ export const DEFAULT_MOBILE_CONFIG: MobileConfig = {
 		dashboard: {
 			statusSummary: true,
 			segmentForecast: true,
-			corridorOutlook: true,
 			eventForecasts: true,
 			mlHotspots: true,
 		},

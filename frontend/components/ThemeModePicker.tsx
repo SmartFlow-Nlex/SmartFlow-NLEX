@@ -14,13 +14,14 @@ export interface ThemeModePickerProps {
 interface Option {
   mode: ThemeMode;
   label: string;
+  detail: string;
   icon: keyof typeof Ionicons.glyphMap;
 }
 
 const options: Option[] = [
-  { mode: 'on', label: 'On', icon: 'moon' },
-  { mode: 'off', label: 'Off', icon: 'sunny' },
-  { mode: 'system', label: 'System', icon: 'phone-portrait-outline' },
+  { mode: 'on', label: 'On', detail: 'Always dark', icon: 'moon' },
+  { mode: 'off', label: 'Off', detail: 'Always light', icon: 'sunny' },
+  { mode: 'system', label: 'System', detail: "Match your phone's setting", icon: 'phone-portrait-outline' },
 ];
 
 /** Human-readable value for the settings row. */
@@ -31,7 +32,7 @@ export const themeModeLabel: Record<ThemeMode, string> = {
 };
 
 const ThemeModePicker: React.FC<ThemeModePickerProps> = ({ visible, onClose }) => {
-  const { colors, mode, setMode } = useTheme();
+  const { colors, mode, scheme, setMode } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
   const handleSelect = (next: ThemeMode): void => {
@@ -83,6 +84,11 @@ const ThemeModePicker: React.FC<ThemeModePickerProps> = ({ visible, onClose }) =
                 <View style={styles.optionText}>
                   <Text style={[styles.optionLabel, active && styles.optionLabelActive]}>
                     {option.label}
+                  </Text>
+                  <Text style={styles.optionDetail}>
+                    {option.detail}
+                    {/* While following the phone, say which way it is now. */}
+                    {option.mode === 'system' && active ? ` · ${scheme === 'dark' ? 'dark' : 'light'} now` : ''}
                   </Text>
                 </View>
 
@@ -160,5 +166,11 @@ const makeStyles = (c: ThemePalette) =>
     optionLabelActive: {
       color: c.accent,
       fontWeight: '800',
+    },
+    optionDetail: {
+      color: c.textSecondary,
+      fontSize: Typography.fontSize.sm,
+      fontWeight: '500',
+      marginTop: 2,
     },
   });
