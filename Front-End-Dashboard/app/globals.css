@@ -10180,6 +10180,106 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   grid-template-columns: 1fr 1fr;
 }
 
+/* --- full screen at any zoom --------------------------------------------------
+   Browser zoom changes the viewport in CSS pixels: at 150% a 1366 x 768 laptop is
+   911 x 512, at 200% it is 683 x 384. Everything floating over the road was sized
+   for a big screen, so zoomed in it wrapped into five rows at the top and a tall
+   readout strip at the bottom, and the road between them was 7 px tall (0 at 200%).
+   The road comes first here: the controls rail shares the width in proportion, and
+   a short or narrow viewport gets a compact HUD — one tight toolbar, the options in
+   one row, no key-hint line, slim readouts — and a very short one a tighter HUD
+   still, so the road keeps most of the screen at every zoom. The strip's real
+   height is measured (--fs-strip, page.tsx) like the header's, so the road never
+   runs under it. */
+.sandbox-page {
+  /* The controls rail: full width on a big screen, a share of a smaller one. */
+  --fs-rail: min(372px, max(300px, 30vw));
+}
+.sandbox-page .sandbox-side.is-expanded {
+  width: var(--fs-rail);
+}
+.sandbox-page .sandbox-main.is-expanded.with-rail {
+  right: var(--fs-rail);
+}
+@media (max-width: 900px) {
+  /* A sheet over the road: as wide as it needs, never the whole screen. */
+  .sandbox-page .sandbox-side.is-expanded { width: min(372px, 92vw); }
+  .sandbox-page .sandbox-main.is-expanded.with-rail { right: 0; }
+}
+
+@media (max-height: 760px), (max-width: 1180px) {
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-hud-top {
+    top: 6px;
+    left: 8px;
+    right: 8px;
+    gap: 6px;
+  }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-head {
+    padding: 4px 8px;
+    gap: 8px;
+  }
+  /* The title is what the whole screen is; the room is the road's. */
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-head h2 { display: none; }
+  /* The clock keeps its digits; its label and date are what the docked page shows. */
+  .ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-live-clock-label, .sandbox-live-clock-date) { display: none; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock { padding: 2px 6px; gap: 6px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-head > div:last-child { gap: 6px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-head :is(.btn-muted, .nc-pill) {
+    min-height: 30px;
+    padding: 0 12px;
+    font-size: 0.68rem;
+  }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-head .nc-pill { padding-right: 30px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-speed-seg { padding: 2px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-speed-seg button { padding: 3px 8px; font-size: 0.68rem; }
+  /* The keyboard hints are reference; the keys still work. */
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-fs-keys { display: none; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-hud-row { gap: 6px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-view-seg, .sandbox-fs-notes-toggle) { padding: 3px 8px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-view-seg .k { display: none; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-fs-notes-toggle { margin-left: auto; font-size: 0.7rem; }
+  /* Slim readouts: the label and the number, smaller. */
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric-row {
+    left: 8px;
+    right: 8px;
+    bottom: 6px;
+    padding: 3px 6px;
+    gap: 4px;
+  }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric-row > * { min-width: 96px; padding: 1px 6px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric h3 { font-size: 0.55rem; margin: 0; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric-val { font-size: 0.95rem; line-height: 1.15; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric-row > * > div:last-child { font-size: 0.6rem; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-footbar { left: 8px; right: 8px; bottom: calc(var(--fs-strip, 96px) + 4px); max-height: 42vh; }
+}
+
+/* Very short or narrow (a laptop at 150-200%): the buttons say less — the short word in their data-short (the
+   full one is still their text, read out, and in their title) — and the readouts are as small as stays legible.
+   The toolbar wraps rather than scrolling sideways: a scrolled toolbar hid Exit and Hide behind a scrollbar. */
+@media (max-height: 560px), (max-width: 760px) {
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-hud-top { gap: 4px; }
+  /* Letter-spacing is in px here and survives a zero font size: the hidden long label still took its width. */
+  .ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-head, .sandbox-hud-row) [data-short] { font-size: 0; letter-spacing: 0; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-head, .sandbox-hud-row) [data-short]::after {
+    content: attr(data-short);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+  }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-head :is(.btn-muted, .nc-pill) { min-height: 26px; padding: 0 10px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-head .nc-pill { padding-right: 26px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-speed-seg button { padding: 2px 7px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric-row { padding: 2px 4px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric-row > * { min-width: 0; padding: 0 6px; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric h3 {
+    font-size: 0.5rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric-val { font-size: 0.82rem; white-space: nowrap; }
+  .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric-row > * > div:last-child:not(.sandbox-metric-val) { display: none; }
+}
+
 /* One carriageway's notes: its recommendation, its status, its before/after. */
 .sandbox-dir-card {
   display: grid;
@@ -13973,3 +14073,217 @@ h1, h2, h3, h4, h5 { letter-spacing: -0.01em; }
 .ds-shell .mapboxgl-map,
 .ds-shell .mapboxgl-popup-content,
 .ds-shell .mapboxgl-ctrl { font-family: var(--font-ui); }
+
+/* --- Trends: the readouts over time (scenario-sandbox/components/TrendCharts.tsx) ------------
+   Four small line charts under the road, one line per carriageway. The line colours are the
+   carriageway pills' hues stepped for a 2px line, checked (dataviz validator, 2026-10-07) for
+   colour-blind separation and contrast on each surface they are drawn on: the light card
+   (#fdfdfc), the dark card (#0a1121) and the full-screen notes panel, which is dark glass in
+   either theme. Text is in text colours; a line key beside it says which carriageway. */
+.sandbox-trends {
+  --trend-NB: #2563eb;
+  --trend-SB: #b07a04;
+  --trend-ink: var(--text-primary);
+  --trend-ink-2: var(--text-secondary);
+  --trend-muted: var(--text-muted);
+  --trend-grid: rgba(3, 6, 13, 0.07);
+  --trend-axis: rgba(3, 6, 13, 0.22);
+  --trend-surface: var(--bg-surface-solid);
+  --trend-band: rgba(100, 116, 139, 0.11);
+  --trend-tip-bg: var(--bg-raised);
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-default);
+  min-width: 0;
+}
+:root[data-theme="dark"] .sandbox-trends {
+  --trend-NB: #3b82f6;
+  --trend-SB: #c08304;
+  --trend-grid: rgba(255, 255, 255, 0.06);
+  --trend-axis: rgba(255, 255, 255, 0.2);
+  --trend-band: rgba(148, 163, 184, 0.11);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sandbox-trends {
+    --trend-NB: #3b82f6;
+    --trend-SB: #c08304;
+    --trend-grid: rgba(255, 255, 255, 0.06);
+    --trend-axis: rgba(255, 255, 255, 0.2);
+    --trend-band: rgba(148, 163, 184, 0.11);
+  }
+}
+/* Full screen: the notes panel is dark glass whatever the theme, so the dark steps and light ink. */
+.sandbox-main.is-expanded .sandbox-trends {
+  --trend-NB: #3b82f6;
+  --trend-SB: #c08304;
+  --trend-ink: #e8eefc;
+  --trend-ink-2: #c3cbe0;
+  --trend-muted: #97a3bd;
+  --trend-grid: rgba(255, 255, 255, 0.07);
+  --trend-axis: rgba(255, 255, 255, 0.22);
+  --trend-surface: #0b1222;
+  --trend-band: rgba(148, 163, 184, 0.13);
+  --trend-tip-bg: rgba(10, 16, 30, 0.97);
+}
+/* Both mode's notes are two columns (a pair per row); the trends cover both carriageways, so the whole width. */
+.sandbox-footbar[data-both] > .sandbox-trends { grid-column: 1 / -1; }
+
+.sandbox-trends-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.sandbox-trends-head strong { font-size: 0.82rem; color: var(--trend-ink); }
+.sandbox-trends-sub { margin-left: 8px; font-size: 0.7rem; color: var(--trend-muted); }
+.sandbox-trends-controls { display: flex; align-items: center; gap: 8px; }
+.sandbox-trends-seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-input);
+}
+.sandbox-trends-seg button,
+.sandbox-trends-table-toggle {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--trend-ink-2);
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.sandbox-trends-seg button.active {
+  background: var(--action);
+  color: var(--action-ink, #fff);
+}
+.sandbox-trends-table-toggle { border: 1px solid var(--border-default); }
+.sandbox-trends-seg button:focus-visible,
+.sandbox-trends-table-toggle:focus-visible { outline: 2px solid var(--action); outline-offset: 1px; }
+
+.sandbox-trends-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 8px;
+  font-size: 0.7rem;
+  color: var(--trend-ink-2);
+}
+.sandbox-trends-legend span,
+.sandbox-trend-tip .tip-event { display: inline-flex; align-items: center; gap: 6px; }
+.sandbox-trends .key-line { display: inline-block; width: 14px; height: 2px; border-radius: 1px; flex: none; }
+.sandbox-trends .key-dash { display: inline-block; width: 14px; border-top: 2px dashed var(--trend-muted); flex: none; }
+.sandbox-trends .key-band {
+  display: inline-block;
+  width: 12px;
+  height: 10px;
+  background: var(--trend-band);
+  border-top: 3px solid var(--trend-muted);
+  flex: none;
+}
+
+.sandbox-trends-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px 18px;
+  margin-top: 6px;
+}
+.sandbox-trend { position: relative; margin: 0; min-width: 0; }
+.sandbox-trend figcaption { font-size: 0.72rem; font-weight: 600; color: var(--trend-ink); }
+.sandbox-trend figcaption span { font-weight: 500; color: var(--trend-muted); margin-left: 3px; }
+.sandbox-trend svg { display: block; touch-action: pan-y; }
+.sandbox-trend svg:focus { outline: none; }
+.sandbox-trend svg:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; border-radius: 4px; }
+.sandbox-trend .trend-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.sandbox-trend .trend-grid { stroke: var(--trend-grid); stroke-width: 1; }
+.sandbox-trend .trend-axis { stroke: var(--trend-axis); stroke-width: 1; }
+.sandbox-trend .trend-tick { fill: var(--trend-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.sandbox-trend .trend-end { fill: var(--trend-ink-2); font-size: 11px; font-weight: 700; }
+.sandbox-trend .trend-dot { stroke: var(--trend-surface); stroke-width: 2; }
+.sandbox-trend .trend-base { stroke-width: 1.5; stroke-dasharray: 5 4; opacity: 0.85; }
+.sandbox-trend .trend-cross { stroke: var(--trend-muted); stroke-width: 1; }
+.sandbox-trend .trend-band { fill: var(--trend-band); }
+.sandbox-trend-tip {
+  position: absolute;
+  top: 26px;
+  z-index: 2;
+  min-width: 150px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--trend-tip-bg);
+  box-shadow: 0 6px 18px rgba(3, 6, 13, 0.18);
+  font-size: 0.72rem;
+  color: var(--trend-ink-2);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.sandbox-trend-tip .tip-time { font-size: 0.68rem; color: var(--trend-muted); font-variant-numeric: tabular-nums; margin-bottom: 3px; }
+.sandbox-trend-tip .tip-row { display: flex; align-items: center; gap: 6px; line-height: 1.5; }
+.sandbox-trend-tip .tip-row b { color: var(--trend-ink); font-weight: 700; }
+.sandbox-trend-tip .tip-event { margin-top: 3px; color: var(--trend-ink-2); }
+
+.sandbox-trends-empty { margin: 8px 0 0; font-size: 0.74rem; color: var(--trend-muted); }
+.sandbox-trends-tablewrap {
+  margin-top: 8px;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+}
+.sandbox-trends-table { border-collapse: collapse; width: 100%; font-size: 0.72rem; color: var(--trend-ink-2); }
+.sandbox-trends-table th,
+.sandbox-trends-table td { padding: 4px 9px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sandbox-trends-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--trend-surface);
+  color: var(--trend-ink);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-default);
+}
+.sandbox-trends-table thead th span { color: var(--trend-muted); font-weight: 500; }
+.sandbox-trends-table tbody th { text-align: left; color: var(--trend-ink); font-weight: 600; }
+.sandbox-trends-table tbody tr + tr > * { border-top: 1px solid var(--trend-grid); }
+
+/* --- Before / after: the one-sentence verdict, the footnote, and the empty state -------------- */
+.sandbox-compare-verdict {
+  margin: 6px 0 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border-left: 3px solid var(--text-muted);
+  background: var(--bg-input);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.sandbox-compare-verdict.bad { border-left-color: #d03b3b; }
+.sandbox-compare-verdict.good { border-left-color: #0ca30c; }
+.sandbox-compare-foot { margin: 6px 0 0; font-size: 0.68rem; color: var(--text-muted); }
+.sandbox-compare-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.sandbox-compare-empty span { font-size: 0.76rem; color: var(--text-secondary); }
+.sandbox-main.is-expanded .sandbox-compare-verdict { color: #e8eefc; background: rgba(255, 255, 255, 0.06); }
+.sandbox-main.is-expanded :is(.sandbox-compare-foot, .sandbox-compare-empty span) { color: #97a3bd; }
+/* Full screen: the range pill and the Table button sit on dark glass, not on the light card. */
+.sandbox-main.is-expanded .sandbox-trends-seg { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.16); }
+.sandbox-main.is-expanded .sandbox-trends-table-toggle { border-color: rgba(255, 255, 255, 0.16); }
+.sandbox-main.is-expanded .sandbox-trends-tablewrap { border-color: rgba(255, 255, 255, 0.14); }
+
+/* --- Zoom the road: −, how much road is on screen, +, Whole road (beside the speed buttons) ---- */
+.sandbox-zoom-seg { align-items: center; }
+.sandbox-zoom-seg span {
+  min-width: 52px;
+  padding: 0 4px;
+  text-align: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.sandbox-zoom-seg button:disabled { opacity: 0.4; cursor: default; }
+.sandbox-main.is-expanded .sandbox-zoom-seg span { color: #c3cbe0; }

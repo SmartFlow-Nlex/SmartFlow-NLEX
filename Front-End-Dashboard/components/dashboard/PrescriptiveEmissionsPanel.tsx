@@ -28,6 +28,11 @@ type Strategy = {
   reductionPct: number;
   reductionTonnes: number;
   lever: string;
+  /** Where on the corridor, and when in the day, the saving is (from the incidents it is made of). */
+  where?: string;
+  when?: string;
+  /** What the saving is concentrated in, in one sentence. */
+  focus?: string;
   evidenceBounded: boolean;
   /** For a scenario: what the record does show, in one sentence. */
   evidenceNote?: string;
@@ -115,7 +120,7 @@ export default function PrescriptiveEmissionsPanel({
     <div className="nc-em-card-head">
       <h3>
         Projected % Emission Reduction by Strategy
-        <InfoTooltip text="Computed from the warehouse over the selected Range. Faster clearance and peak deployment are bounded by response times this corridor has already achieved; the heavy-vehicle bar is a policy target and is drawn hollow to say so. Emissions here are linear in volume with no congestion term, so shifting trips between hours saves nothing and is deliberately not offered as a strategy." />
+        <InfoTooltip text="Computed from the warehouse over the selected Range. Shorter lane blockages and peak deployment are bounded by blockage times this corridor has already achieved, and count only the time a lane was actually blocked; the heavy-vehicle bar is a policy target and is drawn hollow to say so. Emissions here are linear in volume with no congestion term, so shifting trips between hours saves nothing and is deliberately not offered as a strategy." />
       </h3>
       <p className="nc-em-context">
         CO₂ avoided per strategy, as a share of what the corridor actually emitted over the Range.
@@ -288,10 +293,20 @@ export default function PrescriptiveEmissionsPanel({
           </div>
           <div>
             <dt>Where</dt>
-            <dd>Corridor-wide</dd>
+            <dd>{s.where ?? "Corridor-wide"}</dd>
           </div>
           <div>
             <dt>When</dt>
+            <dd>{s.when ?? "Any hour"}</dd>
+          </div>
+          {s.focus && (
+            <div>
+              <dt>Start with</dt>
+              <dd>{s.focus}</dd>
+            </div>
+          )}
+          <div>
+            <dt>Period</dt>
             <dd>Estimated over {data.basis.from} to {data.basis.to}</dd>
           </div>
           <div>
@@ -392,7 +407,7 @@ export default function PrescriptiveEmissionsPanel({
               details={
                 <p>
                   <b>{second.label}</b> — {second.lever} — worth {fmtT(second.reductionTonnes)} t.{" "}
-                  <b>Do not add these two together.</b> This one applies the same clearance floor to fewer hours, so it
+                  <b>Do not add these two together.</b> This one applies the same blockage floor to fewer hours, so it
                   is a subset of the first, not an addition to it.
                 </p>
               }
@@ -449,7 +464,7 @@ export default function PrescriptiveEmissionsPanel({
           ) : (
             <div>
               <dt>Incidents</dt>
-              <dd>{data.basis.incidentsCounted.toLocaleString()} cleared incidents in the same window</dd>
+              <dd>{data.basis.incidentsCounted.toLocaleString()} lane-blocking incidents in the same window</dd>
             </div>
           )}
         </dl>
@@ -459,8 +474,8 @@ export default function PrescriptiveEmissionsPanel({
             Against {fmtT(data.basis.actualCo2Tonnes)} t actually emitted over {data.basis.from} to {data.basis.to}.
             {unavailable.length === 0 && (
               <>
-                {" "}Incident-based strategies use {data.basis.incidentsCounted.toLocaleString()} cleared incidents in the
-                same window.
+                {" "}Incident-based strategies use {data.basis.incidentsCounted.toLocaleString()} incidents that blocked
+                a lane in the same window, each for as long as the lane stayed blocked.
               </>
             )}
           </p>

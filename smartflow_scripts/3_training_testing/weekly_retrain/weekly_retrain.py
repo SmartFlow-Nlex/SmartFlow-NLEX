@@ -14,6 +14,14 @@ For each model group, the batch:
      left alone, and the run records that.
   2. backs up the group's current outputs to the ml_backup schema: its forecast
      tables, and its own rows in the shared metric tables.
+  2b. checks the forecasts already published against the real data that has
+     arrived since they were made (the "feedback" of the MLOps feedback loop in
+     the architecture diagram). A forecast for July is a guess until July's
+     records are uploaded; once they are, how far off it was is the only
+     measure of the model on days it had never seen. The result is recorded
+     in gold.ml_forecast_feedback and on the run, and a model that did worse
+     than "the same weekday last week" is marked as drifted. It is measured
+     BEFORE retraining, because retraining replaces those forecasts.
   3. clears the trainers' prediction caches. Those caches are keyed on row count
      and latest date only, so a corrected upload would otherwise reuse the old
      results.
@@ -209,9 +217,13 @@ GROUPS = [
     Group(
         "incident_counts", "Incident count forecast",
         inputs=["accidents", "breakdowns", "weather", "traffic_daily"],
+        # The accuracy-by-range study describes the champion the first step just chose, so it is re-measured in
+        # the same batch: left to a separate manual run it described last month's model (it had, since 2026-10-05).
         steps=[Step(INCIDENTS, ["train_incident_models.py", "--write-db", "--holdout-days", "90"]),
+               Step(INCIDENTS, ["measure_incident_horizon_accuracy.py", "--write-db"]),
                Step(INCIDENTS, ["train_incident_models.py", "--write-db", "--holdout-days", "90", "--series", "accident"])],
         tables=[("public.ml_daily_actuals", None), ("public.ml_predictive_incidents", None),
+                ("public.ml_incident_horizon_accuracy", None),
                 ("public.ml_training_metadata", None), ("public.ml_daily_actuals_accident", None),
                 ("public.ml_predictive_incidents_accident", None), ("public.ml_training_metadata_accident", None)],
         evaluation="source IN ('public.ml_training_metadata', 'public.ml_training_metadata_accident')",
@@ -246,6 +258,41 @@ GROUPS = [
     ),
 ]
 BY_KEY = {g.key: g for g in GROUPS}
+
+# ── the live forecast check ──────────────────────────────────────────────────
+# Per group: what was forecast for days that had no record yet, and where the
+# record of those days is read from once it arrives. `preds` and `actuals` each
+# return (date, value).
+VOLUME_CHAMPION_COLUMN = (
+    "SELECT 'pred_' || lower(model_name) FROM gold.model_evaluation "
+    "WHERE is_champion AND target = 'Daily corridor volume, 80/20 split' LIMIT 1")
+FEEDBACK = {
+    "volume": [{
+        "target": "Daily corridor volume", "unit": "vehicles/day",
+        "column": VOLUME_CHAMPION_COLUMN, "allowed": [c.strip() for c in VOLUME_PREDS.split(",")],
+        "preds": "SELECT forecast_date, {column}::float FROM gold.ml_predictive_volume "
+                 "WHERE is_future AND split_label = '80_20'",
+        "actuals": "SELECT date, total_volume::float FROM gold.daily_traffic_volume_corrected",
+    }],
+    "emissions": [{
+        "target": "Daily corridor CO2", "unit": "tonnes CO2/day",
+        "preds": "SELECT forecast_date, (CASE champion_model WHEN 'GBR' THEN pred_gbr WHEN 'Polynomial' THEN pred_polynomial "
+                 "WHEN 'LSTM' THEN pred_lstm WHEN 'Derived' THEN pred_derived END)::float "
+                 "FROM gold.ml_predictive_emissions WHERE is_future",
+        "actuals": "SELECT date, SUM(co2_tonnes)::float FROM gold.fact_emissions_hourly GROUP BY date",
+    }],
+    "incident_counts": [{
+        "target": "Daily incidents (accidents and breakdowns)", "unit": "incidents/day",
+        "preds": "SELECT forecast_date, predicted_incident_count::float FROM public.ml_predictive_incidents "
+                 "WHERE prediction_type = 'future'",
+        # The trainer's own daily count (DAILY_COUNTS_SQL in train_incident_models.py).
+        "actuals": "SELECT d, COUNT(*)::float FROM ("
+                   "SELECT event_start_date::date AS d FROM silver.nlex_accident_events_clean WHERE event_start_date IS NOT NULL "
+                   "UNION ALL SELECT event_encoded_date::date FROM silver.nlex_breakdown_events_clean "
+                   "WHERE event_encoded_date IS NOT NULL) x GROUP BY d",
+    }],
+}
+FEEDBACK_MIN_DAYS = 7               # fewer days than a week of new record says little; reported, never called drift
 
 # ── output ───────────────────────────────────────────────────────────────────
 
@@ -286,6 +333,19 @@ def exists(cur, name: str) -> bool:
 
 
 def ensure_tables(cur) -> None:
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS gold.ml_forecast_feedback (
+            id serial PRIMARY KEY,
+            run_id int, group_key text NOT NULL, target text NOT NULL,
+            checked_at timestamptz NOT NULL DEFAULT now(),
+            days int NOT NULL, date_from date, date_to date,
+            wmape double precision, mae double precision, naive_wmape double precision,
+            verdict text NOT NULL)""")
+    cur.execute("COMMENT ON TABLE gold.ml_forecast_feedback IS "
+                "'How each published forecast did on the days that had no record when it was made, measured by the "
+                "weekly batch (weekly_retrain.py) once those days were uploaded and before the models were retrained. "
+                "wmape and naive_wmape are percentages; naive is the same weekday of the last recorded week before the "
+                "forecast began. verdict: on track, drifted (worse than naive over a week or more), or too few days to judge.'")
     cur.execute(f"CREATE SCHEMA IF NOT EXISTS {BACKUP}")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS gold.ml_batch_runs (
@@ -557,6 +617,87 @@ def champions(champs: dict) -> str | None:
     return ", ".join(names)[:120] or None
 
 
+def score_feedback(preds: dict, actuals: dict) -> dict | None:
+    """How the published forecast did on the days that now have a record. Pure: dates -> values in, figures out.
+
+    Scored against the seasonal naive every model here is held to: the same weekday of the last recorded week
+    before the forecast began. Days in the last recorded week are left out when the upload may still be growing
+    that day (the caller passes whole days only). None when no forecast day has a record yet.
+    """
+    days = sorted(d for d in preds if d in actuals and preds[d] is not None)
+    if not days:
+        return None
+    start = min(preds)
+    week = [actuals.get(start - __import__("datetime").timedelta(days=k)) for k in range(7, 0, -1)]   # oldest first
+    err = sum(abs(actuals[d] - preds[d]) for d in days)
+    total = sum(abs(actuals[d]) for d in days)
+    naive_err, naive_n = 0.0, 0
+    for d in days:
+        ref = week[(d - start).days % 7]
+        if ref is not None:
+            naive_err += abs(actuals[d] - ref)
+            naive_n += 1
+    wmape = (err / total * 100) if total > 0 else None
+    naive = (naive_err / total * 100) if total > 0 and naive_n == len(days) else None
+    if len(days) < FEEDBACK_MIN_DAYS or wmape is None or naive is None:
+        verdict = "too few days to judge"
+    else:
+        verdict = "on track" if wmape <= naive else "drifted"
+    return {"days": len(days), "from": days[0], "to": days[-1], "wmape": wmape, "mae": err / len(days),
+            "naive_wmape": naive, "verdict": verdict}
+
+
+def live_feedback(cur, g: Group) -> list[dict]:
+    """The published forecasts of `g` against the record that has arrived since. Reads only."""
+    out = []
+    for spec in FEEDBACK.get(g.key, []):
+        try:
+            sql = spec["preds"]
+            if "column" in spec:
+                cur.execute(spec["column"])
+                row = cur.fetchone()
+                if not row or row[0] not in spec["allowed"]:
+                    continue
+                sql = sql.format(column=row[0])
+            cur.execute(sql)
+            preds = {d: v for d, v in cur.fetchall()}
+            if not preds:
+                continue
+            cur.execute(spec["actuals"])
+            actuals = {d: v for d, v in cur.fetchall() if v is not None}
+            scored = score_feedback(preds, actuals)
+            out.append({"target": spec["target"], "unit": spec["unit"], "forecast_from": min(preds), "forecast_to": max(preds),
+                        **(scored or {"days": 0, "verdict": "no new record yet"})})
+        except Exception as exc:      # a check on the old forecasts must never stop the retrain
+            cur.connection.rollback()
+            out.append({"target": spec["target"], "unit": spec["unit"], "days": 0, "verdict": f"could not be checked ({str(exc).splitlines()[0]})"})
+    return out
+
+
+def feedback_line(f: dict) -> str:
+    if f["days"] == 0:
+        return f"published forecast vs new record — {f['target']}: {f['verdict']}"
+    naive = "" if f["naive_wmape"] is None else f", same-weekday-last-week {f['naive_wmape']:.1f}%"
+    return (f"published forecast vs new record — {f['target']}: {f['days']} day(s) {f['from']} to {f['to']}, "
+            f"off by {f['wmape']:.1f}% (MAE {num(f['mae'])} {f['unit']}){naive} → {f['verdict']}")
+
+
+def record_feedback(run_id: int, g: Group, items: list[dict]) -> None:
+    scored = [f for f in items if f["days"] > 0]
+    if not scored:
+        return
+    conn = connect()
+    try:
+        with conn, conn.cursor() as cur:
+            for f in scored:
+                cur.execute(
+                    "INSERT INTO gold.ml_forecast_feedback (run_id, group_key, target, days, date_from, date_to, "
+                    "wmape, mae, naive_wmape, verdict) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (run_id, g.key, f["target"], f["days"], f["from"], f["to"], f["wmape"], f["mae"], f["naive_wmape"], f["verdict"]))
+    finally:
+        conn.close()
+
+
 def audit_entry(run_id: int, action: str, outcome: str, entity_type: str, entity_id: str, *,
                 from_status: str | None = None, to_status: str | None = None,
                 duration_ms: int | None = None, details: dict | None = None) -> None:
@@ -600,6 +741,18 @@ def run_group(g: Group, entry: dict, fp: dict, run_id: int, log_path: Path) -> N
     finally:
         conn.close()
     entry["from"] = champions(before)
+    # Before anything is replaced: how did what we published do on the days that have arrived since?
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            entry["feedback"] = live_feedback(cur, g)
+    finally:
+        conn.close()
+    notes = [feedback_line(f) for f in entry["feedback"]]
+    for n in notes:
+        say(f"  {n}")
+    record_feedback(run_id, g, entry["feedback"])
+    entry["comparisons"] = list(notes)
     saved = take_backup(g)
     say(f"  backed up {len(saved)} table(s) to {BACKUP}")
     for c in g.caches:
@@ -622,9 +775,10 @@ def run_group(g: Group, entry: dict, fp: dict, run_id: int, log_path: Path) -> N
     finally:
         conn.close()
     entry["to"] = champions(after)
-    problems, entry["comparisons"], entry["checks"] = gate(g, before, stamp_before, after, stamp_after)
-    for c in entry["comparisons"]:
+    problems, compared, entry["checks"] = gate(g, before, stamp_before, after, stamp_after)
+    for c in compared:
         say(f"    {c}")
+    entry["comparisons"] = notes + compared
     if problems:
         restore(g)
         entry["status"] = "kept previous"
@@ -641,7 +795,7 @@ def run_group(g: Group, entry: dict, fp: dict, run_id: int, log_path: Path) -> N
     finally:
         conn.close()
     entry["status"] = "retrained"
-    entry["reason"] = f"passed all {len(entry['checks']) + len(entry['comparisons'])} tests; the new models are live"
+    entry["reason"] = f"passed all {len(entry['checks']) + len(compared)} tests; the new models are live"
     say(f"  RETRAINED — {entry['reason']}")
 
 
@@ -790,6 +944,8 @@ def plan(args) -> int:
                 for what, sql in g.checks:
                     ok = run_check(cur, sql)
                     say(f"  test on current outputs: {'pass' if ok is True else 'FAIL'} — {what}{'' if ok is True else f' ({ok})'}")
+                for f in live_feedback(cur, g):
+                    say(f"  {feedback_line(f)}")
     finally:
         conn.close()
     return 0

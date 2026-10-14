@@ -64,25 +64,51 @@ export async function exposureByHour(lo: string, hi: string): Promise<Map<number
   return new Map(rows.map((r: { hr: number; veh: number | null }) => [Number(r.hr), Number(r.veh ?? 0)]));
 }
 
-export type ClearedIncident = { day: string; hr: number; minutes: number; band: "under15" | "to60" | "to180" | "over180" };
+export type ClearedIncident = {
+  day: string;
+  hr: number;
+  /** Minutes a LANE was blocked (see clearedIncidents): the time traffic queued behind it. */
+  minutes: number;
+  band: "under15" | "to60" | "to180" | "over180";
+  /** "NB", "SB", "EB" or "WB" where recorded, and the km post it happened at; null where the record has none. */
+  direction: string | null;
+  km: number | null;
+};
 
-/** Accidents in [lo, hi] with a clearance time: the hour each started and how long it took to clear. */
+/**
+ * Accidents in [lo, hi] that blocked a lane: the hour each started and how long the lane stayed blocked.
+ *
+ * The queue behind an incident lasts as long as the BLOCKAGE does (blockage_cleared - event_start_date), not as
+ * long as the site takes to clear. This used clearance_min until 2026-10-11, which is the time to SITE cleared:
+ * a vehicle down an embankment that never touched a lane, recovered twenty-two hours later, was counted as
+ * twenty-two hours of queueing, squared. Measured on 2025: of the 61 incidents over three hours by clearance_min,
+ * 18 had no blockage at all, and the sum of T squared (what the idling model is driven by) on blockage time is
+ * 29.6% of what it was on clearance time. Delay-induced carbon and both incident strategies were therefore
+ * about three times too large. An incident with no blockage (recorded as cleared the minute it began) queues
+ * nobody and is left out; one recorded as cleared before it began is a data error and is left out too.
+ */
 export async function clearedIncidents(lo: string, hi: string): Promise<ClearedIncident[]> {
   const { rows } = await db!.query(
-    `SELECT event_start_date::date::text AS day, EXTRACT(hour FROM event_start_date)::int AS hr, clearance_min::float AS minutes
+    `SELECT event_start_date::date::text AS day, EXTRACT(hour FROM event_start_date)::int AS hr,
+            (EXTRACT(EPOCH FROM (blockage_cleared - event_start_date)) / 60)::float AS minutes,
+            direction, km_value::float AS km
        FROM silver.nlex_accident_events_clean
-      WHERE clearance_min IS NOT NULL AND clearance_min > 0 AND event_start_date::date BETWEEN $1 AND $2`,
+      WHERE blockage_cleared IS NOT NULL AND blockage_cleared > event_start_date
+        AND blockage_cleared - event_start_date <= interval '24 hours'
+        AND event_start_date::date BETWEEN $1 AND $2`,
     [lo, hi],
   );
-  return rows.map((r: { day: string; hr: number; minutes: number }) => ({
+  return rows.map((r: { day: string; hr: number; minutes: number; direction: string | null; km: number | null }) => ({
     day: r.day,
     hr: Number(r.hr),
     minutes: Number(r.minutes),
     band: r.minutes < 15 ? "under15" : r.minutes < 60 ? "to60" : r.minutes < 180 ? "to180" : "over180",
+    direction: ["NB", "SB", "EB", "WB"].includes(r.direction ?? "") ? r.direction : null,
+    km: r.km == null ? null : Number(r.km),
   }));
 }
 
-/** Delay-induced carbon over [lo, hi]: the idling CO2 of every cleared accident, each at its own clearance time. */
+/** Delay-induced carbon over [lo, hi]: the idling CO2 of every accident that blocked a lane, each for as long as it blocked it. */
 export async function delayCarbon(lo: string, hi: string) {
   const [exposure, incidents] = await Promise.all([exposureByHour(lo, hi), clearedIncidents(lo, hi)]);
   const kg = incidents.reduce((s, e) => s + idleKg(exposure.get(e.hr) ?? 0, e.minutes), 0);
@@ -91,7 +117,7 @@ export async function delayCarbon(lo: string, hi: string) {
   return {
     tonnes: kg / 1000,
     incidents: incidents.length,
-    /** Share of it from incidents that took three hours or more: the tail, because the cost is quadratic. */
+    /** Share of it from incidents that blocked a lane for three hours or more: the tail, because the cost is quadratic. */
     longIncidents: long.length,
     longSharePct: kg > 0 ? (longKg / kg) * 100 : 0,
   };

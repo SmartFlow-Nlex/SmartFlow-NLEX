@@ -12,6 +12,7 @@ import {
   type Direction,
   type ManualClosure,
   type NewEventSpec,
+  type KmStretch,
   type Ownership,
   type Road,
   type ScenarioEvent,
@@ -139,6 +140,8 @@ type Props = {
   onDragFamily?: (family: FamilyKey | null) => void;
   /** Outline a plaza or service area on the canvas while it is the chosen place. */
   onHighlight?: (facilityId: string | null) => void;
+  /** Zoom the road onto a km: an event's "Zoom to" button. */
+  onLocate?: (km: number) => void;
 };
 
 type DurationChoice = "sampled" | "p50" | "p90" | "manual";
@@ -500,11 +503,14 @@ function EventRow({
   onRemove,
   showDirection,
   clockStartMin,
+  onLocate,
 }: {
   event: ScenarioEvent;
   owners: Ownership;
   nowS: number;
   onRemove: () => void;
+  /** Zoom the road onto this event (absent for rain, which is the whole road). */
+  onLocate?: () => void;
   /** Time of day at which the scenario clock reads zero, so the row can say when the event starts on the clock. */
   clockStartMin: number;
   /** Both mode: name the carriageway on the row itself, not only on the group it sits in. */
@@ -535,13 +541,19 @@ function EventRow({
         : event.lane === null
           ? "Shoulder"
           : `Lane ${event.lane}`;
-  const where = `${place} · Km ${event.positionKm.toFixed(2)} · starts ${clockLabel(clockStartMin + event.startS / 60)}`;
+  const km = event.stretchKm ? `${event.stretchKm.fromKm.toFixed(2)}–${event.stretchKm.toKm.toFixed(2)}` : event.positionKm.toFixed(2);
+  const where = `${place} · Km ${km} · starts ${clockLabel(clockStartMin + event.startS / 60)}`;
   return (
     <div className={`sandbox-scn-event${invalid ? " is-invalid" : ""}`} data-scn-event={event.id}>
       <div className="sandbox-scn-event-head">
         {showDirection && <DirectionPill direction={event.direction} />}
         <b>{event.name}</b>
         <span className={`sandbox-scn-chip ${invalid ? "bad" : p.state}`}>{status}</span>
+        {onLocate && (
+          <button className="btn-muted" data-scn="locate" onClick={onLocate} title="Zoom the road onto this event">
+            Zoom to
+          </button>
+        )}
         <button className="btn-muted" data-scn="remove" onClick={onRemove}>
           Remove
         </button>
@@ -594,6 +606,9 @@ export default function ScenarioPanel(props: Props) {
   /** Extra lanes the operator added on top of `lane`, for a MULTI_LANE_FAMILIES family. 1-based, no duplicates. */
   const [extraLanes, setExtraLanes] = useState<number[]>([]);
   const [posKm, setPosKm] = useState<number | null>(null);
+  /** "Over a stretch": the event covers posKm to stretchEndKm exactly (ScenarioEvent.stretchKm) rather than a point. */
+  const [stretchOn, setStretchOn] = useState(false);
+  const [stretchEndKm, setStretchEndKm] = useState<number | null>(null);
   const [startMin, setStartMin] = useState(DEFAULT_START_MIN);
   const [choice, setChoice] = useState<DurationChoice>("sampled");
   const [manualMin, setManualMin] = useState(DEFAULT_MANUAL_MIN);
@@ -617,10 +632,11 @@ export default function ScenarioPanel(props: Props) {
     const t = getTemplate(f);
     setFamily(f);
     setInfoOpen(false);
-    setWantBoth(t.carriageways === "one_or_both");
+    setWantBoth(t.carriageways !== "one");
     setLane(null);
     setExtraLanes([]);
     setPosKm(null);
+    setStretchEndKm(null);
     setRefusal(null);
     setHotChoice(null);
     // Keep the operator's way of placing wherever it still applies to the new family.
@@ -705,11 +721,17 @@ export default function ScenarioPanel(props: Props) {
     : [];
   // One place for both carriageways: the first target's default, so Both does not put the two events at different km.
   const kmNow = Math.min(toKm, Math.max(fromKm, place.positionKm));
+  /* Over a stretch — "within Km 12.30–12.40" — the event covers exactly it: its closure (or slow-down) is the
+     stretch, and its vehicles stop inside it. A typed km only, and not rain, which is the whole road. The far end
+     starts 100 m on (or back, at the end of the window). */
+  const canStretch = mode === "km" && family !== "rain";
+  const stretchEnd = Math.min(toKm, Math.max(fromKm, stretchEndKm ?? (kmNow + 0.1 <= toKm ? kmNow + 0.1 : kmNow - 0.1)));
+  const stretchNow: KmStretch | null = canStretch && stretchOn ? { fromKm: Math.min(kmNow, stretchEnd), toKm: Math.max(kmNow, stretchEnd) } : null;
   const variant = variantFor(family, vehicle, cause, label, intensity);
   const duration: DurationMode =
     choice === "sampled" ? { kind: "sampled", seed } : choice === "p50" ? { kind: "p50" } : choice === "p90" ? { kind: "p90" } : { kind: "manual", minutes: manualMin };
   // At a plaza the event has no lane of the carriageway: the booth or pump is its place.
-  const specFor = (d: Direction): NewEventSpec => ({ variant, direction: d, lane: site ? null : hasLane(family) ? laneNow : null, extraLanes: site ? [] : extraLanesNow, positionKm: kmNow, startMinutes: startMin, duration, site });
+  const specFor = (d: Direction): NewEventSpec => ({ variant, direction: d, lane: site ? null : hasLane(family) ? laneNow : null, extraLanes: site ? [] : extraLanesNow, positionKm: kmNow, stretchKm: stretchNow, startMinutes: startMin, duration, site });
 
   // The same call "Add event" makes, once per target, so what is shown is what will be stored (and why not, if
   // it will not). With two targets the Add is all or nothing: one refusal blocks both, and names its carriageway.
@@ -780,6 +802,10 @@ export default function ScenarioPanel(props: Props) {
     };
   }, [props.dropRef]);
 
+  const { onLocate } = props;
+  const locateOf = (e: ScenarioEvent) =>
+    onLocate && e.variant.family !== "rain" ? () => onLocate(e.stretchKm ? (e.stretchKm.fromKm + e.stretchKm.toKm) / 2 : e.positionKm) : undefined;
+
   const add = () => {
     let failure: string | null = null;
     for (const d of targets) {
@@ -825,7 +851,12 @@ export default function ScenarioPanel(props: Props) {
           </button>
         ))}
       </div>
-      {both && (
+      {template.carriageways === "both" && (
+        <p className="sandbox-slider-hint" data-scn="direction-note">
+          Rain falls on the whole road: it is added to both carriageways, at the same time{both ? "" : " (the other one runs off screen)"}.
+        </p>
+      )}
+      {both && template.carriageways !== "both" && (
         <div className="sandbox-dir-pick" data-scn="direction-pick" role="tablist" aria-label="Add the event to which carriageway">
           <span className="k">Add to</span>
           <div className="sandbox-dir-seg">
@@ -1017,10 +1048,22 @@ export default function ScenarioPanel(props: Props) {
         {mode === "km" && (
           <div className="sandbox-scn-row">
             <label>
-              Position (km)
+              {stretchNow ? "From (km)" : "Position (km)"}
               <NumberField value={kmNow} min={fromKm} max={toKm} step={0.05} decimals={2} scn="km" onCommit={setPosKm} />
             </label>
+            {stretchNow && (
+              <label>
+                To (km)
+                <NumberField value={stretchEnd} min={fromKm} max={toKm} step={0.05} decimals={2} scn="km-to" onCommit={setStretchEndKm} />
+              </label>
+            )}
           </div>
+        )}
+        {canStretch && (
+          <label className="sandbox-scn-check">
+            <input type="checkbox" data-scn="km-stretch" checked={stretchOn} onChange={(e) => setStretchOn(e.target.checked)} />
+            Over a stretch: the event covers exactly From–To
+          </label>
         )}
         {place.note && mode !== "data" && <span className="sandbox-slider-hint" data-scn="place-note">{place.note}</span>}
         {mode === "data" && place.note && candidates.length === 0 && <span className="sandbox-slider-hint" data-scn="place-note">{place.note}</span>}
@@ -1149,7 +1192,7 @@ export default function ScenarioPanel(props: Props) {
       {refusal !== null && refusalNow === null && <p className="sandbox-live-note warn">{refusal}</p>}
       <div className="sandbox-btn-row">
         <button className="btn-primary" data-scn="add" disabled={refusalNow !== null} onClick={add} style={{ marginLeft: 0 }}>
-          {both ? (onBoth ? "Add to both carriageways" : `Add to ${DIRECTION_NAME[direction]}`) : "Add event"}
+          {onBoth ? "Add to both carriageways" : both ? `Add to ${DIRECTION_NAME[direction]}` : "Add event"}
         </button>
       </div>
 
@@ -1170,7 +1213,7 @@ export default function ScenarioPanel(props: Props) {
                     </div>
                     <SkipControl data={dd} />
                     {dd.events.map((e) => (
-                      <EventRow key={e.id} event={e} owners={dd.owners} nowS={dd.nowS} onRemove={() => dd.onRemove(e.id)} showDirection clockStartMin={clockStartMin} />
+                      <EventRow key={e.id} event={e} owners={dd.owners} nowS={dd.nowS} onRemove={() => dd.onRemove(e.id)} showDirection clockStartMin={clockStartMin} onLocate={locateOf(e)} />
                     ))}
                   </div>
                 );
@@ -1182,7 +1225,7 @@ export default function ScenarioPanel(props: Props) {
               <span className="sandbox-mini-label">Events · time of day, the clock starts at {clockLabel(clockStartMin)}</span>
               <SkipControl data={target} />
               {events.map((e) => (
-                <EventRow key={e.id} event={e} owners={target.owners} nowS={target.nowS} onRemove={() => target.onRemove(e.id)} showDirection={false} clockStartMin={clockStartMin} />
+                <EventRow key={e.id} event={e} owners={target.owners} nowS={target.nowS} onRemove={() => target.onRemove(e.id)} showDirection={false} clockStartMin={clockStartMin} onLocate={locateOf(e)} />
               ))}
             </>
           )}

@@ -30,8 +30,31 @@ WHY THE CHAMPION ONLY, NOT ALL SEVEN CANDIDATES
   origin), and the dashboard's long-horizon caveat only needs to describe the
   series shown by default — the champion's.
 
+WHAT EACH ORIGIN IS ALLOWED TO KNOW (corrected 2026-10-08)
+  A forecast made on the origin date knows nothing after it. The first version
+  of this study handed every origin the REAL rainfall and the REAL traffic
+  volume of the 90 days it was forecasting (fetch_future_rain and
+  VOLUME_BY_DATE both prefer an observed value, and for a historical origin
+  every "future" day has one). The live forecast never has those: it gets a
+  16-day weather forecast and the traffic module's own predicted volume. So
+  the study scored a better-informed model than the one on the dashboard.
+  Each origin now sees only what was on record at the origin:
+    rain    after the origin = the mean daily rain of that calendar month in
+            the history before the origin (no archive of past weather
+            forecasts exists to replay, and past day 16 the live run has none)
+    volume  after the origin = the mean of the same weekday over the last 28
+            days before the origin (a stand-in for the traffic forecast; the
+            live one is a trained model, so this is the cautious side)
+
+  The naive baseline is the same weekday of the last full week before the
+  origin. The first version took the seven days before the origin in REVERSE
+  order (day 1 was scored against the origin's eve, day 2 against the day
+  before that...), which lines up with the weekday one day in seven -- a
+  baseline easier to beat than the lag-7 naive the notes claim it is.
+
 Usage:
-    .venv/Scripts/python.exe measure_incident_horizon_accuracy.py
+    python measure_incident_horizon_accuracy.py               dry run: prints the table, writes nothing
+    python measure_incident_horizon_accuracy.py --write-db    also replaces ml_incident_horizon_accuracy
 
 Run train_incident_models.py --write-db first: this script reads the
 champion's name from ml_training_metadata rather than re-deriving it, and
@@ -55,7 +78,32 @@ SEASON = 7     # weekly seasonality -- this pipeline's own "naive" lag
 BUCKETS = [(1, 7), (8, 14), (15, 30), (31, 60), (61, 90)]
 
 
+def origin_inputs(origin_date, future_dates: list, rain_by_date: dict, volume_by_date: dict) -> tuple[dict, dict]:
+    """Rain and volume as known ON the origin date: observed up to it, estimated after it (see the module note)."""
+    rain = {d: v for d, v in rain_by_date.items() if d <= origin_date}
+    by_month: dict[int, list] = {}
+    for d, v in rain.items():
+        by_month.setdefault(d.month, []).append(float(v))
+    overall = float(np.mean(list(rain.values()))) if rain else 0.0
+    for fd in future_dates:
+        m = by_month.get(fd.month)
+        rain[fd] = float(np.mean(m)) if m else overall
+    volume = {d: v for d, v in volume_by_date.items() if d <= origin_date}
+    if volume:
+        recent = [(origin_date - pd.Timedelta(days=k)) for k in range(0, 28)]
+        by_dow: dict[int, list] = {}
+        for d in recent:
+            if d in volume:
+                by_dow.setdefault(d.weekday(), []).append(float(volume[d]))
+        fallback = float(np.mean([v for vs in by_dow.values() for v in vs])) if by_dow else 0.0
+        for fd in future_dates:
+            vs = by_dow.get(fd.weekday())
+            volume[fd] = float(np.mean(vs)) if vs else fallback
+    return rain, volume
+
+
 def main() -> None:
+    write_db = "--write-db" in sys.argv[1:]
     conn = tim.get_conn()
     try:
         print("Loading daily incident counts + rainfall + volume (mirrors train_incident_models.py's own load)...")
@@ -104,37 +152,43 @@ def main() -> None:
 
         actual_by_date = dict(zip(daily["d"].dt.date, daily["total"]))
         saved_future_days = tim.FUTURE_DAYS
+        saved_volume = tim.VOLUME_BY_DATE
+        all_volume = dict(tim.VOLUME_BY_DATE)
         tim.FUTURE_DAYS = HZ_H
         rows: list[dict] = []
         try:
             for oi, cut in enumerate(origins, 1):
                 origin_feat = feat.iloc[:cut].reset_index(drop=True)
                 origin_date = origin_feat["d"].iloc[-1].date()
+                future_dates = [(origin_date + pd.Timedelta(days=i)) for i in range(1, HZ_H + 1)]
+                origin_rain, origin_volume = origin_inputs(origin_date, future_dates, rain_by_date, all_volume)
+                tim.VOLUME_BY_DATE = origin_volume
                 try:
                     tim.set_all_seeds()
-                    _val_pred, future_rows, _imp = tim.build_final_predictions(champion, origin_feat, rain_by_date)
+                    _val_pred, future_rows, _imp = tim.build_final_predictions(champion, origin_feat, origin_rain)
                 except Exception as e:
                     print(f"    origin {oi}/{len(origins)}  {origin_date}  FAILED ({e}) -- skipped")
                     continue
-                # The naive baseline for this origin: the SEASON most recent
-                # ACTUAL values before it, cycled across the horizon -- the
-                # same lag-7 convention train_incident_models.py's own
-                # evaluation scores every model against, not a fresh baseline
-                # invented for this script.
-                lag_window = [actual_by_date.get(origin_date - pd.Timedelta(days=k)) for k in range(1, SEASON + 1)]
-                lag_window = [v for v in lag_window if v is not None]
+                # The naive baseline for this origin: the same weekday in the
+                # last full week on record at the origin (the origin's own day
+                # included), repeated across the horizon -- the lag-7
+                # convention train_incident_models.py scores every model
+                # against. Day h falls on the weekday of the day
+                # (SEASON*ceil(h/SEASON) - h) before the origin.
                 scored = 0
                 for h, (d, pred) in enumerate(future_rows, start=1):
                     actual = actual_by_date.get(d.date())
-                    if actual is None or not lag_window:
+                    back = SEASON * -(-h // SEASON) - h
+                    naive = actual_by_date.get(origin_date - pd.Timedelta(days=back))
+                    if actual is None or naive is None:
                         continue
-                    naive = lag_window[(h - 1) % len(lag_window)]
                     rows.append({"h": h, "a": float(actual), "f": float(pred), "sn": float(naive)})
                     scored += 1
                 last_h_date = future_rows[-1][0].date() if future_rows else origin_date
                 print(f"    origin {oi}/{len(origins)}  {origin_date} -> {last_h_date}  ({scored}/{len(future_rows)} days scorable)")
         finally:
             tim.FUTURE_DAYS = saved_future_days
+            tim.VOLUME_BY_DATE = saved_volume
 
         hzdf = pd.DataFrame(rows)
         if hzdf.empty:
@@ -149,6 +203,41 @@ def main() -> None:
         if hz_scale:
             print(f"\n  MASE denominator (lag-7 naive, {len(ins)} training days): {hz_scale:.3f} incidents/day")
         print(f"  {'range':<10}{'WMAPE%':>9}{'MAPE%':>8}{'MASE':>8}{'MAE':>9}{'baseline%':>11}   verdict")
+
+        study = []
+        for lo, hi in BUCKETS:
+            g = hzdf[(hzdf.h >= lo) & (hzdf.h <= hi)]
+            if g.empty:
+                continue
+            e = (g.a - g.f).abs()
+            a_sum = g.a.sum()
+            wm = float(e.sum() / a_sum * 100) if a_sum > 0 else None
+            nonzero = g.a.replace(0, np.nan)
+            mp = float((e / nonzero).mean() * 100)
+            ms = float(e.mean() / hz_scale) if hz_scale else None
+            base = float((g.a - g.sn).abs().sum() / a_sum * 100) if a_sum > 0 else None
+            ok = bool(wm is not None and base is not None and ms is not None and wm < base and ms < 1.0)
+            # No "validated operating range" bucket exists here the way
+            # traffic's h<=14 is: VALIDATION_DAYS never scores a multi-step
+            # recursive run at ANY depth, so every bucket below is this
+            # script's own first measurement of it, not a comparison
+            # against a separately-validated range.
+            note = (
+                "rolling-origin study — clears both gates: beats the lag-7 naive on WMAPE, and MASE is under 1.0"
+                if ok else
+                "rolling-origin study — fails at least one gate: does not beat the lag-7 naive on WMAPE, "
+                "and/or MASE is 1.0 or higher"
+            )
+            study.append((lo, hi, int(len(g)), wm, mp, ms, float(e.mean()), base, ok, note))
+            ms_s = f"{ms:.3f}" if ms is not None else "n/a"
+            base_s = f"{base:.2f}" if base is not None else "n/a"
+            wm_s = f"{wm:.2f}" if wm is not None else "n/a"
+            print(f"  {f'd{lo}-{hi}':<10}{wm_s:>9}{mp:>8.2f}{ms_s:>8}{e.mean():>9.2f}{base_s:>11}   {'USABLE' if ok else 'FAILS GATES'}")
+
+        if not write_db:
+            print(f"\ndry run: {len(study)} buckets measured for champion={champion}; "
+                  "ml_incident_horizon_accuracy NOT touched (pass --write-db to replace it)")
+            return
 
         with conn.cursor() as cur:
             cur.execute("""
@@ -170,35 +259,6 @@ def main() -> None:
                 "to each stretch instead of quoting the day-1 figure everywhere.'"
             )
             cur.execute("DELETE FROM ml_incident_horizon_accuracy")
-
-            study = []
-            for lo, hi in BUCKETS:
-                g = hzdf[(hzdf.h >= lo) & (hzdf.h <= hi)]
-                if g.empty:
-                    continue
-                e = (g.a - g.f).abs()
-                a_sum = g.a.sum()
-                wm = float(e.sum() / a_sum * 100) if a_sum > 0 else None
-                nonzero = g.a.replace(0, np.nan)
-                mp = float((e / nonzero).mean() * 100)
-                ms = float(e.mean() / hz_scale) if hz_scale else None
-                base = float((g.a - g.sn).abs().sum() / a_sum * 100) if a_sum > 0 else None
-                ok = bool(wm is not None and base is not None and ms is not None and wm < base and ms < 1.0)
-                # No "validated operating range" bucket exists here the way
-                # traffic's h<=14 is: VALIDATION_DAYS never scores a multi-step
-                # recursive run at ANY depth, so every bucket below is this
-                # script's own first measurement of it, not a comparison
-                # against a separately-validated range.
-                note = (
-                    "rolling-origin study — clears both gates: beats the lag-7 naive on WMAPE, and MASE is under 1.0"
-                    if ok else
-                    "rolling-origin study — fails at least one gate: does not beat the lag-7 naive on WMAPE, "
-                    "and/or MASE is 1.0 or higher"
-                )
-                study.append((lo, hi, int(len(g)), wm, mp, ms, float(e.mean()), base, ok, note))
-                ms_s = f"{ms:.3f}" if ms is not None else "n/a"
-                base_s = f"{base:.2f}" if base is not None else "n/a"
-                print(f"  {f'd{lo}-{hi}':<10}{wm:>9.2f}{mp:>8.2f}{ms_s:>8}{e.mean():>9.2f}{base_s:>11}   {'USABLE' if ok else 'FAILS GATES'}")
 
             for lo, hi, n, wm, mp, ms, mae, bw, ok, note in study:
                 cur.execute(

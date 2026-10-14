@@ -19,6 +19,53 @@ export type VehicleClass = 1 | 2 | 3;
  *  not an emergency, so it travels at ordinary speed and sets up rather than
  *  responding to anything. */
 export type ResponderKind = "ambulance" | "police" | "tow" | "works";
+/** How a scene's vehicle looks once it has come to rest: crashed (turned at an angle, bodywork damaged), stalled (a
+ *  breakdown: straight, hazards going) or overturned (on its side). */
+export type WreckLook = "crash" | "stalled" | "overturned";
+/* How the vehicles of a scene come to be there. Never put down on the road: they are the traffic that was driving
+ * there, picked out a few seconds before it happens and seen to do it.
+ *   collision  the first brakes hard and stops; the one behind sees it too late and runs into it
+ *   pileup     the same, and each one behind piles into the last
+ *   self       one vehicle loses control, skids round and stops
+ *   overturn   the same, and it goes over (a truck or a bus, if one is coming)
+ *   breakdown  it loses power, slows with its hazards on and stops in its lane
+ *   shoulder   the same, but it pulls onto the hard shoulder to stop */
+export type CrashKind = "collision" | "pileup" | "self" | "overturn" | "breakdown" | "shoulder";
+
+/** A scene being put together out of the traffic, then standing until it is cleared (crashAt / releaseScene). */
+export type CrashScene = {
+  /** The scenario event it belongs to, or an id of its own for an operator's or a secondary incident. */
+  readonly key: string;
+  /** The lane it happens in (the outer lane, for a vehicle pulling onto the shoulder). */
+  readonly lane: number;
+  /** The event's point, and where the first vehicle's nose comes to rest. */
+  readonly x: number;
+  readonly stopX: number;
+  /** How many vehicles it takes; cut short if nobody else comes along. */
+  want: number;
+  readonly kind: CrashKind;
+  /** The class to pick if one is coming: a truck to overturn, the class that broke down. */
+  readonly prefer: VehicleClass | null;
+  /** Sim time it is due: the first vehicle is chosen to arrive about then. */
+  readonly dueAt: number;
+  readonly members: Vehicle[];
+  lastJoinAt: number;
+  /** Everyone in it has come to rest; the response has been sent. */
+  done: boolean;
+  /** The operator's or a secondary incident it is the vehicles of: when that is cleared, so is the scene. */
+  incident?: Interventions["incidents"][number];
+  /** A recovery truck has been asked for (its tow or service phase began), and has been sent. */
+  towWanted: boolean;
+  towSent: boolean;
+  /** A scene with no event to say when: the time to send its recovery truck. */
+  towAt: number | null;
+  /** Seconds after it is due by which the first responder should be at the scene (the event's response time);
+   *  undefined for a scene with no event behind it, which is answered after RESPONSE_CALL_S. */
+  respondS?: number;
+};
+
+/** The least time between a scene coming to rest and its first responder setting off: somebody has to report it. */
+const RESPONSE_CALL_S = 15;
 export type DriverProfile = "cautious" | "normal" | "aggressive";
 
 export type Vehicle = {
@@ -144,8 +191,35 @@ export type Vehicle = {
   heldAtGore?: boolean;
   /** Responders sent to a scene in a plaza or service area: which, and which booth. */
   facTarget?: { fid: string; station: number | null };
+  /** A responder held on the shoulder behind its own scene with no way round: for how long (s). */
+  shoulderWait?: number;
   /** Until when (sim time) this driver accepts a shortened headway behind a car that just merged in front of it. */
   relaxUntil?: number;
+  /* On its way into a scene that has not happened yet (crashAt): which, its place in it (0 stops first; each after it
+   * runs into the one ahead, `ahead`), and how it is going. Until the moment it happens it drives as everyone does,
+   * which is what lets the event be seen coming. */
+  doom?: { readonly scene: CrashScene; readonly order: number; readonly ahead: Vehicle | null; readonly spin: number; brakeFromV?: number; hitAt?: number; stoppedFor: number };
+  /** Wrecks, and a vehicle skidding into one: which way the body points now, radians off the lane, easing to restAngle. */
+  yaw?: number;
+  /** Wrecks: how the canvas draws it. */
+  look?: WreckLook;
+  /** Hazard lights flashing: stalled, crashed, or slowing to a stop with a fault. */
+  hazards?: boolean;
+  /** Sim time a wreck came to rest, or a responder parked: how long the people there have had to get out and get on with it. */
+  stillSince?: number;
+  /** Responders: the lane they park in (TrafficSim.shoulderLane for the hard shoulder). */
+  parkLane?: number;
+  /** On the hard shoulder, in TrafficSim.shoulder — in no lane. `lane` is then the shoulder's number. */
+  onShoulder?: boolean;
+  /** Crossing between the shoulder and a lane (laneFrom or lane is the shoulder's number): the canvas draws that end on the shoulder. */
+  viaShoulder?: boolean;
+  /** A wreck being towed away: the truck it is hitched behind, and whether the hitch is made yet (it is winched up first). */
+  towedBy?: Vehicle;
+  hitched?: boolean;
+  /** A recovery truck: the vehicle it has in tow. */
+  towing?: Vehicle;
+  /** Responders: how long it has stood waiting to get across to the lane it parks in. */
+  heldFor?: number;
 };
 
 export type Interventions = {
@@ -342,6 +416,24 @@ const B_COMF = 2.0; // comfortable decel m/s^2
 const S0 = 2.5; // minimum bumper gap m
 const DELTA = 4;
 const INCIDENT_LENGTH = 5; // a stalled vehicle occupies ~5 m of lane
+
+/* Scenes made of the traffic (crashAt). */
+/** How far upstream the first vehicle of a scene may be picked from, m. */
+const SCENE_REACH_M = 450;
+/** A vehicle joins a scene only from this close behind the last one in it, m. */
+const SCENE_FOLLOW_M = 220;
+/** Nobody else has come along in this long, s: the scene is what it is. */
+const SCENE_GIVE_UP_S = 45;
+/** The first vehicle's hard stop, and how fast a breakdown loses speed, m/s². */
+const CRASH_BRAKE = 6.5;
+const COAST_DECEL = 1.6;
+/** How hard the one behind brakes once it has seen: an emergency stop, too late to avoid it. */
+const LATE_BRAKE = 5.5;
+/** Responders' pace on the hard shoulder, m/s: well under the limit, past a queue. */
+const SHOULDER_SPEED: Record<ResponderKind, number> = { police: 22, ambulance: 20, tow: 16, works: 13 };
+const RESPONDER_LENGTH: Record<ResponderKind, number> = { police: 5, ambulance: 6.5, tow: 9, works: 8 };
+const RESPONDER_CLASS: Record<ResponderKind, VehicleClass> = { police: 1, ambulance: 2, tow: 3, works: 3 };
+const RESPONDER_COLOR: Record<ResponderKind, string> = { police: "#1d4ed8", ambulance: "#e2e8f0", tow: "#f59e0b", works: "#eab308" };
 
 const B_SAFE = 4.0; // MOBIL: max decel a follower may be forced into
 const LC_THRESHOLD = 0.2; // MOBIL: incentive threshold m/s^2
@@ -677,6 +769,19 @@ function mulberry32(seed: number) {
 export class TrafficSim {
   cfg: SimConfig;
   vehicles: Vehicle[] = [];
+  /** The hard shoulder: responders running past the traffic to a scene, and vehicles stopped on it. In no lane. */
+  shoulder: Vehicle[] = [];
+  /** The shoulder's number as a lane: one past the outer lane (laneFrom / lane while crossing to or from it). */
+  get shoulderLane(): number {
+    return this.cfg.laneCount;
+  }
+  /** Scenes being made out of the traffic, and standing (crashAt). */
+  private scenes: CrashScene[] = [];
+  private sceneSeq = 0;
+  /** The incidents that are obstacles this step: one whose vehicles are still on their way to it is not there yet. */
+  private liveIncidents: Interventions["incidents"] = [];
+  /** Responders waiting to come across into a lane this step: the traffic coming up in it holds back and lets them in. */
+  private yieldTo: { lane: number; x: number; len: number }[] = [];
   interventions: Interventions;
   time = 0;
   private rng: () => number;
@@ -988,28 +1093,38 @@ export class TrafficSim {
    * would — off the expressway at the gore, or down the local road into an
    * entry plaza — and stops behind the scene. Roadworks are a crew shutting
    * booths, with a works truck parked in the lane instead. */
-  facilityEventStart(sceneKey: string, site: { facilityId: string; kind: "booth" | "pump" | "approach"; stations: readonly number[] }, family: string): boolean {
+  facilityEventStart(sceneKey: string, site: { facilityId: string; kind: "booth" | "pump" | "approach"; stations: readonly number[] }, family: string, respondS?: number): boolean {
     const f = this.fac.get(site.facilityId);
     if (!f) return false;
     const works = family === "scheduled_roadworks";
     const breakdown = family === "breakdown_in_lane" || family === "breakdown_shoulder";
     const want = works ? 0 : family === "multi_vehicle_collision" ? 3 : family === "minor_collision" ? 2 : 1;
-    const synth = (u: number) => this.facilityArrival(u);
+    // Made of the vehicles in the plaza: those there are brought to rest, and with none there the next to arrive is.
     if (site.kind === "approach") {
-      this.fac.strandOnApproach(f.spec.id, Math.max(1, want), sceneKey, synth, !breakdown);
+      this.fac.strandOnApproach(f.spec.id, Math.max(1, want), sceneKey, !breakdown);
     } else {
       site.stations.forEach((st, i) => {
-        if (i === 0 && want > 0) this.fac.strandAt(f.spec.id, st, want, sceneKey, synth, !breakdown);
+        if (i === 0 && want > 0) this.fac.strandAt(f.spec.id, st, want, sceneKey, !breakdown);
         else this.fac.closeStation(f.spec.id, st, sceneKey);
       });
     }
     const station = site.kind === "approach" ? null : site.stations[0] ?? null;
-    const call = (kind: ResponderKind, delayS: number) =>
-      this.pendingFacilityResponders.push({ kind, fid: f.spec.id, station, at: this.time + delayS, sceneKey });
-    if (works) call("works", 0);
+    /* `afterS` counts from the moment the scene EXISTS (its first vehicle at rest), not from the event's start. On a
+       fixed clock from the start, the police were on the road at six seconds for a crash that formed at forty-three,
+       and on a quiet plaza where no vehicle ever came to the booth all three still drove in, stood at an empty booth
+       for the whole event and left. A works crew is not answering anything: it goes at once. */
+    const call = (kind: ResponderKind, afterS: number, waits: boolean) =>
+      this.pendingFacilityResponders.push({ kind, fid: f.spec.id, station, at: waits ? Infinity : this.time + afterS, afterS, sceneKey });
+    if (works) call("works", 0, false);
     else {
-      if (!breakdown) call("police", 6);
-      call("tow", breakdown ? 25 : 45);
+      // The drive in from the edge of the picture is about three-quarters of a minute; the rest is the wait.
+      const first = Math.max(RESPONSE_CALL_S, (respondS ?? 60) - 45);
+      // A crash at a booth or a pump is still a crash: the police, an ambulance, then the recovery.
+      if (!breakdown) {
+        call("police", first, true);
+        call("ambulance", first + 8, true);
+      }
+      call("tow", breakdown ? first : first + 45, true);
     }
     return true;
   }
@@ -1022,7 +1137,7 @@ export class TrafficSim {
   }
 
   /** Responders on their way to a scene in a plaza or service area. */
-  private pendingFacilityResponders: { kind: ResponderKind; fid: string; station: number | null; at: number; sceneKey: string }[] = [];
+  private pendingFacilityResponders: { kind: ResponderKind; fid: string; station: number | null; at: number; afterS: number; sceneKey: string }[] = [];
 
   /* Send them in the way traffic gets there. Into an entry plaza they come
    * down its local road; to an exit plaza or a service area they enter the
@@ -1034,23 +1149,44 @@ export class TrafficSim {
     for (const r of this.pendingFacilityResponders) {
       const f = this.fac.get(r.fid);
       if (!f) continue;
+      // Waiting for there to be a scene: its clock starts when the first vehicle of it is at rest.
+      if (r.at === Infinity) {
+        if (this.fac.sceneLane(r.sceneKey) !== undefined) r.at = this.time + r.afterS;
+        still.push(r);
+        continue;
+      }
       if (this.time < r.at) { still.push(r); continue; }
       const v = this.makeResponder(r.kind, r.sceneKey);
-      v.facTarget = { fid: r.fid, station: r.station };
+      /* A scene on a barrier's approach is in ONE of the lanes fanning into the booths. Sent "to the approach" with
+         no lane, the ambulance and the recovery truck took whichever fan lane was shortest, drove past the crash,
+         through a booth and away. They go to the lane the casualty is standing in. */
+      const station = r.station ?? (f.laneEntries ? this.fac.sceneLane(r.sceneKey) ?? null : null);
+      v.facTarget = { fid: r.fid, station };
       if (f.spawnPath != null) {
         if (!this.fac.enterFromLocalRoad(f, v)) still.push(r);
         continue;
       }
-      const lane = f.laneEntries
-        ? (r.station != null ? this.fac.laneOfStation(f, r.station) : null) ?? this.exitLane
+      const want = f.laneEntries
+        ? (station != null ? this.fac.laneOfStation(f, station) : null) ?? this.exitLane
         : this.exitLane;
-      let lead: Vehicle | null = null;
-      for (const o of this.vehicles) {
-        if (!occupiesLane(o, lane)) continue;
-        if (!lead || o.x < lead.x) lead = o;
-      }
-      const gapAhead = lead ? lead.x - lead.length : Infinity;
-      if (gapAhead < S0 + 6) { still.push(r); continue; }
+      /* Room at the entrance: in the lane it wants, or — going to an exit plaza or a service area, which it reaches
+         by working across like any driver leaving — in any lane. Held to one lane, it waited behind a queue that
+         reached back to the entrance and never came; a barrier's booth lane is the exception, it must be that one. */
+      const gapIn = (l: number): number => {
+        let lead: Vehicle | null = null;
+        for (const o of this.vehicles) {
+          if (!occupiesLane(o, l)) continue;
+          if (!lead || o.x < lead.x) lead = o;
+        }
+        return lead ? lead.x - lead.length : Infinity;
+      };
+      const lanes = f.laneEntries ? [want] : [want, ...Array.from({ length: this.cfg.laneCount }, (_, l) => l).filter((l) => l !== want).sort((a, b) => Math.abs(a - want) - Math.abs(b - want))];
+      /* The lane it leaves the expressway from, if there is room there within a few seconds; only then any other.
+         Put straight into an inner lane, a recovery truck did not get across four lanes of traffic before the exit
+         and drove on past the plaza it was sent to. */
+      const lane = gapIn(want) >= S0 + 6 ? want : this.time - r.at < 12 ? undefined : lanes.find((l) => gapIn(l) >= S0 + 6);
+      if (lane === undefined) { still.push(r); continue; }
+      const gapAhead = gapIn(lane);
       v.lane = lane;
       v.laneFrom = lane;
       v.x = 0;
@@ -1381,17 +1517,29 @@ export class TrafficSim {
       }
     }
     // incidents (stopped obstacles) in this lane
-    for (const inc of this.interventions.incidents) {
+    for (const inc of this.liveIncidents) {
       if (inc.lane === lane && inc.x > v.x && inc.x < bestX) {
         bestX = inc.x;
         leadV = 0;
         leadLen = INCIDENT_LENGTH;
       }
     }
+    /* A responder waiting to come across into this lane: the traffic coming up behind the gap holds back for it, as
+       drivers do for the lights. Without this an ambulance stood beside a stream of cars that never left it a gap. */
+    if (v.role === "traffic" && !v.doom) {
+      for (const y of this.yieldTo) {
+        if (y.lane === lane && y.x - y.len - 1.5 > v.x && y.x < bestX) {
+          bestX = y.x;
+          leadV = 0;
+          leadLen = y.len + 1.5;
+        }
+      }
+    }
     // A closure acts as a stopped obstacle at its taper — but only for traffic
     // that has not already passed the far end. Without the second test a
     // vehicle that has cleared the works still braked for a barrier behind it.
     for (const c of this.closureList()) {
+      if (this.passesClosure(v, c, lane)) continue;
       if (c.lanes[lane] && v.x < c.to && c.from > v.x && c.from < bestX) {
         bestX = c.from;
         leadV = 0;
@@ -1427,7 +1575,7 @@ export class TrafficSim {
   // (or right up against) a stalled incident in `lane`? Used to stop cars from
   // changing lanes directly onto an accident.
   private incidentTooCloseInLane(lane: number, x: number, length: number): boolean {
-    for (const inc of this.interventions.incidents) {
+    for (const inc of this.liveIncidents) {
       if (inc.lane !== lane) continue;
       const incFront = inc.x;
       const incRear = inc.x - INCIDENT_LENGTH;
@@ -1450,12 +1598,129 @@ export class TrafficSim {
   /** Cannot be pushed, and will not get out of the way. */
   private isImmovable(v: Vehicle): boolean {
     if (v.departing) return false; // under tow, and moving like anything else
-    return v.role === "wreck" || (v.role === "responder" && v.holdAtX != null && v.x >= v.holdAtX);
+    return v.role === "wreck" || (v.role === "responder" && v.stillSince != null);
+  }
+
+  /** A closure that is no wall to this vehicle: the one round its own scene, which it is driving into — to crash there, or
+   *  to park there with its lights on. To everyone else, and to it anywhere else, a closure is what it always was. */
+  private passesClosure(v: Vehicle | undefined, c: LaneClosure, lane: number): boolean {
+    if (!v || !c.lanes[lane]) return false;
+    if (v.doom) return c.from <= v.doom.scene.stopX && c.to >= v.doom.scene.x - 5;
+    if (v.role === "responder" && !v.departing && v.holdAtX != null && v.parkLane === lane) return v.holdAtX >= c.from - 1 && v.holdAtX <= c.to + 1;
+    return false;
+  }
+
+  /** Who is waiting to come across, and into which lane: responders close to their spot, slowed, not yet in its lane. */
+  private findYields(): void {
+    this.yieldTo = [];
+    const outer = this.cfg.laneCount - 1;
+    for (const v of this.vehicles) {
+      if (v.role !== "responder" || v.departing || v.holdAtX == null || v.stillSince != null || v.parkLane == null || v.laneShift < 1) continue;
+      const target = Math.min(v.parkLane, outer);
+      if (v.lane === target || v.v > 5 || v.holdAtX - v.x > 45) continue;
+      this.yieldTo.push({ lane: v.lane + Math.sign(target - v.lane), x: v.x, len: v.length });
+    }
+    for (const v of this.shoulder) {
+      if (v.role !== "responder" || v.departing || v.holdAtX == null || v.parkLane == null || v.parkLane >= this.cfg.laneCount) continue;
+      if (v.x >= v.holdAtX - 16) this.yieldTo.push({ lane: outer, x: v.x, len: v.length });
+    }
+  }
+
+  /** Room for `v` in `lane` with its nose at x: nobody in the way, and whoever is behind has room to stop for it. */
+  private roomFor(v: Vehicle, lane: number, x: number): boolean {
+    if (lane < 0 || lane >= this.cfg.laneCount) return false;
+    for (const o of this.vehicles) {
+      if (o === v || !occupiesLane(o, lane)) continue;
+      if (o.x > x - v.length - 1.5 && o.x - o.length < x + 1.5) return false;
+      // A car standing still behind (it is giving way) needs only a metre; a moving one, a second's travel.
+      if (o.x <= x - v.length - 1.5 && x - v.length - o.x < Math.max(o.v < 0.5 ? 1.0 : S0, o.v * 1.0)) return false;
+    }
+    for (const inc of this.liveIncidents) if (inc.lane === lane && inc.x > x - v.length - S0 && inc.x - INCIDENT_LENGTH < x + S0) return false;
+    return true;
+  }
+
+  /** Where on the shoulder `v` can stop near `want`: there, or — if someone is already stopped on that stretch — the
+   *  nearest free length beside them: behind if it has not passed that yet, otherwise in front. */
+  private freeShoulderSpot(v: Vehicle, want: number): number {
+    let at = want;
+    for (let k = 0; k < 4; k++) {
+      const o = this.shoulder.find((q) => q !== v && q.v < 0.5 && q.x > at - v.length - 2 && q.x - q.length < at + 2);
+      if (!o) return at;
+      const behind = o.x - o.length - 2.5;
+      at = v.x <= behind - 1 ? behind : o.x + 2.5 + v.length;
+    }
+    return at;
+  }
+
+  /** Nobody on the shoulder where `len` metres of vehicle with its nose at x would go. */
+  private shoulderFree(x: number, len: number, self?: Vehicle): boolean {
+    return !this.shoulder.some((o) => o !== self && o.x > x - len - 2 && o.x - o.length < x + 3);
+  }
+
+  /** The deceleration that stops `v` at x, once it is worth starting; a large number (no limit) until then. */
+  private brakeTo(v: Vehicle, x: number): number {
+    const room = x - v.x;
+    if (room <= 0.3) return v.v > 0.05 ? -8 : 0;
+    const need = (v.v * v.v) / (2 * room);
+    return need >= 1.8 ? -need : 99;
+  }
+
+  /* A responder on its way to a scene: across to the lane it parks in, one lane at a time, through any gap the traffic
+   * leaves it — they give way to the lights. It is not choosing a cruising lane, so nothing else applies. */
+  private responderLane(v: Vehicle): void {
+    if (v.parkLane == null || v.laneShift < 1 || v.laneCooldown > 0) return;
+    // Bound for the shoulder: out to the outer lane, and the shoulder pass takes it from there.
+    const target = Math.min(v.parkLane, this.cfg.laneCount - 1);
+    if (v.lane === target) return;
+    const to = v.lane + Math.sign(target - v.lane);
+    if (!this.roomFor(v, to, v.x)) return;
+    v.laneFrom = visualLane(v);
+    v.laneShift = 0;
+    v.lane = to;
+    v.laneCooldown = v.lcSec + 0.2;
   }
 
   // MOBIL-ish lane change: pick the neighbouring lane that is safe and offers a
   // meaningfully better acceleration, with a strong pull out of a blocked lane.
   private considerLaneChange(v: Vehicle) {
+    /* A wreck stays where it came to rest, and one being towed goes where the truck goes. A vehicle on its way into a
+     * scene holds its lane: it is about to BE the scene. These used to run the ordinary decision, so a wreck with free
+     * road beside it "changed lane" — measured, a collision's two wrecks drifted from lane 2 to lane 4, out of the lane
+     * the closure shut and into the traffic, with the ambulance parked beside them. */
+    // A truck with a casualty in tow keeps its lane: the load behind it could not be fitted into a gap sized for it alone.
+    if (v.role === "wreck" || v.towedBy || v.towing) return;
+    /* Sent to a booth at a barrier: it came in on the lane that feeds that booth and keeps it. Lining up for the
+       shortest queue like a paying driver took it to booths the scene's could not be reached from, and it paid and
+       drove on. */
+    if (v.role === "responder" && !v.departing && v.facTarget && this.fac.get(v.facTarget.fid)?.laneEntries) return;
+    // Sent to an exit plaza or a service area: straight across to the lane its ramp leaves from, through any gap.
+    if (v.role === "responder" && !v.departing && v.facTarget && v.exitAtX != null && v.stillSince == null) {
+      if (v.lane !== this.exitLane && v.laneShift >= 1 && v.laneCooldown <= 0) {
+        const to = v.lane + Math.sign(this.exitLane - v.lane);
+        if (this.roomFor(v, to, v.x)) {
+          v.laneFrom = visualLane(v);
+          v.laneShift = 0;
+          v.lane = to;
+          v.laneCooldown = v.lcSec + 0.2;
+        }
+      }
+      return;
+    }
+    if (v.doom) {
+      // Brought in from the next lane: it moves across behind the others first.
+      const want = v.doom.scene.lane;
+      if (v.lane !== want && v.laneShift >= 1 && v.laneCooldown <= 0 && this.roomFor(v, want, v.x)) {
+        v.laneFrom = visualLane(v);
+        v.laneShift = 0;
+        v.lane = want;
+        v.laneCooldown = v.lcSec + LC_SETTLE_SEC;
+      }
+      return;
+    }
+    if (v.role === "responder" && !v.departing && v.parkLane != null) {
+      this.responderLane(v);
+      return;
+    }
     if (v.laneCooldown > 0) return;
     if (v.heldAtGore) return;
     // Committed to the booths in front of them: nobody weaves across a plaza's fan.
@@ -1480,7 +1745,11 @@ export class TrafficSim {
     // Blocked for THIS vehicle only while it is upstream of the works.
     // The nearest closure in this vehicle's own lane that it has still to reach: it has to get out before it.
     const closing = this.nextClosureIn(v.lane, v.x);
-    const mustEscape = closing !== null;
+    /* Already inside a shut stretch — caught between the taper and the scene when the lane closed round it — is as
+       pressing as a taper ahead: it gets out the same way (patience, then forcing in), rather than sitting behind
+       the wreck for the rest of the event. */
+    const trapped = closing === null && this.closedHere(v.lane, v.x);
+    const mustEscape = closing !== null || trapped;
     /* A lane closed somewhere ahead is off limits, as it always was — except, while this vehicle's own lane is
      * closing, a lane that closes FURTHER on: that is the way round staggered closures (lane 1 shut here, lane 2
      * shut 300 m on), and without it a car behind the first waited for ever. With a single closure it never
@@ -1538,7 +1807,7 @@ export class TrafficSim {
      * road left and insistent once there is not. */
     const urgency = closing !== null
       ? Math.max(0, Math.min(1, 1 - (closing.from - v.x) / MERGE_ZONE_M))
-      : 0;
+      : trapped ? 1 : 0;
 
     /* Working across for an exit.
      *
@@ -1574,6 +1843,8 @@ export class TrafficSim {
       if (this.incidentTooCloseInLane(lane, v.x, v.length)) continue;
       // safety: would the new follower have to brake harder than B_SAFE?
       const follower = this.lastBefore(lane, v.x, v);
+      // Never in front of a vehicle that is about to run into something: the scene is made of whoever was there.
+      if (follower?.doom) continue;
       const lead = this.firstAfter(lane, v.x, v);
       const roomAhead = lead ? lead.x - v.x - lead.length : Infinity;
       /* Gap between this vehicle's rear and the follower's nose.
@@ -1772,14 +2043,15 @@ export class TrafficSim {
 
   // Nearest impassable point ahead of `fromX` in a lane: the rear of a stalled
   // incident, or a closed lane's taper. Infinity if the lane is clear ahead.
-  private blockPointAhead(lane: number, fromX: number): number {
+  private blockPointAhead(lane: number, fromX: number, who?: Vehicle): number {
     let wall = Infinity;
-    for (const inc of this.interventions.incidents) {
+    for (const inc of this.liveIncidents) {
       if (inc.lane !== lane) continue;
       const rear = inc.x - INCIDENT_LENGTH;
       if (rear >= fromX && rear < wall) wall = rear;
     }
     for (const c of this.closureList()) {
+      if (this.passesClosure(who, c, lane)) continue;
       // Only a wall to traffic that still has to get past the works.
       if (c.lanes[lane] && fromX < c.to && c.from >= fromX && c.from < wall) wall = c.from;
     }
@@ -1997,168 +2269,627 @@ export class TrafficSim {
     return out;
   }
 
-  /* Place an incident — by CRASHING THE CARS THAT ARE THERE.
+  /* Place an incident — made of the traffic that is approaching it.
    *
-   * This used to delete them: `vehicles.filter(...)` removed anything on the
-   * spot so that "nothing appears to drive out of it", and the canvas drew a
-   * wreck over the gap. The result was that the crashed cars were not the
-   * cars that crashed. They blinked out and a picture replaced them, which is
-   * exactly what an operator sees as vehicles appearing from nowhere.
+   * This used to delete the cars on the spot and draw a wreck over the gap; then it froze the cars nearest the spot
+   * where they were, mid-stride, which an operator still sees as cars turning into wrecks out of nowhere. Now the
+   * incident's vehicles are picked out of the traffic coming up to it and are SEEN to crash there (crashAt): the first
+   * brakes hard and stops, the next fails to. The obstacle is not there until they are — an incident with nobody in it
+   * yet would stop traffic for nothing.
    *
-   * The vehicles are kept and marked `wreck` instead. A wreck is stationary,
-   * so every car-following calculation already treats it as an obstacle, and
-   * the overlap correction already keeps others out of it — no separate
-   * blocking rule, and nothing to drive through.
-   *
-   * If the spot happens to be empty (an operator dropping a pin on clear
-   * road), one is synthesised, because an incident with no vehicle in it
-   * would be stranger still. */
+   * A scenario breakdown starts its own scene before its incident slots are placed, and the slots are that vehicle. */
   addIncident(lane: number, x: number, secondary = false) {
-    this.crashAt(lane, x, 1);
-    this.interventions.incidents.push({ lane, x, secondary, bornAt: this.time });
+    const inc = { lane, x, secondary, bornAt: this.time };
+    this.interventions.incidents.push(inc);
+    if (!this.sceneAt(lane, x)) {
+      const s = this.crashAt(lane, x, 2, undefined, "collision", null, 0, x + 6);
+      if (s) s.incident = inc;
+    }
     if (secondary) this.freshSecondaries.push({ lane, x, t: this.time });
   }
 
-  /* Crash whatever is there, and call it in.
-   *
-   * Split out of addIncident because a COLLISION never went through
-   * addIncident at all: to the scenario layer a collision is a `closure` effect, not
-   * an `incident` one, so it closed lanes and placed no obstacle. The canvas
-   * used to paper over that by drawing a wreck; once the drawn wreck was
-   * removed in favour of real agents, collisions had no vehicles in them at
-   * all. This is the entry point a closure-family event uses.
-   *
-   * `want` vehicles are taken from the traffic that is actually there. Only
-   * if the road happens to be empty is one synthesised, because an accident
-   * with nothing in it would be stranger than a fabricated car. */
-  crashAt(lane: number, x: number, want: number, sceneKey?: string): void {
-    /* Take the nearest traffic in this lane, not only whatever happens to be
-     * standing on the exact metre.
-     *
-     * A 5 m window around the point almost never contains a car — at 4,200
-     * veh/h there is a vehicle every few seconds, not every few metres — so
-     * the first version synthesised a wreck on every single crash and none of
-     * them were the cars that had been driving. Searching upstream finds the
-     * vehicles that were ABOUT to be there, which are the ones that would
-     * have been involved, and they are then brought to the point of impact.
-     * That is also what makes the impact animation truthful: those cars were
-     * really on the road a moment ago. */
-    /* The cars nearest the point, stopped WHERE THEY ARE.
-     *
-     * An earlier version moved them onto the crash point to make a tidy pile.
-     * That teleported vehicles into cells other cars already occupied, and
-     * since a wreck refuses to be shifted by the overlap pass, the overlap
-     * simply stayed: 9 same-lane pairs appeared the moment repositioning was
-     * introduced. Stopping them in place has no such failure mode, and the
-     * traffic behind brakes and bunches against them on its own — which is
-     * how a pile-up forms anyway, and it is the engine doing it rather than
-     * the scenario asserting it.
-     *
-     * 80 m, because these are the vehicles that were about to be at the point
-     * of impact. Wider and the "pile-up" is strung out across the segment. */
-    const CATCH_RADIUS_M = 80;
-    const caught = this.vehicles
-      .filter((v) => v.role === "traffic" && occupiesLane(v, lane) && Math.abs(v.x - x) <= CATCH_RADIUS_M)
-      .sort((a, b) => Math.abs(a.x - x) - Math.abs(b.x - x))
-      .slice(0, Math.max(1, want));
+  /** The scene standing at (or coming together at) this point of this lane, if any. */
+  private sceneAt(lane: number, x: number): CrashScene | null {
+    return this.scenes.find((s) => s.lane === lane && x >= s.x - 30 && x <= s.stopX + 5) ?? null;
+  }
 
-    for (const v of caught) {
+  /* An incident is an obstacle once its vehicles are there — until then they are still driving to it — and only where
+   * they are: a breakdown's slots run back from the point for the length of the vehicle asked for, and when a shorter
+   * one is what stopped, the slots behind it are empty road. */
+  private incidentArmed(inc: Interventions["incidents"][number]): boolean {
+    const s = this.sceneAt(inc.lane, inc.x);
+    if (s === null) return true;
+    if (!s.done) return false;
+    if (s.incident !== undefined) return true;
+    return s.members.some((m) => m.lane === inc.lane && inc.x > m.x - m.length && inc.x - INCIDENT_LENGTH < m.x);
+  }
+
+  /* A scene, made of the traffic.
+   *
+   * Nothing is put down on the road. The vehicles are the ones driving there: the first is picked a few seconds ahead
+   * (`inS`, the time until it is due) from the traffic approaching the point in that lane, chosen to arrive about then —
+   * a truck or a bus if one is coming and the event asks for it — and each one after it is the vehicle behind the last.
+   * They drive as everyone does until it happens (doomAccel), so an operator sees the event coming and then sees it
+   * happen, to cars that were already there. The response is sent once they are at rest (respond).
+   *
+   * Once per event: a second call with the same key is ignored. Returns the scene, or null when it already exists. */
+  crashAt(lane: number, x: number, want: number, sceneKey?: string, kind: CrashKind = "collision", prefer: VehicleClass | null = null, inS = 0, stopAt?: number, respondS?: number): CrashScene | null {
+    if (sceneKey !== undefined && this.scenes.some((s) => s.key === sceneKey)) return null;
+    const single = kind === "self" || kind === "overturn" || kind === "breakdown" || kind === "shoulder";
+    const n = single ? 1 : Math.max(1, Math.round(want));
+    // A crash ends AT the event's point and its vehicles lie downstream of it, inside the closed stretch; a breakdown's
+    // nose is at the point, over the obstacle slots that run back from it.
+    const pile = kind === "breakdown" || kind === "shoulder" ? 0 : n * 6 + 4;
+    const scene: CrashScene = {
+      key: sceneKey ?? `incident-${++this.sceneSeq}`,
+      lane: kind === "shoulder" ? this.cfg.laneCount - 1 : lane,
+      x,
+      stopX: Math.max(1, Math.min(this.cfg.length - 2, stopAt ?? x + pile)),
+      want: n,
+      kind,
+      prefer,
+      dueAt: this.time + Math.max(0, inS),
+      members: [],
+      lastJoinAt: this.time,
+      done: false,
+      towWanted: false,
+      towSent: false,
+      towAt: null,
+      respondS,
+    };
+    this.scenes.push(scene);
+    this.gatherScene(scene);
+    return scene;
+  }
+
+  /** May this vehicle become part of a scene in `lane`: an ordinary vehicle, settled in that lane, wholly on the road. */
+  private canJoinScene(v: Vehicle, lane: number): boolean {
+    return v.role === "traffic" && !v.doom && !v.fac && !v.heldAtGore && v.lane === lane && v.laneShift >= 1 && v.x - v.length >= 0 && !v.relaxUntil;
+  }
+
+  private joinScene(s: CrashScene, v: Vehicle): void {
+    const ahead = s.members.length > 0 ? s.members[s.members.length - 1] : null;
+    const sgn = hash01(v.id * 7 + 3) < 0.5 ? -1 : 1;
+    // How far round a skid turns it: less the longer it is, so a truck stays (mostly) in its own lane.
+    const cap = Math.min(0.95, Math.asin(Math.min(1, 3.2 / Math.max(3.2, v.length))));
+    v.doom = { scene: s, order: s.members.length, ahead, spin: sgn * cap * (0.65 + 0.35 * hash01(v.id)), stoppedFor: 0 };
+    v.exitAtX = null; // not leaving at the next interchange after all
+    v.sceneKey = s.key;
+    s.members.push(v);
+    s.lastJoinAt = this.time;
+  }
+
+  /** Bring the next vehicle into a scene that still needs one: the first, chosen to arrive about when it is due, then each one behind. */
+  private gatherScene(s: CrashScene): void {
+    // Anyone who has left the road (or was released) is no longer in it.
+    for (let i = s.members.length - 1; i >= 0; i--) {
+      const m = s.members[i];
+      if (m.sceneKey !== s.key || (!this.vehicles.includes(m) && !this.shoulder.includes(m))) s.members.splice(i, 1);
+    }
+    if (s.members.length === 0) {
+      const eta = Math.max(0, s.dueAt - this.time);
+      let best: Vehicle | null = null;
+      let bestScore = Infinity;
+      const coast = s.kind === "breakdown" || s.kind === "shoulder";
+      const brake = coast ? COAST_DECEL : CRASH_BRAKE;
+      /* When it should come to rest: a crash's first vehicle a few seconds before it is due, so that the one behind
+         runs into it on time; a breakdown when it is due. */
+      const restIn = eta - (s.want > 1 ? 3 : 0);
+      // The class asked for (a heavy vehicle, for an overturn), if one comes along — waited for a little while.
+      const wanted = (v: Vehicle) => s.prefer === null || (s.kind === "overturn" ? v.vClass >= 2 : v.vClass === s.prefer);
+      let bestWanted: Vehicle | null = null;
+      let bestWantedScore = Infinity;
+      for (const v of this.vehicles) {
+        if (!this.canJoinScene(v, s.lane)) continue;
+        const d = s.stopX - v.x;
+        // Far enough back to stop there believably (a breakdown coasts, it does not brake), near enough to get there soon.
+        if (d < (v.v * v.v) / (2 * (coast ? 2.2 : 7)) + 3 || d > SCENE_REACH_M) continue;
+        const cruise = Math.max(0, d - (v.v * v.v) / (2 * brake)) / Math.max(4, v.v);
+        const score = Math.abs(cruise + v.v / brake - restIn);
+        if (score < bestScore) {
+          bestScore = score;
+          best = v;
+        }
+        if (wanted(v) && score < bestWantedScore) {
+          bestWantedScore = score;
+          bestWanted = v;
+        }
+      }
+      /* The class asked for is waited for only while one of any class could still get there on time: a coasting
+         breakdown needs about v / COAST_DECEL to stop, a crash a few seconds. Waited for until twenty seconds AFTER it
+         was due, every breakdown began half a minute late (a truck is one vehicle in eleven). */
+      const latest = s.dueAt - (coast ? 17 : 4);
+      if (bestWanted === null && s.prefer !== null && this.time < latest) return;
+      let pick = bestWanted ?? best;
+      /* Due, and nobody can stop there in the ordinary way — the point is a few car lengths from where traffic comes
+         onto the simulated stretch at full speed, so no vehicle is ever "far enough back to stop believably". The
+         event used to shut its lane and then nothing happened at all: no vehicle, no response. It happens to the next
+         vehicle to reach the point, which stops as hard as the room it has demands (a crash does; a breakdown this
+         close to the edge of the picture has simply come from further back than the picture shows). Three seconds
+         ahead, not at the moment itself: by then the event has shut the lane, and nobody enters a shut lane. */
+      if (pick === null && this.time >= s.dueAt - 3) {
+        let near = Infinity;
+        for (const v of this.vehicles) {
+          if (!this.canJoinScene(v, s.lane)) continue;
+          const d = s.stopX - v.x;
+          if (d < 2 || d > SCENE_REACH_M || d >= near) continue;
+          // Not one that would need more than a crash stop to make it; it passes, and the next is taken.
+          if ((v.v * v.v) / (2 * d) > 11) continue;
+          near = d;
+          pick = v;
+        }
+      }
+      if (pick === null) return;
+      this.joinScene(s, pick);
+    }
+    while (s.members.length < s.want) {
+      const last = s.members[s.members.length - 1];
+      if (last.onShoulder) break;
+      const rear = last.x - last.length;
+      let next = this.lastBefore(s.lane, rear, last);
+      if (next && (!this.canJoinScene(next, s.lane) || rear - next.x > SCENE_FOLLOW_M)) next = null;
+      /* Nobody coming in its own lane for a few seconds (light traffic, or the lane already emptying ahead of the
+         closure): the next one comes from the lane beside it, far enough back to move across first. */
+      if (!next && this.time - s.lastJoinAt > 4) {
+        let best: Vehicle | null = null;
+        for (const l of [s.lane - 1, s.lane + 1]) {
+          if (l < 0 || l >= this.cfg.laneCount) continue;
+          const c = this.lastBefore(l, rear - 40);
+          if (c && this.canJoinScene(c, l) && rear - c.x <= SCENE_FOLLOW_M && (!best || c.x > best.x)) best = c;
+        }
+        next = best;
+      }
+      if (!next) break;
+      this.joinScene(s, next);
+    }
+  }
+
+  /* How a vehicle on its way into a scene drives: like anyone, until the moment it does not.
+   *
+   * The first one stops at the scene's point — hard, for a crash; a long coast with its hazards on, for a breakdown —
+   * following the traffic in front as usual until then. Each one behind follows the one ahead without seeing it stop,
+   * brakes when it is already too late, and runs into it at a speed that is still a crash (hitAt). In a crawl that is a
+   * nudge, at speed a hard one, which is how a pile-up actually differs from one road to another. */
+  private doomAccel(v: Vehicle): number {
+    const d = v.doom!;
+    const s = d.scene;
+    const coast = s.kind === "breakdown" || s.kind === "shoulder";
+    if (d.order === 0) {
+      let a = this.idmAccel(v, v.lane);
+      const room = s.stopX - v.x;
+      const need = room <= 0.2 ? Infinity : (v.v * v.v) / (2 * room);
+      if (d.brakeFromV === undefined && need >= (coast ? COAST_DECEL : CRASH_BRAKE) * 0.95) {
+        d.brakeFromV = Math.max(1, v.v);
+        if (coast) v.hazards = true;
+      }
+      if (d.brakeFromV !== undefined) {
+        a = Math.min(a, room <= 0.2 ? -8 : -need);
+        // Short of the point and all but stopped, with the road clear: it rolls up to it.
+        if (v.v < 1 && room > 1) a = Math.max(a, Math.min(0.8, this.idmAccel(v, v.lane)));
+      }
+      return a;
+    }
+    const lead = d.ahead;
+    if (!lead || v.lane !== lead.lane) return this.idmAccel(v, v.lane);
+    // Somebody else between it and the one it is to hit (they will be merging out): it follows them as anyone would.
+    const front = this.firstAfter(v.lane, v.x, v);
+    if (front && front !== lead && front.x < lead.x) return this.idmAccel(v, v.lane);
+    const inTrouble = lead.role === "wreck" || lead.doom?.brakeFromV !== undefined;
+    if (!inTrouble) return this.idmAccel(v, v.lane);
+    /* The room it has: to where the one ahead will have stopped, which is further on than where it is now if it is still
+       moving. Judged against where it is now, a follower of a car that was still braking stopped well short, then crept
+       up to the pile at walking pace for a minute and a half. */
+    const gap = lead.x - lead.length - v.x;
+    const room = lead.role === "wreck" ? gap : gap + (lead.v * lead.v) / (2 * Math.max(1, -lead.accel));
+    /* The speed it will hit at is fixed the moment it reacts. Re-chosen from its speed every step, the target fell as it
+       slowed, so it braked harder and harder and stopped 0.4 m short: a pile-up of cars politely stopping. */
+    if (d.hitAt === undefined) {
+      const hitAt = Math.min(v.v, 4 + 0.3 * v.v);
+      const late = room <= 0.2 ? Infinity : (v.v * v.v - hitAt * hitAt) / (2 * room);
+      if (late < LATE_BRAKE) return v.v < 2 ? 0.8 : 0; // has not seen it: carries on (and creeps up, in a crawl)
+      d.hitAt = hitAt;
+      d.brakeFromV = Math.max(1, v.v);
+    }
+    if (v.v <= d.hitAt + 0.05) return v.v < 2.5 ? 0.8 : 0; // down to the speed it hits at: it rolls on into it
+    return -Math.min(8, Math.max(0, (v.v * v.v - d.hitAt * d.hitAt) / (2 * Math.max(0.2, room))));
+  }
+
+  /** After it moved: has it happened? The first one has stopped at its point; one behind has closed on the one ahead. */
+  private doomContact(v: Vehicle, dt: number): void {
+    const d = v.doom!;
+    const s = d.scene;
+    d.stoppedFor = v.v < 0.3 ? d.stoppedFor + dt : 0;
+    if (d.order === 0) {
+      // A skid turns it as it slows, and an overturn goes over part way through.
+      if (d.brakeFromV !== undefined && (s.kind === "self" || s.kind === "overturn")) {
+        const p = Math.max(0, Math.min(1, 1 - v.v / d.brakeFromV));
+        v.yaw = d.spin * Math.pow(p, 0.8);
+        if (s.kind === "overturn" && p > 0.6) v.look = "overturned";
+      }
+      const room = s.stopX - v.x;
+      const arrived = d.brakeFromV !== undefined && v.v < 0.3 && (room < 1.5 || d.stoppedFor > 3);
+      // Held in a queue short of it for a while: this is where it happens.
+      const held = d.stoppedFor > 8 && room < 80;
+      if (arrived || held) this.comeToRest(v, 0);
+      return;
+    }
+    const lead = d.ahead;
+    if (!lead) return;
+    const gap = lead.x - lead.length - v.x;
+    /* Contact is the overlap pass's floor (MIN_CLEARANCE), not less: in a crawl that pass holds it there first and
+       zeroes its speed, so a test any tighter never fired and the "crash" was a car stopping politely behind another. */
+    if (gap <= MIN_CLEARANCE + 0.05) {
+      const impact = Math.max(0, v.v - lead.v);
+      v.x = Math.max(v.x - 1.5, lead.x - lead.length - MIN_CLEARANCE);
+      // The one hit is shoved on a little, if there is room in front of it.
+      const push = Math.min(1.4, 0.12 * impact);
+      const beyond = this.firstAfter(lead.lane, lead.x, lead);
+      if (push > 0.05 && (!beyond || beyond.x - beyond.length - lead.x > push + 0.6)) lead.x += push;
+      this.comeToRest(lead, impact);
+      this.comeToRest(v, impact);
+    } else if (d.stoppedFor > 10) {
+      this.comeToRest(v, 0); // stopped short after all, in a crawl: part of it nose to tail
+    }
+  }
+
+  /** It is a wreck now: at rest, where it is, turned by whatever hit it. */
+  private comeToRest(v: Vehicle, impact: number): void {
+    const kind = v.doom?.scene.kind ?? "collision";
+    const cap = Math.min(0.55, Math.asin(Math.min(1, 3.2 / Math.max(3.2, v.length))));
+    if (v.role !== "wreck") {
+      const spin = v.doom?.spin ?? 0;
       v.role = "wreck";
       v.v = 0;
       v.accel = 0;
+      v.stillSince = this.time;
       v.laneShift = 1;
       v.laneFrom = v.lane;
-      // How it came to rest. Deterministic per vehicle so it does not twitch
-      // between frames.
-      v.restAngle = (hash01(v.id) - 0.5) * 1.1;
-      v.sceneKey = sceneKey;
+      v.look = kind === "breakdown" || kind === "shoulder" ? "stalled" : kind === "overturn" ? "overturned" : "crash";
+      v.hazards = kind !== "collision" && kind !== "pileup" ? true : impact > 0;
+      v.yaw = v.yaw ?? 0;
+      v.restAngle = kind === "self" || kind === "overturn" ? spin : kind === "breakdown" || kind === "shoulder" ? 0 : spin * 0.08;
+      v.doom = undefined;
     }
-
-    if (caught.length === 0) {
-      const c = this.cls[1];
-      this.vehicles.push({
-        id: this.nextId++, lane, x, v: 0, vClass: 1, profile: "normal",
-        v0: c.v0, T: 1.4, aMax: 1.4, politeness: 0.3, lcSec: 1.1,
-        scanSec: 1, scanTimer: 0, reactionS: 0.8, reactTimer: 0, accel: 0,
-        patience: PATIENCE_BASE_SEC, exitAtX: null, stuckFor: 0,
-        length: c.len, spawnTime: this.time, co2: 0, laneCooldown: 0,
-        laneFrom: lane, laneShift: 1, color: c.color,
-        role: "wreck", restAngle: 0.2, sceneKey,
-      });
+    if (impact > 0) {
+      // The knock turns it, more the harder it was; and it is now plainly a crash.
+      const sgn = hash01(v.id * 13 + 5) < 0.5 ? -1 : 1;
+      v.restAngle = Math.max(-cap, Math.min(cap, (v.restAngle ?? 0) + sgn * Math.min(cap, 0.05 + 0.022 * impact)));
+      v.look = "crash";
+      v.hazards = true;
+      // Whatever happens next at the scene (people getting out, the response) counts from the impact, not from when it stopped.
+      v.stillSince = this.time;
     }
+  }
 
-    /* Send the response. They enter at the start of the segment and drive to
-     * the scene like anything else on the road, so an operator sees them
-     * come. Staggered the way a real callout is: police first to protect the
-     * scene, then the ambulance, then recovery once the casualties are out. */
-    this.dispatchResponder("police", lane, x - INCIDENT_LENGTH - 14, 4, sceneKey);
-    this.dispatchResponder("ambulance", lane, x - INCIDENT_LENGTH - 30, 12, sceneKey);
-    this.dispatchResponder("tow", lane, x - INCIDENT_LENGTH - 46, 40, sceneKey);
+  /** A wreck at rest: it does not move, and settles to the angle it was knocked to. */
+  private settleWreck(v: Vehicle, dt: number): void {
+    v.v = 0;
+    v.accel = 0;
+    if (v.restAngle !== undefined) v.yaw = (v.yaw ?? 0) + (v.restAngle - (v.yaw ?? 0)) * Math.min(1, dt * 5);
+  }
+
+  /** Hitched to a recovery truck: winched up to it first, then pulled along at its speed, in its lane, straightening out. */
+  private followTow(w: Vehicle, dt: number): void {
+    const t = w.towedBy!;
+    if (!this.vehicles.includes(t) && !this.shoulder.includes(t)) {
+      // The truck has left the road ahead of it: it rolls on, as departing traffic.
+      w.towedBy = undefined;
+      w.v = t.v;
+      return;
+    }
+    const at = t.x - t.length - 1.0;
+    if (!w.hitched) {
+      if (at - w.x > 0.05) w.x = Math.min(at, w.x + 1.5 * dt);
+      else w.hitched = true;
+      w.v = 0;
+    } else {
+      w.x = Math.max(w.x, at);
+      w.v = t.v;
+    }
+    w.lane = t.lane;
+    w.laneFrom = t.laneFrom;
+    w.laneShift = t.laneShift;
+    w.onShoulder = t.onShoulder;
+    w.viaShoulder = t.viaShoulder;
+    w.yaw = (w.yaw ?? 0) * Math.max(0, 1 - dt * 1.2);
+    w.restAngle = w.yaw;
+  }
+
+  /* Each step: bring the next vehicle into each scene that still needs one; once everyone in it is at rest, send the
+   * response; an operator's or a secondary incident that has been cleared takes its scene away with it. */
+  private stepScenes(): void {
+    const cleared: string[] = [];
+    for (const s of this.scenes) {
+      if (s.incident && !this.interventions.incidents.includes(s.incident)) {
+        cleared.push(s.key);
+        continue;
+      }
+      if (!s.done) {
+        this.gatherScene(s);
+        const resting = s.members.length > 0 && s.members.every((m) => m.role === "wreck");
+        if (resting && s.members.length < s.want && this.time - s.lastJoinAt > SCENE_GIVE_UP_S) s.want = s.members.length;
+        if (resting && s.members.length >= s.want) {
+          s.done = true;
+          this.respond(s);
+        }
+      }
+      if (s.done && !s.towSent && (s.towWanted || (s.towAt !== null && this.time >= s.towAt))) this.sendTow(s);
+    }
+    for (const key of cleared) this.releaseScene(key);
+  }
+
+  /* The response, once the vehicles are at rest: police first, parked behind the wreck to protect it (the patrol, for a
+   * breakdown), then the ambulance behind them for a crash. They come up the hard shoulder and cross into the lane at
+   * the scene. The recovery truck goes when the event's tow or service phase begins (dispatchTow); a scene with no
+   * event behind it gets one after a while. */
+  private respond(s: CrashScene): void {
+    const park = s.kind === "shoulder" ? this.shoulderLane : s.lane;
+    const rear = Math.min(...s.members.map((m) => m.x - m.length));
+    /* A breakdown in a lane is not closed off: traffic queues right up behind it and squeezes past, so there is no
+       room in its lane for the patrol to stop in (it tried, and stood in the next lane, shutting that one as well). It
+       stops on the shoulder level with it, lights going, as patrols do. */
+    /* When they set off. They used to leave three seconds after the last vehicle stopped and were parked at the scene
+       half a minute later — while the event's own label went on saying "awaiting response" for another five minutes,
+       and twice the patrol car was on the road before the crash it was going to. Now: never before the scene has
+       been reported (RESPONSE_CALL_S), and timed to ARRIVE at the response time the event carries (respondS after it
+       was due), the drive up the shoulder allowed for. */
+    const travel = Math.max(0, rear) / SHOULDER_SPEED.police + 6;
+    const wait = s.respondS === undefined ? RESPONSE_CALL_S : Math.max(RESPONSE_CALL_S, s.dueAt + s.respondS - this.time - travel);
+    if (s.kind === "breakdown") {
+      /* Beside the casualty — unless it broke down in the OUTER lane. There the shoulder is the recovery truck's
+         only way to the front of it (the lane behind is the queue), and a patrol car standing on it level with the
+         casualty shut that way: the truck stood behind it for the rest of the event and the casualty drove itself
+         off. In the outer lane the patrol goes past, to beyond where the truck will stand; with no road left for
+         that, it stops behind the casualty and the truck waits behind it (stepShoulder). */
+      const front = Math.max(...s.members.map((m) => m.x));
+      const beyond = front + 4 + RESPONDER_LENGTH.tow + 6 + RESPONDER_LENGTH.police;
+      const at = s.lane !== this.cfg.laneCount - 1 ? rear + 4 : beyond <= this.cfg.length - 3 ? beyond : rear - 7;
+      this.dispatchResponder("police", this.shoulderLane, at, wait, s.key);
+    }
+    else if (s.kind === "shoulder") this.dispatchResponder("police", park, rear - 7, wait, s.key);
+    else {
+      /* The police car is the one furthest back, blocking the lane behind everything (its cones go out behind it);
+         the ambulance stands between it and the wreck, beside the casualties. The police get there first and leave
+         the ambulance its space; the ambulance crosses in alongside it. */
+      this.dispatchResponder("police", park, rear - 7 - RESPONDER_LENGTH.ambulance - 5, wait, s.key);
+      this.dispatchResponder("ambulance", park, rear - 7, wait + 7, s.key);
+    }
+    if (s.incident) s.towAt = this.time + 75;
+  }
+
+  private sendTow(s: CrashScene): void {
+    s.towSent = true;
+    const front = Math.max(s.stopX, ...s.members.map((m) => m.x));
+    // In front of the casualty, nose out, so that it can be winched up behind and pulled away.
+    const at = front + 4 + RESPONDER_LENGTH.tow;
+    /* No road left in front of it — the scene is at the very end of the simulated stretch. Sent to a point past the
+       end, the truck drove up, off the picture, and was never seen to stop; the casualty then drove itself away. It
+       stands on the shoulder beside the casualty instead, which is where a recovery truck waits when it cannot get
+       in front. Level with the tail of the scene, so it is short of anyone already stopped on the shoulder there
+       (freeShoulderSpot moves it back behind them if not). */
+    if (at > this.cfg.length - 3) {
+      const rear = Math.min(...s.members.map((m) => m.x - m.length));
+      this.dispatchResponder("tow", this.shoulderLane, Math.max(12, rear - 6), 0, s.key);
+      return;
+    }
+    this.dispatchResponder("tow", s.kind === "shoulder" ? this.shoulderLane : s.lane, at, 0, s.key);
+  }
+
+  /** Is somebody at this scene: a responder of its own, parked there and not yet leaving? (On the road or in a plaza.) */
+  sceneAttended(sceneKey: string): boolean {
+    for (const v of this.vehicles) if (v.sceneKey === sceneKey && v.role === "responder" && !v.departing && v.stillSince != null) return true;
+    for (const v of this.shoulder) if (v.sceneKey === sceneKey && v.role === "responder" && !v.departing && v.stillSince != null) return true;
+    return this.fac.sceneAttended(sceneKey);
+  }
+
+  /** The event's tow (or service) phase has begun: send the recovery truck — now, or as soon as the scene is at rest. */
+  dispatchTow(sceneKey: string): void {
+    const s = this.scenes.find((x) => x.key === sceneKey);
+    if (!s || s.towWanted) return;
+    s.towWanted = true;
+    if (s.done && !s.towSent) this.sendTow(s);
   }
 
   /* Pack up and go.
    *
-   * Everything this scene put on the road starts moving again: the wreck is
-   * under tow, the responders fall in behind, and all of them leave by
-   * driving off the end like any other vehicle. Nothing is deleted in place,
-   * which is the whole complaint about how these scenes used to end. */
+   * Everything this scene put on the road starts moving again: the recovery truck takes the vehicle in front of it in
+   * tow, the other wrecks are driven off slowly, the responders fall in, and all of them leave by driving off the end
+   * like anything else. A vehicle that was still on its way into the scene simply carries on — it never happened to it.
+   * Nothing is deleted in place. */
   releaseScene(sceneKey: string): void {
-    for (const v of this.vehicles) {
-      if (v.sceneKey !== sceneKey) continue;
-      if (v.role !== "wreck" && v.role !== "responder") continue;
+    const all = [...this.vehicles, ...this.shoulder];
+    for (const v of all) {
+      if (v.doom && v.doom.scene.key === sceneKey) {
+        v.doom = undefined;
+        v.hazards = false;
+        v.yaw = undefined;
+        v.look = undefined;
+        v.sceneKey = undefined;
+      }
+    }
+    const mine = all.filter((v) => v.sceneKey === sceneKey && (v.role === "wreck" || v.role === "responder"));
+    for (const v of mine) {
       v.departing = true;
       v.holdAtX = undefined;
-      // A tow pulling a casualty does not accelerate away; nor does a crew
-      // that has just loaded up.
-      v.v0 = Math.min(v.v0, 18);
+      v.v0 = Math.min(v.v0, v.role === "wreck" ? 12 : 18);
       v.aMax = Math.min(v.aMax, 1.0);
+      // Righted for the tow.
+      if (v.look === "overturned") v.look = "crash";
+    }
+    const tow = mine.find((v) => v.role === "responder" && v.responderKind === "tow" && v.stillSince != null);
+    if (tow) {
+      const load = mine
+        .filter((v) => v.role === "wreck" && Boolean(v.onShoulder) === Boolean(tow.onShoulder) && v.lane === tow.lane && v.x <= tow.x - tow.length + 0.5 && tow.x - tow.length - v.x < 40)
+        .sort((a, b) => b.x - a.x)[0];
+      if (load) {
+        load.towedBy = tow;
+        load.hitched = false;
+        tow.towing = load;
+      }
     }
     this.pendingResponders = this.pendingResponders.filter((r) => r.sceneKey !== sceneKey);
+    this.scenes = this.scenes.filter((s) => s.key !== sceneKey);
   }
 
-  /** Responders waiting to be released onto the road. */
+  /** Responders waiting to be released onto the road. `lane` is the lane they park in. */
   private pendingResponders: { kind: ResponderKind; lane: number; holdAtX: number; at: number; sceneKey?: string }[] = [];
 
-  /** Queue a responder to enter the segment and drive to the scene. */
+  /** Queue a responder to come up the shoulder to the scene and park at holdAtX in `lane` (the shoulder's number for the shoulder). */
   dispatchResponder(kind: ResponderKind, lane: number, holdAtX: number, delayS: number, sceneKey?: string) {
     this.pendingResponders.push({ kind, lane, holdAtX: Math.max(10, holdAtX), at: this.time + delayS, sceneKey });
   }
 
-  /** Release any responder whose time has come, if there is room to enter. */
+  /* Responders due onto the road: onto the hard shoulder at the entrance.
+   *
+   * They used to enter in their lane like ordinary traffic, waiting for a gap at the entrance. With a lane closed the
+   * queue reaches back to the entrance, so the gap never came: the ambulance was "dispatched" and never seen. On the
+   * shoulder they get past the queue, as they do on the real road, and cross into the lane at the scene. */
   private releaseResponders() {
     if (this.pendingResponders.length === 0) return;
+    const S = this.shoulderLane;
     const still: typeof this.pendingResponders = [];
     for (const r of this.pendingResponders) {
       if (this.time < r.at) { still.push(r); continue; }
-
-      // Same admission rule as ordinary traffic: they cannot materialise on
-      // top of a queue just because they are an emergency.
-      let lead: Vehicle | null = null;
-      for (const other of this.vehicles) {
-        if (!occupiesLane(other, r.lane)) continue;
-        if (!lead || other.x < lead.x) lead = other;
-      }
-      const gapAhead = lead ? lead.x - lead.length : Infinity;
-      if (gapAhead < S0 + 6) { still.push(r); continue; }  // wait for room
-
-      const len = r.kind === "tow" ? 9 : r.kind === "works" ? 8 : 6.5;
+      // One at a time: the last one on has to have moved off the entrance first.
+      if (this.shoulder.some((o) => o.x - o.length < 4)) { still.push(r); continue; }
       const urgent = r.kind !== "works";
-      this.vehicles.push({
-        id: this.nextId++, lane: r.lane, x: 0, v: Math.min(22, gapAhead > 60 ? 22 : 10),
-        vClass: 2, profile: "normal",
-        // They make progress through queued traffic rather than joining the
-        // back of it: a shorter headway and a higher desired speed, which is
-        // what a blue-light run looks like without needing its own physics.
+      this.shoulder.push({
+        id: this.nextId++, lane: S, x: 0, v: SHOULDER_SPEED[r.kind] * 0.8, vClass: RESPONDER_CLASS[r.kind], profile: "normal",
         v0: urgent ? 26 : 16, T: urgent ? 0.8 : 1.6, aMax: urgent ? 2.2 : 1.1, politeness: urgent ? 0 : 0.4, lcSec: 1.3,
         scanSec: 0.5, scanTimer: 0, reactionS: 0.5, reactTimer: 0, accel: 0,
         patience: 2, exitAtX: null, stuckFor: 0,
-        length: len, spawnTime: this.time, co2: 0, laneCooldown: 0,
-        laneFrom: r.lane, laneShift: 1,
-        color: r.kind === "police" ? "#1d4ed8" : r.kind === "ambulance" ? "#e2e8f0" : "#f59e0b",
-        role: "responder", responderKind: r.kind, holdAtX: r.holdAtX, sceneKey: r.sceneKey,
+        length: RESPONDER_LENGTH[r.kind], spawnTime: this.time, co2: 0, laneCooldown: 0,
+        laneFrom: S, laneShift: 1,
+        color: RESPONDER_COLOR[r.kind],
+        role: "responder", responderKind: r.kind, holdAtX: r.holdAtX, parkLane: r.lane, sceneKey: r.sceneKey, onShoulder: true,
       });
     }
     this.pendingResponders = still;
+  }
+
+  /* A vehicle pulling over onto the shoulder (a shoulder breakdown, slowing), and a responder that went round something
+   * stopped on the shoulder coming back onto it, once there is room there. */
+  private pullOntoShoulder(): void {
+    const S = this.shoulderLane;
+    const outer = this.cfg.laneCount - 1;
+    const moving: Vehicle[] = [];
+    for (const v of this.vehicles) {
+      if (v.lane !== outer || v.laneShift < 1) continue;
+      const d = v.doom;
+      const pulling = d !== undefined && d.scene.kind === "shoulder" && d.brakeFromV !== undefined && (v.v < 14 || d.scene.stopX - v.x < 60);
+      if (v.role === "responder" && !v.departing && v.parkLane === S && v.holdAtX != null) v.holdAtX = this.freeShoulderSpot(v, v.holdAtX);
+      const back =
+        v.role === "responder" && !v.departing && v.parkLane === S && v.holdAtX != null &&
+        !this.shoulder.some((o) => o.v < 0.5 && o.x > v.x - 2 && o.x - o.length < v.holdAtX!);
+      if (!pulling && !back) continue;
+      if (!this.shoulderFree(v.x, v.length, v)) continue;
+      moving.push(v);
+    }
+    if (moving.length === 0) return;
+    this.vehicles = this.vehicles.filter((v) => !moving.includes(v));
+    for (const v of moving) {
+      v.onShoulder = true;
+      v.viaShoulder = true;
+      v.laneFrom = outer;
+      v.lane = S;
+      v.laneShift = 0;
+      this.shoulder.push(v);
+    }
+  }
+
+  /* The hard shoulder. Responders run up it past the traffic at a steady pace, one behind another, and leave it for their
+   * lane level with where they park — or park on it, beside a vehicle stopped there. A vehicle pulling over coasts to a
+   * stop on it. A truck with a casualty in tow goes on along it to the end. Nobody in a lane sees any of this: the
+   * shoulder is not a lane. */
+  private stepShoulder(dt: number): void {
+    if (this.shoulder.length === 0) return;
+    const S = this.shoulderLane;
+    const outer = this.cfg.laneCount - 1;
+    const list = this.shoulder.sort((a, b) => b.x - a.x);
+    const toLane: Vehicle[] = [];
+    for (let i = 0; i < list.length; i++) {
+      const v = list[i];
+      if (v.laneShift < 1) v.laneShift = Math.min(1, v.laneShift + dt / v.lcSec);
+      else v.viaShoulder = false;
+      if (v.role === "wreck" && !v.departing) { this.settleWreck(v, dt); continue; }
+      if (v.towedBy) { this.followTow(v, dt); continue; }
+      if (v.towing && !v.towing.hitched && list.includes(v.towing)) { v.v = 0; v.accel = 0; continue; }
+      if (v.role === "responder" && v.stillSince != null && !v.departing) { v.v = 0; v.accel = 0; continue; }
+      const lead = i > 0 ? list[i - 1] : null;
+      let a: number;
+      if (v.doom) a = this.doomAccel(v);
+      else {
+        const v0 = v.departing ? 14 : SHOULDER_SPEED[v.responderKind ?? "police"];
+        a = v.aMax * (1 - Math.pow(v.v / Math.max(1, v0), DELTA));
+        if (lead) {
+          const gap = Math.max(0.1, lead.x - lead.length - v.x);
+          const sStar = S0 + Math.max(0, v.v * 0.9 + (v.v * (v.v - lead.v)) / (2 * Math.sqrt(v.aMax * B_COMF)));
+          a -= v.aMax * Math.pow(sStar / gap, 2);
+        }
+        if (v.holdAtX != null && !v.departing) a = Math.min(a, this.brakeTo(v, v.holdAtX));
+      }
+      const vNew = Math.max(0, v.v + Math.max(-8, Math.min(v.aMax, a)) * dt);
+      v.x += Math.max(0, ((v.v + vNew) / 2) * dt);
+      v.v = vNew;
+      v.accel = a;
+      if (lead && v.x > lead.x - lead.length - MIN_CLEARANCE) {
+        v.x = Math.max(0, lead.x - lead.length - MIN_CLEARANCE);
+        v.v = Math.min(v.v, lead.v);
+      }
+      if (v.doom) { this.doomContact(v, dt); continue; }
+      if (v.role !== "responder" || v.departing || v.holdAtX == null) continue;
+      // Something stopped on the shoulder before its spot: round it, through the outer lane.
+      const blocked = lead !== null && lead.v < 0.5 && lead.x < v.holdAtX && lead.x - lead.length - v.x < 10;
+      /* Held behind one of its own scene's vehicles, parked on the shoulder, with no way round (the lane beside is a
+         standing queue): after half a minute this is where it attends from. It used to wait there, counted as still
+         on its way, until the event ended. */
+      if (blocked && v.v < 0.3 && lead!.sceneKey === v.sceneKey && lead!.stillSince != null && !this.roomFor(v, outer, v.x)) {
+        v.shoulderWait = (v.shoulderWait ?? 0) + dt;
+        if (v.shoulderWait > 30) {
+          v.parkLane = S;
+          v.holdAtX = v.x;
+          v.stillSince = this.time;
+          v.v = 0;
+          continue;
+        }
+      } else v.shoulderWait = 0;
+      /* Into the lane only where the lane is shut. A scene that closes nothing (an operator's accident, a shunt in a
+         queue) has traffic queued right up behind it in that lane, so there is no room to stop in it: the police and
+         the ambulance stop on the shoulder beside it instead. The recovery truck still goes in, in front, where the
+         lane is empty. Decided on the way (and before going round anything), so it never has to come back. */
+      if (v.parkLane !== S && v.responderKind !== "tow" && v.responderKind !== "works" && (blocked || v.x >= v.holdAtX - 80)) {
+        const shut = this.closureList().some((c) => c.lanes[v.parkLane!] && v.holdAtX! >= c.from && v.holdAtX! <= c.to);
+        if (!shut) {
+          v.parkLane = S;
+          /* On the shoulder they stop in the order they get there, the police (first) nearest the scene: the spots
+             were set for the lane, where the police car blocks furthest back, and kept here the ambulance would have
+             had to get past it on a shoulder one vehicle wide. */
+          if (v.responderKind === "police") v.holdAtX += RESPONDER_LENGTH.ambulance + 5;
+          else if (v.responderKind === "ambulance") v.holdAtX -= RESPONDER_LENGTH.ambulance + 5;
+        }
+      }
+      if (v.parkLane === S) v.holdAtX = this.freeShoulderSpot(v, v.holdAtX);
+      if (v.parkLane === S) {
+        if (v.x >= v.holdAtX - 0.4 || (v.v < 0.3 && v.holdAtX - v.x < 4)) {
+          v.stillSince = this.time;
+          v.v = 0;
+        } else if (blocked && this.roomFor(v, outer, v.x)) toLane.push(v);
+      } else if (blocked && v.x < v.holdAtX - 14) {
+        if (this.roomFor(v, outer, v.x)) toLane.push(v);
+      } else if (v.x >= v.holdAtX - 14 && this.roomFor(v, outer, v.x)) {
+        toLane.push(v);
+      }
+    }
+    for (const v of toLane) {
+      v.onShoulder = false;
+      v.viaShoulder = true;
+      v.laneFrom = S;
+      v.lane = outer;
+      v.laneShift = 0;
+      v.laneCooldown = v.lcSec + 0.3;
+      this.vehicles.push(v);
+    }
+    this.shoulder = list.filter((v) => !toLane.includes(v) && v.x - v.length < this.cfg.length);
   }
 
   step(dt: number) {
@@ -2182,6 +2913,8 @@ export class TrafficSim {
     // Every lookup below reads this; it must reflect the positions the
     // decisions are made against, so it is built before any of them.
     this.rebuildLaneIndex();
+    this.liveIncidents = this.interventions.incidents.filter((i) => this.incidentArmed(i));
+    this.findYields();
 
     // Inflow across ALL lanes — a lane closure is a downstream work zone, so
     // vehicles still enter the closing lane and must merge out at the taper.
@@ -2293,6 +3026,16 @@ export class TrafficSim {
     // Longitudinal update (ballistic integration, clamped to >= 0).
     for (const v of this.vehicles) {
       const oldX = v.x;
+      /* A wreck is where it stopped — decided BEFORE it is moved. This used to come after the integration below, which
+         moved it by its own (free-road) acceleration first and only then zeroed its speed: a wreck crept downstream,
+         measured at 4 m over a twenty-minute scene. */
+      if (v.role === "wreck" && !v.departing) { this.settleWreck(v, dt); continue; }
+      // Hitched to a recovery truck: it goes where the truck goes.
+      if (v.towedBy) { this.followTow(v, dt); continue; }
+      // A recovery truck waits while its load is winched up behind it.
+      if (v.towing && !v.towing.hitched && this.vehicles.includes(v.towing)) { v.v = 0; v.accel = 0; continue; }
+      // Parked at the scene: it stays put (the overlap pass below still makes it give way to anyone already in its cell).
+      if (v.role === "responder" && v.stillSince != null && !v.departing) { v.v = 0; v.accel = 0; continue; }
       // Clamp to THIS driver's acceleration. Against the global A_MAX, every
       // driver drawn above average simply had the difference clipped off here,
       // quietly handing back the spread the traits were added to create.
@@ -2300,10 +3043,40 @@ export class TrafficSim {
        * holding the acceleration they last chose. This is the lag: for up to
        * `reactionS` they are acting on a road that has already changed. */
       v.reactTimer -= dt;
-      if (v.reactTimer <= 0) {
+      if (v.doom) {
+        // Scripted every step: the moment it fails to stop IS the event, and a lag would only blur it.
+        v.accel = this.doomAccel(v);
+      } else if (v.role === "responder" && !v.departing && v.holdAtX != null && v.stillSince == null) {
+        // On its way to its spot: following the traffic, and slowing to stop there.
+        if (v.reactTimer <= 0) v.reactTimer = v.reactionS;
+        v.accel = Math.min(this.idmAccel(v, v.lane), this.brakeTo(v, v.holdAtX));
+        /* Standing in a live lane waiting to get across to its own, with nobody letting it: rather than stand there
+           holding up a second lane, it pulls onto the shoulder and stops there. */
+        v.heldFor = v.v < 0.3 && v.lane !== v.parkLane ? (v.heldFor ?? 0) + dt : 0;
+        if (v.heldFor > 15 && v.responderKind !== "tow" && v.responderKind !== "works") v.parkLane = this.shoulderLane;
+      } else if (v.role === "responder" && !v.departing && v.facTarget && v.stillSince == null) {
+        /* Sent to a plaza or a service area. Two things an ordinary driver does that it must not:
+           - miss the exit. Not yet in the lane the ramp leaves from, it stops short of the gore and waits for a way
+             across (considerLaneChange gives it one as soon as there is room); it used to drive on down the
+             expressway, away from the scene it was sent to.
+           - wait unseen. Held in the queue for its own scene — at the gore, at the barrier's mouth — with the ramp
+             behind the crash full, that is as near as it can get, and where it attends from. */
+        if (v.reactTimer <= 0) v.reactTimer = v.reactionS;
+        const short = v.exitAtX != null && v.lane !== this.exitLane ? this.brakeTo(v, v.exitAtX - 8) : 99;
+        v.accel = Math.min(this.idmAccel(v, v.lane), short);
+        v.heldFor = v.v < 0.3 ? (v.heldFor ?? 0) + dt : 0;
+        if (v.heldFor > 5 && v.sceneKey !== undefined && this.fac.sceneLane(v.sceneKey) !== undefined) {
+          v.stillSince = this.time;
+          v.v = 0;
+          v.accel = 0;
+          continue;
+        }
+      } else if (v.reactTimer <= 0) {
         v.reactTimer = v.reactionS;
         v.accel = this.idmAccel(v, v.lane);
       }
+      // Driving off: a wreck straightens up as it goes.
+      if (v.role === "wreck" && v.yaw) v.yaw *= Math.max(0, 1 - dt * 1.2);
       const a = Math.max(-8, Math.min(v.aMax, v.accel));
       const vNew = Math.max(0, v.v + a * dt);
       v.x += Math.max(0, (v.v + vNew) / 2 * dt);
@@ -2312,17 +3085,20 @@ export class TrafficSim {
       // obstacle the IDM couldn't brake for in time. Never let a car drive
       // out the far side of an accident (or closed-lane taper) — it stops
       // against it instead.
-      /* A wreck is where it stopped. Skipping it here is what makes it an
-         obstacle for free: it stays in the vehicle list, so every follower's
-         car-following term and the overlap correction both see it. */
-      if (v.role === "wreck" && !v.departing) { v.v = 0; v.accel = 0; continue; }
       // Waiting at a full ramp or plaza: stands in its lane until there is room.
       if (v.heldAtGore) { v.v = 0; v.accel = 0; continue; }
+      /* On its way into a scene: has it happened? A wreck now is where it came to rest — it stays in the vehicle
+         list, so every follower's car-following term and the overlap correction both see it, which is what makes it an
+         obstacle for free. */
+      if (v.doom) this.doomContact(v, dt);
+      if (v.role === "wreck" && !v.departing) continue;
 
       /* A responder holds station once it reaches the scene. Braking into it
          rather than stopping dead, so it arrives rather than snapping to a
          halt — and it is still a normal vehicle to everyone behind. */
-      if (v.role === "responder" && !v.departing && v.holdAtX != null && v.x >= v.holdAtX) {
+      if (v.role === "responder" && !v.departing && v.holdAtX != null && v.lane === v.parkLane && v.laneShift >= 1 &&
+          (v.stillSince != null || v.x >= v.holdAtX - 0.4 || (v.v < 0.3 && v.holdAtX - v.x < 4))) {
+        if (v.stillSince == null) v.stillSince = this.time;
         /* Park AT the station, or short of it if someone is in the way.
          *
          * Pinning straight to holdAtX let a responder stop with its nose
@@ -2343,7 +3119,7 @@ export class TrafficSim {
         continue;
       }
 
-      const wall = this.blockPointAhead(v.lane, oldX);
+      const wall = this.blockPointAhead(v.lane, oldX, v);
       if (v.x > wall) {
         /* Stop against the obstacle — but behind anything already stopped
          * against it. Clamping straight to `wall` put every queued vehicle at
@@ -2358,6 +3134,11 @@ export class TrafficSim {
       }
       this.emit(v, Math.max(0, v.x - oldX), dt);
     }
+
+    // A wreck in tow sits on its hitch at the truck's position after the truck has moved, not one step behind it.
+    for (const v of this.vehicles) if (v.towedBy && v.hitched) v.x = Math.max(v.x, v.towedBy.x - v.towedBy.length - 1.0);
+    // Onto the hard shoulder: a vehicle pulling over, a responder coming back to it.
+    this.pullOntoShoulder();
 
     /* Everything inside the plazas and service areas moves on the same tick,
      * after the carriageway: a vehicle merging back has to judge the lane as it
@@ -2440,8 +3221,10 @@ export class TrafficSim {
       if (!moved) break;
     }
 
-    // Responders entering the road, if any are due and there is room.
+    // The hard shoulder, then responders onto it if any are due, then the scenes being put together.
+    this.stepShoulder(dt);
     this.releaseResponders();
+    this.stepScenes();
     if (this.fac.list.length > 0) this.releaseFacilityResponders();
 
     // A shunt in the queue behind an existing incident, if one is due.

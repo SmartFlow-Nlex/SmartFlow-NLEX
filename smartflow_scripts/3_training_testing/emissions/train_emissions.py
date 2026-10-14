@@ -93,6 +93,41 @@ wx["ds"] = pd.to_datetime(wx.ds)
 df = df.merge(wx, on="ds", how="left")
 df[["rain", "temp"]] = df[["rain", "temp"]].ffill().bfill()
 
+# Holidays (public.ph_holidays): known in advance, so they are a legitimate input
+# for any day being forecast. Added 2026-10-11. Without them the model met every
+# holiday as an ordinary day: its error on holidays was 32.5% against 6.1% on
+# other days (42 origins x 7 days), and a holiday dip in the lags was read as a
+# fall in the level.
+_hol = pd.read_sql_query("SELECT date_day FROM public.ph_holidays", conn)
+HOLIDAYS = set(pd.to_datetime(_hol.date_day).dt.normalize())
+
+
+def _is_hol(x):
+    return int(pd.Timestamp(x).normalize() in HOLIDAYS)
+
+
+def special_day(x):
+    """Not an ordinary day's traffic: a holiday, or the year-end week (23 Dec - 2 Jan)."""
+    x = pd.Timestamp(x).normalize()
+    return x in HOLIDAYS or (x.month == 12 and x.day >= 23) or (x.month == 1 and x.day <= 2)
+
+
+def hol_feats(ds):
+    """Calendar facts about `ds`: the day itself, its eve and the day after, and
+    whether the days its lags and rolling mean are read from were holidays (so a
+    dip fed in through them is recognised as one), and whether one is coming."""
+    one = pd.Timedelta(days=1)
+    return {
+        "is_hol": _is_hol(ds), "hol_eve": _is_hol(ds + one), "hol_after": _is_hol(ds - one),
+        "hol_lag7": _is_hol(ds - 7 * one),
+        "hol_in_last7": sum(_is_hol(ds - k * one) for k in range(1, 8)),
+        "hol_in_next3": sum(_is_hol(ds + k * one) for k in range(0, 4)),
+    }
+
+
+HOL_FEATS = ["is_hol", "hol_eve", "hol_after", "hol_lag7", "hol_in_last7", "hol_in_next3"]
+print(f"  {len(HOLIDAYS)} holiday dates loaded from public.ph_holidays")
+
 # ── features ─────────────────────────────────────────────────────────────────
 banner("STEP 2: Features")
 d = df.copy()
@@ -105,8 +140,11 @@ for L in LAGS:
 d["roll7"] = d.y.shift(1).rolling(7).mean()
 d["roll28"] = d.y.shift(1).rolling(28).mean()
 d["heavy_share"] = (d.heavy / d.veh).shift(1)
+_hf = pd.DataFrame([hol_feats(x) for x in d.ds], index=d.index)
+for _c in HOL_FEATS:
+    d[_c] = _hf[_c].values
 FEATS = ["dow", "is_weekend", "month", "t", "rain", "temp", "roll7", "roll28",
-         "heavy_share"] + [f"lag{L}" for L in LAGS]
+         "heavy_share"] + [f"lag{L}" for L in LAGS] + HOL_FEATS
 d = d.dropna().reset_index(drop=True)
 print(f"  usable rows after lags: {len(d):,}   features: {len(FEATS)}")
 
@@ -227,6 +265,19 @@ def project(mname, mfn, hist0=None, horizon_ds=None, clim_tbl=None):
     if mname == "LSTM":
         return [float(v) for v in mfn(base, pd.DataFrame({"ds": list(window)}))]
 
+    # The heavy-vehicle share each future day is given. It used to be the share of
+    # the single LAST recorded day, held for the whole projection - and when that
+    # day was a holiday (1 Nov, 1 Jan: almost no trucks) every one of the next 90
+    # days was forecast as if trucks had left the road, about a third too low.
+    # That, not the lags, was why two horizon origins failed (2026-10-11). Now:
+    # what that weekday has lately been, over the ordinary days of the last eight
+    # weeks. (heavy_share is YESTERDAY's share, hence the weekday of ds - 1.)
+    _recent = base.tail(56)
+    _recent = _recent[[not special_day(x) for x in _recent.ds]]
+    _share = _recent.heavy / _recent.veh
+    share_by_dow = _share.groupby(_recent.ds.dt.dayofweek).median().to_dict()
+    share_all = float(_share.median()) if len(_share) else float(base.heavy.iloc[-1] / base.veh.iloc[-1])
+
     hist, out = base.copy(), []
     for ds in window:
         k = ds.dayofyear
@@ -236,8 +287,9 @@ def project(mname, mfn, hist0=None, horizon_ds=None, clim_tbl=None):
             "ds": ds, "dow": ds.dayofweek, "is_weekend": int(ds.dayofweek >= 5),
             "month": ds.month, "t": len(hist),
             "rain": float(r["rain"]), "temp": float(r["temp"]),
-            "heavy_share": float(hist.heavy.iloc[-1] / hist.veh.iloc[-1]),
+            "heavy_share": float(share_by_dow.get((ds - pd.Timedelta(days=1)).dayofweek, share_all)),
             "roll7": float(ys[-7:].mean()), "roll28": float(ys[-28:].mean()),
+            **hol_feats(ds),
         }
         for L in LAGS:
             row[f"lag{L}"] = float(ys[-L])
@@ -254,7 +306,7 @@ def project(mname, mfn, hist0=None, horizon_ds=None, clim_tbl=None):
 banner(f"STEP 3: Rolling-origin evaluation ({N_ORIGINS} origins, h={HORIZON}d)")
 import os, pickle
 CACHE = str(WORK / "cache" / "emissions_preds.pkl")
-CACHE_KEY = ("served-procedure-derived-v3", len(d), str(d.ds.max().date()), N_ORIGINS, HORIZON, tuple(CANDIDATES))
+CACHE_KEY = ("served-procedure-derived-v4-holidays", len(d), str(d.ds.max().date()), N_ORIGINS, HORIZON, tuple(CANDIDATES))
 _cached = None
 if os.path.exists(CACHE):
     with open(CACHE, "rb") as fh:

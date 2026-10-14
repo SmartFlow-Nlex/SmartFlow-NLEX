@@ -29,16 +29,20 @@ import {
   type ScenarioEvent,
   type EventSite,
   type NewEventSpec,
+  type KmStretch,
+  MIN_EVENT_STRETCH_M,
 } from "./scenarios/adapter";
 import ScenarioPanel, { TimeField, type DirectionScenarioData, type SkipPlan } from "./components/ScenarioPanel";
+import TrendCharts from "./components/TrendCharts";
+import { recentAverage } from "./trends";
 import PlacesList from "./components/PlacesList";
 import { candidatesFrom, HOTSPOT_FAMILIES, SCENARIO_DRAG_TYPE, SITE_FAMILIES, type Hotspots, type PickResult, type ResolvedPlace, type ScenarioDrop, type SiteOption } from "./components/placement";
 import { defaultOperatorLane, defaultVariant, getTemplate, type FamilyKey, type ScenarioVariant } from "./scenarios/catalogue";
 import { expectedOnStretch, ON_CARRIAGEWAY_SHARE } from "./scenarios/forecastIncidents";
-import { engineIndexToOperatorLane } from "./scenarios/assumptions";
+import { engineIndexToOperatorLane, operatorLaneToEngineIndex } from "./scenarios/assumptions";
 import DirectionPill, { DIRECTION_NAME } from "./components/DirectionPill";
 import { combineBaselines, combineMetrics } from "./bothMetrics";
-import { drawBorrowedLanes, drawScenes, drawWater, drawWeather, hasSceneArt, type SceneGeometry } from "./sceneArt";
+import { drawBorrowedLanes, drawSceneGround, drawScenes, drawWater, drawWeather, hasSceneArt, type SceneActor, type SceneGeometry } from "./sceneArt";
 import { ASSUMPTIONS } from "./scenarios/assumptions";
 import { borrowedLanes, crossoverM, defaultStretch, planStretch, planZipper, REALLOCATION_NAME, zipperHolds, type ZipperState } from "./zipper";
 import { PAINT_WHITE, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint } from "./vehiclePaint";
@@ -451,10 +455,15 @@ type CommandAction =
       lane: number | null;
       extraLanes: number[];
       km: number | null;
+      /** A stretch instead of a point ("within Km 12.30–12.40"), low km first: the event covers exactly it. */
+      fromKm?: number | null;
+      toKm?: number | null;
       placeId: string | null;
       site: "booth" | "pump" | "approach" | null;
       stations: number[];
       startMinutes: number;
+      /** A clock time to start at ("at 12:30"), measured from this page's clock when it is applied; startMinutes is then 0. */
+      atClock?: { hour: number; minute: number } | null;
       duration: { kind: "p50" } | { kind: "p90" } | { kind: "sampled" } | { kind: "manual"; minutes: number };
       /** Where the incident log records this kind of event most on the window (looked up when it is applied). */
       usual?: boolean;
@@ -536,8 +545,8 @@ function describeAction(a: CommandAction, look: CommandLookup): string {
       const what = `${getTemplate(a.family).displayName}${detail ? ` (${detail})` : ""}`;
       const where = a.placeId
         ? `at ${look.placeName(a.placeId)}${a.site === "approach" ? ", on the approach" : a.stations.length ? `, ${a.site === "pump" ? "pump" : "booth"} ${a.stations.map((x) => x + 1).join(", ")}` : ""}`
-        : `${a.lane != null ? `in lane ${[a.lane, ...a.extraLanes].join(", ")}` : ""}${a.km != null ? ` at Km ${a.km.toFixed(2)}` : " mid-window"}`;
-      const when = a.startMinutes > 0 ? `starting in ${a.startMinutes} min` : "starting now";
+        : `${a.lane != null ? `in lane ${[a.lane, ...a.extraLanes].join(", ")}` : ""}${a.fromKm != null && a.toKm != null ? ` over Km ${a.fromKm.toFixed(2)}–${a.toKm.toFixed(2)}` : a.km != null ? ` at Km ${a.km.toFixed(2)}` : " mid-window"}`;
+      const when = a.atClock ? `starting at ${hhmm2(a.atClock.hour, a.atClock.minute)}` : a.startMinutes > 0 ? `starting in ${a.startMinutes} min` : "starting now";
       const long =
         a.duration.kind === "manual" ? `for ${a.duration.minutes} min`
           : a.duration.kind === "p90" ? "for a long (90th percentile) time"
@@ -631,22 +640,47 @@ export default function AiSandboxPage() {
      took (--fs-top on the card), not a fixed offset: a fixed 104px let the
      Forecast day row sit on top of the outer lane once the header grew. */
   const hudTopRef = useRef<HTMLDivElement | null>(null);
+  /* The same for the readout strip along the bottom (--fs-strip): its height was a fixed 96 px (148 in Both),
+     but it is as tall as its tiles render, which browser zoom changes — at 175% the road ran under it. Both are
+     measured, and both again whenever either changes size (zooming in or out resizes them). Applied on the next
+     frame: setting them inside the observer's own callback resized what it was observing, and the browser
+     reported a ResizeObserver loop on every zoom step. */
   useEffect(() => {
     const el = hudTopRef.current;
     const card = mainCardRef.current;
     if (!expanded || !el || !card) return;
-    const apply = () => card.style.setProperty("--fs-top", `${Math.ceil(el.offsetTop + el.getBoundingClientRect().height)}px`);
-    apply();
+    let raf = 0;
+    const measure = () => {
+      card.style.setProperty("--fs-top", `${Math.ceil(el.offsetTop + el.getBoundingClientRect().height)}px`);
+      const strip = card.querySelector<HTMLElement>(".sandbox-metric-row");
+      if (strip) card.style.setProperty("--fs-strip", `${Math.ceil(card.getBoundingClientRect().bottom - strip.getBoundingClientRect().top) + 4}px`);
+    };
+    const apply = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    };
+    measure();
     const ro = new ResizeObserver(apply);
     ro.observe(el);
+    const strip = card.querySelector<HTMLElement>(".sandbox-metric-row");
+    if (strip) ro.observe(strip);
+    window.addEventListener("resize", apply);
     return () => {
+      cancelAnimationFrame(raf);
       ro.disconnect();
+      window.removeEventListener("resize", apply);
       card.style.removeProperty("--fs-top");
+      card.style.removeProperty("--fs-strip");
     };
   }, [expanded]);
   const [heldHeight, setHeldHeight] = useState(0);
   const toggleExpanded = () => {
-    if (!expanded) setHeldHeight(mainCardRef.current?.offsetHeight ?? 0);
+    if (!expanded) {
+      setHeldHeight(mainCardRef.current?.offsetHeight ?? 0);
+      // Too narrow for the road and the controls side by side (a small window, or zoomed in): the controls are a
+      // sheet over the road there, so full screen opens with them folded and the road in view (C brings them back).
+      if (window.matchMedia(NARROW_FULL_SCREEN).matches) setRailOpen(false);
+    }
     setExpanded((v) => !v);
   };
 
@@ -656,12 +690,18 @@ export default function AiSandboxPage() {
   useEffect(() => {
     const el = canvasRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
+    // On the next frame, not inside the callback: the state change re-lays out the page (see the --fs-top effect).
+    let raf = 0;
     const ro = new ResizeObserver(([e]) => {
       const w = Math.round(e.contentRect.width);
-      if (w > 0) setCanvasW(w);
+      cancelAnimationFrame(raf);
+      if (w > 0) raf = requestAnimationFrame(() => setCanvasW(w));
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
   }, []);
 
 
@@ -904,6 +944,16 @@ export default function AiSandboxPage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
+
+  /* Zoomed in (or the window made narrow) past the point where the road and the controls fit side by side while in
+   * full screen: the controls become a sheet over the road, so they fold away rather than cover half of it. */
+  useEffect(() => {
+    if (!expanded) return;
+    const mq = window.matchMedia(NARROW_FULL_SCREEN);
+    const onChange = (e: MediaQueryListEvent) => { if (e.matches) setRailOpen(false); };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
   }, [expanded]);
 
   /* The page behind must not scroll under the overlay: a wheel over the road
@@ -1314,7 +1364,7 @@ export default function AiSandboxPage() {
     // closure is armed the click belongs to placement, so hovering shows nothing and the cursor stays a crosshair.
     const paintVehicleProbe = () => {
       const armed = placingArmedRef.current;
-      const r = drawVehicleProbes(ctx, canvas.clientWidth, canvas.clientHeight, armed ? null : pointerRef.current, pinnedVehicleRef.current);
+      const r = drawVehicleProbes(ctx, roadW(canvas.clientWidth), canvas.clientHeight, armed ? null : pointerRef.current, pinnedVehicleRef.current);
       // A pinned vehicle that has left the road (or whose sim was rebuilt) is no longer there to point at.
       if (pinnedVehicleRef.current && !r.pinnedFound) pinnedVehicleRef.current = null;
       const cursor = r.hovering && !armed ? "pointer" : "";
@@ -1350,6 +1400,8 @@ export default function AiSandboxPage() {
             // Recorded for review. Throttled inside the buffer, so calling it
             // every step costs a comparison on most of them.
             replayRef.current[direction].record(sim);
+            // And the readouts over time, for the Trends charts: one comparison per step until a sample is due.
+            d.trend.record(sim, d.scenarioFrame.warmupS);
             const sctx = d.scenarioCtxRef.current;
             if (sctx) {
               const r = applyAtBoundary(d.scenarioBinding, sim, sctx.controls, sctx.events, sctx.frame, d.scenarioDueRef.current);
@@ -1397,7 +1449,7 @@ export default function AiSandboxPage() {
             facilityHighlightRef.current,
           );
           paintVehicleProbe();
-          if (dropGhostRef.current) drawDropGhost(ctx, canvas.clientWidth, dropGhostRef.current);
+          if (dropGhostRef.current) drawDropGhost(ctx, roadW(canvas.clientWidth), { ...dropGhostRef.current, x: roadX(dropGhostRef.current.x) });
         }
       } else {
         const liveSim = byDirection[focusDirection].simRef.current;
@@ -1424,7 +1476,7 @@ export default function AiSandboxPage() {
               : null;
           render(ctx, canvas, focusedSim as NonNullable<typeof liveSim>, locationRef.current, marksRef.current, maxLaneRef.current, exitsRef.current, scenarioOverlayRef.current[focusDirection] ?? null, animClockRef.current, dayFraction, asphaltColor, alpha, facView, facilityHighlightRef.current);
           paintVehicleProbe();
-          if (dropGhostRef.current) drawDropGhost(ctx, canvas.clientWidth, dropGhostRef.current);
+          if (dropGhostRef.current) drawDropGhost(ctx, roadW(canvas.clientWidth), { ...dropGhostRef.current, x: roadX(dropGhostRef.current.x) });
         }
       }
     };
@@ -1439,7 +1491,7 @@ export default function AiSandboxPage() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const hit = vehicleAt(e.clientX - rect.left, e.clientY - rect.top);
+    const hit = vehicleAt(roadX(e.clientX - rect.left), e.clientY - rect.top);
     const cur = pinnedVehicleRef.current;
     pinnedVehicleRef.current =
       hit === null || (cur !== null && cur.id === hit.id && cur.dir === hit.dir && cur.born === hit.born)
@@ -1452,7 +1504,7 @@ export default function AiSandboxPage() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    pointerRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    pointerRef.current = { x: roadX(e.clientX - rect.left), y: e.clientY - rect.top };
   };
 
   /* Incident placement and closure drawing: arm a mode from a control, then click the road.
@@ -1475,9 +1527,9 @@ export default function AiSandboxPage() {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
-    const cssW = rect.width;
+    const cssW = roadW(rect.width);
     const cssH = rect.height;
-    const cx = e.clientX - rect.left;
+    const cx = roadX(e.clientX - rect.left);
     const cy = e.clientY - rect.top;
     type Geo = { dir: Direction; roadTop: number; roadH: number; laneH: number; gutterPx: number; gutter: number; reverse: boolean; laneTop?: (lane: number) => number };
     const geos: Geo[] = [];
@@ -1558,7 +1610,95 @@ export default function AiSandboxPage() {
     return { direction: g.dir, km, lane: engineIndexToOperatorLane(engineLane, lanes), site: null };
   };
 
+  /* ── Zoom ──────────────────────────────────────────────────────────────────────────────────────────────
+     Vehicles are their true size, so the road is zoomed to see them large (roadView). The wheel zooms about the
+     cursor in full screen, or anywhere with Ctrl held (docked, a plain wheel still scrolls the page); a drag
+     pans; the toolbar has −, + and Whole road; an event's "Zoom to" goes to it. It goes back to the whole
+     window whenever the window or the view changes: a zoom is a look at this stretch, not a setting. */
+  const [zoom, setZoom] = useState(1);
+  const maxZoomNow = () => {
+    const w = canvasRef.current?.clientWidth ?? 0;
+    return w > 0 ? Math.max(1, (MAX_PX_PER_M * segLengthM) / w) : 1;
+  };
+  /** Zoom to `z`, keeping the road under screen x `anchor` (CSS px on the canvas; its middle when null) where it is. */
+  const zoomAt = (z: number, anchor: number | null) => {
+    const w = canvasRef.current?.clientWidth ?? 0;
+    if (w <= 0) return;
+    const nz = Math.max(1, Math.min(maxZoomNow(), z));
+    const a = anchor ?? w / 2;
+    roadView.pan = Math.max(0, Math.min(w * nz - w, (roadView.pan + a) * (nz / roadView.zoom) - a));
+    roadView.zoom = nz;
+    setZoom(nz);
+  };
+  const zoomAtRef = useRef(zoomAt);
+  zoomAtRef.current = zoomAt;
+  /** Onto a km of the window, with about 180 m of road across the screen (or as close as the zoom allows). */
+  const zoomToKm = (km: number) => {
+    const w = canvasRef.current?.clientWidth ?? 0;
+    if (w <= 0 || toKm <= fromKm) return;
+    const nz = Math.max(1, Math.min(maxZoomNow(), segLengthM / 180));
+    roadView.zoom = nz;
+    // Low km is on the left for both carriageways (southbound is drawn mirrored), so one mapping serves both.
+    roadView.pan = Math.max(0, Math.min(w * nz - w, ((km - fromKm) / (toKm - fromKm)) * w * nz - w / 2));
+    setZoom(nz);
+  };
+  useEffect(() => {
+    roadView.zoom = 1;
+    roadView.pan = 0;
+    setZoom(1);
+    return () => {
+      roadView.zoom = 1;
+      roadView.pan = 0;
+    };
+  }, [fromKm, toKm, view, segLengthM]);
+  // The wheel, as a real listener: React's is passive, and a zoom must stop the page scrolling under it.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      const zooming = expanded || e.ctrlKey || e.metaKey;
+      const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey;
+      if (roadView.zoom > 1 && sideways) {
+        e.preventDefault();
+        const w = canvas.clientWidth;
+        roadView.pan = Math.max(0, Math.min(w * roadView.zoom - w, roadView.pan + (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY)));
+        return;
+      }
+      if (!zooming) return;
+      e.preventDefault();
+      zoomAtRef.current(roadView.zoom * Math.exp(-e.deltaY * 0.0016), e.clientX - canvas.getBoundingClientRect().left);
+    };
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+  }, [expanded]);
+  /** A drag on the zoomed road pans it. One that moved is not also a click (it would pin a vehicle or place an incident). */
+  const panDraggedRef = useRef(false);
+  const startPan = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0 || roadView.zoom <= 1) return;
+    const canvas = e.currentTarget;
+    const from = { x: e.clientX, pan: roadView.pan };
+    let moved = false;
+    const move = (m: MouseEvent) => {
+      const dx = m.clientX - from.x;
+      if (!moved && Math.abs(dx) < 5) return;
+      moved = true;
+      const w = canvas.clientWidth;
+      roadView.pan = Math.max(0, Math.min(w * roadView.zoom - w, from.pan - dx));
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      if (moved) panDraggedRef.current = true;
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (panDraggedRef.current) {
+      panDraggedRef.current = false;
+      return;
+    }
     const armed = activeDirections.find((dn) => byDirection[dn].placingIncident || byDirection[dn].placingClosure);
     if (armed === undefined) {
       pinVehicleAt(e);
@@ -1570,9 +1710,9 @@ export default function AiSandboxPage() {
     // Invert the same geometry the renderer uses to map the click back to
     // (carriageway, lane, x-in-metres). Keep these formulas in sync with render()/renderBoth().
     const rect = canvas.getBoundingClientRect();
-    const cssW = rect.width;
+    const cssW = roadW(rect.width);
     const cssH = rect.height;
-    const cx = e.clientX - rect.left;
+    const cx = roadX(e.clientX - rect.left);
     const cy = e.clientY - rect.top;
 
     let target: Direction;
@@ -1736,7 +1876,7 @@ export default function AiSandboxPage() {
     if (!sim || !canvas || d.closureDraftKm == null) return;
     const rect = canvas.getBoundingClientRect();
     const L = sim.cfg.length;
-    const frac = (e.clientX - rect.left) / rect.width;
+    const frac = roadX(e.clientX - rect.left) / roadW(rect.width);
     const x = Math.max(0, Math.min(L, (drafting === "SB" ? 1 - frac : frac) * L));
     const startM = d.mAt(d.closureDraftKm);
     sim.interventions.closureDraft = { from: Math.min(startM, x), to: Math.max(startM, x) };
@@ -1804,6 +1944,93 @@ export default function AiSandboxPage() {
       closedBooths: Object.entries(h.closedBooths).filter(([, st]) => st.length > 0).map(([placeId, st]) => ({ placeId, stations: [...st] })),
     };
   };
+  /* The proposal on the road (planGhosts): each action with a place, as metres on its carriageway's run now.
+     Recomputed when the proposal or either road changes; emptied when there is no proposal. */
+  useEffect(() => {
+    const out: Record<Direction, PlanGhost[]> = { NB: [], SB: [] };
+    const span = (a: number, b: number) => `Km ${Math.min(a, b).toFixed(2)}–${Math.max(a, b).toFixed(2)}`;
+    for (const a of plan?.actions ?? []) {
+      if (!("direction" in a) && a.type !== "set_reallocation" && a.type !== "remove_event") continue;
+      const dir: Direction | null = a.type === "remove_event" ? (a.eventId.startsWith("SB:") ? "SB" : "NB") : a.type === "set_reallocation" ? a.toward : "direction" in a ? a.direction : null;
+      if (dir === null) continue;
+      const h = byDirection[dir];
+      const len = h.spanM;
+      const push = (kmA: number, kmB: number, lanes: readonly number[] | null, point: boolean, label: string) => {
+        const m0 = Math.min(h.mAt(kmA), h.mAt(kmB));
+        const m1 = Math.max(h.mAt(kmA), h.mAt(kmB));
+        if (m1 < 0 || m0 > len) return; // not on the window now: Apply moves the window first
+        out[dir].push({ fromM: Math.max(0, m0), toM: Math.min(len, m1), lanes, point, label });
+      };
+      const engine = (ops: readonly number[]) => ops.map((l) => operatorLaneToEngineIndex(l, h.laneCount)).filter((l): l is number => l !== null);
+      switch (a.type) {
+        case "close_lane": {
+          const A = a.fromKm ?? h.shownClosureFromKm;
+          const B = a.toKm ?? h.shownClosureToKm;
+          push(A, B, engine(a.lanes), false, `close lane ${a.lanes.join(", ")} · ${span(A, B)}`);
+          break;
+        }
+        case "open_lane":
+          push(h.shownClosureFromKm, h.shownClosureToKm, engine(a.lanes), false, `reopen lane ${a.lanes.join(", ")}`);
+          break;
+        case "set_speed_limit": {
+          if (a.kmh == null) break;
+          const A = a.fromKm ?? h.shownZoneFromKm;
+          const B = a.toKm ?? h.shownZoneToKm;
+          push(A, B, null, false, `${a.kmh} km/h · ${span(A, B)}`);
+          break;
+        }
+        case "set_reallocation":
+          if (a.fromKm != null && a.toKm != null) push(a.fromKm, a.toKm, null, false, `lane reallocation · ${span(a.fromKm, a.toKm)}`);
+          break;
+        case "remove_event": {
+          const e = h.scenarioEvents.find((x) => `${dir}:${x.id}` === a.eventId);
+          if (!e) break;
+          const lanes = e.lane === null ? null : engine([e.lane, ...e.extraLanes]);
+          if (e.stretchKm) push(e.stretchKm.fromKm, e.stretchKm.toKm, lanes, false, `remove ${e.name}`);
+          else push(e.positionKm, e.positionKm, lanes, true, `remove ${e.name}`);
+          break;
+        }
+        case "set_booths": {
+          const p = h.places.find((x) => x.id === a.placeId);
+          if (p) push(p.km, p.km, null, true, `${a.open ? "reopen" : "shut"} ${a.stations.length ? `booth ${a.stations.map((x) => x + 1).join(", ")}` : "every booth"} at ${p.name}`);
+          break;
+        }
+        case "add_event": {
+          const name = getTemplate(a.family).displayName;
+          const when = a.atClock ? ` · ${hhmm2(a.atClock.hour, a.atClock.minute)}` : a.startMinutes > 0 ? ` · in ${a.startMinutes} min` : "";
+          if (a.family === "rain") {
+            push(fromKm, toKm, null, false, `${name} · whole road${when}`);
+            break;
+          }
+          if (a.usual) break; // looked up when applied: there is no place to show yet
+          if (a.placeId) {
+            const p = h.places.find((x) => x.id === a.placeId);
+            if (p) push(p.km, p.km, null, true, `${name} at ${p.name}${when}`);
+            break;
+          }
+          const cap = h.laneCount;
+          const lane = eventHasLane(a.family) ? Math.min(Math.max(1, a.lane ?? defaultOperatorLane(getTemplate(a.family), cap)), cap) : null;
+          const lanes = lane === null ? null : engine([lane, ...a.extraLanes]);
+          if (a.fromKm != null && a.toKm != null) push(a.fromKm, a.toKm, lanes, false, `${name} · ${span(a.fromKm, a.toKm)}${when}`);
+          else {
+            const km = a.km ?? (fromKm + toKm) / 2;
+            push(km, km, lanes, true, `${name} · Km ${km.toFixed(2)}${when}`);
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    planGhosts.NB = out.NB;
+    planGhosts.SB = out.SB;
+    return () => {
+      planGhosts.NB = [];
+      planGhosts.SB = [];
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, fromKm, toKm, nb.laneCount, sb.laneCount, nb.scenarioEvents, sb.scenarioEvents, nb.shownClosureFromKm, nb.shownClosureToKm, sb.shownClosureFromKm, sb.shownClosureToKm, nb.shownZoneFromKm, nb.shownZoneToKm, sb.shownZoneFromKm, sb.shownZoneToKm]);
+
   /** Every toll plaza, barrier and gas station on the corridor, both carriageways, in km order: "go to Shell
    *  Balagtas" has to work from any route, so the ones off it are sent too (the server routes round them). */
   const commandPlaces = () =>
@@ -1881,6 +2108,8 @@ export default function AiSandboxPage() {
                 name: e.name,
                 direction: d,
                 km: e.positionKm,
+                fromKm: e.stretchKm?.fromKm ?? null,
+                toKm: e.stretchKm?.toKm ?? null,
                 startMin: (e.startS - byDirection[d].scenarioNowS) / 60,
                 endMin: (e.endS - byDirection[d].scenarioNowS) / 60,
               })),
@@ -1888,6 +2117,8 @@ export default function AiSandboxPage() {
             reallocation: zipper !== null ? { toward: zipper.toward, fromKm, toKm } : null,
             clock: { hour: Math.floor(liveMin / 60) % 24, minute: Math.floor(liveMin % 60) },
             nowMin: Math.max(0, sentTo.scenarioNowS / 60),
+            // The clock at the end of warm-up: an event "at 12:30" is measured from it (with nowMin).
+            runStart: { hour: Math.floor((((clockStartMin % 1440) + 1440) % 1440) / 60), minute: Math.floor((((clockStartMin % 1440) + 1440) % 1440) % 60) },
             forecastDay: forecast.date,
             forecastDays: forecast.data?.availableDates ?? [],
             playback: { running, speed: simSpeed, fullScreen: expanded },
@@ -1975,15 +2206,47 @@ export default function AiSandboxPage() {
     const wantLane = at ? at.lane ?? a.lane : a.lane;
     if (site === null && eventHasLane(a.family) && wantLane != null && wantLane > cap) no(`${DIRECTION_NAME[a.direction]} has no lane ${wantLane} here (it has ${cap}); the event goes in lane ${cap}`);
     const lane = site !== null || !eventHasLane(a.family) ? null : Math.min(Math.max(1, wantLane ?? defaultOperatorLane(getTemplate(a.family), cap)), cap);
+    /* A stretch ("within Km 12.30–12.40"): the event covers exactly it — its closure is the stretch and the wreck is
+       put inside it (positionInStretch) — instead of a point with a closure laid out round it, which put most of a
+       "12.30–12.40" crash outside 12.30–12.40. Held to the window; one cut below 20 m is the point it has become. */
+    let stretchKm: KmStretch | null = null;
+    if (site === null && a.fromKm != null && a.toKm != null && !at) {
+      const lo = Math.max(fromKm, Math.min(a.fromKm, a.toKm));
+      const hi = Math.min(toKm, Math.max(a.fromKm, a.toKm));
+      if ((hi - lo) * 1000 >= MIN_EVENT_STRETCH_M) {
+        stretchKm = { fromKm: lo, toKm: hi };
+        if (lo > Math.min(a.fromKm, a.toKm) + 0.0005 || hi < Math.max(a.fromKm, a.toKm) - 0.0005) no(`Km ${Math.min(a.fromKm, a.toKm).toFixed(2)}–${Math.max(a.fromKm, a.toKm).toFixed(2)} runs past the road on screen; the event covers Km ${lo.toFixed(2)}–${hi.toFixed(2)}`);
+      } else {
+        km = (lo + hi) / 2;
+      }
+    }
+    // Minutes after warm-up. A run just rebuilt is still warming up (its "now" is below zero), and an event cannot
+    // start before warm-up ends, so "now" is the later of the two, as the Scenario panel has it.
+    const nowMin = Math.max(0, h.scenarioNowS / 60);
+    let startMinutes = nowMin + a.startMinutes;
+    /* A clock time ("at 12:30"): measured here, from this clock to the second — the server's copy of it is a
+       minute-rounded snapshot from when the command was typed, and the run may have been rebuilt since (a set_time
+       before it in the same plan builds a new one at that hour). */
+    if (a.atClock) {
+      const at = a.atClock.hour * 60 + a.atClock.minute;
+      const base = clockStartMin + nowMin;
+      const ahead = (((at - base) % 1440) + 1440) % 1440;
+      const behind = 1440 - ahead;
+      if (behind < 1) startMinutes = nowMin;
+      else if (ahead <= 240) startMinutes = nowMin + ahead;
+      else {
+        no(`${getTemplate(a.family).displayName}: ${hhmm2(a.atClock.hour, a.atClock.minute)} is ${ahead > 720 ? "already past" : "more than 4 hours ahead"} on the sandbox clock (${hhmm2(Math.floor((((base % 1440) + 1440) % 1440) / 60), Math.floor((((base % 1440) + 1440) % 1440) % 60))}); not added`);
+        return;
+      }
+    }
     const spec: NewEventSpec = {
       variant,
       direction: a.direction,
       lane,
       extraLanes: lane === null || !EVENT_MULTI_LANE.has(a.family) ? [] : [...new Set(a.extraLanes.filter((l) => l >= 1 && l <= cap && l !== lane))],
       positionKm: Math.min(toKm, Math.max(fromKm, km ?? (fromKm + toKm) / 2)),
-      // Minutes after warm-up. A run just rebuilt is still warming up (its "now" is below zero), and an event
-      // cannot start before warm-up ends, so "now" is the later of the two, as the Scenario panel has it.
-      startMinutes: Math.max(0, h.scenarioNowS / 60) + a.startMinutes,
+      stretchKm,
+      startMinutes,
       duration: a.duration.kind === "sampled" ? { kind: "sampled", seed: 1 + Math.floor(Math.random() * 2147483000) } : a.duration,
       site,
     };
@@ -2239,7 +2502,8 @@ export default function AiSandboxPage() {
     if (!plan || !planTarget.simRef.current) return;
     const actions = [...plan.actions];
     // A carriageway the view does not show: show both first, so what is changed can be seen.
-    const named = actions.flatMap((a) => ("direction" in a ? [a.direction] : a.type === "set_reallocation" && a.toward ? [a.toward] : []));
+    // Rain is put on both carriageways whatever is on screen (it falls on the whole road), so it never widens the view.
+    const named = actions.flatMap((a) => (a.type === "add_event" && a.family === "rain" ? [] : "direction" in a ? [a.direction] : a.type === "set_reallocation" && a.toward ? [a.toward] : []));
     if (!actions.some((a) => a.type === "set_view") && named.some((d) => !activeDirections.includes(d))) actions.unshift({ type: "set_view", view: "Both" });
     const stages = [0, 1, 2, 3, 4, 5].map((n) => actions.filter((a) => commandStage(a) === n)).filter((g) => g.length > 0);
     const now = Date.now();
@@ -2620,6 +2884,20 @@ export default function AiSandboxPage() {
               </div>
             )}
             <div>
+              <div className="sandbox-speed-seg sandbox-zoom-seg" role="group" aria-label="Zoom the road" data-zoom>
+                <button onClick={() => zoomAt(roadView.zoom / 1.6, null)} disabled={zoom <= 1.001} aria-label="Zoom out" title="Zoom out (Ctrl + wheel, or the wheel in full screen)">
+                  −
+                </button>
+                <span data-zoom-readout title="How much of the road is across the screen. Vehicles are drawn at their true size, so zoom in to see them large.">
+                  {Math.round(segLengthM / zoom).toLocaleString()} m
+                </span>
+                <button onClick={() => zoomAt(roadView.zoom * 1.6, null)} disabled={zoom >= maxZoomNow() - 0.001} aria-label="Zoom in" title="Zoom in (Ctrl + wheel, or the wheel in full screen); drag the road to move along it">
+                  +
+                </button>
+                <button onClick={() => zoomAt(1, null)} disabled={zoom <= 1.001} title="Show the whole window" data-zoom-fit>
+                  Fit
+                </button>
+              </div>
               <div className="sandbox-speed-seg">
                 {SPEED_STEPS.map((s) => (
                   <button key={s} className={simSpeed === s ? "active" : ""} onClick={() => setSimSpeed(s)}>
@@ -2645,6 +2923,7 @@ export default function AiSandboxPage() {
               {(replayHasEvent || replayIndex !== null) && (
                 <button
                   className="btn-muted"
+                  data-short="⟲ Replay"
                   title="Replay the last incident or closure on this carriageway"
                   onClick={() => {
                     const buf = replayRef.current[focusDirection];
@@ -2668,6 +2947,7 @@ export default function AiSandboxPage() {
                   onClick={() => setRailOpen((o) => !o)}
                   title="Show or hide the controls (C)"
                   aria-pressed={railOpen}
+                  data-short={railOpen ? "Hide" : "Controls"}
                 >
                   {railOpen ? "Hide controls" : "Controls"}
                 </button>
@@ -2676,6 +2956,7 @@ export default function AiSandboxPage() {
                 className="btn-muted"
                 onClick={toggleExpanded}
                 title={expanded ? "Exit full screen (Esc)" : "Expand the road to fill the screen"}
+                data-short={expanded ? "Exit" : undefined}
               >
                 {expanded ? "Exit full screen" : "Full screen"}
               </button>
@@ -2788,6 +3069,7 @@ export default function AiSandboxPage() {
                   className="sandbox-fs-notes-toggle"
                   onClick={() => setNotesOpen((o) => !o)}
                   aria-expanded={notesOpen}
+                  data-short={notesOpen ? "Hide notes" : "Notes"}
                 >
                   {notesOpen ? "Hide notes" : "Notes, legend & recommendation"}
                 </button>
@@ -2851,6 +3133,13 @@ export default function AiSandboxPage() {
                   }
             }
             onClick={handleCanvasClick}
+            onMouseDown={startPan}
+            onDoubleClick={(e) => {
+              // Double-click: in to about 180 m across, on the spot clicked (or back out, when already that close).
+              const rect = e.currentTarget.getBoundingClientRect();
+              const near = Math.max(1, Math.min(maxZoomNow(), segLengthM / 180));
+              zoomAt(roadView.zoom >= near - 0.01 ? 1 : near, e.clientX - rect.left);
+            }}
             onMouseMove={(e) => {
               trackPointer(e);
               previewClosureAt(e);
@@ -2935,6 +3224,19 @@ export default function AiSandboxPage() {
               <CompareBlock d={focused} direction={null} />
             </>
           )}
+          {/* The readouts over time, per carriageway shown: what the strip above can only show as a moment. */}
+          <TrendCharts
+            series={activeDirections.map((dn) => {
+              const d = byDirection[dn];
+              return {
+                direction: dn,
+                samples: d.trend.samplesOf(d.simRef.current),
+                baseline: d.baseline,
+                events: d.scenarioEvents.map((e) => ({ id: e.id, name: e.name, startS: e.startS, endS: e.endS })),
+              };
+            })}
+            clockStartMin={clockStartMin}
+          />
           <div className="sandbox-legend">
             <span><i className="veh veh-1" /> Class 1 · light (car)</span>
             <span><i className="veh veh-2" /> Class 2 · medium (bus)</span>
@@ -3308,6 +3610,7 @@ export default function AiSandboxPage() {
               toKm={toKm}
               clockStartMin={clockStartMin}
               onHighlight={setHighlight}
+              onLocate={zoomToKm}
               dropRef={scenarioDropRef}
               onDragFamily={(f) => {
                 setDraggedFamily(f);
@@ -4007,14 +4310,38 @@ function BaselineSteps({ d, hideCapture }: { d: DirectionApi; hideCapture?: bool
  * each direction gets its own, headed by its own pill.
  */
 function CompareBlock({ d, direction }: { d: DirectionApi; direction: Direction | null }) {
-  if (!(d.baseline && d.metrics && d.anyIntervention)) return null;
+  /* One carriageway on screen and nothing to compare yet: say what is missing and offer the button here, where
+     the comparison will appear, rather than only in the guide in the controls. (Both mode prints its own line
+     per carriageway.) */
+  if (!d.baseline || !d.metrics || !d.anyIntervention) {
+    if (direction !== null || !d.metrics) return null;
+    return (
+      <div className="sandbox-compare sandbox-compare-empty" data-compare-empty>
+        <b>Before / after</b>
+        <span>
+          {d.baseline
+            ? `Baseline captured with ${d.baseline.takenWith}. Now change something — close a lane, set a speed limit, add an event — and the difference appears here.`
+            : "Capture a baseline first (how the road runs before you change anything), then change something to see what it costs."}
+        </span>
+        {!d.baseline && (
+          <button className="btn-primary" onClick={d.captureBaseline} style={{ marginLeft: 0 }} data-compare-capture>
+            Capture baseline
+          </button>
+        )}
+      </div>
+    );
+  }
+  // "Now" is the last minute's mean, as the baseline is (recentAverage): two instants gave a different answer each second.
+  const avg = recentAverage(d.trend.samplesOf(d.simRef.current));
+  const nowOf = { speed: avg ? avg.speedKmh : d.metrics.avgSpeedKmh, flow: avg ? avg.throughputPerMin : d.metrics.throughputPerMin, queue: avg ? avg.queueM : d.metrics.longestQueueM, co2: avg ? avg.co2KgPerMin : d.metrics.co2RatePerMin };
   // label, was, now, unit, and whether a bigger number is the better outcome.
   const compareRows: readonly (readonly [string, number, number, string, boolean])[] = [
-    ["Avg speed", d.baseline.avgSpeedKmh, d.metrics.avgSpeedKmh, "km/h", true],
-    ["Throughput", d.baseline.throughputPerMin, d.metrics.throughputPerMin, "/min", true],
-    ["Longest queue", d.baseline.longestQueueM, d.metrics.longestQueueM, "m", false],
-    ["CO₂ rate", d.baseline.co2RatePerMin, d.metrics.co2RatePerMin, "kg/min", false],
+    ["Avg speed", d.baseline.avgSpeedKmh, nowOf.speed, "km/h", true],
+    ["Throughput", d.baseline.throughputPerMin, nowOf.flow, "/min", true],
+    ["Longest queue", d.baseline.longestQueueM, nowOf.queue, "m", false],
+    ["CO₂ rate", d.baseline.co2RatePerMin, nowOf.co2, "kg/min", false],
   ];
+  const verdict = compareVerdict(d.baseline, nowOf);
   return (
     <div className="sandbox-compare" data-compare={direction ?? undefined}>
       <div className="sandbox-compare-head">
@@ -4025,6 +4352,9 @@ function CompareBlock({ d, direction }: { d: DirectionApi; direction: Direction 
           {d.baseline.takenWith} &rarr; {d.interventionSummary}
         </span>
       </div>
+      <p className={`sandbox-compare-verdict ${verdict.tone}`} data-compare-verdict>
+        {verdict.text}
+      </p>
       <div className="sandbox-compare-rows">
         <div className="sandbox-compare-row sandbox-compare-labels" aria-hidden>
           <span className="l" />
@@ -4056,8 +4386,36 @@ function CompareBlock({ d, direction }: { d: DirectionApi; direction: Direction 
           },
         )}
       </div>
+      <p className="sandbox-compare-foot">
+        {avg && d.baseline.averaged ? "Both sides are one-minute averages, so the figures hold steady." : "Averaged over the last minute where the run is long enough; re-capture once the road has run a minute for a steadier baseline."}
+      </p>
     </div>
   );
+}
+
+/**
+ * The comparison as one sentence: what moved, by how much, in the words a reader would use. A change under 3%
+ * is the road's own second-to-second noise and is called no change; the queue is given in metres, because
+ * "+∞%" of a queue that was 0 m says nothing.
+ */
+function compareVerdict(
+  b: { avgSpeedKmh: number; throughputPerMin: number; longestQueueM: number; co2RatePerMin: number },
+  now: { speed: number; flow: number; queue: number; co2: number },
+): { text: string; tone: "good" | "bad" | "flat" } {
+  const pct = (was: number, is: number) => (was > 0 ? ((is - was) / was) * 100 : 0);
+  const parts: string[] = [];
+  let score = 0;
+  const sp = pct(b.avgSpeedKmh, now.speed);
+  if (Math.abs(sp) >= 3) { parts.push(`speed ${sp < 0 ? "down" : "up"} ${Math.abs(sp).toFixed(0)}%`); score += sp > 0 ? 1 : -1; }
+  const fl = pct(b.throughputPerMin, now.flow);
+  if (Math.abs(fl) >= 3) { parts.push(`throughput ${fl < 0 ? "down" : "up"} ${Math.abs(fl).toFixed(0)}%`); score += fl > 0 ? 1 : -1; }
+  const dq = now.queue - b.longestQueueM;
+  if (Math.abs(dq) >= 20) { parts.push(`queue ${Math.abs(dq).toFixed(0)} m ${dq > 0 ? "longer" : "shorter"}`); score += dq < 0 ? 1 : -1; }
+  const co = pct(b.co2RatePerMin, now.co2);
+  if (Math.abs(co) >= 3) { parts.push(`CO₂ ${co < 0 ? "down" : "up"} ${Math.abs(co).toFixed(0)}%`); score += co < 0 ? 1 : -1; }
+  if (parts.length === 0) return { text: "No real change from the baseline: every figure is within its normal second-to-second movement.", tone: "flat" };
+  const text = `Compared with the baseline: ${parts.join(", ")}.`;
+  return { text, tone: score > 0 ? "good" : score < 0 ? "bad" : "flat" };
 }
 
 /** Both mode's warm-up / unmet-demand notes, one carriageway each, each naming which. */
@@ -4215,6 +4573,108 @@ type VehicleHit = {
 type VehicleRef = { id: number; dir: Direction; born: number };
 
 const vehicleHits: VehicleHit[] = [];
+
+/* The road's zoom, for the drawing and for every click on it.
+ *
+ * Vehicles are drawn at their true length (facilityArt's TRUE SIZE), so with a whole 600 m window on screen a
+ * car is a dozen pixels and with 3 km it is two or three. Zooming is how they are made large: `zoom` times the
+ * window's scale, with `pan` CSS pixels of the zoomed road off the left edge. The renderers lay the road out
+ * on a "virtual" canvas `zoom` times as wide as the real one and shift it left by `pan`, so nothing in the
+ * drawing needed to learn about zoom; a click is put back onto that virtual canvas (roadX / roadW) before it
+ * is read. Module-level, like vehicleHits: the render loop runs outside React. Along the road only — across
+ * it the lanes already fill the height they are given. */
+const roadView = { zoom: 1, pan: 0 };
+/** The widest a metre is drawn, px: a car about 70 px long. Zoom stops there. */
+const MAX_PX_PER_M = 15;
+/** A screen x on the canvas (CSS px from its left edge) as an x on the zoomed road. */
+const roadX = (screenX: number) => screenX + roadView.pan;
+/** The zoomed road's width for a canvas this wide. */
+const roadW = (canvasW: number) => canvasW * roadView.zoom;
+
+/* What a Copilot proposal would do on the road, drawn faintly until Apply or Cancel.
+ *
+ * A proposal was a sentence in the panel — "Minor collision on Northbound, over Km 12.30–12.40" — and where that
+ * is on the road could only be checked after applying it. Each action that has a place is outlined where it will
+ * land, in its own colour (sky blue: not the red of a closure in force nor the amber of an event), dashed, with
+ * "Proposed" in its label. Metres along the carriageway's own run; only what lies on the window now is listed
+ * (a plan that moves the window says so in the panel). Module-level like vehicleHits: the render loop runs
+ * outside React and reads it every frame. */
+type PlanGhost = {
+  readonly fromM: number;
+  readonly toM: number;
+  /** Engine lanes covered; null = the whole carriageway (a speed limit, rain, a shoulder breakdown's slow-down). */
+  readonly lanes: readonly number[] | null;
+  /** One spot (an event given a single km, a plaza): a pin, not a box. */
+  readonly point: boolean;
+  readonly label: string;
+};
+const planGhosts: Record<Direction, readonly PlanGhost[]> = { NB: [], SB: [] };
+
+function drawPlanGhosts(
+  ctx: CanvasRenderingContext2D,
+  ghosts: readonly PlanGhost[],
+  g: { xPx: (m: number) => number; roadTop: number; roadH: number; laneH: number; cssW: number; lanes: number; laneTop: (lane: number) => number; animT: number },
+) {
+  if (ghosts.length === 0) return;
+  const placed: { x0: number; x1: number; y0: number; y1: number }[] = [];
+  ctx.save();
+  ctx.font = "700 11px Inter, system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  for (const gh of ghosts) {
+    const lanes = (gh.lanes ?? []).filter((l) => l >= 0 && l < g.lanes);
+    const tops = lanes.map((l) => g.laneTop(l));
+    const top = gh.lanes === null || tops.length === 0 ? g.roadTop : Math.min(...tops);
+    const bottom = gh.lanes === null || tops.length === 0 ? g.roadTop + g.roadH : Math.max(...tops) + g.laneH;
+    const xa = g.xPx(gh.fromM);
+    const xb = g.xPx(gh.toM);
+    const x0 = Math.max(0, Math.min(xa, xb));
+    const x1 = Math.min(g.cssW, Math.max(xa, xb));
+    ctx.setLineDash([7, 5]);
+    ctx.lineDashOffset = -(g.animT * 14) % 12; // marching, so it reads as "not there yet"
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(56,189,248,0.95)";
+    let anchorX: number;
+    if (gh.point) {
+      const cx = (xa + xb) / 2;
+      const cy = (top + bottom) / 2;
+      const r = Math.min(13, g.laneH * 0.42);
+      ctx.fillStyle = "rgba(56,189,248,0.2)";
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx, g.roadTop);
+      ctx.lineTo(cx, g.roadTop + g.roadH);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      anchorX = cx;
+    } else {
+      ctx.fillStyle = "rgba(56,189,248,0.16)";
+      ctx.fillRect(x0, top, Math.max(2, x1 - x0), bottom - top);
+      ctx.strokeRect(x0 + 1, top + 1, Math.max(2, x1 - x0 - 2), bottom - top - 2);
+      anchorX = (x0 + x1) / 2;
+    }
+    ctx.setLineDash([]);
+    const text = `Proposed · ${gh.label}`;
+    const w = ctx.measureText(text).width + 14;
+    const h = 18;
+    const lx = Math.max(4, Math.min(anchorX - w / 2, g.cssW - w - 4));
+    let ly = top - h - 3 >= g.roadTop + 20 ? top - h - 3 : bottom + 3 + h <= g.roadTop + g.roadH ? bottom + 3 : top + 3;
+    for (let tries = 0; tries < 6 && placed.some((p) => lx < p.x1 && lx + w > p.x0 && ly < p.y1 && ly + h > p.y0); tries++) ly += h + 3;
+    placed.push({ x0: lx, x1: lx + w, y0: ly, y1: ly + h });
+    ctx.fillStyle = "rgba(8,47,73,0.94)";
+    roundRect(ctx, lx, ly, w, h, 4);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(56,189,248,0.95)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = "#e0f2fe";
+    ctx.fillText(text, lx + 7, ly + 3.5);
+  }
+  ctx.restore();
+}
 /** Sprites are a few pixels across at corridor scale; the hover target is a little bigger than the drawing. */
 const PROBE_SLOP_PX = 4;
 const VEHICLE_NAME = { 1: "Car", 2: "Bus", 3: "Truck" } as const;
@@ -4303,7 +4763,7 @@ function drawProbeBubble(ctx: CanvasRenderingContext2D, cssW: number, cssH: numb
 
 /** Tick spacing in km that yields a readable number of markers for a span. */
 function kmTickStep(spanKm: number): number {
-  for (const step of [0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 5]) {
+  for (const step of [0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 5]) {
     if (spanKm / step <= 8) return step;
   }
   return 10;
@@ -4377,6 +4837,27 @@ type ScenarioOverlay = {
   isScenarioIncident: (i: Incident) => boolean;
 };
 
+/** Narrower than this (CSS px) the road and the full-screen controls do not fit side by side. Matches globals.css. */
+const NARROW_FULL_SCREEN = "(max-width: 900px)";
+
+/* The canvas's pixel buffer at the screen's density, whatever the browser zoom.
+ *
+ * Zoom sets devicePixelRatio, and at 90%, 110%, 125% or 175% it is fractional, so width x ratio is not a whole
+ * number. The buffer was compared against that unrounded product, which a canvas width (an integer) never equals,
+ * so it was re-allocated — and cleared — every frame; and the transform scaled by the ratio while the buffer had
+ * been truncated, so the picture was a fraction of a pixel out (soft). Rounded once, compared rounded, and scaled
+ * by exactly buffer / CSS size. */
+function fitBackingStore(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, cssW: number, cssH: number): void {
+  const dpr = window.devicePixelRatio || 1;
+  const bw = Math.max(1, Math.round(cssW * dpr));
+  const bh = Math.max(1, Math.round(cssH * dpr));
+  if (canvas.width !== bw || canvas.height !== bh) {
+    canvas.width = bw;
+    canvas.height = bh;
+  }
+  ctx.setTransform(bw / Math.max(1, cssW), 0, 0, bh / Math.max(1, cssH), 0, 0);
+}
+
 /** A hazard triangle for a scenario event; `faint` for one that has not started. */
 function drawScenarioMarker(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, faint: boolean) {
   ctx.save();
@@ -4415,6 +4896,8 @@ function drawScenarioLabels(
     reverseLanes: boolean;
     /** Where each engine lane is drawn, when not laneSlotTop within this block (Both mode, dualLanes). */
     laneTop?: (lane: number) => number;
+    /** What an event's label says, when not its mark's own text (the phase's words, corrected for who is there). */
+    wording?: (m: SceneMark) => string;
   },
 ) {
   const slotTop = g.laneTop ?? ((lane: number) => laneSlotTop(lane, g.roadTop, g.laneH, g.lanes, g.reverseLanes));
@@ -4436,7 +4919,7 @@ function drawScenarioLabels(
     // A scene draws itself. The amber triangle is what is left for an event that has not started, or that is
     // running but holds nothing on the road (it yielded its closure to the operator's own).
     if (!hasSceneArt(m)) drawScenarioMarker(ctx, x, laneY, g.r, faint);
-    const text = `${m.name} · ${m.text}`;
+    const text = `${m.name} · ${g.wording ? g.wording(m) : m.text}`;
     const w = ctx.measureText(text).width + 14;
     const h = 18;
     const heldStretch = hasSceneArt(m) && m.closedLanes.length > 0 ? m.stretch : null;
@@ -4728,75 +5211,166 @@ function daylightAsphalt(minutesSinceMidnight: number): string {
   return mixHex(ASPHALT_DUSK, ASPHALT_NIGHT, h - 18);
 }
 
-/* An agent that has crashed. Drawn from the vehicle list like everything
- * else, at the angle it came to rest, with hazards going. */
-function drawWreckAgent(
-  ctx: CanvasRenderingContext2D, xNose: number, y: number,
-  len: number, wid: number, angle: number, sb: boolean, t: number,
-): void {
+/** Hazard lamps at the four corners of a vehicle, flashing: centred on (cx, y), turned `angle`. */
+function drawHazardLamps(ctx: CanvasRenderingContext2D, cx: number, y: number, len: number, wid: number, angle: number, t: number): void {
+  if (Math.floor(t * 2.2) % 2 !== 0) return;
   ctx.save();
-  ctx.translate(xNose - (sb ? -len / 2 : len / 2), y);
+  ctx.translate(cx, y);
   ctx.rotate(angle);
-  const r = Math.min(wid * 0.3, 4);
-  ctx.fillStyle = "rgba(0,0,0,0.34)";
-  roundRect(ctx, -len / 2 + 1.5, -wid / 2 + 2, len, wid, r);
-  ctx.fill();
-  ctx.fillStyle = "#b91c1c";
-  roundRect(ctx, -len / 2, -wid / 2, len, wid, r);
-  ctx.fill();
-  // Crumpled nose: a lighter wedge where the body has deformed.
-  ctx.fillStyle = "rgba(255,255,255,0.18)";
-  roundRect(ctx, len * 0.24, -wid * 0.42, len * 0.2, wid * 0.84, r * 0.6);
-  ctx.fill();
-  if (Math.floor(t * 2.2) % 2 === 0) {
-    ctx.fillStyle = "#fbbf24";
-    for (const sgn of [-1, 1]) {
-      ctx.beginPath();
-      ctx.arc(-len * 0.4, sgn * wid * 0.34, Math.max(1, wid * 0.14), 0, Math.PI * 2);
-      ctx.fill();
+  const r = Math.max(1, wid * 0.12);
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      const x = sx * (len / 2 - r * 0.7);
+      const yy = sy * (wid / 2 - r * 0.7);
+      ctx.fillStyle = "rgba(251,191,36,0.32)";
+      dot(ctx, x, yy, r * 2.4);
+      ctx.fillStyle = "#fbbf24";
+      dot(ctx, x, yy, r);
     }
   }
   ctx.restore();
 }
 
-/** A responder, driving in and holding station. Livery by kind, bar flashing. */
+/* A vehicle that has crashed or broken down — drawn as ITSELF: its own paint and class, at the angle it came to rest,
+ * with what happened to it on it (crumpled at the ends for a crash, on its side for an overturn) and its hazards going.
+ * It used to be a red block, so the car that crashed turned into a different car the moment it did — which is exactly
+ * what an operator reads as a wreck appearing from nowhere. */
+function drawWreckAgent(
+  ctx: CanvasRenderingContext2D, xNose: number, y: number,
+  len: number, wid: number, angle: number, sb: boolean, t: number,
+  vClass: 1 | 2 | 3 = 1, paint: Paint = PAINT_WHITE, trailer: Paint = PAINT_WHITE,
+  look: "crash" | "stalled" | "overturned" = "crash", hazards = true, moto = false,
+): void {
+  const f = sb ? -1 : 1;
+  ctx.save();
+  ctx.translate(xNose - f * (len / 2), y);
+  ctx.rotate(angle);
+  if (look === "overturned") paintOverturned(ctx, len, wid, paint, trailer, vClass, f);
+  else {
+    drawVehicle(ctx, f * (len / 2), 0, len, wid, vClass, paint, false, sb, trailer, moto);
+    if (look === "crash" && !moto) paintDamage(ctx, len, wid, f);
+  }
+  ctx.restore();
+  if (hazards && !moto) drawHazardLamps(ctx, xNose - f * (len / 2), y, len, wid, angle, t);
+}
+
+/** Crumpled ends and broken glass, over a vehicle's sprite (frame centred on it, nose toward `f`). */
+function paintDamage(ctx: CanvasRenderingContext2D, len: number, wid: number, f: 1 | -1): void {
+  const nose = (f * len) / 2;
+  const tail = (-f * len) / 2;
+  ctx.fillStyle = "rgba(15,23,42,0.5)";
+  ctx.beginPath();
+  ctx.moveTo(nose, -wid * 0.44);
+  ctx.lineTo(nose - f * len * 0.1, -wid * 0.28);
+  ctx.lineTo(nose - f * len * 0.05, 0);
+  ctx.lineTo(nose - f * len * 0.12, wid * 0.3);
+  ctx.lineTo(nose, wid * 0.44);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "rgba(15,23,42,0.38)";
+  ctx.beginPath();
+  ctx.moveTo(tail, -wid * 0.4);
+  ctx.lineTo(tail + f * len * 0.07, -wid * 0.12);
+  ctx.lineTo(tail + f * len * 0.04, wid * 0.24);
+  ctx.lineTo(tail, wid * 0.4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "rgba(226,232,240,0.9)";
+  for (let i = 0; i < 4; i++) ctx.fillRect(nose - f * len * (0.18 + i * 0.035) - 0.6, (i % 2 ? 1 : -1) * wid * (0.08 + i * 0.07) - 0.6, 1.2, 1.2);
+}
+
+/** A vehicle on its side, from above: the side panel in its paint, the underside with its axles and wheels to the sky. */
+function paintOverturned(ctx: CanvasRenderingContext2D, len: number, wid: number, paint: Paint, trailer: Paint, vClass: 1 | 2 | 3, f: 1 | -1): void {
+  const w = wid * 0.94;
+  ctx.fillStyle = "rgba(0,0,0,0.32)";
+  roundRect(ctx, -len / 2 + 1.5, -w / 2 + 2, len, w, Math.min(3, w * 0.3));
+  ctx.fill();
+  const g = ctx.createLinearGradient(0, -w / 2, 0, w / 2);
+  g.addColorStop(0, vClass === 3 ? trailer.hi : paint.hi);
+  g.addColorStop(1, vClass === 3 ? trailer.lo : paint.lo);
+  ctx.fillStyle = g;
+  roundRect(ctx, -len / 2, -w / 2, len, w, Math.min(3, w * 0.3));
+  ctx.fill();
+  if (vClass === 3) {
+    // The cab, in its own colour, at the front.
+    ctx.fillStyle = paint.lo;
+    roundRect(ctx, f === 1 ? len / 2 - len * 0.28 : -len / 2, -w / 2, len * 0.28, w, Math.min(3, w * 0.3));
+    ctx.fill();
+  }
+  // The underside: chassis along the half that faces the sky.
+  ctx.fillStyle = "#273142";
+  roundRect(ctx, -len / 2 + len * 0.04, -w / 2 + w * 0.06, len * 0.92, w * 0.46, 2);
+  ctx.fill();
+  const axles = vClass === 3 ? [0.4, 0.2, -0.22, -0.32, -0.42] : vClass === 2 ? [0.32, -0.3] : [0.3, -0.3];
+  for (const a of axles) {
+    const x = a * len * f;
+    ctx.fillStyle = "#05080f";
+    ctx.beginPath();
+    ctx.ellipse(x, -w * 0.18, Math.max(1.4, len * 0.045), Math.max(1.2, w * 0.2), 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#94a3b8";
+    dot(ctx, x, -w * 0.18, Math.max(0.6, w * 0.06));
+  }
+  // The roof edge, scraped along the road.
+  ctx.strokeStyle = "rgba(226,232,240,0.55)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-len / 2 + 2, w / 2 - 1.5);
+  ctx.lineTo(len / 2 - 2, w / 2 - 1.5);
+  ctx.stroke();
+}
+
+const RESPONDER_LOOK: Record<"ambulance" | "police" | "tow" | "works", { readonly vClass: 1 | 2 | 3; readonly body: Paint; readonly bed: Paint; readonly lights: readonly [string, string]; readonly glow: readonly [string, string] }> = {
+  police: { vClass: 1, body: { hi: "#ffffff", lo: "#d5dbe5" }, bed: PAINT_WHITE, lights: ["#ef4444", "#3b82f6"], glow: ["rgba(239,68,68,0.32)", "rgba(59,130,246,0.32)"] },
+  ambulance: { vClass: 2, body: { hi: "#ffffff", lo: "#e2e8f0" }, bed: PAINT_WHITE, lights: ["#ef4444", "#f8fafc"], glow: ["rgba(239,68,68,0.32)", "rgba(248,250,252,0.3)"] },
+  tow: { vClass: 3, body: { hi: "#fbbf24", lo: "#d97706" }, bed: { hi: "#64748b", lo: "#334155" }, lights: ["#fbbf24", "#f59e0b"], glow: ["rgba(251,191,36,0.32)", "rgba(245,158,11,0.3)"] },
+  works: { vClass: 3, body: { hi: "#fde047", lo: "#ca8a04" }, bed: { hi: "#facc15", lo: "#a16207" }, lights: ["#fbbf24", "#f59e0b"], glow: ["rgba(251,191,36,0.32)", "rgba(245,158,11,0.3)"] },
+};
+
+/* A responder: the same vehicle shapes as the traffic (a car, a van, a truck) in its service's livery, with its light
+ * bar flashing — police red and blue, ambulance red and white, recovery and works amber. */
 function drawResponderAgent(
   ctx: CanvasRenderingContext2D, xNose: number, y: number,
   len: number, wid: number, kind: "ambulance" | "police" | "tow" | "works", sb: boolean, t: number,
 ): void {
-  const body =
-    kind === "police" ? "#1d4ed8" :
-    kind === "ambulance" ? "#f1f5f9" :
-    kind === "works" ? "#eab308" : "#f59e0b";
+  const look = RESPONDER_LOOK[kind];
+  const f = sb ? -1 : 1;
+  drawVehicle(ctx, xNose, y, len, wid, look.vClass, look.body, false, sb, look.bed, false);
   ctx.save();
-  ctx.translate(xNose - (sb ? -len / 2 : len / 2), y);
-  const r = Math.min(wid * 0.3, 4);
-  ctx.fillStyle = "rgba(0,0,0,0.32)";
-  roundRect(ctx, -len / 2 + 1.5, -wid / 2 + 2, len, wid, r);
-  ctx.fill();
-  ctx.fillStyle = body;
-  roundRect(ctx, -len / 2, -wid / 2, len, wid, r);
-  ctx.fill();
-  if (kind === "ambulance") {
+  ctx.translate(xNose - f * (len / 2), y);
+  if (kind === "police") {
+    // A blue band down each side.
+    ctx.fillStyle = "#1d4ed8";
+    ctx.fillRect(-len * 0.42, -wid / 2, len * 0.84, Math.max(1, wid * 0.13));
+    ctx.fillRect(-len * 0.42, wid / 2 - Math.max(1, wid * 0.13), len * 0.84, Math.max(1, wid * 0.13));
+  } else if (kind === "ambulance") {
     ctx.fillStyle = "#dc2626";
-    ctx.fillRect(-len * 0.06, -wid * 0.1, len * 0.24, wid * 0.2);
-    ctx.fillRect(len * 0.02, -wid * 0.32, len * 0.08, wid * 0.64);
-  }
-  if (kind === "works") {
-    // Chevrons on the tail, which is what marks a works vehicle apart from a
-    // recovery truck at this size.
+    ctx.fillRect(-len * 0.46, -wid / 2, len * 0.92, Math.max(1, wid * 0.12));
+    ctx.fillRect(-len * 0.46, wid / 2 - Math.max(1, wid * 0.12), len * 0.92, Math.max(1, wid * 0.12));
+    // The cross on the roof.
+    const cx = -f * len * 0.12;
+    ctx.fillRect(cx - len * 0.09, -wid * 0.07, len * 0.18, wid * 0.14);
+    ctx.fillRect(cx - len * 0.03, -wid * 0.24, len * 0.06, wid * 0.48);
+  } else if (kind === "works") {
+    // Chevrons across the tail.
     ctx.fillStyle = "#1f2937";
-    for (let i = 0; i < 3; i++) ctx.fillRect(-len * 0.46 + i * len * 0.1, -wid * 0.42, len * 0.05, wid * 0.84);
+    for (let i = 0; i < 3; i++) ctx.fillRect(-f * len * 0.46 + f * i * len * 0.09 - len * 0.022, -wid * 0.42, len * 0.045, wid * 0.84);
   }
-  // The light bar: two halves alternating, which is what reads as a blue light
-  // at this size rather than a steady dot. A works truck gets a steady amber
-  // beacon instead — it is not running to anything.
-  const on = kind === "works" ? true : Math.floor(t * 4) % 2 === 0;
-  const w = Math.max(1.2, len * 0.1);
-  ctx.fillStyle = kind === "police" ? (on ? "#ef4444" : "#3b82f6") : "#fbbf24";
-  ctx.fillRect(-w / 2, -wid * 0.5, w, wid * (on ? 0.5 : 1));
-  ctx.fillStyle = kind === "police" ? (on ? "#3b82f6" : "#ef4444") : "#f59e0b";
-  ctx.fillRect(-w / 2, on ? 0 : -wid * 0.5, w, wid * 0.5);
+  // The light bar, across the roof (the cab, on a truck); its halves alternate, and the lit one glows.
+  const barX = kind === "police" ? -f * len * 0.04 : f * len * 0.3;
+  const on = Math.floor(t * (kind === "tow" || kind === "works" ? 2.5 : 4)) % 2 === 0;
+  const bw = Math.max(1.6, len * 0.07);
+  const bh = wid * 0.84;
+  for (const side of [-1, 1] as const) {
+    const lit = (side === -1) === on;
+    const i = side === -1 ? 0 : 1;
+    if (lit) {
+      ctx.fillStyle = look.glow[i];
+      dot(ctx, barX, (side * bh) / 4, wid * 0.42);
+    }
+    ctx.fillStyle = lit ? look.lights[i] : "rgba(30,41,59,0.9)";
+    ctx.fillRect(barX - bw / 2, side === -1 ? -bh / 2 : 0, bw, bh / 2);
+  }
   ctx.restore();
 }
 
@@ -5151,7 +5725,8 @@ function drawCarriageway(
     for (let lane = 0; lane < lanes; lane++) {
       const worst = new Array(bins).fill(Infinity);
       for (const v of sim.vehicles) {
-        if (v.lane !== lane || v.v >= SLOW) continue;
+        // A wreck or a parked responder is not queueing: its own scene shows it.
+        if (v.lane !== lane || v.v >= SLOW || v.role !== "traffic") continue;
         const b = Math.min(bins - 1, Math.max(0, Math.floor(xPx(v.x) / binPx)));
         worst[b] = Math.min(worst[b], v.v);
       }
@@ -5252,11 +5827,11 @@ function drawCarriageway(
       const lentHere = lent !== null && lane < lent.lanes;
       const w = lentHere ? tagW + 16 : tagW;
       ctx.fillStyle = "rgba(9,14,28,0.72)";
-      roundRect(ctx, 5, cy - tagH / 2, w, tagH, 3);
+      roundRect(ctx, roadView.pan + 5, cy - tagH / 2, w, tagH, 3);
       ctx.fill();
       const closed = sim.interventions.closedLanes[lane];
       ctx.fillStyle = closed ? "#fca5a5" : lentHere ? "rgba(253,224,71,0.95)" : "rgba(255,255,255,0.6)";
-      ctx.fillText(lentHere ? `${sb ? "SB" : "NB"} L${lane + 1}` : `L${lane + 1}`, 5 + w / 2, cy + 0.5);
+      ctx.fillText(lentHere ? `${sb ? "SB" : "NB"} L${lane + 1}` : `L${lane + 1}`, roadView.pan + 5 + w / 2, cy + 0.5);
     }
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
@@ -5289,8 +5864,11 @@ function drawCarriageway(
    * allowed a sprite slightly longer than the space it would actually be
    * drawn into. Both the gap map and the sprites use the same extrapolated
    * positions now, so the cap below is exact rather than nearly right. */
+  // The hard shoulder's vehicles (responders running up it, a vehicle pulled over onto it) are drawn with the traffic.
+  const shoulderTraffic = (sim as { shoulder?: typeof sim.vehicles }).shoulder ?? [];
+  const everyone = shoulderTraffic.length > 0 ? [...sim.vehicles, ...shoulderTraffic] : sim.vehicles;
   const noseXm = new Map<number, number>();
-  for (const v of sim.vehicles) {
+  for (const v of everyone) {
     noseXm.set(v.id, v.x + Math.max(0, v.v + 0.5 * v.accel * alphaS) * alphaS);
   }
 
@@ -5307,22 +5885,70 @@ function drawCarriageway(
      by the plaza layer, which knows their booth lanes. */
   const plazaRoomM = new Map<number, number>();
   {
-    type Nose = { id: number; x: number; plaza: boolean };
+    /* `w`: how much this vehicle counts in the band, 0..1. A vehicle in its lane is 1. One changing lanes counts
+       in both from the moment it starts, by how close it has come: nothing as it leaves the far lane's centre,
+       fully once it is near enough to touch (laneReach). It used to switch from not counted to fully counted at
+       that one point, so the cars either side of the gap it was moving into were drawn a size smaller in a single
+       frame, and a size bigger again in the frame it cleared the lane it left — traffic round an event, which
+       changes lanes in a queue all the time, pulsed. The room is now eased in and out with it (softRoom). */
+    type Nose = { id: number; x: number; plaza: boolean; w: number; free: number };
+    /* The least room at which a vehicle of this length is drawn at its full size (bisected off drawnLengthPx, once
+       per length). The easing runs from there down to the real room, not from "unlimited": most of an ease from
+       unlimited passes before the sprite is touched at all, and the whole change then lands in its last frames. */
+    const freeByLen = new Map<number, number>();
+    const freeRoomM = (lengthM: number): number => {
+      const hit = freeByLen.get(lengthM);
+      if (hit !== undefined) return hit;
+      const base = baseLengthPx(lengthM, mToPx, k);
+      let lo = lengthM;
+      let hi = lengthM + 400;
+      for (let i = 0; i < 24; i++) {
+        const mid = (lo + hi) / 2;
+        if (drawnLengthPx(base, lengthM, mid, mToPx) >= base - 0.01) hi = mid;
+        else lo = mid;
+      }
+      freeByLen.set(lengthM, hi);
+      return hi;
+    };
+    const softRoom = (gap: number, w: number, free: number) => gap + (1 - w) * Math.max(0, free - gap);
     const bands = new Map<number, Nose[]>();
     const put = (b: number, n: Nose) => {
       const arr = bands.get(b);
       if (arr) arr.push(n);
       else bands.set(b, [n]);
     };
-    for (const v of sim.vehicles) {
-      const n = { id: v.id, x: noseXm.get(v.id) ?? v.x, plaza: false };
+    /** Metres from the entrance over which a new vehicle comes to count in full. */
+    const ENTRY_EASE_M = 14;
+    // How far through a lane change (0..1 of its time) a vehicle comes within reach of the lane it is moving into.
+    let shiftAtReach = 0.5;
+    {
+      let lo = 0;
+      let hi = 1;
+      for (let i = 0; i < 20; i++) {
+        const mid = (lo + hi) / 2;
+        if (mid * mid * (3 - 2 * mid) >= 1 - laneReach) hi = mid;
+        else lo = mid;
+      }
+      shiftAtReach = Math.max(0.05, hi);
+    }
+    for (const v of everyone) {
+      const x = noseXm.get(v.id) ?? v.x;
       const across = visualLane(v);
-      for (const b of v.laneFrom !== v.lane ? [v.lane, v.laneFrom] : [v.lane]) if (Math.abs(across - b) < laneReach) put(b, n);
+      for (const b of v.laneFrom !== v.lane && v.laneShift < 1 ? [v.lane, v.laneFrom] : [v.lane]) {
+        // Evenly over the time it takes to come within reach (not over the distance, which a lane change covers
+        // slowly at first and then all at once): 0 as it sets off, 1 by the time it could touch.
+        const off = Math.abs(across - b);
+        const progress = v.laneShift >= 1 || v.laneFrom === v.lane ? 1 : b === v.lane ? v.laneShift : 1 - v.laneShift;
+        // A vehicle just entering the road counts in over its first metres, for the same reason: it appears behind
+        // the one ahead all at once.
+        const w = (off <= laneReach ? 1 : Math.max(0, Math.min(1, progress / shiftAtReach))) * Math.max(0, Math.min(1, x / ENTRY_EASE_M));
+        if (w > 0.001) put(b, { id: v.id, x, plaza: false, w, free: freeRoomM(v.length) });
+      }
     }
     for (const a of facView?.agents ?? []) {
       // In whichever lane its nose or its tail is drawn over; past the outer
       // lane's edge it is off the carriageway.
-      const n = { id: a.id, x: a.u, plaza: true };
+      const n = { id: a.id, x: a.u, plaza: true, w: 1, free: 80 };
       const into = new Set<number>();
       for (const w of [a.w, a.tw]) if (w < 0.78) into.add(Math.max(0, Math.min(lanes - 1, Math.round(lanes - 1 + w))));
       for (const b of into) put(b, n);
@@ -5334,19 +5960,167 @@ function drawCarriageway(
     };
     for (const arr of bands.values()) {
       arr.sort((a, b) => a.x - b.x);
-      let behind: number | null = null;
-      let behindId: number | null = null;
-      let roadBehind: number | null = null;
-      for (const n of arr) {
-        if (!n.plaza && behind !== null) tighter(noseGapM, n.id, n.x - behind);
-        if (n.plaza && roadBehind !== null) tighter(plazaRoomM, n.id, n.x - roadBehind);
-        if (behindId !== null && behind !== null) tighter(roomAheadM, behindId, n.x - behind);
-        behind = n.x;
-        behindId = n.id;
-        if (!n.plaza) roadBehind = n.x;
+      for (let i = 0; i < arr.length; i++) {
+        const n = arr[i];
+        // Back to the first vehicle that fully counts: one only part-way in does not hide the one behind it.
+        let plazaDone = !n.plaza;
+        for (let j = i - 1; j >= 0; j--) {
+          const o = arr[j];
+          const w = Math.min(n.w, o.w);
+          const room = softRoom(n.x - o.x, w, n.free);
+          if (!n.plaza) tighter(noseGapM, n.id, room);
+          else if (!plazaDone && !o.plaza) {
+            tighter(plazaRoomM, n.id, room);
+            if (o.w >= 0.999) plazaDone = true;
+          }
+          tighter(roomAheadM, o.id, softRoom(n.x - o.x, w, 80));
+          if (o.w >= 0.999 && (plazaDone || !n.plaza)) break;
+        }
       }
     }
   }
+
+  /* A scene's own vehicles at rest — its wrecks and its parked responders — are laid out together, front to back, at
+     one scale. Sized one by one to the room behind each, as the traffic is, a crash came out as a big car hitting a
+     small one, an ambulance twice the size of the police car beside it, and a car that shrank to half its size the
+     moment it was hit. They keep the traffic's size where the shut stretch behind them has room for that, nose to tail
+     in the order they really stand; where it has not, all of them shrink alike. A vehicle still driving into the scene
+     is held (on screen) at the drawn tail of the one it is about to hit, so the contact is shown where it is drawn. */
+  const sceneLayout = new Map<number, { xm: number; len: number }>();
+  {
+    const groups = new Map<string, (typeof everyone)[number][]>();
+    for (const v of everyone) {
+      if (v.sceneKey === undefined || v.departing) continue;
+      if (v.role === "traffic" && v.doom === undefined) continue;
+      if (v.role === "responder" && v.stillSince == null) continue;
+      const key = `${v.sceneKey}|${v.onShoulder ? "shoulder" : v.lane}`;
+      const g = groups.get(key);
+      if (g) g.push(v);
+      else groups.set(key, [v]);
+    }
+    for (const members of groups.values()) {
+      const lane = members[0].lane;
+      const shoulder = Boolean(members[0].onShoulder);
+      const inGroup = new Set(members);
+      // Everyone else in the same lane (or on the shoulder), so a run of the scene's vehicles stops at the first stranger.
+      const strangers = everyone.filter(
+        (o) => !inGroup.has(o) && (shoulder ? Boolean(o.onShoulder) : !o.onShoulder && (o.lane === lane || (o.laneShift < 1 && o.laneFrom === lane))),
+      );
+      const all = [...members, ...strangers].sort((a, b) => b.x - a.x);
+      // Runs of the scene's vehicles with nobody else between them, front first; each is laid out on its own.
+      const runs: (typeof everyone)[number][][] = [];
+      let run: (typeof everyone)[number][] = [];
+      for (const v of all) {
+        if (inGroup.has(v)) run.push(v);
+        else if (run.length > 0) {
+          runs.push(run);
+          run = [];
+        }
+      }
+      if (run.length > 0) runs.push(run);
+      for (const list of runs) {
+        const rest = list.filter((v) => v.role !== "traffic");
+        let scale = 1;
+        if (rest.length > 0) {
+          const front = rest[0].x;
+          const tail = Math.min(...rest.map((v) => v.x - v.length));
+          // As far back as the run may be drawn: the start of the shut stretch it stands in, or the first stranger behind it.
+          let limit = tail - 2;
+          if (!shoulder) for (const c of allClosures) if (c.lanes[lane] && front >= c.from && front <= c.to + 1) limit = Math.min(limit, c.from + 3);
+          for (const o of strangers) if (o.x < front) limit = Math.max(limit, o.x + 1.5);
+          limit = Math.min(limit, tail);
+          let need = 0;
+          rest.forEach((v, i) => {
+            need += baseLengthPx(v.length, mToPx, k) / mToPx;
+            if (i > 0) need += Math.max(0.4, rest[i - 1].x - rest[i - 1].length - v.x);
+          });
+          scale = Math.min(1, Math.max(0.01, front - limit) / Math.max(0.01, need));
+        }
+        let tailM = Infinity;
+        list.forEach((v, i) => {
+          const real = v.role === "traffic" ? noseXm.get(v.id) ?? v.x : v.x;
+          const prev = i > 0 ? list[i - 1] : null;
+          const gapM = prev === null ? 0 : Math.max(0.4, prev.x - prev.length - v.x);
+          const xm = prev === null ? real : Math.min(real, tailM - Math.min(gapM, 0.5));
+          const len = v.role === "traffic" ? -1 : Math.max(v.length * mToPx, baseLengthPx(v.length, mToPx, k) * scale);
+          sceneLayout.set(v.id, { xm, len });
+          tailM = xm - (len > 0 ? len : drawnLengthPx(baseLengthPx(v.length, mToPx, k), v.length, noseGapM.get(v.id) ?? Infinity, mToPx)) / mToPx;
+        });
+      }
+    }
+  }
+
+  /* The hard shoulder, for what is on it: its middle, or a little further out for a vehicle too wide for it, so it
+     clears the outer lane's traffic. A vehicle crossing to or from it slides between that and its lane. */
+  const outerEdgePx = reverseLanes ? roadTop : roadTop + roadH;
+  const outwardPx: 1 | -1 = reverseLanes ? -1 : 1;
+  const yOnRoad = (v: (typeof everyone)[number], across: number, xm: number, wid: number): number => {
+    if (!(v.onShoulder || v.viaShoulder) || across <= lanes - 1) return laneCentreAt(across, xm);
+    const inLane = laneCentreAt(lanes - 1, xm);
+    const onIt = outerEdgePx + outwardPx * Math.max(shoulderPx(laneH) / 2, wid / 2 - laneH * 0.08);
+    return inLane + (onIt - inLane) * Math.min(1, across - (lanes - 1));
+  };
+  /** Where a vehicle's sprite goes: its drawn nose (m), length and width (px), lanes across, centre line, and the angle
+   *  it is turned to — never further round than keeps it inside its own lane, so a wreck does not reach into traffic. */
+  /** A vehicle's drawn length: its true length, whatever is round it (facilityArt's TRUE SIZE). */
+  const easedLen = (v: (typeof everyone)[number]): number =>
+    drawnLengthPx(baseLengthPx(v.length, mToPx, k), v.length, noseGapM.get(v.id) ?? Infinity, mToPx);
+  // Test hook: a page under test sets window.__spriteLog to a Map and reads each vehicle's drawn length per frame.
+  const spriteLog = typeof window !== "undefined" ? (window as unknown as { __spriteLog?: Map<string, number[]> }).__spriteLog : undefined;
+  const spriteOf = (v: (typeof everyone)[number]) => {
+    const laid = sceneLayout.get(v.id);
+    const xm = laid?.xm ?? noseXm.get(v.id) ?? v.x;
+    const len = laid !== undefined && laid.len > 0 ? laid.len : easedLen(v);
+    if (spriteLog && v.role === "traffic" && laid === undefined) {
+      const key = `${sb ? "SB" : "NB"}${v.id}`;
+      const arr = spriteLog.get(key);
+      const row = [len, xm, v.laneShift < 1 ? 1 : 0, performance.now(), noseGapM.get(v.id) ?? -1, sim.time];
+      if (arr) arr.push(...row);
+      else spriteLog.set(key, row);
+    }
+    const wid = drawnWidthPx(Math.max(2, Math.min(laneH * 0.85, widthM[v.vClass] * mToPx * widK * widScale)), len);
+    // visualLane, not v.lane: the integer flips the instant MOBIL accepts
+    // the move, which drew the change as a one-frame jump across a whole lane.
+    const across = visualLane(v);
+    const turn = v.yaw ?? (v.role === "wreck" ? v.restAngle ?? 0 : 0);
+    const lim = Math.asin(Math.max(0, Math.min(1, (laneH * 0.47 - wid / 2) / Math.max(1, len / 2))));
+    return { xm, len, wid, across, y: yOnRoad(v, across, xm, wid), yaw: Math.max(-lim, Math.min(lim, turn)) };
+  };
+
+  // The scenario events' art shares the traffic's scale: a "hero" vehicle is a car drawn a little larger.
+  const heroLen = Math.max(18, Math.min(drawnCarLen * 2.4, laneH * 1.25));
+  const sceneGeom: SceneGeometry = {
+    ctx,
+    cssW,
+    roadTop,
+    roadH,
+    laneH,
+    xPx,
+    fwd,
+    laneCenterY,
+    outerEdgeY: reverseLanes ? roadTop : roadTop + roadH,
+    outward: reverseLanes ? -1 : 1,
+    carLen: heroLen,
+    carWid: Math.max(9, Math.min(heroLen * 0.46, laneH * 0.62)),
+    t: animT,
+  };
+  /* Each scene's own vehicles as they are drawn this frame — its wrecks and its responders, by event — so the people,
+     cones and marks of a scene go round the vehicles that are really there, not at fixed offsets from its point. */
+  const actors = new Map<string, SceneActor[]>();
+  for (const v of everyone) {
+    if (v.sceneKey === undefined || v.role === "traffic") continue;
+    const sp = spriteOf(v);
+    const cast = actors.get(v.sceneKey) ?? [];
+    cast.push({
+      kind: v.role === "wreck" ? "wreck" : v.responderKind ?? "police",
+      cx: xPx(sp.xm) - fwd * (sp.len / 2), cy: sp.y, len: sp.len, wid: sp.wid, yaw: sp.yaw,
+      still: v.stillSince != null ? Math.max(0, sim.time - v.stillSince) : null,
+      departing: Boolean(v.departing), onShoulder: Boolean(v.onShoulder), look: v.look ?? null,
+    });
+    actors.set(v.sceneKey, cast);
+  }
+  // What the crashes left on the road — skid marks, glass, a spilled load — goes UNDER the traffic.
+  drawSceneGround(sceneGeom, scenes, actors);
 
   /* Night: each vehicle's headlights throw a beam ahead of it along its lane. Drawn before the sprites, so
      the light falls on the road and the vehicles sit on top of it. Wrecks are dark. */
@@ -5354,7 +6128,7 @@ function drawCarriageway(
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
     ctx.globalAlpha = 0.42 * night;
-    const beamLen = Math.max(laneH * 1.6, drawnCarLen * 2.6);
+    const beamLen = Math.min(laneH * 1.6, Math.max(18, drawnCarLen * 3.2));
     const beamW = laneH * 0.78;
     for (const v of sim.vehicles) {
       if (v.role === "wreck") continue;
@@ -5376,7 +6150,7 @@ function drawCarriageway(
   /** Where each vehicle's tail lights are, recorded as it is drawn, for the glow pass after the sprites. */
   const tails: { x: number; y: number; r: number; braking: boolean }[] = [];
 
-  for (const v of sim.vehicles) {
+  for (const v of everyone) {
     try {
       // One factor for every class, so a bus still reads as longer than a car.
       // Capped by the room behind it — see noseGapM above.
@@ -5391,12 +6165,11 @@ function drawCarriageway(
        * sprite. drawnLengthPx lets the enlargement take only part of the real
        * gap behind a vehicle; the drawn length only, so the simulation is
        * untouched. */
-      const len = drawnLengthPx(baseLengthPx(v.length, mToPx, k), v.length, noseGapM.get(v.id) ?? Infinity, mToPx);
-      let wid = drawnWidthPx(Math.max(2, Math.min(laneH * 0.85, widthM[v.vClass] * mToPx * widK * widScale)), len);
-      // visualLane, not v.lane: the integer flips the instant MOBIL accepts
-      // the move, which drew the change as a one-frame jump across a whole lane.
-      const across = visualLane(v);
-      let y = laneCentreAt(across, noseXm.get(v.id) ?? v.x);
+      const sprite = spriteOf(v);
+      const len = sprite.len;
+      let wid = sprite.wid;
+      const across = sprite.across;
+      let y = sprite.y;
       /* Still out beyond the outer lane: merging off an acceleration lane. The
          plaza layer drew this vehicle there a frame ago, in the plaza's band at
          the plaza's scale (narrower than the road's), and it is handed over as a
@@ -5404,7 +6177,7 @@ function drawCarriageway(
          out by half a lane the moment it started to merge, then slid in — the
          "teleport". Placed and sized by the plaza's own rule until it is across
          the road edge, it glides in from exactly where it was. */
-      if (facGeom && across > lanes - 1) {
+      if (facGeom && across > lanes - 1 && !v.onShoulder && !v.viaShoulder) {
         const w = across - (lanes - 1);
         y = facGeom.yOf(w);
         const slotWid = FAC_LANE * DRAW_W_FRAC * (w > 0.5 ? facGeom.gutterPx : laneH);
@@ -5421,7 +6194,7 @@ function drawCarriageway(
        * acceleration over a fraction of one step; clamped so a braking vehicle
        * is never drawn sliding backwards, which the kinematics would allow once
        * v + a*alpha goes negative. */
-      const xDrawn = noseXm.get(v.id) ?? v.x;
+      const xDrawn = sprite.xm;
       const xNose = xPx(xDrawn);
       /* Wrecks and responders are real agents now, so they are drawn HERE,
          with the traffic, rather than by the scene layer on top of it. That
@@ -5429,12 +6202,23 @@ function drawCarriageway(
          positions, so nothing can be drawn where the engine does not think it
          is. A wreck keeps the angle it came to rest at; a responder gets its
          own livery and a flashing bar. */
-      if (v.role === "wreck") {
-        drawWreckAgent(ctx, xNose, y, len, wid, v.restAngle ?? 0, sb, animT);
+      const paint = moto ? motorcyclePaintFor(v.id) : paintFor(v.id, v.vClass);
+      if (v.role === "wreck" || v.look === "overturned") {
+        // The vehicle that crashed or broke down, as itself: its own paint, at the angle it came to rest.
+        drawWreckAgent(ctx, xNose, y, len, wid, sprite.yaw, sb, animT, v.vClass, paint, trailerPaintFor(v.id), v.look ?? "crash", v.hazards ?? true, moto);
       } else if (v.role === "responder") {
         drawResponderAgent(ctx, xNose, y, len, wid, v.responderKind ?? "police", sb, animT);
       } else {
-        drawVehicle(ctx, xNose, y, len, wid, v.vClass, moto ? motorcyclePaintFor(v.id) : paintFor(v.id, v.vClass), braking, sb, trailerPaintFor(v.id), moto);
+        if (sprite.yaw !== 0) {
+          // Skidding into it: turned as it slides.
+          ctx.save();
+          ctx.translate(xNose - fwd * (len / 2), y);
+          ctx.rotate(sprite.yaw);
+          drawVehicle(ctx, fwd * (len / 2), 0, len, wid, v.vClass, paint, braking, sb, trailerPaintFor(v.id), moto);
+          ctx.restore();
+        } else drawVehicle(ctx, xNose, y, len, wid, v.vClass, paint, braking, sb, trailerPaintFor(v.id), moto);
+        // Slowing to a stop with a fault: its hazards are already on.
+        if (v.hazards) drawHazardLamps(ctx, xNose - fwd * (len / 2), y, len, wid, sprite.yaw, animT);
         if (lights) tails.push({ x: xNose - fwd * len, y, r: Math.max(4, wid * 0.55), braking });
       }
       // The body trails behind the nose: to the left going north, to the right going south.
@@ -5450,6 +6234,7 @@ function drawCarriageway(
         vClass: v.vClass,
         lane: v.lane + 1,
         moto,
+        where: v.onShoulder ? "Hard shoulder" : undefined,
       });
     } catch (err) {
       // One unusable sprite must not take the remaining traffic with it: a
@@ -5486,7 +6271,8 @@ function drawCarriageway(
    * scale, turned to face along the lane they are on. */
   const facSprite: SpriteFn = (a, len, wid, braking) => {
     if (a.role === "wreck") {
-      drawWreckAgent(ctx, 0, 0, len, wid, a.restAngle ?? 0, false, animT);
+      // A breakdown at a booth stands straight (no resting angle); a crash is crumpled.
+      drawWreckAgent(ctx, 0, 0, len, wid, a.restAngle ?? 0, false, animT, a.vClass, paintFor(a.id, a.vClass), trailerPaintFor(a.id), a.restAngle === undefined ? "stalled" : "crash");
     } else if (a.role === "responder") {
       drawResponderAgent(ctx, 0, 0, len, wid, a.responderKind ?? "tow", false, animT);
     } else {
@@ -5541,27 +6327,19 @@ function drawCarriageway(
     ctx.fillText("!", xPx(inc.x), y);
   }
 
-  // Scenario events as scenes: stalled and crashed vehicles, responders, cones, the work zone — then the
-  // weather over everything, then each event's label (phase and time left) on top.
-  const heroLen = Math.max(18, Math.min(drawnCarLen * 2.4, laneH * 1.25));
-  const sceneGeom: SceneGeometry = {
-    ctx,
-    cssW,
-    roadTop,
-    roadH,
-    laneH,
-    xPx,
-    fwd,
-    laneCenterY,
-    outerEdgeY: reverseLanes ? roadTop : roadTop + roadH,
-    outward: reverseLanes ? -1 : 1,
-    carLen: heroLen,
-    carWid: Math.max(9, Math.min(heroLen * 0.46, laneH * 0.62)),
-    t: animT,
-  };
-  drawScenes(sceneGeom, scenes);
+  // Scenario events as scenes, round their own vehicles (drawn above with the traffic): the people, the cones, the
+  // work zone — then the weather over everything, then each event's label (phase and time left) on top.
+  drawScenes(sceneGeom, scenes, actors);
   drawWeather(sceneGeom, scenes);
   if (overlay) {
+    /* The label says who is there. "Awaiting response" is the phase's name, and it is true only until somebody
+       arrives: with a patrol car parked behind the wreck it read as a mistake. Asked of the engine (a recording
+       cannot say, and keeps the phase's own words). */
+    const engine = sim as { sceneAttended?: (key: string) => boolean };
+    const wording = (m: SceneMark): string =>
+      m.state === "active" && typeof engine.sceneAttended === "function" && engine.sceneAttended(m.eventId)
+        ? m.text.replace("awaiting response", "responders on scene").replace("Waiting for responder", "Patrol on scene, awaiting recovery")
+        : m.text;
     drawScenarioLabels(ctx, scenes, {
       xPx,
       roadTop,
@@ -5572,8 +6350,11 @@ function drawCarriageway(
       lanes,
       reverseLanes,
       laneTop: slotTop,
+      wording,
     });
   }
+  // A Copilot proposal not yet applied, outlined where it would land.
+  drawPlanGhosts(ctx, planGhosts[sb ? "SB" : "NB"], { xPx, roadTop, roadH, laneH, cssW, lanes, laneTop: slotTop, animT });
 
   // direction arrow
   ctx.fillStyle = "rgba(255,255,255,0.5)";
@@ -5678,7 +6459,7 @@ function drawCarriageway(
   // not approximate), so a second copy would only be a duplicate, not a check.
   if (drawAxis) {
     const spanKm = Math.max(1e-6, toKm - fromKm);
-    const step = kmTickStep(spanKm);
+    const step = kmTickStep(spanKm / roadView.zoom);
     const first = Math.ceil(fromKm / step) * step;
     /* The scale sits outside the carriageway, opposite the ramps.
      *
@@ -5734,21 +6515,24 @@ function drawCarriageway(
     ctx.font = tall ? "700 11px system-ui" : "600 9px system-ui";
     ctx.fillStyle = "rgba(255,255,255,0.6)";
     ctx.textAlign = "left";
-    ctx.fillText("KM POST", 6, axisY + 0.5);
+    ctx.fillText("KM POST", roadView.pan + 6, axisY + 0.5);
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
   }
 
   ctx.font = "10px system-ui";
   ctx.fillStyle = "rgba(255,255,255,0.5)";
-  ctx.fillText(flowLabel, 8, roadTop + 4);
+  // Beside the lane tags, not over the first one, when the lanes are too short for the two to sit one above the
+  // other (a small window, zoomed in, or Both mode's half-height carriageways).
+  const flowX = laneH >= 16 && laneH < 48 ? 5 + (lent !== null ? 36 : 20) + 6 : 8;
+  ctx.fillText(flowLabel, roadView.pan + flowX, roadTop + 4);
 
   // Where this stretch is on the corridor. Without it the canvas is 280 m of
   // anonymous tarmac and the route pickers appear to do nothing.
   ctx.fillStyle = "rgba(255,255,255,0.72)";
   ctx.font = "600 11px system-ui";
   ctx.textAlign = "right";
-  ctx.fillText(location, cssW - 8, roadTop + 4);
+  ctx.fillText(location, roadView.pan + cssW / roadView.zoom - 8, roadTop + 4);
 }
 
 /**
@@ -5777,15 +6561,15 @@ function render(
   highlightFacility: string | null = null,
 ) {
   vehicleHits.length = 0; // re-recorded by drawCarriageway() below
-  const dpr = window.devicePixelRatio || 1;
-  const cssW = canvas.clientWidth;
+  const viewW = canvas.clientWidth;
+  const cssW = roadW(viewW); // the zoomed road: everything below is laid out on it (see roadView)
   const cssH = canvas.clientHeight;
-  if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
-    canvas.width = cssW * dpr;
-    canvas.height = cssH * dpr;
-  }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cssW, cssH);
+  fitBackingStore(ctx, canvas, viewW, cssH);
+  ctx.clearRect(0, 0, viewW, cssH);
+  roadView.pan = Math.max(0, Math.min(roadView.pan, cssW - viewW));
+  // Not restored: fitBackingStore resets the transform at the start of the next frame, and what the loop draws
+  // over the road after this (the speed bubble, the drop ghost) is drawn in the same shifted space.
+  ctx.translate(-roadView.pan, 0);
 
   // The canvas has no size for a frame or two while the layout settles — most
   // visibly when entering full screen, where its height is elastic. Every
@@ -5900,15 +6684,15 @@ function renderBoth(
   highlightFacility: string | null = null,
 ) {
   vehicleHits.length = 0; // re-recorded by both drawCarriageway() calls below
-  const dpr = window.devicePixelRatio || 1;
-  const cssW = canvas.clientWidth;
+  const viewW = canvas.clientWidth;
+  const cssW = roadW(viewW); // the zoomed road: everything below is laid out on it (see roadView)
   const cssH = canvas.clientHeight;
-  if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
-    canvas.width = cssW * dpr;
-    canvas.height = cssH * dpr;
-  }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cssW, cssH);
+  fitBackingStore(ctx, canvas, viewW, cssH);
+  ctx.clearRect(0, 0, viewW, cssH);
+  roadView.pan = Math.max(0, Math.min(roadView.pan, cssW - viewW));
+  // Not restored: fitBackingStore resets the transform at the start of the next frame, and what the loop draws
+  // over the road after this (the speed bubble, the drop ghost) is drawn in the same shifted space.
+  ctx.translate(-roadView.pan, 0);
   if (cssW <= 0 || cssH <= 0) return; // see render()'s identical guard for why
 
   const L = simNB.cfg.length; // both directions share the same segment length (SharedRoadInputs)
@@ -6187,7 +6971,7 @@ function drawSharedKmAxis(
 ) {
   const { xPx, fromKm, toKm, cssW, axisY, backdrop } = g;
   const spanKm = Math.max(1e-6, toKm - fromKm);
-  const step = kmTickStep(spanKm);
+  const step = kmTickStep(spanKm / roadView.zoom);
   const first = Math.ceil(fromKm / step) * step;
   ctx.save();
   ctx.textAlign = "center";
@@ -6222,10 +7006,10 @@ function drawSharedKmAxis(
   const label = "KM POST";
   const lw = ctx.measureText(label).width;
   ctx.fillStyle = "rgba(8,13,25,0.7)";
-  roundRect(ctx, 3, axisY - 7.5, lw + 8, 15, 3);
+  roundRect(ctx, roadView.pan + 3, axisY - 7.5, lw + 8, 15, 3);
   ctx.fill();
   ctx.fillStyle = "rgba(255,255,255,0.8)";
-  ctx.fillText(label, 7, axisY + 0.5);
+  ctx.fillText(label, roadView.pan + 7, axisY + 0.5);
   ctx.restore();
 }
 

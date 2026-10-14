@@ -10,6 +10,7 @@ import { supabase } from "../../../lib/supabase";
 import { useToast } from "../../../lib/toast";
 import { SortableTh, useTableSort } from "../../../lib/table-sort";
 import { useNlexExits, exitNearestKm, displayExitName, CORRIDOR_KM, type NlexExit } from "../../../lib/nlex-exits";
+import { LANE_SEGMENTS } from "../../../lib/nlex-lanes";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -26,8 +27,23 @@ const DIRECTION_LABEL: Record<(typeof DIRECTIONS)[number], string> = {
    inner (fast) lane. It is stored as text, e.g. "Lane 1 + Lane 2", so the
    mobile app and map popups show it as written. "None", "Shoulder only",
    "Full closure" and the older "1 lane" / "2 lanes" are still understood. */
-const LANE_OPTIONS = ["Lane 1", "Lane 2", "Lane 3", "Shoulder"] as const;
-const LANE_HINT: Record<string, string> = { "Lane 1": "inner", "Lane 3": "outer" };
+const LANE_OPTIONS = ["Lane 1", "Lane 2", "Lane 3", "Lane 4", "Shoulder"] as const;
+
+/* How many lanes the widest part of a stretch has on one carriageway (lib/nlex-lanes.ts, the table the sandbox
+   uses). The corridor is 2, 3 or 4 lanes wide depending on where you are, so the picker offers the lanes that
+   exist there: Lane 4 on the four-lane stretches, no Lane 3 on the two-lane ones. The WIDEST part, not the
+   narrowest, because a closure of Lane 4 on a stretch that is partly four lanes is real work. Four when the
+   km posts are not filled in yet or the table does not cover them. */
+const MAX_LANES = 4;
+const lanesOnStretch = (fromKm: number, toKm: number, direction: "NB" | "SB") => {
+  if (!Number.isFinite(fromKm) || !Number.isFinite(toKm)) return MAX_LANES;
+  const lo = Math.min(fromKm, toKm);
+  const hi = Math.max(fromKm, toKm);
+  const widths = LANE_SEGMENTS.filter(
+    (s) => (s.direction === undefined || s.direction === direction) && (lo === hi ? lo >= s.fromKm && lo < s.toKm : s.fromKm < hi && s.toKm > lo),
+  ).map((s) => s.lanes);
+  return widths.length ? Math.min(MAX_LANES, Math.max(...widths)) : MAX_LANES;
+};
 
 const closureText = (lanes: string[], full: boolean, legacy: string) => {
   if (full) return "Full closure";
@@ -840,6 +856,7 @@ export default function MaintenancePage() {
   const setDirection = (d: (typeof DIRECTIONS)[number]) =>
     setForm((f) => (f.direction === d ? f : { ...f, direction: d, startKm: f.endKm, endKm: f.startKm }));
 
+  const stretchLanes = lanesOnStretch(form.startKm === "" ? NaN : Number(form.startKm), form.endKm === "" ? NaN : Number(form.endKm), form.direction);
   const segmentNote =
     form.startKm !== "" && form.endKm !== "" && !Number.isNaN(Number(form.startKm)) && !Number.isNaN(Number(form.endKm))
       ? `${Math.abs(Number(form.endKm) - Number(form.startKm)).toFixed(1)} km · near ${nearestExitName(NLEX_EXITS, Number(form.startKm))} → ${nearestExitName(NLEX_EXITS, Number(form.endKm))}`
@@ -1427,11 +1444,12 @@ export default function MaintenancePage() {
               )}
 
               <div className="ms-input-group">
-                <label id="ms-lanes-label">Lanes closed ({form.direction})</label>
+                <label id="ms-lanes-label">Lanes closed ({form.direction}) · {stretchLanes} lanes here</label>
                 <div className="nc-ops-lanes" role="group" aria-labelledby="ms-lanes-label">
                   <span className="nc-ops-lanes-edge" aria-hidden="true">Median</span>
-                  {LANE_OPTIONS.map((l) => {
+                  {LANE_OPTIONS.filter((l) => l === "Shoulder" || Number(l.slice(5)) <= stretchLanes || form.lanes.includes(l)).map((l) => {
                     const on = form.fullClosure || form.lanes.includes(l);
+                    const hint = l === "Lane 1" ? "inner" : l === `Lane ${stretchLanes}` ? "outer" : "";
                     return (
                       <button
                         key={l}
@@ -1445,7 +1463,7 @@ export default function MaintenancePage() {
                           lanes: f.lanes.includes(l) ? f.lanes.filter((x) => x !== l) : [...f.lanes, l],
                         }))}
                       >
-                        {l}{LANE_HINT[l] ? <span className="nc-ops-seg2-name"> {LANE_HINT[l]}</span> : null}
+                        {l}{hint ? <span className="nc-ops-seg2-name"> {hint}</span> : null}
                       </button>
                     );
                   })}

@@ -5,11 +5,11 @@ export const MAINTENANCE_DIRECTIONS = ["NB", "SB", "Both"] as const;
 /*
  * Which lanes are closed, as text the mobile app and map popups show verbatim:
  * "None", "Shoulder only", "Full closure", or specific lanes joined with " + ",
- * e.g. "Lane 1 + Lane 2" (Lane 1 is the inner lane). The older "1 lane" and
+ * e.g. "Lane 1 + Lane 2" (Lane 1 is the inner lane; the widest stretches have four). The older "1 lane" and
  * "2 lanes" are still accepted so existing rows can be saved again.
  */
 export const MAINTENANCE_LANE_CLOSURES_PATTERN =
-  /^(None|Shoulder only|Full closure|1 lane|2 lanes|(Lane [1-3]|Shoulder)( \+ (Lane [1-3]|Shoulder))*)$/;
+  /^(None|Shoulder only|Full closure|1 lane|2 lanes|(Lane [1-4]|Shoulder)( \+ (Lane [1-4]|Shoulder))*)$/;
 
 // The corridor runs Balintawak (Km 12) to Sta. Ines (Km 88.25); the API is the
 // authority on this, not the dashboard form.

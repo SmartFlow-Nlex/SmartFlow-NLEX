@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import type { SceneMark } from "../scenarios/adapter";
 import { ASSUMPTIONS, type RainIntensity } from "../scenarios/assumptions";
 import type { FamilyKey, VehicleKind } from "../scenarios/catalogue";
-import { drawScenes, drawWater, drawWeather, type SceneGeometry } from "../sceneArt";
+import { drawPreviewVehicles, drawSceneGround, drawScenes, drawWater, drawWeather, previewCast, type SceneGeometry } from "../sceneArt";
 
 /**
  * A small animated preview of the scenario the operator is about to add, drawn by the SAME scene art the
@@ -76,11 +76,15 @@ export default function ScenePreview({ family, vehicle, intensity }: { family: F
         raf = requestAnimationFrame(draw);
         return;
       }
-      if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-        canvas.width = w * dpr;
-        canvas.height = h * dpr;
+      // Rounded: at a fractional zoom (110%, 125%) the unrounded product never equalled the buffer's whole-number
+      // width, so the buffer was re-allocated every frame. Scaled by exactly buffer / CSS size.
+      const bw = Math.max(1, Math.round(w * dpr));
+      const bh = Math.max(1, Math.round(h * dpr));
+      if (canvas.width !== bw || canvas.height !== bh) {
+        canvas.width = bw;
+        canvas.height = bh;
       }
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.setTransform(bw / w, 0, 0, bh / h, 0, 0);
       ctx.clearRect(0, 0, w, h);
       const t = reduce ? 2.4 : (now - t0) / 1000;
       const pad = 6;
@@ -117,8 +121,12 @@ export default function ScenePreview({ family, vehicle, intensity }: { family: F
         t,
       };
       const marks = [markFor(family, vehicle, intensity, t)];
+      // On the road the scene's vehicles are real agents; here a little made-up cast stands in for them.
+      const actors = new Map([["preview", previewCast(g, marks[0])]]);
       drawWater(g, marks);
-      drawScenes(g, marks);
+      drawSceneGround(g, marks, actors);
+      drawPreviewVehicles(g, actors.get("preview") ?? []);
+      drawScenes(g, marks, actors);
       drawWeather(g, marks);
       raf = requestAnimationFrame(draw);
     };

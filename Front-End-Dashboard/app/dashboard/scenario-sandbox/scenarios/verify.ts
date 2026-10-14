@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import calibrationJson from "./calibration.json";
 import { CLASS_META, TrafficSim, type Interventions, type Metrics } from "../simulation";
 import { combineBaselines, combineMetrics, flowWeightedSpeed } from "../bothMetrics";
-import { drawBorrowedLanes, drawScenes, drawWater, drawWeather, hasSceneArt, type SceneCtx, type SceneGeometry } from "../sceneArt";
+import { drawBorrowedLanes, drawScenes, drawWater, drawWeather, hasSceneArt, type SceneActor, type SceneActors, type SceneCtx, type SceneGeometry } from "../sceneArt";
 import { drawForecastEvents, expectedOnStretch, ON_CARRIAGEWAY_SHARE } from "./forecastIncidents";
 import { borrowedLanes, crossoverM, defaultStretch, planStretch, planZipper, REALLOCATION_NAME, zipperCounts, zipperHolds, type StretchLimits } from "../zipper";
 import { drawMotorcycle, type BikeCtx } from "../motorcycleArt";
@@ -44,6 +44,10 @@ import {
 } from "./assumptions";
 import {
   NO_OWNERS,
+  SCENE_LEAD_S,
+  BREAKDOWN_LEAD_S,
+  responseArrivalS,
+  sceneLeadS,
   sceneMarks,
   type SceneMark,
   addEvent,
@@ -1168,7 +1172,11 @@ check("event: phases tile the whole duration, start at 0, ascend, are labelled w
     }
   }
   check("zero-length: a skipped phase is never the current phase and never the owner of anything", neverCurrent && [...ownerPhases].sort().join() === "one:waiting,zero:service");
-  check("zero-length: it adds no boundary of its own (share 1 has start, waiting start, end; share 0 has start and service start, end)", boundaryTimes([one], road600).join() === "0,600" && boundaryTimes([zero], road600).join() === "0,600");
+  check(
+    "zero-length: it adds no boundary of its own (share 1 has start, waiting start, end; share 0 has start and service start, end — each with the lead-in when its vehicle is picked out of the traffic)",
+    // A breakdown's lead-in is BREAKDOWN_LEAD_S (it coasts to a stop), not a crash's SCENE_LEAD_S.
+    boundaryTimes([one], road600).join() === `${-BREAKDOWN_LEAD_S},0,600` && boundaryTimes([zero], road600).join() === `${-BREAKDOWN_LEAD_S},0,600`,
+  );
   check("zero-length: the obstacle is present the whole event either way, with no gap at the join", composeInterventions({ ...idle, incidents: [] }, [zero], abs(0), road600).owners.incidents.length === 3 && composeInterventions({ ...idle, incidents: [] }, [one], abs(0) + 599.9, road600).owners.incidents.length === 3);
   const collisionBase = must([], collisionSpec("multi_vehicle_collision", 1, 330, 0, manualMinutes(10)), 1).event;
   const collisionZeroTow: ScenarioEvent = { ...collisionBase, phases: collisionBase.phases.map((p) => (p.id === "tow" ? { ...p, durationS: 0, minutes: 0, skipped: true, text: `${p.label} — 0 min (skipped)` } : p)) };
@@ -1248,6 +1256,312 @@ function engineInSync(ts: TrafficSim, controls: ManualControls, events: readonly
     flood.closed >= 1 && flood.wrecks === 0 && flood.responders === 0 && crash.wrecks >= 1,
     `flood ${JSON.stringify(flood)}, collision ${JSON.stringify(crash)}`,
   );
+}
+
+// --- scenes made of the traffic: the vehicles of an event are cars that were on the road, seen to do it
+{
+  type Run = {
+    readonly ts: TrafficSim;
+    readonly startT: number;
+    /** Every vehicle that was ever in the scene (a wreck or a responder), by id, with what it was before. */
+    readonly cast: Map<number, { firstSeen: number; wasTraffic: boolean; lanes: Set<number>; restX: number | null; crept: number; spawn: number; vClass: number; look: string | undefined }>;
+    /** A scene vehicle that turned up already at rest, or a responder that appeared anywhere but the entrance. */
+    readonly popIns: string[];
+    readonly worstOverlap: number;
+  };
+  const film = (family: "minor_collision" | "multi_vehicle_collision" | "self_accident" | "overturned_vehicle", minutes: number, inflow = 5200, laneOp = 2): Run => {
+    const ts = new TrafficSim({ length: 600, laneCount: 4, inflowVehPerHour: inflow, seed: 7, warmupS: 60 }, engineIv(600, 4));
+    const binding = createEngineBinding();
+    const events = must([], collisionSpec(family, laneOp, 350, 1, manualMinutes(minutes)), 1).events;
+    const startT = abs(1);
+    const cast: Run["cast"] = new Map();
+    const popIns: string[] = [];
+    let worstOverlap = 0;
+    let due = -Infinity;
+    const seen = new Map<number, { role: string; x: number }>();
+    while (ts.time < startT + minutes * 60 + 90) {
+      ts.step(0.05);
+      due = applyAtBoundary(binding, ts, idle, events, frame, due).dueS;
+      const all = [...ts.vehicles, ...ts.shoulder];
+      for (const v of all) {
+        const before = seen.get(v.id);
+        if (v.role !== "traffic") {
+          let c = cast.get(v.id);
+          if (!c) {
+            c = { firstSeen: ts.time, wasTraffic: before?.role === "traffic", lanes: new Set(), restX: null, crept: 0, spawn: v.spawnTime, vClass: v.vClass, look: v.look };
+            cast.set(v.id, c);
+            // A wreck must have been driving a moment ago; a responder must come in at the entrance.
+            if (v.role === "wreck" && before === undefined) popIns.push(`wreck #${v.id} appeared at ${v.x.toFixed(0)} m`);
+            if (v.role === "responder" && v.x > 1) popIns.push(`${v.responderKind} #${v.id} appeared at ${v.x.toFixed(0)} m`);
+          }
+          if (v.role === "wreck" && !v.departing) {
+            c.lanes.add(v.lane);
+            c.look = v.look;
+            // Measured once the impacts are over: being hit shoves the one in front on a little, which is the crash, not a creep.
+            if (c.restX === null && ts.time > startT + 20) c.restX = v.x;
+            if (c.restX !== null) c.crept = Math.max(c.crept, Math.abs(v.x - c.restX));
+          }
+        }
+        seen.set(v.id, { role: v.role, x: v.x });
+      }
+      for (let l = 0; l < 4; l++) {
+        const row = ts.vehicles.filter((v) => v.lane === l || (v.laneShift < 1 && v.laneFrom === l)).sort((a, b) => b.x - a.x);
+        for (let i = 1; i < row.length; i++) {
+          if (row[i].towedBy === row[i - 1] || row[i].x - row[i].length < 5) continue; // a hitch; the entrance
+          worstOverlap = Math.max(worstOverlap, row[i].x - (row[i - 1].x - row[i - 1].length));
+        }
+      }
+    }
+    return { ts, startT, cast, popIns, worstOverlap };
+  };
+  const wrecksOf = (r: Run) => [...r.cast.entries()].filter(([, c]) => c.lanes.size > 0);
+  const minor = film("minor_collision", 8);
+  check(
+    "scenes from traffic: a collision's wrecks are cars that were driving there — on the road before it, ordinary traffic a moment before they crashed — and nothing appeared at the spot",
+    wrecksOf(minor).length === 2 && wrecksOf(minor).every(([, c]) => c.wasTraffic && c.spawn < minor.startT) && minor.popIns.length === 0,
+    `${wrecksOf(minor).length} wrecks; ${minor.popIns.join("; ")}`,
+  );
+  const firstWreck = Math.min(...wrecksOf(minor).map(([, c]) => c.firstSeen));
+  check(
+    `scenes from traffic: it happens on time — the first car stops within a few seconds of the start (${(firstWreck - minor.startT).toFixed(1)} s), picked out of the traffic ${SCENE_LEAD_S} s ahead`,
+    Math.abs(firstWreck - minor.startT) < 8,
+  );
+  check(
+    "scenes from traffic: a wreck stays where it came to rest — never changes lane, and once the impacts are over never creeps (it used to drift two lanes over and 4 m on)",
+    wrecksOf(minor).every(([, c]) => c.lanes.size === 1 && c.crept < 1e-6),
+    wrecksOf(minor).map(([id, c]) => `#${id} lanes ${[...c.lanes].join("/")} crept ${c.crept.toFixed(2)}`).join(", "),
+  );
+  const responders = [...minor.cast.entries()].filter(([, c]) => c.lanes.size === 0);
+  check("scenes from traffic: the response to a crash is a police car and an ambulance, entering at the entrance (the shoulder), no tow for a minor collision", responders.length === 2, `${responders.length} responders`);
+  check("scenes from traffic: no two vehicles in a lane are drawn through each other at any point of the scene", minor.worstOverlap < 0.01, `worst ${minor.worstOverlap.toFixed(2)} m`);
+  check("scenes from traffic: when the event is over, everything it put on the road has driven off — nothing is left", [...minor.ts.vehicles, ...minor.ts.shoulder].every((v) => v.role === "traffic"));
+  {
+    // Mid-scene: where everyone is.
+    const ts = new TrafficSim({ length: 600, laneCount: 4, inflowVehPerHour: 5200, seed: 7, warmupS: 60 }, engineIv(600, 4));
+    const binding = createEngineBinding();
+    const events = must([], collisionSpec("multi_vehicle_collision", 2, 350, 1, manualMinutes(10)), 1).events;
+    let due = -Infinity;
+    while (ts.time < abs(1) + 240) {
+      ts.step(0.05);
+      due = applyAtBoundary(binding, ts, idle, events, frame, due).dueS;
+    }
+    const lane = ts.vehicles.find((v) => v.role === "wreck")?.lane;
+    const parked = ts.vehicles.filter((v) => v.role === "responder" && v.stillSince != null);
+    const kinds = parked.map((v) => v.responderKind).sort().join();
+    const shut = ts.interventions.closedLanes;
+    check(
+      "scenes from traffic: a pile-up is four vehicles, and its police, ambulance and (once the tow phase begins) recovery truck are parked IN the shut lane, at the scene — not in the traffic beside it",
+      ts.vehicles.filter((v) => v.role === "wreck").length === 4 && kinds === "ambulance,police,tow" && lane !== undefined && shut[lane] === true && parked.every((v) => v.lane === lane && v.x > 250 && v.x < 420),
+      `${kinds}; ${parked.map((v) => `${v.responderKind} L${v.lane + 1}@${v.x.toFixed(0)}`).join(", ")}`,
+    );
+    const police = parked.find((v) => v.responderKind === "police");
+    const amb = parked.find((v) => v.responderKind === "ambulance");
+    check("scenes from traffic: the police car blocks furthest back (its cones go out behind it) and the ambulance stands between it and the wreck", police !== undefined && amb !== undefined && police.x < amb.x);
+  }
+  {
+    const ts = new TrafficSim({ length: 600, laneCount: 4, inflowVehPerHour: 5200, seed: 7, warmupS: 60 }, engineIv(600, 4));
+    const binding = createEngineBinding();
+    const events = must([], inLaneSpec("truck", 3, 350, 1, manualMinutes(10)), 1).events;
+    let due = -Infinity;
+    let stopping = false;
+    while (ts.time < abs(1) + 500) {
+      ts.step(0.05);
+      due = applyAtBoundary(binding, ts, idle, events, frame, due).dueS;
+      if (ts.vehicles.some((v) => v.doom && v.hazards && v.v > 3)) stopping = true;
+    }
+    const stalled = ts.vehicles.find((v) => v.role === "wreck");
+    const resp = [...ts.vehicles, ...ts.shoulder].filter((v) => v.role === "responder").map((v) => `${v.responderKind}${v.onShoulder ? "@shoulder" : "@lane"}`).sort().join();
+    check(
+      "scenes from traffic: an in-lane breakdown is a vehicle of the kind asked for (a truck) slowing with its hazards on and stopping straight in its lane; a patrol on the shoulder and a recovery truck in front — no ambulance",
+      stalled !== undefined && stalled.vClass === 3 && stalled.look === "stalled" && stalled.hazards === true && (stalled.restAngle ?? 0) === 0 && stopping && resp === "police@shoulder,tow@lane",
+      `${stalled ? `class ${stalled.vClass} ${stalled.look}` : "none"}; ${resp}`,
+    );
+  }
+  const over = film("overturned_vehicle", 10, 5200, 3);
+  check(
+    "scenes from traffic: an overturned vehicle is a heavy one when one is coming (a bus or a truck), on its side",
+    wrecksOf(over).length === 1 && over.popIns.length === 0 && wrecksOf(over).every(([, c]) => c.wasTraffic && c.vClass >= 2 && c.look === "overturned"),
+    wrecksOf(over).map(([id, c]) => `#${id} class ${c.vClass} ${c.look}`).join(", "),
+  );
+}
+
+// --- an event over a stretch: "within Km 12.30–12.40" is 12.30–12.40 (the operator's report, 2026-10-07)
+{
+  const TO_KM = FROM_KM + 0.6;
+  // Southbound runs from the high km to the low one: its metre 0 is Km 10.60.
+  const sbFrame: RoadFrame = { warmupS: 60, metresAt: (km) => Math.round((TO_KM - km) * 1e6) / 1e3 };
+  const road600SB: Road = { laneCount: 4, segmentLengthM: 600, ...sbFrame };
+  const stretch = { fromKm: 10.3, toKm: 10.4 };
+  const withStretch = (spec: NewEventSpec, sk: { fromKm: number; toKm: number } = stretch): NewEventSpec => ({ ...spec, stretchKm: sk });
+  const BOUNDS = { NB: [300, 400], SB: [200, 300] } as const;
+
+  // Where the event's own point goes.
+  const minorNB = must([], withStretch(collisionSpec("minor_collision", 2, 0, 0, manualMinutes(20))), 1).event;
+  const minorSB = must([], withStretch(collisionSpec("minor_collision", 2, 0, 0, manualMinutes(20), "SB")), 1, road600SB).event;
+  check(
+    "stretch: a collision's point is inside the stretch, 45 m in from the end traffic comes from (the low km northbound, the high km southbound), leaving its pile room before the far end",
+    near(minorNB.positionKm, 10.345, 1e-9) && near(minorSB.positionKm, 10.355, 1e-9) && minorNB.stretchKm?.fromKm === 10.3 && minorNB.stretchKm?.toKm === 10.4,
+    `${minorNB.positionKm} / ${minorSB.positionKm}`,
+  );
+  const reversed = must([], withStretch(collisionSpec("flood", 2, 0, 0, manualMinutes(20)), { fromKm: 10.4, toKm: 10.3 }), 1).event;
+  check("stretch: given high to low it is stored low to high; a flood's point is the middle", reversed.stretchKm?.fromKm === 10.3 && reversed.stretchKm?.toKm === 10.4 && near(reversed.positionKm, 10.35, 1e-9));
+  const rainEv = must([], withStretch(rainSpec(330, 0, manualMinutes(20))), 1).event;
+  const boothEv = must([], withStretch(boothSpec(0, manualMinutes(20))), 1).event;
+  check("stretch: rain (the whole road) and an event at a plaza keep none", rainEv.stretchKm === null && boothEv.stretchKm === null);
+  check(
+    "stretch: one running off the road, or shorter than 20 m, is refused",
+    refused([], withStretch(collisionSpec("minor_collision", 2, 0, 0, manualMinutes(20)), { fromKm: 10.5, toKm: 10.7 }), 1) !== null &&
+      refused([], withStretch(collisionSpec("minor_collision", 2, 0, 0, manualMinutes(20)), { fromKm: 10.3, toKm: 10.31 }), 1) !== null,
+  );
+
+  // What is closed: the stretch, exactly, in every phase that blocks a lane, on both carriageways.
+  {
+    let ok = true;
+    let n = 0;
+    const bad: string[] = [];
+    for (const [direction, road] of [["NB", road600], ["SB", road600SB]] as const) {
+      const [lo, hi] = BOUNDS[direction];
+      for (const family of ["minor_collision", "multi_vehicle_collision", "self_accident", "overturned_vehicle", "flood", "scheduled_roadworks"] as const) {
+        const { event } = must([], withStretch(collisionSpec(family, 2, 0, 0, manualMinutes(50), direction)), 1, road);
+        for (const p of event.phases) {
+          if (p.skipped || p.lanesBlocked <= 0) continue;
+          const c = composeInterventions({ ...idle, incidents: [] }, [event], frame.warmupS + event.startS + p.offsetS + p.durationS / 2, road);
+          n++;
+          if (c.interventions.closurePoint !== lo || c.interventions.closureEnd !== hi || !c.interventions.closedLanes.some(Boolean)) {
+            ok = false;
+            bad.push(`${direction} ${family} ${p.id}: ${c.interventions.closurePoint}-${c.interventions.closureEnd}`);
+          }
+        }
+      }
+    }
+    check(`stretch: every phase that blocks a lane closes exactly the stretch — Km 10.30–10.40 is metres 300–400 northbound and 200–300 southbound (${n} phases)`, ok && n >= 12, bad.join("; "));
+    const sh = must([], withStretch(shoulderSpec(0, 0, manualMinutes(20), "SB")), 1, road600SB).event;
+    const z = composeInterventions({ ...idle, incidents: [] }, [sh], abs(1), road600SB).interventions.speedZone;
+    check("stretch: a shoulder breakdown slows traffic over exactly the stretch", z[0] === 200 && z[1] === 300, JSON.stringify(z));
+  }
+
+  // What is on the road: the wrecks, the police, the ambulance and the tow all stand inside the stretch.
+  {
+    const onRoad = (family: "minor_collision" | "multi_vehicle_collision" | "self_accident" | "overturned_vehicle", direction: Direction) => {
+      const fr = direction === "NB" ? frame : sbFrame;
+      const ts = new TrafficSim({ length: 600, laneCount: 4, inflowVehPerHour: 5200, seed: 7, warmupS: 60 }, engineIv(600, 4));
+      const binding = createEngineBinding();
+      const events = must([], withStretch(collisionSpec(family, 2, 0, 1, manualMinutes(30), direction)), 1, { laneCount: 4, segmentLengthM: 600, ...fr }).events;
+      const ev = events[0];
+      const startT = abs(1);
+      let due = -Infinity;
+      let lo = Infinity;
+      let hi = -Infinity;
+      const kinds = new Set<string>();
+      // Through every phase until the road reopens: what is parked for the scene, measured once it has stood still a while.
+      const reopen = frame.warmupS + ev.startS + ev.phases.filter((p) => p.lanesBlocked > 0).reduce((t, p) => Math.max(t, p.offsetS + p.durationS), 0);
+      while (ts.time < reopen - 5) {
+        ts.step(0.05);
+        due = applyAtBoundary(binding, ts, idle, events, fr, due).dueS;
+        if (ts.time < startT + 30) continue;
+        for (const v of [...ts.vehicles, ...ts.shoulder]) {
+          if (v.role === "traffic" || v.departing || v.v > 0.05 || v.stillSince === undefined || ts.time - v.stillSince < 10) continue;
+          lo = Math.min(lo, v.x - v.length);
+          hi = Math.max(hi, v.x);
+          kinds.add(v.role === "responder" ? String(v.responderKind) : v.role);
+        }
+      }
+      return { lo, hi, kinds: [...kinds].sort().join(",") };
+    };
+    for (const direction of ["NB", "SB"] as const) {
+      const [lo, hi] = BOUNDS[direction];
+      for (const family of ["minor_collision", "multi_vehicle_collision", "overturned_vehicle"] as const) {
+        const r = onRoad(family, direction);
+        if (process.env.VERIFY_SHOW) console.log(`  ${family} ${direction}: ${r.kinds} ${r.lo.toFixed(1)}–${r.hi.toFixed(1)} m (stretch ${lo}–${hi})`);
+        check(
+          `stretch: ${family} ${direction} — everything parked for the scene (${r.kinds}) stands inside metres ${lo}–${hi}`,
+          r.lo >= lo - 0.5 && r.hi <= hi + 0.5 && r.kinds.includes("wreck") && r.kinds.includes("police"),
+          `scene ${r.lo.toFixed(1)}–${r.hi.toFixed(1)} m`,
+        );
+      }
+    }
+  }
+}
+
+// --- scenes anywhere on the window, and a response that is neither instant nor early (the 60-case review, 2026-10-11)
+{
+  const at = (family: Parameters<typeof collisionSpec>[0] | "breakdown", lane: number, xM: number, minutes = 9) => {
+    const ts = new TrafficSim({ length: 600, laneCount: 4, inflowVehPerHour: 5200, seed: 7, warmupS: 60 }, engineIv(600, 4));
+    const binding = createEngineBinding();
+    const spec = family === "breakdown" ? inLaneSpec("truck", lane, xM, 1.5, manualMinutes(minutes)) : collisionSpec(family, lane, xM, 1.5, manualMinutes(minutes));
+    const events = must([], spec, 1).events;
+    const ev = events[0];
+    const startT = abs(1.5);
+    let due = -Infinity;
+    let firstWreck: number | null = null;
+    let firstResponderOnRoad: number | null = null;
+    let firstParked: number | null = null;
+    let towParked = false;
+    let attendedSaid = false;
+    while (ts.time < startT + minutes * 60 + 60) {
+      ts.step(0.05);
+      due = applyAtBoundary(binding, ts, idle, events, frame, due).dueS;
+      const t = ts.time - startT;
+      for (const v of [...ts.vehicles, ...ts.shoulder]) {
+        if (v.role === "wreck" && firstWreck === null) firstWreck = t;
+        if (v.role !== "responder") continue;
+        if (firstResponderOnRoad === null) firstResponderOnRoad = t;
+        if (v.stillSince != null && !v.departing) {
+          if (firstParked === null) firstParked = t;
+          if (v.responderKind === "tow") towParked = true;
+        }
+      }
+      if (firstParked !== null && ts.sceneAttended(ev.id)) attendedSaid = true;
+    }
+    const left = [...ts.vehicles, ...ts.shoulder].filter((v) => v.role !== "traffic").length;
+    return { ev, firstWreck, firstResponderOnRoad, firstParked, towParked, attendedSaid, left };
+  };
+
+  const crash = must([], collisionSpec("minor_collision", 2, 350, 0, manualMinutes(9)), 1).event;
+  const pile = must([], collisionSpec("multi_vehicle_collision", 2, 350, 0, manualMinutes(9)), 1).event;
+  const stall = must([], inLaneSpec("truck", 2, 350, 0, manualMinutes(9)), 1).event;
+  const works = must([], collisionSpec("scheduled_roadworks", 2, 350, 0, manualMinutes(9)), 1).event;
+  const flood = must([], collisionSpec("flood", 2, 350, 0, manualMinutes(9)), 1).event;
+  check(
+    "lead-in: a crash is set up SCENE_LEAD_S ahead, a breakdown BREAKDOWN_LEAD_S (it coasts to a stop), a works convoy by its drive from the entrance, a flood not at all",
+    sceneLeadS(crash, road600) === SCENE_LEAD_S && sceneLeadS(stall, road600) === BREAKDOWN_LEAD_S && sceneLeadS(works, road600) === 19 && sceneLeadS(flood, road600) === 0 &&
+      sceneLeadS(must([], collisionSpec("scheduled_roadworks", 2, 40, 0, manualMinutes(9)), 1).event, road600) === 0,
+    `${sceneLeadS(crash, road600)} ${sceneLeadS(stall, road600)} ${sceneLeadS(works, road600)} ${sceneLeadS(flood, road600)}`,
+  );
+  const first = (e: ScenarioEvent) => e.phases.filter((p) => !p.skipped)[0].durationS;
+  check(
+    "response time: read off the event — 45 s before the tow or service phase begins, half way through a blocked phase with no tow after it, never under 20 s",
+    near(responseArrivalS(pile), first(pile) - 45, 1e-9) && near(responseArrivalS(stall), first(stall) - 45, 1e-9) && near(responseArrivalS(crash), first(crash) * 0.5, 1e-9) &&
+      responseArrivalS(must([], collisionSpec("multi_vehicle_collision", 2, 350, 0, manualMinutes(1)), 1).event) === 20,
+  );
+
+  const mid = at("minor_collision", 2, 350);
+  const want = responseArrivalS(mid.ev);
+  check(
+    `response: nobody sets off before the crash has happened and been reported, and the first of them parks about when the event's response time says (${mid.firstParked?.toFixed(0)} s against ${want.toFixed(0)} s) — it used to be there in half a minute`,
+    mid.firstWreck !== null && mid.firstResponderOnRoad !== null && mid.firstResponderOnRoad > mid.firstWreck + 14 && mid.firstParked !== null && Math.abs(mid.firstParked - want) < 25 && mid.attendedSaid && mid.left === 0,
+    JSON.stringify({ ...mid, ev: undefined }),
+  );
+  const edge = at("self_accident", 1, 45);
+  check(
+    "placed 45 m from where traffic enters: it still happens — to the next vehicle to reach the point, on time — and is attended (the lane used to shut with no vehicle and no response at all)",
+    edge.firstWreck !== null && Math.abs(edge.firstWreck) < 6 && edge.firstParked !== null && edge.towParked && edge.left === 0,
+    JSON.stringify({ ...edge, ev: undefined }),
+  );
+  const stalled = at("breakdown", 2, 350);
+  check(
+    `breakdown: the vehicle is at rest within a quarter of a minute of its start time (${stalled.firstWreck?.toFixed(0)} s; it used to be half a minute late), the patrol does not arrive before it, and the recovery truck parks`,
+    stalled.firstWreck !== null && Math.abs(stalled.firstWreck) <= 15 && stalled.firstResponderOnRoad !== null && stalled.firstResponderOnRoad > stalled.firstWreck + 14 && stalled.towParked && stalled.left === 0,
+    JSON.stringify({ ...stalled, ev: undefined }),
+  );
+  const end = at("breakdown", 4, 565);
+  check(
+    "breakdown in the outer lane 35 m from the end of the window: the patrol leaves the shoulder clear and the recovery truck gets in front and parks (it used to stand behind the patrol car, or drive off the end)",
+    end.firstWreck !== null && end.towParked && end.left === 0,
+    JSON.stringify({ ...end, ev: undefined }),
+  );
+  const pileEnd = at("multi_vehicle_collision", 4, 565);
+  check("pile-up 35 m from the end of the window: with no road in front of it, the recovery truck waits on the shoulder beside it instead of driving off the picture", pileEnd.towParked && pileEnd.left === 0, JSON.stringify({ ...pileEnd, ev: undefined }));
 }
 
 // --- no limit, on the real engine: several closures and speed zones at once
@@ -1493,22 +1807,27 @@ function engineInSync(ts: TrafficSim, controls: ManualControls, events: readonly
 {
   // fast-forward: stepping without rendering, in slices, lands on the boundary, and matches running normally
   const events = must([], collisionSpec("minor_collision", 1, 330, 0.5, manualMinutes(6)), 1).events;
-  const target = nextBoundaryAfter(events, road600, 0);
-  check("skip: the next boundary from time 0 is the event's start", target === 30);
-  if (target !== null) {
+  /* A scene made of vehicles has a lead-in boundary SCENE_LEAD_S before its start: its vehicles are picked out of the
+     traffic then. Skipping goes boundary by boundary, as the page's does, so a skip and a normal run see the same. */
+  const lead = nextBoundaryAfter(events, road600, 0);
+  const target = lead === null ? null : nextBoundaryAfter(events, road600, lead);
+  check("skip: the next boundary from time 0 is the scene's lead-in (SCENE_LEAD_S before its start), and the one after it the event's start", lead === 30 - SCENE_LEAD_S && target === 30);
+  if (lead !== null && target !== null) {
     const a = newSim();
     const bA = createEngineBinding();
     let steps = 0;
     let calls = 0;
     let fake = 0;
-    let done = false;
-    while (!done) {
-      const r = stepToScenarioTime(a, frame, target, 0.05, 5, () => (fake += 1)); // a fake clock: 5 ms of budget = 5 reads
-      steps += r.steps;
-      calls++;
-      done = r.reached;
+    for (const leg of [lead, target]) {
+      let done = false;
+      while (!done) {
+        const r = stepToScenarioTime(a, frame, leg, 0.05, 5, () => (fake += 1)); // a fake clock: 5 ms of budget = 5 reads
+        steps += r.steps;
+        calls++;
+        done = r.reached;
+      }
+      bA.apply(a, idle, events, frame);
     }
-    bA.apply(a, idle, events, frame);
     const b = newSim();
     const bB = createEngineBinding();
     let due = -Infinity;
@@ -1523,7 +1842,11 @@ function engineInSync(ts: TrafficSim, controls: ManualControls, events: readonly
     check("skip: rejects a non-positive step", throws(() => stepToScenarioTime(newSim(), frame, 10, 0, 100, () => 0)));
   }
   const bs = boundaryTimes(events, road600);
-  check("skip: successive boundaries visit start, end of lane-blocked, end of event, then none", nextBoundaryAfter(events, road600, 0) === 30 && nextBoundaryAfter(events, road600, 30) === bs[1] && nextBoundaryAfter(events, road600, bs[1]) === bs[2] && nextBoundaryAfter(events, road600, bs[2]) === null && bs.length === 3);
+  check(
+    "skip: successive boundaries visit the lead-in, the start, the end of lane-blocked, the end of the event, then none",
+    nextBoundaryAfter(events, road600, 0) === bs[0] && bs[0] === 30 - SCENE_LEAD_S && nextBoundaryAfter(events, road600, bs[0]) === 30 && nextBoundaryAfter(events, road600, 30) === bs[2] &&
+      nextBoundaryAfter(events, road600, bs[2]) === bs[3] && nextBoundaryAfter(events, road600, bs[3]) === null && bs.length === 4,
+  );
 }
 
 {
@@ -2152,21 +2475,45 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check("flood art: the water spans the flooded stretch — it is drawn at the stretch's own x range and nowhere near a far-away lane position", (() => { const xs = water.calls.filter((c) => c.startsWith("lineTo ")).map((c) => Number(c.split(" ")[1])).filter((x) => Number.isFinite(x)); return Math.min(...xs) >= 250 * 1.3 - 12 && Math.max(...xs) <= 400 * 1.3 + 12; })());
 
   const collision: SceneMark = { ...base, family: "multi_vehicle_collision", kind: "closure", phaseId: "blocked", closedLanes: [1], stretch: { fromM: 250, toM: 350 }, intensity: null, lane: 1, phaseFraction: 0.9 };
-  const paintScene = (marks: readonly SceneMark[], t = 1): Recorder => { const r = new Recorder(); drawScenes(geom(r, t), marks); return r; };
+  /* The wrecked vehicles and the responders are agents, drawn with the traffic (simulation.ts crashAt / respond), and
+     the canvas hands the scene art where each of them is (SceneActors); the scene layer paints only what stands
+     around them: people, cones, flares, skid marks. A cast as the engine would have it: the wrecks at the point, the
+     ambulance behind them and the police car behind that, the tow in front — all at rest for `still` seconds. */
+  const castOf = (g: SceneGeometry, m: SceneMark, still: number, kinds: readonly SceneActor["kind"][], leaving = false): SceneActors => {
+    const y = m.lane === null ? g.outerEdgeY + 6 : g.laneCenterY(m.lane);
+    const x = g.xPx(m.xM);
+    let back = 0;
+    const list = kinds.map((kind): SceneActor => {
+      const ahead = kind === "tow";
+      const cx = ahead ? x + g.fwd * 30 : x - g.fwd * back;
+      if (!ahead) back += 28;
+      return { kind, cx, cy: y, len: 24, wid: 11, yaw: 0, still: leaving ? null : still, departing: leaving, onShoulder: false, look: kind === "wreck" ? "crash" : null };
+    });
+    return new Map([[m.eventId, list]]);
+  };
+  const crashCast: readonly SceneActor["kind"][] = ["wreck", "wreck", "wreck", "wreck", "ambulance", "police"];
+  const paintScene = (marks: readonly SceneMark[], t = 1, kinds: readonly SceneActor["kind"][] = crashCast, still = 20, leaving = false, fwd: 1 | -1 = 1): Recorder => {
+    const r = new Recorder();
+    const g = geom(r, t, fwd);
+    drawScenes(g, marks, marks.length > 0 ? castOf(g, marks[0], still, kinds, leaving) : undefined);
+    return r;
+  };
   const blocked = paintScene([collision]);
-  const towing = paintScene([{ ...collision, phaseId: "tow", phaseFraction: 0.6 }]);
-  const clearing = paintScene([{ ...collision, phaseId: "clearing", closedLanes: [], stretch: null }]);
-  // The wrecked vehicles and the responders are agents now, drawn with the traffic (simulation.ts crashAt /
-  // dispatchResponder), so the scene layer paints only what stands around them: people, cones, flares.
-  check("scene art: people and cones are painted while lanes are blocked, more once the tow crew is working, and less once only the cones remain (the vehicles themselves are agents, drawn with the traffic)", blocked.calls.length > 40 && towing.calls.length > blocked.calls.length && clearing.calls.length < blocked.calls.length, `${blocked.calls.length} / ${towing.calls.length} / ${clearing.calls.length}`);
+  const towing = paintScene([{ ...collision, phaseId: "tow", phaseFraction: 0.6 }], 1, [...crashCast, "tow"]);
+  const clearing = paintScene([{ ...collision, phaseId: "clearing", closedLanes: [], stretch: null }], 1, [...crashCast, "tow"], 20, true);
+  check("scene art: people and cones are painted round the scene's vehicles while lanes are blocked, more once the tow crew is working, and fewer once the scene is packing up (the vehicles themselves are agents, drawn with the traffic)", blocked.calls.length > 40 && towing.calls.length > blocked.calls.length && clearing.calls.length < blocked.calls.length, `${blocked.calls.length} / ${towing.calls.length} / ${clearing.calls.length}`);
+  check("scene art: with no vehicles yet at the scene there is nobody to paint (no people standing on empty road)", paintScene([collision], 1, []).calls.length === 0);
+  check("scene art: nobody gets out of a vehicle that has only just stopped, and the police set their cones out a while after parking", paintScene([collision], 1, crashCast, 1).calls.length < paintScene([collision], 1, crashCast, 4).calls.length && paintScene([collision], 1, crashCast, 4).calls.length < paintScene([collision], 1, crashCast, 20).calls.length);
   check("scene art: an event holding no lane and not clearing paints nothing (no wreck the engine is not honouring)", paintScene([{ ...collision, closedLanes: [], stretch: null }]).calls.length === 0);
   check("scene art: a pending event paints nothing (it keeps the faint marker)", paintScene([{ ...collision, state: "pending" }]).calls.length === 0);
-  check("scene art: hazard lights and beacons blink — the picture changes with the clock (and repeats exactly for the same clock)", paintScene([collision], 1.0).calls.join("|") !== paintScene([collision], 1.25).calls.join("|") && paintScene([collision], 1.0).calls.join("|") === paintScene([collision], 1.0).calls.join("|"));
-  check("scene art: southbound is the mirror — traffic drawn right to left still paints a scene of the same size", Math.abs(paintScene([collision], 1).calls.length - (() => { const r = new Recorder(); drawScenes(geom(r, 1, -1), [collision]); return r.calls.length; })()) < 40);
+  check("scene art: people, smoke and beacons move — the picture changes with the clock (and repeats exactly for the same clock)", paintScene([collision], 1.0).calls.join("|") !== paintScene([collision], 1.25).calls.join("|") && paintScene([collision], 1.0).calls.join("|") === paintScene([collision], 1.0).calls.join("|"));
+  check("scene art: southbound is the mirror — traffic drawn right to left still paints a scene of the same size", Math.abs(paintScene([collision], 1).calls.length - paintScene([collision], 1, crashCast, 20, false, -1).calls.length) < 40);
   const allFamilies: readonly FamilyKey[] = ["breakdown_in_lane", "breakdown_shoulder", "minor_collision", "multi_vehicle_collision", "self_accident", "overturned_vehicle", "scheduled_roadworks"];
+  const castFor = (f: FamilyKey): readonly SceneActor["kind"][] =>
+    f.startsWith("breakdown") ? ["wreck", "police", "tow"] : f === "scheduled_roadworks" ? ["works", "works"] : [...crashCast, "tow"];
   check(
-    "scene art: every family that draws a scene paints something when it holds what it needs, without throwing",
-    allFamilies.every((f) => paintScene([{ ...collision, family: f, phaseId: f === "breakdown_in_lane" || f === "breakdown_shoulder" ? "waiting" : "blocked", vehicle: f.startsWith("breakdown") ? "truck" : null }]).calls.length > 20),
+    "scene art: every family that draws a scene paints something round its vehicles when it holds what it needs, without throwing",
+    allFamilies.every((f) => paintScene([{ ...collision, family: f, phaseId: f === "breakdown_in_lane" || f === "breakdown_shoulder" ? "service" : f === "scheduled_roadworks" ? "active" : "tow", vehicle: f.startsWith("breakdown") ? "truck" : null }], 1, castFor(f)).calls.length > 20),
   );
   const roadworks = paintScene([{ ...collision, family: "scheduled_roadworks", phaseId: "active" }]);
   check("scene art: roadworks paint a work zone — cones, barrels, a truck and its lit arrow board (many arcs and filled rects)", roadworks.count("arc") > 15 && roadworks.count("fillRect") > 5);
@@ -2323,7 +2670,7 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check(
     "traffic sprites: vehicles are painted from vehiclePaint.ts by the vehicle's id (trailer painted separately), classes are told apart by shape, and the legend shows the shapes rather than class colours",
     /import \{ PAINT_WHITE, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint \} from "\.\/vehiclePaint";/.test(pageSource) &&
-      /paintFor\(v\.id, v\.vClass\), braking, sb, trailerPaintFor\(v\.id\)/.test(pageSource) && !/v\.color/.test(pageSource) &&
+      /const paint = moto \? motorcyclePaintFor\(v\.id\) : paintFor\(v\.id, v\.vClass\);/.test(pageSource) && /v\.vClass, paint, braking, sb, trailerPaintFor\(v\.id\), moto\);/.test(pageSource) && !/v\.color/.test(pageSource) &&
       /<i className="veh veh-1" \/>/.test(pageSource) && /<i className="veh veh-3" \/>/.test(pageSource) && !/CLASS_META\[[123]\]\.color/.test(pageSource),
   );
   // ── the colours themselves: a realistic spread, stable per vehicle ─────────
@@ -2405,7 +2752,7 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
     check(
       "motorcycles: the road draws a vehicle as a motorcycle only through isMotorcycle at the recorded share (Class 1 only), the legend says where the figure comes from, and the counts are published for the browser checks",
       /const motoShare = ASSUMPTIONS\.MOTORCYCLE_SHARE_OF_CLASS_1\.value;/.test(pageSource) && /const moto = isMotorcycle\(v\.id, v\.vClass, motoShare\);/.test(pageSource) &&
-        /moto \? motorcyclePaintFor\(v\.id\) : paintFor\(v\.id, v\.vClass\), braking, sb, trailerPaintFor\(v\.id\), moto\);/.test(pageSource) &&
+        /const paint = moto \? motorcyclePaintFor\(v\.id\) : paintFor\(v\.id, v\.vClass\);/.test(pageSource) && /drawVehicle\(ctx, xNose, y, len, wid, v\.vClass, paint, braking, sb, trailerPaintFor\(v\.id\), moto\);/.test(pageSource) &&
         /data-legend="motorcycle"/.test(pageSource) && /from NLEX&apos;s records/.test(pageSource) && /ctx\.canvas\.dataset\[sb \? "motoSb" : "motoNb"\]/.test(pageSource) && /if \(motorcycle\) \{/.test(pageSource),
     );
   }
@@ -2443,8 +2790,8 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check(
     "panel: the 'Add to' picker sits UNDER the family chips (it appears once a scenario is chosen), offers Both only for a family that reaches both, and is Both-mode only",
     panelSource.indexOf('data-scn="direction-pick"') > panelSource.indexOf('className="sandbox-scn-families"') && panelSource.indexOf('className="sandbox-scn-families"') > -1 &&
-      /\{template\.carriageways === "one_or_both" && \(\s*<button role="tab" aria-selected=\{onBoth\}/.test(panelSource) && /\{both && \(\s*<div className="sandbox-dir-pick"/.test(panelSource) &&
-      /setWantBoth\(t\.carriageways === "one_or_both"\)/.test(panelSource) && /const targets = addTargets\(template\.carriageways, directions, direction, wantBoth\);/.test(panelSource),
+      /\{template\.carriageways === "one_or_both" && \(\s*<button role="tab" aria-selected=\{onBoth\}/.test(panelSource) && /\{both && template\.carriageways !== "both" && \(\s*<div className="sandbox-dir-pick"/.test(panelSource) &&
+      /setWantBoth\(t\.carriageways !== "one"\)/.test(panelSource) && /const targets = addTargets\(template\.carriageways, directions, direction, wantBoth\);/.test(panelSource),
   );
   check(
     "panel: a Both add is all or nothing — the refusal is worked out for EVERY target (one refusal disables Add for both, and names its carriageway), and Add stores one event per target",
@@ -2464,8 +2811,8 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   // ── where an Add goes: one carriageway, or both for weather and flooding ────
   const reach = (f: FamilyKey): string => TEMPLATE_BY_FAMILY[f].carriageways;
   check(
-    "add to which carriageway: rain and flooding can go on both; every other family is one carriageway's business",
-    reach("rain") === "one_or_both" && reach("flood") === "one_or_both" &&
+    "add to which carriageway: rain always goes on both (it falls on the whole road), flooding can go on one or both; every other family is one carriageway's business",
+    reach("rain") === "both" && reach("flood") === "one_or_both" &&
       (["breakdown_in_lane", "breakdown_shoulder", "minor_collision", "multi_vehicle_collision", "self_accident", "overturned_vehicle", "scheduled_roadworks"] as const).every((f) => reach(f) === "one"),
   );
   const both2: readonly Direction[] = ["NB", "SB"];
@@ -2480,6 +2827,10 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check(
     "add to which carriageway: a one-carriageway family never goes to both, even if 'both' was left set from a previous choice",
     addTargets("one", both2, "NB", true).join() === "NB" && addTargets("one", both2, "SB", true).join() === "SB",
+  );
+  check(
+    "add to which carriageway: rain goes on NB and SB whatever is on screen, whichever is focused and whatever the flag",
+    addTargets("both", ["NB"], "NB", false).join() === "NB,SB" && addTargets("both", ["SB"], "SB", false).join() === "NB,SB" && addTargets("both", both2, "SB", false).join() === "NB,SB",
   );
   check(
     "add to which carriageway: with one carriageway on screen it is that carriageway, whatever the family or the flag",

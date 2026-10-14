@@ -60,6 +60,12 @@ export type Strategy = {
   range: { lowTonnes: number; highTonnes: number; lowPct: number; highPct: number; runs: number } | null;
   /** The decision variable's chosen value, in words. */
   lever: string;
+  /** Where on the corridor the saving is, and when in the day: read off the incidents the figure is made of
+   *  (the stretches and the hours that hold most of it), so the card names somewhere to act, not "corridor-wide". */
+  where: string;
+  when: string;
+  /** What the saving is concentrated in, as one sentence an operator can act on; absent for a policy scenario. */
+  focus?: string;
   /** For a strategy that is not evidence-bounded: what the record does show, in one sentence. */
   evidenceNote?: string;
   /** True when the bound comes from something the corridor has actually
@@ -195,7 +201,7 @@ export async function getPrescriptiveStrategies(
        the vehicles per hour on one segment of one carriageway (see
        exposureByHour), not the corridor's. */
     exposureByHour(lo, hi),
-    // Strategies B and C: every cleared accident in the Range, with its own clearance time.
+    // Strategies B and C: every accident in the Range that blocked a lane, with its own blockage time.
     clearedIncidents(lo, hi),
     // Strategy A's evidence: the heavy share of vehicle-km in every month of the record.
     db.query(
@@ -231,10 +237,10 @@ export async function getPrescriptiveStrategies(
 
   /* ── B and C. Idling ────────────────────────────────────────────────────
      Each incident's idling is the area of its queue triangle at its OWN
-     clearance time (idleKg in emissions-source.ts): squaring each time, not a
-     band's mean, which understated the tail. Bands are kept for the floors:
-     clearance is heavily right-skewed (median 5 min, p90 59), so one floor for
-     all would be meaningless. The floor in each band and hour is the p10 the
+     lane-blockage time (idleKg and clearedIncidents in emissions-source.ts):
+     squaring each time, not a band's mean, which understated the tail. Bands
+     are kept for the floors: blockage is heavily right-skewed (median 4 min,
+     p90 about 33), so one floor for all would be meaningless. The floor in each band and hour is the p10 the
      corridor has itself achieved there: the target is a response time already
      delivered, which is why B and C are evidence-bounded and A is not. An
      incident already faster than its floor keeps its own time. */
@@ -260,8 +266,71 @@ export async function getPrescriptiveStrategies(
     const floor = Math.min(e.minutes, floorOf.get(`${e.band}|${e.hr}`) ?? e.minutes);
     const now = idleKg(veh, e.minutes);
     const b = idleKg(veh, floor);
-    return { saveB: now - b, saveC: targetHours.has(e.hr) ? now - b : 0 };
+    return { e, saveB: now - b, saveC: targetHours.has(e.hr) ? now - b : 0 };
   });
+
+  /* Where and when each saving is, from the incidents it is made of. A stretch is 10 km of one carriageway —
+     fine enough to send a patrol to, coarse enough that a year's incidents on it are not one bad afternoon. */
+  const BOUND: Record<string, string> = { NB: "Northbound", SB: "Southbound", EB: "Eastbound", WB: "Westbound" };
+  const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
+  /** Hours as ranges: [6,7,8,17,18] -> "06:00–09:00, 17:00–19:00". */
+  const hourRanges = (hours: number[]): string => {
+    const hs = [...new Set(hours)].sort((a, b) => a - b);
+    const out: string[] = [];
+    for (let i = 0; i < hs.length; i++) {
+      let j = i;
+      while (j + 1 < hs.length && hs[j + 1] === hs[j] + 1) j++;
+      out.push(`${hh(hs[i])}–${hh((hs[j] + 1) % 24)}`);
+      i = j;
+    }
+    return out.join(", ");
+  };
+  const focusOf = (pick: (x: (typeof perIncident)[number]) => number) => {
+    const total = perIncident.reduce((s, x) => s + pick(x), 0);
+    const share = (v: number) => (total > 0 ? Math.round((v / total) * 100) : 0);
+    const byStretch = new Map<string, { kg: number; long: number }>();
+    const byHour = new Map<number, number>();
+    let longKg = 0;
+    let longN = 0;
+    let biggest: (typeof perIncident)[number] | undefined;
+    for (const x of perIncident) {
+      const v = pick(x);
+      if (!(v > 0)) continue;
+      if (!biggest || v > pick(biggest)) biggest = x;
+      if (x.e.km != null && x.e.direction != null) {
+        const lo10 = Math.floor(x.e.km / 10) * 10;
+        const k = `${BOUND[x.e.direction] ?? x.e.direction} Km ${lo10}–${lo10 + 10}`;
+        const s = byStretch.get(k) ?? { kg: 0, long: 0 };
+        s.kg += v;
+        if (x.e.minutes >= 60) s.long++;
+        byStretch.set(k, s);
+      }
+      byHour.set(x.e.hr, (byHour.get(x.e.hr) ?? 0) + v);
+      if (x.e.minutes >= 60) {
+        longKg += v;
+        longN++;
+      }
+    }
+    const top = [...byStretch.entries()].sort((a, b) => b[1].kg - a[1].kg).slice(0, 3);
+    /* The cost is quadratic, so one very long blockage can be most of a stretch's figure. Say so when it is:
+       a stretch that leads because of one afternoon is not a stretch that needs a standing patrol. */
+    const lone =
+      biggest && total > 0 && pick(biggest) / total >= 0.2
+        ? ` One incident alone is ${share(pick(biggest))}% of it (${biggest.e.day}, ${BOUND[biggest.e.direction ?? ""] ?? "direction not recorded"}${biggest.e.km != null ? ` Km ${biggest.e.km.toFixed(1)}` : ""}, lane blocked ${(biggest.e.minutes / 60).toFixed(1)} h), so read the stretch shares as where the long blockages happened this Range, not as a fixed pattern.`
+        : "";
+    const topHours = [...byHour.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+    return {
+      where: top.length
+        ? top.map(([k, v]) => `${k} (${share(v.kg)}%, ${v.long} blockage${v.long === 1 ? "" : "s"} of an hour or more)`).join(" · ")
+        : "Corridor-wide (the incidents carry no km post)",
+      when: topHours.length ? `${hourRanges(topHours.map(([h]) => h))} — ${share(topHours.reduce((s, [, v]) => s + v, 0))}% of the saving` : "No hour stands out",
+      focus: total > 0
+        ? `${share(longKg)}% of this saving comes from ${longN.toLocaleString("en-US")} incident${longN === 1 ? "" : "s"} that blocked a lane for an hour or more — the long blockages are the ones to shorten first.${lone}`
+        : undefined,
+    };
+  };
+  const focusB = focusOf((x) => x.saveB);
+  const focusC = focusOf((x) => x.saveC);
   const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
   const clearanceTonnes = Math.max(0, sum(perIncident.map((x) => x.saveB)) / 1000);
   const deploymentTonnes = Math.max(0, sum(perIncident.map((x) => x.saveC)) / 1000);
@@ -319,14 +388,18 @@ export async function getPrescriptiveStrategies(
   const strategies: Strategy[] = [
     {
       key: "clearance",
-      label: "Faster incident clearance",
+      label: "Shorter lane blockages",
       reductionPct: r2(pct(clearanceTonnes)),
       reductionTonnes: r2(clearanceTonnes),
       range: rangeOf(runsB),
-      lever: "every clearance band pulled to the fastest 10% already achieved in that band",
+      lever: "every lane blockage shortened to the fastest 10% already achieved for blockages of its length, at that hour",
+      where: focusB.where,
+      when: focusB.when,
+      focus: focusB.focus,
       evidenceBounded: true,
       assumptions: [
-        "Idling is the area of the queue triangle, lambda x T^2 / 2: vehicles join while the incident is live and drain as it clears. Still quadratic in delay, so the long tail dominates.",
+        "Queueing lasts as long as a lane is blocked (blockage cleared minus the start), not as long as the site takes to clear: an incident that never blocked a lane queues nobody and is not counted.",
+        "Idling is the area of the queue triangle, lambda x T^2 / 2: vehicles join while the lane is blocked and drain as it clears. Still quadratic in delay, so the long tail dominates.",
         "One incident is taken to affect one exit-segment in one direction, not the whole corridor.",
         "The floor per band is that band's observed 10th percentile, so the target is a response time this corridor has already delivered.",
         `Idling factor ${IDLING_KG_PER_VEHICLE_MINUTE} kg CO2 per vehicle-minute, from Climatiq's petrol-car factor scaled by 0.10 for idling.`,
@@ -340,12 +413,15 @@ export async function getPrescriptiveStrategies(
       reductionPct: r2(pct(deploymentTonnes)),
       reductionTonnes: r2(deploymentTonnes),
       range: rangeOf(runsC),
-      lever: "same total capacity, concentrated on the 12 hours with the most vehicles exposed",
+      lever: `same total capacity, concentrated on the 12 busiest hours (${hourRanges([...targetHours])})`,
+      where: focusC.where,
+      when: hourRanges([...targetHours]),
+      focus: focusC.focus,
       evidenceBounded: true,
       assumptions: [
-        "Reallocation, not extra resourcing: the hours outside the target keep their current clearance times.",
+        "Reallocation, not extra resourcing: the hours outside the target keep their current blockage times.",
         "A minute saved at 17:00 traps roughly ten times the vehicles of a minute saved at 02:00, which is the entire reason this differs from the strategy above.",
-        "Always at most as large as faster clearance corridor-wide, since it applies the same floor to fewer hours.",
+        "Always at most as large as shorter blockages corridor-wide, since it applies the same floor to fewer hours.",
         mcNote,
       ],
     },
@@ -356,6 +432,8 @@ export async function getPrescriptiveStrategies(
       reductionTonnes: r2(fleetTonnes),
       range: null,
       lever: `${deltaPp} pp of Class-3 vehicle-km moved to Class 2 (from ${heavySharePct.toFixed(2)}% in this Range) — a policy target, not an observed change`,
+      where: "Corridor-wide: it is a share of all vehicle-km, not of any one stretch",
+      when: "Every day of the Range",
       evidenceBounded: false,
       evidenceNote: fleetNote,
       assumptions: [
@@ -377,7 +455,7 @@ export async function getPrescriptiveStrategies(
           .map((s) => ({
             key: s.key,
             label: s.label,
-            reason: `No cleared incidents are recorded between ${lo} and ${hi}, and this strategy is computed from them.`,
+            reason: `No lane-blocking incidents are recorded between ${lo} and ${hi}, and this strategy is computed from them.`,
           }));
 
   const data: PrescriptiveResult = {

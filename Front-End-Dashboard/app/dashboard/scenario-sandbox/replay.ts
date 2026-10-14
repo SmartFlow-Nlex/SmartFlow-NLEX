@@ -41,11 +41,23 @@ export type ReplayVehicle = {
   role: Vehicle["role"];
   responderKind?: ResponderKind;
   restAngle?: number;
+  /* And how the scene was going: which way a wreck (or a car skidding into one) pointed, how it came to rest, its
+     hazards, how long it had been still, whose scene it was, whether it was leaving, and the shoulder. */
+  yaw?: number;
+  look?: Vehicle["look"];
+  hazards?: boolean;
+  stillSince?: number;
+  sceneKey?: string;
+  departing?: boolean;
+  onShoulder?: boolean;
+  viaShoulder?: boolean;
 };
 
 export type ReplayFrame = {
   time: number;
   vehicles: ReplayVehicle[];
+  /** Who was on the hard shoulder (responders on their way, a vehicle pulled over). */
+  shoulder?: ReplayVehicle[];
   /** Who was in the plazas and service areas, and which booths were shut. */
   fac?: { agents: FacAgentView[]; closed: [string, number[]][]; busy: [string, number[]][] };
   incidents: { lane: number; x: number; secondary?: boolean }[];
@@ -63,6 +75,7 @@ export type ReplayFrame = {
 export type SimLike = {
   time: number;
   vehicles: ReplayVehicle[];
+  shoulder?: ReplayVehicle[];
   cfg: { laneCount: number; length: number };
   interventions: Interventions;
 };
@@ -70,6 +83,7 @@ export type SimLike = {
 type Source = {
   time: number;
   vehicles: Vehicle[];
+  shoulder?: Vehicle[];
   interventions: Interventions;
   cfg: { laneCount: number; length: number };
   fac?: FacilityEngine;
@@ -82,6 +96,35 @@ type Source = {
  * which a per-step buffer would do within a minute. */
 const DEFAULT_HZ = 8;
 const DEFAULT_WINDOW_S = 90;
+
+/** One vehicle as the canvas will need it again. Copied field by field, not by reference: the engine mutates its
+ *  vehicles in place every step, so storing the object would give a buffer of N pointers to one ever-changing present. */
+function snapshot(v: Vehicle): ReplayVehicle {
+  return {
+    id: v.id,
+    lane: v.lane,
+    laneFrom: v.laneFrom,
+    laneShift: v.laneShift,
+    x: v.x,
+    v: v.v,
+    vClass: v.vClass,
+    length: v.length,
+    accel: v.accel,
+    spawnTime: v.spawnTime,
+    color: v.color,
+    role: v.role,
+    responderKind: v.responderKind,
+    restAngle: v.restAngle,
+    yaw: v.yaw,
+    look: v.look,
+    hazards: v.hazards,
+    stillSince: v.stillSince,
+    sceneKey: v.sceneKey,
+    departing: v.departing,
+    onShoulder: v.onShoulder,
+    viaShoulder: v.viaShoulder,
+  };
+}
 
 export class ReplayBuffer {
   private frames: ReplayFrame[] = [];
@@ -102,25 +145,8 @@ export class ReplayBuffer {
     const iv = sim.interventions;
     this.frames.push({
       time: sim.time,
-      // Copied field by field, not by reference: the engine mutates these
-      // objects in place every step, so storing the vehicle itself would give
-      // a buffer of N pointers to one ever-changing present.
-      vehicles: sim.vehicles.map((v) => ({
-        id: v.id,
-        lane: v.lane,
-        laneFrom: v.laneFrom,
-        laneShift: v.laneShift,
-        x: v.x,
-        v: v.v,
-        vClass: v.vClass,
-        length: v.length,
-        accel: v.accel,
-        spawnTime: v.spawnTime,
-        color: v.color,
-        role: v.role,
-        responderKind: v.responderKind,
-        restAngle: v.restAngle,
-      })),
+      vehicles: sim.vehicles.map(snapshot),
+      shoulder: sim.shoulder && sim.shoulder.length > 0 ? sim.shoulder.map(snapshot) : undefined,
       fac: sim.fac && sim.fac.list.length > 0 ? snapshotFacilities(sim.fac) : undefined,
       incidents: iv.incidents.map((i) => ({ lane: i.lane, x: i.x, secondary: i.secondary })),
       closedLanes: [...iv.closedLanes],
@@ -194,6 +220,7 @@ export class ReplayBuffer {
     return {
       time: f.time,
       vehicles: f.vehicles,
+      shoulder: f.shoulder,
       cfg,
       interventions: {
         closedLanes: f.closedLanes,

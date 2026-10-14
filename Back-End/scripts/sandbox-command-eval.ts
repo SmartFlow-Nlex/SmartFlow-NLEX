@@ -101,6 +101,15 @@ const CASES: Case[] = [
   { id: "R14", lang: "Taglish", cmd: "Isara mo yung pump 2 sa Petron Marilao", want: "set_booths sa:petron-marilao [1] shut", ok: (a) => of(a, "set_booths", (x) => x.placeId === "sa:petron-marilao" && x.stations.join() === "1" && x.open === false) },
   { id: "R15", lang: "Taglish", cmd: "Bagalan mo yung traffic sa 60 sa NB", want: "speed limit NB 60, not the simulation", ok: (a) => of(a, "set_speed_limit", (x) => x.direction === "NB" && x.kmh === 60) && no(a, "playback") },
 
+  { id: "R16", lang: "Taglish", cmd: "Umuulan ng malakas sa southbound, 45 minutes", want: "rain heavy on BOTH carriageways, manual 45", ok: (a) => ["NB", "SB"].every((d) => ev(a, d, "rain", (x) => x.variant.intensity === "heavy" && manual(x, 45))) },
+  { id: "R17", lang: "English", cmd: "Light rain northbound only", want: "rain light on BOTH (rain is never one carriageway)", ok: (a) => ["NB", "SB"].every((d) => ev(a, d, "rain", (x) => x.variant.intensity === "light")) },
+
+  // A stretch and a clock window (the operator's "within 12.30 - 12.40", 2026-10-07)
+  { id: "S1", lang: "English", cmd: "Put a crash northbound within 20.30 - 20.40", want: "minor_collision NB over Km 20.30-20.40 (a stretch, not one km)", ok: (a) => ev(a, "NB", "minor_collision", (x) => near(x.fromKm, 20.3) && near(x.toKm, 20.4)) },
+  { id: "S2", lang: "Tagalog", cmd: "Banggaan pa-Maynila sa lane 2 mula 20.30 hanggang 20.40", want: "minor_collision SB lane 2 over Km 20.30-20.40", ok: (a) => ev(a, "SB", "minor_collision", (x) => x.lane === 2 && near(x.fromKm, 20.3) && near(x.toKm, 20.4)) },
+  { id: "S3", lang: "English", cmd: "Breakdown in lane 2 northbound from 20:10 to 20:25", want: "breakdown NB lane 2 at 20:10, manual 15", ok: (a) => ev(a, "NB", "breakdown_in_lane", (x) => x.lane === 2 && x.atClock?.hour === 20 && x.atClock?.minute === 10 && manual(x, 15)) },
+  { id: "S4", lang: "Taglish", cmd: "Lagay ka ng aksidente sa SB lane 3, 9:00 pm hanggang 9:30 pm", want: "minor_collision SB lane 3 at 21:00, manual 30", ok: (a) => ev(a, "SB", "minor_collision", (x) => x.lane === 3 && x.atClock?.hour === 21 && x.atClock?.minute === 0 && manual(x, 30)) },
+
   // Typos and no accents
   { id: "Y1", lang: "Typos", cmd: "close lane 2 soutbound", want: "close SB [2]", ok: (a) => of(a, "close_lane", (x) => x.direction === "SB" && lanes(x) === "2") },
   { id: "Y2", lang: "Typos", cmd: "aksidente sa meycuayan toll SB booth 1", want: "minor_collision SB at entry:4:SB booth [0]", ok: (a) => ev(a, "SB", "minor_collision", (x) => x.placeId === "entry:4:SB" && x.stations.join() === "0") },

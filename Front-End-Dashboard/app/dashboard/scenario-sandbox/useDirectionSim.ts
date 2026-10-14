@@ -34,6 +34,7 @@ import type { InflowFrom } from "./recommendation";
 import { borrowedLanes, crossoverM, type ZipperState } from "./zipper";
 import { drawForecastEvents, type ExitIncidents } from "./scenarios/forecastIncidents";
 import { placeFuelStations } from "../../../lib/nlex-fuel-stations";
+import { recentAverage, TrendLog } from "./trends";
 
 /**
  * One carriageway's worth of simulation: its own TrafficSim, its own scenario
@@ -84,6 +85,8 @@ export type Baseline = {
   co2RatePerMin: number;
   avgTravelTimeS: number;
   takenWith: string;
+  /** True when the figures are the mean of the last minute (recentAverage); false for a single reading, taken too early in a run to average. */
+  averaged?: boolean;
 };
 
 /** What every direction shares, computed once by the page and handed to each hook call. */
@@ -713,6 +716,12 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
   const cancelSkip = useCallback(() => {
     if (skipRef.current) skipRef.current.cancel = true;
   }, []);
+  /* The readouts over time (trends.ts), sampled by whatever steps this carriageway's engine: the page's loop,
+     and the skip below. One log for the hook's life; it starts again by itself when handed a new run. */
+  const trendRef = useRef<TrendLog | null>(null);
+  if (trendRef.current === null) trendRef.current = new TrendLog();
+  const trend = trendRef.current;
+
   const skipToNextPhase = useCallback(() => {
     const sim = simRef.current;
     if (!sim) return;
@@ -736,6 +745,8 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
         return;
       }
       const r = stepToScenarioTime(sim, scenarioFrame, target, 0.05, 25, () => performance.now());
+      // One sample per slice at most: a slice is a few simulated seconds, so a skip leaves the trend roughly as dense.
+      trend.record(sim, scenarioFrame.warmupS);
       if (!r.reached) {
         const now = scenarioTimeS(sim.time, scenarioFrame);
         setSkip((cur) => (cur ? { ...cur, nowS: now } : cur));
@@ -752,7 +763,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
       finish();
     };
     setTimeout(pump, 0);
-  }, [scenarioFrame, scenarioBinding, publishOwners, resetSimAccumulator]);
+  }, [scenarioFrame, scenarioBinding, publishOwners, resetSimAccumulator, trend]);
 
   const clearIncidents = useCallback(() => {
     const sim = simRef.current;
@@ -775,12 +786,15 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
   const captureBaseline = useCallback(() => {
     if (!metrics) return;
     const closed = eff.closedLanes.map((c, i) => (c ? `L${i + 1}` : null)).filter(Boolean).join(", ");
+    // The last minute's mean where there is one (see recentAverage): a single reading is whatever second it was pressed in.
+    const avg = recentAverage(trend.samplesOf(simRef.current));
     setBaseline({
-      avgSpeedKmh: metrics.avgSpeedKmh,
-      throughputPerMin: metrics.throughputPerMin,
-      longestQueueM: metrics.longestQueueM,
-      co2RatePerMin: metrics.co2RatePerMin,
+      avgSpeedKmh: avg ? avg.speedKmh : metrics.avgSpeedKmh,
+      throughputPerMin: avg ? avg.throughputPerMin : metrics.throughputPerMin,
+      longestQueueM: avg ? avg.queueM : metrics.longestQueueM,
+      co2RatePerMin: avg ? avg.co2KgPerMin : metrics.co2RatePerMin,
       avgTravelTimeS: metrics.avgTravelTimeS,
+      averaged: avg !== null,
       takenWith:
         [
           closed ? `${closed} closed` : null,
@@ -811,7 +825,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     placingIncident, setPlacingIncident, placingClosure, setPlacingClosure, closureDraftKm, setClosureDraftKm,
     scenarioEvents, owners, skip, cancelSkip, skipToNextPhase,
     addScenarioEvent, removeScenarioEvent,
-    metrics, setMetrics, baseline, setBaseline, captureBaseline, peakUnmetVehPerHour,
+    metrics, setMetrics, baseline, setBaseline, captureBaseline, trend, peakUnmetVehPerHour,
     eff, effIncidentCount, activeScenarioText, anyIntervention, interventionSummary,
     manualControls, scenarioFrame, scenarioRoad, scenarioNowS,
     kmAt, mAt, clampKm, spanM,
