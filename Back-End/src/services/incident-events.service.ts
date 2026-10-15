@@ -90,16 +90,18 @@ export async function getEventBreakdownFromDb(filters: EventBreakdownFilters): P
       lo = minDate;
       hi = maxDate;
     } else {
-      // Same trailing-window rule as /analytics: counted back from the last
-      // actual day of data, not from today's wall-clock date.
+      // Every month range ENDS at the last day of data, on every module (the user, 2026-10-15): "3 mo" is the
+      // last 3 months, "12 mo" the last 12, "All" the whole record. 12 months back from the last day, counting
+      // both ends, is 365 days, hence the + 1 day.
       hi = maxDate;
-      lo = (
-        await db.query(`SELECT GREATEST(($1::date - ($2 || ' months')::interval)::date, $3::date)::text AS lo`, [
-          hi,
-          filters.months,
-          minDate,
-        ])
-      ).rows[0].lo;
+      lo =
+        (
+              await db.query(`SELECT GREATEST(($1::date + interval '1 day' - ($2 || ' months')::interval)::date, $3::date)::text AS lo`, [
+                hi,
+                filters.months,
+                minDate,
+              ])
+            ).rows[0].lo;
     }
 
     const [causeRes, byServiceRes, byCauseRes] = await Promise.all([

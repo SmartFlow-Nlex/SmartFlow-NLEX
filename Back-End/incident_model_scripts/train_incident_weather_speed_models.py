@@ -110,12 +110,20 @@ def get_conn():
             f"dbname={os.environ.get('PG_DATABASE')} user={os.environ.get('PG_USER')} "
             f"password={os.environ.get('PG_PASSWORD')}"
         )
-    return psycopg2.connect(dsn, sslmode="require")
+    # TCP keep-alives: on this RDS link a connection can die mid-query without either side being told, and the
+    # script then waited on it forever (2026-10-15: idle 40 min after the server had finished). With these a dead
+    # link raises within about a minute and the run fails visibly instead of hanging.
+    return psycopg2.connect(dsn, sslmode="require", keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
 
 
 # ---------------------------------------------------------------------------
 # SQL
 # ---------------------------------------------------------------------------
+# The record every other module trains and reports on (2026-10-15): traffic, emissions, accidents and
+# breakdowns all run 2022-01-01 to 2026-06-30 (RECORD_END in Back-End/src/etl/toll-hourly.ts). This script
+# read everything in its tables instead, which reached back to 2020 and, for incidents, past the record end.
+RECORD_START = "2022-01-01"
+RECORD_END = "2026-06-30"
 # GREATEST(...,0): the negative-speed/negative-jam floor described in the
 # module docstring — physically impossible values clamped, not dropped, so a
 # noisy row still contributes its other columns.
@@ -126,9 +134,10 @@ DAILY_PANEL_SQL = """
            MAX(GREATEST(avg_jam_level, 0))::float AS jam_level_max,
            SUM(total_volume)::float AS volume
     FROM bronze.nlex_traffic_volume
+    WHERE date_day BETWEEN '{lo}' AND '{hi}'
     GROUP BY date_day
     ORDER BY date_day
-"""
+""".format(lo=RECORD_START, hi=RECORD_END)
 
 # Mirrors train_incident_models.py's DAILY_RAIN_SQL — kept in sync by hand.
 DAILY_RAIN_SQL = """
@@ -138,18 +147,21 @@ DAILY_RAIN_SQL = """
     ORDER BY 1
 """
 
-# Mirrors train_incident_models.py's DAILY_COUNTS_SQL — kept in sync by hand.
-_D = "CASE WHEN date LIKE '%/%' THEN to_date(date, 'MM/DD/YYYY') ELSE date::date END"
+# Mirrors train_incident_models.py's DAILY_COUNTS_SQL — kept in sync by hand. It had not been: that script
+# moved to the accident and breakdown event tables (the population the whole incident dashboard reports),
+# while this one still counted the legacy road-crash / motorcycle / stalled-vehicle tables, a smaller and
+# older population that also runs outside the record. Brought back in line on 2026-10-15.
 DAILY_INCIDENT_COUNTS_SQL = f"""
     WITH all_incidents AS (
-        SELECT {_D} AS d FROM nlex_road_crashes        WHERE date IS NOT NULL
+        SELECT event_start_date::date AS d FROM silver.nlex_accident_events_clean
+        WHERE event_start_date IS NOT NULL
         UNION ALL
-        SELECT {_D} AS d FROM nlex_motorcycle_crashes  WHERE date IS NOT NULL
-        UNION ALL
-        SELECT {_D} AS d FROM nlex_stalled_vehicles    WHERE date IS NOT NULL
+        SELECT event_encoded_date::date AS d FROM silver.nlex_breakdown_events_clean
+        WHERE event_encoded_date IS NOT NULL
     )
     SELECT d, COUNT(*)::float AS total
     FROM all_incidents
+    WHERE d BETWEEN '{RECORD_START}' AND '{RECORD_END}'
     GROUP BY 1
     ORDER BY 1
 """
@@ -182,7 +194,7 @@ EXIT_HOUR_PANEL_SQL = """
            AVG(GREATEST(avg_speed_kmh, 0))::float AS speed_kmh,
            SUM(total_volume)::float AS volume
     FROM bronze.nlex_traffic_volume
-    WHERE exit_id IS NOT NULL
+    WHERE exit_id IS NOT NULL AND date_day BETWEEN %(lo)s AND %(hi)s
     GROUP BY date_day, hour_of_day, exit_id
 """
 
@@ -192,8 +204,41 @@ HOURLY_RAIN_BY_LOCATION_SQL = """
            UPPER(location_name) AS location_upper,
            SUM(rainfall)::float AS rain_mm
     FROM hourly_weather
+    WHERE (timestamp_utc + interval '8 hours')::date BETWEEN %(lo)s AND %(hi)s
     GROUP BY 1, 2, 3
 """
+
+
+def read_by_year(conn, sql: str) -> pd.DataFrame:
+    """Run a %(lo)s/%(hi)s query one calendar year at a time over the record and stack the results. Read whole,
+    the exit-hour panel is a single large transfer, and on the RDS link to this PC that transfer stalls: the
+    server finished the query and sat in ClientWrite for over 20 minutes while the client received nothing
+    (2026-10-15). A year at a time keeps every transfer small."""
+    # Each year on its own fresh connection, retried: the same link also closes a long transfer outright
+    # ("server closed the connection unexpectedly"), and one dropped year should cost one retry, not the run.
+    # `conn` is left untouched for the caller.
+    import time
+    parts = []
+    for y in range(int(RECORD_START[:4]), int(RECORD_END[:4]) + 1):
+        lo = max(RECORD_START, f"{y}-01-01")
+        hi = min(RECORD_END, f"{y}-12-31")
+        for attempt in range(1, 4):
+            c = get_conn()
+            try:
+                parts.append(pd.read_sql(sql, c, params={"lo": lo, "hi": hi}))
+                break
+            except Exception as e:  # psycopg2 OperationalError / InterfaceError, wrapped by pandas
+                if attempt == 3:
+                    raise
+                print(f"    read {y}: connection dropped ({str(e).splitlines()[0][:80]}), retry {attempt}", flush=True)
+                time.sleep(10 * attempt)
+            finally:
+                try:
+                    c.close()
+                except Exception:
+                    pass
+        print(f"    read {y}: {len(parts[-1]):,} rows", flush=True)
+    return pd.concat(parts, ignore_index=True)
 
 
 def load_holidays(conn) -> set:
@@ -271,10 +316,10 @@ def load_daily_panel(conn, holidays: set) -> pd.DataFrame:
 
 
 def load_exit_hour_panel(conn, exits_df: pd.DataFrame) -> pd.DataFrame:
-    panel = pd.read_sql(EXIT_HOUR_PANEL_SQL, conn)
+    panel = read_by_year(conn, EXIT_HOUR_PANEL_SQL)
     panel["d"] = pd.to_datetime(panel["d"])
 
-    rain = pd.read_sql(HOURLY_RAIN_BY_LOCATION_SQL, conn)
+    rain = read_by_year(conn, HOURLY_RAIN_BY_LOCATION_SQL)
     rain["d"] = pd.to_datetime(rain["d"])
     exit_upper = exits_df[["exit_id", "exit_name"]].copy()
     exit_upper["location_upper"] = exit_upper["exit_name"].str.upper()

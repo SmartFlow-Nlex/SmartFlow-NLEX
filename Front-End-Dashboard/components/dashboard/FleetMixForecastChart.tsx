@@ -26,6 +26,7 @@
 
 import type { EChartsOption } from "echarts";
 import { useEffect, useMemo, useState } from "react";
+import FleetMixNarrative from "./FleetMixNarrative";
 import { TriangleAlert } from "lucide-react";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
@@ -387,23 +388,9 @@ export default function FleetMixForecastChart() {
           {data.split?.future_days ? <span className="pill">{data.split.future_days}-day projection</span> : null}
           <span className="pill">Validated at {VALIDATED_HORIZON} days</span>
           {data.split?.updated_at ? <span className="pill">Trained {data.split.updated_at.slice(0, 10)}</span> : null}
+          {/* Where the observed data stops, as the CO2 card says it ("measured to"): the axis shows the rest. */}
+          {lastObservedDate ? <span className="pill">Data to {lastObservedDate}</span> : null}
         </div>
-        {/* Data vintage, not run date.
-            "updated <date>" meant "the script ran then", which on a card whose
-            forecast window has already passed reads as "this is current". The
-            observed series ends when the warehouse ends; if that is well
-            behind today, the projection covers days that have already
-            happened and the reader should be told plainly rather than left to
-            infer it from the axis. */}
-        {staleDays != null && staleDays > 45 && (
-          <p className="nc-em-stale">
-            <TriangleAlert size={14} strokeWidth={2} aria-hidden="true" />
-            <span>
-              <b>Data ends {lastObservedDate} — {staleDays} days ago.</b> This projection covers a
-              period that has already passed; refresh the warehouse to forecast forward.
-            </span>
-          </p>
-        )}
       </header>
 
       <DashboardChart option={option} height={320} />
@@ -478,6 +465,34 @@ export default function FleetMixForecastChart() {
             </p>
           </details>
         </div>
+      )}
+
+      {data.models.length > 0 && (
+        <FleetMixNarrative
+          models={data.models.map((m) => ({
+            model: m.model_name,
+            rank: m.rank,
+            accepted: m.accepted,
+            maePp: m.mae,
+            mape: m.mape,
+            heavyWmape: m.wmape,
+            heavyR2: m.r2,
+            skill: m.mase,
+            rejectedReason: m.rejected_reason,
+            diagnosis: m.diagnosis,
+          }))}
+          champion={champ?.model_name ?? null}
+          heavyNowPct={heavyNowMean != null ? heavyNowMean * 100 : null}
+          heavyNextPct={heavyEndMean != null ? heavyEndMean * 100 : null}
+          windowDays={HEAVY_WINDOW_DAYS}
+          projectionDays={data.split?.future_days ?? null}
+          projectionStart={data.split?.future_start?.slice(0, 10) ?? null}
+          projectionEnd={data.split?.future_end?.slice(0, 10) ?? null}
+          validatedDays={VALIDATED_HORIZON}
+          surgeDates={surges.map((x) => x.d.slice(0, 10))}
+          dataEnds={lastObservedDate}
+          staleDays={staleDays}
+        />
       )}
     </article>
   );

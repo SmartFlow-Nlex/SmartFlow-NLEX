@@ -1614,7 +1614,8 @@ export default function AiSandboxPage() {
      Vehicles are their true size, so the road is zoomed to see them large (roadView). The wheel zooms about the
      cursor in full screen, or anywhere with Ctrl held (docked, a plain wheel still scrolls the page); a drag
      pans; the toolbar has −, + and Whole road; an event's "Zoom to" goes to it. It goes back to the whole
-     window whenever the window or the view changes: a zoom is a look at this stretch, not a setting. */
+     window whenever the window or the view changes: a zoom is a look at this stretch, not a setting. (Opening
+     zoomed in was tried on 2026-10-14 and dropped: the operator wants the whole window, with taller vehicles.) */
   const [zoom, setZoom] = useState(1);
   const maxZoomNow = () => {
     const w = canvasRef.current?.clientWidth ?? 0;
@@ -1682,7 +1683,7 @@ export default function AiSandboxPage() {
       const dx = m.clientX - from.x;
       if (!moved && Math.abs(dx) < 5) return;
       moved = true;
-      const w = canvas.clientWidth;
+        const w = canvas.clientWidth;
       roadView.pan = Math.max(0, Math.min(w * roadView.zoom - w, from.pan - dx));
     };
     const up = () => {
@@ -4584,8 +4585,8 @@ const vehicleHits: VehicleHit[] = [];
  * is read. Module-level, like vehicleHits: the render loop runs outside React. Along the road only — across
  * it the lanes already fill the height they are given. */
 const roadView = { zoom: 1, pan: 0 };
-/** The widest a metre is drawn, px: a car about 70 px long. Zoom stops there. */
-const MAX_PX_PER_M = 15;
+/** The widest a metre is drawn, px: a car about 115 px long. Zoom stops there. */
+const MAX_PX_PER_M = 25;
 /** A screen x on the canvas (CSS px from its left edge) as an x on the zoomed road. */
 const roadX = (screenX: number) => screenX + roadView.pan;
 /** The zoomed road's width for a canvas this wide. */

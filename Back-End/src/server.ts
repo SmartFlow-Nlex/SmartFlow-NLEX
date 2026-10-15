@@ -1,7 +1,7 @@
 import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { verifyDbConnection } from "./config/db.js";
-import { setSelfBase } from "./middleware/route-cache.js";
+import { lastReadAt, setSelfBase } from "./middleware/route-cache.js";
 
 /* A rejected promise that escapes a handler must not take the API down.
  *
@@ -76,6 +76,14 @@ function startCacheWarmer(): void {
     ["/emissions/fleet-profile", 9 * 60_000],
     ["/audit-log/list?limit=500", 9 * 60_000],
     ["/audit-log/summary?days=30", 9 * 60_000],
+    /* Added 15 Oct 2026 from an audit of every module's first load after a restart: the URLs these pages
+       request were still cold, at 73-78 s (traffic forecast and booth plan), 34 s (incident forecast) and
+       5-15 s (emissions prescriptive, fleet mix). Query strings exactly as the pages build them. */
+    ["/traffic/forecast?months=12&split=80_20", 9 * 60_000],
+    ["/traffic/prescriptive?throughput=350", 9 * 60_000],
+    ["/incident/predictive?months=12&weather=all", 9 * 60_000],
+    ["/emissions/prescriptive?months=12", 9 * 60_000],
+    ["/emissions/fleet-mix?days=180", 9 * 60_000],
   ];
   /* The sandbox's first load (7 Oct 2026): 20-30 s of reads, every visit,
      because they were never warmed. Each is seconds of full-table scans and
@@ -106,11 +114,20 @@ function startCacheWarmer(): void {
    * which no one is waiting on, and keeps the pool free for real requests.
    * The repeat is offset by the same amount so the groups never re-align. */
   const STAGGER_MS = 1_500;
+  /* Load (2026-10-15): repeating every job around the clock kept the micro RDS instance's CPU and disk credits at
+     zero. Now each record read is warmed ONCE at boot; after that the route cache serves it (three-hour lifetime,
+     stale-while-refresh, refreshed in full when an upload is published). The live feeds still repeat on their
+     short interval, but only while someone has read them in the last two minutes. */
+  const LIVE_WATCH_MS = 2 * 60_000;
   jobs.forEach(([path, every], i) => {
     const start = setTimeout(() => {
       void warm(path);
-      const t = setInterval(() => void warm(path), every);
-      t.unref();
+      if (every < 60_000) {
+        const t = setInterval(() => {
+          if (Date.now() - lastReadAt(`/api${path}`) < LIVE_WATCH_MS) void warm(path);
+        }, every);
+        t.unref();
+      }
     }, i * STAGGER_MS);
     start.unref();
   });
@@ -121,10 +138,7 @@ function startCacheWarmer(): void {
     sandboxBusy = true;
     try { for (const path of sandboxJobs) await warm(path); } finally { sandboxBusy = false; }
   };
-  const sandboxStart = setTimeout(() => {
-    void warmSandbox();
-    const t = setInterval(() => void warmSandbox(), 9 * 60_000);
-    t.unref();
-  }, jobs.length * STAGGER_MS);
+  // Once at boot, like the record jobs above.
+  const sandboxStart = setTimeout(() => void warmSandbox(), jobs.length * STAGGER_MS);
   sandboxStart.unref();
 }

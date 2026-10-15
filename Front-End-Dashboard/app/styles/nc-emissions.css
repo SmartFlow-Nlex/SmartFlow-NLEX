@@ -307,6 +307,9 @@
   color: var(--color-warning);
 }
 .viz-emissions .nc-em-stale > svg { flex: none; margin-top: 4px; }
+/* The record's end date is a project rule, not a fault: said in the quiet ink, not the warning one. */
+.viz-emissions .nc-em-stale.is-info { color: var(--text-secondary); }
+.viz-emissions .nc-em-stale.is-info b { color: var(--text-primary); }
 .viz-emissions .nc-em-answer > .nc-em-delta {
   display: inline-flex;
   align-items: center;
@@ -597,3 +600,266 @@
 @media (min-width: 1180px) and (max-width: 1399px) {
   .ds-shell-collapsed .nc-em-page.viz-emissions .nc-em-kpis > article > h3 { min-height: 3.9em; }
 }
+
+/* Action-card fields as small boxes (2026-10-15): icon, label and a written headline; the full text opens
+   below. Two tiers: what to do (larger), then the facts behind it (compact). */
+.viz-emissions .nc-em-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  gap: 10px;
+}
+.viz-emissions .nc-em-tiles.is-facts {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.viz-emissions .nc-em-tile {
+  min-width: 0;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-card, #fff) 70%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 6%, transparent);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.viz-emissions .nc-em-tile:has(.nc-em-tile-head:not(:disabled)):hover {
+  border-color: color-mix(in srgb, var(--color-primary, #2563eb) 45%, var(--border-default));
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+.viz-emissions .nc-em-tile.is-open { grid-column: 1 / -1; border-color: color-mix(in srgb, var(--color-primary, #2563eb) 45%, var(--border-default)); }
+.viz-emissions .nc-em-tiles.is-facts .nc-em-tile { background: color-mix(in srgb, var(--text-primary) 3%, transparent); box-shadow: none; }
+.viz-emissions .nc-em-tile-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "icon label chev" "summary summary summary";
+  align-items: center;
+  gap: 6px 8px;
+  width: 100%;
+  padding: 12px 14px 13px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.viz-emissions .nc-em-tile.is-compact .nc-em-tile-head { padding: 9px 12px 10px; gap: 4px 6px; }
+.viz-emissions .nc-em-tile-head:disabled { cursor: default; }
+.viz-emissions .nc-em-tile-head:focus-visible { outline: 2px solid var(--color-primary, #2563eb); outline-offset: 2px; border-radius: 12px; }
+.viz-emissions .nc-em-tile-icon {
+  grid-area: icon;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: var(--color-primary, #2563eb);
+  background: color-mix(in srgb, var(--color-primary, #2563eb) 10%, transparent);
+}
+.viz-emissions .nc-em-tile.is-compact .nc-em-tile-icon { width: 22px; height: 22px; border-radius: 6px; }
+.viz-emissions .nc-em-tile.is-note .nc-em-tile-icon { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 12%, transparent); }
+.viz-emissions .nc-em-tile-label {
+  grid-area: label;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.viz-emissions .nc-em-tile.is-note .nc-em-tile-label { color: var(--color-warning); }
+.viz-emissions .nc-em-tile-summary {
+  grid-area: summary;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.viz-emissions .nc-em-tile.is-compact .nc-em-tile-summary { font-size: var(--fs-body); font-weight: 500; }
+.viz-emissions .nc-em-tile-more {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  vertical-align: 1px;
+}
+.viz-emissions .nc-em-tile-chev { grid-area: chev; color: var(--text-muted); transition: transform 0.2s ease; }
+.viz-emissions .nc-em-tile.is-open .nc-em-tile-chev { transform: rotate(180deg); }
+.viz-emissions .nc-em-tile-body {
+  margin: 0 14px 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-default);
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.viz-emissions .nc-em-tile-body p { margin: 0; }
+.viz-emissions .nc-em-tile-body ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  .viz-emissions .nc-em-tile, .viz-emissions .nc-em-tile-chev { transition: none; }
+}
+.viz-emissions .nc-em-tile.is-compact .nc-em-inline-bar { width: 36px; margin-right: 8px; }
+
+/* Shorter Prescriptive page (2026-10-15): folded action cards and one tabbed card for the analyses. */
+.viz-emissions .nc-em-acard.is-folded { display: block; padding: 0; min-height: 0; }
+.viz-emissions .nc-em-fold-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  width: 100%;
+  padding: 14px 20px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: inherit;
+}
+.viz-emissions .nc-em-fold-row:focus-visible { outline: 2px solid var(--color-primary, #2563eb); outline-offset: -2px; }
+.viz-emissions .nc-em-fold-title { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+.viz-emissions .nc-em-fold-value { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.viz-emissions .nc-em-fold-value b { color: var(--text-primary); font-size: 16px; }
+.viz-emissions .nc-em-fold-cta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-primary, #2563eb);
+}
+.viz-emissions .nc-em-fold-btn {
+  justify-self: start;
+  margin-top: 8px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-primary, #2563eb);
+  cursor: pointer;
+}
+.viz-emissions .nc-em-more-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-default);
+}
+.viz-emissions .nc-em-more-tabs button {
+  padding: 7px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.viz-emissions .nc-em-more-tabs button.is-on {
+  color: var(--color-primary, #2563eb);
+  border-color: color-mix(in srgb, var(--color-primary, #2563eb) 50%, var(--border-default));
+  background: color-mix(in srgb, var(--color-primary, #2563eb) 9%, transparent);
+}
+.viz-emissions .nc-em-more-pane { display: grid; gap: 10px; }
+
+/* Containers side by side (2026-10-15): folded action cards two to a row, the chart beside the analyses. */
+@media (min-width: 1100px) {
+  .viz-emissions .nc-em-acards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* #1 and #2 side by side: each stacks its headline over its boxes to give them the width. */
+  .viz-emissions .nc-em-acards > .nc-em-acard:not(.is-folded) { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .viz-emissions .nc-em-acards > .nc-em-acard:not(.is-folded) .nc-em-tiles { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+  .viz-emissions .nc-em-acards > .nc-em-acard:not(.is-folded) .nc-em-tiles.is-facts { grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); }
+  /* The policy scenario takes its own row, folded or open. */
+  .viz-emissions .nc-em-acards > .nc-em-acard[data-tone="scenario"] { grid-column: 1 / -1; }
+  .viz-emissions .nc-em-fold-title { flex: 1 1 auto; }
+}
+.viz-emissions .nc-em-pair { display: grid; gap: 14px; align-items: start; }
+.viz-emissions .nc-em-pair > .nc-em-span { grid-column: auto; min-width: 0; }
+@media (min-width: 1200px) {
+  .viz-emissions .nc-em-pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+/* Tables in the half-width analysis card: tighter cells so every column fits. */
+.viz-emissions .nc-em-more .nc-em-table th { padding-left: 6px; padding-right: 6px; letter-spacing: 0.06em; white-space: nowrap; }
+.viz-emissions .nc-em-more .nc-em-table td { padding-left: 6px; padding-right: 6px; }
+/* Compact boxes: the chevron sits in the corner so the label keeps the whole width. */
+.viz-emissions .nc-em-tile.is-compact { position: relative; }
+.viz-emissions .nc-em-tile.is-compact .nc-em-tile-head { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "icon label" "summary summary"; padding-right: 22px; }
+.viz-emissions .nc-em-tile.is-compact .nc-em-tile-chev { position: absolute; top: 8px; right: 7px; width: 14px; height: 14px; }
+.viz-emissions .nc-em-tile.is-compact .nc-em-tile-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0.08em; }
+@media (min-width: 1100px) {
+  /* Side-by-side cards: compact boxes drop their icon so labels such as CONFIDENCE fit whole. */
+  .viz-emissions .nc-em-acards > .nc-em-acard:not(.is-folded) .nc-em-tile.is-compact .nc-em-tile-icon { display: none; }
+  .viz-emissions .nc-em-acards > .nc-em-acard:not(.is-folded) .nc-em-tile.is-compact .nc-em-tile-head { grid-template-columns: minmax(0, 1fr); grid-template-areas: "label" "summary"; }
+}
+
+/* Card polish (2026-10-15): takeaway line, one footer row, and side-by-side cards that line up. */
+.viz-emissions .nc-em-takeaway {
+  margin: 2px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--page-accent, var(--color-primary, #2563eb));
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--page-accent, #2563eb) 7%, transparent);
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+.viz-emissions .nc-em-acard[data-tone="scenario"] .nc-em-takeaway {
+  border-left-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+}
+.viz-emissions .nc-em-acard-foot {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+.viz-emissions .nc-em-acard-foot .nc-details { margin-top: 0; flex: 1 1 auto; min-width: 0; }
+.viz-emissions .nc-em-acard-foot .nc-em-fold-btn { margin-top: 12px; display: inline-flex; align-items: center; gap: 4px; flex: none; }
+@media (min-width: 1100px) {
+  .viz-emissions .nc-em-acards > .nc-em-acard:not(.is-folded) { align-content: start; }
+}
+
+/* The policy scenario as one line (2026-10-15). */
+.viz-emissions .nc-em-acard.nc-em-scenario-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-height: 0;
+  padding: 12px 20px;
+  grid-column: 1 / -1;
+  border-style: dashed;
+  box-shadow: none;
+  background: color-mix(in srgb, var(--color-warning) 4%, var(--bg-surface));
+}
+.viz-emissions .nc-em-scenario-text { flex: 1 1 420px; min-width: 0; color: var(--text-secondary); line-height: 1.45; }
+.viz-emissions .nc-em-scenario-text b { color: var(--text-primary); font-weight: 600; }
+.viz-emissions .nc-em-scenario-why { flex: 1 0 100%; order: 3; }
+.viz-emissions .nc-em-scenario-why summary {
+  display: inline-block;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-primary, #2563eb);
+}
+.viz-emissions .nc-em-scenario-why[open] summary { margin-bottom: 6px; }
+.viz-emissions .nc-em-scenario-why p { margin: 0; max-width: 90ch; color: var(--text-secondary); line-height: 1.5; }
+.viz-emissions .nc-em-scenario-line > .nc-em-scenario-why:not([open]) { flex: 0 0 auto; order: 0; }
+.viz-emissions .nc-em-scenario-why ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; max-width: 95ch; color: var(--text-secondary); line-height: 1.5; }

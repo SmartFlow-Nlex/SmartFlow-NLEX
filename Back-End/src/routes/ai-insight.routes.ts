@@ -5,6 +5,7 @@ import {
   modelNarrative,
   congestionNarrative,
   eventSurgeNarrative,
+  fleetMixNarrative,
   rankingNarrative,
   insightStatus,
   explainFeature,
@@ -39,6 +40,7 @@ router.use(authenticateToken);
 router.post("/model-narrative", asyncHandler(modelNarrative));
 router.post("/congestion-narrative", asyncHandler(congestionNarrative));
 router.post("/event-surge-narrative", asyncHandler(eventSurgeNarrative));
+router.post("/fleet-mix-narrative", asyncHandler(fleetMixNarrative));
 router.post("/ranking-narrative", asyncHandler(rankingNarrative));
 router.post("/explain", asyncHandler(explainFeature));
 

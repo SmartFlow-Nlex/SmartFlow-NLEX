@@ -197,3 +197,25 @@ bars are comparable to each other and to the Descriptive tab.
   where that bound came from. ✓
 - No strategy claims a saving from moving traffic between hours. ✓
 - Descriptive, Predictive and Prescriptive read the same CO₂ record. ✓
+
+---
+
+## Additions from the modelling diagram (2026-10-14)
+
+The diagram's Recommendations/Strategies boxes for emissions name TOPSIS, CO2 per class-km, a dynamic tolling
+recommendation, and a heavy-vehicle window restriction advisory (KPI: Class 3 peak share reduction). All four are
+now returned by `GET /api/emissions/prescriptive` and shown on the Prescriptive tab, as tables, not charts.
+
+- **CO2 per class-km** (`classKm`, `corridorGPerVkm`): 192 / 354 / 1,492 g per km for classes 1 / 2 / 3, against
+  each class's share of vehicle-km and of CO2. 2025: Class 3 is 9.5% of the distance and 42.0% of the CO2.
+- **TOPSIS** (`ranking`): the CO2 strategies ranked on four criteria the record can measure: expected saving as
+  the record supports it (a policy target counts 0: its figure is whatever target is chosen), the 5th-percentile
+  saving, whether the bound has been achieved on NLEX, and the Monte Carlo width (unknown = the widest seen).
+  Weights 0.35 / 0.25 / 0.25 / 0.15, a stated choice. 2025: shorter blockages 1.00, busiest-hours deployment
+  0.75, heavy share 0.00. The first two overlap, so they are alternatives, not savings to add.
+- **Heavy-vehicle window** (`heavyWindow`): the peak is the hours within 10% of the busiest hour's vehicle-km
+  (2025: 17:00-20:00); the moved Class-3 vehicle-km go to the quietest hours that stay under the peak's lowest
+  hour. KPI: Class 3 share in the window (2025: 3.6% against 9.5% all day; trucks already avoid it). No CO2
+  saving is claimed: the model has no congestion term.
+- **Dynamic tolling** (`tolling`): the exits with the most Class-3 CO2 in the window (2025: San Fernando 21.5%).
+  No toll elasticity is in the record, so the tonnes are what is at stake, not a saving.
