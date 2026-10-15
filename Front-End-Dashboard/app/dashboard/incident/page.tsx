@@ -19,6 +19,7 @@ import PredictiveCorridorChart from "../../../components/dashboard/PredictiveCor
 import BreakdownResponseModel from "../../../components/dashboard/BreakdownResponseModel";
 import PrescriptiveDeploymentPanel from "../../../components/dashboard/PrescriptiveDeploymentPanel";
 import PatrolAlertWindowPanel from "../../../components/dashboard/PatrolAlertWindowPanel";
+import ClearanceResponsePanel from "../../../components/dashboard/ClearanceResponsePanel";
 import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import EventBreakdownPanel from "../../../components/dashboard/EventBreakdownPanel";
 import DateRangePicker from "../traffic/components/DateRangePicker";
@@ -909,6 +910,13 @@ export default function IncidentPage() {
             </div>
             <div className={styles.spanFull}>
               <PatrolAlertWindowPanel
+                months={rangeMode === "custom" ? "all" : rangeMode}
+                from={rangeMode === "custom" ? customFrom : undefined}
+                to={rangeMode === "custom" ? customTo : undefined}
+              />
+            </div>
+            <div className={styles.spanFull}>
+              <ClearanceResponsePanel
                 months={rangeMode === "custom" ? "all" : rangeMode}
                 from={rangeMode === "custom" ? customFrom : undefined}
                 to={rangeMode === "custom" ? customTo : undefined}
