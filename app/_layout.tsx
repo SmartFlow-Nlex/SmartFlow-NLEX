@@ -11,6 +11,7 @@ import { StatusBar } from 'expo-status-bar';
 import { AlertBanner, AlertsProvider } from '../frontend/alerts';
 import { AuthProvider, useAuth } from '../frontend/auth';
 import { ThemeProvider, useAppFonts, useTheme } from '../frontend/theme';
+import { NotificationsProvider } from '../frontend/notifications';
 
 const authRoutes = ['sign-in', 'sign-up'];
 
@@ -138,10 +139,17 @@ export default function RootLayout(): React.ReactElement | null {
          * ever been opened.
          */}
         <AlertsProvider>
-          <ThemedStack />
-          {/* Over every screen: a new accident, hazard, police or community
-              incident report drops in here wherever the user is. */}
-          <AlertBanner />
+          {/*
+           * Inside AlertsProvider, because it announces what that provider
+           * gathers - a device notification always corresponds to a row the
+           * Alerts tab is showing, never to something invented here.
+           */}
+          <NotificationsProvider>
+            <ThemedStack />
+            {/* Over every screen: a new accident, hazard, police or community
+                incident report drops in here wherever the user is. */}
+            <AlertBanner />
+          </NotificationsProvider>
         </AlertsProvider>
       </AuthProvider>
     </ThemeProvider>

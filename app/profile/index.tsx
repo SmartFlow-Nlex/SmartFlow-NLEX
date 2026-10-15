@@ -18,6 +18,7 @@ import SectionHeader from '../../frontend/components/SectionHeader';
 import SettingsRow from '../../frontend/components/SettingsRow';
 import ThemeModePicker, { themeModeLabel } from '../../frontend/components/ThemeModePicker';
 import { initialsFor } from '../../frontend/components/AppHeader';
+import { useNotifications } from '../../frontend/notifications';
 import { useTheme, useThemedStyles } from '../../frontend/theme';
 import type { ThemePalette } from '../../frontend/theme';
 import { Typography } from '../../frontend/constants/typography';
@@ -28,6 +29,20 @@ export default function ProfileScreen(): React.ReactElement {
   const { colors, mode: themeMode } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const router = useRouter();
+  const notifications = useNotifications();
+
+  /**
+   * Why the switch will not move, when it will not.
+   *
+   * An unexplained switch that springs back is the worst version of this: on
+   * web there is nothing to deliver to, and once the OS prompt has been
+   * refused it never appears again, so the only way back is system settings.
+   */
+  const notificationsHint = !notifications.available
+    ? 'Not available here'
+    : notifications.blocked
+      ? 'Blocked in system settings'
+      : undefined;
   const { session, signOut } = useAuth();
   /**
    * A deep link or a browser refresh lands here with no history behind it, and
@@ -154,14 +169,27 @@ export default function ProfileScreen(): React.ReactElement {
 
         <SectionHeader title="General" />
         <View style={styles.sectionCard}>
+          {/*
+            The real switch now, not a remembered boolean.
+            
+            Turning it on asks the OS for permission, and `setEnabled` answers
+            false if that is refused - so the switch falls back instead of
+            sitting on showing a state the system has already denied. It reads
+            its own stored preference, so `settings.notificationsEnabled` is no
+            longer the source of truth for it.
+          */}
           <SettingsRow
             icon="notifications-outline"
             label="Notifications"
+            value={notificationsHint}
             toggle
-            toggleValue={settings.notificationsEnabled}
-            onToggle={(notificationsEnabled) =>
-              setSettings((current) => ({ ...current, notificationsEnabled }))
-            }
+            toggleValue={notifications.enabled}
+            onToggle={(next) => {
+              void (async () => {
+                const applied = await notifications.setEnabled(next);
+                setSettings((current) => ({ ...current, notificationsEnabled: applied }));
+              })();
+            }}
           />
           <View style={styles.divider} />
           <SettingsRow
