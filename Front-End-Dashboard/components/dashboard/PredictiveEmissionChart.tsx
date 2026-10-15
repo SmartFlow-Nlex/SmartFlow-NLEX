@@ -78,6 +78,8 @@ type Metric = {
 type HzBucket = {
   hLo: number; hHi: number; wmape: number | null; mase: number | null;
   usable: boolean; note: string | null;
+  /** The baseline's error over the same days, for saying how far the model lost by. */
+  baselineWmape?: number | null;
 };
 
 type Payload = {
@@ -327,7 +329,16 @@ export default function PredictiveEmissionChart() {
 
   const option: EChartsOption | null = useMemo(() => {
     if (!view) return null;
-    const { dates, holdoutStart, futureStart } = view;
+    const { holdoutStart, futureStart } = view;
+    /* Room for the future block. Weekly over all history puts the 7-day forecast on ONE point at the very right
+       edge, where its band had no width and the point sat on the frame. A few empty slots after it (about 5% of
+       the axis) give the Future band a visible width and its value label somewhere to sit. They carry no data
+       and no axis label. */
+    const realN = view.dates.length;
+    const futureCount = Math.max(0, realN - futureStart);
+    const pad = futureCount > 0 ? Math.max(0, Math.ceil(realN * 0.05) - futureCount) : 0;
+    const dates = [...view.dates, ...Array.from({ length: pad }, (_, i) => `pad-${i}`)];
+    const padded = (arr: (number | null)[]) => (pad ? [...arr, ...Array<null>(pad).fill(null)] : arr);
     // History is the measured line: solid, in primary ink.
     const actualColor = T.textPrimary;
 
@@ -373,6 +384,7 @@ export default function PredictiveEmissionChart() {
       { name: "Past", from: 0, to: holdoutStart - 1, color: ZONE.past },
       { name: "Present", from: holdoutStart, to: futureStart - 1, color: ZONE.present },
       { name: "Future", from: futureStart, to: dates.length - 1, color: ZONE.future },
+      // (dates.length includes the empty slots, so the band reaches the frame.)
     ] as { name: string; from: number; to: number; color: string }[])
       .filter((z) => z.from <= z.to && dates[z.from] != null && dates[z.to] != null)
       .map((z) => [
@@ -450,6 +462,7 @@ export default function PredictiveEmissionChart() {
           const ps = params as { dataIndex: number; seriesName: string; value: number | null; color: string }[];
           if (!ps.length) return "";
           const i = ps[0].dataIndex;
+          if (i >= realN) return "";
           const zoneText =
             i >= futureStart ? "Future — no actual to compare"
             : i >= holdoutStart ? "Holdout — scored against actual"
@@ -515,7 +528,7 @@ export default function PredictiveEmissionChart() {
         type: "category",
         data: dates,
         boundaryGap: false,
-        axisLabel: { hideOverlap: true, formatter: (v: string) => label(v) },
+        axisLabel: { hideOverlap: true, formatter: (v: string) => (v.startsWith("pad-") ? "" : label(v)) },
         axisTick: { show: false },
       },
       yAxis: {
@@ -532,7 +545,7 @@ export default function PredictiveEmissionChart() {
         {
           name: "Actual CO₂",
           type: "line",
-          data: view.models.actual,
+          data: padded(view.models.actual),
           smooth: true,
           connectNulls: false,
           symbol: "circle",
@@ -548,25 +561,55 @@ export default function PredictiveEmissionChart() {
             data: boundaryLines as never[],
           },
         },
-        ...ORDER.filter((k) => selected.includes(k)).map((k) => ({
-          name: LABEL[k],
-          type: "line" as const,
-          data: view.models[k],
-          smooth: true,
-          connectNulls: true,
-          symbol: "circle" as const,
-          // Points are drawn ONLY over the future block. Everywhere else the
-          // series is dense enough that markers would just smear the line.
-          symbolSize: (_v: unknown, params: { dataIndex: number }) =>
-            params.dataIndex >= futureStart ? 7 : 0,
-          z: 4,
-          // Model output is dashed, so it can never pass for the measured line.
-          lineStyle: { width: 2, color: COLOR[k], type: "dashed" as const },
-          itemStyle: { color: COLOR[k], borderColor: T.tooltipBg, borderWidth: 1.5 },
-        })),
+        ...ORDER.filter((k) => selected.includes(k)).map((k) => {
+          const champ = k === championKey;
+          const lastFuture = view.models[k][realN - 1];
+          return {
+            name: LABEL[k],
+            type: "line" as const,
+            data: padded(view.models[k]),
+            smooth: true,
+            connectNulls: false,
+            symbol: "circle" as const,
+            // Points are drawn ONLY over the future block. Everywhere else the
+            // series is dense enough that markers would just smear the line.
+            // The champion's are larger: it is the forecast the headline quotes.
+            symbolSize: (_v: unknown, params: { dataIndex: number }) =>
+              params.dataIndex >= futureStart && params.dataIndex < realN ? (champ ? 10 : 7) : 0,
+            z: champ ? 5 : 4,
+            // Model output is dashed, so it can never pass for the measured line.
+            lineStyle: { width: champ ? 2.4 : 2, color: COLOR[k], type: "dashed" as const },
+            itemStyle: { color: COLOR[k], borderColor: T.tooltipBg, borderWidth: 2 },
+            // The forecast's own value, written beside its last point, so the future reads at a glance instead
+            // of being a dot to hover. Champion only: one number, the one the headline is about.
+            ...(champ && futureCount > 0 && lastFuture != null && isFinite(lastFuture)
+              ? {
+                  markPoint: {
+                    silent: true,
+                    symbol: "circle",
+                    symbolSize: 0,
+                    data: [{ coord: [dates[realN - 1], lastFuture], value: lastFuture }],
+                    label: {
+                      show: true,
+                      position: "right" as const,
+                      distance: 10,
+                      formatter: `${fmt(lastFuture, 0)} t`,
+                      color: ZONE_INK.Future,
+                      backgroundColor: ZONE_CHIP.Future,
+                      borderRadius: 6,
+                      padding: [3, 7, 3, 7] as [number, number, number, number],
+                      fontSize: 12,
+                      fontWeight: 700 as const,
+                      fontFamily: CT.fontFamily,
+                    },
+                  } as never,
+                }
+              : {}),
+          };
+        }),
       ],
     };
-  }, [view, selected, granularity, meanLabel, T, CT, ZONE, weakDates]);
+  }, [view, selected, granularity, meanLabel, T, CT, ZONE, weakDates, championKey]);
 
   const titleRow = (
     <h3>
@@ -910,12 +953,17 @@ export default function PredictiveEmissionChart() {
               { label: "2 mo", d: 60 },
               { label: "3 mo", d: 90 },
             ]
-              .filter((it, i, arr) => {
+              /* A range whose added days all failed the horizon study is shown greyed out with the reason,
+                 not removed: a missing button reads as "the system cannot do this", when it can and the
+                 published model just has not earned it. It comes back by itself after a retrain passes. */
+              .map((it, i, arr) => {
                 const buckets = data.horizonAccuracy ?? [];
-                if (!buckets.length || i === 0) return true;
-                const prev = arr[i - 1].d;
+                const prev = i === 0 ? 0 : arr[i - 1].d;
                 const added = buckets.filter((bk) => bk.hHi > prev && bk.hLo <= it.d);
-                return added.length === 0 || added.some((bk) => bk.usable);
+                const failed = i > 0 && buckets.length > 0 && added.length > 0 && !added.some((bk) => bk.usable);
+                const beyond = it.d > data.split.futureDays;
+                const worst = added.length ? added.reduce((a, b) => ((b.wmape ?? 0) > (a.wmape ?? 0) ? b : a)) : null;
+                return { ...it, failed, beyond, worst };
               })
               .map((it) => (
                 <button
@@ -924,7 +972,18 @@ export default function PredictiveEmissionChart() {
                   className={futureDays === it.d ? "is-on" : ""}
                   aria-pressed={futureDays === it.d}
                   onClick={() => setFutureDays(it.d)}
-                  disabled={it.d > data.split.futureDays}
+                  disabled={it.beyond || it.failed}
+                  title={
+                    it.beyond
+                      ? `The published forecast stores ${data.split.futureDays} days ahead.`
+                      : it.failed
+                        ? `Not offered yet: tested on past data, the published model loses to simply repeating last week this far ahead${
+                            it.worst?.wmape != null && it.worst?.baselineWmape != null
+                              ? ` (${it.worst.wmape.toFixed(1)}% error against ${it.worst.baselineWmape.toFixed(1)}%)`
+                              : ""
+                          }. It is offered automatically once a retrained model passes.`
+                        : undefined
+                  }
                 >
                   {it.label}
                 </button>

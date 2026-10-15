@@ -126,7 +126,10 @@ def get_conn():
             f"dbname={os.environ.get('PG_DATABASE')} user={os.environ.get('PG_USER')} "
             f"password={os.environ.get('PG_PASSWORD')}"
         )
-    return psycopg2.connect(dsn, sslmode="require")
+    # TCP keep-alives: on this RDS link a connection can die mid-query without either side being told, and the
+    # script then waited on it forever (2026-10-15: idle 40 min after the server had finished). With these a dead
+    # link raises within about a minute and the run fails visibly instead of hanging.
+    return psycopg2.connect(dsn, sslmode="require", keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
 
 
 # ---------------------------------------------------------------------------

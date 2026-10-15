@@ -63,11 +63,32 @@ const SHORT_PREFIXES = ["/api/maintenance", "/api/audit-log", "/api/health"];
    nineteen rows, so a short TTL costs little. */
 const FORECAST_PREFIXES = ["/api/map-comparison/forecast"];
 
+/* Historical reads (2026-10-15): three hours, not ten minutes. The record they read changes only when an upload
+   is published (which clears this cache, below) or a model is retrained (weekly), so a ten-minute lifetime made
+   the warmer re-run every heavy query six times an hour for answers that had not changed. On the micro RDS
+   instance that drained its CPU and disk burst credits to zero and throttled the whole database. */
+const RECORD_TTL_MS = 3 * 60 * 60_000;
+
 export function ttlFor(url: string): number {
   if (LIVE_PREFIXES.some((p) => url.startsWith(p))) return 30_000;
   if (SHORT_PREFIXES.some((p) => url.startsWith(p))) return 15_000;
   if (FORECAST_PREFIXES.some((p) => url.startsWith(p))) return 60_000;
-  return 10 * 60_000;
+  return RECORD_TTL_MS;
+}
+
+/** When each URL was last asked for by a reader (not by the warmer), so live feeds are only kept warm while watched. */
+const lastRead = new Map<string, number>();
+export function lastReadAt(url: string): number {
+  return lastRead.get(url) ?? 0;
+}
+
+/* New data published: every cached answer may be out of date. Each one is refetched in the background, a second
+   and a half apart so the database is not hit with all of them at once, and served stale until its turn. */
+function refreshEverything(): void {
+  [...store.keys()].forEach((url, i) => {
+    const t = setTimeout(() => refreshInBackground(url), i * 1_500);
+    t.unref?.();
+  });
 }
 
 /* An empty answer is never worth serving stale.
@@ -147,10 +168,15 @@ export function routeCache(req: Request, res: Response, next: NextFunction): voi
     if (!url.startsWith("/api/audit-log/activity")) {
       res.on("finish", () => { if (res.statusCode < 400) invalidatePrefix(prefixOf(url)); });
     }
+    // A published upload or an undo changes the record every module reads (a ?mode=check dry run does not).
+    if (/^\/api\/upload\/(file|[^/]+\/undo)/.test(url) && !/[?&]mode=check/.test(url)) {
+      res.on("finish", () => { if (res.statusCode < 400) refreshEverything(); });
+    }
     return next();
   }
 
   const bypass = req.headers["x-cache-bypass"] === "1";
+  if (!bypass) lastRead.set(url, Date.now());
   const ttl = ttlFor(url);
   const hit = store.get(url);
   const fresh = hit != null && Date.now() - hit.at < ttl;

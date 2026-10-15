@@ -50,16 +50,20 @@ export async function getEmissionsAnalyticsFromDb(filters: EmissionsAnalyticsFil
       lo = f < minDate ? minDate : f;
       hi = t > maxDate ? maxDate : t;
     } else {
-      // Month ranges anchor at the default year (2025), clamped to available data:
-      // "12 mo" opens as calendar 2025, "3 mo" as Jan-Apr 2025.
-      const anchor = "2025-01-01";
-      lo = anchor < minDate ? minDate : anchor > maxDate ? minDate : anchor;
-      hi =
+      // Every month range ENDS at the last day of data, on every module (the user, 2026-10-15): "3 mo" is the
+      // last 3 months, "12 mo" the last 12, "All" the whole record. 12 months back from the last day, counting
+      // both ends, is 365 days, hence the + 1 day.
+      hi = maxDate;
+      lo =
         filters.months === "all"
-          ? maxDate
+          ? minDate
           : (
-              await db.query(`SELECT LEAST(($1::date + ($2 || ' months')::interval - interval '1 day')::date, $3::date)::text AS hi`, [lo, filters.months, maxDate]))
-              .rows[0].hi;
+              await db.query(`SELECT GREATEST(($1::date + interval '1 day' - ($2 || ' months')::interval)::date, $3::date)::text AS lo`, [
+                hi,
+                filters.months,
+                minDate,
+              ])
+            ).rows[0].lo;
     }
 
     const params = [lo, hi];
@@ -305,7 +309,7 @@ export async function getFleetMixForecast(days?: number) {
          FROM gold.ml_predictive_fleet_mix`),
       db.query(
         `SELECT model_name, rank, accepted, mae, rmse, wmape, r2, mase, mape,
-                rejected_reason, diagnosis, split_label, updated_at
+                rejected_reason, NULLIF(NULLIF(diagnosis, 'NaN'), '') AS diagnosis, split_label, updated_at
          FROM gold.ml_model_metrics
          WHERE target = 'Fleet Mix'
          ORDER BY accepted DESC, rank NULLS LAST, mase ASC`),

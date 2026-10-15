@@ -460,6 +460,150 @@ export async function generateEventSurgeInsight(req: EventSurgeInsightRequest): 
   });
 }
 
+/* ── Fleet mix: a forecast of shares (a composition), not of a quantity ───── */
+
+export type FleetMixInsightRequest = {
+  models: {
+    model: string;
+    rank?: number | null;
+    accepted?: boolean | null;
+    maePp?: number | null;
+    mape?: number | null;
+    heavyWmape?: number | null;
+    heavyR2?: number | null;
+    skill?: number | null;
+    rejectedReason?: string | null;
+    diagnosis?: string | null;
+  }[];
+  situation?: {
+    champion?: string | null;
+    heavyNowPct?: number | null;
+    heavyNextPct?: number | null;
+    windowDays: number;
+    projectionDays?: number | null;
+    projectionStart?: string | null;
+    projectionEnd?: string | null;
+    validatedDays: number;
+    surgeDays: number;
+    surgeDates?: string[];
+    dataEnds?: string | null;
+    staleDays?: number | null;
+  };
+};
+
+const FLEET_SYSTEM = `You explain a vehicle fleet-mix forecast to a sustainability team and traffic operations staff who are not statisticians. Reply with JSON only.
+
+OUTPUT SHAPE
+{
+  "summary": "2-4 sentences: what the forecast says about the share of heavy vehicles and how far to trust it",
+  "perModel": [{"model": "<exact name as given>", "verdict": "one sentence"}],
+  "caveat": "the single most important limitation, or null"
+}
+
+WHAT IS BEING FORECAST
+The SHARE of each NLEX toll class in a day's traffic: Class 1 (cars), Class 2 (buses and small trucks), Class 3 (large trucks). The three shares always add up to 100%. "Heavy share" means Class 2 plus Class 3. Heavy vehicles matter because each of their kilometres emits several times a car's CO2.
+
+HOW TO READ THE NUMBERS
+- MAE (pp) is the average miss in percentage points of share: 0.5 pp means a class forecast at 9.0% typically turns out between 8.5% and 9.5%.
+- MAPE and heavy WMAPE are percentage errors. MAPE punishes the small Class 3 share hardest, which is why the models are ranked by Aitchison distance instead (a measure made for shares that add up to 100%).
+- Heavy R2 near 1 is good, near 0 means the model explains little of the day-to-day movement in the heavy share, negative is worse than predicting the average.
+- SKILL compares each model with persistence: assuming tomorrow's mix is the same as the last one seen. Each model is labelled BEATS-PERSISTENCE, FAILS-PERSISTENCE or LEVEL-WITH-PERSISTENCE, and that label is authoritative. Do not reinterpret the raw number.
+
+HOW A MODEL IS ACCEPTED (this decides the verdicts)
+A candidate is accepted only if its Aitchison distance beats the BETTER of the two baselines, Climatology (the usual mix for that day of the week and month) and Persistence. Beating persistence alone is NOT enough. So a model can be labelled BEATS-PERSISTENCE and still be REJECTED, because Climatology is the harder bar: that is not a contradiction, say it plainly. Climatology and Persistence are baselines, not candidates; describe them as the yardsticks the candidates were measured against.
+
+RULES
+- Never state a number that was not given to you. Never estimate one.
+- Every claim must be traceable to a fact above. You know NOTHING about how the models were built, what data they saw, or why the mix moves. Do not speculate about causes.
+- perModel must contain exactly one entry for EVERY model listed, using its name exactly as given.
+- Repeat each model's persistence label faithfully. If a model is marked rejected or as a baseline, say so and give the stated reason.
+- If the heavy share is said to change by less than 1 percentage point, say there is no material change; do not describe it as a rise or a fall.
+- If the facts say the projection covers dates that have already passed, say so plainly in the summary: it is a check against what happened, not a look ahead.
+- Translate into consequences: what a heavy share at this level means for planning and for CO2.
+- Do not recommend retraining, more data, or model changes. The reader operates this system, they do not build it.
+- Plain English. No jargon that is not defined in the sentence that uses it.
+
+THE CAVEAT FIELD
+Use it ONLY for a limitation the supplied facts demonstrate: a projection longer than the horizon the models were validated at, a projection over dates already passed, a champion that barely beats persistence, a low heavy R2. If none applies, return null. Never invent one.`;
+
+function buildFleetMessage(req: FleetMixInsightRequest): string {
+  const lines: string[] = [];
+  const f = (v: number | null | undefined, dp: number) => (v == null || !Number.isFinite(v) ? null : v.toFixed(dp));
+  lines.push(
+    "TASK: forecast the daily share of each toll class on the NLEX corridor.",
+    "READER: a sustainability team and traffic control centre planning for heavy-vehicle traffic and its CO2.",
+  );
+  const s = req.situation;
+  if (s) {
+    lines.push("", "WHAT THE CARD SHOWS NOW");
+    if (s.champion) lines.push(`- The forecast drawn is the champion model's: ${s.champion}.`);
+    if (s.heavyNowPct != null && s.heavyNextPct != null) {
+      const d = s.heavyNextPct - s.heavyNowPct;
+      lines.push(
+        `- Heavy share (Class 2 + Class 3): ${s.heavyNowPct.toFixed(2)}% over the last ${s.windowDays} observed days, ${s.heavyNextPct.toFixed(2)}% averaged over the projection.`,
+        Math.abs(d) < 1
+          ? `- That is a change of ${d.toFixed(2)} percentage points: NO MATERIAL CHANGE.`
+          : `- That is a change of ${d > 0 ? "+" : ""}${d.toFixed(2)} percentage points.`,
+      );
+    }
+    if (s.projectionDays) {
+      lines.push(
+        `- The projection runs ${s.projectionDays} days${s.projectionStart && s.projectionEnd ? `, ${s.projectionStart} to ${s.projectionEnd}` : ""}. The models were validated at ${s.validatedDays} days ahead.`,
+      );
+    }
+    lines.push(
+      s.surgeDays > 0
+        ? `- Heavy-vehicle surge flagged on ${s.surgeDays} projected day(s)${s.surgeDates?.length ? `: ${s.surgeDates.join(", ")}` : ""} (heavy share more than 1.5 standard deviations above its training mean).`
+        : "- No heavy-vehicle surge day is flagged in the projection.",
+    );
+    if (s.dataEnds && s.staleDays != null && s.staleDays > 45) {
+      lines.push(`- The observed data ends ${s.dataEnds}, ${s.staleDays} days before today, so the projection covers dates that have ALREADY PASSED.`);
+    }
+  }
+  lines.push("", "MODEL SCORES ON HELD-OUT DAYS");
+  for (const m of req.models) {
+    const parts: string[] = [];
+    if (f(m.maePp, 2)) parts.push(`MAE ${f(m.maePp, 2)} pp`);
+    if (f(m.mape, 2)) parts.push(`MAPE ${f(m.mape, 2)}%`);
+    if (f(m.heavyWmape, 2)) parts.push(`heavy WMAPE ${f(m.heavyWmape, 2)}%`);
+    if (f(m.heavyR2, 3)) parts.push(`heavy R2 ${f(m.heavyR2, 3)}`);
+    // Decided here, not by the model: the same lesson as MASE on the forecast path.
+    if (m.skill != null && Number.isFinite(m.skill)) {
+      parts.push(`skill ${m.skill.toFixed(3)}`, m.skill < 0.995 ? "BEATS-PERSISTENCE" : m.skill > 1.005 ? "FAILS-PERSISTENCE" : "LEVEL-WITH-PERSISTENCE");
+    }
+    if (m.rank != null) parts.push(`rank ${m.rank}`);
+    parts.push(m.accepted === false ? (m.rejectedReason ? "REJECTED" : "BASELINE (not a candidate)") : m.rank === 1 ? "accepted, CHAMPION" : "accepted");
+    // The leaderboard carries "NaN" and repeats the reason as the diagnosis; neither tells the reader anything.
+    const real = (v: string | null | undefined) => (v && v.trim() && !/^nan$/i.test(v.trim()) ? v.trim() : null);
+    const reason = real(m.rejectedReason);
+    const diagnosis = real(m.diagnosis);
+    if (reason) parts.push(`reason: ${reason}`);
+    if (diagnosis && diagnosis !== reason) parts.push(`diagnosis: ${diagnosis}`);
+    lines.push(`- ${m.model}: ${parts.join(", ")}`);
+  }
+  lines.push("", `Write one verdict for each of the ${req.models.length} models above, using their exact names.`);
+  return lines.join("\n");
+}
+
+export async function generateFleetMixInsight(req: FleetMixInsightRequest): Promise<Insight> {
+  if (req.models.length === 0) {
+    throw new GlmError("No model metrics were supplied.", "bad_model_output");
+  }
+  const content = await chat({
+    system: FLEET_SYSTEM,
+    user: buildFleetMessage(req),
+    json: true,
+    // Six models (four candidates and two baselines) take more reasoning than the other cards' rosters.
+    maxTokens: 3200,
+    temperature: 0.3,
+  });
+  return validate(extractJson(content), {
+    quantity: "emissions",
+    metrics: req.models.map((m) => ({ model: m.model })),
+    horizonDays: 1,
+  });
+}
+
 /* ── Ranking: a ranked list of corridor locations, not a forecast or classifier ── */
 
 export type RankingRowInput = { label: string; value: number; sharePct?: number | null; n?: number | null };
