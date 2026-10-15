@@ -350,6 +350,7 @@ FAMILY and its variant fields (leave a field out to use the usual value):
   minor_collision                         {"label":"rear_end"|"sideswipe"|"hit_and_run"}
   multi_vehicle_collision, self_accident  {}
   overturned_vehicle, flood, scheduled_roadworks   {}   duration must be manual
+  (A flood brings its own heavy rain first, then the water rises, so never add a separate rain event for it. A flood may cover every lane: "all lanes", "lahat ng linya", "buong kalsada" → lane 1 and extraLanes with every other lane of that carriageway; both directions → one flood on each.)
   rain                                    {"intensity":"light"|"moderate"|"heavy"}   duration must be manual; it rains on BOTH carriageways (one rain action is enough; it is added to each)`;
 
 /* The words operators use. Tagalog and Taglish first, because English is the model's default and needs no help;
@@ -1184,10 +1185,39 @@ function withWordRanges(raw: unknown, command: string, n: Norm, warnings: string
 
 /** The checks applied to a model answer, exported so they can be tested without a model. `command` is the operator's
  *  words, read for a range the model dropped (withWordRanges). */
+/** "All lanes", in the operator's words, with no exception named ("all lanes except lane 1" is not all of them). */
+const ALL_LANES = /\b(all|every)\s+(of\s+the\s+)?(the\s+)?lanes?\b|\blahat\s+ng\s+(mga\s+)?(linya|lane)s?\b|\bbuong\s+(kalsada|daan|carriageway|kalye)\b|\bwhole\s+(road|carriageway|width)\b|\bfull\s+(width|closure)\b/i;
+const EXCEPT = /\b(except|but\s+not|other\s+than|apart\s+from|maliban|bukod\s+sa)\b/i;
+
+/**
+ * "Flood all lanes northbound and southbound" came back from the model as an event with no lane at all in two
+ * phrasings out of three, which the page then put in its one default lane: the operator asked for the whole road
+ * and got one lane of it. When the words say all lanes, every multi-lane event in the plan covers every lane of its
+ * carriageway, whatever the model wrote. (Only a flood may close a whole carriageway; for the others the sandbox
+ * refuses it and says why, which is the honest answer to that request.)
+ */
+function withAllLanes(raw: unknown, command: string, n: Norm, warnings: string[]): unknown {
+  if (!Array.isArray(raw) || !ALL_LANES.test(command) || EXCEPT.test(command)) return raw;
+  return raw.map((a) => {
+    if (!a || typeof a !== "object") return a;
+    const x = a as Record<string, unknown>;
+    const family = typeof x.family === "string" ? x.family : "";
+    if (x.type !== "add_event" || !MULTI_LANE.has(family as FamilyKey)) return a;
+    const d = x.direction === "SB" ? "SB" : x.direction === "NB" ? "NB" : null;
+    const count = d ? n.dirs[d]?.lanes ?? null : null;
+    if (!d || count == null || count < 1) return a;
+    const all = Array.from({ length: count }, (_, i) => i + 1);
+    const had = [x.lane, ...(Array.isArray(x.extraLanes) ? x.extraLanes : [])].filter((v) => typeof v === "number");
+    if (had.length === count) return a;
+    warnings.push(`${family === "flood" ? "Flood" : "Event"} on ${d}: "all lanes" read as lanes ${all.join(", ")}.`);
+    return { ...x, lane: 1, extraLanes: all.slice(1) };
+  });
+}
+
 export function planFromModelOutput(parsed: Record<string, unknown>, ctx: SandboxContext, command = ""): CommandPlan {
   const n = normalise(ctx);
   const warnings: string[] = [];
-  const actions = checkActions(withWordRanges(parsed.actions, command, n, warnings), n, warnings);
+  const actions = checkActions(withAllLanes(withWordRanges(parsed.actions, command, n, warnings), command, n, warnings), n, warnings);
   const reply = typeof parsed.reply === "string" && parsed.reply.trim().length > 0 ? parsed.reply.trim() : "Command understood.";
   const unsupported = typeof parsed.unsupported === "string" && parsed.unsupported.trim().length > 0 ? parsed.unsupported.trim() : null;
   return { actions, reply, unsupported, warnings };

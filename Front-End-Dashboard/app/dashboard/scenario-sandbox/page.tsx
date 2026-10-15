@@ -21,6 +21,7 @@ import {
   nextBoundaryAfter,
   roadOf,
   sceneMarks,
+  NO_OWNERS,
   type Direction,
   type Incident,
   type Ownership,
@@ -1344,11 +1345,17 @@ export default function AiSandboxPage() {
   // outside React) and refreshed whenever either direction's own events/binding change — mirrors the
   // single-sim page's old scenarioOverlayRef assignment, just done once per direction instead of once.
   useEffect(() => {
-    scenarioOverlayRef.current.NB = { events: nb.scenarioEvents, frame: nb.scenarioFrame, owners: nb.owners, isScenarioIncident: nb.scenarioBinding.isScenarioIncident };
-  }, [nb.scenarioEvents, nb.scenarioFrame, nb.owners, nb.scenarioBinding]);
+    scenarioOverlayRef.current.NB = {
+      events: nb.scenarioEvents, frame: nb.scenarioFrame, owners: nb.owners, isScenarioIncident: nb.scenarioBinding.isScenarioIncident,
+      sky: { events: sb.scenarioEvents, frame: sb.scenarioFrame },
+    };
+  }, [nb.scenarioEvents, nb.scenarioFrame, nb.owners, nb.scenarioBinding, sb.scenarioEvents, sb.scenarioFrame]);
   useEffect(() => {
-    scenarioOverlayRef.current.SB = { events: sb.scenarioEvents, frame: sb.scenarioFrame, owners: sb.owners, isScenarioIncident: sb.scenarioBinding.isScenarioIncident };
-  }, [sb.scenarioEvents, sb.scenarioFrame, sb.owners, sb.scenarioBinding]);
+    scenarioOverlayRef.current.SB = {
+      events: sb.scenarioEvents, frame: sb.scenarioFrame, owners: sb.owners, isScenarioIncident: sb.scenarioBinding.isScenarioIncident,
+      sky: { events: nb.scenarioEvents, frame: nb.scenarioFrame },
+    };
+  }, [sb.scenarioEvents, sb.scenarioFrame, sb.owners, sb.scenarioBinding, nb.scenarioEvents, nb.scenarioFrame]);
 
   // Animation + physics loop: steps every ACTIVE direction's sim in the same tick, in the same
   // ~25ms-equivalent-per-frame slice budget the single-sim loop always used (there is no separate
@@ -4836,6 +4843,9 @@ type ScenarioOverlay = {
   owners: Ownership;
   /** True for an incident in the engine's list that a scenario put there. */
   isScenarioIncident: (i: Incident) => boolean;
+  /** The other carriageway's events and frame, for the weather only: the two sides share a sky, so a flood (and the
+   *  rain it brings) on one carriageway rains on both. */
+  sky?: { events: readonly ScenarioEvent[]; frame: RoadFrame } | null;
 };
 
 /** Narrower than this (CSS px) the road and the full-screen controls do not fit side by side. Matches globals.css. */
@@ -5375,6 +5385,68 @@ function drawResponderAgent(
   ctx.restore();
 }
 
+/* Driving out of the picture.
+ *
+ * The engine retires a vehicle the moment its NOSE reaches the end of the simulated stretch, which is the edge of the
+ * canvas — so the rest of it, still on screen (a car's sprite is 26 px at the whole view, a truck's well over twice
+ * that), vanished in one frame: traffic popped out of existence at the exit edge. The engine is right to count the trip
+ * there; this is only the drawing. A vehicle that was about to cross the end in one frame and is gone in the next is
+ * drawn rolling on at the speed it had until it is clear of the picture. Keyed by the engine, so each carriageway has
+ * its own, and emptied if the clock goes back (a reset). */
+type ExitGhost = { v: TrafficSim["vehicles"][number]; x0: number; t0: number };
+
+/** How far each vehicle is drawn back from where it really is to keep its full size without touching the one ahead
+ *  (m), and when, per carriageway; eased off over DISPLACE_EASE_S when it is let go. */
+const displaceBySim = new WeakMap<object, Map<number, { d: number; t: number }>>();
+const DISPLACE_EASE_S = 1.2;
+function displaceStateOf(sim: TrafficSim): Map<number, { d: number; t: number }> {
+  let m = displaceBySim.get(sim);
+  if (!m) displaceBySim.set(sim, (m = new Map()));
+  return m;
+}
+
+/** How far each scene vehicle is drawn back from where it really is (m), and when, per carriageway (see `geo`). */
+const sceneGlideBySim = new WeakMap<object, Map<number, { d: number; t: number }>>();
+const SCENE_GLIDE_S = 0.4;
+function sceneGlideOf(sim: TrafficSim): Map<number, { d: number; t: number }> {
+  let m = sceneGlideBySim.get(sim);
+  if (!m) sceneGlideBySim.set(sim, (m = new Map()));
+  return m;
+}
+const exitGhostsBySim = new WeakMap<object, { t: number; near: Map<number, TrafficSim["vehicles"][number]>; ghosts: Map<number, ExitGhost> }>();
+/** How far past the end (m) a ghost is kept: more than any vehicle's drawn length at the most enlarged view. */
+const EXIT_RUNOUT_M = 80;
+function exitGhosts(sim: TrafficSim, live: readonly TrafficSim["vehicles"][number][]): TrafficSim["vehicles"][number][] {
+  const L = sim.cfg.length;
+  let st = exitGhostsBySim.get(sim);
+  if (!st || sim.time < st.t) {
+    st = { t: sim.time, near: new Map(), ghosts: new Map() };
+    exitGhostsBySim.set(sim, st);
+  }
+  const dt = sim.time - st.t;
+  if (dt > 0) {
+    const here = new Set(live.map((v) => v.id));
+    for (const [id, v] of st.near) {
+      // Gone, and where it was going it would have crossed the end: it drove off (not a ramp, not a reset).
+      if (!here.has(id) && v.x + Math.max(0, v.v) * dt >= L - 0.5) st.ghosts.set(id, { v: { ...v }, x0: v.x, t0: st.t });
+    }
+  }
+  const out: TrafficSim["vehicles"][number][] = [];
+  for (const [id, g] of st.ghosts) {
+    const x = g.x0 + Math.max(0, g.v.v) * (sim.time - g.t0);
+    if (x > L + EXIT_RUNOUT_M) {
+      st.ghosts.delete(id);
+      continue;
+    }
+    g.v.x = x;
+    g.v.accel = 0;
+    out.push(g.v);
+  }
+  st.near = new Map(live.filter((v) => v.x > L - 40).map((v) => [v.id, { ...v }]));
+  st.t = sim.time;
+  return out;
+}
+
 function drawCarriageway(
   ctx: CanvasRenderingContext2D,
   sim: TrafficSim,
@@ -5867,7 +5939,9 @@ function drawCarriageway(
    * positions now, so the cap below is exact rather than nearly right. */
   // The hard shoulder's vehicles (responders running up it, a vehicle pulled over onto it) are drawn with the traffic.
   const shoulderTraffic = (sim as { shoulder?: typeof sim.vehicles }).shoulder ?? [];
-  const everyone = shoulderTraffic.length > 0 ? [...sim.vehicles, ...shoulderTraffic] : sim.vehicles;
+  const live = shoulderTraffic.length > 0 ? [...sim.vehicles, ...shoulderTraffic] : sim.vehicles;
+  const leaving = exitGhosts(sim, live);
+  const everyone = leaving.length > 0 ? [...live, ...leaving] : live;
   const noseXm = new Map<number, number>();
   for (const v of everyone) {
     noseXm.set(v.id, v.x + Math.max(0, v.v + 0.5 * v.accel * alphaS) * alphaS);
@@ -5885,6 +5959,9 @@ function drawCarriageway(
      over the car behind it. Plaza vehicles among themselves are still spaced
      by the plaza layer, which knows their booth lanes. */
   const plazaRoomM = new Map<number, number>();
+  /** The room behind a road vehicle to a PLAZA vehicle (m): the one thing a road vehicle is still shortened for, as the
+   *  plaza layer draws its own vehicles by its own geometry. Against road traffic it keeps its size (see `geo`). */
+  const plazaBehindM = new Map<number, number>();
   {
     /* `w`: how much this vehicle counts in the band, 0..1. A vehicle in its lane is 1. One changing lanes counts
        in both from the moment it starts, by how close it has come: nothing as it leaves the far lane's centre,
@@ -5918,8 +5995,6 @@ function drawCarriageway(
       if (arr) arr.push(n);
       else bands.set(b, [n]);
     };
-    /** Metres from the entrance over which a new vehicle comes to count in full. */
-    const ENTRY_EASE_M = 14;
     // How far through a lane change (0..1 of its time) a vehicle comes within reach of the lane it is moving into.
     let shiftAtReach = 0.5;
     {
@@ -5940,9 +6015,11 @@ function drawCarriageway(
         // slowly at first and then all at once): 0 as it sets off, 1 by the time it could touch.
         const off = Math.abs(across - b);
         const progress = v.laneShift >= 1 || v.laneFrom === v.lane ? 1 : b === v.lane ? v.laneShift : 1 - v.laneShift;
-        // A vehicle just entering the road counts in over its first metres, for the same reason: it appears behind
-        // the one ahead all at once.
-        const w = (off <= laneReach ? 1 : Math.max(0, Math.min(1, progress / shiftAtReach))) * Math.max(0, Math.min(1, x / ENTRY_EASE_M));
+        /* A vehicle just entering the road counts in full at once. It used to be eased in over its first 14 m, so the
+           one ahead kept its enlarged tail drawn over it there — measured, up to 8 px of a truck over the car behind,
+           a few pixels in from the edge. It enters with its nose at the edge of the picture, so the one ahead is cut
+           off there and nothing on screen changes size. */
+        const w = off <= laneReach ? 1 : Math.max(0, Math.min(1, progress / shiftAtReach));
         if (w > 0.001) put(b, { id: v.id, x, plaza: false, w, free: freeRoomM(v.length) });
       }
     }
@@ -5969,8 +6046,10 @@ function drawCarriageway(
           const o = arr[j];
           const w = Math.min(n.w, o.w);
           const room = softRoom(n.x - o.x, w, n.free);
-          if (!n.plaza) tighter(noseGapM, n.id, room);
-          else if (!plazaDone && !o.plaza) {
+          if (!n.plaza) {
+            tighter(noseGapM, n.id, room);
+            if (o.plaza) tighter(plazaBehindM, n.id, room);
+          } else if (!plazaDone && !o.plaza) {
             tighter(plazaRoomM, n.id, room);
             if (o.w >= 0.999) plazaDone = true;
           }
@@ -5993,7 +6072,9 @@ function drawCarriageway(
     for (const v of everyone) {
       if (v.sceneKey === undefined || v.departing) continue;
       if (v.role === "traffic" && v.doom === undefined) continue;
-      if (v.role === "responder" && v.stillSince == null) continue;
+      // A responder still pulling in is laid out with the scene too (held a visible gap short of it), so it is never
+      // drawn into the wreck it is stopping behind in the frames before it is parked.
+      if (v.role === "responder" && v.stillSince == null && v.holdAtX == null) continue;
       const key = `${v.sceneKey}|${v.onShoulder ? "shoulder" : v.lane}`;
       const g = groups.get(key);
       if (g) g.push(v);
@@ -6004,8 +6085,13 @@ function drawCarriageway(
       const shoulder = Boolean(members[0].onShoulder);
       const inGroup = new Set(members);
       // Everyone else in the same lane (or on the shoulder), so a run of the scene's vehicles stops at the first stranger.
+      // (Not the scene's own responders crossing in: counted as strangers, one squeezed the whole scene up small while
+      // it crossed, and the scene jumped back to full size the frame it arrived.)
+      const sceneKey = members[0].sceneKey;
       const strangers = everyone.filter(
-        (o) => !inGroup.has(o) && (shoulder ? Boolean(o.onShoulder) : !o.onShoulder && (o.lane === lane || (o.laneShift < 1 && o.laneFrom === lane))),
+        (o) =>
+          !inGroup.has(o) && !(o.role === "responder" && o.sceneKey === sceneKey && !o.departing) &&
+          (shoulder ? Boolean(o.onShoulder) : !o.onShoulder && (o.lane === lane || (o.laneShift < 1 && o.laneFrom === lane))),
       );
       const all = [...members, ...strangers].sort((a, b) => b.x - a.x);
       // Runs of the scene's vehicles with nobody else between them, front first; each is laid out on its own.
@@ -6019,33 +6105,40 @@ function drawCarriageway(
         }
       }
       if (run.length > 0) runs.push(run);
+      /* The drawn gap between two of a scene's vehicles at rest: the real one, scaled with the scene, but never less
+         than a visible 3 px plus what each one's angle swings its corners out by. They used to be laid nose to tail
+         0.5 m apart — a pixel at the whole view — so a crash, its ambulance and its police car were drawn as one
+         bumper-to-bumper chain, the turned wrecks a pixel or two into each other. */
+      const swing = (v: (typeof everyone)[number], lenPx: number) =>
+        0.3 * lenPx * Math.abs(Math.sin(v.yaw ?? (v.role === "wreck" ? v.restAngle ?? 0 : 0)));
+      const restGapM = (prev: (typeof everyone)[number], v: (typeof everyone)[number], realM: number, scale: number, prevPx: number, lenPx: number) =>
+        Math.max(realM * scale, (3 + swing(prev, prevPx) + swing(v, lenPx)) / mToPx);
+      /* Everyone at full size, in the order they really stand. Responders are drawn where the engine has them; a
+         wreck at its real position or, if the one in front is drawn reaching back over it, a visible gap behind it
+         (its real gap, or 3 px plus what each one's angle swings out by). Where that leaves no room, the last pass
+         over everything (below) draws whoever is behind further back — it never shrinks anyone. The scene used to be
+         scaled down to fit its closure, so wrecks changed size as an ambulance arrived and grew back when towed. */
       for (const list of runs) {
-        const rest = list.filter((v) => v.role !== "traffic");
-        let scale = 1;
-        if (rest.length > 0) {
-          const front = rest[0].x;
-          const tail = Math.min(...rest.map((v) => v.x - v.length));
-          // As far back as the run may be drawn: the start of the shut stretch it stands in, or the first stranger behind it.
-          let limit = tail - 2;
-          if (!shoulder) for (const c of allClosures) if (c.lanes[lane] && front >= c.from && front <= c.to + 1) limit = Math.min(limit, c.from + 3);
-          for (const o of strangers) if (o.x < front) limit = Math.max(limit, o.x + 1.5);
-          limit = Math.min(limit, tail);
-          let need = 0;
-          rest.forEach((v, i) => {
-            need += baseLengthPx(v.length, mToPx, k) / mToPx;
-            if (i > 0) need += Math.max(0.4, rest[i - 1].x - rest[i - 1].length - v.x);
-          });
-          scale = Math.min(1, Math.max(0.01, front - limit) / Math.max(0.01, need));
-        }
+        const moving = (v: (typeof everyone)[number]) => v.role === "traffic" || (v.role === "responder" && v.stillSince == null);
+        const anchor = (v: (typeof everyone)[number]) => v.role === "responder";
         let tailM = Infinity;
+        let prevPx = 0;
         list.forEach((v, i) => {
-          const real = v.role === "traffic" ? noseXm.get(v.id) ?? v.x : v.x;
+          const real = moving(v) ? noseXm.get(v.id) ?? v.x : v.x;
           const prev = i > 0 ? list[i - 1] : null;
           const gapM = prev === null ? 0 : Math.max(0.4, prev.x - prev.length - v.x);
-          const xm = prev === null ? real : Math.min(real, tailM - Math.min(gapM, 0.5));
-          const len = v.role === "traffic" ? -1 : Math.max(v.length * mToPx, baseLengthPx(v.length, mToPx, k) * scale);
+          const base = drawnLengthPx(baseLengthPx(v.length, mToPx, k), v.length, plazaBehindM.get(v.id) ?? Infinity, mToPx);
+          const len = moving(v) ? -1 : base;
+          const drawn = base;
+          let xm = real;
+          if (prev !== null && !anchor(v)) {
+            // Still driving into the scene: held a visible gap short of the drawn tail of the one it is about to hit.
+            const keep = restGapM(prev, v, gapM, 1, prevPx, drawn);
+            xm = Math.min(real, tailM - keep);
+          }
           sceneLayout.set(v.id, { xm, len });
-          tailM = xm - (len > 0 ? len : drawnLengthPx(baseLengthPx(v.length, mToPx, k), v.length, noseGapM.get(v.id) ?? Infinity, mToPx)) / mToPx;
+          tailM = xm - drawn / mToPx;
+          prevPx = drawn;
         });
       }
     }
@@ -6065,13 +6158,90 @@ function drawCarriageway(
    *  it is turned to — never further round than keeps it inside its own lane, so a wreck does not reach into traffic. */
   /** A vehicle's drawn length: its true length, whatever is round it (facilityArt's TRUE SIZE). */
   const easedLen = (v: (typeof everyone)[number]): number =>
-    drawnLengthPx(baseLengthPx(v.length, mToPx, k), v.length, noseGapM.get(v.id) ?? Infinity, mToPx);
+    drawnLengthPx(baseLengthPx(v.length, mToPx, k), v.length, plazaBehindM.get(v.id) ?? Infinity, mToPx);
   // Test hook: a page under test sets window.__spriteLog to a Map and reads each vehicle's drawn length per frame.
   const spriteLog = typeof window !== "undefined" ? (window as unknown as { __spriteLog?: Map<string, number[]> }).__spriteLog : undefined;
+  /* Where everything is drawn this frame: nose (m) and length (px).
+   *
+   * A scene's vehicles are drawn a little back from their engine positions (the layout above, so its enlarged sprites
+   * fit nose to tail). Whenever one joined or left the layout — an ambulance pulling in, the scene packing up to
+   * drive away — it jumped between the two: measured, an ambulance 38 m in one frame. So the OFFSET from the real
+   * position is eased (about 0.4 s of simulated time; paused, nothing moves), not the position: a scene that packs
+   * up catches up with where its vehicles really are while they drive.
+   *
+   * Then one rule over everything drawn, lane by lane: a sprite never reaches back over the drawn nose of anything
+   * behind it that it could touch across the road — it is shortened instead. Whatever the easing, the layout or a
+   * lane change does, nothing is drawn over anything else. */
+  const glide = sceneGlideOf(sim);
+  const geo = new Map<number, { xm: number; len: number }>();
+  for (const v of everyone) {
+    const laid = sceneLayout.get(v.id);
+    const real = noseXm.get(v.id) ?? v.x;
+    const want = laid === undefined ? 0 : real - laid.xm;
+    const prev = glide.get(v.id);
+    let d = want;
+    if (prev !== undefined && sim.time >= prev.t) d = prev.d + (want - prev.d) * (1 - Math.exp(-Math.max(0, sim.time - prev.t) / SCENE_GLIDE_S));
+    if (laid === undefined && Math.abs(d) < 0.02) glide.delete(v.id);
+    else if (laid !== undefined || prev !== undefined) glide.set(v.id, { d, t: sim.time });
+    geo.set(v.id, { xm: real - d, len: laid !== undefined && laid.len > 0 ? laid.len : easedLen(v) });
+  }
+  /* Full size, never drawn over one another: where there is not room, a vehicle is drawn further BACK, not shorter.
+   *
+   * At the whole view a car is drawn about 10 m long, and a standing queue in the engine is a car every 6.6 m — so
+   * either the sprites shrink in a queue (they did, in 5–14% of frames round an event) or they overlap, unless the
+   * queue is drawn longer than the engine's. It is: front to back, each vehicle is drawn at its engine position or,
+   * if that would put it into the drawn tail of one ahead that it could touch, a visible 2 px behind that tail. The
+   * difference is soaked up a few vehicles further back, where moving traffic leaves far bigger gaps than any
+   * sprite needs.
+   *
+   * Two vehicles count against each other by how close they are ACROSS the road, pair by pair: in full once near
+   * enough to touch, not at all a whole lane apart, and in between in proportion — so a vehicle changing lanes
+   * pushes the one behind it back smoothly as it comes across, and a whole queue moving over together (a lane
+   * reopening) still never overlaps itself. A vehicle let go — the one ahead moved off or moved over — catches up
+   * with where it really is over about a second (DISPLACE_EASE_S), rather than jumping forward. Nothing is contact
+   * by design, not even a casualty on the tow truck's hook (it is drawn just behind the truck). Drawing only: the
+   * engine, and every figure, are untouched. */
+  {
+    const MARGIN_M = 2 / mToPx;
+    const disp = displaceStateOf(sim);
+    type Done = { tail: number; across: number; swing: number };
+    // How far a vehicle turned at an angle (a wreck, one skidding) swings its corners out past its length, in metres.
+    const swingM = (v: (typeof everyone)[number], lenPx: number) => (0.3 * lenPx * Math.abs(Math.sin(v.yaw ?? (v.role === "wreck" ? v.restAngle ?? 0 : 0)))) / mToPx;
+    const done: Done[] = [];
+    const order = [...everyone].sort((a, b) => geo.get(b.id)!.xm - geo.get(a.id)!.xm);
+    const seen = new Set<number>();
+    for (const v of order) {
+      const g = geo.get(v.id)!;
+      const real = g.xm;
+      const across = visualLane(v);
+      const swing = swingM(v, g.len);
+      let xm = real;
+      for (let i = done.length - 1; i >= Math.max(0, done.length - 48); i--) {
+        const e = done[i];
+        const da = Math.abs(e.across - across);
+        if (da >= 1) continue;
+        const ww = da <= laneReach ? 1 : (1 - da) / Math.max(1e-6, 1 - laneReach);
+        const cap = e.tail - MARGIN_M - e.swing - swing;
+        xm = Math.min(xm, cap + (1 - ww) * Math.max(0, real - cap));
+      }
+      // Let go gradually: never drawn further forward than the easing allows (further back is always safe).
+      let d = real - xm;
+      const st = disp.get(v.id);
+      if (st !== undefined && sim.time > st.t && d < st.d) d = d + (st.d - d) * Math.exp(-(sim.time - st.t) / DISPLACE_EASE_S);
+      else if (st !== undefined && sim.time === st.t) d = Math.max(d, st.d);
+      if (d > 0.01) disp.set(v.id, { d, t: sim.time });
+      else disp.delete(v.id);
+      seen.add(v.id);
+      g.xm = real - d;
+      done.push({ tail: g.xm - g.len / mToPx, across, swing });
+    }
+    for (const id of disp.keys()) if (!seen.has(id)) disp.delete(id);
+  }
   const spriteOf = (v: (typeof everyone)[number]) => {
     const laid = sceneLayout.get(v.id);
-    const xm = laid?.xm ?? noseXm.get(v.id) ?? v.x;
-    const len = laid !== undefined && laid.len > 0 ? laid.len : easedLen(v);
+    const g = geo.get(v.id) ?? { xm: noseXm.get(v.id) ?? v.x, len: easedLen(v) };
+    const xm = g.xm;
+    const len = g.len;
     if (spriteLog && v.role === "traffic" && laid === undefined) {
       const key = `${sb ? "SB" : "NB"}${v.id}`;
       const arr = spriteLog.get(key);
@@ -6150,6 +6320,13 @@ function drawCarriageway(
   }
   /** Where each vehicle's tail lights are, recorded as it is drawn, for the glow pass after the sprites. */
   const tails: { x: number; y: number; r: number; braking: boolean }[] = [];
+  /* Test hook: a page under test sets window.__spriteDump to { rows: [], every: seconds } and gets every drawn
+     sprite (traffic, wrecks, responders) about every `every` simulated seconds, to check a scene for vehicles that
+     appear or vanish mid-road, jump, or are drawn over one another. Nothing is recorded otherwise. */
+  const dumpHook = typeof window !== "undefined" ? (window as unknown as { __spriteDump?: { rows: unknown[]; every: number; last?: Record<string, number> } }).__spriteDump : undefined;
+  const dirKey = sb ? "SB" : "NB";
+  const dumping = dumpHook !== undefined && sim.time - (dumpHook.last?.[dirKey] ?? -Infinity) >= dumpHook.every;
+  if (dumping) dumpHook.last = { ...dumpHook.last, [dirKey]: sim.time };
 
   for (const v of everyone) {
     try {
@@ -6204,6 +6381,9 @@ function drawCarriageway(
          is. A wreck keeps the angle it came to rest at; a responder gets its
          own livery and a flashing bar. */
       const paint = moto ? motorcyclePaintFor(v.id) : paintFor(v.id, v.vClass);
+      if (dumping && xNose > -60 && xNose < cssW + 60) {
+        dumpHook.rows.push([dirKey, +sim.time.toFixed(2), v.id, v.role === "responder" ? v.responderKind ?? "responder" : v.role, +(xNose - fwd * (len / 2)).toFixed(1), +y.toFixed(1), +len.toFixed(1), +wid.toFixed(1), +sprite.yaw.toFixed(3), +sprite.xm.toFixed(1), v.onShoulder || v.viaShoulder ? 1 : 0, v.towedBy ? 1 : 0, +cssW.toFixed(0), +mToPx.toFixed(3)]);
+      }
       if (v.role === "wreck" || v.look === "overturned") {
         // The vehicle that crashed or broke down, as itself: its own paint, at the angle it came to rest.
         drawWreckAgent(ctx, xNose, y, len, wid, sprite.yaw, sb, animT, v.vClass, paint, trailerPaintFor(v.id), v.look ?? "crash", v.hazards ?? true, moto);
@@ -6331,7 +6511,11 @@ function drawCarriageway(
   // Scenario events as scenes, round their own vehicles (drawn above with the traffic): the people, the cones, the
   // work zone — then the weather over everything, then each event's label (phase and time left) on top.
   drawScenes(sceneGeom, scenes, actors);
-  drawWeather(sceneGeom, scenes);
+  // The weather of both carriageways: they share a sky (ScenarioOverlay.sky).
+  const skyMarks: readonly SceneMark[] = overlay?.sky
+    ? sceneMarks(overlay.sky.events, roadOf(sim, overlay.sky.frame), sim.time, NO_OWNERS).filter((m) => m.family === "rain" || m.family === "flood")
+    : [];
+  drawWeather(sceneGeom, skyMarks.length ? [...scenes, ...skyMarks] : scenes);
   if (overlay) {
     /* The label says who is there. "Awaiting response" is the phase's name, and it is true only until somebody
        arrives: with a patrol car parked behind the wreck it read as a mistake. Asked of the engine (a recording

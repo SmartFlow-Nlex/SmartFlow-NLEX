@@ -423,9 +423,14 @@ const FLOOD: FloodTemplate = {
   carriageways: "one_or_both",
   displayName: "Flooding",
   description:
-    "Standing water makes a lane impassable until it drains. NLEX has no flood record of any kind (no event type, no duration, no lane count), so this is a simplification: modelled as a single lane closed over a longer stretch than a wreck (150 m, against 60-100 m for a collision), for a duration the operator enters directly. A real flood can be a partial-width, reduced-speed hazard rather than a full closure; the engine has no lever for that, so a closed lane is the closest honest approximation with what exists today.",
-  phases: singlePhase("Flooded: lane closed"),
-  defaultLane: { kind: "operator_lane", lane: 1 },
+    "Heavy rain first, then the water. Waze reported 354 flood alerts on the NLEX corridor itself (Aug to Oct 2026), most at San Simon, Meycauayan and Valenzuela, and they follow rain: on 29 Aug 2026 five places flooded at once after more than a day of rain (14 to 18 mm in the 6 hours before, against a typical 1.9 mm), and the corridor carried 3.7 times its usual length of jams that day. So the event runs as the data does, compressed into its minutes: heavy rain with water pooling (no lane closed yet, traffic slowed by the rain), the outer lanes going under, the whole requested width under water, then draining with the inner lanes reopening first. A flood may close every lane of a carriageway; traffic then queues behind it.",
+  phases: [
+    { id: "pooling", label: "Heavy rain: water pooling", offset: { kind: "fixed", fraction: 0 } },
+    { id: "rising", label: "Water rising: outer lanes closed", offset: { kind: "fixed", fraction: 0.2 } },
+    { id: "flooded", label: "Flooded: lanes closed", offset: { kind: "fixed", fraction: 0.35 } },
+    { id: "draining", label: "Draining: inner lanes reopened", offset: { kind: "fixed", fraction: 0.8 } },
+  ],
+  defaultLane: { kind: "outermost" },
   defaultPlacement: DEFAULT_PLACEMENT,
   resources: ["closure_stretch"],
   durationSource: "manual_only",
