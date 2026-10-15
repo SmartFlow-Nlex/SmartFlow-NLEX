@@ -8,7 +8,7 @@ stated in Section 1.4.
 Section 4.1 reports the descriptive, predictive, and prescriptive outputs of the three operational
 modules, each alongside the dashboard visualisation that renders it. Section 4.2 documents the
 implementation itself. Section 4.3 reports testing and validation. Section 4.4 maps the findings to
-the general and specific objectives. Section 4.5 states the limitations within which all of the
+the general and specific objectives. Section 4.4 states the limitations within which all of the
 foregoing should be read.
 
 ## 4.1 Presentation of Results
@@ -47,7 +47,7 @@ Two streams described in Chapter 3 are absent from Table 4.1.1 because they are 
 warehouse. No table derived from the Apprehension and Undercap records exists, and no variable from
 it reaches any dashboard panel. The mobile application is joined to the dashboard through a
 configuration endpoint, but contributes no community-report records. Neither stream is reported as a
-data source for this chapter. Section 4.5.3 records both.
+data source for this chapter. Section 4.4.3 records both.
 
 #### 4.1.1.1 Description of the Raw Data
 
@@ -110,6 +110,29 @@ Section 4.1.3.2 reports what that effect turns out to be, and it is narrower tha
 cross-tabulation implied.
 
 ---
+
+#### 4.1.1.4 Relevance of the Raw Data to the Objectives
+
+Each acquired stream carries a specific objective, and no stream was collected without one.
+
+The **traffic reports** and the **incident tables** together supply the four and a half years of
+operational history required by the third specific objective, which calls for a four-year dataset to
+be analysed for recurring inefficiencies and congestion patterns. They are the only streams in the
+collection that reach back far enough to establish a recurring pattern rather than a recent one.
+
+The fusion of those internal records with the **Waze Partner Hub feed**, the **weather observations**,
+and the **scraped event schedules** satisfies the multisource requirement of the fourth objective.
+Each external stream enters a model as an exogenous input: weather conditions the volume, incident,
+and emission forecasts; event schedules drive the surge model; and the Waze records serve twice, as
+the congestion-state target and as an independent series against which forecasts are checked.
+
+The **vehicle classification counts**, combined with class-specific emission factors, produce the
+corridor carbon figures through which the general objective is addressed, since a reduction in
+emissions cannot be argued for without a measured baseline to reduce from.
+
+Finally, the consolidated warehouse assembled from all of these is the data layer the operator
+dashboard renders, and is therefore the substrate of the second objective. The sections that follow
+report what each stream yielded.
 
 ### 4.1.2 Implementation of Data Cleaning and Preprocessing
 
@@ -198,7 +221,7 @@ against 2.73 in the preceding period.
 The regime separation and speed-flow fit described in Chapter 3 are not implemented in the delivered
 system, and no free-flow speed or critical density is computed. The empirical capacity threshold used
 by the congestion classifier is derived instead from observed congestion states, as Section 4.1.4.1
-reports. Section 4.5.1 records the deviation.
+reports. Section 4.4.1 records the deviation.
 
 ![Predicted Incident Hotspots](manuscript-figures/web/Figure_4.1.19.jpg)
 
@@ -255,7 +278,7 @@ accidents and **72.0 minutes** for breakdowns.
 These figures rest on partial coverage, which is stated here rather than left implicit. Clearance
 coverage is **36.7 %**: of 40,497 breakdowns only 11,803 carry a usable duration, against 4,893 of
 5,024 accidents. The breakdown figure therefore describes roughly a quarter of the events it covers.
-Section 4.5.3 records this, together with the definition of clearance the warehouse actually
+Section 4.4.3 records this, together with the definition of clearance the warehouse actually
 supports.
 
 ![Incident Occurrence by Time of Day](manuscript-figures/web/Figure_4.1.8.jpg)
@@ -287,7 +310,7 @@ alone carries 14.1 % of incidents over roughly 4 % of corridor length.
 
 
 These segments are identified by ranked observed density rather than by the spatial-significance
-statistics described in Chapter 3, which the delivered system does not compute. Section 4.5.1 records
+statistics described in Chapter 3, which the delivered system does not compute. Section 4.4.1 records
 the deviation.
 
 **Top Incident Causes.** After the free-text cause fields were normalised, the leading contributors
@@ -387,6 +410,41 @@ projected saving is reported there.
 
 
 ---
+
+#### 4.1.3.4 What the Descriptive Tier Establishes
+
+The third specific objective asks that a four-year historical dataset be analysed to map recurring
+systemic inefficiencies and congestion patterns for strategic capacity planning. The preceding three
+subsections discharge it.
+
+The dataset analysed spans **1 January 2022 to 30 June 2026** — **1,642 days, or four and a half
+years** — so the four-year requirement is met with margin. The analysis was carried out in **Python**,
+across 174 extraction, cleaning, feature-engineering, model-training, and evaluation scripts held in
+the repository. **RStudio, which the objective also names, was not used**, and the repository contains
+no R sources; the analytical requirement of the objective was satisfied without it. The proponents
+recommend that Section 1.4.2 be amended to state Python alone rather than that R analysis be
+retrofitted to satisfy a tool list.
+
+What the analysis found is worth stating plainly, because three of the eight recurring patterns
+contradict an assumption that capacity planning would otherwise rest on.
+
+| Pattern established | Bearing on capacity planning |
+| --- | --- |
+| Friday carries 358,514 entries against Sunday's 282,076, a 21 % spread | Weekly staffing need is predictable and unevenly distributed |
+| Weekday demand peaks at 18:00, with a secondary rise at 07:00 | Peak-hour resourcing has two targets, not one |
+| The three busiest toll points carry 51.7 % of entries | Capacity investment concentrates at the southern end |
+| The five densest segments carry 50.0 % of incidents over 24 % of corridor length | Patrol coverage need is spatially concentrated |
+| Stalled vehicles outnumber crashes roughly eight to one | The dominant burden is mechanical, so towing capacity matters more than enforcement |
+| 20 of 21 holidays fall **below** baseline, Good Friday by 49.0 % | Holiday demand is suppressed, not surged — the opposite of the planning assumption |
+| Wet weather raises the **crash** rate 19.3 % while leaving total incidents unchanged | Weather response should target crash readiness, not general mobilisation |
+| 62 long-duration incidents produce 72.5 % of delay-induced carbon | Clearance speed, not incident count, governs the carbon cost of congestion |
+
+The last three are the findings that change a decision rather than confirming one. A corridor that
+empties on declared holidays does not need the surge staffing a calendar-based plan would schedule;
+a corridor whose wet-weather risk is concentrated in crashes rather than breakdowns needs a different
+response posture; and a corridor whose delay carbon is concentrated in a few slow clearances is one
+where response time, rather than incident prevention, is the carbon lever. Each of these is taken up
+quantitatively in Sections 4.1.4 and 4.1.5.
 
 ### 4.1.4 Predictive Analysis
 
@@ -519,7 +577,7 @@ together account for **44 %** of the corridor forecast.
 
 The ranking is **derived rather than separately modelled**: the corridor forecast apportioned by each
 exit's historical share, as the panel itself states. The spatially weighted regression described in
-Chapter 3 is not implemented; Section 4.5.1 records the deviation.
+Chapter 3 is not implemented; Section 4.4.1 records the deviation.
 
 **Secondary Incident Risk.** The system estimates the probability that a primary incident induces a
 second within **2 km** while the first is still being responded to, using a **30-minute** buffer. On
@@ -581,10 +639,37 @@ correct metric disagree, and the pipeline followed the correct one.
 
 ---
 
+#### 4.1.4.4 What the Predictive Tier Establishes
+
+The fourth specific objective asks that multi-source predictive models be deployed within the
+dashboard to forecast expressway conditions, integrating toll records, crowdsourced data, weather
+inputs, and event schedules. Five forecasting targets are deployed and all four input streams are
+integrated, as the preceding subsections report.
+
+Two properties of this tier are worth drawing out, because they are what distinguish deployed models
+from demonstrated ones.
+
+**Selection was competitive, and most candidates lost.** Across the five targets, forty-one model
+configurations were evaluated and the majority were rejected, each against a stated baseline and with
+its rejection reason retained in Table 4.1.4. For the volume target every neural candidate was
+rejected, the best of them ranking seventh of eight. A selection process that rejects nothing
+demonstrates nothing, and the retained rejections are the evidence that this one did.
+
+**The forecasts are consumed, not merely displayed.** Each model's output is read by a downstream
+component: the volume and incident forecasts seed the simulation of Section 4.1.5.4, the congestion
+classifier drives the corridor state map, the emission model supplies the baseline the prescriptive
+strategies are measured against, and the event-surge model feeds exit-level intervention ranking.
+Forecasting that terminates in a chart satisfies the letter of the objective; forecasting that
+another component depends on satisfies its intent.
+
 ### 4.1.5 Prescriptive Analysis
 
 The prescriptive tier converts the forecasts of Section 4.1.4 into resource-constrained
-recommendations.
+recommendations, and exposes the simulation in which a recommendation can be exercised before it is
+adopted. It is the tier through which the first specific objective and the general objective are
+addressed.
+
+#### 4.1.5.1 Incident Module
 
 **Patrol and Tow Resource Deployment.** An exact Maximal Covering Location solve distributes patrol
 units across exits to cover as much predicted risk as possible. With a **fleet of 4 units** at an
@@ -615,7 +700,9 @@ derived from it are shown below.
 
 Prioritisation is delivered as the quadrant matrix described above rather than the closeness-
 coefficient ranking described in Chapter 3. No closeness coefficient is reported, because none is
-computed. Section 4.5.1 records the deviation.
+computed. Section 4.4.1 records the deviation.
+
+#### 4.1.5.2 Traffic Module
 
 **Proactive Speed Advisory.** The weather-incident risk model gives a high-incident-day probability
 rising from **14.0 % at 0 mm rain to 14.3 % at 100 mm**, with **AUC 0.704** against a base rate of
@@ -652,6 +739,19 @@ corridor carbon, and the two operational levers move well under one percent each
 tier lies in ranking interventions against a common measure and in bounding what each can be expected
 to achieve, rather than in promising a large reduction.
 
+Taken with Section 4.1.3.3, this completes the chain the general objective describes. The corridor
+emits **161,224.7 tonnes** of CO₂ in a calendar year. **1,151.5 tonnes** of that is delay-induced —
+carbon emitted because vehicles were held below free-flow speed by incidents — and **72.5 %** of the
+delay carbon arises from only **62 long-duration incidents**. Congestion-attributable carbon on this
+corridor is therefore concentrated rather than diffuse, which is what makes it addressable at all,
+and the three interventions above quantify what addressing it would save.
+
+What the system does not do is close that chain by observation. No intervention has been applied to
+the corridor and no reduction has been measured against the baseline. The contribution to SDG 9 that
+this chapter can evidence is a decision-support capability that identifies where congestion carbon
+concentrates and bounds what specific interventions would recover — not a realised reduction. That
+distinction is maintained throughout, and Section 4.4 records it among the limitations.
+
 ![Projected Percentage Emission Reduction by Strategy](manuscript-figures/web/Figure_4.1.30.jpg)
 
 **Figure 4.1.30** *Projected Percentage Emission Reduction by Strategy*
@@ -676,9 +776,23 @@ agents** (31 northbound, 21 southbound), a flow-weighted **average speed of 97 k
 of 143 vehicles per minute** (75 northbound, 68 southbound), a **longest queue of 0 m**, lane density
 of 13 and 9 vehicles per kilometre per lane, and a **carbon rate of 19.2 kg per minute**.
 
-Throughput and queue length are the operational measures; the carbon rate connects the sandbox to the
-corridor emission baseline of Section 4.1.3.3. Because the sandbox writes nothing to the warehouse, a
-strategy can be exercised at no operational risk.
+Throughput and queue length are the operational measures named by the first specific objective —
+maximising vehicle throughput and minimising expressway downtime — and the carbon rate connects the
+sandbox to the corridor emission baseline of Section 4.1.3.3. Because the sandbox writes nothing to
+the warehouse, a strategy can be exercised at no operational risk, which is the "risk-free
+environment" the objective requires.
+
+The property that most distinguishes this implementation is that the scenario is **seeded by the
+predictive tier rather than assumed**. The objective asks for a data-driven environment in which to
+test operational decisions before live deployment; what the system provides is an environment driven
+by the same forecasts the rest of the dashboard runs on, each labelled with the held-out error of the
+model that produced it. The first specific objective therefore consumes the fourth rather than
+standing beside it, and an operator testing a decision in the sandbox is testing it against the
+corridor the models predict rather than against a corridor imagined for the purpose.
+
+What this chapter does not report is a controlled comparison between two response strategies run over
+the same scenario. The simulation produces the measures by which such a comparison would be made, and
+the comparison itself is recorded in Section 4.4 as outstanding.
 
 ![The Agent-Based Scenario Sandbox, Seeded from the Forecast Models](manuscript-figures/web/Figure_4.1.31.jpg)
 
@@ -691,7 +805,22 @@ strategy can be exercised at no operational risk.
 
 ## 4.2 System Implementation
 
-*This section documents the implementation of the system that produces the results reported in Section 4.1: the interface they are rendered through, the environment and repository they are built in, the authentication that guards them, and the module through which operators write back to the warehouse.*
+This section documents the implementation of the system that produces the results reported in Section
+4.1: the interface they are rendered through, the environment and repository they are built in, the
+authentication that guards them, and the module through which operators write back to the warehouse.
+
+It is also where the second specific objective is discharged. That objective asks for a custom-built
+Next.js and TypeScript dashboard that merges and visualises real-time, multi-source data across web
+and conversational channels, and that is usable and accessible. The subsections below evidence each
+clause in turn: the design token system and its measured contrast behaviour (4.2.1) for
+accessibility; the delivery and configuration of the application (4.2.2) and the repository it is
+built in (4.2.3); the role-based authentication that makes it a system *for NLEX operators* rather
+than a public site (4.2.4); and the maintenance scheduler (4.2.5), the one module in which an
+operator writes to the warehouse rather than reading from it.
+
+The conversational channel the objective names is delivered in two places: natural-language narration
+generated for the analytical panels of Section 4.1, and the command interface on the simulation of
+Section 4.1.5.4, through which a scenario can be set up in words rather than through controls.
 
 
 
@@ -930,7 +1059,7 @@ per stage.
 | `REDIS_REST_URL`, `REDIS_REST_TOKEN` | Cache provider | Same provider | Live incident feed cache |
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY` | Auth provider | Same provider | Operator authentication and audit logging |
 | `CLIMATIQ_API_KEY` | Emissions provider | Same provider | Emission factor lookup, Section 4.1.5 |
-| `GLM_API_KEY`, `GLM_MODEL`, `GLM_BASE_URL` | Language model provider | Same provider | Narrative generation layer, Section 4.1.7 |
+| `GLM_API_KEY`, `GLM_MODEL`, `GLM_BASE_URL` | Language model provider | Same provider | Narrative generation layer, Section 4.2 |
 
 Dashboard parameters number two: the application server's base address and the
 geospatial rendering token. Both are declared under the framework's public prefix
@@ -1518,7 +1647,7 @@ application consumes these same endpoints, and a fabricated success there would
 place a closure on an operator's screen that does not exist in the warehouse.
 
 **Every mutation is audited.** Creation, edit, status change, and deletion each
-write an entry to the audit log described in Section 4.1.8, recording the actor
+write an entry to the system's audit log, recording the actor
 and what changed. The write is fire-and-forget: a failure in the audit path never
 fails the operation the operator requested.
 
@@ -1707,212 +1836,23 @@ proponents is not a substitute and is not reported as one.
 The proponents recommend that a short structured session be held with two or three evaluators who
 were not involved in building the system, each given a realistic scheduling task and observed, with
 the evaluators named in the record. Three questions already identified as likely to arise are
-recorded in Section 4.5.3.
+recorded in Section 4.4.3.
 
 ---
 
-## 4.4 Attainment of the Objectives
 
-This section maps each objective stated in Section 1.4 to the evidence in this chapter. Each
-objective is assessed against what the delivered system demonstrably does, not against what it was
-intended to do.
-
-### 4.4.1 Specific Objective 1 — Agent-Based Simulation Sandbox
-
-> *To evaluate response strategies within an Agent-Based Simulation Sandbox in order to minimise
-> expressway downtime and maximise vehicle throughput during incidents or demand surges, providing
-> NLEX management with a risk-free, data-driven environment to test operational decisions before live
-> deployment using a custom HTML5 Canvas-based simulation interface.*
-
-**Attained.**
-
-The Scenario Sandbox is implemented as a custom agent-based simulation rendered on an HTML5 canvas,
-operating over a selectable corridor segment — Balintawak to Marilao, Km 12.00 to 12.60 in the
-configuration shown — with northbound and southbound carriageways simulated separately and reported
-both individually and as a corridor total.
-
-The simulation reports the quantities the objective names. In the reference run, the sandbox tracked
-**52 active agents** (31 northbound, 21 southbound) and reported **throughput of 143 vehicles per
-minute** (75 northbound, 68 southbound), a flow-weighted **average speed of 97 km/h**, a **longest
-queue of 0 m**, lane **density of 13 and 9 vehicles per kilometre per lane**, and a **carbon rate of
-19.2 kg per minute**. Throughput and queue length are the direct measures of the objective's
-"maximise vehicle throughput" and "minimise expressway downtime"; the carbon rate connects the module
-to the general objective.
-
-The sandbox is *risk-free* in the sense the objective requires: it operates on a simulated corridor
-and writes nothing to the warehouse.
-
-It is *data-driven* in a stronger sense than the objective requires, and this is the finding most
-worth putting before a panel. The scenario is not seeded with assumed values but with the output of
-the predictive tier reported in Section 4.1.4: corridor volume of **349,702 vehicles** from the
-Prophet volume model, segment inflow of **4,372 vehicles per hour** at Bocaue Barrier, **3 predicted
-incidents** at 19:00 from the Negative Binomial GLM, and **500.1 tonnes** of predicted CO₂ from the
-Gradient Boosting Regressor. Each figure is labelled on the panel with its source model and that
-model's held-out error. Specific Objective 1 therefore consumes Specific Objective 4 rather than
-standing beside it.
-
-*Evidence: Section 4.1.5; Figure 4.1.31.*
-
-**Limitation.** The sandbox measures a scenario; this chapter does not report a controlled comparison
-between two response strategies run over the same scenario. The capability to evaluate strategies
-exists and the metrics to compare them are produced, but a before-and-after experiment is not
-reported. Section 4.5.1 records this.
-
-### 4.4.2 Specific Objective 2 — The Decision-Intelligence System
-
-> *To develop the "SmartFlow NLEX" decision-intelligence system for NLEX operators using a
-> custom-built Next.js and TypeScript web dashboard... merge and visualise real-time, multi-source
-> data streams across web and conversational channels... a highly usable, accessible platform.*
-
-**Attained.**
-
-| Clause in the objective | Evidence |
-| --- | --- |
-| Custom-built Next.js and TypeScript dashboard | Next.js 15 with TypeScript throughout, delivered as a static export and packaged as a desktop application (Section 4.2.2) |
-| Merge multi-source data streams | Four streams joined in one warehouse: toll records, Waze crowdsourced feeds, weather, and event schedules (Section 4.1.1) |
-| Real-time | Live corridor map and Waze jam feeds, refreshed through a cached read path (Sections 4.1.3, 4.2.2) |
-| Web channel | Ten dashboard pages across three analytical tiers and three operational modules |
-| Conversational channel | Natural-language narrative generation on the analytical panels, and a command interface on the Scenario Sandbox |
-| Usable and accessible | Design token system with a dark presentation (Section 4.2.1); contrast audit returning zero failures across ten pages in both presentations (Section 4.3.2) |
-| For NLEX operators | Role-based access across three operator roles, enforced on the server (Section 4.2.4) |
-
-*Evidence: Sections 4.2.1 through 4.2.5; Tables 4.3.1 and 4.3.3; Figures 4.1.32 and 4.1.33.*
-
-**Limitation.** "Ensures widespread user adoption" cannot be evidenced by a system that has not been
-deployed to its intended users. The objective's accessibility and usability clauses are supported;
-the adoption clause is not, and no claim about adoption is made.
-
-### 4.4.3 Specific Objective 3 — Historical Analysis
-
-> *To analyse a 4-year historical NLEX dataset to map and identify recurring systemic inefficiencies
-> and traffic congestion patterns for strategic capacity planning using Python and RStudio.*
-
-**Attained in substance; one stated tool was not used.**
-
-The dataset analysed spans **1 January 2022 to 30 June 2026**, which is **1,642 days, or four and a
-half years** — the objective's four-year requirement is met and exceeded. It comprises 2,086,512
-traffic volume records, 21,820 road crash records, 156,925 stalled-vehicle records, 1,152,960 hourly
-weather observations, and 358,998 hourly Waze jam records.
-
-The recurring patterns identified, each of which bears on capacity planning, are:
-
-| Pattern | Finding |
-| --- | --- |
-| Weekly cycle | Friday carries the highest mean daily volume at 358,514 entries; Sunday the lowest at 282,076, a 21 % spread |
-| Daily cycle | Weekday demand peaks at 18:00, with a secondary morning concentration at 07:00 |
-| Spatial concentration of demand | The three busiest toll points carry 51.7 % of all entries |
-| Spatial concentration of incidents | The five densest segments carry 50.0 % of incidents over 24 % of corridor length; Km 0–4 alone carries 14.1 % |
-| Incident composition | Stalled vehicles outnumber crashes approximately eight to one, so the corridor's incident burden is mechanical rather than collision-driven |
-| Calendar effect | Declared holidays *suppress* demand — 20 of 21 fall below their local baseline, Good Friday by 49.0 % |
-| Weather effect | Wet conditions raise the crash rate by 19.3 % per hour while leaving the overall incident rate unchanged |
-| Carbon concentration | 62 long-duration incidents produce 72.5 % of all delay-induced carbon |
-
-The last three are the ones that change an operating assumption rather than confirming one, and the
-holiday finding in particular inverts the intuition that a holiday brings a surge.
-
-**Analysis was performed in Python.** The repository contains 174 Python analysis and pipeline
-scripts covering extraction, cleaning, feature engineering, model training, and evaluation.
-**RStudio was not used**, and the repository contains no R sources. The objective names a tool that
-the delivered work did not require. The proponents recommend that Section 1.4.2 be amended to state
-Python alone, rather than that R analysis be retrofitted to satisfy a tool list; the analytical
-requirement of the objective is met either way.
-
-*Evidence: Sections 4.1.1 through 4.1.3; Figures 4.1.2 to 4.1.14b.*
-
-### 4.4.4 Specific Objective 4 — Predictive Models
-
-> *To deploy existing multi-source predictive models within the SmartFlow NLEX dashboard that
-> forecast expressway conditions using integrating historical toll records, crowdsourced data,
-> weather inputs, and event schedules using existing machine learning algorithms.*
-
-**Attained.**
-
-Five forecasting targets are deployed in the dashboard, each selected competitively from a field of
-candidates on held-out performance, with the losing candidates and their rejection reasons retained:
-
-| Target | Champion | Held-out performance | Candidates evaluated |
-| --- | --- | --- | --- |
-| Corridor traffic volume | Prophet | MAPE 7.45 %, MASE 0.989 | 8 |
-| Daily incident count | Negative Binomial GLM | WMAPE 9.75 %, MASE 0.718 | 7 |
-| Congestion state per exit-hour | XGBoost | Accuracy 66.7 % against a 60.5 % profile baseline | 6 |
-| Corridor CO₂ | Gradient Boosting Regressor | MAPE 9.63 %, MASE 0.908 | 6 |
-| Fleet composition | Dirichlet regression | MAPE 11.80 %, MASE 0.602 | 6 |
-| Event surge by exit | Per-exit uplift | WMAPE 9.44 % | 8 |
-
-All four input streams the objective names are integrated: toll records as the volume series,
-crowdsourced Waze records as the congestion-state ground truth, weather as an exogenous regressor in
-the volume, incident, and emission models, and event schedules as the driver of the surge model.
-
-Model selection was competitive rather than nominal. Of the candidates evaluated, the majority were
-rejected — including, for the volume target, every neural candidate. This is reported in full in
-Table 4.1.4 because a selection process that rejects nothing is not a selection process.
-
-*Evidence: Section 4.1.4; Table 4.1.4; Figures 4.1.15 to 4.1.23.*
-
-**Limitations.** Three are stated in Section 4.5.2: no volume model is accepted at the 90/10 split;
-the incident champion carries an overfitting diagnosis; and the corridor CO₂ model, while accepted on
-its holdout, is not validated at the seven-day horizon.
-
-### 4.4.5 General Objective and SDG 9
-
-> *To develop and evaluate SmartFlow NLEX, a centralised decision-intelligence platform that leverages
-> a 4-year historical NLEX dataset alongside real-time crowdsourced and external data to optimise
-> proactive traffic management and incident response. By reducing traffic congestion, the capstone
-> project will support SDG 9 through lower vehicular carbon emissions.*
-
-**The platform is attained. The emission reduction is quantified and projected, not measured in the
-field.**
-
-The platform exists, is centralised, and leverages both the historical dataset and real-time
-crowdsourced and external data; Sections 4.4.1 to 4.4.4 evidence each clause. Proactive management is
-supported in the specific sense that the system forecasts conditions ahead of them occurring and
-ranks interventions against those forecasts.
-
-On the carbon claim, the chapter reports the following chain:
-
-1. Corridor emissions for calendar year 2025 total **161,224.7 tonnes of CO₂**.
-2. Of this, **1,151.5 tonnes (0.71 %)** is delay-induced carbon — the excess attributable to vehicles
-   held below free-flow speed by incidents.
-3. **72.5 %** of that excess arises from just **62 long-duration incidents**, so the carbon cost of
-   congestion is concentrated in a small number of slow clearances rather than spread evenly.
-4. The prescriptive tier projects the reduction available from three interventions: reducing the
-   heavy-vehicle share by one percentage point at **3.39 %** of corridor CO₂, faster incident
-   clearance at **0.48 %**, and added response capacity at the busiest hours at **0.33 %**.
-
-The honest statement of the general objective's attainment is therefore this: **the system
-establishes that congestion-attributable carbon on the corridor is concentrated and therefore
-addressable, and quantifies what three specific interventions would save — but no intervention has
-been deployed on the corridor and no reduction has been measured.** The contribution to SDG 9 is the
-decision-support capability and the quantified case for intervention, not a realised reduction.
-
-Stating this plainly is also the stronger position. A capstone that claims a measured carbon
-reduction it cannot evidence invites exactly one question; a capstone that quantifies the available
-reduction and names what would be required to realise it does not.
-
-**Table 4.4.1** *Summary of Objective Attainment*
-
-| Objective | Status | Principal evidence |
-| --- | --- | --- |
-| SO1 — Agent-Based Simulation Sandbox | Attained | §4.1.5; Fig. 4.1.31; throughput 143/min, queue 0 m, 52 agents, seeded from the forecast models |
-| SO2 — Decision-intelligence system | Attained | §4.2.1–4.2.5; §4.3.2; zero contrast failures across 10 pages, both presentations |
-| SO3 — Historical analysis | Attained in substance; RStudio not used | §4.1.1–4.1.3; 1,642 days, 4.5 years; eight recurring patterns identified |
-| SO4 — Predictive models | Attained | §4.1.4; Table 4.1.4; five targets, six model families, competitive selection |
-| General — Platform and SDG 9 | Platform attained; carbon reduction projected, not measured | §4.1.3.3, §4.1.5; 161,224.7 t baseline; 3.39 % / 0.48 % / 0.33 % projected |
-
----
-
-## 4.5 Limitations
+## 4.4 Limitations
 
 The limitations below are stated so that the findings in this chapter are read against their proper
 scope. They are grouped by what they constrain.
 
-### 4.5.1 Limitations of Scope
+### 4.4.1 Limitations of Scope
 
 **No controlled strategy comparison in the sandbox.** The simulation produces the metrics by which two
 response strategies could be compared, and the comparison is not reported (Section 4.4.1).
 
 **No field deployment.** No intervention recommended by the prescriptive tier has been applied to the
-corridor, so no projected saving has been confirmed against an observed one (Section 4.4.5).
+corridor, so no projected saving has been confirmed against an observed one (Section 4.1.5.3).
 
 **No stress testing, and one outstanding user-acceptance evaluation** (Section 4.3.3).
 
@@ -1926,7 +1866,7 @@ by historical share, and a quadrant prioritisation — which is reported in this
 the method named in Chapter 3. The proponents recommend that Chapter 3 be reconciled to the delivered
 methods rather than the methods retrofitted.
 
-### 4.5.2 Limitations of the Models
+### 4.4.2 Limitations of the Models
 
 **Volume forecasting is split-dependent.** At the 80/20 chronological split, Prophet is accepted with
 MASE 0.989 — marginally better than a seasonal naive forecast. At the 90/10 split no candidate is
@@ -1950,7 +1890,7 @@ high-incident day moves from 14.0 % at zero rainfall to 14.3 % at 100 mm. The mo
 high-incident days using its other features; rainfall is not the lever, and no rainfall-triggered
 advisory is claimed.
 
-### 4.5.3 Limitations of the Data
+### 4.4.3 Limitations of the Data
 
 **Speed data that does not originate from the Waze feed is synthetic.** The warehouse's own model
 evaluation records state that the weather-speed models were scored against a volume table whose speed
@@ -1985,9 +1925,9 @@ use, so no stage is isolated from operational data.
 
 *Decisions required before submission. Each names the section it affects.*
 
-1. **Section 1.4.2 names RStudio, which the delivered work did not use** (Section 4.4.3). The analysis was carried out in Python across 174 scripts. The proponents recommend amending the objective to state Python alone rather than retrofitting R analysis to satisfy a tool list.
+1. **Section 1.4.2 names RStudio, which the delivered work did not use** (Section 4.1.3.4). The analysis was carried out in Python across 174 scripts. The proponents recommend amending the objective to state Python alone rather than retrofitting R analysis to satisfy a tool list.
 
-2. **Four methods described in Chapter 3 are not implemented** (Section 4.5.1): the regime separation and speed-flow fit, Getis-Ord Gi\* significance testing, Geographically Weighted Regression, and TOPSIS ranking. In each case the delivered system provides an equivalent output by a simpler method. The proponents recommend reconciling Chapter 3 to the delivered methods.
+2. **Four methods described in Chapter 3 are not implemented** (Section 4.4.1): the regime separation and speed-flow fit, Getis-Ord Gi\* significance testing, Geographically Weighted Regression, and TOPSIS ranking. In each case the delivered system provides an equivalent output by a simpler method. The proponents recommend reconciling Chapter 3 to the delivered methods.
 
 3. **Two figures require screenshots the proponents cannot capture from the running system**: the hosting console showing the application server's configuration with values masked, and the repository branch listing. Both require account access rather than the dashboard.
 
@@ -1995,7 +1935,7 @@ use, so no stage is isolated from operational data.
 
 5. **No stress testing has been carried out** (Section 4.3.3). If Chapter 3's testing plan is to be reported as fully executed, a load test is required; otherwise the gap should stand as recorded.
 
-6. **Chapter 5 should carry forward the three model limitations in Section 4.5.2** — the split dependence of volume forecasting, the overfitting diagnosis on the incident model, and the unvalidated seven-day horizon on corridor CO₂ — since each bears directly on what the system can be claimed to forecast.
+6. **Chapter 5 should carry forward the three model limitations in Section 4.4.2** — the split dependence of volume forecasting, the overfitting diagnosis on the incident model, and the unvalidated seven-day horizon on corridor CO₂ — since each bears directly on what the system can be claimed to forecast.
 
 7. Section 3.7 specifies a Tailwind CSS theme configuration as the design token
    mechanism. The delivered interface implements tokens as CSS custom properties
