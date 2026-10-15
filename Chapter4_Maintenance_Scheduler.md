@@ -112,10 +112,10 @@ why neither had surfaced in ordinary use.
 | 2 | Deletion did not check whether a row was removed | A `DELETE` against an identifier that did not exist answered 200 "Deleted" and wrote an audit entry for a deletion that never happened — the audit log recording an event the database never saw | Deletion now distinguishes the three outcomes and answers 404 where no row matched |
 | 3 | A malformed identifier was reported as a database outage | The identifier reached the database, which rejected it as badly formed. The service treats every query failure alike and reports the database unreachable, so a mistyped identifier answered 503 — telling the operator the warehouse was down while it was healthy, and raising an infrastructure alarm for what was a bad request | The identifier is checked before the database is consulted, and an unparseable one answers 404 |
 
-Defect 1 was not hypothetical. A record already in the table — a toll booth
-repair entered as Km 76.25 to Km 73.23 — carries a reversed range and is in the
-`in progress` state. The validation now prevents another, but the existing row
-predates it and requires correction by hand.
+Defect 1 was not hypothetical. A record in the table at the time of the fix — a toll booth
+repair entered as Km 76.25 to Km 73.23 — carried a reversed range that the validation would now
+refuse. That record has since been replaced during testing, and no reversed range remains in the
+table; the schedules now present all run forward along the corridor.
 
 Defect 2 is the more instructive of the two. The update path had always
 distinguished a missing row and answered 404; the delete path, written alongside
@@ -195,9 +195,8 @@ wrong in the way most likely to be noticed and least likely to be forgiven.
 *Proposed as item 10, following item 9 in the authentication section.*
 
 10. Section 4.2.5.4 records an existing maintenance record whose kilometre range
-    runs backwards (Km 76.25 to Km 73.23) and which is currently in progress.
-    The new validation prevents another from being created but does not repair
-    this one. The group should correct it before the demonstration, since it is
-    the kind of entry a panel notices on screen, and decide whether the
+    held a reversed kilometre range has since been replaced; none remains.
+    What does remain are test records ("Ysa Test", "Ysa Test 2"), which should be
+    removed before the demonstration. The group should also decide whether the
     corridor-facing views should additionally ignore any row whose range is
     reversed, as a defence against records created before the rule existed.

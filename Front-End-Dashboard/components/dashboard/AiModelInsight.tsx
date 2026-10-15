@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch } from "../../lib/api";
 
 /**
  * The Narrative Explanation panel's body: a language model's read of the
@@ -93,7 +94,7 @@ export default function AiModelInsight(props: Props) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
 
-    fetch(`${BACKEND}${p.endpoint ?? "/api/ai-insight/model-narrative"}`, {
+    apiFetch(`${BACKEND}${p.endpoint ?? "/api/ai-insight/model-narrative"}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: ctrl.signal,

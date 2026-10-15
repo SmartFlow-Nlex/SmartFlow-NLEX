@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch } from "../../lib/api";
 
 /**
  * Plain-language read of whatever the page below it is showing.
@@ -45,7 +46,7 @@ export default function FeatureBriefing({
   const load = useCallback(() => {
     setBusy(true);
     setFailed(false);
-    fetch(`${BACKEND}/api/ai-insight/explain`, {
+    apiFetch(`${BACKEND}/api/ai-insight/explain`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ feature, months: months ?? "12" }),

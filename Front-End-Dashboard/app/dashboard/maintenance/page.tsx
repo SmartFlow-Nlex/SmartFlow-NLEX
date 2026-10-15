@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Calendar, Check, ChevronDown, Info, MapPin, MoreVertical, Plus, Search, Trash2, Wrench, X } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
+import { apiFetch } from "../../../lib/api";
 import StateNote from "../../../components/stage/StateNote";
 import styles from "../traffic/traffic.module.css";
 import { supabase } from "../../../lib/supabase";
@@ -454,7 +455,7 @@ export default function MaintenancePage() {
 
   const refresh = useCallback(async () => {
     try {
-      const r = await fetch(`${BACKEND}/api/maintenance/list`, { cache: "no-store" });
+      const r = await apiFetch(`${BACKEND}/api/maintenance/list`, { cache: "no-store" });
       const json = await r.json();
       if (!json.success) throw new Error(json.message ?? "Request failed");
       setSchedules(json.data);
@@ -567,7 +568,7 @@ export default function MaintenancePage() {
     setMutating(true);
     setActionError(null);
     try {
-      const r = await fetch(`${BACKEND}/api/maintenance/${s.id}/status`, {
+      const r = await apiFetch(`${BACKEND}/api/maintenance/${s.id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", "x-user": actor },
         body: JSON.stringify(reason ? { status: to, reason } : { status: to }),
@@ -596,7 +597,7 @@ export default function MaintenancePage() {
     setMutating(true);
     setActionError(null);
     try {
-      const r = await fetch(`${BACKEND}/api/maintenance/${s.id}`, {
+      const r = await apiFetch(`${BACKEND}/api/maintenance/${s.id}`, {
         method: "DELETE",
         headers: { "x-user": actor },
       });
@@ -679,7 +680,7 @@ export default function MaintenancePage() {
     setFormError(null);
     setServerConflict(false);
     try {
-      const r = await fetch(editId ? `${BACKEND}/api/maintenance/${editId}` : `${BACKEND}/api/maintenance/schedule`, {
+      const r = await apiFetch(editId ? `${BACKEND}/api/maintenance/${editId}` : `${BACKEND}/api/maintenance/schedule`, {
         method: editId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", "x-user": actor },
         body: JSON.stringify({

@@ -11,6 +11,8 @@ implementation itself. Section 4.3 reports testing and validation. Section 4.4 m
 the general and specific objectives. Section 4.4 states the limitations within which all of the
 foregoing should be read.
 
+[[TOC]]
+
 ## 4.1 Presentation of Results
 
 This section presents the empirical results produced by the system across the three analytical tiers.
@@ -1665,10 +1667,10 @@ why neither had surfaced in ordinary use.
 | 2 | Deletion did not check whether a row was removed | A `DELETE` against an identifier that did not exist answered 200 "Deleted" and wrote an audit entry for a deletion that never happened — the audit log recording an event the database never saw | Deletion now distinguishes the three outcomes and answers 404 where no row matched |
 | 3 | A malformed identifier was reported as a database outage | The identifier reached the database, which rejected it as badly formed. The service treats every query failure alike and reports the database unreachable, so a mistyped identifier answered 503 — telling the operator the warehouse was down while it was healthy, and raising an infrastructure alarm for what was a bad request | The identifier is checked before the database is consulted, and an unparseable one answers 404 |
 
-Defect 1 was not hypothetical. A record already in the table — a toll booth
-repair entered as Km 76.25 to Km 73.23 — carries a reversed range and is in the
-`in progress` state. The validation now prevents another, but the existing row
-predates it and requires correction by hand.
+Defect 1 was not hypothetical. A record in the table at the time of the fix — a toll booth
+repair entered as Km 76.25 to Km 73.23 — carried a reversed range that the validation would now
+refuse. That record has since been replaced during testing, and no reversed range remains in the
+table; the schedules now present all run forward along the corridor.
 
 Defect 2 is the more instructive of the two. The update path had always
 distinguished a missing row and answered 404; the delete path, written alongside
@@ -1819,13 +1821,41 @@ project now carries a flat configuration so that linting runs outside the build.
 **zero errors and 83 warnings**, the warnings being unused identifiers and exhaustive-dependency
 advisories rather than defects.
 
-### 4.3.3 Testing Not Yet Performed
+### 4.3.3 Load and Concurrency Testing
+
+The application server was exercised under concurrent load across five scenarios spanning its three
+read profiles: an endpoint that touches no database, two cached analytical endpoints, an uncached
+database read, and the live crowdsourced feed.
+
+| Scenario | Concurrency | Requests | Succeeded | p50 | p95 | Max |
+| --- | --- | --- | --- | --- | --- | --- |
+| Health check (no database) | 50 | 500 | 500 | 28 ms | 36 ms | 41 ms |
+| Traffic analytics (cached) | 25 | 250 | 250 | 29 ms | 44 ms | 53 ms |
+| Incident analytics (cached) | 25 | 250 | 250 | 16 ms | 31 ms | 38 ms |
+| Maintenance list (database read) | 25 | 250 | 250 | 12 ms | 27 ms | 36 ms |
+| Live corridor feed | 15 | 120 | 120 | 7 ms | 23 ms | 30 ms |
+
+**1,370 requests were issued and every one returned 200**, with the 95th percentile under 45 ms in
+all five scenarios. The response cache described in Section 4.2.2 is visible in these figures: the
+analytical endpoints, which answer in seconds on a cold request, serve a warm one in tens of
+milliseconds.
+
+The result bounds a claim rather than proving an absence of limits. The corridor has a known and
+small operator population, and the concurrency tested comfortably exceeds it; what has not been
+established is the point at which the server degrades, because it was not reached.
+
+One behaviour is worth recording because it was observed rather than predicted. After a restart, the
+first requests to a database-backed endpoint can fail while the connection pool is still being
+established, and the endpoint reports that the database is unreachable. The database is reachable;
+the pool is not yet warm, and subsequent requests succeed. An operator opening the dashboard within a
+few seconds of a server restart may therefore see a panel report a database fault that does not
+exist.
+
+### 4.3.4 Testing Not Yet Performed
 
 Two categories named in Section 3.13 are outstanding and are reported as such.
 
-**Stress testing.** No load or concurrency testing has been carried out. The system has been
-exercised by its developers and by scripted clients, never by many simultaneous operators, and no
-claim about behaviour under load is made in this chapter.
+**Degradation limits.** Section 4.3.3 establishes that the server sustains the concurrency a corridor operations team would generate. It does not establish where the server fails, since that point was not reached, and no claim is made about behaviour beyond the levels tested.
 
 **User-acceptance testing.** Two modules carry a UAT acceptance criterion. The Data Management module
 records its user-acceptance subtask as complete. The Maintenance Scheduler's does not: its criterion
@@ -1933,7 +1963,7 @@ use, so no stage is isolated from operational data.
 
 4. **One user-acceptance evaluation remains outstanding** (Section 4.3.3). The Maintenance Scheduler's UAT criterion requires maintenance coordinators to evaluate the interface. A short structured session with two or three evaluators who were not involved in building the system would close it, with the evaluators named in the record.
 
-5. **No stress testing has been carried out** (Section 4.3.3). If Chapter 3's testing plan is to be reported as fully executed, a load test is required; otherwise the gap should stand as recorded.
+5. **Load testing is now reported in Section 4.3.3** — 1,370 requests across five scenarios, every one successful, p95 under 45 ms. What remains unestablished is the point of degradation, which was not reached.
 
 6. **Chapter 5 should carry forward the three model limitations in Section 4.4.2** — the split dependence of volume forecasting, the overfitting diagnosis on the incident model, and the unvalidated seven-day horizon on corridor CO₂ — since each bears directly on what the system can be claimed to forecast.
 
@@ -1967,10 +1997,9 @@ use, so no stage is isolated from operational data.
    evidence the testing that found them.
 
 10. Section 4.2.5.4 records an existing maintenance record whose kilometre range
-    runs backwards (Km 76.25 to Km 73.23) and which is currently in progress.
-    The new validation prevents another from being created but does not repair
-    this one. The group should correct it before the demonstration, since it is
-    the kind of entry a panel notices on screen, and decide whether the
+    held a reversed kilometre range has since been replaced; none remains.
+    What does remain are test records ("Ysa Test", "Ysa Test 2"), which should be
+    removed before the demonstration. The group should also decide whether the
     corridor-facing views should additionally ignore any row whose range is
     reversed, as a defence against records created before the rule existed.
 

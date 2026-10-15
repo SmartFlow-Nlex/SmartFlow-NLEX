@@ -48,5 +48,42 @@
     "eslint-config-next": "^15.2.4",
     "typescript": "^5.8.3",
     "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "ph.edu.ust.smartflow.nlex",
+    "productName": "SmartFlow NLEX",
+    "copyright": "Copyright \u00a9 2026 SmartFlow NLEX",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "out/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/logo-dark-bg.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SmartFlow NLEX"
+    },
+    "asar": true
   }
 }

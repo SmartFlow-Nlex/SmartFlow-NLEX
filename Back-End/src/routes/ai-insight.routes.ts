@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../middleware/error.middleware.js";
+import { authenticateToken } from "../middleware/auth.middleware.js";
 import {
   modelNarrative,
   congestionNarrative,
@@ -16,14 +17,25 @@ import {
 
 const router = Router();
 
-/**
- * Unauthenticated for the same reason as the sandbox command route: the
- * dashboard carries no Supabase session today, so gating this would leave the
- * button permanently failing while the chart above it worked. It reads nothing
- * and writes nothing — the metrics come from the caller — but it does spend
- * tokens, so it moves behind auth with the rest of the dashboard.
+/*
+ * These endpoints were left unauthenticated on the stated grounds that "the
+ * dashboard carries no Supabase session today", so gating them would have left
+ * the narrative buttons failing beneath charts that worked. That reason expired
+ * when two-step sign-in landed: the dashboard now holds a session on every page,
+ * and the callers pass it (components/dashboard/AiModelInsight.tsx and
+ * FeatureBriefing.tsx both go through lib/api.ts).
+ *
+ * Gating them matters because each call spends language-model tokens against the
+ * project's own key. An open endpoint that costs money per request is a billing
+ * exposure whether or not it returns anything sensitive — and these return
+ * corridor analysis, which is not nothing.
+ *
+ * /status stays public: it reports only whether the provider is configured, and
+ * the interface uses it to decide whether to offer the buttons at all.
  */
 router.get("/status", asyncHandler(insightStatus));
+
+router.use(authenticateToken);
 router.post("/model-narrative", asyncHandler(modelNarrative));
 router.post("/congestion-narrative", asyncHandler(congestionNarrative));
 router.post("/event-surge-narrative", asyncHandler(eventSurgeNarrative));
