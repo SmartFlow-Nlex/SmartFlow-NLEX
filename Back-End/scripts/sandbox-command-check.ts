@@ -289,6 +289,23 @@ const show = (p: { actions: readonly Action[]; warnings: readonly string[] }) =>
   check("prompt: placeholders are marked and returning them is called a failure", /The <\.\.\.> parts are placeholders/.test(text));
 }
 
+{
+  // "All lanes": the model sometimes sends a flood with no lane at all; the words decide (2026-10-15).
+  const flood = (lane: number | null, extra: number[]) => [
+    { type: "add_event", direction: "NB", family: "flood", lane, extraLanes: extra, duration: { kind: "manual", minutes: 30 } },
+    { type: "add_event", direction: "SB", family: "flood", lane, extraLanes: extra, duration: { kind: "manual", minutes: 30 } },
+  ];
+  const lanesOf = (p: { actions: any[] }) => p.actions.filter((a) => a.type === "add_event").map((a) => `${a.direction}:${[a.lane, ...a.extraLanes].sort().join(",")}`).join(" ");
+  const all = planFromModelOutput({ actions: flood(null, []), reply: "ok" }, ctx, "flood all of the lanes northbound and southbound");
+  check("all lanes: a flood with no lane, asked for on all lanes, covers every lane of each carriageway", lanesOf(all) === "NB:1,2,3,4 SB:1,2,3,4", lanesOf(all));
+  const tl = planFromModelOutput({ actions: flood(null, []), reply: "ok" }, ctx, "bumaha sa lahat ng linya, pahilaga at patimog");
+  check("all lanes: in Tagalog too (lahat ng linya)", lanesOf(tl) === "NB:1,2,3,4 SB:1,2,3,4", lanesOf(tl));
+  const except = planFromModelOutput({ actions: flood(2, [3, 4]).slice(0, 1), reply: "ok" }, ctx, "flood all lanes except lane 1 northbound");
+  check("all lanes: an exception named is respected (all lanes except lane 1 stays 2, 3, 4)", lanesOf(except) === "NB:2,3,4", lanesOf(except));
+  const one = planFromModelOutput({ actions: flood(4, []).slice(0, 1), reply: "ok" }, ctx, "flood lane 4 northbound");
+  check("all lanes: a single lane asked for stays a single lane", lanesOf(one) === "NB:4", lanesOf(one));
+}
+
 console.log(`sandbox-command-check: ${checks} checks, ${failures.length} failed`);
 for (const f of failures) console.log(`  FAIL ${f}`);
 process.exit(failures.length > 0 ? 1 : 0);

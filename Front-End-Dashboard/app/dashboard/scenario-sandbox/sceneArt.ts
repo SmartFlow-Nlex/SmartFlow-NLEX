@@ -446,6 +446,23 @@ const RAIN: Readonly<Record<RainIntensity, { readonly density: number; readonly 
   heavy: { density: 1 / 400, speed: 800, len: 18, alpha: 0.86, width: 1.7, tint: 0.2, ripples: 18 },
 };
 
+/** The look of rain at a level between 0 (dry) and 3 (heavy): the named intensities at 1, 2 and 3, blended between
+ *  them, and thinning out to nothing below light — so rain builds and eases instead of switching. */
+function rainLook(level: number): (typeof RAIN)[RainIntensity] {
+  const l = Math.max(0, Math.min(3, level));
+  if (l <= 1) {
+    const b = RAIN.light;
+    return { ...b, density: b.density * l, alpha: b.alpha * (0.4 + 0.6 * l), tint: b.tint * l, ripples: Math.round(b.ripples * l) };
+  }
+  const [a, b] = l <= 2 ? [RAIN.light, RAIN.moderate] : [RAIN.moderate, RAIN.heavy];
+  const f = l <= 2 ? l - 1 : l - 2;
+  const mix = (x: number, y: number) => x + (y - x) * f;
+  return {
+    density: mix(a.density, b.density), speed: mix(a.speed, b.speed), len: mix(a.len, b.len), alpha: mix(a.alpha, b.alpha),
+    width: mix(a.width, b.width), tint: mix(a.tint, b.tint), ripples: Math.round(mix(a.ripples, b.ripples)),
+  };
+}
+
 /** The drops are sky blue so they read against dark asphalt: the near layer #9CDDEC, the far layer #87CEFA. */
 const DROP_NEAR_RGB = "156,221,236";
 const DROP_FAR_RGB = "135,206,250";
@@ -456,8 +473,8 @@ const DROP_FAR_RGB = "135,206,250";
  * drops are deterministic from the clock — nothing is stored per drop — and drawn as one path per
  * layer, so even heavy rain is a couple of strokes a frame.
  */
-export function drawRain(g: SceneGeometry, intensity: RainIntensity): void {
-  const cfg = RAIN[intensity];
+export function drawRain(g: SceneGeometry, intensity: RainIntensity | number): void {
+  const cfg = rainLook(typeof intensity === "number" ? intensity : RAIN_LEVEL_OF[intensity]);
   const c = g.ctx;
   const y0 = g.roadTop;
   const w = g.cssW;
@@ -474,7 +491,7 @@ export function drawRain(g: SceneGeometry, intensity: RainIntensity): void {
   c.fillRect(0, y0, w, h);
 
   const slant = 0.2;
-  const total = Math.max(20, Math.round(w * h * cfg.density));
+  const total = Math.round(w * h * cfg.density);
   for (let layer = 0; layer < 2; layer++) {
     const near = layer === 1;
     const len = cfg.len * (near ? 1.5 : 1);
@@ -514,18 +531,68 @@ export function drawRain(g: SceneGeometry, intensity: RainIntensity): void {
  * edges. Drawn over the closure hatch so the lane reads as under water, with the depth-gauge post and a
  * caution sign at the upstream end.
  */
+/** Puddles gathering on the flood's outer lane while it rains, before the water closes anything: more and larger
+ *  as the pooling phase runs on, so the flood is seen coming. */
+function drawPooling(g: SceneGeometry, m: SceneMark): void {
+  if (m.water == null) return;
+  const c = g.ctx;
+  const a = g.xPx(m.water.fromM);
+  const b = g.xPx(m.water.toM);
+  const left = Math.min(a, b);
+  const w = Math.max(30, Math.abs(b - a));
+  const f = Math.max(0, Math.min(1, m.phaseFraction));
+  const top = g.laneCenterY(m.water.outerLane) - g.laneH / 2;
+  const n = Math.max(3, Math.round((w / 26) * (0.35 + 0.65 * f)));
+  c.save();
+  for (let i = 0; i < n; i++) {
+    const px = left + hash(i * 7 + 3) * w;
+    // nearer the shoulder edge of the lane: water runs to the low side first
+    const edge = g.outward > 0 ? top + g.laneH * (0.62 + hash(i * 7 + 5) * 0.3) : top + g.laneH * (0.08 + hash(i * 7 + 5) * 0.3);
+    const rx = (4 + hash(i * 7 + 1) * 10) * (0.4 + 0.9 * f);
+    const ry = Math.max(1.2, rx * 0.28);
+    c.fillStyle = `rgba(56,128,168,${0.32 + 0.4 * f})`;
+    c.beginPath();
+    c.ellipse(px, edge, rx, ry, 0, 0, Math.PI * 2);
+    c.fill();
+    c.strokeStyle = `rgba(226,242,255,${0.25 + 0.25 * f})`;
+    c.lineWidth = 0.8;
+    c.stroke();
+  }
+  c.restore();
+}
+
 function drawFlood(g: SceneGeometry, m: SceneMark): void {
+  if (m.phaseId === "pooling") {
+    drawPooling(g, m);
+    return;
+  }
   if (m.stretch === null || m.closedLanes.length === 0) return;
   const c = g.ctx;
   const a = g.xPx(m.stretch.fromM);
   const b = g.xPx(m.stretch.toM);
   const left = Math.min(a, b);
   const w = Math.max(30, Math.abs(b - a));
-  const grow = ramp(m.phaseFraction, 0, 0.06); // the water rises over the first moments
-  for (const lane of m.closedLanes) {
-    const top = g.laneCenterY(lane) - g.laneH / 2;
+  /* How much of each lane is under water: it spreads in over the rising phase, and shrinks over the draining one,
+     rather than appearing whole the instant a lane closes. */
+  const grow =
+    m.phaseId === "rising" ? 0.45 + 0.55 * ramp(m.phaseFraction, 0, 0.9)
+      : m.phaseId === "draining" ? 1 - 0.5 * ramp(m.phaseFraction, 0.1, 1)
+        : ramp(m.phaseFraction, 0, 0.06);
+  /* Side-by-side lanes under water are one sheet of it, not a strip per lane with dry seams between: group the closed
+     lanes into runs of neighbours and draw each run as one body. */
+  const sorted = [...m.closedLanes].sort((x, y) => x - y);
+  const runs: number[][] = [];
+  for (const l of sorted) {
+    const last = runs[runs.length - 1];
+    if (last && l === last[last.length - 1] + 1) last.push(l);
+    else runs.push([l]);
+  }
+  for (const run of runs) {
+    const lane = run[0];
+    const spanH = g.laneH * run.length;
+    const top = Math.min(...run.map((l) => g.laneCenterY(l))) - g.laneH / 2;
     const inset = g.laneH * 0.06;
-    const h = g.laneH - inset * 2;
+    const h = spanH - inset * 2;
     const seed = lane * 13 + 1;
     const edge = (x: number, side: number): number => Math.sin(x * 0.11 + seed + side * 2) * 1.8 + Math.sin(x * 0.27 - g.t * 0.9 + side) * 1.1;
 
@@ -539,15 +606,15 @@ function drawFlood(g: SceneGeometry, m: SceneMark): void {
     c.closePath();
     c.clip();
 
-    const body = c.createLinearGradient(0, top, 0, top + g.laneH);
+    const body = c.createLinearGradient(0, top, 0, top + spanH);
     body.addColorStop(0, "rgba(72,146,181,0.84)");
     body.addColorStop(0.5, "rgba(38,104,142,0.90)");
     body.addColorStop(1, "rgba(72,146,181,0.84)");
     c.fillStyle = body;
-    c.fillRect(left - 4, top, w + 8, g.laneH);
+    c.fillRect(left - 4, top, w + 8, spanH);
 
     // flowing streaks: sine lines whose phase runs with the traffic, so the water visibly moves
-    const lines = Math.max(3, Math.round(g.laneH / 6));
+    const lines = Math.max(3, Math.round(spanH / 6));
     for (let i = 0; i < lines; i++) {
       const y = top + inset + ((i + 0.5) / lines) * h;
       const lambda = 24 + hash(seed + i) * 26;
@@ -909,10 +976,17 @@ function drawBreakdown(g: SceneGeometry, m: SceneMark, c: Cast, onShoulder: bool
 
 /* Roadworks: the work area and its barrels belong to the stretch the closure holds; the works trucks are agents (they
  * drive in and park in the lane), so the arrow board goes on the back of the last one, and the gang get out of them. */
+/** Seconds the crew takes to set the cones out along a work zone, and to pick them up again at the end. */
+const WORKS_LAY_S = 30;
+
 function drawRoadworks(g: SceneGeometry, m: SceneMark, c: Cast): void {
   if (m.stretch === null || m.closedLanes.length === 0) return;
+  /* How much of the zone is coned off: set out from the taper forward over the first half-minute, picked up from the
+     far end back over the last — rather than the whole work zone appearing and vanishing in one frame. */
+  const laid = Math.max(0.04, Math.min(1, (m.elapsedS ?? WORKS_LAY_S) / WORKS_LAY_S, (m.remainingS ?? WORKS_LAY_S) / WORKS_LAY_S));
   const a = g.xPx(m.stretch.fromM);
-  const b = g.xPx(m.stretch.toM);
+  const bFull = g.xPx(m.stretch.toM);
+  const b = a + (bFull - a) * laid;
   const left = Math.min(a, b);
   const right = Math.max(a, b);
   const lane = m.closedLanes[0];
@@ -939,8 +1013,10 @@ function drawRoadworks(g: SceneGeometry, m: SceneMark, c: Cast): void {
   const r = Math.max(2.3, Math.min(4.6, g.laneH * 0.07));
   const span = Math.max(right - left, 20);
   // taper upstream: cones run diagonally from the neighbouring lane's edge into the closed lane
-  const taperStart = g.xPx(m.stretch.fromM) - g.fwd * Math.min(g.carLen * 3.2, span * 0.35);
-  drawTaper(g, taperStart, laneY, g.outward, 5, Math.min(g.carLen * 3.2, span * 0.35));
+  // (sized off the whole zone, not the part coned so far: the taper goes out first, at its full length)
+  const fullSpan = Math.max(Math.abs(bFull - a), 20);
+  const taperStart = g.xPx(m.stretch.fromM) - g.fwd * Math.min(g.carLen * 3.2, fullSpan * 0.35);
+  drawTaper(g, taperStart, laneY, g.outward, 5, Math.min(g.carLen * 3.2, fullSpan * 0.35));
   // barrels along the work area's edges
   const barrels = Math.max(2, Math.floor(span / (g.carLen * 1.3)));
   for (let i = 0; i <= barrels; i++) {
@@ -948,12 +1024,14 @@ function drawRoadworks(g: SceneGeometry, m: SceneMark, c: Cast): void {
     drawBarrel(g, x, top + g.laneH * 0.1, r);
     drawBarrel(g, x, top + g.laneH * 0.9, r);
   }
-  // barrier across the downstream end
+  // barrier across the downstream end, once the cones reach it
   const endX = g.fwd === 1 ? right : left;
+  if (laid >= 0.98) {
   ctx.fillStyle = "#f8fafc";
   ctx.fillRect(endX - 1.5, top + g.laneH * 0.08, 3, g.laneH * 0.84);
   ctx.fillStyle = "#f97316";
   for (let i = 0; i < 4; i += 2) ctx.fillRect(endX - 1.5, top + g.laneH * 0.08 + (i * g.laneH * 0.84) / 4, 3, (g.laneH * 0.84) / 4);
+  }
   drawCautionSign(g, taperStart - g.fwd * (g.carLen * 1.4), "!");
 
   // The arrow board on the back of the last works truck, lit once it is parked.
@@ -1081,6 +1159,7 @@ export function hasSceneArt(m: SceneMark): boolean {
     case "breakdown_shoulder":
       return true;
     case "flood":
+      return m.closedLanes.length > 0 || (m.phaseId === "pooling" && m.water != null);
     case "scheduled_roadworks":
       return m.closedLanes.length > 0;
     case "minor_collision":
@@ -1134,21 +1213,20 @@ export function drawScenes(g: SceneGeometry, marks: readonly SceneMark[], actors
 
 /** Weather sits over the traffic and the scenes, under the labels. */
 export function drawWeather(g: SceneGeometry, marks: readonly SceneMark[]): void {
-  let strongest: RainIntensity | null = null;
+  let level = 0;
   let cap: number | null = null;
-  const order: readonly RainIntensity[] = ["light", "moderate", "heavy"];
   for (const m of marks) {
-    if (!hasSceneArt(m) || m.family !== "rain" || m.intensity === null) continue;
-    if (strongest === null || order.indexOf(m.intensity) > order.indexOf(strongest)) {
-      strongest = m.intensity;
-      cap = m.capKmh;
-    }
+    if (m.state !== "active" || (m.family !== "rain" && m.family !== "flood") || m.intensity === null) continue;
+    // The heaviest rain falling wins; the sign shows the strictest cap in force.
+    const l = m.rainLevel ?? RAIN_LEVEL_OF[m.intensity];
+    if (l > level) level = l;
+    if (m.capKmh !== null && (cap === null || m.capKmh < cap)) cap = m.capKmh;
   }
-  if (strongest !== null) {
-    drawRain(g, strongest);
-    if (cap !== null) drawSpeedSign(g, cap);
-  }
+  if (level > 0.02) drawRain(g, level);
+  if (cap !== null) drawSpeedSign(g, cap);
 }
+
+const RAIN_LEVEL_OF: Readonly<Record<RainIntensity, number>> = { light: 1, moderate: 2, heavy: 3 };
 
 /**
  * A speed-limit roundel at the upstream end of the road: what tells the operator rain has capped traffic,

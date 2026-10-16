@@ -590,11 +590,11 @@ for (const f of ["minor_collision", "multi_vehicle_collision", "self_accident", 
   check(`${f}: wreck length is >0 exactly when lanes are blocked`, Object.keys(lanes).every((id) => (lanes[id] > 0) === (lengths[id] > 0)));
   check(`${f}: last phase blocks no lane (lanes reopen before the scene is cleared)`, lanes[t.phases[t.phases.length - 1].id] === 0);
 }
-// Flood and scheduled roadworks are single-phase closure families (ASSUMPTIONS.PHASE_SPLIT gives each one phase
-// at share 1): there is no "clearing" phase to reopen a lane before the scene ends, so the "last phase blocks no
-// lane" check above does not apply — the phase itself blocks a lane for the whole event, and the closure simply
-// ends when the event does (composeInterventions holds nothing for an event with no current phase).
-for (const f of ["flood", "scheduled_roadworks"] as const) {
+// Scheduled roadworks is a single-phase closure family (ASSUMPTIONS.PHASE_SPLIT gives it one phase at share 1):
+// there is no "clearing" phase to reopen a lane before the scene ends, so the "last phase blocks no lane" check
+// above does not apply — the phase itself blocks a lane for the whole event, and the closure simply ends when the
+// event does (composeInterventions holds nothing for an event with no current phase).
+for (const f of ["scheduled_roadworks"] as const) {
   const t = TEMPLATE_BY_FAMILY[f];
   const split = ASSUMPTIONS.PHASE_SPLIT.value[f];
   const offsets = phaseOffsetFractions(t.phases, null);
@@ -604,6 +604,21 @@ for (const f of ["flood", "scheduled_roadworks"] as const) {
   const lengths: Record<string, number> = ASSUMPTIONS.CLOSURE_LENGTH_M.value[f];
   check(`${f}: wreck length is >0 exactly when lanes are blocked`, Object.keys(lanes).every((id) => (lanes[id] > 0) === (lengths[id] > 0)));
   check(`${f}: its one phase blocks exactly 1 lane for the whole event`, lanes[t.phases[0].id] === 1);
+}
+// A flood runs as the data does (Waze flood alerts follow heavy rain): heavy rain with water pooling and no lane
+// closed, then the water rising, then flooded, then draining — four fixed phases whose starts are the running sums
+// of ASSUMPTIONS.PHASE_SPLIT, with pooling the only one that closes nothing.
+{
+  const t = TEMPLATE_BY_FAMILY.flood;
+  const split = ASSUMPTIONS.PHASE_SPLIT.value.flood;
+  const offsets = phaseOffsetFractions(t.phases, null);
+  const sums = split.map((_, i) => split.slice(0, i).reduce((a, p) => a + p.share, 0));
+  check("flood: four phases in order (pooling, rising, flooded, draining)", t.phases.map((p) => p.id).join() === "pooling,rising,flooded,draining" && split.map((p) => p.id).join() === "pooling,rising,flooded,draining");
+  check("flood: the phases start at the running sums of PHASE_SPLIT, and the shares add to 1", t.phases.every((p) => p.offset.kind === "fixed") && offsets.every((o, i) => Math.abs(o - sums[i]) < 1e-9) && Math.abs(split.reduce((a, p) => a + p.share, 0) - 1) < 1e-9);
+  const lanes: Record<string, number> = ASSUMPTIONS.LANES_BLOCKED.value.flood;
+  const lengths: Record<string, number> = ASSUMPTIONS.CLOSURE_LENGTH_M.value.flood;
+  check("flood: pooling closes no lane; rising, flooded and draining close one by default", lanes.pooling === 0 && lanes.rising === 1 && lanes.flooded === 1 && lanes.draining === 1);
+  check("flood: wreck length is >0 exactly when lanes are blocked", Object.keys(lanes).every((id) => (lanes[id] > 0) === (lengths[id] > 0)));
 }
 for (const f of BREAKDOWN_FAMILIES) {
   const t = TEMPLATE_BY_FAMILY[f];
@@ -633,8 +648,8 @@ for (const f of ["breakdown_in_lane", "minor_collision", "multi_vehicle_collisio
 }
 check("breakdown_shoulder: default lane is the outermost", TEMPLATE_BY_FAMILY.breakdown_shoulder.defaultLane.kind === "outermost");
 check(
-  "flood, scheduled roadworks: default lane is operator lane 1 (LANES_BLOCKED gives each just one lane; no data exists to prefer any other)",
-  TEMPLATE_BY_FAMILY.flood.defaultLane.kind === "operator_lane" && TEMPLATE_BY_FAMILY.flood.defaultLane.lane === 1 &&
+  "scheduled roadworks: default lane is operator lane 1 (LANES_BLOCKED gives it just one lane; no data exists to prefer any other); flood: the outermost (water collects on the low, shoulder side first)",
+  TEMPLATE_BY_FAMILY.flood.defaultLane.kind === "outermost" &&
     TEMPLATE_BY_FAMILY.scheduled_roadworks.defaultLane.kind === "operator_lane" && TEMPLATE_BY_FAMILY.scheduled_roadworks.defaultLane.lane === 1,
 );
 check("rain: default lane is the outermost, like the other speed-zone family (it blocks no lane, but defaultOperatorLane still needs an index)", TEMPLATE_BY_FAMILY.rain.defaultLane.kind === "outermost");
@@ -919,7 +934,7 @@ check("event: phases tile the whole duration, start at 0, ascend, are labelled w
       }
     }
   }
-  check(`collisions: in every phase (${checked} cases: 6 families x 3 lanes x 3 positions, 13 phases per lane and position: 2+3+3+3+1+1) the lanes, stretch and owner match the assumption tables, updating as phases advance`, ok && checked === 117);
+  check(`collisions: in every phase (${checked} cases: 6 families x 3 lanes x 3 positions, 16 phases per lane and position: 2+3+3+3+4+1) the lanes, stretch and owner match the assumption tables, updating as phases advance`, ok && checked === 144);
 }
 
 // --- shoulder breakdown: the speed zone, unless the operator is using it
@@ -1243,7 +1258,8 @@ function engineInSync(ts: TrafficSim, controls: ManualControls, events: readonly
     const binding = createEngineBinding();
     const events = must([], collisionSpec(family, 2, 330, 0.5, manualMinutes(10)), 1).events;
     let due = -Infinity;
-    while (scenarioTimeS(ts.time, frame) < 90) {
+    // A flood's first phase is rain with water pooling (nothing closed), so look once it has risen.
+    while (scenarioTimeS(ts.time, frame) < (family === "flood" ? 90 + 0.35 * 600 : 90)) {
       ts.step(0.05);
       due = applyAtBoundary(binding, ts, idle, events, frame, due).dueS;
     }
@@ -1264,7 +1280,7 @@ function engineInSync(ts: TrafficSim, controls: ManualControls, events: readonly
     readonly ts: TrafficSim;
     readonly startT: number;
     /** Every vehicle that was ever in the scene (a wreck or a responder), by id, with what it was before. */
-    readonly cast: Map<number, { firstSeen: number; wasTraffic: boolean; lanes: Set<number>; restX: number | null; crept: number; spawn: number; vClass: number; look: string | undefined }>;
+    readonly cast: Map<number, { firstSeen: number; wasTraffic: boolean; lanes: Set<number>; restX: number | null; crept: number; spawn: number; vClass: number; look: string | undefined; lastLook: string | undefined }>;
     /** A scene vehicle that turned up already at rest, or a responder that appeared anywhere but the entrance. */
     readonly popIns: string[];
     readonly worstOverlap: number;
@@ -1288,7 +1304,7 @@ function engineInSync(ts: TrafficSim, controls: ManualControls, events: readonly
         if (v.role !== "traffic") {
           let c = cast.get(v.id);
           if (!c) {
-            c = { firstSeen: ts.time, wasTraffic: before?.role === "traffic", lanes: new Set(), restX: null, crept: 0, spawn: v.spawnTime, vClass: v.vClass, look: v.look };
+            c = { firstSeen: ts.time, wasTraffic: before?.role === "traffic", lanes: new Set(), restX: null, crept: 0, spawn: v.spawnTime, vClass: v.vClass, look: v.look, lastLook: v.look };
             cast.set(v.id, c);
             // A wreck must have been driving a moment ago; a responder must come in at the entrance.
             if (v.role === "wreck" && before === undefined) popIns.push(`wreck #${v.id} appeared at ${v.x.toFixed(0)} m`);
@@ -1296,7 +1312,9 @@ function engineInSync(ts: TrafficSim, controls: ManualControls, events: readonly
           }
           if (v.role === "wreck" && !v.departing) {
             c.lanes.add(v.lane);
-            c.look = v.look;
+            // How it came to rest; and how it last stood before it was taken away (an overturned one is righted first).
+            if (c.restX === null) c.look = v.look;
+            c.lastLook = v.look;
             // Measured once the impacts are over: being hit shoves the one in front on a little, which is the crash, not a creep.
             if (c.restX === null && ts.time > startT + 20) c.restX = v.x;
             if (c.restX !== null) c.crept = Math.max(c.crept, Math.abs(v.x - c.restX));
@@ -1377,11 +1395,71 @@ function engineInSync(ts: TrafficSim, controls: ManualControls, events: readonly
       `${stalled ? `class ${stalled.vClass} ${stalled.look}` : "none"}; ${resp}`,
     );
   }
+  // The clearing phase: the lane reopens before the scene is over. The casualties leave the lane, the police wait on
+  // the hard shoulder until the event ends, then go too.
+  {
+    const ts = new TrafficSim({ length: 600, laneCount: 4, inflowVehPerHour: 5200, seed: 7, warmupS: 60 }, engineIv(600, 4));
+    const binding = createEngineBinding();
+    const events = must([], collisionSpec("minor_collision", 2, 350, 1, manualMinutes(10)), 1).events;
+    const e = events[0];
+    const clearing = e.phases.find((p) => p.id === "clearing")!;
+    let due = -Infinity;
+    const run = (until: number) => {
+      while (ts.time < until) {
+        ts.step(0.05);
+        due = applyAtBoundary(binding, ts, idle, events, frame, due).dueS;
+      }
+    };
+    run(frame.warmupS + e.startS + clearing.offsetS + clearing.durationS * 0.6);
+    const mine = [...ts.vehicles, ...ts.shoulder].filter((v) => v.sceneKey === e.id);
+    // A snapshot: the vehicles themselves move on in the run below.
+    const police = mine.filter((v) => v.responderKind === "police").map((v) => ({ onShoulder: v.onShoulder, stillSince: v.stillSince, departing: v.departing }));
+    const wrecksInLane = mine.filter((v) => v.role === "wreck" && !v.departing);
+    run(frame.warmupS + e.endS + 120);
+    const after = [...ts.vehicles, ...ts.shoulder].filter((v) => v.sceneKey === e.id && !v.departing);
+    check(
+      "scenes from traffic: in a collision's clearing phase the wrecks have left the lane and the police wait, parked, on the hard shoulder; once the event ends they leave too",
+      wrecksInLane.length === 0 && police.length === 1 && police[0].onShoulder === true && police[0].stillSince != null && !police[0].departing && after.length === 0,
+      `wrecks ${wrecksInLane.length}; police ${police.map((v) => `${String(v.onShoulder)} ${v.stillSince != null ? "parked" : "moving"} departing ${String(v.departing)}`).join()}; left behind ${after.length}`,
+    );
+  }
+  // Works trucks come in with the traffic in the lane they close, and are parked there before it shuts.
+  {
+    const ts = new TrafficSim({ length: 600, laneCount: 4, inflowVehPerHour: 4000, seed: 7, warmupS: 60 }, engineIv(600, 4));
+    const binding = createEngineBinding();
+    const events = must([], collisionSpec("scheduled_roadworks", 1, 350, 2, manualMinutes(10)), 1).events;
+    const e = events[0];
+    let due = -Infinity;
+    let onShoulder = false;
+    while (ts.time < frame.warmupS + e.startS + 5) {
+      ts.step(0.05);
+      due = applyAtBoundary(binding, ts, idle, events, frame, due).dueS;
+      if (ts.shoulder.some((v) => v.responderKind === "works")) onShoulder = true;
+    }
+    const crew = ts.vehicles.filter((v) => v.responderKind === "works");
+    check(
+      "roadworks: the works trucks drive in in the lane they close (never up the shoulder and across the traffic) and are parked in it by the time it shuts",
+      !onShoulder && crew.length === 2 && crew.every((v) => v.stillSince != null && v.lane === crew[0].lane),
+      `shoulder ${onShoulder}; ${crew.map((v) => `lane ${v.lane} ${v.stillSince != null ? "parked" : "moving"} x ${v.x.toFixed(0)}`).join("; ")}`,
+    );
+  }
+  // Rain builds and eases rather than switching; a flood's rain eases to light as it drains.
+  {
+    const rain = must([], rainSpec(300, 1, manualMinutes(10), "NB", "moderate"), 1).event;
+    const lvl = (min: number) => sceneMarks([rain], road600, abs(min), NO_OWNERS)[0]?.rainLevel ?? 0;
+    const flood = must([], collisionSpec("flood", 1, 330, 1, manualMinutes(20)), 1).event;
+    const fl = (min: number) => sceneMarks([flood], road600, abs(min), NO_OWNERS)[0]?.rainLevel ?? 0;
+    check(
+      "weather: rain builds up over its first minute and a half and eases off over its last (moderate = level 2 in between); a flood's heavy rain (3) eases to light (1) once it drains",
+      lvl(1.25) > 0 && lvl(1.25) < 1 && near(lvl(6), 2, 1e-9) && lvl(10.9) > 0 && lvl(10.9) < 1 && near(fl(10), 3, 1e-9) && near(fl(19), 1, 1e-9),
+      `${lvl(1.25).toFixed(2)} ${lvl(6)} ${lvl(10.9).toFixed(2)} flood ${fl(10)} ${fl(19)}`,
+    );
+  }
   const over = film("overturned_vehicle", 10, 5200, 3);
   check(
-    "scenes from traffic: an overturned vehicle is a heavy one when one is coming (a bus or a truck), on its side",
-    wrecksOf(over).length === 1 && over.popIns.length === 0 && wrecksOf(over).every(([, c]) => c.wasTraffic && c.vClass >= 2 && c.look === "overturned"),
-    wrecksOf(over).map(([id, c]) => `#${id} class ${c.vClass} ${c.look}`).join(", "),
+    "scenes from traffic: an overturned vehicle is a heavy one when one is coming (a bus or a truck), on its side — and back on its wheels (righted by the recovery crew) before it is towed",
+    wrecksOf(over).length === 1 && over.popIns.length === 0 && wrecksOf(over).every(([, c]) => c.wasTraffic && c.vClass >= 2 && c.look === "overturned" && c.lastLook === "crash"),
+    wrecksOf(over).map(([id, c]) => `#${id} class ${c.vClass} ${c.look} then ${c.lastLook}`).join(", "),
   );
 }
 
@@ -1523,9 +1601,9 @@ function engineInSync(ts: TrafficSim, controls: ManualControls, events: readonly
   const works = must([], collisionSpec("scheduled_roadworks", 2, 350, 0, manualMinutes(9)), 1).event;
   const flood = must([], collisionSpec("flood", 2, 350, 0, manualMinutes(9)), 1).event;
   check(
-    "lead-in: a crash is set up SCENE_LEAD_S ahead, a breakdown BREAKDOWN_LEAD_S (it coasts to a stop), a works convoy by its drive from the entrance, a flood not at all",
-    sceneLeadS(crash, road600) === SCENE_LEAD_S && sceneLeadS(stall, road600) === BREAKDOWN_LEAD_S && sceneLeadS(works, road600) === 19 && sceneLeadS(flood, road600) === 0 &&
-      sceneLeadS(must([], collisionSpec("scheduled_roadworks", 2, 40, 0, manualMinutes(9)), 1).event, road600) === 0,
+    "lead-in: a crash is set up SCENE_LEAD_S ahead, a breakdown BREAKDOWN_LEAD_S (it coasts to a stop), a works convoy by its drive from the entrance in its own lane plus 10 s to pull up (parked before the lane shuts), a flood not at all",
+    sceneLeadS(crash, road600) === SCENE_LEAD_S && sceneLeadS(stall, road600) === BREAKDOWN_LEAD_S && sceneLeadS(works, road600) === 37 && sceneLeadS(flood, road600) === 0 &&
+      sceneLeadS(must([], collisionSpec("scheduled_roadworks", 2, 40, 0, manualMinutes(9)), 1).event, road600) === 13,
     `${sceneLeadS(crash, road600)} ${sceneLeadS(stall, road600)} ${sceneLeadS(works, road600)} ${sceneLeadS(flood, road600)}`,
   );
   const first = (e: ScenarioEvent) => e.phases.filter((p) => !p.skipped)[0].durationS;
@@ -1978,13 +2056,26 @@ check(
   // even though the family's own LANES_BLOCKED figure alone would have been fine.
   const everyLane = { ...collisionSpec("scheduled_roadworks", 1, 330, 5, manualMinutes(20)), extraLanes: [2, 3, 4] };
   check("extra lanes: requesting every lane on the road is refused, using the requested count not the assumption default", (refused([], everyLane, 1) ?? "").includes("every lane"));
+  // Except a flood: water can close the whole carriageway, and the engine queues traffic behind it.
+  const wholeFlood = must([], { ...collisionSpec("flood", 1, 330, 1, manualMinutes(20)), extraLanes: [2, 3, 4] }, 1).event;
+  const atPeak = composeInterventions({ ...idle, incidents: [] }, [wholeFlood], abs(1 + 0.6 * 20), road600);
+  const rising = composeInterventions({ ...idle, incidents: [] }, [wholeFlood], abs(1 + 0.27 * 20), road600);
+  const pooling = composeInterventions({ ...idle, incidents: [] }, [wholeFlood], abs(1 + 0.1 * 20), road600);
+  check(
+    "flood: may close every lane; pooling closes none under heavy rain, rising and draining close the outer half (water on the shoulder side), flooded closes all four",
+    atPeak.interventions.closedLanes.every(Boolean) &&
+      rising.interventions.closedLanes.map((x) => (x ? 1 : 0)).join("") === "0011" &&
+      pooling.interventions.closedLanes.every((x) => !x) && pooling.interventions.speedLimitKmh === ASSUMPTIONS.RAIN_SPEED_KMH.value.heavy,
+    `peak ${atPeak.interventions.closedLanes} rising ${rising.interventions.closedLanes} pooling ${pooling.interventions.closedLanes} limit ${pooling.interventions.speedLimitKmh}`,
+  );
 
   // A duplicate of the primary lane, or of another extra, is silently deduped rather than treated
   // as a distinct lane (matches manualBlockedLanes' Set-based resolution).
   const dup = { ...collisionSpec("flood", 1, 330, 5, manualMinutes(20)), extraLanes: [1, 2, 2] };
   const dupEvent = must([], dup, 1).event;
-  const dupC = composeInterventions({ ...idle, incidents: [] }, [dupEvent], abs(5.2), road600);
-  const dupState = effectiveState({ closedLanes: [false, false, false, false], speedLimitKmh: null }, dupC.owners, [dupEvent], 5.2 * 60, 4);
+  // Half way through the flood: its flooded phase, when it holds every lane it was given.
+  const dupC = composeInterventions({ ...idle, incidents: [] }, [dupEvent], abs(15), road600);
+  const dupState = effectiveState({ closedLanes: [false, false, false, false], speedLimitKmh: null }, dupC.owners, [dupEvent], 15 * 60, 4);
   check("extra lanes: duplicates of the primary lane or of each other are deduped, not double-counted", dupState.closedLanes.join() === "true,true,false,false");
 }
 
@@ -2298,6 +2389,12 @@ check(
   check(
     "scenario panel: Both mode has an explicit 'Add to' carriageway picker and the Add button names the carriageway; the event is stamped with the picked direction",
     /data-scn="direction-pick"/.test(panelSource) && /`Add to \$\{DIRECTION_NAME\[direction\]\}`/.test(panelSource) && /const specFor = \(d: Direction\): NewEventSpec => \(\{ variant, direction: d,/.test(panelSource),
+  );
+  check(
+    "scenario panel: Extra lanes can be added without first touching the Lane list (the row was hidden until a lane was picked, so a flood stayed on its one default lane); a flood has an 'All lanes' button; the event row names every lane it closes",
+    /\{canAddExtraLanes\(family\) && hasLane\(family\) && !site && \(/.test(panelSource) && !/canAddExtraLanes\(family\) && lane !== null/.test(panelSource) &&
+      /family === "flood" && extraLanesNow\.length < laneCap - 1 && \(/.test(panelSource) && /data-scn="all-lanes"/.test(panelSource) &&
+      /`Lanes \$\{\[event\.lane, \.\.\.event\.extraLanes\]/.test(panelSource),
   );
   check(
     "scenario panel: conflicts, locks and the next event number are taken from the TARGET carriageway's own events (scoped within a direction)",
@@ -2639,6 +2736,14 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   const imports = artSource.match(/^import .*$/gm) ?? [];
   check("scene art is pure drawing: it imports only TYPES (no engine, no adapter logic), and never touches the engine's interventions or a TrafficSim", imports.length > 0 && imports.every((l) => l.startsWith("import type ")) && !/TrafficSim|\.interventions|simRef/.test(artSource));
   check("scene art: the animation clock advances only while the run is running (a paused road freezes its rain, water and beacons)", /if \(running\) animClockRef\.current \+= dtReal;/.test(pageSource));
+  check(
+    "drawing: a vehicle that crossed the end of the road is drawn rolling on out of the picture (exitGhosts), not removed with its body still on screen",
+    /const leaving = exitGhosts\(sim, live\);/.test(pageSource) && /const everyone = leaving\.length > 0 \? \[\.\.\.live, \.\.\.leaving\] : live;/.test(pageSource),
+  );
+  check(
+    "drawing: full size, never drawn over one another — where there is not room a vehicle is drawn further back (eased in by how far across a lane change it is), not shorter; road vehicles are shortened only for a plaza vehicle behind; only a tow's hook is contact by design; a scene's offset from its real positions is eased, not jumped",
+    /xm = Math\.min\(xm, cap \+ \(1 - ww\) \* Math\.max\(0, real - cap\)\);/.test(pageSource) && /drawnLengthPx\(baseLengthPx\(v\.length, mToPx, k\), v\.length, plazaBehindM\.get\(v\.id\) \?\? Infinity, mToPx\)/.test(pageSource) && /SCENE_GLIDE_S\)\)/.test(pageSource),
+  );
   check("scene art: the road draws scenes from sceneMarks(events, road, sim.time, owners) — what the engine's binding owns, not a second reading of the events", /sceneMarks\(overlay\.events, roadOf\(sim, overlay\.frame\), sim\.time, overlay\.owners\)/.test(pageSource) && /owners: nb\.owners/.test(pageSource) && /owners: sb\.owners/.test(pageSource));
   check("scene art: the amber triangle marker is now only for an event with no scene to show (not started, or holding nothing)", /if \(!hasSceneArt\(m\)\) drawScenarioMarker\(ctx, x, laneY, g\.r, faint\);/.test(pageSource) && /if \(overlay && overlay\.isScenarioIncident\(inc\)\) continue;/.test(pageSource));
   check("scene art: water goes under the traffic and scenes, weather over both, labels last", pageSource.indexOf("drawWater(") > -1 && pageSource.indexOf("drawWater(") < pageSource.indexOf("drawScenes(sceneGeom") && pageSource.indexOf("drawScenes(sceneGeom") < pageSource.indexOf("drawWeather(sceneGeom") && pageSource.indexOf("drawWeather(sceneGeom") < pageSource.indexOf("drawScenarioLabels(ctx, scenes"));

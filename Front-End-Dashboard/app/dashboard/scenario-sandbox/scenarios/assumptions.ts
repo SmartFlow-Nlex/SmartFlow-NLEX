@@ -60,7 +60,7 @@ export type PhaseIdOf = {
   readonly multi_vehicle_collision: "blocked" | "tow" | "clearing";
   readonly self_accident: "blocked" | "tow" | "clearing";
   readonly overturned_vehicle: "blocked" | "tow" | "clearing";
-  readonly flood: "active";
+  readonly flood: "pooling" | "rising" | "flooded" | "draining";
   readonly scheduled_roadworks: "active";
   readonly rain: "active";
 };
@@ -171,7 +171,7 @@ export const ASSUMPTIONS = {
       multi_vehicle_collision: { blocked: 2, tow: 1, clearing: 0 },
       self_accident: { blocked: 1, tow: 1, clearing: 0 },
       overturned_vehicle: { blocked: 1, tow: 1, clearing: 0 },
-      flood: { active: 1 },
+      flood: { pooling: 0, rising: 1, flooded: 1, draining: 1 },
       scheduled_roadworks: { active: 1 },
       rain: { active: 0 },
     },
@@ -189,7 +189,7 @@ export const ASSUMPTIONS = {
       multi_vehicle_collision: { blocked: 100, tow: 60, clearing: 0 },
       self_accident: { blocked: 60, tow: 60, clearing: 0 },
       overturned_vehicle: { blocked: 80, tow: 80, clearing: 0 },
-      flood: { active: 150 },
+      flood: { pooling: 0, rising: 150, flooded: 150, draining: 150 },
       scheduled_roadworks: { active: 120 },
     },
     "The WRECK LENGTH: how far downstream of the event position the scene extends. NOT AVAILABLE in the data (no export records how much road a scene occupies). Sized to the vehicles involved (4.6 m car, 9 m bus, 14 m truck in the engine) plus a working buffer: two vehicles about 40 m, a multi-vehicle scene about 100 m while lanes are blocked, then a shorter working area while a tow is in progress. Zero where no lane is blocked. The closed stretch is longer than this: it also includes UPSTREAM_BUFFER_M. An overturned vehicle is given a longer footprint than a self accident (80 m against 60 m): a vehicle on its side or roof occupies more than its own length, and righting it needs a crane or heavy wrecker working beside it, not just behind it. Flood is longer again (150 m): standing water pools over a stretch of low ground, not a point, and this sandbox has no flood record to size it against — 150 m is simply larger than any single-vehicle wreck length here, not a measurement. Scheduled roadworks (120 m) is a work zone plus an advance-warning taper, the same reasoning as UPSTREAM_BUFFER_M applied to the work area itself rather than the approach to it.",
@@ -241,7 +241,15 @@ export const ASSUMPTIONS = {
         { id: "tow", share: 0.41 },
         { id: "clearing", share: 0.29 },
       ],
-      flood: [{ id: "active", share: 1 }],
+      // Rain first, then the water (see the flood template): heavy rain with water pooling, the outer lanes going under,
+      // the whole requested width under water, then draining from the inside out. The order is the data's (Waze flood
+      // alerts follow heavy rain; 29 Aug 2026); the shares are a modelling choice compressed into the event's minutes.
+      flood: [
+        { id: "pooling", share: 0.2 },
+        { id: "rising", share: 0.15 },
+        { id: "flooded", share: 0.45 },
+        { id: "draining", share: 0.2 },
+      ],
       scheduled_roadworks: [{ id: "active", share: 1 }],
     },
     "CLOSURE families only. The data gives one total duration per event, not a timeline, so how that total divides into phases is a modelling choice. The lane-blocked share is anchored to the data (below) and only the split of that share into 'awaiting response' and 'tow' is assumed. Breakdown phases are NOT here: they are split by the response share measured in the data (RESPONSE_SHARE_MODEL). Overturned vehicle has no clearance-ratio evidence of its own (see NO_CALIBRATION_FAMILIES) and is given self_accident's split verbatim, as the closest analog (a single vehicle needing recovery, not a multi-vehicle scene) — doubly an assumption, since self_accident's own split is itself unvalidated at the phase level. Flood and scheduled_roadworks are single-phase (share 1): neither has a real 'response then clearing' story the way a collision does — a flood is closed for as long as the water stands and then open, and roadworks are closed for the planned window and then open. Splitting either into invented sub-phases would be a phase-level fake-metric with nothing behind it at all, worse than the collision families' at least ratio-anchored split.",

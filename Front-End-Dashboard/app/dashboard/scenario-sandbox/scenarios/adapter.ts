@@ -378,8 +378,10 @@ export type SceneSpec = {
  *  ahead like a crash, every breakdown came to rest half a minute after its start time. */
 export const BREAKDOWN_LEAD_S = 40;
 /** A works convoy's pace up the shoulder (m/s, door to door), and how far short of its place it decides where to park. */
-const WORKS_PACE_MPS = 12.5;
-const WORKS_DECIDES_M = 110;
+/* The works trucks' drive in, in their own lane at about 13 m/s, and the seconds to pull up and get the board lit: they
+   are parked a little before the lane shuts, which is what a crew setting out a closure does. */
+const WORKS_PACE_MPS = 13;
+const WORKS_SETTLE_S = 10;
 
 /**
  * How long before its start an event has to begin being set up on the road, seconds; 0 for one that needs nothing.
@@ -394,7 +396,7 @@ export function sceneLeadS(event: Pick<ScenarioEvent, "variant" | "site" | "posi
   if (event.site) return 0;
   if (event.variant.family === "scheduled_roadworks") {
     const at = road.metresAt(event.positionKm);
-    return Number.isFinite(at) ? Math.max(0, Math.min(240, Math.round((at - WORKS_DECIDES_M) / WORKS_PACE_MPS))) : 0;
+    return Number.isFinite(at) ? Math.max(0, Math.min(240, Math.round(at / WORKS_PACE_MPS + WORKS_SETTLE_S))) : 0;
   }
   const scene = sceneOf(event.variant);
   if (scene === null) return 0;
@@ -548,7 +550,8 @@ export function eventProblems(event: ScenarioEvent, road: Road): readonly string
     for (const p of event.phases) {
       if (p.skipped || p.lanesBlocked <= 0) continue;
       const count = manualCount ?? p.lanesBlocked;
-      if (count >= road.laneCount) problems.push(`"${p.label}" blocks ${count} lane${count === 1 ? "" : "s"}, which is every lane of a ${road.laneCount}-lane road`);
+      // A flood may close the whole carriageway (the engine queues traffic behind it); nothing else may.
+      if (count >= road.laneCount && event.variant.family !== "flood") problems.push(`"${p.label}" blocks ${count} lane${count === 1 ? "" : "s"}, which is every lane of a ${road.laneCount}-lane road`);
       else if (own === null && p.wreckLengthM !== null && Number.isFinite(positionM) && closureStretch(positionM, p.wreckLengthM, road.segmentLengthM) === null) {
         problems.push(`"${p.label}" leaves no closure stretch at Km ${event.positionKm.toFixed(2)}`);
       }
@@ -1002,6 +1005,35 @@ function manualBlockedLanes(baseIndex: number, extraLanes: readonly number[], la
   return [...lanes].sort((a, b) => a - b);
 }
 
+/**
+ * The lanes a flood holds in its current phase, out of the lanes it was given. Water collects on the low, shoulder
+ * side first and leaves the crown of the road first, so while it rises and while it drains only the outer half of
+ * the given lanes is under water (higher engine index = further out); in its flooded phase all of them are. Any
+ * other family holds what it was given.
+ */
+function floodLanesAt(family: FamilyKey, phaseId: string, given: readonly number[]): readonly number[] {
+  if (family !== "flood" || given.length <= 1) return given;
+  if (phaseId === "rising" || phaseId === "draining") {
+    const keep = Math.ceil(given.length / 2);
+    return [...given].sort((a, b) => b - a).slice(0, keep).sort((a, b) => a - b);
+  }
+  return given;
+}
+
+/** The rain a flood brings in each phase: heavy until the water starts to drain, then light. */
+export function floodRainOf(phaseId: string): RainIntensity | null {
+  switch (phaseId) {
+    case "pooling":
+    case "rising":
+    case "flooded":
+      return "heavy";
+    case "draining":
+      return "light";
+    default:
+      return null;
+  }
+}
+
 function ownerOf(event: ScenarioEvent, phase: ScheduledPhase): Owner {
   return { eventId: event.id, eventName: event.name, phaseId: phase.id, phaseLabel: phase.label };
 }
@@ -1067,6 +1099,15 @@ export function composeInterventions(
     if (event.site) continue;
     const positionM = road.metresAt(event.positionKm);
     const effect = effectOf(event.variant.family);
+    // A flood brings its rain: heavy over the whole road until it starts to drain, then light (floodRainOf).
+    if (event.variant.family === "flood") {
+      const intensity = floodRainOf(phase.id);
+      if (intensity !== null) {
+        const held: SpeedZoneOwnership = { ...ownerOf(event, phase), zone: [0, road.segmentLengthM], limitKmh: ASSUMPTIONS.RAIN_SPEED_KMH.value[intensity] };
+        if (manual.speedLimitKmh === null && speedZone === null) speedZone = held;
+        else extraSpeedZones.push(held);
+      }
+    }
     switch (effect) {
       case "closure": {
         if (phase.lanesBlocked <= 0 || phase.wreckLengthM === null || event.lane === null) break;
@@ -1079,9 +1120,13 @@ export function composeInterventions(
         if (base === null || stretch === null) break;
         const held: ClosureOwnership = {
           ...ownerOf(event, phase),
-          lanes: event.extraLanes.length > 0
-            ? manualBlockedLanes(base, event.extraLanes, road.laneCount)
-            : blockedLanes(base, phase.lanesBlocked, road.laneCount),
+          lanes: floodLanesAt(
+            event.variant.family,
+            phase.id,
+            event.extraLanes.length > 0
+              ? manualBlockedLanes(base, event.extraLanes, road.laneCount)
+              : blockedLanes(base, phase.lanesBlocked, road.laneCount),
+          ),
           closurePointM: stretch.closurePointM,
           closureEndM: stretch.closureEndM,
         };
@@ -1160,6 +1205,8 @@ export type EngineLike = {
   dispatchResponder?(kind: "ambulance" | "police" | "tow" | "works", lane: number, holdAtX: number, delayS: number, sceneKey?: string): void;
   /** Everything this scene put on the road packs up and drives away. */
   releaseScene?(sceneKey: string): void;
+  /** The lanes reopen before the scene is over: the casualties leave the lane, the police wait on the shoulder. */
+  reopenScene?(sceneKey: string): void;
   /** Start a scene at a plaza or service area: strand the vehicles there, shut the booths, send a tow. */
   facilityEventStart?(sceneKey: string, site: EventSite, family: string, respondS?: number): boolean;
   /** End it: the booths reopen and the scene is recovered. */
@@ -1268,7 +1315,7 @@ export function createEngineBinding(): EngineBinding {
   /* Events whose scene has been started: "on" while it stands on the road, "site" for one in a plaza or service area,
      "off" once it has been cleared. A scene is a one-off: apply() runs on every phase boundary and on every operator
      edit, and without this a four-car pile-up would acquire four more cars each time. */
-  const scenes = new Map<string, "on" | "site" | "off">();
+  const scenes = new Map<string, "on" | "clearing" | "site" | "off">();
   /** Scenes whose recovery truck has been sent for. */
   const towed = new Set<string>();
 
@@ -1304,7 +1351,7 @@ export function createEngineBinding(): EngineBinding {
       // An event taken off the list mid-scene: its vehicles pack up and leave, as they would at its end.
       for (const [id, where] of [...scenes]) {
         if (listed.has(id)) continue;
-        if (where === "on") sim.releaseScene?.(id);
+        if (where === "on" || where === "clearing") sim.releaseScene?.(id);
         if (where === "site") sim.facilityEventEnd?.(id);
         scenes.delete(id);
         towed.delete(id);
@@ -1373,7 +1420,11 @@ export function createEngineBinding(): EngineBinding {
            rather than being deleted where it stands, and the lane is free again as the label says. Without the second
            a wreck stood in a lane the engine had reopened, and traffic queued behind it for the rest of the event. */
         const reopened = phase !== null && scene !== null && effectOf(family) === "closure" && phase.lanesBlocked === 0;
-        if ((state === "done" || reopened) && scenes.get(e.id) === "on") {
+        if (reopened && scenes.get(e.id) === "on" && typeof sim.reopenScene === "function") {
+          sim.reopenScene(e.id);
+          scenes.set(e.id, "clearing");
+        }
+        if ((state === "done" || reopened) && (scenes.get(e.id) === "on" || (state === "done" && scenes.get(e.id) === "clearing"))) {
           sim.releaseScene?.(e.id);
           scenes.set(e.id, "off");
         }
@@ -1608,7 +1659,50 @@ export type SceneMark = CanvasMark & {
   readonly capKmh: number | null;
   /** Breakdowns only. */
   readonly vehicle: VehicleKind | null;
+  /** Floods only: the stretch and the outermost lane the water will cover, known before any lane closes, so the
+   *  pooling phase can show water gathering where the flood is about to be. */
+  readonly water?: { readonly fromM: number; readonly toM: number; readonly outerLane: number } | null;
+  /** Rain and flood only: how hard it is raining on the picture right now, 0 (dry) to 3 (heavy) — 1 light, 2 moderate.
+   *  It builds up over the first minute or so and eases off at the end rather than switching on and off, and a
+   *  flood's heavy rain eases to light as the water drains (rainLevelOf). Drawing only: the speed cap is the
+   *  engine's, set by `intensity`. */
+  readonly rainLevel?: number;
+  /** Seconds since the event started and until it ends (0 before it starts and after it ends), for what is set out
+   *  and packed away over time: a work zone's cones. */
+  readonly elapsedS?: number;
+  readonly remainingS?: number;
 };
+
+const RAIN_LEVEL: Readonly<Record<RainIntensity, number>> = { light: 1, moderate: 2, heavy: 3 };
+/** The rain's build-up and easing-off: 90 s, or a sixth of a short event. */
+const rainRampS = (e: ScenarioEvent) => Math.min(90, Math.max(5, (e.endS - e.startS) / 6));
+
+/** How hard it is raining for this event at scenario time t (see SceneMark.rainLevel). */
+function rainLevelOf(e: ScenarioEvent, t: number, phase: ScheduledPhase | null): number {
+  if (t < e.startS || t >= e.endS) return 0;
+  const ramp = rainRampS(e);
+  const envelope = Math.min(1, (t - e.startS) / ramp, (e.endS - t) / ramp);
+  if (e.variant.family === "rain") return RAIN_LEVEL[e.variant.intensity] * envelope;
+  if (e.variant.family !== "flood" || phase === null) return 0;
+  // Heavy until the water starts to drain, then easing to light over the first part of the draining.
+  if (phase.id !== "draining") return RAIN_LEVEL.heavy * envelope;
+  const into = Math.max(0, Math.min(1, (t - (e.startS + phase.offsetS)) / Math.max(1, ramp)));
+  return Math.min(RAIN_LEVEL.heavy - (RAIN_LEVEL.heavy - RAIN_LEVEL.light) * into, RAIN_LEVEL.heavy * envelope);
+}
+
+/** Where a flood's water lies on the road: its own stretch, or 150 m laid out round its point; and its outermost lane. */
+function floodWaterOf(e: ScenarioEvent, road: Road): { readonly fromM: number; readonly toM: number; readonly outerLane: number } | null {
+  if (e.lane === null) return null;
+  const base = operatorLaneToEngineIndex(e.lane, road.laneCount);
+  if (base === null) return null;
+  const lanes = e.extraLanes.length > 0 ? manualBlockedLanes(base, e.extraLanes, road.laneCount) : [base];
+  const own = eventStretchM(e, road);
+  const stretch = own
+    ? { closurePointM: Math.max(0, own.fromM), closureEndM: Math.min(road.segmentLengthM, own.toM) }
+    : closureStretch(road.metresAt(e.positionKm), ASSUMPTIONS.CLOSURE_LENGTH_M.value.flood.flooded, road.segmentLengthM);
+  if (stretch === null) return null;
+  return { fromM: stretch.closurePointM, toM: stretch.closureEndM, outerLane: Math.max(...lanes) };
+}
 
 /**
  * One SceneMark per event that has not finished and can run on this road. `owners` is what the engine
@@ -1636,9 +1730,17 @@ export function sceneMarks(events: readonly ScenarioEvent[], road: Road, simTime
       phaseFraction: fraction,
       closedLanes: holds === null ? [] : holds.lanes,
       stretch: holds === null ? null : { fromM: holds.closurePointM, toM: holds.closureEndM },
-      intensity: e.variant.family === "rain" ? e.variant.intensity : null,
-      capKmh: e.variant.family === "rain" ? ASSUMPTIONS.RAIN_SPEED_KMH.value[e.variant.intensity] : null,
+      intensity: e.variant.family === "rain" ? e.variant.intensity : e.variant.family === "flood" && phase !== null ? floodRainOf(phase.id) : null,
+      capKmh: e.variant.family === "rain"
+        ? ASSUMPTIONS.RAIN_SPEED_KMH.value[e.variant.intensity]
+        : e.variant.family === "flood" && phase !== null && floodRainOf(phase.id) !== null
+          ? ASSUMPTIONS.RAIN_SPEED_KMH.value[floodRainOf(phase.id) as RainIntensity]
+          : null,
       vehicle: breakdownVehicle(e.variant),
+      water: e.variant.family === "flood" ? floodWaterOf(e, road) : null,
+      rainLevel: e.variant.family === "rain" || e.variant.family === "flood" ? rainLevelOf(e, t, phase) : 0,
+      elapsedS: Math.max(0, Math.min(e.endS - e.startS, t - e.startS)),
+      remainingS: Math.max(0, Math.min(e.endS - e.startS, e.endS - t)),
     });
   }
   return out;

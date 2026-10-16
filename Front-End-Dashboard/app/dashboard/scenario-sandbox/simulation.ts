@@ -66,6 +66,8 @@ export type CrashScene = {
 
 /** The least time between a scene coming to rest and its first responder setting off: somebody has to report it. */
 const RESPONSE_CALL_S = 15;
+/** How long the recovery crew is at an overturned vehicle before it is back on its wheels. */
+const RIGHTING_S = 45;
 export type DriverProfile = "cautious" | "normal" | "aggressive";
 
 export type Vehicle = {
@@ -2614,6 +2616,13 @@ export class TrafficSim {
         }
       }
       if (s.done && !s.towSent && (s.towWanted || (s.towAt !== null && this.time >= s.towAt))) this.sendTow(s);
+      /* An overturned vehicle is righted by the recovery crew once their truck has been there a while (the event's
+         "righting and tow" phase), and waits on its wheels to be towed — rather than lying on its side right up to
+         the moment it is pulled away, and flipping upright then. */
+      if (s.towSent && s.members.some((m) => m.look === "overturned")) {
+        const tow = [...this.vehicles, ...this.shoulder].find((v) => v.sceneKey === s.key && v.role === "responder" && v.responderKind === "tow" && v.stillSince != null && !v.departing);
+        if (tow && this.time - tow.stillSince! > RIGHTING_S) for (const m of s.members) if (m.look === "overturned") m.look = "crash";
+      }
     }
     for (const key of cleared) this.releaseScene(key);
   }
@@ -2697,6 +2706,20 @@ export class TrafficSim {
    * like anything else. A vehicle that was still on its way into the scene simply carries on — it never happened to it.
    * Nothing is deleted in place. */
   releaseScene(sceneKey: string): void {
+    this.packUp(sceneKey, false);
+  }
+
+  /* The lanes are open again, but the scene is not over: a collision's clearing phase (the incident log has
+   * BlockageCleared before SiteCleared for all but 358 of 21,804 accidents). The casualties are got out of the lane —
+   * the recovery truck takes one in tow, the others are driven off slowly — and the ambulance goes with them. The
+   * police stay: they move out onto the hard shoulder a little ahead of where they stood and wait there, lights on,
+   * until the event ends (releaseScene). Everything used to drive off here, so the clearing phase played out on an
+   * empty road under a label saying the scene was still being cleared. */
+  reopenScene(sceneKey: string): void {
+    this.packUp(sceneKey, true);
+  }
+
+  private packUp(sceneKey: string, policeStay: boolean): void {
     const all = [...this.vehicles, ...this.shoulder];
     for (const v of all) {
       if (v.doom && v.doom.scene.key === sceneKey) {
@@ -2708,7 +2731,18 @@ export class TrafficSim {
       }
     }
     const mine = all.filter((v) => v.sceneKey === sceneKey && (v.role === "wreck" || v.role === "responder"));
+    const S = this.shoulderLane;
     for (const v of mine) {
+      if (policeStay && v.role === "responder" && v.responderKind === "police" && !v.departing) {
+        // Already parked on the shoulder: it stays where it is. In a lane: out to the shoulder, rolling on to stop.
+        if (!(v.onShoulder && v.stillSince != null)) {
+          v.parkLane = S;
+          v.holdAtX = Math.min(this.cfg.length - 6, v.x + 35);
+          v.stillSince = undefined;
+          v.facTarget = undefined;
+        }
+        continue;
+      }
       v.departing = true;
       v.holdAtX = undefined;
       v.v0 = Math.min(v.v0, v.role === "wreck" ? 12 : 18);
@@ -2750,6 +2784,29 @@ export class TrafficSim {
     const still: typeof this.pendingResponders = [];
     for (const r of this.pendingResponders) {
       if (this.time < r.at) { still.push(r); continue; }
+      /* A works crew is not an emergency: it drives in with the traffic, in the lane it is going to close, and pulls up
+         there — set off early enough to be parked before the lane shuts (sceneLeadS). Up the shoulder like an
+         ambulance, it stopped level with the works and cut sideways across every lane between, standing in live
+         traffic for twenty seconds, and arrived half a minute after the lane had closed round nothing. */
+      if (r.kind === "works" && r.lane < this.cfg.laneCount) {
+        const crew: Vehicle = {
+          id: -1, lane: r.lane, x: 0, v: 0, vClass: RESPONDER_CLASS.works, profile: "normal",
+          v0: 18, T: 1.6, aMax: 1.1, politeness: 0.4, lcSec: 1.6,
+          scanSec: 0.5, scanTimer: 0, reactionS: 0.5, reactTimer: 0, accel: 0,
+          patience: 2, exitAtX: null, stuckFor: 0,
+          length: RESPONDER_LENGTH.works, spawnTime: this.time, co2: 0, laneCooldown: 0,
+          laneFrom: r.lane, laneShift: 1,
+          color: RESPONDER_COLOR.works,
+          role: "responder", responderKind: "works", holdAtX: r.holdAtX, parkLane: r.lane, sceneKey: r.sceneKey,
+        };
+        if (!this.roomFor(crew, r.lane, 0)) { still.push(r); continue; }
+        // At the speed of the traffic it joins, so nobody has to brake hard for it.
+        const ahead = this.vehicles.filter((o) => occupiesLane(o, r.lane) && o.x > 0).sort((a, b) => a.x - b.x)[0];
+        crew.v = Math.min(14, ahead ? ahead.v : 14);
+        crew.id = this.nextId++;
+        this.vehicles.push(crew);
+        continue;
+      }
       // One at a time: the last one on has to have moved off the entrance first.
       if (this.shoulder.some((o) => o.x - o.length < 4)) { still.push(r); continue; }
       const urgent = r.kind !== "works";
