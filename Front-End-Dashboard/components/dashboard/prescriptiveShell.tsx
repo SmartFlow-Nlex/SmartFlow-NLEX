@@ -16,13 +16,31 @@ import StateNote from "../stage/StateNote";
 
 export const CARD: React.CSSProperties = { padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14 };
 
-export function Shell({ title, hint, children, right }: { title: string; hint: string; right?: React.ReactNode; children: React.ReactNode }) {
+export function Shell({
+  title,
+  hint,
+  children,
+  right,
+  updating,
+}: {
+  title: string;
+  hint: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+  /** A fetch is in flight while already-loaded data is still on screen -- flags it so stale data is never mistaken for current. */
+  updating?: boolean;
+}) {
   return (
     <article className="chart-card wide inc-card">
       <div className="inc-card-head">
         <div className="inc-card-titles">
           <h3 className="inc-card-title">
             {title} <InfoTooltip text={hint} />
+            {updating && (
+              <span className="inc-updating-badge" role="status" aria-live="polite">
+                Updating…
+              </span>
+            )}
           </h3>
         </div>
         {right}

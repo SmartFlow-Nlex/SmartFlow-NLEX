@@ -107,6 +107,10 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    // Cleared here, not just on success -- otherwise a retry after a control
+    // change renders as a stale-refresh warning (the PREVIOUS attempt's
+    // error) while it's still in flight, instead of "Updating…".
+    setError(null);
     const qs = new URLSearchParams();
     if (months) qs.set("months", months);
     if (from) qs.set("from", from);
@@ -149,7 +153,13 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
   const hint =
     "A solution for the Predictive tab's own Predicted Incidents Ranking: an exact linear program (Maximal Covering Location solve) that recommends exactly where to pre-position patrol and tow-truck units — which exits or km segments to station them at — to cover as much predicted incident risk as possible, cutting response time during high-risk windows. Fleet size and coverage radius are yours to set — nothing in the warehouse records NLEX's actual patrol fleet.";
 
-  if (loading && predictive === null) return <Empty msg="Loading patrol deployment…" />;
+  if (loading && predictive === null) {
+    return (
+      <Shell title="Resource Staging & Patrol Repositioning" hint={hint}>
+        <Empty msg="Loading patrol deployment…" />
+      </Shell>
+    );
+  }
 
   const useKmView = view === "km" && predictive?.kmSegmentForecast != null && predictive.kmSegmentForecast.length > 0;
   const exitRows: Row[] = (predictive?.corridorForecast ?? [])
@@ -171,8 +181,16 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
   }));
   const rows = useKmView ? kmRows : exitRows;
 
-  if (error || !predictive || rows.length === 0) {
-    return <Empty kind={error ? "error" : "nodata"} msg={`Patrol deployment unavailable: ${error ?? "no Predicted Incidents Ranking data — check the Predictive tab's corridor card."}`} />;
+  // Only reachable with no successful load yet -- predictive === null -- or a
+  // genuinely empty ranking, so there is nothing stale to fall back to; a
+  // later refresh failure with data already loaded is handled below instead
+  // of wiping the panel.
+  if (!predictive || rows.length === 0) {
+    return (
+      <Shell title="Resource Staging & Patrol Repositioning" hint={hint}>
+        <Empty kind={error ? "error" : "nodata"} msg={`Patrol deployment unavailable: ${error ?? "no Predicted Incidents Ranking data — check the Predictive tab's corridor card."}`} />
+      </Shell>
+    );
   }
 
   const clampedFleet = Math.max(1, Math.min(fleetSize, rows.length));
@@ -232,6 +250,7 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
     <Shell
       title="Resource Staging & Patrol Repositioning"
       hint={hint}
+      updating={loading && !error}
       right={
         <div className="inc-controls">
           <div className="inc-seg" role="group" aria-label="Group by">
@@ -252,6 +271,11 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
         </div>
       }
     >
+      {error && (
+        <div role="alert" style={{ fontSize: "0.78rem", color: "var(--color-warning)" }}>
+          Couldn&apos;t refresh with the current Range ({error}) — showing the last loaded result.
+        </div>
+      )}
       {/* The fleet disclaimer stays visible, beside the controls it qualifies. */}
       <p className="inc-caption" style={{ marginTop: -6 }}>
         Fleet size and radius are yours to set — nothing in the warehouse records NLEX&apos;s actual patrol fleet.
@@ -408,6 +432,7 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
               ),
             },
             { label: "When", value: "As rainfall rises" },
+            { label: "Basis", value: <>Top 3 {useKmView ? "segments" : "exits"} by density — predicted incidents per km, not raw count — so a short stretch with concentrated risk outranks a long one with more incidents spread thin</> },
             ...(weatherRisk
               ? [
                   {
@@ -429,9 +454,19 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
           ]}
           details={
             <>
-              Top 3 hotspots by density (predicted incidents per km) — advise reduced speed here first as rainfall
-              rises. The percentages below are the weather-incident-risk model&apos;s own probability of a
-              corridor-wide high-incident day at each rainfall level{weatherRisk ? ` (AUC ${weatherRisk.auc?.toFixed(3) ?? "—"})` : ""}.
+              <p style={{ margin: 0 }}>
+                Top 3 {useKmView ? "segments" : "exits"} by density (predicted incidents per km, from the same{" "}
+                {modelName}{predictive.corridorForecastDays}-day ranking the staging plan above uses) — advise
+                reduced speed here first as rainfall rises. Density, not raw incident count, is deliberate: it is
+                a different ranking from the Hotspot alert above, which watches whichever locations carry the most
+                predicted volume regardless of how spread out that volume is.
+              </p>
+              <p style={{ margin: "8px 0 0" }}>
+                The percentages below are the weather-incident-risk model&apos;s own probability of a corridor-wide
+                high-incident day at each rainfall level{weatherRisk ? ` (AUC ${weatherRisk.auc?.toFixed(3) ?? "—"})` : ""}
+                — a corridor-wide read, not specific to these 3 locations, since no per-location weather-incident
+                model exists in this warehouse. {weatherRisk ? "Higher rainfall raises the probability; use it as a trigger for when to start advising reduced speed, not where." : "Unavailable right now — the advisory still ranks locations by density, just without the rainfall-probability context."}
+              </p>
             </>
           }
         />

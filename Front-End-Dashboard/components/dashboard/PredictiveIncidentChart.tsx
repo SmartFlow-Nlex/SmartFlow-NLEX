@@ -1267,6 +1267,16 @@ export default function PredictiveIncidentChart({
             </svg>
             Volume
           </button>
+          {/* Feature-test feedback read the overlay stopping at Past as missing
+              data for Present, when real Present-zone volume exists and this is
+              deliberate (see effVolume's own doc comment above): Volume is
+              training context for the models, not drawn into Present/Future on
+              purpose, to keep those bands focused on actual vs. predicted
+              incident counts. Shown only alongside the toggle actually being on
+              — there's nothing to explain about an overlay that isn't drawn. */}
+          {showVolume && (
+            <InfoTooltip text="Volume is shown as training context only, stopping at Past by design — even though real volume data exists for Present too. This keeps the Present/Future bands focused on actual vs. predicted incident counts rather than crowding them with a second line." />
+          )}
           {/* Rainfall toggle — same pill, independent of Volume so the user can
               show either, both, or neither. Like Volume, it switches the
               forecast itself when the pipeline stored a weather-free twin

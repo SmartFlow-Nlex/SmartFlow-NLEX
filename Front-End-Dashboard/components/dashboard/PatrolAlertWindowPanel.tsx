@@ -45,6 +45,9 @@ function percentileOf(v: number, all: number[]): number {
 // this card's day order matches that chart's, not JS's Sun-first getDay().
 const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
+// Full names for the Confidence fact below -- "Mon 53, Tue 53, ..." tested as
+// confusing (what is 53?) without spelling out that it's a day count.
+const DOW_FULL: Record<string, string> = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
 
 type HeatmapPoint = { dow: number; hour: number; v: number };
 type AnalyticsSlice = { heatmap: HeatmapPoint[]; range: { from: string; to: string } };
@@ -106,6 +109,10 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    // Cleared here, not just on success -- otherwise a retry after a Range
+    // change renders as a stale-refresh warning (the PREVIOUS attempt's
+    // error) while it's still in flight, instead of "Updating…".
+    setError(null);
     const qs = new URLSearchParams();
     if (months) qs.set("months", months);
     if (from) qs.set("from", from);
@@ -129,9 +136,27 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
     };
   }, [months, from, to]);
 
-  if (loading && data === null) return <Empty msg="Loading patrol alert schedule…" />;
-  if (error || !data || data.heatmap.length === 0) {
-    return <Empty kind={error ? "error" : "nodata"} msg={`Patrol alert schedule unavailable: ${error ?? "no hourly incident data for this Range."}`} />;
+  const hint =
+    "Hours patrol should treat as elevated-risk, one row per day of the week, from the Descriptive tab's own Hour x Day-of-week incident frequency — the same table its Time-of-Day chart draws Weekday/Weekend lines from, broken out further here since different weekdays (and Saturday vs Sunday) don't share one rhythm. A window is any run of hours whose average incident count sits above that specific day's own mean, so it's sized to this corridor's measured rhythm rather than a fixed span like 'rush hour.'";
+
+  if (loading && data === null) {
+    return (
+      <Shell title="Patrol Alert Schedule" hint={hint}>
+        <Empty msg="Loading patrol alert schedule…" />
+      </Shell>
+    );
+  }
+  // Only reachable with no successful load yet -- data === null -- so there is
+  // nothing stale to fall back to; a later refresh failure with data already
+  // loaded is handled below instead of wiping the panel. A genuinely empty
+  // response (heatmap.length === 0) is treated the same way: no previous good
+  // data exists either way.
+  if (!data || data.heatmap.length === 0) {
+    return (
+      <Shell title="Patrol Alert Schedule" hint={hint}>
+        <Empty kind={error ? "error" : "nodata"} msg={`Patrol alert schedule unavailable: ${error ?? "no hourly incident data for this Range."}`} />
+      </Shell>
+    );
   }
 
   // How many of each specific weekday (not just weekday-vs-weekend) fall in
@@ -159,17 +184,24 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
 
   const withWindow = rows.filter((r) => r.primary != null) as (DayRow & { primary: [number, number] })[];
   if (withWindow.length === 0) {
-    return <Empty kind="nodata" msg="Patrol alert schedule unavailable: no days in the selected Range have incident data." />;
+    return (
+      <Shell title="Patrol Alert Schedule" hint={hint} updating={loading && !error}>
+        <Empty kind="nodata" msg="Patrol alert schedule unavailable: no days in the selected Range have incident data." />
+      </Shell>
+    );
   }
   const widest = [...withWindow].sort((a, b) => windowSpanHours(b.primary) - windowSpanHours(a.primary))[0];
   const allHours = rows.flatMap((r) => r.profile.hours);
   const maxHour = Math.max(...allHours, 1e-9);
+  const dayCountPhrase = rows.map((r) => `${r.days} ${DOW_FULL[r.label]}${r.days === 1 ? "" : "s"}`).join(", ");
 
   return (
-    <Shell
-      title="Patrol Alert Schedule"
-      hint="Hours patrol should treat as elevated-risk, one row per day of the week, from the Descriptive tab's own Hour x Day-of-week incident frequency — the same table its Time-of-Day chart draws Weekday/Weekend lines from, broken out further here since different weekdays (and Saturday vs Sunday) don't share one rhythm. A window is any run of hours whose average incident count sits above that specific day's own mean, so it's sized to this corridor's measured rhythm rather than a fixed span like 'rush hour.'"
-    >
+    <Shell title="Patrol Alert Schedule" hint={hint} updating={loading && !error}>
+      {error && (
+        <div role="alert" style={{ fontSize: "0.78rem", color: "var(--color-warning)" }}>
+          Couldn&apos;t refresh with the current Range ({error}) — showing the last loaded result.
+        </div>
+      )}
       <ActionCard
         lead
         icon={Clock}
@@ -185,8 +217,11 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
               </>
             ),
           },
-          { label: "Basis", value: "Hours above that day's own mean" },
-          { label: "Confidence", value: <>Measured over {rows.map((r) => `${r.label} ${r.days}`).join(", ")} days</> },
+          { label: "Basis", value: "Hours whose average incident count sits above that day's own 24-hour mean — not a fixed rush-hour assumption" },
+          {
+            label: "Confidence",
+            value: <>Based on {dayCountPhrase} observed in the selected Range — more occurrences of a weekday means a more reliable average hourly rhythm for it</>,
+          },
         ]}
         details={
           <>
@@ -203,9 +238,10 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
               measured rhythm rather than a fixed span like &apos;rush hour.&apos;
             </p>
             <p style={{ margin: "8px 0 0" }}>
-              Each day&apos;s window is measured over however many of that weekday fell in the selected Range (
-              {rows.map((r) => `${r.label} ${r.days}`).join(", ")}) and recomputed from that day&apos;s own hourly rhythm —
-              it is not a fixed rush-hour assumption shared across days.
+              Each day&apos;s window is measured over however many of that weekday fell in the selected Range —
+              {" "}{dayCountPhrase} — and recomputed from that day&apos;s own hourly rhythm; it is not a fixed
+              rush-hour assumption shared across days. A day with fewer occurrences in the Range (e.g. a short
+              Range spanning only one or two of it) has a noisier average and a less reliable window.
             </p>
           </>
         }

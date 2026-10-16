@@ -84,6 +84,17 @@ function startCacheWarmer(): void {
     ["/incident/predictive?months=12&weather=all", 9 * 60_000],
     ["/emissions/prescriptive?months=12", 9 * 60_000],
     ["/emissions/fleet-mix?days=180", 9 * 60_000],
+    /* Added 17 Oct 2026: Clearance Response Protocol's default view (the
+       combination ClearanceResponsePanel requests on mount). Its own KM/MILP
+       work aside, it also calls getIncidentPredictiveFromDb directly as a
+       plain function -- not an HTTP request -- so it never benefited from
+       /incident/predictive being warmed above; every first hit of a new
+       control combination paid that forecast's full cold cost on top of its
+       own, which is most of why this panel felt unreliable. Warming the
+       default combo here, plus the dedicated cache clearance-protocol.service.ts
+       now keeps on that nested call, covers the common case; a slider moved to
+       a combination nobody has asked for yet is still a genuine first query. */
+    ["/incident/clearance-protocol?type=accident&severity=injury&weather=all&demandLevel=normal&maxUnits=4&unitEffect=0.25&deltaResponseMin=15&months=12", 9 * 60_000],
   ];
   /* The sandbox's first load (7 Oct 2026): 20-30 s of reads, every visit,
      because they were never warmed. Each is seconds of full-table scans and

@@ -26,6 +26,11 @@
     --inc-violet: #8c7ff0;
     --inc-teal: #169bb8;
     --inc-magenta: #d55181;
+    /* Dark-mode contrast pass (feature test IN-9): the shared muted ink #8590a6 is
+       AA on the card but reads dim for 11 px labels, tab names and captions. Lifted
+       for this page only; the Traffic and Emissions tabs keep the shared token. */
+    --text-muted: #a9b3c8;
+    --text-secondary: #cdd5e4;
   }
 }
 :root[data-theme="dark"] .viz-incident {
@@ -34,6 +39,8 @@
   --inc-violet: #8c7ff0;
   --inc-teal: #169bb8;
   --inc-magenta: #d55181;
+  --text-muted: #a9b3c8;
+  --text-secondary: #cdd5e4;
 }
 /* The shared module tints its sort-button hover with --kpi-1, which the old
    layer set to an amber step. On this page it follows the accent instead. */
@@ -495,6 +502,32 @@ html:root .viz-incident.viz-incident { --kpi-1: var(--page-accent); }
   color: var(--text-muted);
 }
 
+/* A fetch is in flight while the previous answer is still showing -- e.g. the
+   Clearance Response Protocol's controls, which otherwise swap units/graphs
+   in silently with no visual cue that the numbers on screen are about to
+   change. Pulses rather than sitting static so it reads as "in progress,"
+   not as a fixed label. */
+.inc-updating-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--page-accent);
+  background: color-mix(in srgb, var(--page-accent) 14%, transparent);
+  color: var(--page-accent);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  vertical-align: middle;
+  animation: inc-updating-pulse 1.4s ease-in-out infinite;
+}
+@keyframes inc-updating-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 /* --- Predicted Incidents Ranking ----------------------------------------- */
 .inc-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .inc-pill {
@@ -929,3 +962,32 @@ html:root .viz-incident.viz-incident { --kpi-1: var(--page-accent); }
   .inc-trust-pill:hover { transform: none; }
   .inc-validation.is-flash { animation: none; }
 }
+
+
+/* --- KPI tile with nothing to show ------------------------------------------
+   A null used to render as a bare dash, which reads as "broken". The tile now
+   says there is no data and its hint line says why. */
+.inc-kpi-empty {
+  display: inline-block;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-muted);
+}
+
+/* --- Heatmap legend: Traffic's interactive key plus the No-data chip -------- */
+.inc-heat-legend { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-top: 30px; }
+.inc-heat-legend > :first-child { flex: 1 1 260px; min-width: 0; }
+
+/* --- Incident types in view: fills the space under the hour x day heatmap --- */
+.inc-mix { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border-default); }
+.inc-mix-bar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--text-muted) 16%, transparent); }
+.inc-mix-bar > span { display: block; height: 100%; min-width: 2px; }
+.inc-mix-bar > span + span { margin-left: 2px; }
+.inc-mix-rows { display: grid; gap: 10px; }
+.inc-mix-row { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: baseline; gap: 2px 10px; }
+.inc-mix-row > i { width: 10px; height: 10px; border-radius: 3px; align-self: center; }
+.inc-mix-name { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); }
+.inc-mix-count { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.inc-mix-facts { grid-column: 2 / -1; margin: 0; font-size: var(--fs-body); font-weight: 300; line-height: 1.5; color: var(--text-secondary); }
+.inc-mix-facts b { font-weight: 600; color: var(--text-primary); }

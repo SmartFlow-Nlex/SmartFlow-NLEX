@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { cachedJson } from "../../../lib/cached-json";
 import { attachCategoryClick } from "../../../lib/chart-click";
-import { useChartTheme, applyChartTheme, seriesRamp, seriesPair, seriesNominal } from "../../../lib/chart-theme";
+import { useChartTheme, applyChartTheme, liftDarkText, seriesRamp, seriesPair, seriesNominal } from "../../../lib/chart-theme";
+import { useNlexExits } from "../../../lib/nlex-exits";
+import { createExitLookup, postRangeForBin } from "../../../lib/exit-lookup";
 import ReactECharts from "echarts-for-react";
 import type { EChartsOption } from "echarts";
 import { AlertTriangle, ArrowDownWideNarrow, ArrowUpNarrowWide, CloudRain, HeartPulse, MapPin, Timer, Siren, X } from "lucide-react";
@@ -95,6 +97,8 @@ const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1
 const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`);
 const fmtPct = (p: number) => `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
 const kmLabel = (bin: number) => `Km ${bin}–${bin + 4}`;
+/** Balintawak-relative range first, the roadside km-post equivalent beside it. */
+const kmLabelBoth = (bin: number) => `${kmLabel(bin)} (post ${postRangeForBin(bin)})`;
 const fmtDay = (d: string) =>
   new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const weekdayOf = (dateStr: string) =>
@@ -109,6 +113,17 @@ function weekStart(dateStr: string): string {
 export default function IncidentPage() {
   // Chart furniture follows the active theme; series hues stay fixed.
   const chartTheme = useChartTheme();
+  // Brighter axis/legend text for dark mode on this tab (feature test IN-9).
+  const frameTheme = liftDarkText(chartTheme);
+
+  // km -> nearest exit, built once and used everywhere a km value is shown.
+  const { exits } = useNlexExits();
+  const exitAt = useMemo(() => createExitLookup(exits), [exits]);
+  /** "Km 0–4 · Balintawak": the segment label with its nearest exit. */
+  const segLabel = (bin: number) => {
+    const n = exitAt.nameForBin(bin);
+    return n ? `${kmLabelBoth(bin)} · ${n}` : kmLabelBoth(bin);
+  };
 
   /* This tab's colour family. The ramp is ordinal — lightest to darkest — and
      both modes are selected steps validated against their own surface, not an
@@ -214,24 +229,40 @@ export default function IncidentPage() {
   // ---------- Derived ----------
   const derived = useMemo(() => {
     if (!data) return null;
-    const { kpis, hotspots, weather } = data;
+    const { kpis, hotspots, weather: wx } = data;
+    // null, not 0: with no prior-period incidents there is nothing to compare
+    // against, and "+0.0%" would claim the count was flat.
     const deltaPct =
       kpis.prevTotalIncidents > 0
         ? ((kpis.totalIncidents - kpis.prevTotalIncidents) / kpis.prevTotalIncidents) * 100
-        : 0;
+        : null;
     const hotspotTotal = hotspots.reduce((s, h) => s + h.total, 0);
     const topHotspot = hotspots[0] ?? null;
 
     // Crash rate per day of each weather, wet vs dry (crashes = road + moto).
     // Exposure-normalized: wet hours are far rarer than dry, so raw counts can't be compared.
-    const wetCrashes = weather.incidents.wet.accident;
-    const dryCrashes = weather.incidents.dry.accident;
-    const wetRate = weather.wetHours > 0 ? (wetCrashes / weather.wetHours) * 24 : 0;
-    const dryRate = weather.dryHours > 0 ? (dryCrashes / weather.dryHours) * 24 : 0;
-    const rainMultiplier = dryRate > 0 ? wetRate / dryRate : null;
+    const wetCrashes = wx.incidents.wet.accident;
+    const dryCrashes = wx.incidents.dry.accident;
+    const wetRate = wx.wetHours > 0 ? (wetCrashes / wx.wetHours) * 24 : 0;
+    const dryRate = wx.dryHours > 0 ? (dryCrashes / wx.dryHours) * 24 : 0;
 
-    return { deltaPct, topHotspot, hotspotTotal, wetRate, dryRate, rainMultiplier };
-  }, [data]);
+    /* The wet-vs-dry multiplier needs both sides. The API applies the Weather
+       filter to the incident counts but not to the hours of exposure, so under
+       Wet or Dry one side is always zero: Wet gave a dry rate of 0 (a null
+       multiplier, drawn as a bare dash) and Dry gave a wet rate of 0 (a
+       "0.00x" that looked like a real result). Accidents-only too: choosing
+       Breakdowns removes every crash. Say which one it is. */
+    let rainMultiplier: number | null = null;
+    let rainEmptyReason: string | null = null;
+    if (weather !== "all") rainEmptyReason = "Compares wet with dry hours: set Weather to All";
+    else if (source === "breakdown") rainEmptyReason = "Counts crashes only: Incident type is set to Breakdowns";
+    else if (wx.wetHours === 0) rainEmptyReason = "No wet hours in this Range";
+    else if (wx.dryHours === 0) rainEmptyReason = "No dry hours in this Range";
+    else if (dryRate === 0) rainEmptyReason = "No crashes in dry hours to compare against";
+    else rainMultiplier = wetRate / dryRate;
+
+    return { deltaPct, topHotspot, hotspotTotal, wetRate, dryRate, rainMultiplier, rainEmptyReason };
+  }, [data, weather, source]);
 
     // ---------- Trend ----------
   type TrendRow = { label: string; accident: number; breakdown: number; total: number };
@@ -476,15 +507,30 @@ export default function IncidentPage() {
     return {
       rows: display,
       option: {
-        grid: { left: 84, right: 46, top: 8, bottom: 18 },
+        grid: { left: 168, right: 46, top: 8, bottom: 18 },
         xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => fmtInt(v) } },
-        yAxis: { type: "category", data: display.map((r) => kmLabel(r.km_bin)), axisLabel: { interval: 0 }, axisTick: { show: false } },
+        yAxis: {
+          type: "category",
+          data: display.map((r) => kmLabel(r.km_bin)),
+          // Two lines per segment: the km range, then the exit it sits nearest.
+          axisLabel: {
+            interval: 0,
+            lineHeight: 13,
+            formatter: (_v: string, i: number) => {
+              const r = display[i];
+              const n = exitAt.nameForBin(r.km_bin) ?? "";
+              return `{k|${kmLabelBoth(r.km_bin)}}\n{n|${n.length > 22 ? `${n.slice(0, 21)}…` : n}}`;
+            },
+            rich: { k: { fontSize: 11, fontWeight: 600, color: chartTheme.ink, lineHeight: 13 }, n: { fontSize: 10, lineHeight: 13 } },
+          },
+          axisTick: { show: false },
+        },
         tooltip: {
           axisPointer: { type: "shadow" },
           formatter: (p) => {
             const i = (p as { dataIndex: number }).dataIndex;
             const r = display[i];
-            return `<b>${kmLabel(r.km_bin)}</b><br/>${fmtInt(r.total)} incidents · ${fmtInt(r.injuries)} injured · ${fmtInt(r.fatalities)} fatalities`;
+            return `<b>${segLabel(r.km_bin)}</b><br/>${fmtInt(r.total)} incidents · ${fmtInt(r.injuries)} injured · ${fmtInt(r.fatalities)} fatalities`;
           },
         },
         /* No legend: one series, and the axis already says these are incidents
@@ -505,7 +551,7 @@ export default function IncidentPage() {
         ],
       },
     };
-  }, [data, hotspotSort, chartTheme]);
+  }, [data, hotspotSort, chartTheme, exitAt]);
 
   /* One place decides what a mode means, so the chart, the click handler and
      the heading cannot drift apart. Defaulted to an empty list rather than
@@ -645,9 +691,10 @@ export default function IncidentPage() {
   const showHotspotDetail = (r: Analytics["hotspots"][number]) => {
     if (!derived) return;
     setDetail({
-      title: kmLabel(r.km_bin),
-      subtitle: "Incident hotspot (5-km segment)",
+      title: kmLabelBoth(r.km_bin),
+      subtitle: "Incident hotspot (5-km segment) · post = roadside km-post, Balintawak = 12",
       rows: [
+        ["Nearest exit", exitAt.nameForBin(r.km_bin) ?? "—"],
         ["Total incidents", fmtInt(r.total)],
         ["Accidents", fmtInt(r.accident)],
         ["Breakdowns", fmtInt(r.breakdown)],
@@ -714,7 +761,7 @@ export default function IncidentPage() {
     if (!option) return <div className={styles.placeholder}>{emptyNote}</div>;
     return (
       <ReactECharts
-        option={applyChartTheme(option, chartTheme)}
+        option={applyChartTheme(option, frameTheme)}
         notMerge
         lazyUpdate
         style={{ width: "100%", height: "100%" }}
@@ -735,7 +782,7 @@ export default function IncidentPage() {
   // A skeleton rather than an ellipsis: the tile keeps its height, so the KPI
   // row does not resize under the cursor as the numbers arrive.
   const kpiValue = (v: string | null) =>
-    loading && !data ? <KpiSkeleton /> : <CountUpValue text={v ?? "—"} />;
+    loading && !data ? <KpiSkeleton /> : v == null ? <span className="inc-kpi-empty">No data</span> : <CountUpValue text={v} />;
 
   // One-glance explanation of what a KPI tile actually measures — same
   // portal-based popup used on every Predictive-tab card title.
@@ -847,6 +894,61 @@ export default function IncidentPage() {
   const causeNoun = causeMode === "Accident causes" ? "accident cause" : causeMode === "Breakdown causes" ? "breakdown cause" : "accident type";
   const wetBreakdownRate = data && data.weather.wetHours > 0 ? (data.weather.incidents.wet.breakdown / data.weather.wetHours) * 24 : null;
   const dryBreakdownRate = data && data.weather.dryHours > 0 ? (data.weather.incidents.dry.breakdown / data.weather.dryHours) * 24 : null;
+  /* Incident types in view: what the hour x day grid cannot say. Same Range, Weather
+     and Incident type as everything else on the tab, from rows already loaded. */
+  const incidentMix = (() => {
+    if (!data || error) return null;
+    const acc = data.dailyTrend.reduce((s, r) => s + r.accident, 0);
+    const brk = data.dailyTrend.reduce((s, r) => s + r.breakdown, 0);
+    const all = acc + brk;
+    if (all === 0) return null;
+    const pct = (n: number) => `${((n / all) * 100).toFixed(1)}%`;
+    const topSeg = (key: "accident" | "breakdown") => {
+      const h = [...data.hotspots].sort((a, b) => b[key] - a[key])[0];
+      return h && h[key] > 0 ? h : null;
+    };
+    const segAcc = topSeg("accident");
+    const segBrk = topSeg("breakdown");
+    const topType = data.types[0];
+    const topAccCause = data.accidentCauses[0];
+    const topBrkCause = data.breakdownCauses[0];
+    return (
+      <div className="inc-mix">
+        <h4 className="inc-subhead">Incident types in view</h4>
+        <div className="inc-mix-bar" role="img" aria-label={`${pct(acc)} accidents, ${pct(brk)} breakdowns`}>
+          {acc > 0 && <span style={{ width: `${(acc / all) * 100}%`, background: TYPE_HUES[0] }} title={`Accidents: ${fmtInt(acc)} (${pct(acc)})`} />}
+          {brk > 0 && <span style={{ width: `${(brk / all) * 100}%`, background: TYPE_HUES[2] }} title={`Breakdowns: ${fmtInt(brk)} (${pct(brk)})`} />}
+        </div>
+        <div className="inc-mix-rows">
+          {acc > 0 && (
+            <div className="inc-mix-row">
+              <i style={{ background: TYPE_HUES[0] }} aria-hidden="true" />
+              <span className="inc-mix-name">Accidents</span>
+              <span className="inc-mix-count">{fmtInt(acc)} · {pct(acc)}</span>
+              <p className="inc-mix-facts">
+                {topType && <>Most common type <b>{topType.label}</b> ({fmtInt(topType.total)}). </>}
+                {topAccCause && <>Top cause <b>{topAccCause.label}</b> ({fmtInt(topAccCause.total)}). </>}
+                <b>{fmtInt(data.kpis.injuries)}</b> injured, <b>{fmtInt(data.kpis.fatalities)}</b> fatal.
+                {segAcc && <> Busiest near <b>{exitAt.nameForBin(segAcc.km_bin) ?? kmLabel(segAcc.km_bin)}</b> ({kmLabelBoth(segAcc.km_bin)}).</>}
+              </p>
+            </div>
+          )}
+          {brk > 0 && (
+            <div className="inc-mix-row">
+              <i style={{ background: TYPE_HUES[2] }} aria-hidden="true" />
+              <span className="inc-mix-name">Breakdowns</span>
+              <span className="inc-mix-count">{fmtInt(brk)} · {pct(brk)}</span>
+              <p className="inc-mix-facts">
+                {topBrkCause && <>Top fault <b>{topBrkCause.label}</b> ({fmtInt(topBrkCause.total)}). </>}
+                {segBrk && <>Busiest near <b>{exitAt.nameForBin(segBrk.km_bin) ?? kmLabel(segBrk.km_bin)}</b> ({kmLabelBoth(segBrk.km_bin)}).</>}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  })();
+
   const answer = (value: ReactNode, label: ReactNode) =>
     data && !error ? (
       <p className="inc-answer inc-chart-answer">
@@ -937,10 +1039,16 @@ export default function IncidentPage() {
                 </h3>
                 <div className={styles.kpiValue}>{kpiValue(data ? fmtInt(data.kpis.totalIncidents) : null)}</div>
                 <p className={styles.kpiHint}>
-                  {derived ? (
-                    <span className={derived.deltaPct <= 0 ? styles.deltaUp : styles.deltaDown}>{fmtPct(derived.deltaPct)}</span>
-                  ) : "—"}{" "}
-                  vs previous period
+                  {derived && derived.deltaPct != null ? (
+                    <>
+                      <span className={derived.deltaPct <= 0 ? styles.deltaUp : styles.deltaDown}>{fmtPct(derived.deltaPct)}</span>{" "}
+                      vs previous period
+                    </>
+                  ) : derived ? (
+                    "No incidents in the previous period to compare against"
+                  ) : (
+                    "—"
+                  )}
                 </p>
               </article>
               <article className={styles.kpiTile}>
@@ -962,10 +1070,15 @@ export default function IncidentPage() {
                   {kpiValue(data?.kpis.avgTimeToFirstResponder.min != null ? `${data.kpis.avgTimeToFirstResponder.min} min` : null)}
                 </div>
                 <p className={styles.kpiHint}>
-                  breakdowns only
                   {data && data.kpis.avgTimeToFirstResponder.min != null
-                    ? ` · ${fmtInt(data.kpis.avgTimeToFirstResponder.n)} of ${fmtInt(data.kpis.avgTimeToFirstResponder.totalBreakdowns)} logged`
-                    : ""}
+                    ? `breakdowns only · ${fmtInt(data.kpis.avgTimeToFirstResponder.n)} of ${fmtInt(data.kpis.avgTimeToFirstResponder.totalBreakdowns)} logged`
+                    : data && source === "accident"
+                      ? "Breakdowns only: Incident type is set to Accidents"
+                      : data && data.kpis.avgTimeToFirstResponder.totalBreakdowns === 0
+                        ? "No breakdowns in this Range and Weather"
+                        : data
+                          ? `None of the ${fmtInt(data.kpis.avgTimeToFirstResponder.totalBreakdowns)} breakdowns in range has a dispatch response logged`
+                          : "breakdowns only"}
                 </p>
               </article>
               <article className={styles.kpiTile}>
@@ -977,8 +1090,10 @@ export default function IncidentPage() {
                 <div className={styles.kpiValue}>{kpiValue(derived?.topHotspot ? kmLabel(derived.topHotspot.km_bin) : null)}</div>
                 <p className={styles.kpiHint}>
                   {derived?.topHotspot && derived.hotspotTotal > 0
-                    ? `${((derived.topHotspot.total / derived.hotspotTotal) * 100).toFixed(1)}% of located incidents`
-                    : "—"}
+                    ? `Post ${postRangeForBin(derived.topHotspot.km_bin)} · near ${exitAt.nameForBin(derived.topHotspot.km_bin) ?? "—"} · ${((derived.topHotspot.total / derived.hotspotTotal) * 100).toFixed(1)}% of located incidents`
+                    : data
+                      ? "No incident in this Range and Weather has a resolved location"
+                      : "—"}
                 </p>
               </article>
               <article className={styles.kpiTile}>
@@ -989,7 +1104,11 @@ export default function IncidentPage() {
                 </h3>
                 <div className={styles.kpiValue}>{kpiValue(derived?.rainMultiplier != null ? `${derived.rainMultiplier.toFixed(2)}×` : null)}</div>
                 <p className={styles.kpiHint}>
-                  {derived ? `${derived.wetRate.toFixed(1)} vs ${derived.dryRate.toFixed(1)} crashes/day, wet vs dry` : "—"}
+                  {derived
+                    ? derived.rainMultiplier != null
+                      ? `${derived.wetRate.toFixed(1)} vs ${derived.dryRate.toFixed(1)} crashes/day, wet vs dry`
+                      : derived.rainEmptyReason
+                    : "—"}
                 </p>
               </article>
             </div>
@@ -1085,7 +1204,7 @@ export default function IncidentPage() {
                 answer(
                   kmLabel(derived.topHotspot.km_bin),
                   <>
-                    <b>{fmtInt(derived.topHotspot.total)}</b> incidents
+                    <b>{fmtInt(derived.topHotspot.total)}</b> incidents near <b>{exitAt.nameForBin(derived.topHotspot.km_bin) ?? "—"}</b>
                     {derived.hotspotTotal > 0 ? ` · ${((derived.topHotspot.total / derived.hotspotTotal) * 100).toFixed(1)}% of located` : ""}
                   </>
                 )}
@@ -1169,15 +1288,22 @@ export default function IncidentPage() {
               ) : error ? (
                 <div className={styles.placeholder} style={{ height: 200 }}>Live data unavailable — is the backend running on port 4000?</div>
               ) : data && data.heatmap.length > 0 ? (
-                <HourDayHeatmap heatmap={data.heatmap} range={data.range} />
+                <>
+                  <HourDayHeatmap heatmap={data.heatmap} range={data.range} />
+                  {incidentMix}
+                </>
               ) : (
                 <div className={styles.placeholder} style={{ height: 200 }}>No data for the selected filters</div>
               )}
             </article>
 
-            {/* Dispatch response times (breakdown log, fixed 12 months) */}
+            {/* Dispatch response times (breakdown log); follows Range like every other card */}
             <div className={`${styles.spanHalf} inc-half`}>
-              <EventBreakdownPanel />
+              <EventBreakdownPanel
+                months={rangeMode === "custom" ? "all" : rangeMode}
+                from={rangeMode === "custom" ? customFrom : undefined}
+                to={rangeMode === "custom" ? customTo : undefined}
+              />
             </div>
           </>
         )}
@@ -1234,13 +1360,14 @@ export default function IncidentPage() {
             <div className={styles.plazaTableWrap}>
               <table className={styles.plazaTable}>
                 <thead>
-                  <tr><th>#</th><th>Segment</th><th>Total</th><th>Accident</th><th>Breakdown</th><th>Injured</th><th>Fatal</th></tr>
+                  <tr><th>#</th><th>Segment</th><th>Nearest exit</th><th>Total</th><th>Accident</th><th>Breakdown</th><th>Injured</th><th>Fatal</th></tr>
                 </thead>
                 <tbody>
                   {data.hotspots.map((r, i) => (
                     <tr key={r.km_bin} className={styles.clickableRow} onClick={() => { setAllHotspotsOpen(false); showHotspotDetail(r); }}>
                       <td className={styles.plazaRank}>{i + 1}</td>
-                      <td>{kmLabel(r.km_bin)}</td>
+                      <td>{kmLabelBoth(r.km_bin)}</td>
+                      <td>{exitAt.nameForBin(r.km_bin) ?? "—"}</td>
                       <td className={styles.plazaNum}>{fmtInt(r.total)}</td>
                       <td className={styles.plazaNum}>{fmtInt(r.accident)}</td>
                       <td className={styles.plazaNum}>{fmtInt(r.breakdown)}</td>

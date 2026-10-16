@@ -433,10 +433,41 @@ export { DEFAULT_UNIT_COST_PER_HOUR, DEFAULT_DELAY_COST_PER_VEH_HOUR, DEFAULT_UN
  * SAME forecast PrescriptiveDeploymentPanel uses) x (a DERIVED cost per
  * incident that zone goes uncovered for -- not a flat guess). See
  * deriveUncoveredIncidentCost for the derivation. incidentsPerHourPerUnit
- * returns null (coverage cost skipped, flagged in assumptions) if the
- * forecast pipeline hasn't written output.
+ * returns null (coverage cost skipped, flagged in assumptions) only once a
+ * retry has also come back empty -- see the cache below for why a single
+ * null here used to be worse than it looked.
+ *
+ * Cached on its own, separately from clearanceCache: this call takes no
+ * filters (always {weather:"all", months:"12"}), so every distinct
+ * accident/severity/weather/demandLevel/slider combination the operator
+ * tries was re-running the SAME heavy nested forecast query -- the one
+ * /api/incident/predictive keeps warm for everyone else via server.ts's
+ * cache warmer -- because this is a direct function call, not an HTTP
+ * request, so it never touched that warm HTTP-level cache. That made EVERY
+ * new control combination pay the forecast's full cold cost (seconds, per
+ * the warmer's own measurements) on top of this file's own KM/MILP work,
+ * which is the main reason Clearance Response Protocol felt unreliable and
+ * "stuck" after a control change -- a slow request with no distinct answer
+ * to show yet, not a different one failing to arrive.
+ *
+ * Worse, a transient null used to be indistinguishable from a genuinely
+ * empty pipeline: getClearanceProtocolFromDb would fold it into a
+ * "coverage cost skipped" response that still reports success, and that
+ * whole response is then cached for real -- not just by clearanceCache's
+ * 10-minute TTL, but by the generic /api route cache in
+ * middleware/route-cache.ts, which stores any 200 JSON body for 3 hours.
+ * That is the same shape of bug already fixed once on the Predictive tab:
+ * a resolved null persisted as if it were the real, final answer. The retry
+ * below plus caching only a real number (never null) closes it here too --
+ * null is now only ever returned, and only ever reaches that 3-hour cache,
+ * after two attempts both come back empty, which is a much stronger signal
+ * that the pipeline genuinely has no output yet rather than one cold query.
  */
-async function getIncidentsPerHourPerUnit(): Promise<number | null> {
+type RateCacheEntry = { at: number; value: number };
+let rateCache: RateCacheEntry | null = null;
+const RATE_CACHE_TTL_MS = 10 * 60 * 1000;
+
+async function computeIncidentsPerHourPerUnit(): Promise<number | null> {
   const anchors = await getIncidentPredictiveAnchors();
   if (!anchors) return null;
   // months is NOT optional in practice despite the type: omitting it (even
@@ -451,6 +482,24 @@ async function getIncidentsPerHourPerUnit(): Promise<number | null> {
   const numZones = predictive.corridorForecast.length;
   if (horizonHours <= 0 || numZones <= 0) return null;
   return totalPredicted / horizonHours / numZones;
+}
+
+async function getIncidentsPerHourPerUnit(): Promise<number | null> {
+  if (rateCache && Date.now() - rateCache.at < RATE_CACHE_TTL_MS) return rateCache.value;
+
+  let result = await computeIncidentsPerHourPerUnit();
+  if (result == null) {
+    // One short retry before accepting "no output yet" -- cheap (only runs
+    // on a cache miss that also came back empty) and turns a cold-start
+    // blip into a transparent extra few hundred ms instead of a silently
+    // degraded answer that then gets cached for hours.
+    await new Promise((r) => setTimeout(r, 300));
+    result = await computeIncidentsPerHourPerUnit();
+  }
+  if (result == null) return null; // genuinely nothing to cache yet
+
+  rateCache = { at: Date.now(), value: result };
+  return result;
 }
 
 /**

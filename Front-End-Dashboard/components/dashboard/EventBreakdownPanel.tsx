@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { EChartsOption } from "echarts";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
-import { useChartTheme, seriesRamp } from "../../lib/chart-theme";
+import { useChartTheme, seriesRamp, liftDarkText } from "../../lib/chart-theme";
 import StateNote from "../stage/StateNote";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
@@ -29,6 +29,26 @@ type EventBreakdownData = {
 
 const fmtInt = (n: number) => Math.round(n).toLocaleString("en-US");
 
+/* Full names for the abbreviated service labels, shown on hover. Only expansions
+   that are certain are listed. AAP, RAMFA and RSIG are logged as acronyms and no
+   file in this repo (ETL, SQL, models, docs) spells them out; they are left to
+   say so rather than guess at what an operator reads as fact. */
+const SERVICE_FULL_NAME: Record<string, string> = {
+  EMS: "Emergency Medical Services",
+  "Patrol Vehicle": "Patrol Vehicle (highway patrol unit)",
+  Investigator: "Investigator (incident investigation unit)",
+  Others: "Other services (not classified in the dispatch log)",
+};
+const fullServiceName = (g: string) =>
+  SERVICE_FULL_NAME[g] ?? `${g}: acronym as logged; expansion not recorded in the data dictionary`;
+
+type Metric = "median" | "avg" | "onscene";
+const METRICS: { key: Metric; label: string; axis: string; pick: (r: DeploymentTimeStat) => number | null }[] = [
+  { key: "median", label: "Median response", axis: "median response (min)", pick: (r) => r.medianResponseMin },
+  { key: "avg", label: "Avg response", axis: "average response (min)", pick: (r) => r.avgResponseMin },
+  { key: "onscene", label: "Avg on-scene", axis: "average on-scene time (min)", pick: (r) => r.avgServiceMin },
+];
+
 type Props = {
   // Same Range control as the rest of the Descriptive page. Defaults to this
   // panel's original fixed 12mo when unset.
@@ -45,6 +65,11 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [responseView, setResponseView] = useState<"cause" | "service">("cause");
+  const [metric, setMetric] = useState<Metric>("median");
+  const [order, setOrder] = useState<"desc" | "asc">("desc");
+  // Full-name hover for a y-axis label. ECharts' own axis tooltip can only echo
+  // the label text, so the hover is reported here and drawn as a small overlay.
+  const [axisTip, setAxisTip] = useState<{ name: string; x: number; y: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,40 +106,58 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
     return (
       <article className="chart-card wide inc-card" style={{ minHeight: "260px", justifyContent: "center" }}>
         <StateNote kind={error ? "error" : "nodata"} title="Response time breakdown unavailable">
-          {error ?? "No breakdown dispatch data has been ingested yet."}
+          {error ?? "No breakdown dispatches with a logged response in this Range."}
         </StateNote>
       </article>
     );
   }
 
+  const M = METRICS.find((m) => m.key === metric)!;
+  // The ten most-dispatched groups (the API's order), then ranked by the chosen
+  // measure: keeping the cut on volume stops a 3-dispatch group outranking AAP.
   const responseRows = (responseView === "service" ? data.responseTimeByService : data.responseTimeByCause)
-    .filter((r) => r.medianResponseMin != null)
-    .slice(0, 10);
-  const displayRows = [...responseRows].reverse();
-  // The answer: the slowest median among the groups on the chart.
-  const slowest = responseRows.reduce<DeploymentTimeStat | null>(
-    (a, r) => (a == null || (r.medianResponseMin ?? -1) > (a.medianResponseMin ?? -1) ? r : a),
-    null
-  );
+    .filter((r) => M.pick(r) != null)
+    .slice(0, 10)
+    .sort((a, b) => (M.pick(b) ?? 0) - (M.pick(a) ?? 0));
+  // A category axis draws index 0 at the bottom, so longest-first is the reverse.
+  const displayRows = order === "desc" ? [...responseRows].reverse() : [...responseRows];
+  // The answer: the slowest group on the measure being shown.
+  // Groups with a handful of dispatches can top the ranking on one outlier (a
+  // short Range gave "slowest: RSIG, 1 dispatches"), so the headline prefers
+  // groups with at least 5; the bars still show everything.
+  const slowest = responseRows.find((r) => r.n >= 5) ?? responseRows[0] ?? null;
 
   const responseOption: EChartsOption = {
-    grid: { left: 110, right: 42, top: 8, bottom: 28 },
-    xAxis: { type: "value", name: "median response (min)", nameLocation: "middle", nameGap: 24, splitNumber: 3, axisLabel: { formatter: (v: number) => `${v} min` } },
-    yAxis: { type: "category", data: displayRows.map((r) => r.group), axisLabel: {}, axisTick: { show: false } },
+    grid: { left: 118, right: 64, top: 8, bottom: 28 },
+    xAxis: { type: "value", name: M.axis, nameLocation: "middle", nameGap: 24, splitNumber: 3, axisLabel: { formatter: (v: number) => `${v} min` } },
+    yAxis: {
+      type: "category",
+      data: displayRows.map((r) => r.group),
+      axisLabel: {},
+      axisTick: { show: false },
+      // Hovering an axis label shows the full service name for the acronyms.
+      triggerEvent: true,
+    },
     tooltip: {
       axisPointer: { type: "shadow" },
       formatter: (p) => {
         const i = (p as { dataIndex: number }).dataIndex;
         const r = displayRows[i];
-        return `<b>${r.group}</b><br/>Median response: ${r.medianResponseMin} min<br/>` +
+        const full = responseView === "service" ? `<br/><span style="color:var(--text-muted)">${fullServiceName(r.group)}</span>` : "";
+        const zero = M.pick(r) === 0 ? `<br/><span style="color:var(--text-muted)">0 min: dispatch and arrival were logged at the same time</span>` : "";
+        return `<b>${r.group}</b>${full}<br/>Median response: ${r.medianResponseMin ?? "—"} min<br/>` +
           `Avg response: ${r.avgResponseMin ?? "—"} min<br/>Avg on-scene service time: ${r.avgServiceMin ?? "—"} min<br/>` +
-          `${fmtInt(r.n)} dispatches`;
+          `${fmtInt(r.n)} dispatches${zero}`;
       },
     },
     series: [
       {
         type: "bar",
-        data: displayRows.map((r) => ({ value: r.medianResponseMin, itemStyle: { color: RAMP[1], borderRadius: [0, 4, 4, 0] } })),
+        // A value label on every bar: a 0-minute group (Investigators are logged
+        // on scene, dispatch time = arrival time) has no bar to see and used to
+        // read as an empty row.
+        label: { show: true, position: "right", formatter: (p: unknown) => `${(p as { value: number }).value} min`, fontSize: 11, color: chartTheme.ink },
+        data: displayRows.map((r) => ({ value: M.pick(r), itemStyle: { color: RAMP[1], borderRadius: [0, 4, 4, 0] } })),
         barMaxWidth: 16,
       },
     ],
@@ -129,28 +172,73 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
             <InfoTooltip text="Dispatch response times (AAP, Patrol Vehicle, RAMFA, and others) from the breakdown log, by cause or by service." />
           </h3>
         </div>
-        <div className="inc-seg" role="group" aria-label="Group by">
-          {(["cause", "service"] as const).map((v) => (
-            <button key={v} onClick={() => setResponseView(v)} aria-pressed={responseView === v} className={responseView === v ? "is-on" : ""}>
-              {v === "cause" ? "By Cause" : "By Service"}
-            </button>
-          ))}
+        <div className="inc-card-tools">
+          <div className="inc-seg" role="group" aria-label="Measure">
+            {METRICS.map((m) => (
+              <button key={m.key} onClick={() => setMetric(m.key)} aria-pressed={metric === m.key} className={metric === m.key ? "is-on" : ""}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <div className="inc-seg" role="group" aria-label="Sort order">
+            {(["desc", "asc"] as const).map((o) => (
+              <button key={o} onClick={() => setOrder(o)} aria-pressed={order === o} className={order === o ? "is-on" : ""}>
+                {o === "desc" ? "Longest first" : "Shortest first"}
+              </button>
+            ))}
+          </div>
+          <div className="inc-seg" role="group" aria-label="Group by">
+            {(["cause", "service"] as const).map((v) => (
+              <button key={v} onClick={() => setResponseView(v)} aria-pressed={responseView === v} className={responseView === v ? "is-on" : ""}>
+                {v === "cause" ? "By Cause" : "By Service"}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {slowest?.medianResponseMin != null && (
+      {slowest && M.pick(slowest) != null && (
         <p className="inc-answer">
-          <span className="inc-answer-value">{slowest.medianResponseMin} min</span>
+          <span className="inc-answer-value">{M.pick(slowest)} min</span>
           <span className="inc-answer-label">
-            slowest median dispatch · <b>{slowest.group}</b>, {fmtInt(slowest.n)} dispatches
+            slowest {M.key === "onscene" ? "average on-scene time" : M.key === "avg" ? "average dispatch" : "median dispatch"} · <b>{slowest.group}</b>, {fmtInt(slowest.n)} {slowest.n === 1 ? "dispatch" : "dispatches"}
           </span>
         </p>
       )}
 
       <div>
-        <h4 className="inc-subhead" style={{ marginBottom: 8 }}>Median Dispatch Response Time</h4>
-        <DashboardChart option={responseOption} height={Math.max(180, displayRows.length * 32 + 20)} />
-        <p className="inc-caption" style={{ marginTop: 6 }}>Last 12 months of data (to June 30, 2026), as every module's 12-month view; does not follow Range or Weather.</p>
+        <h4 className="inc-subhead" style={{ marginBottom: 8 }}>{M.key === "onscene" ? "Average On-Scene Time" : M.key === "avg" ? "Average Dispatch Response Time" : "Median Dispatch Response Time"}</h4>
+        <div style={{ position: "relative" }}>
+          <DashboardChart
+            option={responseOption}
+            height={Math.max(180, displayRows.length * 32 + 20)}
+            themeTweak={liftDarkText}
+            onEvents={{
+              mouseover: ((p: { componentType?: string; value?: string; name?: string; event?: { offsetX: number; offsetY: number } }) => {
+                if (responseView !== "service" || p.componentType !== "yAxis" || !p.event) return;
+                setAxisTip({ name: String(p.value ?? p.name ?? ""), x: p.event.offsetX, y: p.event.offsetY });
+              }) as (p: never) => void,
+              mouseout: ((p: { componentType?: string }) => {
+                if (p.componentType === "yAxis") setAxisTip(null);
+              }) as (p: never) => void,
+            }}
+          />
+          {axisTip && (
+            <div
+              role="tooltip"
+              style={{
+                position: "absolute", left: axisTip.x + 12, top: axisTip.y + 12, zIndex: 5, pointerEvents: "none", maxWidth: 260,
+                padding: "8px 11px", borderRadius: 10, fontSize: "0.8rem", lineHeight: 1.4,
+                background: "var(--chart-tooltip-bg)", color: "var(--chart-tooltip-text)", border: "1px solid var(--chart-tooltip-border)",
+                boxShadow: "0 12px 32px rgba(0,0,0,0.25)",
+              }}
+            >
+              <b>{axisTip.name}</b>
+              <div style={{ opacity: 0.85 }}>{fullServiceName(axisTip.name)}</div>
+            </div>
+          )}
+        </div>
+        <p className="inc-caption" style={{ marginTop: 6 }}>Follows Range. Weather and Incident type do not apply: the dispatch log carries neither.</p>
         <details className="nc-details">
           <summary>How this is measured</summary>
           <p style={{ margin: 0 }}>
