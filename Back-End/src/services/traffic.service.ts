@@ -32,10 +32,16 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
 
   try {
     const bounds = await db.query(
-      `SELECT min(date)::text AS lo, max(date)::text AS hi FROM nlex_traffic_volume`
+      `SELECT min(date)::text AS lo, max(date)::text AS hi,
+              (SELECT max(date_day)::text FROM fact_hourly_jams) AS jam_hi
+         FROM nlex_traffic_volume`
     );
     const minDate: string = bounds.rows[0].lo;
     const maxDate: string = bounds.rows[0].hi;
+    /* The Waze jam reports behind the congestion index and the jam-speed chart stop earlier than the toll
+       record (2026-04-18 against 2026-06-30). Returned so the page can say so when a range runs past it,
+       rather than averaging only the part of the range that has jams as if it were all of it. */
+    const jamTo: string | null = bounds.rows[0].jam_hi ?? null;
 
     let lo: string;
     let hi: string;
@@ -45,20 +51,20 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
       lo = f < minDate ? minDate : f;
       hi = t > maxDate ? maxDate : t;
     } else {
-      // Month ranges anchor at the default year (2025), clamped to available data:
-      // "12 mo" opens as calendar 2025, "3 mo" as Jan-Apr 2025.
-      const anchor = "2025-01-01";
-      lo = anchor < minDate ? minDate : anchor > maxDate ? minDate : anchor;
-      hi =
+      // Every month range ENDS at the last day of data, on every module (the user, 2026-10-15): "3 mo" is the
+      // last 3 months, "12 mo" the last 12, "All" the whole record. 12 months back from the last day, counting
+      // both ends, is 365 days, hence the + 1 day.
+      hi = maxDate;
+      lo =
         filters.months === "all"
-          ? maxDate
+          ? minDate
           : (
-              await db.query(`SELECT LEAST(($1::date + ($2 || ' months')::interval - interval '1 day')::date, $3::date)::text AS hi`, [
-                lo,
+              await db.query(`SELECT GREATEST(($1::date + interval '1 day' - ($2 || ' months')::interval)::date, $3::date)::text AS lo`, [
+                hi,
                 filters.months,
-                maxDate,
+                minDate,
               ])
-            ).rows[0].hi;
+            ).rows[0].lo;
     }
 
     // Hourly detail is heavy and noisy beyond ~2 weeks; only ship it for short spans
@@ -450,7 +456,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
 
     const data = {
       range: { from: lo, to: hi },
-      meta: { plazas: plazaList.rows.map((r) => r.plaza), minDate, maxDate },
+      meta: { plazas: plazaList.rows.map((r) => r.plaza), minDate, maxDate, jamTo },
       kpis: {
         totalVolume: Number(kpi.rows[0].cur_total),
         prevTotalVolume: Number(kpi.rows[0].prev_total),

@@ -956,7 +956,7 @@ export default function IncidentPage() {
                 <span className={styles.kpiIcon} aria-hidden="true"><Timer size={15} /></span>
                 <h3>
                   Avg Response Time
-                  {kpiInfo("Breakdowns only: average minutes from a breakdown being reported to the first responder being dispatched. Accidents have no per-dispatch record to measure this from, so they aren't included — see \"Predicted clearance time\" on the Predictive tab's Secondary Incident Risk card for an accident-side figure instead.")}
+                  {kpiInfo("Breakdowns only: average minutes from a breakdown being reported to the first responder being dispatched. Accidents have no per-dispatch record to measure this from, so they aren't included.")}
                 </h3>
                 <div className={styles.kpiValue}>
                   {kpiValue(data?.kpis.avgTimeToFirstResponder.min != null ? `${data.kpis.avgTimeToFirstResponder.min} min` : null)}

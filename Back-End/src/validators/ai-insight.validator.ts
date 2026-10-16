@@ -137,6 +137,51 @@ export const EventSurgeNarrativeSchema = z.object({
 });
 
 /**
+ * POST /api/ai-insight/fleet-mix-narrative
+ *
+ * The Forecasted Fleet Composition card: a daily forecast of the SHARE of each
+ * toll class (a composition that sums to 1), ranked by Aitchison distance and
+ * benchmarked against persistence (assume tomorrow's mix is today's). Neither
+ * the forecast nor the congestion schema fits a composition, so it has its own.
+ */
+export const FleetMixNarrativeSchema = z.object({
+  models: z
+    .array(
+      z.object({
+        model: z.string().min(1).max(80),
+        rank: z.number().int().min(0).max(100).nullable().optional(),
+        accepted: z.boolean().nullable().optional(),
+        maePp: z.number().min(0).max(100).nullable().optional(),
+        mape: z.number().min(0).max(10000).nullable().optional(),
+        heavyWmape: z.number().min(0).max(10000).nullable().optional(),
+        heavyR2: z.number().min(-1000).max(1).nullable().optional(),
+        skill: z.number().min(0).max(1000).nullable().optional(),
+        rejectedReason: z.string().max(400).nullable().optional(),
+        diagnosis: z.string().max(400).nullable().optional(),
+      }),
+    )
+    .min(1)
+    .max(10),
+  /** What the card shows: the heavy share now and over the projection, and any surge days. */
+  situation: z
+    .object({
+      champion: z.string().max(80).nullable().optional(),
+      heavyNowPct: z.number().min(0).max(100).nullable().optional(),
+      heavyNextPct: z.number().min(0).max(100).nullable().optional(),
+      windowDays: z.number().int().min(1).max(366),
+      projectionDays: z.number().int().min(0).max(366).nullable().optional(),
+      projectionStart: z.string().max(40).nullable().optional(),
+      projectionEnd: z.string().max(40).nullable().optional(),
+      validatedDays: z.number().int().min(1).max(366),
+      surgeDays: z.number().int().min(0).max(366),
+      surgeDates: z.array(z.string().max(40)).max(10).optional(),
+      dataEnds: z.string().max(40).nullable().optional(),
+      staleDays: z.number().int().min(-10).max(100000).nullable().optional(),
+    })
+    .optional(),
+});
+
+/**
  * POST /api/ai-insight/explain
  *
  * Unlike the narrative endpoint, no data is accepted from the client — only the

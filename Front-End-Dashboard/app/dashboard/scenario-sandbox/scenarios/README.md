@@ -361,8 +361,17 @@ here: they are agents, drawn with the traffic (next section).
   where drops land, a cool wet tint on the asphalt, and a speed-limit roundel showing the cap. The
   engine's orange speed-zone wash is not drawn for a rain-owned zone (the whole-segment zone tinted the
   entire road brown); the roundel and the rain say it instead. Two rain events draw the stronger one only.
-- **Flood**: water over the flooded lane(s) — a rippling shoreline, streaks and glints that move with the
-  direction of travel, foam at the edge, a caution sign and a depth gauge.
+- **Flood**: rain first, then the water, as the data has it (Waze's 354 flood alerts on the corridor, Aug–Oct
+  2026, follow heavy rain; on 29 Aug 2026 five places flooded together after more than a day of rain, 14–18 mm
+  in the 6 h before against a typical 1.9 mm, and the corridor carried 3.7× its usual jam length). Four phases
+  (`ASSUMPTIONS.PHASE_SPLIT`, shares 0.2 / 0.15 / 0.45 / 0.2 — a modelling choice): **pooling** — heavy rain
+  over the whole road at the heavy-rain limit, puddles gathering on the outer lane, nothing closed;
+  **rising** — the outer half of the flood's lanes under water; **flooded** — every lane it was given;
+  **draining** — light rain, the inner lanes reopened first. Side-by-side flooded lanes are drawn as one sheet
+  of water (a rippling shoreline, streaks and glints that move with the direction of travel, foam at the edge,
+  a caution sign and a depth gauge). A flood is the one family that may close **every** lane of a carriageway
+  (the panel's *All lanes* button, or "all lanes" / "lahat ng linya" to the Copilot); traffic then queues behind
+  it. The two carriageways share a sky: a flood or rain on one rains on both pictures.
 - **Animation clock**: one clock in `page.tsx` that advances only while the run is running, so pausing
   freezes the rain, the flowing water and the blinking beacons. The drops are a pure function of the
   clock (nothing stored per drop).
@@ -429,6 +438,43 @@ painted over it.
   creeps; the responders park in the shut lane, police behind the ambulance; a truck breakdown is a truck
   with a patrol on the shoulder and a tow in front, no ambulance; nothing is left once it is over; no two
   vehicles are drawn through each other.
+
+### Start, response and end, filmed (2026-10-16)
+
+Every family was filmed through its whole life on the real page (whole view, 10×) with every drawn sprite
+recorded, and checked for vehicles appearing or vanishing inside the picture, jumps, sudden resizes and sprites
+drawn over one another (touching counts). What that found, and what changed:
+
+- **The exit edge.** The engine retires a vehicle when its nose reaches the end of the stretch — the edge of the
+  canvas — so its body vanished on screen. It is now drawn rolling on at its last speed until it is clear of the
+  picture (`exitGhosts` in `page.tsx`; drawing only, the trip still counts where it did).
+- **The clearing phase.** When a collision's lanes reopened (BlockageCleared, before SiteCleared in the log)
+  everything drove off, so "Scene clearing" played out on an empty road. Now (`reopenScene`) the casualties leave
+  the lane — towed, or driven off — the ambulance goes with them, and the police move onto the hard shoulder and
+  wait, lights on, until the event ends.
+- **An overturned vehicle** is righted by the recovery crew 45 s after their truck is parked (`RIGHTING_S`) and
+  waits on its wheels to be towed, instead of flipping upright as it is pulled away.
+- **Roadworks.** The works trucks used to come up the shoulder like an ambulance, stop level with the works and
+  cut sideways across every lane, arriving half a minute after the lane had shut round nothing. They now drive in
+  with the traffic in the lane they close and are parked before it shuts (`sceneLeadS`: drive at 13 m/s + 10 s).
+  The crew sets the cones out from the taper forward over the first 30 s and picks them up over the last 30 s.
+- **Rain** builds up over its first minute and a half and eases off over its last instead of switching on and
+  off (`SceneMark.rainLevel`, drawn by blending the light/moderate/heavy looks); a flood's heavy rain eases to light
+  as it drains. The speed cap is unchanged: it is the engine's.
+- **Drawn over one another.** A scene's parked vehicles were laid out 0.5 m apart (a pixel at the whole view):
+  they now keep their real gap or a visible 3 px plus what each one's angle swings out by. A new vehicle at the
+  entrance counts in full at once (it was eased in over 14 m, and the truck ahead was drawn over it).
+  Responders are drawn where the engine has them; the wrecks between them are scaled together to the room really
+  there (the visible gaps held, not scaled), shrinking smoothly as a responder crosses in — they used to be laid
+  from the front at full size with the responders pushed back behind, so an ambulance arriving was drawn 28 m
+  short of its spot and jumped there, and a recovery truck's enlarged length pushed a pile-up into the ambulance.
+  A lone stopped vehicle keeps at least the size the traffic rule gives it (a broken-down truck halved as it
+  stopped). What offset a scene still has from its engine positions is eased over about 0.4 s, not jumped. And
+  one last pass over every sprite, shoulder included, shortens any that would reach back over something it could
+  touch — only a crash's impact and a tow's hook are contact by design.
+- **Measured after** (all nine families, 8 min each, both carriageways): nothing appears or vanishes inside the
+  picture; no sprite is drawn over another except at the instant of a crash's impact and for a frame as an
+  ambulance crosses into a four-car pile-up (2.5 px).
 
 ## Forecast incidents on the stretch
 
@@ -643,8 +689,8 @@ time they were written.
   clocks differ by more than a threshold).
 - **Class-filtered blockage** (`ASSUMPTIONS.CLASS_FILTERED_BLOCKAGE`, new): the engine's closure
   lever is binary — a lane is closed to every vehicle class or open to all of them. Flooding is
-  modelled as a single closed lane over 150 m for exactly that reason, but this is a **placeholder**,
-  not a modelled result: real flooding affects outer lanes first and is class-dependent (water
+  modelled as closed lanes over 150 m (outer lanes first while the water rises and drains) for exactly that
+  reason, but this is a **placeholder**, not a modelled result: real flooding is class-dependent (water
   shallow enough for a truck to pass can still stop a car), and nothing here represents that.
   Overturned vehicle and scheduled roadworks do *not* have this problem — both are genuine full-width
   closures for every vehicle class, so a binary closure isn't a simplification for them the way it is

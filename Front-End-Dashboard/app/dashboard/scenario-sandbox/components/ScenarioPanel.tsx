@@ -540,7 +540,9 @@ function EventRow({
         ? `Corridor-wide · ${ASSUMPTIONS.RAIN_SPEED_KMH.value[event.variant.intensity]} km/h cap`
         : event.lane === null
           ? "Shoulder"
-          : `Lane ${event.lane}`;
+          : event.extraLanes.length > 0
+            ? `Lanes ${[event.lane, ...event.extraLanes].sort((a, b) => a - b).join(", ")}`
+            : `Lane ${event.lane}`;
   const km = event.stretchKm ? `${event.stretchKm.fromKm.toFixed(2)}–${event.stretchKm.toKm.toFixed(2)}` : event.positionKm.toFixed(2);
   const where = `${place} · Km ${km} · starts ${clockLabel(clockStartMin + event.startS / 60)}`;
   return (
@@ -1081,7 +1083,7 @@ export default function ScenarioPanel(props: Props) {
           </label>
         )}
       </div>
-      {canAddExtraLanes(family) && lane !== null && !site && (
+      {canAddExtraLanes(family) && hasLane(family) && !site && (
         <div className="sandbox-scn-row" data-scn="extra-lanes">
           <label style={{ flex: 1, minWidth: 0 }}>
             <span className="sandbox-mini-label" style={{ margin: "0 0 3px" }}>
@@ -1126,6 +1128,17 @@ export default function ScenarioPanel(props: Props) {
                   }}
                 >
                   + Add lane
+                </button>
+              )}
+              {/* Water can cover the whole carriageway; no other family may close every lane. */}
+              {family === "flood" && extraLanesNow.length < laneCap - 1 && (
+                <button
+                  type="button"
+                  className="btn-muted"
+                  data-scn="all-lanes"
+                  onClick={() => setExtraLanes(Array.from({ length: laneCap }, (_, i) => i + 1).filter((n) => n !== laneNow))}
+                >
+                  All lanes
                 </button>
               )}
             </div>

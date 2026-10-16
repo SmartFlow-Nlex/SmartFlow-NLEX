@@ -58,22 +58,46 @@ const MIN_SPRITE_ASPECT = 1.2;
  * and at any length of window, so it never shrinks and never overlaps. Legibility comes from zooming the road
  * in (page.tsx's roadView), not from inflating the vehicles. `k` and the room are still passed by every
  * caller and are ignored. */
-/** The one factor every vehicle's width is drawn at: true width (callers add their own slight exaggeration). */
-export function spriteWidthScale(_mToPx: number, _k: number): number {
-  return 1;
+/* LEGIBLE AT THE WHOLE WINDOW (2026-10-14, the operator: "just make it bigger"). True size made a car on a 600 m
+ * window 10-14 px long, a dot in a lane five times taller. Every vehicle is now drawn VIEW_SCALE times its real
+ * length and width, one factor for all of them so a car, a bus and a truck keep their proportions and their
+ * drawings: a car about VIEW_CAR_PX long, at most MAX_VIEW_SCALE times real, and nothing extra once the road is
+ * zoomed in past PLAIN_PX_PER_M (where true size is already legible). The factor depends on the zoom only, never
+ * on the traffic. Where the vehicle behind is closer than the enlarged drawing (a queue, a cut-in), drawnLengthPx
+ * shortens that one vehicle just enough to keep a seam — never below its true length, which always fits — so no
+ * two sprites ever overlap. */
+const VIEW_CAR_PX = 26;
+const MAX_VIEW_SCALE = 3;
+const PLAIN_PX_PER_M = 9;
+export function viewScale(mToPx: number): number {
+  const want = VIEW_CAR_PX / (CAR_REF_M * Math.max(0.05, mToPx));
+  const fade = Math.max(0, Math.min(1, (PLAIN_PX_PER_M - mToPx) / (PLAIN_PX_PER_M * 0.6)));
+  return 1 + (Math.max(1, Math.min(MAX_VIEW_SCALE, want)) - 1) * fade;
 }
-/** A vehicle's drawn length (px): its real length, less a hair so two standing MIN_CLEARANCE apart show a seam. */
-export function baseLengthPx(lengthM: number, mToPx: number, _k: number): number {
+/** The one factor every vehicle's width is drawn at (callers add their own slight exaggeration). */
+export function spriteWidthScale(mToPx: number, _k: number): number {
+  return viewScale(mToPx);
+}
+/** A vehicle's true length on screen (px), less a hair so two standing MIN_CLEARANCE apart show a seam. */
+export function trueLengthPx(lengthM: number, mToPx: number): number {
   const px = lengthM * mToPx;
   return Math.max(2, px - Math.min(1.5, px * 0.06));
+}
+/** A vehicle's drawn length when it has room (px): its real length times viewScale. */
+export function baseLengthPx(lengthM: number, mToPx: number, _k: number): number {
+  return trueLengthPx(lengthM * viewScale(mToPx), mToPx);
 }
 /** The clear seam always left between a sprite and the one behind it: 1.5 px read as touching once vehicles
  *  were drawn at a legible size (2026-10-03), so at least 3 px, and about 8% of the sprite for a long one. */
 const SPRITE_SEAM_MIN_PX = 3;
 /** Squeezed only where the real gap behind it is tighter than its size was chosen for, keeping 30% of that gap visible. */
-export function drawnLengthPx(basePx: number, _lengthM: number, _roomM: number, _mToPx: number): number {
-  // Never squeezed: the base length is the true length, which always fits (see TRUE SIZE above).
-  return Math.max(2, basePx);
+export function drawnLengthPx(basePx: number, lengthM: number, roomM: number, mToPx: number): number {
+  // The true length always fits (see TRUE SIZE above); only the enlargement (LEGIBLE AT THE WHOLE WINDOW) is
+  // given back, and only where the nose of the vehicle behind is closer than the drawing, less a seam.
+  const truePx = trueLengthPx(lengthM, mToPx);
+  if (!(basePx > truePx)) return Math.max(2, basePx);
+  const fitPx = Number.isFinite(roomM) ? roomM * mToPx - SPRITE_SEAM_MIN_PX : Infinity;
+  return Math.max(truePx, Math.min(basePx, fitPx));
 }
 /** Full width unless squeezed so short it would read as sideways; never under 6 px. */
 export function drawnWidthPx(baseWidthPx: number, lengthPx: number): number {

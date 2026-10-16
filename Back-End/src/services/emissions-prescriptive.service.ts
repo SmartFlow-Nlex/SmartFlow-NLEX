@@ -75,8 +75,49 @@ export type Strategy = {
   assumptions: string[];
 };
 
+/** One class's emissions per kilometre (the diagram's "CO2 per class-km" KPI). */
+export type ClassKm = { cls: 1 | 2 | 3; label: string; gPerKm: number; vkmSharePct: number; co2SharePct: number };
+
+/** TOPSIS over the CO2 strategies (the diagram's "TOPSIS - emission intervention ranking"). */
+export type Ranking = {
+  criteria: { key: string; label: string; weight: number; kind: "benefit" | "cost"; why: string }[];
+  rows: { key: Strategy["key"]; label: string; closeness: number; rank: number; values: Record<string, number> }[];
+  note: string;
+};
+
+/** The heavy-vehicle window restriction advisory (the diagram's fleet-mix box, KPI: Class 3 peak share reduction). */
+export type HeavyWindow = {
+  peakHours: string;
+  peakHourList: number[];
+  /** Class 3's share of vehicle-km in those hours now, and the share of all Class-3 vehicle-km that falls in them. */
+  peakClass3SharePct: number;
+  class3InPeakPct: number;
+  /** Class 3's share of vehicle-km over the whole day, to compare the peak against. */
+  allDayClass3SharePct: number;
+  /** With the restriction honoured, the Class-3 share in the peak hours falls by this many points (the KPI). */
+  shareReductionPp: number;
+  receivingHours: string;
+  /** Whether the hours that take the moved trucks stay below the peak's own level. */
+  fitsOffPeak: boolean;
+  capacityNote: string;
+  co2Note: string;
+};
+
+/** Where and when a Class-3 peak toll would act (the diagram's "Dynamic tolling recommendation"). */
+export type Tolling = {
+  hours: string;
+  exits: { name: string; class3Tonnes: number; sharePct: number }[];
+  atStakeTonnes: number;
+  note: string;
+};
+
 export type PrescriptiveResult = {
   strategies: Strategy[];
+  ranking: Ranking | null;
+  classKm: ClassKm[];
+  corridorGPerVkm: number;
+  heavyWindow: HeavyWindow | null;
+  tolling: Tolling | null;
   /** Strategies this Range cannot support, and why. Left out of `strategies`
    *  rather than drawn as 0%: a bar at zero reads as "saves nothing", which is
    *  a finding, and there is no finding without the data. */
@@ -106,6 +147,7 @@ const TTL_MS = 10 * 60 * 1000;
  *  displaced heavy vehicle-km would emit if it moved to the medium class. */
 const F_HEAVY = 1492;
 const F_MEDIUM = 354;
+const F_LIGHT = 192;
 
 /* Monte Carlo for the two incident strategies. Their saving depends on WHICH
    incidents happen in a Range — and because idling is quadratic, on how many
@@ -148,16 +190,14 @@ async function resolveWindow(filters: PrescriptiveFilters) {
        zeros would read as "no saving". */
     return { lo: f < minDate ? minDate : f, hi: t > maxDate ? maxDate : t, askedFrom: f, askedTo: t, ...record };
   }
-  // Same anchoring as getEmissionsAnalyticsFromDb, so the Range control means
-  // the same thing on this tab's Prescriptive view as on its Descriptive one.
-  const anchor = "2025-01-01";
-  const lo = anchor < minDate ? minDate : anchor > maxDate ? minDate : anchor;
-  if (filters.months === "all") return { lo, hi: maxDate, askedFrom: lo, askedTo: maxDate, ...record };
+  // Same rule as every descriptive tab: month ranges END at the last day of data (the user, 2026-10-15).
+  // "All" is the whole record; "3"/"12" are the last 3/12 months, 365 days for twelve.
+  if (filters.months === "all") return { lo: minDate, hi: maxDate, askedFrom: minDate, askedTo: maxDate, ...record };
   const { rows } = await db!.query(
-    `SELECT LEAST(($1::date + ($2 || ' months')::interval - interval '1 day')::date, $3::date)::text AS hi`,
-    [lo, filters.months, maxDate],
+    `SELECT GREATEST(($1::date + interval '1 day' - ($2 || ' months')::interval)::date, $3::date)::text AS lo`,
+    [maxDate, filters.months, minDate],
   );
-  return { lo, hi: rows[0].hi as string, askedFrom: lo, askedTo: rows[0].hi as string, ...record };
+  return { lo: rows[0].lo as string, hi: maxDate, askedFrom: rows[0].lo as string, askedTo: maxDate, ...record };
 }
 
 export async function getPrescriptiveStrategies(
@@ -172,6 +212,11 @@ export async function getPrescriptiveStrategies(
   const { lo, hi, askedFrom, askedTo, recordFrom, recordTo } = await resolveWindow(filters);
   const nothing = (why: string): PrescriptiveResult => ({
     strategies: [],
+    ranking: null,
+    classKm: [],
+    corridorGPerVkm: 0,
+    heavyWindow: null,
+    tolling: null,
     unavailable: [],
     noData: why,
     basis: {
@@ -187,11 +232,13 @@ export async function getPrescriptiveStrategies(
     return data;
   }
 
-  const [totals, exposure, incidents, monthly] = await Promise.all([
+  const [totals, exposure, incidents, monthly, hourly, byExitHour] = await Promise.all([
     // The denominator every reduction is expressed against, and Strategy A's raw material.
     db.query(
       `SELECT COALESCE(SUM(co2_tonnes), 0)                 AS co2_tonnes,
               COALESCE(SUM(total * segment_km), 0)         AS all_vkm,
+              COALESCE(SUM(class_1 * segment_km), 0)       AS c1_vkm,
+              COALESCE(SUM(class_2 * segment_km), 0)       AS c2_vkm,
               COALESCE(SUM(class_3 * segment_km), 0)       AS heavy_vkm
          FROM ${EMISSIONS_TABLE} WHERE date BETWEEN $1 AND $2`,
       [lo, hi],
@@ -208,6 +255,18 @@ export async function getPrescriptiveStrategies(
       `SELECT to_char(date_trunc('month', date), 'YYYY-MM') AS m,
               (100 * SUM(class_3 * segment_km) / NULLIF(SUM(total * segment_km), 0))::float AS share
          FROM ${EMISSIONS_TABLE} GROUP BY 1 ORDER BY 2`,
+    ),
+    // The window advisory's raw material: vehicle-km by hour of day, all classes and Class 3.
+    db.query(
+      `SELECT hour::int AS h, SUM(total * segment_km)::float AS vkm, SUM(class_3 * segment_km)::float AS c3
+         FROM ${EMISSIONS_TABLE} WHERE date BETWEEN $1 AND $2 GROUP BY 1 ORDER BY 1`,
+      [lo, hi],
+    ),
+    // The tolling recommendation's: Class-3 vehicle-km by exit and hour.
+    db.query(
+      `SELECT exit_canonical AS exit, hour::int AS h, SUM(class_3 * segment_km)::float AS c3
+         FROM ${EMISSIONS_TABLE} WHERE date BETWEEN $1 AND $2 GROUP BY 1, 2`,
+      [lo, hi],
     ),
   ]);
 
@@ -458,8 +517,155 @@ export async function getPrescriptiveStrategies(
             reason: `No lane-blocking incidents are recorded between ${lo} and ${hi}, and this strategy is computed from them.`,
           }));
 
+  const shown = strategies.filter((s) => !unavailable.some((u) => u.key === s.key));
+
+  /* ── CO2 per class-km ───────────────────────────────────────────────────
+     The diagram's KPI for this box. Per vehicle-km the factors ARE the model (192 / 354 / 1492 g), so the
+     finding is the gap between a class's share of the distance driven and its share of the CO2. */
+  const c1 = Number(totals.rows[0]?.c1_vkm ?? 0);
+  const c2 = Number(totals.rows[0]?.c2_vkm ?? 0);
+  const classVkm = [c1, c2, heavyVkm];
+  const factors = [F_LIGHT, F_MEDIUM, F_HEAVY];
+  const classCo2 = classVkm.map((v, i) => v * factors[i]);
+  const co2Sum = classCo2.reduce((a, b) => a + b, 0);
+  const vkmSum = classVkm.reduce((a, b) => a + b, 0);
+  const classKm: ClassKm[] = [0, 1, 2].map((i) => ({
+    cls: (i + 1) as 1 | 2 | 3,
+    label: ["Class 1 (cars, vans)", "Class 2 (buses, small trucks)", "Class 3 (large trucks)"][i],
+    gPerKm: factors[i],
+    vkmSharePct: r2(vkmSum > 0 ? (classVkm[i] / vkmSum) * 100 : 0),
+    co2SharePct: r2(co2Sum > 0 ? (classCo2[i] / co2Sum) * 100 : 0),
+  }));
+  const corridorGPerVkm = vkmSum > 0 ? Math.round(co2Sum / vkmSum) : 0;
+
+  /* ── Heavy-vehicle window advisory ──────────────────────────────────────
+     The diagram's fleet-mix box: KPI "Class 3 peak share reduction". The peak hours are those within 10% of
+     the busiest hour's vehicle-km; the receiving hours are the quietest, filled in order until they hold the
+     moved Class-3 vehicle-km while each stays under the peak's own lowest hour. It is NOT a CO2 strategy: in
+     this model a truck emits the same at 03:00 as at 17:00 (no congestion term), so it is reported on its own
+     KPI and says so, rather than inflating the CO2 bars. */
+  const hrs = (hourly.rows as { h: number; vkm: number; c3: number }[]).map((r) => ({ h: Number(r.h), vkm: Number(r.vkm), c3: Number(r.c3) }));
+  let heavyWindow: HeavyWindow | null = null;
+  if (hrs.length >= 12) {
+    const top = Math.max(...hrs.map((r) => r.vkm));
+    const peak = hrs.filter((r) => r.vkm >= top * 0.9);
+    const peakSet = new Set(peak.map((r) => r.h));
+    const peakVkm = peak.reduce((a, r) => a + r.vkm, 0);
+    const peakC3 = peak.reduce((a, r) => a + r.c3, 0);
+    const allC3 = hrs.reduce((a, r) => a + r.c3, 0);
+    const allVkmByHour = hrs.reduce((a, r) => a + r.vkm, 0);
+    const ceiling = Math.min(...peak.map((r) => r.vkm));
+    const quiet = hrs.filter((r) => !peakSet.has(r.h)).sort((a, b) => a.vkm - b.vkm);
+    let left = peakC3;
+    const receiving: number[] = [];
+    for (const r of quiet) {
+      if (left <= 0) break;
+      const room = Math.max(0, ceiling - r.vkm);
+      if (room <= 0) continue;
+      receiving.push(r.h);
+      left -= room;
+    }
+    const sharePeak = peakVkm > 0 ? (peakC3 / peakVkm) * 100 : 0;
+    heavyWindow = {
+      peakHours: hourRanges([...peakSet]),
+      peakHourList: [...peakSet].sort((a, b) => a - b),
+      peakClass3SharePct: r2(sharePeak),
+      class3InPeakPct: r2(allC3 > 0 ? (peakC3 / allC3) * 100 : 0),
+      allDayClass3SharePct: r2(allVkmByHour > 0 ? (allC3 / allVkmByHour) * 100 : 0),
+      shareReductionPp: r2(sharePeak),
+      receivingHours: receiving.length ? hourRanges(receiving) : "none needed",
+      fitsOffPeak: left <= 0,
+      capacityNote:
+        left <= 0
+          ? `${receiving.length === 1 ? "The quietest hour" : `The ${receiving.length} quietest hours`} can take every displaced Class-3 vehicle-km and stay${receiving.length === 1 ? "s" : ""} below the peak's own lowest hour.`
+          : `The quiet hours cannot take all of it without becoming as busy as the peak (${Math.round((left / peakC3) * 100)}% would be left over): restrict part of the window, not all of it.`,
+      co2Note:
+        "No CO2 saving is claimed: in this model emissions do not depend on the hour, so a truck moved to the night emits the same. The gain is a peak with fewer trucks in it; the KPI is the Class-3 share in those hours.",
+    };
+  }
+
+  /* ── Dynamic tolling recommendation ─────────────────────────────────────
+     Where a Class-3 peak toll would act: the exits carrying most Class-3 CO2 in the peak hours. No toll
+     elasticity is in the record, so it states what is at stake there, not a saving. */
+  let tolling: Tolling | null = null;
+  if (heavyWindow) {
+    const peakSet = new Set(heavyWindow.peakHourList);
+    const byExit = new Map<string, number>();
+    for (const r of byExitHour.rows as { exit: string; h: number; c3: number }[]) {
+      if (!peakSet.has(Number(r.h))) continue;
+      byExit.set(r.exit, (byExit.get(r.exit) ?? 0) + (Number(r.c3) * F_HEAVY) / 1e6);
+    }
+    const total = [...byExit.values()].reduce((a, b) => a + b, 0);
+    const ranked = [...byExit.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+    if (ranked.length) {
+      tolling = {
+        hours: heavyWindow.peakHours,
+        exits: ranked.map(([name, t]) => ({ name, class3Tonnes: r2(t), sharePct: r2(total > 0 ? (t / total) * 100 : 0) })),
+        atStakeTonnes: r2(total),
+        note:
+          "A Class-3 surcharge in these hours at these exits is the lever that would enforce the window above. The record holds no toll elasticity, so no CO2 reduction is claimed: the tonnes are what Class 3 emits there now, the most a toll there could act on.",
+      };
+    }
+  }
+
+  /* ── TOPSIS ─────────────────────────────────────────────────────────────
+     The diagram ranks interventions with TOPSIS. Criteria are only what the record can measure: the expected
+     saving, the saving even in a bad year (the Monte Carlo 5th percentile; a policy target with no evidence
+     scores 0 there), whether the bound is something the corridor has already achieved, and how wide the
+     uncertainty is. Weights are a stated choice (they sum to 1) and are returned with the ranking. */
+  let ranking: Ranking | null = null;
+  if (shown.length >= 2) {
+    const criteria: Ranking["criteria"] = [
+      { key: "expected", label: "Expected CO2 avoided, as the record supports it (t)", weight: 0.35, kind: "benefit", why: "The size of the saving. A policy target's figure is whatever target is chosen, so it counts 0 here: ranking a chosen number against measured ones would rank the choice." },
+      { key: "worst", label: "Avoided even in a bad year (t, 5th percentile)", weight: 0.25, kind: "benefit", why: "What can be counted on; a policy target with no evidence counts 0." },
+      { key: "evidence", label: "Bound already achieved on NLEX (1 = yes)", weight: 0.25, kind: "benefit", why: "Whether the corridor has shown it can do this." },
+      { key: "spread", label: "Uncertainty (5th-95th width / expected)", weight: 0.15, kind: "cost", why: "How far the figure could move." },
+    ];
+    type Vals = { expected: number; worst: number; evidence: number; spread: number };
+    const spreads = shown
+      .filter((st) => st.range && st.reductionTonnes > 0)
+      .map((st) => (st.range!.highTonnes - st.range!.lowTonnes) / st.reductionTonnes);
+    // No range means the uncertainty is not known, which is scored as the widest one seen, not as none.
+    const unknownSpread = spreads.length ? Math.max(...spreads) : 1;
+    const vals: Vals[] = shown.map((st) => ({
+      expected: st.evidenceBounded ? st.reductionTonnes : 0,
+      worst: st.evidenceBounded ? (st.range?.lowTonnes ?? st.reductionTonnes) : 0,
+      evidence: st.evidenceBounded ? 1 : 0,
+      spread: st.range && st.reductionTonnes > 0 ? (st.range.highTonnes - st.range.lowTonnes) / st.reductionTonnes : unknownSpread,
+    }));
+    const keys = criteria.map((c) => c.key as keyof Vals);
+    const norm = keys.map((k) => Math.sqrt(vals.reduce((a, v) => a + v[k] * v[k], 0)) || 1);
+    const weighted = vals.map((v) => keys.map((k, j) => (v[k] / norm[j]) * criteria[j].weight));
+    const col = (j: number) => weighted.map((w) => w[j]);
+    const ideal = keys.map((_, j) => (criteria[j].kind === "benefit" ? Math.max(...col(j)) : Math.min(...col(j))));
+    const anti = keys.map((_, j) => (criteria[j].kind === "benefit" ? Math.min(...col(j)) : Math.max(...col(j))));
+    const closeness = weighted.map((w) => {
+      const dPlus = Math.sqrt(w.reduce((a, x, j) => a + (x - ideal[j]) ** 2, 0));
+      const dMinus = Math.sqrt(w.reduce((a, x, j) => a + (x - anti[j]) ** 2, 0));
+      return dPlus + dMinus > 0 ? dMinus / (dPlus + dMinus) : 0;
+    });
+    const order = closeness.map((c, i) => ({ c, i })).sort((a, b) => b.c - a.c);
+    ranking = {
+      criteria,
+      rows: order.map(({ c, i }, n) => ({
+        key: shown[i].key,
+        label: shown[i].label,
+        closeness: Math.round(c * 1000) / 1000,
+        rank: n + 1,
+        values: Object.fromEntries(keys.map((k) => [k, Math.round(vals[i][k] * 100) / 100])),
+      })),
+      note:
+        "TOPSIS scores each intervention by how close it is to an ideal one (best on every criterion) and how far from the worst, from 0 to 1. Shorter blockages and busiest-hours deployment overlap (the second is part of the first): rank them as alternatives, never add their savings.",
+    };
+  }
+
   const data: PrescriptiveResult = {
-    strategies: strategies.filter((s) => !unavailable.some((u) => u.key === s.key)),
+    strategies: shown,
+    ranking,
+    classKm,
+    corridorGPerVkm,
+    heavyWindow,
+    tolling,
     unavailable,
     noData: null,
     basis: {

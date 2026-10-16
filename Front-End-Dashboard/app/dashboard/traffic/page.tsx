@@ -33,7 +33,7 @@ const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Postgres dow (0=Sun) -> Mon-first
 // ---------- Data contract ----------
 type Analytics = {
   range: { from: string; to: string };
-  meta: { plazas: string[]; minDate: string; maxDate: string };
+  meta: { plazas: string[]; minDate: string; maxDate: string; /** Last day of Waze jam reports. */ jamTo?: string | null };
   kpis: {
     totalVolume: number;
     prevTotalVolume: number;
@@ -981,6 +981,10 @@ export default function TrafficPage() {
                     </>
                   ) : data ? "no prior data" : "—"}
                 </p>
+                {/* Jam reports stop before the toll record does: say so when the Range runs past them. */}
+                {data?.meta.jamTo && data.range.to > data.meta.jamTo && (
+                  <p className={styles.kpiHint}>Waze jam data runs to {data.meta.jamTo}; later days are not in this figure.</p>
+                )}
               </article>
             </div>
 

@@ -150,7 +150,7 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
       <div>
         <h4 className="inc-subhead" style={{ marginBottom: 8 }}>Median Dispatch Response Time</h4>
         <DashboardChart option={responseOption} height={Math.max(180, displayRows.length * 32 + 20)} />
-        <p className="inc-caption" style={{ marginTop: 6 }}>Last 12 months; does not follow Range or Weather.</p>
+        <p className="inc-caption" style={{ marginTop: 6 }}>Last 12 months of data (to June 30, 2026), as every module's 12-month view; does not follow Range or Weather.</p>
         <details className="nc-details">
           <summary>How this is measured</summary>
           <p style={{ margin: 0 }}>

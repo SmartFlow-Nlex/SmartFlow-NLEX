@@ -1,4 +1,5 @@
 import { db } from "../config/db.js";
+import { RECORD_END } from "../etl/toll-hourly.js";
 // Reused rather than duplicated: this is the same nlex_exits + dim_location
 // join every other tab (map, maintenance, AI sandbox) already trusts for the
 // corridor's one authoritative exit list. See its own doc comment for why km
@@ -37,8 +38,14 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 
 // Unified incident log. Dates are stored as text in two formats.
 // Response minutes are computed mod 24h to survive midnight wrap, capped at 120.
+//
+// Held to the shared record window (2026-10-14). These three legacy tables go back to 2020, but traffic,
+// emissions, accidents and breakdowns all run 2022-01-01 to RECORD_END, so a view reading these unfiltered
+// could show incidents from years with no traffic or emissions to set them against. The rows stay in the
+// tables; the dashboard just does not read outside the window everything else covers.
+const RECORD_START = "2022-01-01";
 const INCIDENTS_CTE = `
-  incidents AS (
+  incidents_all AS (
     SELECT CASE WHEN date LIKE '%/%' THEN to_date(date, 'MM/DD/YYYY') ELSE date::date END AS d, reported_time AS rt, response_time AS resp,
            location, cause_of_accident AS cause, type_of_accident AS itype,
            weather_condition,
@@ -57,6 +64,9 @@ const INCIDENTS_CTE = `
     SELECT CASE WHEN date LIKE '%/%' THEN to_date(date, 'MM/DD/YYYY') ELSE date::date END, reported_time, responded_time,
            location, vehicle_cause, 'Stalled vehicle', NULL, 0, 0, 'stalled'
     FROM nlex_stalled_vehicles WHERE date IS NOT NULL
+  ),
+  incidents AS (
+    SELECT * FROM incidents_all WHERE d BETWEEN '${RECORD_START}'::date AND '${RECORD_END}'::date
   )`;
 
 const RESPONSE_MIN = `
@@ -131,18 +141,18 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
       lo = minDate;
       hi = maxDate;
     } else {
-      // Trailing window counted back from the last actual day of data, not
-      // from today's wall-clock date: matches the "last ACTUAL day, not
-      // today" windowing emissions.service.ts's forecast query already uses,
-      // and avoids a window whose tail runs past the data into an empty gap.
+      // Every month range ENDS at the last day of data, on every module (the user, 2026-10-15): "3 mo" is the
+      // last 3 months, "12 mo" the last 12, "All" the whole record. 12 months back from the last day, counting
+      // both ends, is 365 days, hence the + 1 day.
       hi = maxDate;
-      lo = (
-        await db.query(`SELECT GREATEST(($1::date - ($2 || ' months')::interval)::date, $3::date)::text AS lo`, [
-          hi,
-          filters.months,
-          minDate,
-        ])
-      ).rows[0].lo;
+      lo =
+        (
+              await db.query(`SELECT GREATEST(($1::date + interval '1 day' - ($2 || ' months')::interval)::date, $3::date)::text AS lo`, [
+                hi,
+                filters.months,
+                minDate,
+              ])
+            ).rows[0].lo;
     }
 
     const src = filters.source && filters.source !== "all" ? filters.source : null;
@@ -565,6 +575,9 @@ export async function getIncidentHourlyFromDb(date: string) {
          SELECT 'moto', max(${DATE_OF()})::text FROM nlex_motorcycle_crashes WHERE date IS NOT NULL
          UNION ALL
          SELECT 'stalled', max(${DATE_OF()})::text FROM nlex_stalled_vehicles WHERE date IS NOT NULL`
+          // The stalled table runs to 2026-07-25, past RECORD_END; the dashboard reads none of that, so it
+          // must not report it as the last day logged.
+          .replace(/max\((.+?)\)::text FROM (nlex_\w+) WHERE date IS NOT NULL/g, `LEAST(max($1), '${RECORD_END}'::date)::text FROM $2 WHERE date IS NOT NULL`)
       ),
       // Every model's predicted DAILY total for this date. Absent for days
       // outside the walk-forward window (ml_predictive_incidents holds only

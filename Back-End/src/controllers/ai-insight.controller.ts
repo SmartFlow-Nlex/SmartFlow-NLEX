@@ -4,12 +4,14 @@ import {
   ExplainSchema,
   CongestionNarrativeSchema,
   EventSurgeNarrativeSchema,
+  FleetMixNarrativeSchema,
   RankingNarrativeSchema,
 } from "../validators/ai-insight.validator.js";
 import {
   generateInsight,
   generateCongestionInsight,
   generateEventSurgeInsight,
+  generateFleetMixInsight,
   generateRankingInsight,
 } from "../services/ai-insight.service.js";
 import { explain } from "../services/ai-explain.service.js";
@@ -121,6 +123,37 @@ export const eventSurgeNarrative = async (req: Request, res: Response) => {
       return res.status(status).json({ success: false, code: err.code, message: err.message });
     }
     console.error("Event surge narrative failed:", err);
+    return res
+      .status(500)
+      .json({ success: false, code: "internal", message: "Narrative generation failed." });
+  }
+};
+
+/**
+ * POST /api/ai-insight/fleet-mix-narrative
+ *
+ * Same read-only contract: the client sends the leaderboard and the projection
+ * it is already showing, and gets prose back. Nothing is stored.
+ */
+export const fleetMixNarrative = async (req: Request, res: Response) => {
+  const parsed = FleetMixNarrativeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      code: "bad_request",
+      message: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+    });
+  }
+
+  try {
+    const data = await generateFleetMixInsight(parsed.data);
+    return res.json({ success: true, data });
+  } catch (err) {
+    if (err instanceof GlmError) {
+      const status = err.code === "bad_model_output" ? 502 : 503;
+      return res.status(status).json({ success: false, code: err.code, message: err.message });
+    }
+    console.error("Fleet mix narrative failed:", err);
     return res
       .status(500)
       .json({ success: false, code: "internal", message: "Narrative generation failed." });
