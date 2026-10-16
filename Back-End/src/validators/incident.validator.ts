@@ -275,3 +275,97 @@ export const IncidentPredictiveResponseSchema = z.object({
 });
 
 export type IncidentPredictiveResult = z.infer<typeof IncidentPredictiveResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Prescriptive tab (Incident → Clearance Response Protocol)
+// ---------------------------------------------------------------------------
+
+export const ClearanceProtocolQuerySchema = z.object({
+  type: z.enum(["accident", "breakdown"]).optional().default("accident"),
+  // PDO-dominated pooled curves are misleading for a dispatch decision, so
+  // this defaults to "injury" rather than "all" — see the panel's own hint.
+  // Ignored entirely when type=breakdown (no severity column on that table).
+  severity: z.enum(["all", "pdo", "injury", "fatal"]).optional().default("injury"),
+  weather: IncidentPredictiveWeatherSchema.optional().default("all"),
+  months: IncidentPredictiveMonthsSchema.optional().default("12"),
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+  maxUnits: z.coerce.number().int().min(1).max(6).optional().default(4),
+  unitCostPerHour: z.coerce.number().positive().optional().default(1500),
+  delayCostPerVehHour: z.coerce.number().positive().optional().default(300),
+  unitEffect: z.coerce.number().min(0).max(1).optional().default(0.25),
+  demandLevel: z.enum(["offpeak", "normal", "peak"]).optional().default("normal"),
+  // Extra travel/response time a NEW incident sees when the nearest unit is
+  // already committed here -- the input the derived coverage-opportunity
+  // cost is built from (see clearance-protocol.service.ts). Not itself
+  // tunable to produce a particular answer; it's a stated assumption like
+  // beta, exposed the same way.
+  deltaResponseMin: z.coerce.number().positive().optional().default(15),
+});
+export type ClearanceProtocolQuery = z.infer<typeof ClearanceProtocolQuerySchema>;
+
+const ScenarioLabelSchema = z.enum(["fast", "typical", "slow", "extreme"]);
+
+export const ClearanceProtocolResponseSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("ok"),
+    recommendation: z.object({
+      unitsAtDispatch: z.number().int(),
+      escalateAtMinute: z.number(),
+      escalationUnitsByScenario: z.record(ScenarioLabelSchema, z.number().int()),
+      action: z.string(),
+      when: z.string(),
+      effect: z.string(),
+      confidence: z.string(),
+    }),
+    survivalCurve: z.array(z.object({ minute: z.number(), survival: z.number(), atRisk: z.number().int() })),
+    quantiles: z.object({ p50: z.number(), p80: z.number(), p95: z.number() }),
+    scenarios: z.array(
+      z.object({
+        label: ScenarioLabelSchema,
+        probability: z.number(),
+        durationMin: z.number(),
+        delayVehHours: z.number(),
+        recourseUnits: z.number().int(),
+        effectiveDurationMin: z.number(),
+      }),
+    ),
+    kpi: z.object({
+      projectedMttr: z.number(),
+      baselineMttr: z.number(),
+      rag: z.enum(["green", "amber", "red"]),
+      targets: z.object({ greenMax: z.number(), amberMax: z.number() }),
+      metricLabel: z.string(),
+      indicative: z.boolean(),
+    }),
+    evpi: z.number(),
+    vss: z.number(),
+    assumptions: z.array(z.string()),
+    sensitivity: z.array(
+      z.object({
+        beta: z.number(),
+        delayCostMultiplier: z.number(),
+        unitsAtDispatch: z.number().int(),
+        maxEscalation: z.number().int(),
+      }),
+    ),
+    deltaSensitivity: z.array(
+      z.object({
+        deltaResponseMin: z.number(),
+        unitsAtDispatch: z.number().int(),
+        maxEscalation: z.number().int(),
+        derivedCostPerUncoveredIncident: z.number(),
+      }),
+    ),
+    scoringWindow: z.object({ from: z.string(), to: z.string() }),
+    sampleSize: z.number().int(),
+    censoredCount: z.number().int(),
+  }),
+  z.object({
+    status: z.literal("insufficient_data"),
+    sampleSize: z.number().int(),
+    scoringWindow: z.object({ from: z.string(), to: z.string() }),
+    message: z.string(),
+  }),
+]);
+export type ClearanceProtocolResult = z.infer<typeof ClearanceProtocolResponseSchema>;

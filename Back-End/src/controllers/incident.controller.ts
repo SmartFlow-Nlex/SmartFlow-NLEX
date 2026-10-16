@@ -5,6 +5,8 @@ import {
   IncidentQuerySchema,
   buildIncidentPredictiveQuerySchema,
   IncidentPredictiveResponseSchema,
+  ClearanceProtocolQuerySchema,
+  ClearanceProtocolResponseSchema,
 } from "../validators/incident.validator.js";
 import {
   getIncidentListFromDb,
@@ -20,6 +22,7 @@ import { getIncidentSeverityFromDb } from "../services/incident-severity.service
 import { getIncidentWeatherSpeedFromDb } from "../services/incident-weather-speed.service.js";
 import { getEventBreakdownFromDb } from "../services/incident-events.service.js";
 import { getBreakdownResponseFromDb } from "../services/breakdown-response.service.js";
+import { getClearanceProtocolFromDb } from "../services/clearance-protocol.service.js";
 
 const IncidentAnalyticsQuerySchema = z.object({
   months: z.enum(["3", "12", "all"]).optional().default("12"),
@@ -215,6 +218,30 @@ export const getIncidentBreakdownResponse = async (_req: Request, res: Response)
     });
   }
   res.json({ success: true, source: "database", data });
+};
+
+// GET /api/incident/clearance-protocol — the Prescriptive tab's Clearance
+// Response Protocol: a Kaplan-Meier clearance-time curve cut into scenarios,
+// fed into a two-stage stochastic covering-location-style MILP (YALPS) that
+// recommends how many units to dispatch now and whether to escalate at the
+// set's own median clearance time. See clearance-protocol.service.ts's own
+// module doc comment for the full method and every assumption involved.
+export const getClearanceProtocol = async (req: Request, res: Response) => {
+  const parsed = ClearanceProtocolQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      message: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+    });
+  }
+
+  const data = await getClearanceProtocolFromDb(parsed.data);
+  if (!data) {
+    return res.status(503).json({ success: false, message: "Clearance protocol unavailable: database not reachable" });
+  }
+
+  const validated = ClearanceProtocolResponseSchema.parse(data);
+  res.json({ success: true, source: "database", data: validated });
 };
 
 // GET /api/incident/event-breakdown — descriptive analytics over the
