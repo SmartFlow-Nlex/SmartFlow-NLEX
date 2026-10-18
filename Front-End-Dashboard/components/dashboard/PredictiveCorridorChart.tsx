@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useThemeTokens } from "./useThemeTokens";
 import InfoTooltip from "./InfoTooltip";
 import CorridorRiskNarrative from "./CorridorRiskNarrative";
-import { fmtInt, fmtNum } from "./incidentPredictive.shared";
+import { fmtInt, fmtNum, fmtDateFull } from "./incidentPredictive.shared";
 import { useNlexExits, accessLabel, displayExitName } from "../../lib/nlex-exits";
+import { corridorKmFromPost } from "../../lib/exit-lookup";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -200,6 +201,21 @@ export default function PredictiveCorridorChart() {
     [data],
   );
 
+  // The actual calendar date(s) a prediction applies to -- feature-test
+  // feedback asked for this explicitly rather than only a relative "7d"/
+  // "Today" label. Read off segmentRisk's own forecastDate per horizonDay
+  // (every exit shares one date per day, same training run) rather than
+  // computed from "today" client-side, so this can never drift from what
+  // the pipeline actually forecast. horizonDay is 1-indexed and contiguous,
+  // so day N's date is the end of an N-day-deep window starting at day 1.
+  const horizonDateRange = useMemo(() => {
+    if (!data) return null;
+    const start = data.segmentRisk.find((r) => r.horizonDay === 1)?.forecastDate ?? null;
+    const end = data.segmentRisk.find((r) => r.horizonDay === effectiveHorizon)?.forecastDate ?? start;
+    if (!start) return null;
+    return { start, end };
+  }, [data, effectiveHorizon]);
+
   const corridorOrder = useMemo(() => [...byExit].sort((a, b) => a.km - b.km), [byExit]);
   const riskPool = useMemo(
     () => byExit.filter((x) => x.hasData).map((x) => x.sumPredicted).sort((a, b) => a - b),
@@ -317,11 +333,20 @@ export default function PredictiveCorridorChart() {
         }}
       >
         <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-muted)", textAlign: "right" }}>{rank}</span>
-        <span title={`${displayExitName(row.exitName)} — Km ${fmtKm(row.km)}`} style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {displayExitName(row.exitName)} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· Km {fmtKm(row.km)}</span>
+        <span title={`${displayExitName(row.exitName)} — Km ${fmtKm(row.km)} (${corridorKmFromPost(row.km)} from Balintawak)`} style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {displayExitName(row.exitName)} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· Km {fmtKm(row.km)} <span style={{ display: "block", fontSize: "0.68rem" }} title="Distance from Balintawak, the scale the Incident hotspot chart uses">{corridorKmFromPost(row.km)} from Balintawak</span></span>
         </span>
         <div style={{ height: 14, borderRadius: "999px", background: "var(--bg-surface-hover)", overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${pct}%`, borderRadius: "999px", background: "linear-gradient(90deg, color-mix(in srgb, var(--page-accent) 55%, transparent), var(--page-accent))", transition: "width 0.2s ease" }} />
+          {/* transform: scaleX, not width -- the bar is always full-width and
+              laid out once; only its paint scales on rank/horizon changes, so
+              this animates on the compositor instead of triggering layout. */}
+          <div
+            style={{
+              height: "100%", width: "100%", borderRadius: "999px",
+              background: "linear-gradient(90deg, color-mix(in srgb, var(--page-accent) 55%, transparent), var(--page-accent))",
+              transform: `scaleX(${pct / 100})`, transformOrigin: "left", transition: "transform 0.2s ease",
+            }}
+          />
         </div>
         <span style={{ justifySelf: "end", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1 }}>
           <span title={`${fmtNum(row.sumPredicted, 2)} expected incidents (exact)`} style={{ fontSize: "0.76rem", fontWeight: 700, color: accentInk }}>{fmtInt(row.sumPredicted)}</span>
@@ -431,6 +456,28 @@ export default function PredictiveCorridorChart() {
         </div>
       </div>
 
+      {/* The calendar date(s) this forecast applies to, stated plainly rather
+          than left as only the relative "7d"/"Today" label above -- feature-
+          test feedback asked for this explicitly. Daily resolution is also
+          stated here, in the UI itself rather than only a tooltip: the
+          Spatial LSTM forecasts one value per exit per DAY, nothing finer,
+          so there is no hour-level prediction to filter by, and saying so
+          plainly rules that out rather than leaving a reader to assume it
+          exists and go looking for it. */}
+      {horizonDateRange && (
+        <p style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap", margin: 0, fontSize: "0.76rem", color: "var(--text-secondary)" }}>
+          <span>
+            Applies to{" "}
+            <strong style={{ color: "var(--text-primary)" }}>
+              {horizonDateRange.start === horizonDateRange.end
+                ? fmtDateFull(horizonDateRange.start)
+                : `${fmtDateFull(horizonDateRange.start)} – ${fmtDateFull(horizonDateRange.end)}`}
+            </strong>
+          </span>
+          <span style={{ color: "var(--text-muted)" }}>· daily resolution — no hourly predictions exist for this model</span>
+        </p>
+      )}
+
       {/* Reserved info rail -- hover facts land here instead of in a floating
           tooltip. A tooltip positioned above its anchor got clipped by the
           scroll container's overflowY: hidden (needed so the corridor only
@@ -446,7 +493,7 @@ export default function PredictiveCorridorChart() {
         {hoveredRow ? (
           <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap", fontSize: "0.78rem" }}>
             <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>
-              {displayExitName(hoveredRow.exitName)} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· Km {fmtKm(hoveredRow.km)}</span>
+              {displayExitName(hoveredRow.exitName)} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· Km {fmtKm(hoveredRow.km)} ({corridorKmFromPost(hoveredRow.km)} from Balintawak)</span>
             </span>
             <span style={{ fontWeight: 800, color: riskOf(hoveredRow).color }}>
               {riskOf(hoveredRow).label}{riskOf(hoveredRow).label !== "No data" ? " risk" : ""}
@@ -455,6 +502,7 @@ export default function PredictiveCorridorChart() {
               <>
                 <span title={`${fmtNum(hoveredRow.sumPredicted, 2)} (exact)`} style={{ color: "var(--text-secondary)" }}>
                   {fmtInt(hoveredRow.sumPredicted)} expected · next {effectiveHorizon}d
+                  {horizonDateRange && ` (through ${fmtDateFull(horizonDateRange.end)})`}
                 </span>
                 {hoveredRow.lastObserved != null && (
                   <span style={{ color: "var(--text-muted)" }}>Last observed day: {fmtInt(hoveredRow.lastObserved)}</span>
@@ -508,7 +556,7 @@ export default function PredictiveCorridorChart() {
                   onClick={() => openDrillDown(row.exitId)}
                   onMouseEnter={() => setHoveredExitId(row.exitId)}
                   onMouseLeave={() => setHoveredExitId((k) => (k === row.exitId ? null : k))}
-                  aria-label={`${displayExitName(row.exitName)}, Km ${fmtKm(row.km)}, ${risk.label}${risk.label !== "No data" ? " risk" : ""}`}
+                  aria-label={`${displayExitName(row.exitName)}, Km ${fmtKm(row.km)} (${corridorKmFromPost(row.km)} from Balintawak), ${risk.label}${risk.label !== "No data" ? " risk" : ""}`}
                   style={{
                     display: "flex", flexDirection: "column", alignItems: "center", gap: "1px", width: "100%",
                     position: "relative", background: "none", border: "none", cursor: "pointer", padding: "5px 0 6px",
@@ -711,7 +759,7 @@ export default function PredictiveCorridorChart() {
                 <div style={{ fontSize: "0.68rem", fontWeight: 800, color: "var(--text-muted)", letterSpacing: "0.04em", textTransform: "uppercase" }}>Selected hotspot</div>
                 <h3 style={{ margin: "2px 0 0 0", fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>{displayExitName(detailRow.exitName)}</h3>
                 <p style={{ margin: "2px 0 0 0", fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                  Km {fmtKm(detailRow.km)}{accessSummaryFor(detailRow.exitName) ? ` · ${accessSummaryFor(detailRow.exitName)}` : ""}
+                  Km {fmtKm(detailRow.km)} ({corridorKmFromPost(detailRow.km)} from Balintawak){accessSummaryFor(detailRow.exitName) ? ` · ${accessSummaryFor(detailRow.exitName)}` : ""}
                 </p>
               </div>
               <button
@@ -741,10 +789,16 @@ export default function PredictiveCorridorChart() {
                     <InfoTooltip text="Sum of each day's forecast over the window. Each day's own number is a statistical expectation, not a whole-number tally, so the sum stays fractional even though it's not an average — rounded here for readability; hover the number for the exact figure." />
                   </div>
                   <div title={detailRow.hasData ? `${fmtNum(detailRow.sumPredicted, 2)} (exact)` : undefined} style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{detailRow.hasData ? fmtInt(detailRow.sumPredicted) : "—"}</div>
+                  {horizonDateRange && (
+                    <div style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>
+                      {horizonDateRange.start === horizonDateRange.end ? fmtDateFull(horizonDateRange.start) : `${fmtDateFull(horizonDateRange.start)} – ${fmtDateFull(horizonDateRange.end)}`}
+                    </div>
+                  )}
                 </div>
                 <div style={{ flex: "1 1 150px", padding: "10px 12px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
                   <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Expected · next 24h</div>
                   <div title={detailRow.day1Predicted != null ? `${fmtNum(detailRow.day1Predicted, 2)} (exact)` : undefined} style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{detailRow.day1Predicted != null ? fmtInt(detailRow.day1Predicted) : "—"}</div>
+                  {horizonDateRange?.start && <div style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>{fmtDateFull(horizonDateRange.start)}</div>}
                 </div>
                 <div style={{ flex: "1 1 150px", padding: "10px 12px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
                   <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Last observed day</div>

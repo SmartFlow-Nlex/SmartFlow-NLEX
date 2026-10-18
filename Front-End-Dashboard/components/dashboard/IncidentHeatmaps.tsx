@@ -17,10 +17,13 @@
  * tooltip; they are never drawn as zero.
  */
 
+import { useRef } from "react";
 import type { EChartsOption } from "echarts";
 import DashboardChart from "./DashboardChart";
-import { useChartTheme } from "../../lib/chart-theme";
+import RampKey from "./RampKey";
+import { useChartTheme, liftDarkText } from "../../lib/chart-theme";
 import { withAlpha } from "../../lib/chart-kit";
+import { heatTip, heatTipEmpty, heatValue, scrubHeatmap } from "../../lib/heat-tooltip";
 import { useThemeTokens } from "./useThemeTokens";
 
 const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`);
@@ -36,15 +39,23 @@ export function incidentHeatRamp(isDark: boolean): string[] {
     : ["#e6e1f9", "#cfc6f4", "#b0a2ec", "#8f7ce2", "#7055d3", "#573bb8", "#45299e"];
 }
 
-function HeatKey({ ramp, min, max, unit, showNone }: { ramp: string[]; min: string; max: string; unit: string; showNone?: boolean }) {
+/** The gradient legend: Traffic's interactive key (hover reads out the value and
+ *  lights the matching cells), plus this tab's "No data" chip. */
+function HeatKey({
+  ramp, min, max, unit, digits, showNone, onScrub,
+}: { ramp: string[]; min: number; max: number; unit: string; digits: number; showNone?: boolean; onScrub: (t: number | null) => void }) {
   return (
-    <div className="inc-heat-key" aria-hidden="true">
-      <span>{min}</span>
-      <i style={{ background: `linear-gradient(90deg, ${ramp.join(", ")})` }} />
-      <span>
-        {max} {unit}
-      </span>
-      {showNone && <span className="inc-heat-none">No data</span>}
+    <div className="inc-heat-legend">
+      <RampKey
+        colors={ramp}
+        min={min}
+        max={max}
+        format={(v) => heatValue(v, unit, digits)}
+        lowLabel="Quieter"
+        highLabel="Busier"
+        onScrub={onScrub}
+      />
+      {showNone && <span className="inc-heat-key"><span className="inc-heat-none">No data</span></span>}
     </div>
   );
 }
@@ -62,6 +73,7 @@ export function HourDayHeatmap({
   const chartTheme = useChartTheme();
   const T = useThemeTokens();
   const ramp = incidentHeatRamp(chartTheme.isDark);
+  const chartRef = useRef<unknown>(null);
 
   // How many of each weekday fall in the Range, so a cell is "incidents per
   // Friday at 5 PM", not a raw sum that favours whichever weekday occurs most.
@@ -102,7 +114,7 @@ export function HourDayHeatmap({
     // ECharts needs a visualMap for every heatmap series: the ramp for the
     // data, and a flat no-data grey for the cells that have no reading.
     visualMap: [
-      { show: false, type: "continuous", min: 0, max: Math.max(max, 0.01), dimension: 2, seriesIndex: 0, inRange: { color: ramp } },
+      { show: false, type: "continuous", min: 0, max: Math.max(max, 0.01), dimension: 2, seriesIndex: 0, inRange: { color: ramp }, outOfRange: { color: noData } },
       { show: false, type: "piecewise", dimension: 2, seriesIndex: 1, pieces: [{ min: 0, max: 2, color: noData }] },
     ],
     tooltip: {
@@ -111,9 +123,13 @@ export function HourDayHeatmap({
         const { value, seriesIndex } = p as { value: [number, number, number]; seriesIndex: number };
         const [h, row] = value;
         const dow = DOW_ORDER[row];
-        const label = `<b>${DOW_LABELS[row]} · ${fmtHour(h)} – ${fmtHour((h + 1) % 24)}</b>`;
-        if (seriesIndex === 1) return `${label}<br/>No ${DOW_LABELS[row]} in this Range`;
-        return `${label}<br/>${fmt1(totals[dow][h] / dowCount[dow])} incidents per ${DOW_LABELS[row]} on average<br/><span style="color:var(--text-muted)">${fmtInt(totals[dow][h])} total across ${fmtInt(dowCount[dow])} ${DOW_LABELS[row]}s</span>`;
+        const title = `${DOW_LABELS[row]} · ${fmtHour(h)} – ${fmtHour((h + 1) % 24)}`;
+        if (seriesIndex === 1) return heatTipEmpty(title, `no ${DOW_LABELS[row]} in this Range`);
+        return heatTip({
+          title,
+          value: `${heatValue(totals[dow][h] / dowCount[dow], "incidents / day")} on average`,
+          detail: [`${fmtInt(totals[dow][h])} total across ${fmtInt(dowCount[dow])} ${DOW_LABELS[row]}s`],
+        });
       },
     },
     series: [
@@ -145,8 +161,8 @@ export function HourDayHeatmap({
           </span>
         </div>
       )}
-      <DashboardChart option={option} height={248} />
-      <HeatKey ramp={ramp} min="0" max={fmt1(max)} unit="incidents / day" showNone={missingDays.length > 0} />
+      <DashboardChart option={option} height={248} themeTweak={liftDarkText} onChartReady={(c) => { chartRef.current = c; }} />
+      <HeatKey ramp={ramp} min={0} max={Math.max(max, 0.01)} unit="incidents / day" digits={1} showNone={missingDays.length > 0} onScrub={scrubHeatmap(chartRef, 0, Math.max(max, 0.01))} />
       {missingDays.length > 0 && <p className="inc-caption">No {missingDays.join(", ")} in this Range, so those rows are greyed out as no data.</p>}
     </>
   );
@@ -173,6 +189,7 @@ export function HourSourceHeatmap({
   const chartTheme = useChartTheme();
   const T = useThemeTokens();
   const ramp = incidentHeatRamp(chartTheme.isDark);
+  const chartRef = useRef<unknown>(null);
   const ROWS: { key: SourceKey; label: string }[] = [
     { key: "road", label: "Road crashes" },
     { key: "moto", label: "Motorcycle crashes" },
@@ -216,7 +233,7 @@ export function HourSourceHeatmap({
     },
     yAxis: { type: "category", data: ROWS.map((r) => r.label), inverse: true, splitLine: { show: false } },
     visualMap: [
-      { show: false, type: "continuous", min: 0, max: Math.max(max, 1), dimension: 2, seriesIndex: 0, inRange: { color: ramp } },
+      { show: false, type: "continuous", min: 0, max: Math.max(max, 1), dimension: 2, seriesIndex: 0, inRange: { color: ramp }, outOfRange: { color: noData } },
       { show: false, type: "piecewise", dimension: 2, seriesIndex: 1, pieces: [{ min: 0, max: 2, color: noData }] },
     ],
     tooltip: {
@@ -225,9 +242,9 @@ export function HourSourceHeatmap({
         const { value, seriesIndex } = p as { value: [number, number, number]; seriesIndex: number };
         const [i, row] = value;
         const h = hours[i];
-        const head = `<b>${fmtHour(h.hour)}</b> · ${ROWS[row].label}`;
-        if (seriesIndex === 1) return `${head}<br/>No data: ${reasonFor(row, i)}`;
-        return `${head}<br/>${fmtInt(value[2])} incident${value[2] === 1 ? "" : "s"}`;
+        const title = `${fmtHour(h.hour)} · ${ROWS[row].label}`;
+        if (seriesIndex === 1) return heatTipEmpty(title, reasonFor(row, i));
+        return heatTip({ title, value: heatValue(value[2], value[2] === 1 ? "incident" : "incidents", 0) });
       },
     },
     series: [
@@ -261,8 +278,8 @@ export function HourSourceHeatmap({
           {hasIncidentLog ? "None of the three sources is logged this far" : "No incident log covers this date"}, so every cell is greyed out as no data.
         </p>
       )}
-      <DashboardChart option={option} height={200} />
-      <HeatKey ramp={ramp} min="0" max={fmtInt(max)} unit="incidents" showNone={empty.length > 0} />
+      <DashboardChart option={option} height={200} themeTweak={liftDarkText} onChartReady={(c) => { chartRef.current = c; }} />
+      <HeatKey ramp={ramp} min={0} max={Math.max(max, 1)} unit="incidents" digits={0} showNone={empty.length > 0} onScrub={scrubHeatmap(chartRef, 0, Math.max(max, 1))} />
     </>
   );
 }

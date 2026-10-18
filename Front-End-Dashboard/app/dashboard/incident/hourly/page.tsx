@@ -181,8 +181,25 @@ function HourlyIncidentContent() {
     });
   }, []);
 
+  // Prominent rather than the shared ghost .secondaryButton: this is the one
+  // way off a page with no other nav, and the ghost style (transparent
+  // background, muted text) read as too quiet to notice on sight — feature-
+  // test feedback flagged it specifically. Filled with the incident tab's
+  // own accent (--page-accent resolves to --accent-incident under the
+  // viz-incident class this page already carries) rather than a new shared
+  // class, so this stays a one-off override instead of changing every other
+  // .secondaryButton on the traffic module.
   const backLink = (
-    <Link href={backHref} className={styles.secondaryButton}>
+    <Link
+      href={backHref}
+      className={styles.secondaryButton}
+      style={{
+        background: "var(--page-accent, var(--accent-incident))",
+        color: "var(--text-on-dark, #fff)",
+        borderColor: "transparent",
+        boxShadow: "0 1px 6px color-mix(in srgb, var(--page-accent, var(--accent-incident)) 45%, transparent)",
+      }}
+    >
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -466,30 +483,6 @@ function HourlyIncidentContent() {
         </div>
       )}
 
-      {/* Hour-by-source heat grid first: the day at a glance. */}
-      {data && (
-        <div className={styles.spanFull}>
-          <article className={styles.chartCard}>
-            <div className={styles.chartHead}>
-              <div className={styles.headText}>
-                <h3>Incidents by Hour and Source</h3>
-              </div>
-            </div>
-            <HourSourceHeatmap
-              hours={data.hours}
-              passes={(h) => passes(h as HourPoint)}
-              hasIncidentLog={data.hasIncidentLog}
-              covered={{
-                road: data.sourceCoverage.road.covered,
-                moto: data.sourceCoverage.moto.covered,
-                stalled: data.sourceCoverage.stalled.covered,
-              }}
-              sliceLabel={weather === "all" ? null : weather}
-            />
-          </article>
-        </div>
-      )}
-
       <div className={styles.spanFull}>
         <article className={styles.chartCard}>
           <div className={styles.chartHead}>
@@ -615,6 +608,32 @@ function HourlyIncidentContent() {
           )}
         </article>
       </div>
+
+      {/* Hour-by-source heat grid, now below the main chart rather than above
+          it — feature-test feedback asked for the chart first and this
+          detail grid second. */}
+      {data && (
+        <div className={styles.spanFull}>
+          <article className={styles.chartCard}>
+            <div className={styles.chartHead}>
+              <div className={styles.headText}>
+                <h3>Incidents by Hour and Source</h3>
+              </div>
+            </div>
+            <HourSourceHeatmap
+              hours={data.hours}
+              passes={(h) => passes(h as HourPoint)}
+              hasIncidentLog={data.hasIncidentLog}
+              covered={{
+                road: data.sourceCoverage.road.covered,
+                moto: data.sourceCoverage.moto.covered,
+                stalled: data.sourceCoverage.stalled.covered,
+              }}
+              sliceLabel={weather === "all" ? null : weather}
+            />
+          </article>
+        </div>
+      )}
     </section>
   );
 }

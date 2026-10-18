@@ -30,6 +30,12 @@ export type ThemeTokens = {
   chartSplit: string;
   tooltipBg: string;
   tooltipText: string;
+  /** --action, resolved -- the one interactive/accent colour, for a chart that needs the real "page accent" it can't read via var(). */
+  accent: string;
+  /** --color-success, resolved. */
+  success: string;
+  /** --color-warning, resolved. */
+  warning: string;
 };
 
 /* Night Corridor dark is the default theme, so the pre-mount fallback is dark. */
@@ -48,6 +54,9 @@ const FALLBACK: ThemeTokens = {
   chartSplit: "rgba(255, 255, 255, 0.06)",
   tooltipBg: "rgba(14, 22, 40, 0.96)",
   tooltipText: "#f4f1ea",
+  accent: "#5c7aff",
+  success: "#2fbf6b",
+  warning: "#f6c544",
 };
 
 function read(): ThemeTokens {
@@ -75,6 +84,9 @@ function read(): ThemeTokens {
     chartSplit: v("--chart-split", FALLBACK.chartSplit),
     tooltipBg: v("--chart-tooltip-bg", FALLBACK.tooltipBg),
     tooltipText: v("--chart-tooltip-text", FALLBACK.tooltipText),
+    accent: v("--action", FALLBACK.accent),
+    success: v("--color-success", FALLBACK.success),
+    warning: v("--color-warning", FALLBACK.warning),
   };
 }
 

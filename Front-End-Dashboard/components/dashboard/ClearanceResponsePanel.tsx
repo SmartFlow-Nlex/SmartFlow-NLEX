@@ -5,6 +5,7 @@ import type { EChartsOption } from "echarts";
 import { Siren } from "lucide-react";
 import DashboardChart from "./DashboardChart";
 import { Shell, Empty, ActionCard } from "./prescriptiveShell";
+import { useThemeTokens } from "./useThemeTokens";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -60,7 +61,18 @@ type Props = {
   to?: string;
 };
 
+/** #rrggbb -> "r, g, b", for an rgba() string -- canvas-rendered ECharts shapes
+ * (markLine/markArea/series) can't resolve CSS var() OR color-mix(), unlike
+ * plain DOM styling, so a token read as a real hex via useThemeTokens still
+ * needs converting by hand to blend in an alpha. */
+function hexToRgbTriplet(hex: string): string {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (!m) return "0, 0, 0";
+  return [m[1], m[2], m[3]].map((h) => parseInt(h, 16)).join(", ");
+}
+
 export default function ClearanceResponsePanel({ months = "12", from, to }: Props) {
+  const T = useThemeTokens();
   const [type, setType] = useState<"accident" | "breakdown">("accident");
   const [severity, setSeverity] = useState<"all" | "pdo" | "injury" | "fatal">("injury");
   const [weather, setWeather] = useState<"all" | "dry" | "wet">("all");
@@ -75,6 +87,10 @@ export default function ClearanceResponsePanel({ months = "12", from, to }: Prop
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    // Cleared here, not just on success -- otherwise a retry after a control
+    // change renders as "couldn't refresh" (the PREVIOUS attempt's error)
+    // while it's still in flight, instead of "Updating…".
+    setError(null);
     const qs = new URLSearchParams();
     qs.set("type", type);
     if (type === "accident") qs.set("severity", severity);
@@ -171,7 +187,10 @@ export default function ClearanceResponsePanel({ months = "12", from, to }: Prop
       </Shell>
     );
   }
-  if (error || !data) {
+  if (!data) {
+    // Only reachable with no successful load yet -- data === null -- so there
+    // is nothing stale to fall back to; a later failure with data already
+    // loaded is handled below instead of wiping the panel.
     return (
       <Shell title="Clearance Response Protocol" hint={hint} right={controls}>
         <Empty kind="error" msg={`Clearance protocol unavailable: ${error ?? "no response from the server."}`} />
@@ -180,8 +199,8 @@ export default function ClearanceResponsePanel({ months = "12", from, to }: Prop
   }
   if (data.status === "insufficient_data") {
     return (
-      <Shell title="Clearance Response Protocol" hint={hint} right={controls}>
-        <Empty kind="nodata" msg={data.message} />
+      <Shell title="Clearance Response Protocol" hint={hint} right={controls} updating={loading && !error}>
+        <Empty kind="nodata" msg={error ? `${data.message} (also couldn't refresh: ${error})` : data.message} />
       </Shell>
     );
   }
@@ -189,23 +208,33 @@ export default function ClearanceResponsePanel({ months = "12", from, to }: Prop
   const curve = data.survivalCurve;
   const maxMinute = curve.length > 0 ? Math.max(curve[curve.length - 1].minute, data.recommendation.escalateAtMinute) : 60;
 
+  // ECharts draws markLine/markArea/series on canvas, which -- unlike plain DOM
+  // styling -- can't resolve a CSS var() or color-mix() string at all; each one
+  // silently fails to parse and the shape renders in whatever colour the canvas
+  // context was already in (effectively undefined, often black). That read as
+  // "fine" in light mode by coincidence and was invisible in dark mode: the
+  // actual bug behind the dark-mode contrast pass on this chart. useThemeTokens
+  // reads the real resolved values instead, exactly as the other canvas charts
+  // on this tab already do (see its own doc comment).
   type MLPoint = { xAxis: number; lineStyle?: { type?: "dashed" | "solid"; color?: string; width?: number }; label?: { show: boolean; formatter?: string; color?: string; fontSize?: number; position?: "insideEndTop" | "insideStartTop" } };
   const markLineData: MLPoint[] = [
-    { xAxis: data.quantiles.p50, lineStyle: { type: "dashed", color: "var(--text-muted)", width: 1.5 }, label: { show: true, formatter: `P50 ${Math.round(data.quantiles.p50)}m`, color: "var(--text-muted)", fontSize: 10 } },
-    { xAxis: data.quantiles.p80, lineStyle: { type: "dashed", color: "var(--text-muted)", width: 1.5 }, label: { show: true, formatter: `P80 ${Math.round(data.quantiles.p80)}m`, color: "var(--text-muted)", fontSize: 10 } },
-    { xAxis: data.quantiles.p95, lineStyle: { type: "dashed", color: "var(--text-muted)", width: 1.5 }, label: { show: true, formatter: `P95 ${Math.round(data.quantiles.p95)}m`, color: "var(--text-muted)", fontSize: 10 } },
-    { xAxis: data.recommendation.escalateAtMinute, lineStyle: { type: "solid", color: "var(--page-accent)", width: 2 }, label: { show: true, formatter: "Escalate", color: "var(--page-accent)", fontSize: 10, position: "insideStartTop" } },
+    { xAxis: data.quantiles.p50, lineStyle: { type: "dashed", color: T.textMuted, width: 1.5 }, label: { show: true, formatter: `P50 ${Math.round(data.quantiles.p50)}m`, color: T.textMuted, fontSize: 10 } },
+    { xAxis: data.quantiles.p80, lineStyle: { type: "dashed", color: T.textMuted, width: 1.5 }, label: { show: true, formatter: `P80 ${Math.round(data.quantiles.p80)}m`, color: T.textMuted, fontSize: 10 } },
+    { xAxis: data.quantiles.p95, lineStyle: { type: "dashed", color: T.textMuted, width: 1.5 }, label: { show: true, formatter: `P95 ${Math.round(data.quantiles.p95)}m`, color: T.textMuted, fontSize: 10 } },
+    { xAxis: data.recommendation.escalateAtMinute, lineStyle: { type: "solid", color: T.accent, width: 2 }, label: { show: true, formatter: "Escalate", color: T.accent, fontSize: 10, position: "insideStartTop" } },
   ];
 
   type MAPoint = { xAxis: number; itemStyle?: { color: string } };
   const markAreaData: [MAPoint, MAPoint][] = [
-    [{ xAxis: 0, itemStyle: { color: "color-mix(in srgb, var(--color-success) 10%, transparent)" } }, { xAxis: data.kpi.targets.greenMax }],
+    [{ xAxis: 0, itemStyle: { color: `rgba(${hexToRgbTriplet(T.success)}, 0.1)` } }, { xAxis: data.kpi.targets.greenMax }],
   ];
 
   const option: EChartsOption = {
     grid: { left: 56, right: 24, top: 24, bottom: 48 },
     tooltip: {
       trigger: "axis",
+      // Rendered into the tooltip's own DOM node (not canvas), so var() here
+      // resolves correctly through the browser's normal CSS engine.
       formatter: (params: unknown) => {
         const items = params as { dataIndex: number; value: [number, number] }[];
         if (items.length === 0) return "";
@@ -215,11 +244,11 @@ export default function ClearanceResponsePanel({ months = "12", from, to }: Prop
         return `<b>${point.minute.toFixed(0)} min since report</b><br/>${(point.survival * 100).toFixed(1)}% still uncleared<br/><span style="color:var(--text-muted)">${point.atRisk} at risk</span>`;
       },
     },
-    xAxis: { type: "value", name: "Minutes since report", nameLocation: "middle", nameGap: 28, min: 0, max: maxMinute, axisLabel: { color: "var(--text-muted)" }, splitLine: { show: false } },
+    xAxis: { type: "value", name: "Minutes since report", nameLocation: "middle", nameGap: 28, min: 0, max: maxMinute, axisLabel: { color: T.chartText }, splitLine: { show: false } },
     yAxis: {
       type: "value", name: "Still uncleared", nameLocation: "middle", nameGap: 44, min: 0, max: 1,
-      axisLabel: { color: "var(--text-muted)", formatter: (v: number) => `${Math.round(v * 100)}%` },
-      splitLine: { lineStyle: { color: "var(--border-default)" } },
+      axisLabel: { color: T.chartText, formatter: (v: number) => `${Math.round(v * 100)}%` },
+      splitLine: { lineStyle: { color: T.chartSplit } },
     },
     series: [
       {
@@ -227,8 +256,8 @@ export default function ClearanceResponsePanel({ months = "12", from, to }: Prop
         step: "end",
         showSymbol: false,
         data: curve.map((p) => [p.minute, p.survival]),
-        lineStyle: { width: 2.5, color: "var(--page-accent, #4f46e5)" },
-        itemStyle: { color: "var(--page-accent, #4f46e5)" },
+        lineStyle: { width: 2.5, color: T.accent },
+        itemStyle: { color: T.accent },
         markLine: { silent: true, symbol: "none", label: { show: false }, data: markLineData },
         markArea: { silent: true, data: markAreaData },
       },
@@ -238,7 +267,12 @@ export default function ClearanceResponsePanel({ months = "12", from, to }: Prop
   const chosen = data.recommendation;
 
   return (
-    <Shell title="Clearance Response Protocol" hint={hint} right={controls}>
+    <Shell title="Clearance Response Protocol" hint={hint} right={controls} updating={loading && !error}>
+      {error && (
+        <div role="alert" style={{ fontSize: "0.78rem", color: "var(--color-warning)" }}>
+          Couldn&apos;t refresh with the current controls ({error}) — showing the last loaded result.
+        </div>
+      )}
       <ActionCard
         lead
         icon={Siren}

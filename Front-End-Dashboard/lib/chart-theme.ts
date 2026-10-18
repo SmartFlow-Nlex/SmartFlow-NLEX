@@ -69,6 +69,18 @@ function read(): ChartTheme {
 }
 
 /**
+ * Brighter furniture text for dark mode, for the pages that asked for it.
+ *
+ * The shared dark axis ink (#8590a6) clears WCAG AA on the card surface but
+ * reads dim at 11 px on a near-black ground, and the Incident tab's testers
+ * called it out. Opt-in rather than a change to the shared token, so the
+ * Traffic and Emissions tabs are untouched. Light mode is returned as is.
+ */
+export function liftDarkText(t: ChartTheme): ChartTheme {
+  return t.isDark ? { ...t, text: "#b4bdd0" } : t;
+}
+
+/**
  * Current chart theme, refreshed on an explicit change and on OS changes while
  * the setting is "System". Include the returned object in a chart option's
  * dependency list so the option rebuilds.
