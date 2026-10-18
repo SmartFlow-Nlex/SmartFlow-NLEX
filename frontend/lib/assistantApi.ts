@@ -42,6 +42,10 @@ export interface ChatMessage {
 export type ReplyMood = 'traffic' | 'clear' | 'alert';
 const MOODS: readonly ReplyMood[] = ['traffic', 'clear', 'alert'];
 
+export function isReplyMood(value: unknown): value is ReplyMood {
+  return MOODS.includes(value as ReplyMood);
+}
+
 /**
  * Tool name -> what to tell the user it looked at.
  *
@@ -348,6 +352,6 @@ export async function askAssistant(
   }
 
   // A server from before moods existed sends none; that is an "anything else".
-  const mood = MOODS.includes(payload.data.mood) ? payload.data.mood : 'alert';
+  const mood = isReplyMood(payload.data.mood) ? payload.data.mood : 'alert';
   return { reply: payload.data.reply, toolsUsed: payload.data.toolsUsed ?? [], mood };
 }

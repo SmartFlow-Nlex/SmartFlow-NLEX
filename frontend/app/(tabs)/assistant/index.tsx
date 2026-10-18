@@ -29,6 +29,9 @@ import {
   toolLabel,
   wakeAssistant,
 } from '../../../lib/assistantApi';
+import { dayLabel, isSameDay, useChatHistory } from '../../../lib/chatHistory';
+import type { SavedChat } from '../../../lib/chatHistory';
+import { ChatHistoryRow, ChatHistorySheet } from '../../../components/assistant/ChatHistory';
 import { useMobileConfig } from '../../../lib/mobileConfig';
 import { firstNameOf, useAuth } from '../../../auth';
 
@@ -37,6 +40,9 @@ const MASCOT_SIZE = 40;
 
 /** Lex's head, small, inside the chat field - the one other place he appears. */
 const mascotIcon = require('../../../assets/mascot-icon.png');
+
+/** How many past chats the empty chat lists before "See all". */
+const RECENT_CHATS_SHOWN = 3;
 
 const quickQuestions = [
   'How is NLEX right now?',
@@ -67,6 +73,16 @@ function formatTime(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
+/**
+ * Whether the day goes above this message: wherever the day changes, since
+ * times alone would not say a reopened chat is from last week. A chat that is
+ * all today needs none.
+ */
+function startsNewDay(messages: ChatMessage[], index: number): boolean {
+  const previous = index === 0 ? Date.now() : messages[index - 1].at;
+  return !isSameDay(previous, messages[index].at);
+}
+
 export default function AssistantScreen(): React.ReactElement {
   const { colors } = useTheme();
 
@@ -78,7 +94,6 @@ export default function AssistantScreen(): React.ReactElement {
   const styles = useThemedStyles(makeStyles);
   const [draft, setDraft] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [isThinking, setIsThinking] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   /** The question behind the current error, so it can be resent in one tap. */
   const [failedQuestion, setFailedQuestion] = useState<string | null>(null);
@@ -86,7 +101,34 @@ export default function AssistantScreen(): React.ReactElement {
 
   const { session } = useAuth();
   const firstName = firstNameOf(session?.fullName);
-  /** Counts new chats: the screen opening is the first, every clear another. */
+
+  const {
+    chats: savedChats,
+    save: saveChat,
+    remove: removeChat,
+    clear: clearChats,
+  } = useChatHistory(session?.email ?? null);
+  /** The saved chat on screen; null for a new one nothing has been asked in yet. */
+  const [chatId, setChatId] = useState<string | null>(null);
+  /** The same, for a reply to check when it lands - the user may have moved on. */
+  const chatIdRef = useRef<string | null>(null);
+  /** The chat waiting on Lex, which is not necessarily the one on screen. */
+  const [pendingChatId, setPendingChatId] = useState<string | null>(null);
+  /** Chats deleted while Lex was still answering in them, so the reply does not bring them back. */
+  const deletedRef = useRef<Set<string>>(new Set());
+  const [historyOpen, setHistoryOpen] = useState<boolean>(false);
+
+  // One question at a time, wherever it was asked.
+  const isThinking = pendingChatId !== null;
+  const showChat = useCallback((id: string | null, next: ChatMessage[]): void => {
+    chatIdRef.current = id;
+    setChatId(id);
+    setMessages(next);
+    setError(null);
+    setFailedQuestion(null);
+  }, []);
+
+  /** Counts new chats: the screen opening is the first, every new chat another. */
   const [chatNumber, setChatNumber] = useState<number>(0);
   /** Lex's welcome for this chat; null while it is being written. */
   const [greeting, setGreeting] = useState<string | null>(null);
@@ -145,17 +187,28 @@ export default function AssistantScreen(): React.ReactElement {
       // History is what came before this question - the new one is sent
       // separately, so including it here would duplicate it.
       const history = messages;
+      const asked = [...history, userMessage];
+
+      // The first question is what turns a new chat into one worth keeping.
+      const id = chatIdRef.current ?? `chat-${userMessage.at}`;
+      chatIdRef.current = id;
+      setChatId(id);
 
       wakeAssistant();
-      setMessages((current) => [...current, userMessage]);
+      setMessages(asked);
+      // Saved before the answer, so the chat is in the history - question
+      // showing - if the user goes to look while Lex is still answering.
+      saveChat(id, asked);
       setDraft('');
       setError(null);
-      setIsThinking(true);
+      setPendingChatId(id);
+
+      const stillOpen = (): boolean => chatIdRef.current === id;
 
       try {
         const { reply, toolsUsed, mood } = await askAssistant(question, history, language);
-        setMessages((current) => [
-          ...current,
+        const answered: ChatMessage[] = [
+          ...asked,
           {
             id: `a-${Date.now()}`,
             role: 'assistant',
@@ -164,27 +217,48 @@ export default function AssistantScreen(): React.ReactElement {
             toolsUsed,
             mood,
           },
-        ]);
+        ];
+        // Kept with the chat it was asked in, even if another is open now.
+        if (!deletedRef.current.has(id)) {
+          saveChat(id, answered);
+        }
+        if (stillOpen()) {
+          setMessages(answered);
+        }
       } catch (caught) {
         /*
-         * Put the question back rather than leaving the user to retype it, and
-         * take its bubble back out - it was never answered, so leaving it in
+         * Take the question back out - it was never answered, so leaving it in
          * the transcript would make the next question look like a follow-up to
-         * something that did not happen.
+         * something that did not happen. A chat that was nothing but that
+         * question is not kept at all.
          */
-        setMessages((current) => current.filter((item) => item.id !== userMessage.id));
-        setDraft(question);
-        setFailedQuestion(question);
-        setError(
-          caught instanceof AssistantError
-            ? caught.message
-            : 'Something went wrong. Please try again.',
-        );
+        if (!deletedRef.current.has(id)) {
+          if (history.length === 0) {
+            removeChat(id);
+          } else {
+            saveChat(id, history);
+          }
+        }
+        if (stillOpen()) {
+          // Put the question back rather than leaving the user to retype it.
+          setMessages(history);
+          if (history.length === 0) {
+            chatIdRef.current = null;
+            setChatId(null);
+          }
+          setDraft(question);
+          setFailedQuestion(question);
+          setError(
+            caught instanceof AssistantError
+              ? caught.message
+              : 'Something went wrong. Please try again.',
+          );
+        }
       } finally {
-        setIsThinking(false);
+        setPendingChatId(null);
       }
     },
-    [isThinking, language, messages],
+    [isThinking, language, messages, removeChat, saveChat],
   );
 
   /** Resend whatever failed, straight from the error banner. */
@@ -197,17 +271,52 @@ export default function AssistantScreen(): React.ReactElement {
     void send(question);
   }, [failedQuestion, send]);
 
-  const clearConversation = useCallback((): void => {
-    setMessages([]);
-    setError(null);
-    setFailedQuestion(null);
+  /** The chat on screen stays in the history; this only opens a fresh one. */
+  const startNewChat = useCallback((): void => {
+    showChat(null, []);
+    setHistoryOpen(false);
     setChatNumber((current) => current + 1);
-  }, []);
+  }, [showChat]);
+
+  const openChat = useCallback(
+    (chat: SavedChat): void => {
+      if (chat.id !== chatIdRef.current) {
+        showChat(chat.id, chat.messages);
+      }
+      setHistoryOpen(false);
+    },
+    [showChat],
+  );
+
+  const deleteChat = useCallback(
+    (id: string): void => {
+      deletedRef.current.add(id);
+      removeChat(id);
+      // The chat on screen has just gone, so what is left is a new one.
+      if (id === chatIdRef.current) {
+        showChat(null, []);
+        setChatNumber((current) => current + 1);
+      }
+    },
+    [removeChat, showChat],
+  );
+
+  const clearAllChats = useCallback((): void => {
+    savedChats.forEach((chat) => deletedRef.current.add(chat.id));
+    clearChats();
+    if (chatIdRef.current !== null) {
+      showChat(null, []);
+      setChatNumber((current) => current + 1);
+    }
+  }, [clearChats, savedChats, showChat]);
 
   const canSend = draft.trim().length > 0 && !isThinking;
   const hasConversation = messages.length > 0;
+  /** Lex is answering the chat on screen, rather than one the user has left. */
+  const thinkingHere = isThinking && pendingChatId === chatId;
+  const recentChats = savedChats.slice(0, RECENT_CHATS_SHOWN);
 
-  /** EN / TL, and - once there is a conversation - a way to start over. */
+  /** EN / TL, past chats, and - once there is a conversation - a fresh one. */
   const heroControls = (
     <>
       {/* Which language Lex replies in, whatever language the question is in. */}
@@ -231,14 +340,22 @@ export default function AssistantScreen(): React.ReactElement {
           );
         })}
       </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Chat history"
+        onPress={() => setHistoryOpen(true)}
+        style={({ pressed }) => [styles.roundButton, pressed && styles.pressedDim]}
+      >
+        <Ionicons name="time-outline" size={20} color={colors.textSecondary} />
+      </Pressable>
       {hasConversation ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Clear the conversation"
-          onPress={clearConversation}
-          style={({ pressed }) => [styles.clearButton, pressed && styles.pressedDim]}
+          accessibilityLabel="Start a new chat"
+          onPress={startNewChat}
+          style={({ pressed }) => [styles.roundButton, pressed && styles.pressedDim]}
         >
-          <Ionicons name="trash-outline" size={18} color={colors.textSecondary} />
+          <Ionicons name="create-outline" size={19} color={colors.textSecondary} />
         </Pressable>
       ) : null}
     </>
@@ -283,7 +400,11 @@ export default function AssistantScreen(): React.ReactElement {
             editable={!isThinking}
             onChangeText={setDraft}
             onSubmitEditing={() => void send(draft)}
-            placeholder="Ask about traffic at any NLEX exit…"
+            placeholder={
+              isThinking && !thinkingHere
+                ? 'Lex is still answering your other chat…'
+                : 'Ask about traffic at any NLEX exit…'
+            }
             placeholderTextColor={colors.textTertiary}
             returnKeyType="send"
             style={styles.input}
@@ -411,6 +532,40 @@ export default function AssistantScreen(): React.ReactElement {
               </ScrollView>
             </View>
           )}
+
+          {/* Pick up an earlier conversation straight from the empty chat. */}
+          {recentChats.length > 0 ? (
+            <View style={styles.recentChats}>
+              <SectionTitle
+                icon="time"
+                title="Recent chats"
+                right={
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="See all past chats"
+                    hitSlop={8}
+                    onPress={() => setHistoryOpen(true)}
+                    style={({ pressed }) => pressed && styles.pressedDim}
+                  >
+                    <Text style={styles.seeAll}>
+                      {savedChats.length > RECENT_CHATS_SHOWN
+                        ? `See all ${savedChats.length}`
+                        : 'See all'}
+                    </Text>
+                  </Pressable>
+                }
+              />
+              {recentChats.map((chat) => (
+                <ChatHistoryRow
+                  key={chat.id}
+                  chat={chat}
+                  active={false}
+                  pending={chat.id === pendingChatId}
+                  onPress={() => openChat(chat)}
+                />
+              ))}
+            </View>
+          ) : null}
         </View>
       ) : null}
 
@@ -419,58 +574,65 @@ export default function AssistantScreen(): React.ReactElement {
         arrives. Staggering by index would make the tenth reply of a
         conversation wait behind nine that are already on screen.
       */}
-      {messages.map((message, index) =>
-        message.role === 'assistant' ? (
-          <Reveal delay={0} key={message.id}>
-            <View style={styles.chatRow}>
-              {/* Acts out the answer; only the newest one moves. */}
-              <MoodMascot
-                mood={message.mood ?? 'alert'}
-                size={MASCOT_SIZE}
-                animate={index === messages.length - 1 && !isThinking}
-                style={styles.assistantBadge}
-              />
-              <View style={styles.chatColumn}>
-                <View style={styles.chatBubble}>
-                  <Text style={styles.chatText}>{message.text}</Text>
-                </View>
-
-                {/*
-                  Provenance, not decoration: this says the answer came from the
-                  live feed rather than the model's own recollection. Absent when
-                  the model answered without checking anything, which is itself
-                  worth knowing.
-                */}
-                {message.toolsUsed !== undefined && message.toolsUsed.length > 0 ? (
-                  <View style={styles.groundedRow}>
-                    {message.toolsUsed.map((tool) => (
-                      <View key={tool} style={styles.groundedChip}>
-                        <Ionicons name="shield-checkmark" size={11} color={colors.statusSmoothText} />
-                        <Text style={styles.groundedText}>{toolLabel(tool)}</Text>
-                      </View>
-                    ))}
+      {messages.map((message, index) => (
+        <React.Fragment key={message.id}>
+          {startsNewDay(messages, index) ? (
+            <View style={styles.dayDivider}>
+              <Text style={styles.dayDividerText}>{dayLabel(message.at)}</Text>
+            </View>
+          ) : null}
+          {message.role === 'assistant' ? (
+            <Reveal delay={0}>
+              <View style={styles.chatRow}>
+                {/* Acts out the answer; only the newest one moves. */}
+                <MoodMascot
+                  mood={message.mood ?? 'alert'}
+                  size={MASCOT_SIZE}
+                  animate={index === messages.length - 1 && !thinkingHere}
+                  style={styles.assistantBadge}
+                />
+                <View style={styles.chatColumn}>
+                  <View style={styles.chatBubble}>
+                    <Text style={styles.chatText}>{message.text}</Text>
                   </View>
-                ) : null}
 
-                <Text style={styles.timeText}>{formatTime(message.at)}</Text>
-              </View>
-            </View>
-          </Reveal>
-        ) : (
-          <Reveal delay={0} key={message.id}>
-            <View style={styles.userRow}>
-              <View style={styles.userColumn}>
-                <View style={styles.userBubble}>
-                  <Text style={styles.userText}>{message.text}</Text>
+                  {/*
+                    Provenance, not decoration: this says the answer came from the
+                    live feed rather than the model's own recollection. Absent when
+                    the model answered without checking anything, which is itself
+                    worth knowing.
+                  */}
+                  {message.toolsUsed !== undefined && message.toolsUsed.length > 0 ? (
+                    <View style={styles.groundedRow}>
+                      {message.toolsUsed.map((tool) => (
+                        <View key={tool} style={styles.groundedChip}>
+                          <Ionicons name="shield-checkmark" size={11} color={colors.statusSmoothText} />
+                          <Text style={styles.groundedText}>{toolLabel(tool)}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  <Text style={styles.timeText}>{formatTime(message.at)}</Text>
                 </View>
-                <Text style={styles.userTimeText}>{formatTime(message.at)}</Text>
               </View>
-            </View>
-          </Reveal>
-        ),
-      )}
+            </Reveal>
+          ) : (
+            <Reveal delay={0}>
+              <View style={styles.userRow}>
+                <View style={styles.userColumn}>
+                  <View style={styles.userBubble}>
+                    <Text style={styles.userText}>{message.text}</Text>
+                  </View>
+                  <Text style={styles.userTimeText}>{formatTime(message.at)}</Text>
+                </View>
+              </View>
+            </Reveal>
+          )}
+        </React.Fragment>
+      ))}
 
-      {isThinking ? (
+      {thinkingHere ? (
         <View style={styles.chatRow}>
           <MoodMascot mood="thinking" size={MASCOT_SIZE} animate style={styles.assistantBadge} />
           <View style={styles.chatColumn}>
@@ -502,6 +664,18 @@ export default function AssistantScreen(): React.ReactElement {
           ) : null}
         </View>
       ) : null}
+
+      <ChatHistorySheet
+        visible={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        chats={savedChats}
+        activeChatId={chatId}
+        pendingChatId={pendingChatId}
+        onOpen={openChat}
+        onDelete={deleteChat}
+        onClearAll={clearAllChats}
+        onNewChat={hasConversation ? startNewChat : undefined}
+      />
     </ScreenShell>
   );
 }
@@ -511,7 +685,7 @@ const makeStyles = (c: ThemePalette) =>
     pressedDim: {
       opacity: 0.7,
     },
-    clearButton: {
+    roundButton: {
       width: 44,
       height: 44,
       borderRadius: 22,
@@ -664,6 +838,33 @@ const makeStyles = (c: ThemePalette) =>
       color: c.navy,
       fontSize: 14.5,
       fontWeight: '600',
+    },
+    recentChats: {
+      alignSelf: 'stretch',
+      gap: 10,
+      marginTop: 6,
+    },
+    seeAll: {
+      color: c.accent,
+      fontSize: 14.5,
+      fontWeight: '700',
+    },
+
+    // A small centred date where a chat crosses into another day.
+    dayDivider: {
+      alignSelf: 'center',
+      marginTop: 18,
+      paddingHorizontal: 12,
+      paddingVertical: 4,
+      borderRadius: Radius.pill,
+      backgroundColor: c.glassStrong,
+      borderWidth: 1,
+      borderColor: c.glassBorder,
+    },
+    dayDividerText: {
+      color: c.textSecondary,
+      fontSize: 12,
+      fontWeight: '700',
     },
 
     chatRow: {

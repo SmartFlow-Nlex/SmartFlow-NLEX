@@ -1,4 +1,4 @@
-# SmartFlow NLEX Mobile — Handoff (14 Oct 2026)
+# SmartFlow NLEX Mobile — Handoff (18 Oct 2026)
 
 How to run the app on another laptop, what has been built, the decisions behind it, and what is still open.
 The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date from May 2026 and are out of date — use this one.
@@ -18,7 +18,7 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - They work from **mockup screenshots** and expect the app to match them closely ("make it identical"), then send phone screenshots of what is wrong.
 
 ### How Ysa wants things done
-- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-5**, so next is **Ysa-Commit-6**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
+- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-6**, so next is **Ysa-Commit-7**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
 - **"Make the server up":** start Metro from the **repo root**, then give the `exp://` address and a QR code (see §1). Check the phone can really load the bundle, not just the manifest.
 - Never commit `.env` (it holds keys; it is in `.gitignore`).
 - Use real data only — no mock traffic data, no fake posts.
@@ -51,6 +51,8 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - `frontend/components/ui/Cards.tsx` (GlassCard, BlueStatusCard, StatusPill, MetricCard, SectionTitle, CountBadge), `SegmentedControl.tsx` (`tone="white"` on Community), `HeroMascot.tsx`.
 - Theme: `frontend/theme/palette.ts` (all colours, light + dark), `frontend/theme/tokens.ts` (spacing, radii, shadows).
 - Mascots: `AlphaVideo.tsx` (packed colour + alpha video through a Skia shader; `poster` shows the first frame until the video starts), `ui/WavingMascot.tsx` (two sizes; only the focused tab plays), `ui/LoadingMascot.tsx` (two sizes; system spinner under Reduce Motion).
+- Assistant chat history: `lib/chatHistory.ts` (`useChatHistory` — past chats in AsyncStorage, one list per signed-in email, max 50) and `components/assistant/ChatHistory.tsx` (the History sheet + the rows reused as "Recent chats" on the empty chat).
+- Assistant reply language: `backend/src/routes/assistant.ts` decides it in code (`replyLanguageFor`), and after the model answers `inReplyLanguage` checks the reply; a reply in the wrong language is rewritten once (`rewriteInLanguage`). The model ignored the prompt's language rules often enough that the check is needed.
 - Live data on the Dashboard: `lib/corridorSummary.ts` (Current Status card, from the shared corridor feed + Alerts' incident list), `lib/routeForecast.ts` + `hooks/useRouteForecast.ts` (Traffic Forecast card, from the dashboard's model — the same feed as the Map tab's forecast).
 
 ### Repo traps (each one cost a debugging cycle)
@@ -185,6 +187,12 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - **Mascots:** loading Lex replaces the spinners; waving Lex in the heroes (Assistant uses a larger copy); the small reply mascots in the Assistant were cleaned (white rim, studio-white patches). All mascot videos were checked frame by frame on dark and light.
 - **Sign In / Sign Up:** always the first screen; new background; tagline removed; smaller card; "Remember me" keeps the email.
 - **Tab backgrounds:** yellow sparkle strokes behind the mascot removed.
+
+### 18 Oct — Ysa-Commit-6 (Assistant history, reply language)
+- **Chat history** (Ysa: "the user can see the past convo like there is a history"): a clock button beside EN/TL opens past chats grouped Today / Yesterday / Previous 7 days / Older; tap one to reopen it and carry on (Lex gets its earlier messages). The empty chat lists the 3 latest under "Recent chats". The old trash button is now **New chat** — the chat on screen stays in the history. Each chat can be deleted (with a confirm), plus "Clear all chats". A day label shows where a reopened chat crosses into another day. Kept **on the phone only**, per account; not synced between phones (Supabase would be the way, if Ysa asks).
+- A reply that lands after the user moved to another chat is saved to the chat it was asked in.
+- **TL / EN switch fixed** ("i pick english first … when i switch to tagalog … it still answer english"): the app sent the choice correctly; the model drifted back to the conversation's earlier language (fully on small talk, or by copying an earlier English sentence). The backend now checks every reply's language and rewrites a wrong one (~1–2 s extra, only then). Taglish small talk ("You're welcome! Kung kailangan mo ng tulong…") is allowed on purpose.
+- Tapping TL while Lex is still answering does not change that answer — the question was already sent.
 
 ---
 

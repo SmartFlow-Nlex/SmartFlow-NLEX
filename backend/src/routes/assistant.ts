@@ -266,6 +266,63 @@ function replyLanguageFor(message: string, choice: LanguageChoice | null): Reply
   return written;
 }
 
+/*
+ * Words that mark a REPLY as English. Wider than ENGLISH_WORDS, which is tuned
+ * to classify short questions: replies add small talk ("you're welcome, feel
+ * free to ask") that a question never has. Kept separate so adding a word here
+ * cannot change which language a question is answered in.
+ */
+const REPLY_ENGLISH_WORDS = new Set([
+  ...ENGLISH_WORDS,
+  "you're", 'your', 'welcome', 'help', 'with', 'be', 'this', 'that', 'if', 'but', 'not', 'all',
+  'both', 'directions', 'direction', 'except', 'only', 'other', 'everywhere', 'else', 'flowing',
+  'smoothly', 'around', 'also', 'mostly', 'areas', 'sections', 'feel', 'free', 'ask', 'safe',
+  'travels', 'drive', 'trip', 'glad', 'sure', 'here', 'let', 'know', 'anything', 'than', 'stay',
+]);
+
+/** The same for Tagalog: a bare "Salamat!" has none of the question words. */
+const REPLY_TAGALOG_WORDS = new Set([
+  ...TAGALOG_WORDS,
+  'salamat', 'sige', 'ingat', 'anuman', 'tulong', 'kailangan', 'nandito', 'magtanong', 'pero',
+  'para', 'iyo', 'kong', 'bang', 'takbo', 'pong', 'ninyo', 'lahat', 'kahit', 'muna', 'talaga',
+  'kaya', 'siya', 'ayos', 'tumutulong', 'karamihan', 'bahagi', 'kabilang', 'iba', 'medyo',
+]);
+
+/** "may" is English as well as Tagalog ("traffic may ease"), so it counts for neither side. */
+function replyWordCounts(text: string): { tagalog: number; english: number } {
+  let tagalog = 0;
+  let english = 0;
+  for (const word of text.toLowerCase().match(/[a-zñ']+/g) ?? []) {
+    if (word === 'may') continue;
+    if (REPLY_TAGALOG_WORDS.has(word)) tagalog += 1;
+    else if (REPLY_ENGLISH_WORDS.has(word)) english += 1;
+  }
+  return { tagalog, english };
+}
+
+/**
+ * Whether a reply came out in the language it was asked for. Loose on
+ * purpose: Tagalog replies keep "km/h", exit names and, in Taglish,
+ * "congested" and "southbound".
+ */
+export function inReplyLanguage(reply: string, language: ReplyLanguage): boolean {
+  const { tagalog, english } = replyWordCounts(reply);
+  if (language === 'english') return tagalog < 2 || tagalog <= english;
+  // Taglish is meant to mix, so only an all-English reply is wrong for it.
+  if (language === 'taglish') return tagalog > 0;
+  /*
+   * A whole English sentence is wrong even in a mostly Tagalog reply: asked in
+   * TL after English answers, the model opened "NLEX traffic is slow at Paso
+   * de Blas Valenzuela (55 km/h) ..." - copied from the history - and only
+   * then went on in Tagalog. Short asides like "Safe travels!" are let be.
+   */
+  const englishSentence = reply.split(/[.!?\n]+/).some((sentence) => {
+    const counts = replyWordCounts(sentence);
+    return counts.tagalog === 0 && counts.english >= 3;
+  });
+  return tagalog > 0 && english <= tagalog && !englishSentence;
+}
+
 function languageGuide(language: ReplyLanguage, choice: LanguageChoice | null): string {
   const why =
     choice === null
@@ -593,6 +650,41 @@ interface ChatRequestBody {
 /** Caps the tool loop so a confused model cannot spin forever on our bill. */
 const MAX_TOOL_ROUNDS = 4;
 
+/**
+ * The same answer in the reply language, for a reply the model wrote in the
+ * other one; null when the rewrite fails or comes back wrong too.
+ *
+ * A separate request over the reply's text alone, without the conversation or
+ * tools: the earlier replies in the conversation are what pulled it into the
+ * wrong language, and nothing needs looking up to say the same thing again.
+ */
+async function rewriteInLanguage(reply: string, language: ReplyLanguage): Promise<string | null> {
+  const extras: Record<string, unknown> = { reasoning: { enabled: false } };
+  if (LLM_ZDR) {
+    extras.provider = { zdr: true };
+  }
+  const completion = await getClient().chat.completions.create({
+    model: QWEN_MODEL,
+    messages: [
+      {
+        role: 'system',
+        content: `You rewrite messages from Lex, a traffic assistant for drivers on the NLEX expressway in the Philippines, into ${LANGUAGE_NAME[language]}.
+Keep the meaning, every number, every speed and every exit name exactly as they are. Add nothing and leave nothing out. Plain text only. Reply with the rewritten message and nothing else.
+${LANGUAGE_STYLE[language]}`,
+      },
+      // "/no_think": see the greeting below - without it the model can spend
+      // the whole budget thinking and return nothing.
+      { role: 'user', content: `${reply}\n\n/no_think` },
+    ],
+    temperature: 0.2,
+    max_tokens: 800,
+    ...extras,
+  } as ChatCompletionCreateParamsNonStreaming);
+  const raw = (completion.choices[0]?.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '');
+  const rewritten = toPlainText(raw);
+  return rewritten.length > 0 && inReplyLanguage(rewritten, language) ? rewritten : null;
+}
+
 router.post('/chat', async (req: Request, res: Response): Promise<void> => {
   if (!isAssistantConfigured) {
     res.status(503).json({
@@ -761,7 +853,7 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
       }
 
       if (calls.length === 0) {
-        const reply = toPlainText(choice.content ?? '');
+        let reply = toPlainText(choice.content ?? '');
 
         /*
          * An empty reply renders as a blank chat bubble, which reads as a
@@ -782,6 +874,25 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
             message: 'The assistant did not return an answer. Please try again.',
           });
           return;
+        }
+
+        /*
+         * Answered in the wrong language. The REPLY LANGUAGE rule, the history
+         * note and the reminder on the question are all requests the model can
+         * still ignore - after a run of English replies, a "thank you" with TL
+         * picked came back "You're welcome! ... feel free to ask. Safe
+         * travels!". Like the lookups above, the rule is checked here. If the
+         * rewrite fails, the original reply still beats an error.
+         */
+        if (!inReplyLanguage(reply, language)) {
+          const rewritten = await rewriteInLanguage(reply, language).catch(() => null);
+          console.log(
+            `[assistant] reply was not in ${LANGUAGE_NAME[language]}: ` +
+              (rewritten === null ? 'rewrite failed, sent as it was' : 'rewritten'),
+          );
+          if (rewritten !== null) {
+            reply = rewritten;
+          }
         }
 
         /*
