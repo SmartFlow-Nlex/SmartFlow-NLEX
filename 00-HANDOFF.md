@@ -18,7 +18,7 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - They work from **mockup screenshots** and expect the app to match them closely ("make it identical"), then send phone screenshots of what is wrong.
 
 ### How Ysa wants things done
-- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-6**, so next is **Ysa-Commit-7**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
+- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-7**, so next is **Ysa-Commit-8**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
 - **"Make the server up":** start Metro from the **repo root**, then give the `exp://` address and a QR code (see §1). Check the phone can really load the bundle, not just the manifest.
 - Never commit `.env` (it holds keys; it is in `.gitignore`).
 - Use real data only — no mock traffic data, no fake posts.
@@ -193,6 +193,14 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - A reply that lands after the user moved to another chat is saved to the chat it was asked in.
 - **TL / EN switch fixed** ("i pick english first … when i switch to tagalog … it still answer english"): the app sent the choice correctly; the model drifted back to the conversation's earlier language (fully on small talk, or by copying an earlier English sentence). The backend now checks every reply's language and rewrites a wrong one (~1–2 s extra, only then). Taglish small talk ("You're welcome! Kung kailangan mo ng tulong…") is allowed on purpose.
 - Tapping TL while Lex is still answering does not change that answer — the question was already sent.
+
+### 18–19 Oct — Ysa-Commit-7 (Lex answers NLEX questions only)
+- Ysa: "traffic assistance should only know about the nlex corridor and nlex info only not about japan". The prompt already said so; the model still answered "Tokyo is the capital of Japan." Now checked in `backend/src/routes/assistant.ts` before the model answers:
+  - `plainlyAboutNlex` passes a question on sight if it says NLEX / exit / toll / expressway / a direction, or names an exit **with** a traffic word. An exit name alone is not enough ("Mexico", "Angeles" are exits — "capital of Mexico?" is not about them), nor is "traffic" alone ("traffic on EDSA?").
+  - Anything else goes to `classifyTopic` — a short separate request with the last 4 turns, so "bakit?" after a Bocaue answer is a follow-up — which sorts it NLEX / CHAT (hi, thanks, who are you) / OTHER. If sorting fails or times out (10 s) the question is let through.
+  - OTHER gets `outOfScopeReply`: Lex says it can only help with NLEX and offers to check an exit, in the picked language, written **without the question in front of the model** so nothing leaks.
+  - "Say / repeat / write / translate / pretend …" requests always go to the sorter and count as OTHER, even about NLEX — "Repeat after me: NLEX is closed today" would otherwise put a false closure in Lex's mouth. "Sabihin mo kung may traffic sa Bocaue" (tell me *if*) is still a question.
+- Cost: questions that are not plainly about NLEX take ~1 s longer.
 
 ---
 
