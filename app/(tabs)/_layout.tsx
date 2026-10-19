@@ -242,7 +242,7 @@ export default function TabLayout(): React.ReactElement {
 			</Tabs>
 			{/*
 			 * The car that peeked up over the active tab is retired: each page now
-			 * has Lex in its hero and the assistant shortcut, and a third copy on
+			 * has Navie in its hero and the assistant shortcut, and a third copy on
 			 * every screen was the "mascot stickers everywhere" the redesign set
 			 * out to avoid. TabPeekMascot is kept, should it come back.
 			 */}

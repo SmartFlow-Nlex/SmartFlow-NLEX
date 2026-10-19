@@ -10,7 +10,7 @@ import { useTheme } from '../../theme';
  *
  * Two, because the player shrinks a frame without averaging it: drawn at a
  * third of its size, the big one loses its fine detail unevenly and the cap's
- * badge and the eyes crawl as he moves. A row-sized Lex therefore plays a
+ * badge and the eyes crawl as he moves. A row-sized Navie therefore plays a
  * video made at about the size he is drawn.
  */
 const LARGE = { source: require('../../assets/mascot-loading.mp4'), width: 300, height: 346 };
@@ -31,7 +31,7 @@ export interface LoadingMascotProps {
 }
 
 /**
- * Lex bouncing on the spot: the app's loading indicator, wherever something
+ * Navie bouncing on the spot: the app's loading indicator, wherever something
  * is being fetched.
  *
  * Cut from the designer's `loading.mp4` and played the way the other mascot

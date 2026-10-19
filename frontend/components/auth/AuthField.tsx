@@ -25,6 +25,12 @@ export interface AuthFieldProps {
   autoComplete?: 'email' | 'name' | 'password' | 'new-password' | 'off';
   error?: string | null;
   testID?: string;
+  /** The most characters the field takes. */
+  maxLength?: number;
+  /** iOS's rules for a password it makes up for this field (see PASSWORD_RULES). */
+  passwordRules?: string;
+  /** Shown under the field, e.g. the strength meter. */
+  footer?: React.ReactNode;
 }
 
 /**
@@ -45,6 +51,9 @@ const AuthField: React.FC<AuthFieldProps> = ({
   autoComplete = 'off',
   error = null,
   testID,
+  maxLength,
+  passwordRules,
+  footer,
 }) => {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -82,6 +91,8 @@ const AuthField: React.FC<AuthFieldProps> = ({
             autoComplete={autoComplete}
             autoCorrect={false}
             keyboardType={keyboardType}
+            maxLength={maxLength}
+            passwordRules={passwordRules}
             onBlur={() => setFocused(false)}
             onChangeText={onChangeText}
             onFocus={() => setFocused(true)}
@@ -99,8 +110,10 @@ const AuthField: React.FC<AuthFieldProps> = ({
               hitSlop={10}
               onPress={() => setRevealed((current) => !current)}
             >
+              {/* The icon shows the state the password is in: struck through while
+                  it is hidden, open once it is showing. */}
               <Ionicons
-                name={revealed ? 'eye-off-outline' : 'eye-outline'}
+                name={revealed ? 'eye-outline' : 'eye-off-outline'}
                 size={21}
                 color={colors.textTertiary}
               />
@@ -110,6 +123,7 @@ const AuthField: React.FC<AuthFieldProps> = ({
       </View>
 
       {hasError ? <Text style={styles.errorText}>{error}</Text> : null}
+      {footer}
     </View>
   );
 };

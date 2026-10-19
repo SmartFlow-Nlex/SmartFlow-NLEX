@@ -56,7 +56,7 @@ export default function MapScreen(): React.ReactElement {
       scene="corridor"
       overlay={<AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />}
     >
-      {/* No Lex here: the corridor is the data-heaviest tab, and its network
+      {/* No Navie here: the corridor is the data-heaviest tab, and its network
           scene is the identity. The assistant shortcut is the one mascot. */}
       <PageHero
         // Placed to the mockup: a large title 46pt under the header, the

@@ -97,7 +97,7 @@ export function wakeAssistant(): void {
   void wakeTrafficSource();
 }
 
-/** Lex's last few welcomes on this phone, sent back so the next one differs. */
+/** Navie's last few welcomes on this phone, sent back so the next one differs. */
 const RECENT_GREETINGS_KEY = 'smartflow.lex.recentGreetings';
 const RECENT_GREETINGS_KEPT = 6;
 
@@ -111,7 +111,7 @@ async function recentGreetings(): Promise<string[]> {
 }
 
 /**
- * A fresh welcome from Lex for a new chat, written by the model, or null when
+ * A fresh welcome from Navie for a new chat, written by the model, or null when
  * the backend cannot be reached in time.
  *
  * The server picks the opening and angle and is told the greetings this phone
@@ -155,12 +155,16 @@ async function fetchGreeting(name: string | null): Promise<string | null> {
  * The greeting for the chat after this one, written ahead of time.
  *
  * Fetching on open meant every new chat waited on the model, and a sleeping
- * backend made that 20-30s of "Lex is saying hi...". Kept in AsyncStorage so
+ * backend made that 20-30s of "Navie is saying hi...". Kept in AsyncStorage so
  * it is ready even after the app restarts. It is thrown away if it was written
  * for a different name, a different part of the day ("Good morning" read at
  * night), or more than a few hours ago.
  */
-const NEXT_GREETING_KEY = 'smartflow.lex.nextGreeting';
+// "navie", not "lex" like the keys around it: the assistant was Lex until
+// 19 Oct, and a welcome written before then, waiting under the old key, would
+// still introduce itself as Lex. The other "lex" keys stay as they are -
+// renaming them would lose people's saved chats and language pick.
+const NEXT_GREETING_KEY = 'smartflow.navie.nextGreeting';
 const NEXT_GREETING_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 
 interface StoredGreeting {
@@ -209,7 +213,7 @@ async function prepareNextGreeting(name: string | null): Promise<void> {
 }
 
 /**
- * Lex's welcome for a new chat: the one written in advance when there is one,
+ * Navie's welcome for a new chat: the one written in advance when there is one,
  * otherwise a fresh one from the server, or null when it cannot be reached.
  * Either way the following chat's greeting starts being written straight away.
  */
@@ -246,7 +250,7 @@ const RETRY_DELAY_MS = 1200;
 const wait = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The EN / TL switch in the Assistant header: which language Lex replies in. */
+/** The EN / TL switch in the Assistant header: which language Navie replies in. */
 export type LanguageChoice = 'english' | 'tagalog';
 
 const LANGUAGE_KEY = 'smartflow.lex.language';

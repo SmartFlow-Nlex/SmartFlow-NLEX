@@ -539,7 +539,7 @@ const WindingRoad: React.FC<{ pts: [number, number][]; widths: number[]; c: Them
   );
 };
 
-/** A white motion streak, for the Assistant's Lex. */
+/** A white motion streak, for the Assistant's Navie. */
 const Swoosh: React.FC<{ d: string; c: ThemePalette; w?: number; o?: number }> = ({ d, c, w = 3, o = 0.85 }) => (
   <Path path={d} style="stroke" strokeWidth={w} strokeCap="round" color={alpha(c.sceneGlow, o)}>
     <BlurMask blur={0.8} style="solid" />
@@ -576,7 +576,7 @@ interface ArtFrame {
 }
 
 const FRAMES: Record<SceneVariant, ArtFrame> = {
-  // Journey: the skyline and flyover behind the greeting, Lex on the road.
+  // Journey: the skyline and flyover behind the greeting, Navie on the road.
   dashboard: {
     zoom: 1,
     skyline: 8,
@@ -629,7 +629,7 @@ const FRAMES: Record<SceneVariant, ArtFrame> = {
       </>
     ),
   },
-  // Intelligence: Lex in the middle of the road, messages either side.
+  // Intelligence: Navie in the middle of the road, messages either side.
   assistant: {
     zoom: 1.1,
     skyline: 66,
@@ -867,7 +867,7 @@ const CommunityScene: React.FC<SceneProps> = ({ d, c, t }) => {
   );
 };
 
-/** Intelligence: signal waves spreading from Lex, trails flowing past. */
+/** Intelligence: signal waves spreading from Navie, trails flowing past. */
 const AssistantScene: React.FC<SceneProps> = ({ d, c, t }) => {
   /** A fraction of the way down the area under the header. */
   const yy = (f: number): number => t + f * (d - t);
@@ -886,7 +886,7 @@ const AssistantScene: React.FC<SceneProps> = ({ d, c, t }) => {
       <Sky d={d} c={c} t={t} />
       <Cloud x={30} y={yy(0.3)} s={0.9} c={c} o={0.75} />
       <Cloud x={292} y={yy(0.18)} s={0.75} c={c} o={0.8} />
-      {/* Signal waves: arcs above and around where Lex stands. */}
+      {/* Signal waves: arcs above and around where Navie stands. */}
       {[80, 118, 156, 194].map((r, i) => (
         <Path
           key={r}

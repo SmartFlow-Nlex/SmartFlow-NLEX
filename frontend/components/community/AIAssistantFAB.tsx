@@ -9,7 +9,7 @@ export interface AIAssistantFABProps {
 }
 
 /**
- * The button is the designer's "Cheerful Traffic Guide Car": Lex with a
+ * The button is the designer's "Cheerful Traffic Guide Car": Navie with a
  * "Check traffic along your route!" bubble, as in the dashboard mockup. The
  * artwork is about twice as wide as it is tall, so the button is too.
  */
@@ -110,7 +110,7 @@ const AIAssistantFAB: React.FC<AIAssistantFABProps> = ({ onPress }) => {
           onPress={onPress}
           style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
         >
-          {/* Lex and his "Check traffic along your route!" bubble, on a
+          {/* Navie and his "Check traffic along your route!" bubble, on a
               transparent background, so it sits on light and dark pages alike. */}
           <Image source={require('../../assets/mascot-guide.png')} style={styles.mascot} resizeMode="contain" />
         </Pressable>

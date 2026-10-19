@@ -13,7 +13,14 @@ import { AuthProvider, useAuth } from '../frontend/auth';
 import { ThemeProvider, useAppFonts, useTheme } from '../frontend/theme';
 import { NotificationsProvider } from '../frontend/notifications';
 
-const authRoutes = ['sign-in', 'sign-up'];
+const authRoutes = ['sign-in', 'sign-up', 'forgot-password', 'reset-password'];
+
+/**
+ * Open in any state. A reset link can arrive while someone is signed in; the
+ * reset screen signs them out itself rather than being bounced to the
+ * dashboard before it can read the link.
+ */
+const openToAll = ['reset-password'];
 
 /**
  * Keeps the route in step with the session: signed-out users cannot stay on an
@@ -49,7 +56,7 @@ function useAuthRedirect(): void {
 
     if (halfway && !onAuthScreen) {
       router.replace('/sign-in');
-    } else if (status === 'signedIn' && onAuthScreen) {
+    } else if (status === 'signedIn' && onAuthScreen && !openToAll.includes(first)) {
       router.replace('/(tabs)/dashboard');
     }
   }, [status, segments, router]);
@@ -106,6 +113,9 @@ function ThemedStack(): React.ReactElement | null {
         <Stack.Screen name="index" />
         <Stack.Screen name="sign-in" />
         <Stack.Screen name="sign-up" />
+        <Stack.Screen name="forgot-password" />
+        {/* Where the reset email's link opens the app. */}
+        <Stack.Screen name="reset-password" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="profile/index" />
         <Stack.Screen name="notifications" />

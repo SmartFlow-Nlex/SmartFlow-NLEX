@@ -27,7 +27,7 @@ const MascotGreeting: React.FC<MascotGreetingProps> = ({ size }) => {
     <AlphaVideo
       source={require('../assets/mascot-hello.mp4')}
       fallback={require('../assets/mascot-hello.webp')}
-      // His first frame, so there is a Lex on screen before the video starts.
+      // His first frame, so there is a Navie on screen before the video starts.
       poster={require('../assets/mascot-hello.png')}
       frameWidth={440}
       frameHeight={463}

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { AccessibilityInfo, Animated, Easing, Image, Platform, StyleSheet, View } from 'react-native';
 
-/** Lex, cut out, front three-quarter - the pose for a page hero. */
+/** Navie, cut out, front three-quarter - the pose for a page hero. */
 const mascotCar = require('../../assets/mascot-car.png');
 /** mascot-car.png's own proportions (256 x 239). */
 const ASPECT = 256 / 239;
@@ -9,7 +9,7 @@ const ASPECT = 256 / 239;
 const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 
 /**
- * Lex standing in a hero: the still car with a slow float, so the page has a
+ * Navie standing in a hero: the still car with a slow float, so the page has a
  * character without a second video decoder running behind every tab. Holds
  * still for anyone who has asked the phone to reduce motion.
  */
@@ -58,7 +58,7 @@ const HeroMascot: React.FC<{ size: number }> = ({ size }) => {
           source={mascotCar}
           resizeMode="contain"
           style={{ width: size * ASPECT, height: size }}
-          accessibilityLabel="Lex, the SmartFlow car mascot"
+          accessibilityLabel="Navie, the SmartFlow car mascot"
         />
       </Animated.View>
     </View>

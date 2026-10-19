@@ -74,9 +74,9 @@ export default function CommunityScreen(): React.ReactElement {
       }
     >
       <PageHero
-        // Placed to the mockup, except that Lex stands whole on the composer
+        // Placed to the mockup, except that Navie stands whole on the composer
         // card: cut off at its edge as the mockup has him, only his cap and
-        // eyes showed - this Lex's cap is taller than the mockup's.
+        // eyes showed - this Navie's cap is taller than the mockup's.
         title="Community"
         subtitle={'Share what you see and help\nthe people behind you.'}
         titleScale={0.082}
@@ -124,7 +124,7 @@ export default function CommunityScreen(): React.ReactElement {
         */}
         {isLoading ? (
           <View accessibilityLabel="Loading community feed">
-            {/* Lex says it is loading; the skeletons say how much is coming. */}
+            {/* Navie says it is loading; the skeletons say how much is coming. */}
             <View style={styles.loadingLex}>
               <LoadingMascot size={88} label="Loading community feed" />
               <Text style={styles.stateText}>Loading the community feed...</Text>

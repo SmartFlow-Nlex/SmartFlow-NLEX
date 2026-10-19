@@ -8,7 +8,7 @@ import SheetModal from '../SheetModal';
 import { historyGroup, whenLabel } from '../../lib/chatHistory';
 import type { SavedChat } from '../../lib/chatHistory';
 
-/** Lex's last words in a chat, which say more about it than the question does. */
+/** Navie's last words in a chat, which say more about it than the question does. */
 function previewOf(chat: SavedChat): string {
   const reply = [...chat.messages].reverse().find((message) => message.role === 'assistant');
   return (reply?.text ?? chat.messages[chat.messages.length - 1].text).replace(/\s+/g, ' ').trim();
@@ -23,7 +23,7 @@ export interface ChatHistoryRowProps {
   chat: SavedChat;
   /** The chat on screen right now. */
   active: boolean;
-  /** Lex is still answering in this chat. */
+  /** Navie is still answering in this chat. */
   pending: boolean;
   onPress: () => void;
   /** Offered in the full history only; the short list on the empty chat is for opening. */
@@ -64,7 +64,7 @@ export const ChatHistoryRow: React.FC<ChatHistoryRowProps> = ({
           <Text style={styles.rowWhen}>{whenLabel(chat.updatedAt)}</Text>
         </View>
         <Text numberOfLines={2} style={styles.rowPreview}>
-          {pending ? 'Lex is still answering…' : previewOf(chat)}
+          {pending ? 'Navie is still answering…' : previewOf(chat)}
         </Text>
         <View style={styles.rowMeta}>
           <Text style={styles.rowMetaText}>{questionCount(chat)}</Text>
@@ -105,7 +105,7 @@ export interface ChatHistorySheetProps {
 }
 
 /**
- * Every past chat with Lex, grouped by when it was last active, to reopen and
+ * Every past chat with Navie, grouped by when it was last active, to reopen and
  * carry on. A sheet over the chat rather than its own screen: you dip in, pick
  * one, and are straight back in the conversation.
  */
@@ -145,7 +145,7 @@ export const ChatHistorySheet: React.FC<ChatHistorySheetProps> = ({
   };
 
   const confirmClearAll = (): void => {
-    Alert.alert('Clear all chats?', 'Every past chat with Lex on this phone will be deleted.', [
+    Alert.alert('Clear all chats?', 'Every past chat with Navie on this phone will be deleted.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Clear all', style: 'destructive', onPress: onClearAll },
     ]);
@@ -195,7 +195,7 @@ export const ChatHistorySheet: React.FC<ChatHistorySheetProps> = ({
               </View>
               <Text style={styles.emptyTitle}>No past chats yet</Text>
               <Text style={styles.emptyText}>
-                Chats with Lex are kept here, so you can come back to one and pick up where you left off.
+                Chats with Navie are kept here, so you can come back to one and pick up where you left off.
               </Text>
             </View>
           ) : (

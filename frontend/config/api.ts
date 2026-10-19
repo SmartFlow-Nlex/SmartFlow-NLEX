@@ -104,7 +104,7 @@ export const TRAFFIC_SOURCE_URL =
 export const ASSISTANT_TIMEOUT_MS = 75000;
 
 /**
- * How long Lex's welcome may take before the screen greets with its own line.
+ * How long Navie's welcome may take before the screen greets with its own line.
  *
  * Shorter than a question: the greeting never reads the traffic feed, so it
  * waits only on our backend waking (20-25s) and a 2-3s generation. Past that,

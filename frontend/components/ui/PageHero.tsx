@@ -12,7 +12,7 @@ export interface HeroMascotPlacement {
   bleed?: number;
   /**
    * Cut the mascot off at the hero's lower edge, so it looks to stand behind
-   * the card that follows - Community's Lex peeking over the composer.
+   * the card that follows - Community's Navie peeking over the composer.
    */
   clip?: boolean;
 }
@@ -26,7 +26,7 @@ export interface PageHeroProps {
   name?: string;
   /** Break it with "\n" where the mockup does. */
   subtitle?: string;
-  /** Lex, or whatever stands on the right of the title. */
+  /** Navie, or whatever stands on the right of the title. */
   mascot?: React.ReactNode;
   /** How much of the row the words keep clear on the right, for the mascot. */
   mascotWidth?: number;
@@ -46,11 +46,11 @@ export interface PageHeroProps {
 
 /**
  * The top of every tab: the page name, large, in the brand face, with the
- * dashboard's gold sparkle - and Lex beside it where the page calls for him.
+ * dashboard's gold sparkle - and Navie beside it where the page calls for him.
  *
  * Each tab places these to match its mockup: how far below the header the
- * title sits (the scene shows in that gap), how large it is, and where Lex
- * stands. The words always keep clear of Lex; a title that would not fit
+ * title sits (the scene shows in that gap), how large it is, and where Navie
+ * stands. The words always keep clear of Navie; a title that would not fit
  * shrinks a little rather than wrapping into him.
  */
 const PageHero: React.FC<PageHeroProps> = ({

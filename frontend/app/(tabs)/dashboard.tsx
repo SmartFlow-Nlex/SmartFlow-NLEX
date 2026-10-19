@@ -322,8 +322,8 @@ export default function DashboardScreen(): React.ReactElement {
       <Reveal index={0}>
         <PageHero
           // Placed to the mockup: the greeting 65pt under the header with the
-          // name on its own line, Lex standing beside both lines, and the
-          // status card starting 208pt down. Words keep clear of Lex.
+          // name on its own line, Navie standing beside both lines, and the
+          // status card starting 208pt down. Words keep clear of Navie.
           title={firstName === null ? greetingFor(now) : `${greetingFor(now)},`}
           name={firstName ?? undefined}
           subtitle={'Here’s the latest traffic\nupdate on NLEX.'}

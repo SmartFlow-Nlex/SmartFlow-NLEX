@@ -38,7 +38,7 @@ import { firstNameOf, useAuth } from '../../../auth';
 /** Height of the mascot beside each reply. */
 const MASCOT_SIZE = 40;
 
-/** Lex's head, small, inside the chat field - the one other place he appears. */
+/** Navie's head, small, inside the chat field - the one other place he appears. */
 const mascotIcon = require('../../../assets/mascot-icon.png');
 
 /** How many past chats the empty chat lists before "See all". */
@@ -64,9 +64,9 @@ const languageOptions: { value: LanguageChoice; label: string; name: string }[] 
   { value: 'tagalog', label: 'TL', name: 'Tagalog' },
 ];
 
-/** What Lex says when the backend cannot be reached for a fresh welcome. */
+/** What Navie says when the backend cannot be reached for a fresh welcome. */
 function offlineGreeting(name: string | null): string {
-  return `${name === null ? 'Hi!' : `Hi ${name}!`} I'm Lex. Ask me about NLEX traffic.`;
+  return `${name === null ? 'Hi!' : `Hi ${name}!`} I'm Navie. Ask me about NLEX traffic.`;
 }
 
 function formatTime(at: number): string {
@@ -112,9 +112,9 @@ export default function AssistantScreen(): React.ReactElement {
   const [chatId, setChatId] = useState<string | null>(null);
   /** The same, for a reply to check when it lands - the user may have moved on. */
   const chatIdRef = useRef<string | null>(null);
-  /** The chat waiting on Lex, which is not necessarily the one on screen. */
+  /** The chat waiting on Navie, which is not necessarily the one on screen. */
   const [pendingChatId, setPendingChatId] = useState<string | null>(null);
-  /** Chats deleted while Lex was still answering in them, so the reply does not bring them back. */
+  /** Chats deleted while Navie was still answering in them, so the reply does not bring them back. */
   const deletedRef = useRef<Set<string>>(new Set());
   const [historyOpen, setHistoryOpen] = useState<boolean>(false);
 
@@ -130,9 +130,9 @@ export default function AssistantScreen(): React.ReactElement {
 
   /** Counts new chats: the screen opening is the first, every new chat another. */
   const [chatNumber, setChatNumber] = useState<number>(0);
-  /** Lex's welcome for this chat; null while it is being written. */
+  /** Navie's welcome for this chat; null while it is being written. */
   const [greeting, setGreeting] = useState<string | null>(null);
-  /** Which language Lex replies in, from the EN / TL switch. Remembered on the phone. */
+  /** Which language Navie replies in, from the EN / TL switch. Remembered on the phone. */
   const [language, setLanguage] = useState<LanguageChoice>('english');
 
   useEffect(() => {
@@ -154,7 +154,7 @@ export default function AssistantScreen(): React.ReactElement {
    * A new welcome for every new chat, written by the model itself, so it
    * addresses the user by name and is never the same line twice. Usually it
    * was written in advance and shows at once - see nextGreeting. If the backend
-   * cannot be reached, Lex still says hello with a fixed line rather than
+   * cannot be reached, Navie still says hello with a fixed line rather than
    * leaving the panel waiting.
    */
   useEffect(() => {
@@ -197,7 +197,7 @@ export default function AssistantScreen(): React.ReactElement {
       wakeAssistant();
       setMessages(asked);
       // Saved before the answer, so the chat is in the history - question
-      // showing - if the user goes to look while Lex is still answering.
+      // showing - if the user goes to look while Navie is still answering.
       saveChat(id, asked);
       setDraft('');
       setError(null);
@@ -312,14 +312,14 @@ export default function AssistantScreen(): React.ReactElement {
 
   const canSend = draft.trim().length > 0 && !isThinking;
   const hasConversation = messages.length > 0;
-  /** Lex is answering the chat on screen, rather than one the user has left. */
+  /** Navie is answering the chat on screen, rather than one the user has left. */
   const thinkingHere = isThinking && pendingChatId === chatId;
   const recentChats = savedChats.slice(0, RECENT_CHATS_SHOWN);
 
   /** EN / TL, past chats, and - once there is a conversation - a fresh one. */
   const heroControls = (
     <>
-      {/* Which language Lex replies in, whatever language the question is in. */}
+      {/* Which language Navie replies in, whatever language the question is in. */}
       <View accessibilityRole="radiogroup" accessibilityLabel="Reply language" style={styles.languageSwitch}>
         {languageOptions.map((option) => {
           const selected = option.value === language;
@@ -402,7 +402,7 @@ export default function AssistantScreen(): React.ReactElement {
             onSubmitEditing={() => void send(draft)}
             placeholder={
               isThinking && !thinkingHere
-                ? 'Lex is still answering your other chat…'
+                ? 'Navie is still answering your other chat…'
                 : 'Ask about traffic at any NLEX exit…'
             }
             placeholderTextColor={colors.textTertiary}
@@ -446,7 +446,7 @@ export default function AssistantScreen(): React.ReactElement {
       keyboardAvoiding
       scrollRef={scrollRef}
       // Follow the conversation as it grows. Before the first question the
-      // page is Lex's welcome, which should stay where it starts.
+      // page is Navie's welcome, which should stay where it starts.
       onContentSizeChange={() => {
         if (hasConversation) {
           scrollRef.current?.scrollToEnd({ animated: true });
@@ -468,15 +468,15 @@ export default function AssistantScreen(): React.ReactElement {
 
       {messages.length === 0 ? (
         <View style={styles.intro}>
-          {/* The one big Lex in the app: this is his page. */}
+          {/* The one big Navie in the app: this is his page. */}
           <WavingMascot size={190} />
 
-          {/* Lex's own words, so they get a bubble pointing back at him. */}
+          {/* Navie's own words, so they get a bubble pointing back at him. */}
           {greeting === null ? (
             <View style={[styles.greetingBubble, styles.greetingWaiting]}>
               <View style={styles.greetingTail} />
               <ActivityIndicator color={colors.accent} size="small" />
-              <Text style={styles.thinkingText}>Lex is saying hi...</Text>
+              <Text style={styles.thinkingText}>Navie is saying hi...</Text>
             </View>
           ) : (
             <Reveal delay={0} key={greeting} style={styles.greetingReveal}>
@@ -727,7 +727,7 @@ const makeStyles = (c: ThemePalette) =>
       color: c.textInverse,
     },
 
-    // Lex rises into the hero's lower edge, where the mockup has him.
+    // Navie rises into the hero's lower edge, where the mockup has him.
     intro: {
       alignItems: 'center',
       gap: 16,
@@ -736,7 +736,7 @@ const makeStyles = (c: ThemePalette) =>
     greetingReveal: {
       alignSelf: 'stretch',
     },
-    /* Speech bubble under Lex, its tail pointing up at him. */
+    /* Speech bubble under Navie, its tail pointing up at him. */
     greetingBubble: {
       alignSelf: 'stretch',
       backgroundColor: c.surface,
@@ -1038,7 +1038,7 @@ const makeStyles = (c: ThemePalette) =>
       alignItems: 'center',
       gap: 10,
     },
-    /* The field as one rounded pill, Lex's head tucked inside its right end. */
+    /* The field as one rounded pill, Navie's head tucked inside its right end. */
     inputPill: {
       flex: 1,
       flexDirection: 'row',

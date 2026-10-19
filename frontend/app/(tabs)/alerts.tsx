@@ -256,7 +256,7 @@ export default function AlertsScreen(): React.ReactElement {
       overlay={<AIAssistantFAB onPress={() => router.push('/(tabs)/assistant')} />}
     >
       <PageHero
-        // Placed to the mockup: Lex up by the bell, the title low under him,
+        // Placed to the mockup: Navie up by the bell, the title low under him,
         // and the Alerts / Maintenance switch 205pt below the header.
         title="Smart Alerts"
         subtitle={'Proactive notifications\nfor traffic events'}
@@ -302,7 +302,7 @@ export default function AlertsScreen(): React.ReactElement {
             <Ionicons name="cloud" size={44} color={colors.primarySoftBorder} style={styles.emptyCloudLeft} />
             <Ionicons name="cloud" size={34} color={colors.primarySoftBorder} style={styles.emptyCloudRight} />
             {isLoadingList ? (
-              // Still waiting: Lex between the clouds, and no sparkles - they
+              // Still waiting: Navie between the clouds, and no sparkles - they
               // mark an answer, and there is not one yet.
               <LoadingMascot size={92} label={emptyState.title} />
             ) : (

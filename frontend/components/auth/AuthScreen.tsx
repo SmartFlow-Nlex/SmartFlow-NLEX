@@ -21,11 +21,11 @@ import LoadingMascot from '../ui/LoadingMascot';
 
 /*
  * The sign-in and sign-up screens, over Ysa's "sign in" artwork (14 Oct 2026):
- * a sunlit sky, the skyline, and Lex driving up the expressway toward you -
+ * a sunlit sky, the skyline, and Navie driving up the expressway toward you -
  * all painted into the one picture, which is why the mascot is not a separate
  * layer here.
  *
- * Lex sits a little below the middle of the picture, where a form laid over
+ * Navie sits a little below the middle of the picture, where a form laid over
  * it would cover him. So the picture is fitted to the form rather than the
  * form to the picture: it is slid down until his cap comes out just under
  * the form's last line, and he drives out from beneath the card. It is not
@@ -43,7 +43,7 @@ import LoadingMascot from '../ui/LoadingMascot';
 /** The background artwork's size. */
 const ART_W = 941;
 const ART_H = 1672;
-/** Lex in the art: where his cap begins, and the line down his middle. */
+/** Navie in the art: where his cap begins, and the line down his middle. */
 const LEX_TOP = 962;
 const LEX_CENTRE_X = 453;
 /**
@@ -126,7 +126,7 @@ export interface AuthScreenProps {
 /**
  * Background art, the SmartFlow header, a frosted-glass card and the
  * copyright line. The page scrolls when the form is taller than the space
- * above Lex (sign-up on a small phone) and keeps the focused field above the
+ * above Navie (sign-up on a small phone) and keeps the focused field above the
  * keyboard.
  */
 const AuthScreen: React.FC<AuthScreenProps> = ({ children }) => {
@@ -143,21 +143,21 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ children }) => {
    * The form's height as first measured, which is what the picture is fitted
    * to. Only the first: an error message makes the form taller, and the whole
    * background visibly zooming to follow it would be worse than the card
-   * covering a little of Lex's cap. Until it is known, a typical share of the
+   * covering a little of Navie's cap. Until it is known, a typical share of the
    * screen stands in, so the picture barely moves when the real figure lands.
    */
   const [contentHeight, setContentHeight] = useState(0);
   const formBottom = top + (contentHeight === 0 ? height * 0.66 : contentHeight);
 
   // The art a little smaller than screen-filling (never narrower than the
-  // screen), slid down until Lex's cap sits under the form - and at least far
+  // screen), slid down until Navie's cap sits under the form - and at least far
   // enough that the picture still reaches the bottom edge.
   const artScale = Math.max(width / ART_W, m.scale * ZOOM_OUT);
   const artWidth = ART_W * artScale;
   const artHeight = ART_H * artScale;
   const artTop = Math.max(0, Math.ceil(height - artHeight), Math.round(formBottom + 10 - LEX_TOP * artScale));
   const capTop = artTop + LEX_TOP * artScale;
-  // Sideways, Lex in the middle - as far as the picture's edges allow.
+  // Sideways, Navie in the middle - as far as the picture's edges allow.
   const artLeft = Math.min(0, Math.max(width - artWidth, width / 2 - LEX_CENTRE_X * artScale));
 
   const artStyle = { width: artWidth, height: artHeight, left: artLeft, top: artTop };
@@ -204,7 +204,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ children }) => {
         style={styles.flex}
         contentContainerStyle={{
           paddingTop: top,
-          // At the end of a scroll, the copyright still clears Lex's cap.
+          // At the end of a scroll, the copyright still clears Navie's cap.
           paddingBottom: Math.max(24, height - capTop + 6),
           paddingHorizontal: m.margin,
         }}
@@ -396,22 +396,31 @@ export const AuthTitle: React.FC<{ children: React.ReactNode }> = ({ children })
  * busy states. The shadow sits on an outer view: a view that clips its corners
  * on iOS clips its own shadow too.
  */
-export const AuthPrimaryButton: React.FC<{ label: string; busy: boolean; onPress: () => void }> = ({
-  label,
-  busy,
-  onPress,
-}) => {
+export const AuthPrimaryButton: React.FC<{
+  label: string;
+  busy: boolean;
+  onPress: () => void;
+  /** Greyed and inert, e.g. while sign-in is locked after too many wrong passwords. */
+  disabled?: boolean;
+}> = ({ label, busy, onPress, disabled = false }) => {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const m = useAuthMetrics();
   const [width, setWidth] = useState(0);
   return (
-    <View style={[styles.primaryShadow, { minHeight: m.buttonHeight }, busy && styles.primaryButtonBusy]}>
+    <View
+      style={[
+        styles.primaryShadow,
+        { minHeight: m.buttonHeight },
+        busy && styles.primaryButtonBusy,
+        disabled && styles.primaryButtonDisabled,
+      ]}
+    >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={label}
-        accessibilityState={{ disabled: busy, busy }}
-        disabled={busy}
+        accessibilityState={{ disabled: busy || disabled, busy }}
+        disabled={busy || disabled}
         onPress={onPress}
         onLayout={(event) => setWidth(Math.round(event.nativeEvent.layout.width))}
         style={[styles.primaryButton, { minHeight: m.buttonHeight }]}
@@ -432,7 +441,7 @@ export const AuthPrimaryButton: React.FC<{ label: string; busy: boolean; onPress
             {/* Pressed: a touch darker, not a different button. */}
             {pressed ? <View pointerEvents="none" style={styles.primaryPressedVeil} /> : null}
             {busy ? (
-              // Lex in place of the label, a little shorter than the button.
+              // Navie in place of the label, a little shorter than the button.
               <LoadingMascot size={Math.min(40, m.buttonHeight - 12)} label={`${label}, please wait`} />
             ) : (
               <Text style={[styles.primaryButtonText, { fontSize: m.inputSize + 1 }]}>{label}</Text>
@@ -452,6 +461,18 @@ export const AuthError: React.FC<{ message: string }> = ({ message }) => {
     <View accessibilityRole="alert" style={styles.errorBanner}>
       <Ionicons name="alert-circle-outline" size={17} color={colors.danger} />
       <Text style={styles.errorBannerText}>{message}</Text>
+    </View>
+  );
+};
+
+/** Good news inside the card: a reset email sent, a password changed. */
+export const AuthNotice: React.FC<{ message: string }> = ({ message }) => {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  return (
+    <View accessibilityRole="alert" style={styles.noticeBanner}>
+      <Ionicons name="checkmark-circle-outline" size={17} color={colors.statusSmoothText} />
+      <Text style={styles.noticeBannerText}>{message}</Text>
     </View>
   );
 };
@@ -560,6 +581,9 @@ const makeStyles = (c: ThemePalette) =>
     primaryButtonBusy: {
       opacity: 0.8,
     },
+    primaryButtonDisabled: {
+      opacity: 0.5,
+    },
     primaryButtonText: {
       color: c.textInverse,
       fontWeight: '700',
@@ -576,6 +600,22 @@ const makeStyles = (c: ThemePalette) =>
     },
     errorBannerText: {
       color: c.danger,
+      fontSize: 13.5,
+      fontWeight: '600',
+      flex: 1,
+    },
+    noticeBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: c.statusSmoothBg,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginBottom: 14,
+    },
+    noticeBannerText: {
+      color: c.statusSmoothText,
       fontSize: 13.5,
       fontWeight: '600',
       flex: 1,

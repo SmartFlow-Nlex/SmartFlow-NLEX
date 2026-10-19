@@ -13,7 +13,7 @@ import { useTheme } from '../../theme';
  *
  * Two, because a frame drawn much larger than it was made goes soft, and one
  * drawn much smaller loses detail unevenly (the player does not average when
- * it shrinks). A page hero's Lex fits the small one; the Assistant's big Lex
+ * it shrinks). A page hero's Navie fits the small one; the Assistant's big Navie
  * needs the large.
  */
 const SMALL = {
@@ -35,7 +35,7 @@ const LARGE = {
 const SMALL_UP_TO_PX = 340;
 
 /**
- * Lex waving - the designer's `waving.mp4`, cut out and looped: a blink, a
+ * Navie waving - the designer's `waving.mp4`, cut out and looped: a blink, a
  * lean, a wave of the wheel, and back.
  *
  * `size` is his height standing upright, and the space he takes in the layout
@@ -79,7 +79,7 @@ const WavingMascot: React.FC<{ size: number }> = ({ size }) => {
             frameWidth={source.width}
             frameHeight={source.height}
             height={frame.height}
-            accessibilityLabel="Lex, the SmartFlow car mascot, waving"
+            accessibilityLabel="Navie, the SmartFlow car mascot, waving"
             // On a pale sky his white cap would otherwise melt into it.
             edgeColor={isDark ? undefined : colors.mascotEdge}
           />
@@ -88,7 +88,7 @@ const WavingMascot: React.FC<{ size: number }> = ({ size }) => {
             source={source.still}
             resizeMode="contain"
             style={{ width: frame.width, height: frame.height }}
-            accessibilityLabel="Lex, the SmartFlow car mascot"
+            accessibilityLabel="Navie, the SmartFlow car mascot"
           />
         )}
       </View>

@@ -4,7 +4,7 @@ import { isReplyMood } from './assistantApi';
 import type { ChatMessage } from './assistantApi';
 
 /**
- * Past conversations with Lex, kept on this phone so they can be reopened and
+ * Past conversations with Navie, kept on this phone so they can be reopened and
  * carried on from the Assistant's history.
  *
  * One list per account, keyed by the signed-in email: a second person signing
@@ -36,7 +36,7 @@ function storageKey(account: string | null): string {
 }
 
 function titleFor(messages: ChatMessage[]): string {
-  const first = messages.find((message) => message.role === 'user')?.text ?? 'Chat with Lex';
+  const first = messages.find((message) => message.role === 'user')?.text ?? 'Chat with Navie';
   const flat = first.replace(/\s+/g, ' ').trim();
   return flat.length > TITLE_LENGTH ? `${flat.slice(0, TITLE_LENGTH - 1).trimEnd()}…` : flat;
 }

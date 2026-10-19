@@ -2,8 +2,15 @@ import React, { useState } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text } from 'react-native';
-import { MIN_PASSWORD_LENGTH, useAuth } from '../frontend/auth';
+import {
+  MAX_PASSWORD_LENGTH,
+  PASSWORD_RULES,
+  useAuth,
+  validateNewPassword,
+  validatePasswordConfirmation,
+} from '../frontend/auth';
 import AuthField from '../frontend/components/auth/AuthField';
+import PasswordStrength from '../frontend/components/auth/PasswordStrength';
 import SecondStepForm from '../frontend/components/auth/SecondStepForm';
 import AuthScreen, {
   AuthError,
@@ -25,6 +32,7 @@ export default function SignUpScreen(): React.ReactElement {
   const [fullName, setFullName] = useState<string>('');
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
+  const [confirmation, setConfirmation] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
@@ -37,6 +45,13 @@ export default function SignUpScreen(): React.ReactElement {
     };
 
   const handleCreateAccount = async (): Promise<void> => {
+    // Checked here as well as in register(): the confirmation never leaves
+    // this screen.
+    const problem = validateNewPassword(password) ?? validatePasswordConfirmation(password, confirmation);
+    if (problem !== null) {
+      setError(problem);
+      return;
+    }
     setError(null);
     setIsSubmitting(true);
     try {
@@ -116,10 +131,27 @@ export default function SignUpScreen(): React.ReactElement {
         autoComplete="new-password"
         icon="lock-closed-outline"
         label="Password"
+        maxLength={MAX_PASSWORD_LENGTH}
+        passwordRules={PASSWORD_RULES}
         onChangeText={edit(setPassword)}
-        placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+        placeholder="8 to 16 characters"
         secure
         value={password}
+        footer={<PasswordStrength password={password} />}
+      />
+
+      <AuthField
+        testID="sign-up-password-confirm"
+        autoComplete="new-password"
+        icon="lock-closed-outline"
+        label="Confirm Password"
+        maxLength={MAX_PASSWORD_LENGTH}
+        passwordRules={PASSWORD_RULES}
+        onChangeText={edit(setConfirmation)}
+        placeholder="Type your password again"
+        secure
+        value={confirmation}
+        error={confirmation.length > 0 && confirmation !== password ? 'The passwords do not match.' : null}
       />
 
       {error !== null ? <AuthError message={error} /> : null}

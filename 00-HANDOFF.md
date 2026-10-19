@@ -18,7 +18,7 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - They work from **mockup screenshots** and expect the app to match them closely ("make it identical"), then send phone screenshots of what is wrong.
 
 ### How Ysa wants things done
-- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-7**, so next is **Ysa-Commit-8**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
+- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-8**, so next is **Ysa-Commit-9**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
 - **"Make the server up":** start Metro from the **repo root**, then give the `exp://` address and a QR code (see §1). Check the phone can really load the bundle, not just the manifest.
 - Never commit `.env` (it holds keys; it is in `.gitignore`).
 - Use real data only — no mock traffic data, no fake posts.
@@ -28,25 +28,26 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 ### Design decisions from our chats (do not undo these)
 | Decision | Why / when |
 |---|---|
+| **The assistant and mascot are called Navie** — Lex until 19 Oct. Every visible string, screen-reader label and model prompt says Navie; the prompt tells the model old chats may still say "Lex". Phone storage keys stay `smartflow.lex.*` (renaming them would lose saved chats and the language pick), except the pre-written next greeting, now `smartflow.navie.nextGreeting` so a stored "I'm Lex" welcome is never shown. | "change the name of the traffic assistance to Navie instead of Lex", 19 Oct. |
 | **NLEX blue / navy / sky palette**, white glass cards, deep-blue sky behind a **white header** on every tab | Ysa's redesign spec, 7 Oct (5 mockups: Dashboard, Corridor, Community, Assistant, Alerts). |
 | Every tab's background is the **team dashboard's own art** (`frontend/assets/scenes/expressway-{day,night}.jpg`, cropped from `Main-Dashboard:Front-End-Dashboard/public/{light,dark}_bg.png`, art by teammate Kiarra) framed per tab, with Skia icons on top (bell + radar, pins, chat bubbles, swooshes, a winding road with a light trail) | "copy the background… make it identical", 7 Oct. |
-| Hero titles, Lex's position, header size and card positions were **measured from the mockups** on a 414 pt grid — each tab has its own title size (~31–43 pt) | "make it identical", 7 Oct. Numbers live in each screen's `<PageHero>` props. |
+| Hero titles, Navie's position, header size and card positions were **measured from the mockups** on a 414 pt grid — each tab has its own title size (~31–43 pt) | "make it identical", 7 Oct. Numbers live in each screen's `<PageHero>` props. |
 | Fonts: **Inter** for text, **Nunito Black** for titles/wordmark, gold **sparkle** after titles | Copied from the dashboard, 5 Oct. *Saira was tried and rejected* — Nunito Black was identified from Ysa's screenshot. |
 | The dashboard's **"Night Corridor" colours were rejected** ("i don't like the colour", 5 Oct). The later blue palette was explicitly requested. | |
-| **Lex is now the "N"-cap car from Ysa's own videos** (`Downloadsmascot`): the waving Lex in the hero of Dashboard, Community, Alerts and the Assistant (`WavingMascot.tsx`), and the hopping Lex as the loading indicator everywhere (`LoadingMascot.tsx`). The old still `mascot-car.png` is no longer shown. | Ysa supplied `waving.mp4` / `loading.mp4`, 11–13 Oct. The Assistant's `hello.mp4` greeting was re-cut twice and still looked glitchy (the video itself morphs), so Ysa chose the wave there too. |
+| **Navie is now the "N"-cap car from Ysa's own videos** (`Downloadsmascot`): the waving Navie in the hero of Dashboard, Community, Alerts and the Assistant (`WavingMascot.tsx`), and the hopping Navie as the loading indicator everywhere (`LoadingMascot.tsx`). The old still `mascot-car.png` is no longer shown. | Ysa supplied `waving.mp4` / `loading.mp4`, 11–13 Oct. The Assistant's `hello.mp4` greeting was re-cut twice and still looked glitchy (the video itself morphs), so Ysa chose the wave there too. |
 | **No yellow sparkle strokes behind the mascot** in the tab backgrounds (the `Twinkle` motif was deleted from `SceneArt.tsx`). The gold sparkle after titles stays. | "remove the yellow lines behind the mascot in every tab", 12 Oct. |
 | **The app always opens on Sign In** — a session left from the last run is ended, never resumed; "Remember me" now only keeps the email filled in. Side effect: every reload in Expo Go means signing in again. | "the user need to sign in first", 13 Oct. |
-| Sign-in background is Ysa's **`sign in.png`** (Lex driving up the expressway). The picture is **slid down, not zoomed**, so Lex shows whole under the card; the strip above is the same sky mirrored. Drawn at 0.88 of screen-filling. No "Decision-Intelligence System" tagline. The card is compact (28 pt margins). | 13–14 Oct: "can u not zoom in too much", "zoom it out a little more", "make the glass card little smaller". |
+| Sign-in background is Ysa's **`sign in.png`** (Navie driving up the expressway). The picture is **slid down, not zoomed**, so Navie shows whole under the card; the strip above is the same sky mirrored. Drawn at 0.88 of screen-filling. No "Decision-Intelligence System" tagline. The card is compact (28 pt margins). | 13–14 Oct: "can u not zoom in too much", "zoom it out a little more", "make the glass card little smaller". |
 | Dashboard has **no Corridor Outlook** (Today / This Week graph) | Removed at Ysa's request, 12 Oct. |
 | **Exception — the floating assistant button** (bottom right) is the designer's "Cheerful Traffic Guide Car" (`frontend/assets/mascot-guide.png`, from Ysa's `Downloads\mascot` folder): the N-cap car with a "Check traffic along your route!" bubble, as in the Dashboard mockup | Ysa asked for it, 8 Oct. It is **fixed** at the bottom right (no longer draggable — Ysa's request) and stands on a Skia road drawn to the mockup's shape (a lane receding left behind the bubble, bending down toward the viewer under the car, two white edges). Size/position measured from the mockup in `AIAssistantFAB.tsx` (156 pt wide, 10 pt from the right, 14 pt above the tab bar). |
-| On Community, Lex is **fully visible**, standing on the post card (the mockup tucks him behind it) | "the mascot is not seen here", 7 Oct. |
+| On Community, Navie is **fully visible**, standing on the post card (the mockup tucks him behind it) | "the mascot is not seen here", 7 Oct. |
 | **No art inside the Corridor road panel** (behind the two carriageways) — it stays plain white | "can u not put the background here", 7 Oct. |
 | Settings gear (top right) replaced the avatar and opens Profile; the tab-bar peek mascot is retired; the Dashboard's "Heaviest right now" row opens Corridor; the Assistant shows the spec's four quick questions in one sideways row | Redesign, 7 Oct. |
 | Alerts are **in-app only** (banner + badge), polled every minute — no push | Ysa's choice, 6 Oct. |
 
 ### Code map (the redesign)
 - `frontend/components/ui/ScreenShell.tsx` — the frame every tab uses: scene behind a see-through header that frosts blue on scroll, white status bar while a tab is focused, scroll content in a 20 pt gutter, optional footer/keyboard handling (Assistant).
-- `frontend/components/ui/PageHero.tsx` — title (+ optional `name` line for the greeting), subtitle, Lex. Per-tab props: `titleScale`, `offsetTop`, `mascotPlacement`, `mascotWidth`, `minHeight` (= where the next card starts).
+- `frontend/components/ui/PageHero.tsx` — title (+ optional `name` line for the greeting), subtitle, Navie. Per-tab props: `titleScale`, `offsetTop`, `mascotPlacement`, `mascotWidth`, `minHeight` (= where the next card starts).
 - `frontend/components/ui/SceneArt.tsx` + `SceneBackground.tsx` — the backgrounds. `FRAMES` in SceneArt holds each tab's framing, clouds and icons; the art is decoded once (`useExpresswayArt`). Drawn vector scenes remain as the fallback while the art loads.
 - `frontend/components/ui/Cards.tsx` (GlassCard, BlueStatusCard, StatusPill, MetricCard, SectionTitle, CountBadge), `SegmentedControl.tsx` (`tone="white"` on Community), `HeroMascot.tsx`.
 - Theme: `frontend/theme/palette.ts` (all colours, light + dark), `frontend/theme/tokens.ts` (spacing, radii, shadows).
@@ -149,11 +150,11 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 
 ### 7–8 Oct — Ysa-Commit-4 (full visual redesign)
 - New design system (§0 code map): `ScreenShell`, `PageHero`, glass cards, blue status cards, segmented switches, NLEX-blue palette (light + dark).
-- All five tabs rebuilt on it and matched to Ysa's mockups by measurement: header (34 pt logo tile, 17 pt wordmark, 40 pt gear), per-tab title sizes and positions, Lex placements, switch heights and colours, card positions.
+- All five tabs rebuilt on it and matched to Ysa's mockups by measurement: header (34 pt logo tile, 17 pt wordmark, 40 pt gear), per-tab title sizes and positions, Navie placements, switch heights and colours, card positions.
 - Backgrounds: the dashboard's expressway art on every tab, framed per mockup, with Skia icons; night version in dark mode.
 - Dashboard: "Good evening, *name*" with the sparkle after the name; status card no longer cuts off "Active Incidents" or wraps "NLEX Traffic".
-- Community: Lex fully visible; switch, composer placeholder and post meta no longer cut off.
-- Assistant: Lex raised, capability card tinted, four quick questions in one scrolling row, smaller input bar.
+- Community: Navie fully visible; switch, composer placeholder and post meta no longer cut off.
+- Assistant: Navie raised, capability card tinted, four quick questions in one scrolling row, smaller input bar.
 - Corridor: winding road + light trail in the hero, bigger SB / NB labels in the road panel.
 - **Fix:** the Mobile Control Centre settings (`/api/mobile-config`) are now read from the dashboard directly. They were asked of our own backend, which has no such route, so every switch and advisory set in the dashboard was ignored.
 
@@ -167,16 +168,16 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - An `app.json` change needs a full reload in Expo Go (close the project and reopen it), not just a refresh.
 
 ### 8 Oct — Sign In / Sign Up redesign
-- Both screens sit on Ysa's artwork **"Cheerful NLEX Mascot City Drive"** (from `Downloads\mascot`): blue sky, clouds, soft skyline, a ground-level road and Lex peeking over the kerb — Lex is painted into the picture, so there is no separate mascot layer. Day: `frontend/assets/scenes/auth-day.jpg`; dark mode uses `auth-night.jpg`, the same picture graded to night (Lex kept bright).
-- Shared frame: `frontend/components/auth/AuthScreen.tsx` (art scaled to cover and pinned to the bottom, logo + "SmartFlow NLEX" + "Decision-Intelligence System", white card, copyright; `useAuthMetrics` scales every size from the mockup measured over the art, with comfortable minimums). The form is placed to end above Lex's cap; on a short phone (iPhone SE) the page scrolls and the card passes in front of him. iOS keeps the focused field above the keyboard (`automaticallyAdjustKeyboardInsets`).
+- Both screens sit on Ysa's artwork **"Cheerful NLEX Mascot City Drive"** (from `Downloads\mascot`): blue sky, clouds, soft skyline, a ground-level road and Navie peeking over the kerb — Navie is painted into the picture, so there is no separate mascot layer. Day: `frontend/assets/scenes/auth-day.jpg`; dark mode uses `auth-night.jpg`, the same picture graded to night (Navie kept bright).
+- Shared frame: `frontend/components/auth/AuthScreen.tsx` (art scaled to cover and pinned to the bottom, logo + "SmartFlow NLEX" + "Decision-Intelligence System", white card, copyright; `useAuthMetrics` scales every size from the mockup measured over the art, with comfortable minimums). The form is placed to end above Navie's cap; on a short phone (iPhone SE) the page scrolls and the card passes in front of him. iOS keeps the focused field above the keyboard (`automaticallyAdjustKeyboardInsets`).
 - The card is **frosted glass** (Ysa's second brief, same day): `expo-blur` BlurView (Apple's `systemUltraThinMaterial` on iOS; Android shows the tint without blur) under a white-to-sky tint (~75% opaque), a 1 pt edge that brightens along the top, a fine blue accent line, a drawn soft shadow and faint light halo, compact spacing (20 pt margins, 18–20 pt between rows). Tokens `authGlass*`, `authField*`, `authFocus*`, `authButton*` in `palette.ts`.
 - `AuthField`: fields a little more solid than the glass (82% white), 18 pt corners, blue border + faint ring while focused. The button is a horizontal blue gradient with a soft blue shadow. Sign-in/up logic, remember-me, the forgot-password message and navigation are unchanged.
 - **New package:** `expo-blur` (~57.0.3, in Expo Go). After pulling, run `npm install`.
 - The blue gear in Ysa's mockup is Expo Go's developer button, not part of the app — there is no settings button on these screens.
 
-### 8 Oct — Assistant's waving Lex re-cut
+### 8 Oct — Assistant's waving Navie re-cut
 - `frontend/assets/mascot-hello.mp4` was rebuilt from the original cut-out frames: pale background blocks on the cap's sides (white in dark mode) and bites out of the cap's top (missing parts in light mode) are fixed, sparkle/floor crumbs along the lower outline removed, and the loop now runs frames 30–179 with a 3-frame blend (the old 8-frame cross-fade showed a see-through double car). Same 300×318 frames, 147 frames at 24 fps.
-- In light mode Lex gets a faint edge shadow (`edgeColor` on `AlphaVideo`, palette `mascotEdge`) so the white cap doesn't melt into the pale sky.
+- In light mode Navie gets a faint edge shadow (`edgeColor` on `AlphaVideo`, palette `mascotEdge`) so the white cap doesn't melt into the pale sky.
 - The working frames and scripts (`v24/combined`, `fix_hello.py`, ffmpeg) are on the old laptop's temp folder only — not in the repo.
 
 ### 9–14 Oct — Ysa-Commit-5 (live data, mascots, sign-in)
@@ -184,23 +185,32 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - **Dashboard → Traffic Forecast is live:** the team's model forecast for the chosen route and hour, per carriageway (the dashboard's side rule: a side counts at ≥40% of an exit's queue-hours). Shows chance of a queue, typical delay, travel time and where the likeliest queue is.
 - **Forecast times fixed** for the Map tab too (§0 trap 7): its forecast had been showing each prediction 8 hours late.
 - **Corridor Outlook removed** from the Dashboard (`OutlookStrip.tsx` deleted; the web Control Centre's switch for it now does nothing).
-- **Mascots:** loading Lex replaces the spinners; waving Lex in the heroes (Assistant uses a larger copy); the small reply mascots in the Assistant were cleaned (white rim, studio-white patches). All mascot videos were checked frame by frame on dark and light.
+- **Mascots:** loading Navie replaces the spinners; waving Navie in the heroes (Assistant uses a larger copy); the small reply mascots in the Assistant were cleaned (white rim, studio-white patches). All mascot videos were checked frame by frame on dark and light.
 - **Sign In / Sign Up:** always the first screen; new background; tagline removed; smaller card; "Remember me" keeps the email.
 - **Tab backgrounds:** yellow sparkle strokes behind the mascot removed.
 
 ### 18 Oct — Ysa-Commit-6 (Assistant history, reply language)
-- **Chat history** (Ysa: "the user can see the past convo like there is a history"): a clock button beside EN/TL opens past chats grouped Today / Yesterday / Previous 7 days / Older; tap one to reopen it and carry on (Lex gets its earlier messages). The empty chat lists the 3 latest under "Recent chats". The old trash button is now **New chat** — the chat on screen stays in the history. Each chat can be deleted (with a confirm), plus "Clear all chats". A day label shows where a reopened chat crosses into another day. Kept **on the phone only**, per account; not synced between phones (Supabase would be the way, if Ysa asks).
+- **Chat history** (Ysa: "the user can see the past convo like there is a history"): a clock button beside EN/TL opens past chats grouped Today / Yesterday / Previous 7 days / Older; tap one to reopen it and carry on (Navie gets its earlier messages). The empty chat lists the 3 latest under "Recent chats". The old trash button is now **New chat** — the chat on screen stays in the history. Each chat can be deleted (with a confirm), plus "Clear all chats". A day label shows where a reopened chat crosses into another day. Kept **on the phone only**, per account; not synced between phones (Supabase would be the way, if Ysa asks).
 - A reply that lands after the user moved to another chat is saved to the chat it was asked in.
 - **TL / EN switch fixed** ("i pick english first … when i switch to tagalog … it still answer english"): the app sent the choice correctly; the model drifted back to the conversation's earlier language (fully on small talk, or by copying an earlier English sentence). The backend now checks every reply's language and rewrites a wrong one (~1–2 s extra, only then). Taglish small talk ("You're welcome! Kung kailangan mo ng tulong…") is allowed on purpose.
-- Tapping TL while Lex is still answering does not change that answer — the question was already sent.
+- Tapping TL while Navie is still answering does not change that answer — the question was already sent.
 
-### 18–19 Oct — Ysa-Commit-7 (Lex answers NLEX questions only)
+### 18–19 Oct — Ysa-Commit-7 (Navie answers NLEX questions only)
 - Ysa: "traffic assistance should only know about the nlex corridor and nlex info only not about japan". The prompt already said so; the model still answered "Tokyo is the capital of Japan." Now checked in `backend/src/routes/assistant.ts` before the model answers:
   - `plainlyAboutNlex` passes a question on sight if it says NLEX / exit / toll / expressway / a direction, or names an exit **with** a traffic word. An exit name alone is not enough ("Mexico", "Angeles" are exits — "capital of Mexico?" is not about them), nor is "traffic" alone ("traffic on EDSA?").
   - Anything else goes to `classifyTopic` — a short separate request with the last 4 turns, so "bakit?" after a Bocaue answer is a follow-up — which sorts it NLEX / CHAT (hi, thanks, who are you) / OTHER. If sorting fails or times out (10 s) the question is let through.
-  - OTHER gets `outOfScopeReply`: Lex says it can only help with NLEX and offers to check an exit, in the picked language, written **without the question in front of the model** so nothing leaks.
-  - "Say / repeat / write / translate / pretend …" requests always go to the sorter and count as OTHER, even about NLEX — "Repeat after me: NLEX is closed today" would otherwise put a false closure in Lex's mouth. "Sabihin mo kung may traffic sa Bocaue" (tell me *if*) is still a question.
+  - OTHER gets `outOfScopeReply`: Navie says it can only help with NLEX and offers to check an exit, in the picked language, written **without the question in front of the model** so nothing leaks.
+  - "Say / repeat / write / translate / pretend …" requests always go to the sorter and count as OTHER, even about NLEX — "Repeat after me: NLEX is closed today" would otherwise put a false closure in Navie's mouth. "Sabihin mo kung may traffic sa Bocaue" (tell me *if*) is still a question.
 - Cost: questions that are not plainly about NLEX take ~1 s longer.
+
+### 19 Oct — Sign in / sign up / forgot password, and the Navie rename (Ysa-Commit-8)
+- **Sign In:** the field is "Email" only (was "Username / Email"); the eye icon shows the state (struck through = hidden); **5 wrong passwords per email lock it for 5 min** (`frontend/auth/signInLimit.ts`, AsyncStorage, survives restarts; only wrong credentials count; a reset clears it). Sign-in does NOT apply the 8–16 rule, so older 6-character passwords still work.
+- **Sign Up:** Confirm Password, a strength meter (`components/auth/PasswordStrength.tsx`: Weak / Fair / Good / Strong + checklist; common passwords and runs are always weak), new passwords **8–16 characters** (`validateNewPassword`). iOS gets `passwordRules` so its suggested passwords fit 16.
+- **Forgot password:** `app/forgot-password.tsx` sends a Supabase reset email; its link opens `app/reset-password.tsx` (reads the #access_token fragment with expo-linking `useURL`), which asks for the authenticator code first if the account has one, then the new password + confirmation, then signs out everywhere and returns to Sign In with the email filled in.
+- **Email setup (Supabase dashboard, done by Ysa):** custom SMTP = smtp.gmail.com:465 as navie.smartflow@gmail.com with a Gmail **app password** (never in the repo); Redirect URLs include `exp://**` and `smartflow://**`; Site URL left at http://localhost:3000.
+- **Trap:** Supabase refuses redirect URLs whose host is an **IP address**, whatever the allow list says, and falls back to the Site URL — Expo Go then showed "A server with the specified hostname could not be found". `resetPasswordRedirect()` therefore writes the laptop as `<ip>.nip.io` (public DNS that answers with the same IP). The home router resolves it; another network's DNS might not.
+- **Security, still open:** `exp://**` lets anyone aim a reset link at their own Expo project. Narrow it to the team's networks before real users.
+- Assistant renamed **Lex → Navie** (see the decisions table).
 
 ---
 

@@ -10,7 +10,18 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Session } from '@supabase/supabase-js';
-import { AuthResult, authenticate, nameForUser, register, signOutRemote } from './authApi';
+import {
+  AuthResult,
+  WrongCredentialsError,
+  authenticate,
+  nameForUser,
+  openRecoverySession,
+  register,
+  requestPasswordReset,
+  saveNewPassword,
+  signOutRemote,
+} from './authApi';
+import { SignInLockedError, clearWrongPasswords, lockedUntil, recordWrongPassword } from './signInLimit';
 import { getSupabase, isSupabaseConfigured } from './supabaseClient';
 import {
   type SecondStep,
@@ -34,6 +45,13 @@ export interface AuthSession {
   email: string;
 }
 
+/**
+ * What a reset link needs before the new password: the authenticator code when
+ * the account has one, so a reset link alone - someone else in the inbox -
+ * cannot take the account over.
+ */
+export type RecoveryStep = { kind: 'code'; factorId: string } | { kind: 'password' };
+
 export interface AuthContextValue {
   /**
    * `loading` for the moment launch takes, then always `signedOut`: every
@@ -55,6 +73,17 @@ export interface AuthContextValue {
   submitSecondStep: (code: string) => Promise<void>;
   /** Abandon a half-finished sign-in and end the password-only session. */
   cancelSecondStep: () => Promise<void>;
+  /** Email a link for setting a new password. */
+  requestPasswordReset: (email: string) => Promise<void>;
+  /** Open the session a reset link carries; says whether a code is owed first. */
+  beginRecovery: (accessToken: string, refreshToken: string) => Promise<RecoveryStep>;
+  submitRecoveryCode: (factorId: string, code: string) => Promise<void>;
+  /**
+   * Save the new password, then end the reset session everywhere. Returns the
+   * account's email so sign-in can be filled in with it.
+   */
+  finishRecovery: (password: string) => Promise<string | null>;
+  cancelRecovery: () => Promise<void>;
 }
 
 const AUTH_TOKEN_KEY = 'authToken';
@@ -250,12 +279,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       remember: boolean;
     }): Promise<void> => {
       await endingLastRun.current;
+
+      const until = await lockedUntil(email);
+      if (until !== null) {
+        throw new SignInLockedError(until);
+      }
+
       /*
        * The password no longer signs anyone in; it only opens the session the
        * code step then has to raise. `startSession` is NOT called here - it is
        * called from `submitSecondStep`, once the authenticator has answered.
        */
-      await authenticate({ email, password });
+      try {
+        await authenticate({ email, password });
+      } catch (caught) {
+        if (!(caught instanceof WrongCredentialsError)) {
+          throw caught;
+        }
+        const tally = await recordWrongPassword(email);
+        if (tally.lockedUntil !== null) {
+          throw new SignInLockedError(tally.lockedUntil);
+        }
+        throw new WrongCredentialsError(
+          `${caught.message} ${tally.attemptsLeft} ${tally.attemptsLeft === 1 ? 'try' : 'tries'} left.`,
+        );
+      }
+      await clearWrongPasswords(email);
       pendingRemember.current = remember;
 
       /*
@@ -369,6 +418,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await removeItem(AUTH_TOKEN_KEY);
   }, []);
 
+  /*
+   * Password reset. The session a reset link opens is never a sign-in: the
+   * auth listener ignores it (nobody signed in this run), and it is ended once
+   * the new password is saved, so the person then signs in as usual - password
+   * and authenticator code.
+   */
+  const beginRecovery = useCallback(
+    async (accessToken: string, refreshToken: string): Promise<RecoveryStep> => {
+      await endingLastRun.current;
+      // A reset link opened while signed in: that account signs out first, so
+      // the link's session never mixes with the app's.
+      if (signedInThisRun.current) {
+        await signOut();
+      }
+      await openRecoverySession(accessToken, refreshToken);
+
+      const { data, error } = await getSupabase().auth.mfa.getAuthenticatorAssuranceLevel();
+      if (error !== null) {
+        throw new Error('This reset link could not be checked. Ask for a new one.');
+      }
+      if (data.nextLevel === 'aal2' && data.currentLevel !== 'aal2') {
+        const factors = await getSupabase().auth.mfa.listFactors();
+        const factor = factors.data?.totp[0];
+        if (factor !== undefined) {
+          return { kind: 'code', factorId: factor.id };
+        }
+      }
+      return { kind: 'password' };
+    },
+    [signOut],
+  );
+
+  const submitRecoveryCode = useCallback(async (factorId: string, code: string): Promise<void> => {
+    await submitCode(factorId, code);
+  }, []);
+
+  const finishRecovery = useCallback(async (password: string): Promise<string | null> => {
+    await saveNewPassword(password);
+    const { data } = await getSupabase().auth.getUser();
+    const email = data.user?.email ?? null;
+    // A reset is how a locked-out address gets back in.
+    if (email !== null) {
+      await clearWrongPasswords(email);
+    }
+    /*
+     * Signed out everywhere, not just here: someone resetting a password may
+     * be doing it because another person knows the old one, and that person's
+     * sessions should not outlive it. If this fails offline, the session left
+     * on the phone is still never treated as signed in, and the next launch
+     * ends it.
+     */
+    await signOutRemote().catch(() => undefined);
+    return email;
+  }, []);
+
+  const cancelRecovery = useCallback(async (): Promise<void> => {
+    await dropPasswordOnlySession();
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
@@ -380,6 +488,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       secondStep,
       submitSecondStep,
       cancelSecondStep,
+      requestPasswordReset,
+      beginRecovery,
+      submitRecoveryCode,
+      finishRecovery,
+      cancelRecovery,
     }),
     [
       status,
@@ -391,6 +504,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       secondStep,
       submitSecondStep,
       cancelSecondStep,
+      beginRecovery,
+      submitRecoveryCode,
+      finishRecovery,
+      cancelRecovery,
     ],
   );
 
