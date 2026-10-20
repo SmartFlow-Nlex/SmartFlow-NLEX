@@ -18,7 +18,7 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - They work from **mockup screenshots** and expect the app to match them closely ("make it identical"), then send phone screenshots of what is wrong.
 
 ### How Ysa wants things done
-- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-8**, so next is **Ysa-Commit-9**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
+- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-9**, so next is **Ysa-Commit-10**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
 - **"Make the server up":** start Metro from the **repo root**, then give the `exp://` address and a QR code (see §1). Check the phone can really load the bundle, not just the manifest.
 - Never commit `.env` (it holds keys; it is in `.gitignore`).
 - Use real data only — no mock traffic data, no fake posts.
@@ -211,6 +211,13 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - **Trap:** Supabase refuses redirect URLs whose host is an **IP address**, whatever the allow list says, and falls back to the Site URL — Expo Go then showed "A server with the specified hostname could not be found". `resetPasswordRedirect()` therefore writes the laptop as `<ip>.nip.io` (public DNS that answers with the same IP). The home router resolves it; another network's DNS might not.
 - **Security, still open:** `exp://**` lets anyone aim a reset link at their own Expo project. Narrow it to the team's networks before real users.
 - Assistant renamed **Lex → Navie** (see the decisions table).
+
+### 20 Oct — Ysa-Commit-9 (reset link fixes)
+- **The reset screen said "Open the reset link…" although it had been opened from the link.** Expo's `Linking.useURL()` only returns the URL the app was *launched* with plus later events; with the app already open, the link's event fired before the reset screen mounted. `frontend/auth/recoveryLink.ts` now catches reset links app-wide from startup (`useRecoveryUrl`).
+- "Error sending recovery email" from Supabase now reads as a plain sentence in the app.
+- **Where Supabase says why an email failed:** Logs → **Auth** (the API Gateway log only shows the 500). On 20 Oct it was Gmail `534 5.7.14 … Please log in via your web browser` — Google blocking a new server, fixed by approving the security alert and https://accounts.google.com/DisplayUnlockCaptcha. Not the HTML template.
+- The reset email template is Ysa's own HTML (Supabase → Authentication → Emails → Reset Password). Its mascot image must use the public URL `https://jzkghkoaojdkusbjttgw.supabase.co/storage/v1/object/public/Mascot/navie-email.png`, not a dashboard link.
+- On campus Wi-Fi the Expo server runs as a tunnel (~100 KB/s, ~2 min per app load); tunnel addresses are names, so reset links work there without nip.io.
 
 ---
 

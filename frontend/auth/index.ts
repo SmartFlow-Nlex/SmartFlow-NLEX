@@ -19,5 +19,7 @@ export {
 } from './authApi';
 export type { Credentials, Registration, AuthResult, PasswordStrength, RecoveryLink } from './authApi';
 export { MAX_SIGN_IN_ATTEMPTS, SignInLockedError } from './signInLimit';
+// Exported from here so it loads - and starts catching reset links - with the app.
+export { useRecoveryUrl } from './recoveryLink';
 export { groupKey, secondStepProblem, signInTimedOut } from './mfa';
 export type { SecondStep } from './mfa';

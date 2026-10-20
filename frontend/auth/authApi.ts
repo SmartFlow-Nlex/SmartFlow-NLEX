@@ -207,6 +207,11 @@ function friendlyAuthMessage(error: AuthError): string {
   if (error.code === 'email_address_not_authorized') {
     return 'Reset emails are not set up for this app yet. Ask the SmartFlow team.';
   }
+  // The mail server refused it - for Gmail, usually an app password that was
+  // revoked, which changing the account's own password does.
+  if (raw.includes('error sending')) {
+    return 'The email could not be sent right now. Try again in a few minutes, and tell the SmartFlow team if it keeps happening.';
+  }
   if (raw.includes('email not confirmed')) {
     return 'Confirm your email address first, then sign in.';
   }

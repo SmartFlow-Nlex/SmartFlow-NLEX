@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Stack, useRouter } from 'expo-router';
-import * as Linking from 'expo-linking';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   MAX_PASSWORD_LENGTH,
@@ -8,6 +7,7 @@ import {
   readRecoveryLink,
   secondStepProblem,
   useAuth,
+  useRecoveryUrl,
   validateNewPassword,
   validatePasswordConfirmation,
 } from '../frontend/auth';
@@ -47,8 +47,8 @@ export default function ResetPasswordScreen(): React.ReactElement {
   const m = useAuthMetrics();
   const router = useRouter();
   const { beginRecovery, submitRecoveryCode, finishRecovery, cancelRecovery } = useAuth();
-  /** The link the app was opened with, or the latest one opened while it ran. */
-  const url = Linking.useURL();
+  /** The reset link that opened this screen - see recoveryLink.ts for why not useURL(). */
+  const url = useRecoveryUrl();
   const handledUrl = useRef<string | null>(null);
 
   const [phase, setPhase] = useState<Phase>({ kind: 'opening' });
