@@ -22,6 +22,12 @@ export type MaintenanceCreate = {
 // Allowed lifecycle transitions. Reverts are permitted so operator mistakes
 // can be undone: completed → in_progress (reopen), cancelled → scheduled
 // (restore), in_progress → scheduled (revert).
+//
+// A restore always lands on scheduled, even for work cancelled while in progress. The row keeps no
+// previous status (the audit log's from_status has it), and putting a job straight back to
+// in_progress would redraw it as a live closure on the map and in the mobile app before anyone has
+// confirmed a crew is back on the road. "Start work" is one step from scheduled. The cancellation
+// reason is cleared from the row with it, since it no longer describes the job; the audit log keeps it.
 const TRANSITIONS: Record<MaintenanceStatus, MaintenanceStatus[]> = {
   scheduled: ["in_progress", "completed", "cancelled"],
   in_progress: ["completed", "cancelled", "scheduled"],

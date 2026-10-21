@@ -60,11 +60,12 @@ export type DailyPoint = {
   isWet: boolean | null;
   /**
    * Daily vehicle volume — the exposure the incident count is generated from.
-   * Observed where the warehouse has it and the traffic module's own forecast
-   * across the Future band, so the overlay runs the full width of the chart.
-   * Null on uncovered days, which breaks the line rather than drawing a zero.
+   * Observed only. Null on uncovered days, which breaks the line rather than
+   * drawing a zero.
    */
   volume?: number | null;
+  /** Future rows only: the traffic module's volume forecast, the input the volume-aware models read that day. */
+  volumeForecast?: number | null;
   models: Partial<Record<ModelKey, number | null>>;
   /**
    * The same models refit with the volume features removed. Present only when
@@ -104,6 +105,7 @@ export type ModelMetric = {
 export type CorridorForecastPoint = {
   exitId: number;
   exitName: string;
+  /** MEASURED km (Balintawak = 12); print it through fmtKm. */
   km: number;
   historicalCount: number;
   historicalShare: number;
@@ -145,6 +147,11 @@ export type PredictiveData = {
     days: number;
     models: { model: string; MAE: number; RMSE: number; R2: number | null; isChampion: boolean }[];
   } | null;
+  /** Every model scored over only the dry, and only the wet, holdout days. */
+  weatherSplit?: {
+    dry: { days: number; models: { model: string; MAE: number; RMSE: number; R2: number | null; isChampion: boolean }[] };
+    wet: { days: number; models: { model: string; MAE: number; RMSE: number; R2: number | null; isChampion: boolean }[] };
+  };
   /**
    * Predicted incidents per exit/corridor — an apportionment of
    * summary.totalPredictedNext7Days by each exit's historical share of
@@ -159,6 +166,8 @@ export type PredictiveData = {
   unclassifiedLocationShare: number | null;
   /** How many published future days corridorForecast was apportioned over. */
   corridorForecastDays: number;
+  /** The logged-incident window the per-exit shares were counted over. */
+  corridorShareWindow?: { from: string; to: string | null } | null;
   /** Which model corridorForecast was apportioned from (toolbar pick, or the champion as a fallback). */
   corridorForecastModel: string | null;
   /**
@@ -221,5 +230,20 @@ export const fmtDateFull = (d: string | null) =>
     : "—";
 // modelInfo.trainedAt is a full ISO timestamp, not a plain date — appending
 // "T00:00:00" to it (as the two above do) would produce an invalid string.
+/** A YYYY-MM-DD date moved by whole days, in UTC so no viewer time zone shifts it. */
+export const isoShift = (iso: string, days: number) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+/** Today's date on the corridor (Asia/Manila), as YYYY-MM-DD. */
+export const manilaTodayIso = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+/** "1 Jul – 28 Sep 2026", or with both years when they differ. */
+export const fmtDateRange = (from: string | null, to: string | null) => {
+  if (!from || !to) return fmtDateFull(from ?? to);
+  const sameYear = from.slice(0, 4) === to.slice(0, 4);
+  const a = new Date(`${from}T00:00:00`).toLocaleDateString("en-US", sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+  return from === to ? fmtDateFull(from) : `${a} – ${fmtDateFull(to)}`;
+};
 export const fmtTrainedAt = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "unknown date";

@@ -39,10 +39,20 @@
   --rule-topbar: rgba(31, 95, 224, 0.1);
   --grid-line: rgba(31, 95, 224, 0.06);
 
-  /* Ink: blue-greys, not black. */
+  /* Ink: blue-greys, not black. Muted was #61769f, 4.2:1 on the stage and 4.3:1 on a card over the sky,
+     under the 4.5:1 body floor; one step deeper clears it on both (4.8 / 5.0) and reads the same (19 Oct 2026). */
   --text-primary: #10275a;
   --text-secondary: #3e5683;
-  --text-muted: #61769f;
+  --text-muted: #586c95;
+
+  /* Scene ink: text that sits straight on the sky art, with no card under it (page subtitle, the
+     mode tabs, the filter row's labels, the header clock). Secondary and muted ink measured 2.0-3.3:1
+     there on the open sky (#55b0fc, right of the veil), so by day they take one deep navy that holds
+     4.7:1 on the sky and 6:1 under the veil. Night redefines all three to the ordinary inks, which
+     already clear 7:1 on the navy sky (testers TR-1 / A11Y-1, 19 Oct 2026). */
+  --scene-ink: #263b69;
+  --mode-tab-ink: #263b69;
+  --mode-tab-hint: #263b69;
 
   --expressway-blue: var(--nlex-blue);
   --expressway-blue-light: #4d86f2;
@@ -105,6 +115,12 @@
 }
 
 /* --- Tokens: night (two identical blocks, as in globals.css) ---------------- */
+/* Muted text, chart labels and the idle mode tabs were raised a step at night (17 Oct 2026, testers TR-1, TR-4,
+   OV-3: "make the tab labels and chart text white or brighter"). Over the translucent cards and the sky art the
+   old #8a9dc4 and the shared #8590a6 chart grey read as disabled.
+   Second pass (19 Oct 2026, same testers: "white chart text", "brighter tab text"): chart text #a9b8d8 -> #c3d0ea
+   (8.3 -> 10.7:1 on a card), the idle tab names text-secondary -> #d6e0f5 (9.6 -> 12.3:1 on the night sky), still
+   a step under the active tab's #eef3ff so the underline is not the only thing that tells them apart. */
 :root[data-theme="dark"] {
   --stage: #0a1838;
   --bg-body: #0a1838;
@@ -120,7 +136,11 @@
   --rule-topbar: rgba(147, 182, 255, 0.12);
   --text-primary: #eef3ff;
   --text-secondary: #b8c7e6;
-  --text-muted: #8a9dc4;
+  --text-muted: #a3b4d8;
+  --chart-text: #c3d0ea;
+  --mode-tab-ink: #d6e0f5;
+  --mode-tab-hint: var(--text-secondary);
+  --scene-ink: var(--text-secondary);
   --action: #5b8dff;
   --pill-bg: #5b8dff;
   --pill-ink: #ffffff;
@@ -149,7 +169,11 @@
     --rule-topbar: rgba(147, 182, 255, 0.12);
     --text-primary: #eef3ff;
     --text-secondary: #b8c7e6;
-    --text-muted: #8a9dc4;
+    --text-muted: #a3b4d8;
+    --chart-text: #c3d0ea;
+    --mode-tab-ink: #d6e0f5;
+    --mode-tab-hint: var(--text-secondary);
+    --scene-ink: var(--text-secondary);
     --action: #5b8dff;
     --pill-bg: #5b8dff;
     --pill-ink: #ffffff;
@@ -170,7 +194,15 @@
 /* --- Type --------------------------------------------------------------------- */
 .ds-page-title { color: var(--text-primary); }
 .ds-page-eyebrow { font-weight: 700; letter-spacing: 1.6px; }
-.ds-datetime-block { font-weight: 600; letter-spacing: 1px; color: var(--text-muted); }
+/* Over the open sky (see --scene-ink). By day the eyebrow keeps its page's hue but deepened toward navy:
+   the plain accents sat at 1.8-2.7:1 on the sky, the 45% mix at 4.3-5.1:1 at the far edge and over 6:1
+   where the veil sits behind it. At night the accents are already 5-9:1 on the navy and stay as they were. */
+.ds-page-eyebrow { color: color-mix(in srgb, var(--page-accent) 45%, #0a1a40); }
+:root[data-theme="dark"] .ds-page-eyebrow { color: var(--page-accent); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ds-page-eyebrow { color: var(--page-accent); } }
+.ds-page-subtitle { color: var(--scene-ink); }
+main.ds-main [class*="filterRow"] :is([class*="filterLabel"], [class*="filterNote"], [class*="updating"]) { color: var(--scene-ink); }
+.ds-datetime-block { font-weight: 600; letter-spacing: 1px; color: var(--scene-ink); }
 .ds-datetime-block strong { font-size: 17px; font-weight: 700; letter-spacing: 0; color: var(--text-primary); }
 .ov-fresh { letter-spacing: 0; }
 
@@ -531,7 +563,7 @@ button.chart-card:hover {
   box-shadow: var(--shadow-card);
   transition: box-shadow var(--transition-base), transform var(--transition-base);
 }
-.ov-worst-label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 10.5px; letter-spacing: 1.1px; white-space: nowrap; }
+.ov-worst-label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11px; letter-spacing: 1.1px; white-space: nowrap; } /* 11 px floor (A11Y-1) */
 .ov-worst-label svg { color: var(--nlex-blue); }
 .ov-worst-value { font-size: 19px; font-weight: 700; color: var(--text-primary); }
 
@@ -562,6 +594,17 @@ button.chart-card:hover {
 .ov-card-go:focus-visible { outline: 2px solid var(--nlex-blue); outline-offset: 2px; }
 .ov-headline-card,
 .ov-worst { overflow: hidden; }
+
+/* The Live card carries the same arrow, into the Live Map (testers OV-5); at night it takes the plain card
+   surface like the Slowest-reading card beside it (OV-3) -- mixed with the day sky it came out a lighter,
+   greyer blue than every other card on the page. */
+.ov-fresh:has(.ov-card-go) { position: relative; overflow: hidden; padding-right: 44px; transition: box-shadow var(--transition-base), transform var(--transition-base); }
+.ov-fresh:has(.ov-card-go):hover { transform: translateY(-2px); box-shadow: var(--shadow-card-hover); }
+.ov-fresh:hover .ov-card-go { color: var(--nlex-blue); background: color-mix(in srgb, var(--nlex-blue) 10%, transparent); transform: translateX(2px); }
+:root[data-theme="dark"] .ov-fresh { background: var(--bg-surface); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ov-fresh { background: var(--bg-surface); }
+}
 
 .ov-actions { flex-direction: column; align-items: flex-start; gap: 10px; }
 .ov-actions .btn-muted { min-height: 40px; padding: 0 16px 0 14px; }
@@ -731,4 +774,259 @@ html[data-stage-drag="1"] * { cursor: grabbing !important; user-select: none; -w
 .tr-title:not(.tr-ready) .tr-char { opacity: 0; animation: none; }
 @media (prefers-reduced-motion: reduce) {
   .tr-title .tr-char { opacity: 1 !important; animation: none !important; }
+}
+
+/* --- Notice card (16 Oct 2026, user request): Navie, the animated mascot, in a round window ------
+   Notices only since 19 Oct 2026 (user request): the loading screens it also served were removed, so this is
+   the card for a refused page -- a ring that drains with the countdown, a lock, the way out. */
+.ds-load { position: relative; z-index: 1; gap: 0; padding: 24px; transition: opacity 0.35s ease; }
+/* Over a page that is already showing (the inactivity warning, 19 Oct 2026). */
+.ds-load.is-overlay { position: fixed; inset: 0; z-index: 90; min-height: 0; background: transparent; }
+/* A frosted veil over the scenery behind the card. */
+.ds-load::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: color-mix(in srgb, var(--bg-body) 38%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  backdrop-filter: blur(12px) saturate(1.1);
+}
+
+.ds-load-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: min(440px, 100%); /* wider (19 Oct 2026, user request) */
+  padding: 30px 44px 28px;
+  border-radius: 28px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 2px 6px rgba(16, 39, 90, 0.05), 0 36px 80px -36px rgba(14, 50, 140, 0.45);
+  animation: ds-load-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  pointer-events: auto;
+}
+/* The ring: a faint track round the disc. */
+.ds-load-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 196px;
+  aspect-ratio: 1;
+  margin-bottom: 14px;
+  border-radius: 50%;
+}
+.ds-load-ring::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    conic-gradient(from 0deg, transparent 0 60%, color-mix(in srgb, var(--nlex-blue) 90%, transparent) 92%, transparent 100%),
+    color-mix(in srgb, var(--nlex-blue) 12%, transparent);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+}
+/* The no-access notice (19 Oct 2026): an amber ring that drains over the countdown, and a lock on the disc. */
+@property --ds-load-left { syntax: "<percentage>"; inherits: false; initial-value: 100%; }
+.ds-load[data-tone="warn"] .ds-load-ring::before { background: color-mix(in srgb, var(--color-warning, #d9930f) 30%, transparent); }
+.ds-load[data-tone="warn"] .ds-load-ring.is-countdown::before {
+  background:
+    conic-gradient(var(--color-warning, #d9930f) var(--ds-load-left), transparent 0),
+    color-mix(in srgb, var(--color-warning, #d9930f) 16%, transparent);
+  animation: ds-load-drain var(--ds-load-total, 4s) linear var(--ds-load-delay, 0s) forwards;
+}
+@keyframes ds-load-drain { from { --ds-load-left: 100%; } to { --ds-load-left: 0%; } }
+.ds-load-badge {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 3px solid var(--bg-surface-solid, #fff);
+  background: var(--color-warning, #d9930f);
+  color: #fff;
+  box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.45);
+}
+.ds-load-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-warning, #d9930f) 45%, transparent);
+  background: color-mix(in srgb, var(--color-warning, #d9930f) 12%, transparent);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.ds-load-count b { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--color-warning, #d9930f); }
+/* The clip's own studio grey (#ececec), so its backdrop reads as the disc, with the edge feathered. */
+.ds-load-disc {
+  width: 172px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #ececec;
+  box-shadow: 0 18px 40px -22px rgba(14, 50, 140, 0.55);
+}
+.ds-load-disc > video,
+.ds-load-disc > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  -webkit-mask-image: radial-gradient(circle, #000 66%, transparent 71%);
+  mask-image: radial-gradient(circle, #000 66%, transparent 71%);
+  transform: scale(0.9);
+}
+/* Warnings: the animated police-car Navie (police-warning.mp4, 20 Oct 2026). The clip is pure white behind
+   the car, so the disc is white and the clip's square edges vanish into it; scaled to 88% so the light bar,
+   mirrors and wheels stay inside the circle. */
+.ds-load-disc.is-police { background: #ffffff; }
+.ds-load-disc.is-police > video,
+.ds-load-disc.is-police > img {
+  -webkit-mask-image: none;
+  mask-image: none;
+  object-fit: contain;
+  transform: scale(0.88);
+}
+
+.ds-load-brand {
+  font-family: var(--font-brand);
+  font-stretch: var(--brand-stretch);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--nlex-blue);
+}
+:root[data-theme="dark"] .ds-load-brand { color: #8cc2ff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ds-load-brand { color: #8cc2ff; } }
+.ds-auth-gate.ds-load p { animation: none; max-width: none; }
+.ds-load .ds-load-title { margin: 2px 0 0; line-height: 1.3; font-size: var(--fs-title); font-weight: 650; letter-spacing: -0.01em; color: var(--text-primary); }
+.ds-load .ds-load-detail { margin: 0; line-height: 1.5; font-size: var(--fs-body); font-weight: 400; color: var(--text-secondary); }
+.ds-load .ds-load-action { margin-top: 10px; }
+.ds-load[data-tone="warn"] p.ds-load-detail { max-width: 38ch; color: var(--text-secondary); }
+.ds-load[data-tone="warn"] .ds-load-action { margin-top: 16px; min-width: 220px; }
+@keyframes ds-load-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .ds-load-card { animation: none; }
+  .ds-load-ring::before { animation: none !important; }
+  .ds-load[data-tone="warn"] .ds-load-ring.is-countdown::before { --ds-load-left: 100%; }
+}
+
+/* --- Navie's speech bubble on the Overview (20 Oct 2026) ------------------------------------------
+   In the open sky up and to the RIGHT of the car's cap (20 Oct 2026, user request: the left already holds the
+   title and cards), never over the car, with its tail reaching down to Navie. Frosted white like the clouds behind it, a soft sky-blue glow, a springy pop-in and a slow float. */
+.ov-hero-mascot { position: relative; }
+.ov-navie-bubble {
+  position: absolute;
+  bottom: 75%;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: max-content;
+  max-width: min(300px, 74vw);
+  padding: 12px 18px 14px;
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  border-radius: 22px 22px 22px 6px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.97), rgba(236, 245, 255, 0.94));
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1), 0 14px 34px -14px rgba(31, 95, 224, 0.55), 0 2px 6px rgba(16, 39, 90, 0.06);
+  font: inherit;
+  text-align: left;
+  color: #10244a;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px) scale(0.85);
+  transform-origin: 0% 100%;
+  transition: opacity 0.25s ease, transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.ov-navie-bubble.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+  animation: ov-navie-float 4.5s ease-in-out 0.5s infinite;
+}
+@keyframes ov-navie-float { 50% { transform: translateY(-4px); } }
+/* The tail: a rounded wedge from the bubble's lower left corner, down toward Navie's cap. */
+.ov-navie-bubble::after {
+  content: "";
+  position: absolute;
+  left: -16px;
+  bottom: -20px;
+  width: 38px;
+  height: 32px;
+  background: linear-gradient(160deg, rgba(246, 250, 255, 0.97), rgba(236, 245, 255, 0.94));
+  border-left: 1.5px solid rgba(255, 255, 255, 0.95);
+  border-bottom: 1.5px solid rgba(255, 255, 255, 0.95);
+  border-radius: 0 0 0 14px;
+  clip-path: polygon(100% 0, 0 100%, 60% 0);
+}
+.ov-navie-bubble:focus-visible { outline: 2px solid var(--nlex-blue); outline-offset: 3px; }
+.ov-navie-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #1f5fe0;
+}
+.ov-navie-name svg { color: #f5b301; }
+.ov-navie-text { display: grid; font-size: 15px; font-weight: 600; line-height: 1.45; }
+.ov-navie-ghost, .ov-navie-typed { grid-area: 1 / 1; }
+.ov-navie-ghost { visibility: hidden; }
+/* At night: the same bubble as a deep-blue glass with a cool rim, still bright enough to read. */
+:root[data-theme="dark"] .ov-navie-bubble { border-color: rgba(140, 194, 255, 0.45); background: linear-gradient(160deg, rgba(23, 46, 102, 0.96), rgba(14, 31, 69, 0.94)); color: #eef3ff; box-shadow: 0 0 0 4px rgba(91, 141, 255, 0.14), 0 14px 34px -14px rgba(0, 0, 0, 0.7); }
+:root[data-theme="dark"] .ov-navie-bubble::after { background: linear-gradient(160deg, rgba(20, 42, 94, 0.96), rgba(14, 31, 69, 0.94)); border-color: rgba(140, 194, 255, 0.45); }
+:root[data-theme="dark"] .ov-navie-name { color: #8cc2ff; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ov-navie-bubble { border-color: rgba(140, 194, 255, 0.45); background: linear-gradient(160deg, rgba(23, 46, 102, 0.96), rgba(14, 31, 69, 0.94)); color: #eef3ff; box-shadow: 0 0 0 4px rgba(91, 141, 255, 0.14), 0 14px 34px -14px rgba(0, 0, 0, 0.7); }
+  :root:not([data-theme="light"]) .ov-navie-bubble::after { background: linear-gradient(160deg, rgba(20, 42, 94, 0.96), rgba(14, 31, 69, 0.94)); border-color: rgba(140, 194, 255, 0.45); }
+  :root:not([data-theme="light"]) .ov-navie-name { color: #8cc2ff; }
+}
+/* Narrow screens: the car stacks above the text, so the bubble sits over its top centre instead. */
+@media (max-width: 760px) { .ov-navie-bubble { right: auto; left: 50%; bottom: 70%; transform-origin: 50% 100%; translate: -50% 0; border-radius: 22px; } .ov-navie-bubble::after { right: calc(50% - 13px); } }
+@media (prefers-reduced-motion: reduce) { .ov-navie-bubble, .ov-navie-bubble.is-open { transition: opacity 0.2s ease; transform: none; animation: none; } }
+
+/* --- Mode tabs at night (20 Oct 2026, user request: "hard to see, especially Prescriptive") -----------
+   The labels sat straight on the night art, with the road's bright light stripe right behind the last tab.
+   No panel (the user did not want a separate container): each word carries a soft dark halo instead, so it
+   lifts off whatever art is behind it, and the inks are brighter. Traffic, Incidents and Emissions share these
+   tabs (traffic.module.css), so this covers all three; module classes are matched by their bare names. */
+:root[data-theme="dark"] [class*="modeTab"]:not([class*="modeTabs"]) {
+  color: #e3ebff;
+  text-shadow: 0 0 6px rgba(4, 12, 34, 0.95), 0 0 14px rgba(4, 12, 34, 0.85), 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+:root[data-theme="dark"] [class*="modeTabActive"] { color: #ffffff; }
+:root[data-theme="dark"] [class*="modeHint"] { color: #cfdcf5; font-weight: 400; }
+:root[data-theme="dark"] [class*="modeTabActive"] [class*="modeHint"] { color: #eef3ff; }
+:root[data-theme="dark"] [class*="modeName"] svg { color: #b7d0ff; filter: drop-shadow(0 0 4px rgba(4, 12, 34, 0.95)); }
+:root[data-theme="dark"] [class*="modeTabActive"] [class*="modeName"] svg { color: var(--page-accent, #8cc2ff); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) [class*="modeTab"]:not([class*="modeTabs"]) {
+    color: #e3ebff;
+    text-shadow: 0 0 6px rgba(4, 12, 34, 0.95), 0 0 14px rgba(4, 12, 34, 0.85), 0 1px 2px rgba(0, 0, 0, 0.6);
+  }
+  :root:not([data-theme="light"]) [class*="modeTabActive"] { color: #ffffff; }
+  :root:not([data-theme="light"]) [class*="modeHint"] { color: #cfdcf5; font-weight: 400; }
+  :root:not([data-theme="light"]) [class*="modeTabActive"] [class*="modeHint"] { color: #eef3ff; }
+  :root:not([data-theme="light"]) [class*="modeName"] svg { color: #b7d0ff; filter: drop-shadow(0 0 4px rgba(4, 12, 34, 0.95)); }
+  :root:not([data-theme="light"]) [class*="modeTabActive"] [class*="modeName"] svg { color: var(--page-accent, #8cc2ff); }
 }

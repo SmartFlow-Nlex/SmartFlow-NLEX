@@ -73,7 +73,7 @@ export function nowMarkLine(t: ChartTheme, x: string | number) {
       position: "insideEndTop" as const,
       color: t.ink,
       fontFamily: t.fontFamily,
-      fontSize: 10,
+      fontSize: 11, // the 11 px floor for chart text (A11Y-1)
       fontWeight: 600,
     },
     data: [{ xAxis: x }],
@@ -114,7 +114,7 @@ export function gapMarkArea(t: ChartTheme, ranges: [string | number, string | nu
   return {
     silent: true,
     itemStyle: { color: img ? { image: img, repeat: "repeat" } : (t.isDark ? "rgba(244,241,234,0.04)" : "rgba(11,18,32,0.04)") } as any,
-    label: { show: true, position: "insideTop" as const, color: t.text, fontFamily: t.fontFamily, fontSize: 10, fontWeight: 600, formatter: label },
+    label: { show: true, position: "insideTop" as const, color: t.text, fontFamily: t.fontFamily, fontSize: 11, fontWeight: 600, formatter: label },
     data: ranges.map(([a, b]) => [{ xAxis: a }, { xAxis: b }]),
   };
 }

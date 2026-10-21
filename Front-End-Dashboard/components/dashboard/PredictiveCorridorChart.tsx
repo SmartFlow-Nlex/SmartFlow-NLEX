@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { X } from "lucide-react";
 import { useThemeTokens } from "./useThemeTokens";
 import InfoTooltip from "./InfoTooltip";
 import CorridorRiskNarrative from "./CorridorRiskNarrative";
 import { fmtInt, fmtNum, fmtDateFull } from "./incidentPredictive.shared";
 import { useNlexExits, accessLabel, displayExitName } from "../../lib/nlex-exits";
 import { corridorKmFromPost } from "../../lib/exit-lookup";
+import { fmtKm as fmtKmPost } from "../../lib/km-post";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -80,7 +83,8 @@ function riskBandFor(value: number, sortedPool: number[]): RiskKey {
   return "low";
 }
 
-const fmtKm = (km: number) => km.toFixed(2).replace(/\.?0+$/, "");
+// km arrives MEASURED (the API and the exit list); shown as the official km post (lib/km-post.ts).
+const fmtKm = (km: number) => fmtKmPost(km);
 
 function ordinal(n: number): string {
   const j = n % 10, k = n % 100;
@@ -150,6 +154,25 @@ export default function PredictiveCorridorChart() {
       cancelled = true;
     };
   }, []);
+
+  /* The two dialogs (testers IN-11: "fix the pop-up modal"). They were drawn inside the card, under the
+     Predictive stage, whose fade-in animation makes it a stacking context: the sticky filter bar and the
+     header shelf painted over the top of the dialog whatever its z-index. They now render into <body>
+     (as Traffic's episode list does), close on Escape as well as on the backdrop and the close button,
+     and use the icon set's X instead of a text glyph. */
+  useEffect(() => {
+    // Rows inside a dialog set the hover too, and unmounting them sends no mouseleave: clear on every
+    // open and close so the rail never describes an exit the pointer is no longer on.
+    setHoveredExitId(null);
+    if (!seeMoreOpen && !drillDownOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setSeeMoreOpen(false);
+      setDrillDownOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [seeMoreOpen, drillDownOpen]);
 
   // Hooks above this line always run; everything below may legitimately see
   // data === null, so each derivation below null-guards internally instead
@@ -221,6 +244,25 @@ export default function PredictiveCorridorChart() {
     () => byExit.filter((x) => x.hasData).map((x) => x.sumPredicted).sort((a, b) => a - b),
     [byExit],
   );
+  /* How many exits change band between Today and the chosen horizon (testers IN-11: "the visual does not
+     update with the data"). It does update: the totals and bar lengths are re-summed per horizon. But the
+     bands are each exit's quarter AGAINST THE OTHERS, and the Spatial LSTM forecasts every exit almost flat
+     day to day (Paso de Blas 12.7, 12.3, 12.3 ... a day), so a longer window scales every exit together
+     and the order, and so the colours, barely move. Counting the moves says that in the card instead of
+     leaving a static strip to read as a stuck one. */
+  const bandMoves = useMemo(() => {
+    if (!data || effectiveHorizon === 1) return null;
+    const day1 = new Map<number, number>();
+    for (const r of data.segmentRisk) if (r.horizonDay === 1 && r.hasData) day1.set(r.exitId, r.predictedIncidents);
+    const pool1 = [...day1.values()].sort((a, b) => a - b);
+    let moved = 0;
+    for (const x of byExit) {
+      const v1 = day1.get(x.exitId);
+      if (!x.hasData || v1 == null) continue;
+      if (riskBandFor(v1, pool1) !== riskBandFor(x.sumPredicted, riskPool)) moved++;
+    }
+    return moved;
+  }, [data, effectiveHorizon, byExit, riskPool]);
   const rankedRows = useMemo(
     () => byExit.filter((x) => x.hasData).sort((a, b) => b.sumPredicted - a.sumPredicted),
     [byExit],
@@ -307,10 +349,15 @@ export default function PredictiveCorridorChart() {
   const detailRank = detailRow ? rankedRows.findIndex((r) => r.exitId === detailRow.exitId) : -1;
   const detailCoefs = detailRow ? sigByExit.get(detailRow.exitId) ?? [] : [];
 
+  /* The hover rail is cleared when a dialog opens (19 Oct 2026, testers IN-11: "hover stays stuck"). The
+     dialog covers the strip under a still pointer, so no mouseleave ever reached the exit that was hovered,
+     and the rail went on describing it after the dialog closed. */
   const openDrillDown = (exitId: number) => {
     setSelectedExitId(exitId);
+    setHoveredExitId(null);
     setDrillDownOpen(true);
   };
+  const clearHover = () => setHoveredExitId(null);
 
   const riskOf = (row: ExitRow) => (row.hasData ? RISK_META[riskBandFor(row.sumPredicted, riskPool)] : { label: "No data", color: NO_DATA_COLOR });
 
@@ -334,23 +381,28 @@ export default function PredictiveCorridorChart() {
       >
         <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-muted)", textAlign: "right" }}>{rank}</span>
         <span title={`${displayExitName(row.exitName)} — Km ${fmtKm(row.km)} (${corridorKmFromPost(row.km)} from Balintawak)`} style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {displayExitName(row.exitName)} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· Km {fmtKm(row.km)} <span style={{ display: "block", fontSize: "0.68rem" }} title="Distance from Balintawak, the scale the Incident hotspot chart uses">{corridorKmFromPost(row.km)} from Balintawak</span></span>
+          {displayExitName(row.exitName)} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· Km {fmtKm(row.km)} <span style={{ display: "block", fontSize: "0.75rem" }} title="Distance from Balintawak, the scale the Incident hotspot chart uses">{corridorKmFromPost(row.km)} from Balintawak</span></span>
         </span>
         <div style={{ height: 14, borderRadius: "999px", background: "var(--bg-surface-hover)", overflow: "hidden" }}>
           {/* transform: scaleX, not width -- the bar is always full-width and
               laid out once; only its paint scales on rank/horizon changes, so
               this animates on the compositor instead of triggering layout. */}
+          {/* The bar wears its exit's risk band, the same colour that exit has on the strip above
+              (testers IN-11: "colours do not vary per exit"). It used to be one accent gradient on every
+              row, so the list and the strip could not be matched by eye. A hue per exit was not used:
+              twenty categorical hues cannot be told apart, and the colour here means risk, not identity
+              (the name beside it is the identity). */}
           <div
             style={{
               height: "100%", width: "100%", borderRadius: "999px",
-              background: "linear-gradient(90deg, color-mix(in srgb, var(--page-accent) 55%, transparent), var(--page-accent))",
+              background: risk.color,
               transform: `scaleX(${pct / 100})`, transformOrigin: "left", transition: "transform 0.2s ease",
             }}
           />
         </div>
         <span style={{ justifySelf: "end", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1 }}>
           <span title={`${fmtNum(row.sumPredicted, 2)} expected incidents (exact)`} style={{ fontSize: "0.76rem", fontWeight: 700, color: accentInk }}>{fmtInt(row.sumPredicted)}</span>
-          <span style={{ fontSize: "0.6rem", fontWeight: 700, color: risk.color }}>{risk.label}</span>
+          <span style={{ fontSize: "0.75rem", fontWeight: 700, color: risk.color }}>{risk.label}</span>
         </span>
       </div>
     );
@@ -425,7 +477,7 @@ export default function PredictiveCorridorChart() {
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
-          <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 600, display: "flex", alignItems: "center" }}>
+          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600, display: "flex", alignItems: "center" }}>
             Horizon
             <InfoTooltip
               text={`Day 1 is the real next-24h forecast. Later days in a longer window are a recursive rollout — each day's own prediction feeds the next day's input${lstmMeta?.rollout_assumptions ? `, holding two inputs flat rather than forecasting them: ${lstmMeta.rollout_assumptions}` : ""}. The further from day 1, the more the rollout's own error compounds — treat a multi-day total as a shape, not a commitment.`}
@@ -439,13 +491,13 @@ export default function PredictiveCorridorChart() {
                 <button
                   key={d}
                   disabled={disabled}
-                  onClick={() => setHorizonDays(d)}
+                  onClick={() => { setHorizonDays(d); setHoveredExitId(null); }}
                   title={disabled ? `The pipeline has only published ${availableDays} future days so far` : d === 1 ? "The real next-24h forecast — not a rollout day" : undefined}
                   style={{
                     padding: "4px 12px", borderRadius: "999px", border: "none", cursor: disabled ? "not-allowed" : "pointer",
                     background: active ? "var(--page-accent, #4f46e5)" : "transparent",
                     color: disabled ? "var(--text-muted)" : active ? "var(--text-on-dark)" : "var(--text-secondary)",
-                    fontWeight: 600, fontSize: "0.72rem", opacity: disabled ? 0.5 : 1,
+                    fontWeight: 600, fontSize: "0.8rem", opacity: disabled ? 0.5 : 1,
                   }}
                 >
                   {d === 1 ? "Today" : `${d}d`}
@@ -532,7 +584,9 @@ export default function PredictiveCorridorChart() {
           Barrier, for instance, really is southbound-only -- and that's
           real data (nb/sb entry/exit flags), not a fabricated split, so a
           hatched block marks "no ramp this way" rather than a risk colour. */}
-      <div style={{ overflowX: "auto", overflowY: "hidden", paddingBottom: "6px" }}>
+      {/* Leaving the whole strip clears the rail too: per-exit mouseleave alone could miss a fast exit
+          through the scrollbar or the gaps between rows. */}
+      <div style={{ overflowX: "auto", overflowY: "hidden", paddingBottom: "6px" }} onMouseLeave={clearHover}>
         {/* 940px, the same track width Live Corridor Status scrolls its own
             20 exits at -- so this reads as the same corridor at the same
             scale, not a wider or narrower one. */}
@@ -567,7 +621,7 @@ export default function PredictiveCorridorChart() {
                       <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" fill="var(--bg-surface)" stroke="currentColor" strokeWidth="3" />
                     </svg>
                   </span>
-                  <span style={{ fontSize: "0.62rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: isSelected ? "var(--text-primary)" : "var(--text-muted)" }}>{fmtKm(row.km)}</span>
+                  <span style={{ fontSize: "0.75rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: isSelected ? "var(--text-primary)" : "var(--text-muted)" }}>{fmtKm(row.km)}</span>
                 </button>
               );
             })}
@@ -592,8 +646,8 @@ export default function PredictiveCorridorChart() {
                     onMouseEnter={() => setHoveredExitId(row.exitId)}
                     onMouseLeave={() => setHoveredExitId((k) => (k === row.exitId ? null : k))}
                     style={{
-                      writingMode: "vertical-rl", transform: "rotate(180deg)", height: "110px", padding: 0, border: "none", background: "none",
-                      font: "inherit", fontSize: "0.7rem", fontWeight: isSelected ? 800 : 600,
+                      writingMode: "vertical-rl", transform: "rotate(180deg)", height: "128px", padding: 0, border: "none", background: "none",
+                      font: "inherit", fontSize: "0.78rem", fontWeight: isSelected ? 800 : 600,
                       color: isSelected ? "var(--page-accent, #4f46e5)" : "var(--text-secondary)",
                       whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer",
                     }}
@@ -610,7 +664,7 @@ export default function PredictiveCorridorChart() {
       {/* Legend -- rect swatches to match Live Corridor Status's own key,
           labeled as risk rather than reusing its Congested/Slow/Clear
           wording, which describes live traffic, not a forecast. */}
-      <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap", fontSize: "0.72rem", fontWeight: 600, color: "var(--text-secondary)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)" }}>
         <span style={{ fontWeight: 700, color: "var(--text-muted)" }}>Predicted incident risk</span>
         {RISK_BANDS.map((b) => (
           <span key={b.key} style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
@@ -624,28 +678,36 @@ export default function PredictiveCorridorChart() {
         </span>
         <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>· quartiles of this window&apos;s forecast, recomputed per horizon — not fixed thresholds</span>
       </div>
+      <p style={{ margin: "-6px 0 0", fontSize: "0.8rem", lineHeight: 1.5, color: "var(--text-muted)" }}>
+        {bandMoves == null
+          ? "Colours rank each exit against the others. The ranked bars below wear the same colour as the exit's block on the strip."
+          : bandMoves === 0
+            ? `Over ${effectiveHorizon} days the totals grow, but no exit changes colour from Today: the model forecasts each exit almost flat day to day, so the ranking holds.`
+            : `${bandMoves} exit${bandMoves === 1 ? "" : "s"} change colour from Today over ${effectiveHorizon} days; the rest hold their rank because the model forecasts each exit almost flat day to day.`}{" "}
+        A model forecast, so the page&apos;s Range does not change it.
+      </p>
 
       {/* Top predicted hotspots */}
       <div>
-        <div style={{ display: "flex", alignItems: "center", fontSize: "0.68rem", fontWeight: 800, color: "var(--page-accent, #4f46e5)", letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: "6px" }}>
+        <div style={{ display: "flex", alignItems: "center", fontSize: "0.75rem", fontWeight: 800, color: "var(--page-accent, #4f46e5)", letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: "6px" }}>
           Top predicted hotspots
           <InfoTooltip text="Each number is the exit's expected incidents — the model's statistical average, not a discrete tally — summed across all the selected horizon's days and rounded for display. Hover a number for the exact figure." />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "26px minmax(120px, 220px) 1fr 64px", columnGap: "10px", padding: "0 8px 2px" }}>
           <span />
-          <span style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.03em" }}>Exit</span>
+          <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.03em" }}>Exit</span>
           <span />
-          <span style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.03em", textAlign: "right" }}>
+          <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.03em", textAlign: "right" }}>
             Expected, {effectiveHorizon}d
           </span>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "1px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "1px" }} onMouseLeave={clearHover}>
           {inlineRanked.map((row, i) => renderHotspotRow(row, i + 1))}
         </div>
         {restRanked.length > 0 && (
           <button
             type="button"
-            onClick={() => setSeeMoreOpen(true)}
+            onClick={() => { setSeeMoreOpen(true); setHoveredExitId(null); }}
             style={{
               marginTop: "10px", width: "100%", padding: "8px 12px", borderRadius: "8px",
               border: "1px dashed var(--border-default)", background: "var(--bg-surface-hover)",
@@ -699,7 +761,8 @@ export default function PredictiveCorridorChart() {
         trainedAt={data.trainedAt}
       />
 
-      {seeMoreOpen && (
+      {seeMoreOpen && typeof document !== "undefined" && createPortal(
+        <div className="viz-incident">
         <div
           role="dialog" aria-modal="true" aria-label="All ranked exits" onClick={() => setSeeMoreOpen(false)}
           className="ds-modal-backdrop"
@@ -725,7 +788,7 @@ export default function PredictiveCorridorChart() {
                 onClick={() => setSeeMoreOpen(false)} aria-label="Close"
                 style={{ flex: "none", width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border-default)", background: "var(--bg-surface)", color: "var(--text-secondary)", cursor: "pointer", display: "grid", placeItems: "center", fontSize: "1rem", lineHeight: 1 }}
               >
-                ✕
+                <X size={16} aria-hidden="true" />
               </button>
             </div>
             <div style={{ overflowY: "auto", padding: "10px 22px 20px" }}>
@@ -735,12 +798,13 @@ export default function PredictiveCorridorChart() {
             </div>
           </div>
         </div>
-      )}
+      </div>, document.body)}
 
       {/* Drill-down -- opens only on click (corridor segment, km marker,
           exit name, or a ranked-list row), replacing the panel that used to
           sit permanently open on the top hotspot. */}
-      {drillDownOpen && detailRow && (
+      {drillDownOpen && detailRow && typeof document !== "undefined" && createPortal(
+        <div className="viz-incident">
         <div
           role="dialog" aria-modal="true" aria-label={`${displayExitName(detailRow.exitName)} detail`} onClick={() => setDrillDownOpen(false)}
           className="ds-modal-backdrop"
@@ -756,7 +820,6 @@ export default function PredictiveCorridorChart() {
           >
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "18px 22px", borderBottom: "1px solid var(--border-default)" }}>
               <div>
-                <div style={{ fontSize: "0.68rem", fontWeight: 800, color: "var(--text-muted)", letterSpacing: "0.04em", textTransform: "uppercase" }}>Selected hotspot</div>
                 <h3 style={{ margin: "2px 0 0 0", fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>{displayExitName(detailRow.exitName)}</h3>
                 <p style={{ margin: "2px 0 0 0", fontSize: "0.8rem", color: "var(--text-muted)" }}>
                   Km {fmtKm(detailRow.km)} ({corridorKmFromPost(detailRow.km)} from Balintawak){accessSummaryFor(detailRow.exitName) ? ` · ${accessSummaryFor(detailRow.exitName)}` : ""}
@@ -766,7 +829,7 @@ export default function PredictiveCorridorChart() {
                 onClick={() => setDrillDownOpen(false)} aria-label="Close"
                 style={{ flex: "none", width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border-default)", background: "var(--bg-surface)", color: "var(--text-secondary)", cursor: "pointer", display: "grid", placeItems: "center", fontSize: "1rem", lineHeight: 1 }}
               >
-                ✕
+                <X size={16} aria-hidden="true" />
               </button>
             </div>
 
@@ -784,28 +847,28 @@ export default function PredictiveCorridorChart() {
 
               <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                 <div style={{ flex: "1 1 150px", padding: "10px 12px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
-                  <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", display: "flex", alignItems: "center", gap: "2px" }}>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", display: "flex", alignItems: "center", gap: "2px" }}>
                     Expected incidents · {effectiveHorizon}d
                     <InfoTooltip text="Sum of each day's forecast over the window. Each day's own number is a statistical expectation, not a whole-number tally, so the sum stays fractional even though it's not an average — rounded here for readability; hover the number for the exact figure." />
                   </div>
                   <div title={detailRow.hasData ? `${fmtNum(detailRow.sumPredicted, 2)} (exact)` : undefined} style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{detailRow.hasData ? fmtInt(detailRow.sumPredicted) : "—"}</div>
                   {horizonDateRange && (
-                    <div style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
                       {horizonDateRange.start === horizonDateRange.end ? fmtDateFull(horizonDateRange.start) : `${fmtDateFull(horizonDateRange.start)} – ${fmtDateFull(horizonDateRange.end)}`}
                     </div>
                   )}
                 </div>
                 <div style={{ flex: "1 1 150px", padding: "10px 12px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
-                  <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Expected · next 24h</div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Expected · next 24h</div>
                   <div title={detailRow.day1Predicted != null ? `${fmtNum(detailRow.day1Predicted, 2)} (exact)` : undefined} style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{detailRow.day1Predicted != null ? fmtInt(detailRow.day1Predicted) : "—"}</div>
-                  {horizonDateRange?.start && <div style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>{fmtDateFull(horizonDateRange.start)}</div>}
+                  {horizonDateRange?.start && <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{fmtDateFull(horizonDateRange.start)}</div>}
                 </div>
                 <div style={{ flex: "1 1 150px", padding: "10px 12px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
-                  <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Last observed day</div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Last observed day</div>
                   <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{detailRow.lastObserved != null ? fmtInt(detailRow.lastObserved) : "—"}</div>
                 </div>
                 <div style={{ flex: "1 1 150px", padding: "10px 12px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
-                  <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Rank this window</div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Rank this window</div>
                   <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{detailRank >= 0 ? `#${detailRank + 1} of ${rankedRows.length}` : "—"}</div>
                 </div>
               </div>
@@ -817,7 +880,7 @@ export default function PredictiveCorridorChart() {
               )}
 
               <div>
-                <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "4px" }}>Why is this exit flagged?</div>
+                <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "4px" }}>Why is this exit flagged?</div>
                 <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "0.78rem", color: "var(--text-muted)", lineHeight: 1.6 }}>
                   {detailRow.historyEventCount != null && (
                     <li>
@@ -839,7 +902,7 @@ export default function PredictiveCorridorChart() {
             </div>
           </div>
         </div>
-      )}
+      </div>, document.body)}
     </article>
   );
 }

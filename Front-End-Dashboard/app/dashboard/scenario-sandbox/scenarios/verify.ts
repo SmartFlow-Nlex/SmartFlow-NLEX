@@ -24,6 +24,9 @@ import { drawMotorcycle, type BikeCtx } from "../motorcycleArt";
 import { FacilityEngine, type FacilityHost, type FacilitySpec } from "../facilities";
 import { APRON_ROLES, BARRIER_ROLES, apronOutline, serviceSite, wAtU } from "../facilityArt";
 import { shapeForecastMix, type ClassShares } from "../forecastMix";
+import { ReplayBuffer } from "../replay";
+import { NoEventTwin } from "../eventTwin";
+import { TrendLog } from "../trends";
 import { getRecommendation, CLOSURE_LANE_CAPACITY_VEH_H, type Supply } from "../recommendation";
 import { BUS_PAINTS, CAB_PAINTS, CAR_PAINTS, MOTORCYCLE_PAINTS, PAINT_WHITE, TRAILER_PAINTS, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint } from "../vehiclePaint";
 import {
@@ -2545,6 +2548,16 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check("rain art: the harder it rains, the more drops are drawn (light < moderate < heavy, heavy more than double light)", drops(light) < drops(moderate) && drops(moderate) < drops(heavy) && drops(heavy) > 2 * drops(light), `${drops(light)} < ${drops(moderate)} < ${drops(heavy)}`);
   check("rain art: the drops are clipped to the carriageway (a clip is applied before any drop is drawn)", heavy.calls.indexOf("clip") > -1 && heavy.calls.indexOf("clip") < heavy.calls.findIndex((c) => c.startsWith("lineTo")));
   check("rain art: the drops and the wet tint stay inside the carriageway (the clip is exactly the road's rectangle, not a margin around it)", heavy.calls.includes("rect 0.00 20.00 800.00 120.00") && heavy.calls.filter((c) => c.startsWith("rect ")).length === 1);
+  {
+    // UAT 16 Oct 2026, SB-13: rain at the toll gates. A plaza beside the road is rained on too, and only it is added.
+    const r = new Recorder();
+    drawWeather({ ...geom(r, 1), wetAreas: [{ x: 300, y: 140, w: 120, h: 60 }] }, [base]);
+    const rects = r.calls.filter((c) => c.startsWith("rect "));
+    // Drops whose foot lands past the road's bottom edge (140) by more than a drop's length: only the plaza can show them.
+    const below = (rc: Recorder): number => rc.calls.filter((c) => c.startsWith("lineTo ")).filter((c) => Number(c.split(" ")[2]) > 175).length;
+    check("rain art: a plaza's footprint beside the road is rained on as well (clip = the road plus that footprint, drops fall into it); without one nothing changes",
+      rects.length === 2 && rects[0] === "rect 0.00 20.00 800.00 120.00" && rects[1] === "rect 300.00 140.00 120.00 60.00" && below(r) > 0 && below(heavy) === 0, rects.join(" / "));
+  }
   check("rain art: a speed-limit sign shows the intensity's cap (96 heavy, 100 light as fixtures), and no sign is drawn for a mark with no cap", paintWeather([{ ...base, intensity: "heavy", capKmh: 96 }], 1).texts.join() === "96" && paintWeather([{ ...base, intensity: "light", capKmh: 100 }], 1).texts.join() === "100" && paintWeather([{ ...base, capKmh: null }], 1).texts.length === 0);
   check("rain art: it is deterministic — the same clock paints the same picture, exactly (which is what makes a paused run freeze)", paintWeather([base], 2.5).calls.join("|") === paintWeather([base], 2.5).calls.join("|"));
   check("rain art: a later clock moves the drops (the animation actually animates)", paintWeather([base], 2.5).calls.join("|") !== paintWeather([base], 2.6).calls.join("|"));
@@ -2801,7 +2814,8 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
     /<div\s+className="sandbox-scn-scene"\s+onKeyDown=\{\(e\) => \{\s*if \(e\.key === "Escape"\) setInfoOpen\(false\);\s*\}\}\s*>\s*<ScenePreview /s.test(panelSource) &&
       /className="sandbox-scn-info"[\s\S]{0,450}onClick=\{\(\) => setInfoOpen\(\(o\) => !o\)\}/.test(panelSource) && /\{infoOpen && \(\s*<div className="sandbox-scn-info-pop"/.test(panelSource) &&
       /setFamily\(f\);\s*setInfoOpen\(false\);/.test(panelSource) && !/<p className="sandbox-scn-desc">\{template\.description\}<\/p>/.test(panelSource) &&
-      /\.sandbox-scn-info \{[^}]*top: 6px; right: 6px;/.test(readFileSync(new URL("../../../globals.css", import.meta.url), "utf8")),
+      // Positioned in the sandbox's own stylesheet since the redesign (its globals.css rule restyles the button but no longer places it).
+      /\.sandbox-scn-info \{[^}]*position: absolute; top: 6px; right: 6px;/.test(readFileSync(new URL("../../../styles/nc-sandbox.css", import.meta.url), "utf8")),
   );
   // ── motorcycles: drawn at the share NLEX's own records give, and honest about what that is ─────────────
   {
@@ -2867,7 +2881,7 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
     const ok = (a: number, b: number): { fromKm: number; toKm: number } | null => { const p = planStretch(a, b, limits); return p.ok ? { fromKm: p.fromKm, toKm: p.toKm } : null; };
     const why = (a: number, b: number): string => { const p = planStretch(a, b, limits); return p.ok ? "" : p.reason; };
     check("stretch: a km range inside the route and within the sandbox's limits is accepted as given, in either order, rounded to the metre", ok(3, 4)?.fromKm === 3 && ok(3, 4)?.toKm === 4 && ok(4, 3)?.fromKm === 3 && ok(4, 3)?.toKm === 4 && ok(3.0004, 4.0006)?.fromKm === 3 && ok(3.0004, 4.0006)?.toKm === 4.001 && ok(0, 3)?.toKm === 3);
-    check("stretch: too short, too long, outside the route, or not a number is refused with its own reason", /at least 0\.10 km/.test(why(3, 3.05)) && /at most 3\.00 km/.test(why(0, 3.5)) && /inside the route, Km 0\.00 to Km 11\.73/.test(why(-1, 0.5)) && /inside the route/.test(why(11, 12)) && /Enter a km post/.test(why(Number.NaN, 2)) && /Enter a km post/.test(why(2, Number.POSITIVE_INFINITY)) && ok(3, 3.05) === null && ok(0, 3.5) === null);
+    check("stretch: too short, too long, outside the route, or not a number is refused with its own reason", /at least 0\.10 km/.test(why(3, 3.05)) && /at most 3\.00 km/.test(why(0, 3.5)) && /inside the route, Km 0 to Km 11\.73/.test(why(-1, 0.5)) && /inside the route/.test(why(11, 12)) && /Enter a km post/.test(why(Number.NaN, 2)) && /Enter a km post/.test(why(2, Number.POSITIVE_INFINITY)) && ok(3, 3.05) === null && ok(0, 3.5) === null);
     check("stretch: the suggested stretch is 1 km — the middle km of a longer window, or a shorter window's start run on downstream (and never past the route's end)",
       (() => {
         const a = defaultStretch(0, 3, 11.73, 1); const b = defaultStretch(0, 0.6, 11.73, 1); const c = defaultStretch(11, 11.6, 11.73, 1); const d = defaultStretch(5, 5.3, 11.73, 1);
@@ -2882,7 +2896,7 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
         /setSegFromKm\(stretch\.fromKm\);\s*setSegToKm\(stretch\.toKm\);\s*nb\.setLaneCount\(plan\.counts\.NB\);/.test(pageSource) &&
         /if \(before !== null && segFromKm === before\.setFrom && segToKm === before\.setTo\) \{\s*setSegFromKm\(before\.from\);\s*setSegToKm\(before\.to\);\s*\}/.test(pageSource),
     );
-    check("stretch: the canvas label and the hint name the stretch (Km from-to) and the control says the road either side is not simulated", /Km \$\{marks\.fromKm\.toFixed\(2\)\}–\$\{marks\.toKm\.toFixed\(2\)\}/.test(pageSource) && /The sandbox simulates only this stretch \(100 m to 3 km\)/.test(pageSource) && /The simulated window becomes the stretch \(Off puts it back\)\./.test(pageSource));
+    check("stretch: the canvas label and the hint name the stretch (Km from-to) and the control says the road either side is not simulated", /\$\{fmtKmRange\(marks\.fromKm, marks\.toKm, 2\)\}/.test(pageSource) && /The sandbox simulates only this stretch \(100 m to 3 km\)/.test(pageSource) && /The simulated window becomes the stretch \(Off puts it back\)\./.test(pageSource));
   }
   const operatorText = [pageSource, artSource, panelSource, previewSource, readFileSync(new URL("./assumptions.ts", import.meta.url), "utf8"), readFileSync(new URL("./catalogue.ts", import.meta.url), "utf8"), readFileSync(new URL("../../../globals.css", import.meta.url), "utf8")].join("\n");
   check("lane reallocation: nothing the operator can read still calls it a zipper lane or counterflow (UI strings, canvas labels, assumption text)", !/Zipper lane|ZIPPER LANE|Counterflow|COUNTERFLOW|zipper lane|counterflow/.test(operatorText));
@@ -3207,6 +3221,105 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
     "ramp wedges: drawn only for the engine's own point ramps (an exit or entry not laid out as a plaza), never for every interchange in view",
     /for \(const r of sim\.cfg\.ramps \?\? \[\]\) \{/.test(rampPage) && !/for \(const ex of exits\)/.test(rampPage),
   );
+}
+
+// --- Testers' fixes, 17 Oct 2026 (SB-15 replay, SB-17 before/after, SB-16.3 confidence run, SB-8 hour, short labels)
+{
+  const pageSource = readFileSync(new URL("../page.tsx", import.meta.url), "utf8");
+  const hookSource = readFileSync(new URL("../useDirectionSim.ts", import.meta.url), "utf8");
+  const artSource = readFileSync(new URL("../facilityArt.ts", import.meta.url), "utf8");
+  type Fake = { time: number; vehicles: never[]; interventions: Interventions; cfg: { laneCount: number; length: number } };
+  const fake = (): Fake => ({ time: 0, vehicles: [], interventions: { closedLanes: [false, false], closurePoint: 0, closureEnd: 0, incidents: [], speedLimitKmh: null, speedZone: [0, 0] }, cfg: { laneCount: 2, length: 600 } });
+  const bufNB = new ReplayBuffer();
+  const bufSB = new ReplayBuffer();
+  const simNB = fake();
+  let simSB = fake();
+  for (let seq = 1; seq <= 1200; seq++) {
+    simNB.time += 0.05;
+    simSB.time += 0.05;
+    if (seq === 400) simSB = fake(); // SB rebuilt alone: its clock starts again
+    if (seq === 800) simNB.interventions = { ...simNB.interventions, incidents: [{ lane: 0, x: 100 }] };
+    bufNB.record(simNB, seq);
+    bufSB.record(simSB, seq);
+  }
+  check("replay: a rebuilt run starts its own recording at once (old frames dropped, no wait for the new clock to pass the old one)", bufSB.isOf(simSB) && (bufSB.firstTime ?? 99) < 0.5 && bufSB.length > 200);
+  const at = bufNB.lastEventIndex();
+  const lead = at === null ? null : bufNB.frame(at);
+  const other = lead?.seq === undefined ? null : bufSB.frame(bufSB.indexAtSeq(lead.seq));
+  check("replay: the other carriageway is lined up by the loop's step, not by its own clock (which a lone rebuild restarted)",
+    lead != null && other != null && Math.abs((other.seq ?? 0) - (lead.seq ?? 0)) <= 3 && Math.abs(other.time - lead.time) > 5);
+  check("replay: Both mode draws the recording of each carriageway under review, not the live road",
+    /const recNB = reviewed\("NB"\);\s*const recSB = reviewed\("SB"\);/.test(pageSource) && /renderBoth\(\s*ctx, canvas, shownNB, shownSB,/.test(pageSource) && /\.record\(sim, stepSeqRef\.current\)/.test(pageSource));
+  check("replay: playing by any route (Space, a command) leaves review; a rebuild under review returns to live",
+    /if \(running && replayIndexRef\.current !== null\) setReplayIndex\(null\);/.test(pageSource) && /!replayRef\.current\[replayLead\]\.isOf\(byDirection\[replayLead\]\.simRef\.current\)/.test(pageSource));
+  check("before/after: scenario events not over when the baseline was taken count as a change (pending, running, at a booth, or over since), and the panels gate on that",
+    /const anyChange = anyIntervention \|\| eff\.active\.length > 0 \|\| compareEvents\.length > 0;/.test(hookSource) && /e\.endS > \(baseline\.atS \?\? -Infinity\)/.test(hookSource) &&
+      /d\.metrics && \(d\.eventCompare \|\| \(d\.baseline && d\.anyChange\)\) \?/.test(pageSource) && /if \(!d\.baseline \|\| !d\.metrics \|\| !d\.anyChange\) \{/.test(pageSource) && !/d\.anyIntervention\)/.test(pageSource));
+  check("confidence run: the timed-events reason shows whenever events are on the road on screen, Both mode included, and a run in progress stops when one is added",
+    /\{repEvents\.length > 0 && \(/.test(pageSource) && !/focused\.scenarioEvents\.length > 0 && \(\s*<p className="sandbox-reps-warn">/.test(pageSource) && /if \(repBlocked && repProgress != null\) \{\s*repCancel\.current = true;/.test(pageSource));
+  check("forecast day: every picker goes through pickForecastDay, which moves the clock to that day's busiest forecast hour; a time set explicitly wins",
+    (pageSource.match(/onChange=\{pickForecastDay\}/g) ?? []).length === 1 && /pickForecastDay\(d\);\s*setForecastFollowing\(true\);/.test(pageSource) &&
+      /const peak = forecastHour\(forecast\.data, null\);/.test(pageSource) && /case "set_time":\s*setHourFollowsDay\(null\);/.test(pageSource));
+  check("labels: an event's label on the road and at a plaza shows its name; the phase and time left are on hover (labelHits)",
+    /const text = m\.name;\s*const w = ctx\.measureText\(text\)\.width \+ 14;/.test(pageSource) && /labelHits\.push\(/.test(pageSource) &&
+      /const text = m\.name;/.test(artSource) && /full: `\$\{m\.name\} · \$\{m\.text\}`/.test(artSource));
+}
+
+// --- Testers' fixes, second pass, 19 Oct 2026 (SB-17: the same run without the events; SB-15: the recording plays back)
+{
+  const pageSource = readFileSync(new URL("../page.tsx", import.meta.url), "utf8");
+  const hookSource = readFileSync(new URL("../useDirectionSim.ts", import.meta.url), "utf8");
+  // The real engine, as the page builds it: one multi-vehicle collision two minutes in, on newSim's busy 600 m road.
+  const ev = must([], collisionSpec("multi_vehicle_collision", 2, 330, 2, manualMinutes(5)), 1).events;
+  const live = newSim();
+  const binding = createEngineBinding();
+  binding.apply(live, idle, ev, frame);
+  for (let i = 0; i < 400; i++) live.step(0.05); // 20 s in before the twin exists: it must catch up from 0
+  const twin = new NoEventTwin(live, engineIv(600, 4), 0.05);
+  twin.apply(idle, frame);
+  const caught = twin.catchUp(60_000, () => Date.now());
+  check("event twin: built mid-run from the live run's own config, it catches up to the same clock", caught && twin.sim.time === live.time && twin.sim.cfg.seed === live.cfg.seed && twin.sim.cfg !== live.cfg);
+  const sig = (s: TrafficSim): string => s.vehicles.map((v) => `${v.id}:${v.lane}:${v.x}`).join("|");
+  const liveTrend = new TrendLog();
+  let due = -Infinity;
+  let identicalUntil = -Infinity;
+  let diverged: number | null = null;
+  let clocks = true;
+  let maxQ = { live: 0, twin: 0 };
+  let twinEverClosed = false;
+  while (scenarioTimeS(live.time, frame) < ev[0].endS + 60) {
+    live.step(0.05);
+    due = applyAtBoundary(binding, live, idle, ev, frame, due).dueS;
+    liveTrend.record(live, 60);
+    twin.stepAlong();
+    if (twin.sim.time !== live.time) clocks = false;
+    const now = scenarioTimeS(live.time, frame);
+    if (diverged === null) {
+      if (sig(live) === sig(twin.sim)) identicalUntil = now;
+      else diverged = now;
+    }
+    maxQ = { live: Math.max(maxQ.live, live.metrics().longestQueueM), twin: Math.max(maxQ.twin, twin.sim.metrics().longestQueueM) };
+    if (twin.sim.interventions.closedLanes.some(Boolean) || (twin.sim.interventions.closures ?? []).length > 0 || twin.sim.vehicles.some((v) => v.role === "wreck")) twinEverClosed = true;
+  }
+  check("event twin: stepped alongside, its clock is the live run's at every step", clocks);
+  check("event twin: vehicle for vehicle the same run until the event's vehicles are picked out of the traffic (SCENE_LEAD_S before it starts), different after",
+    diverged !== null && identicalUntil >= ev[0].startS - SCENE_LEAD_S - 1 && diverged <= ev[0].startS + 1, `identical until ${identicalUntil.toFixed(2)} s, first difference ${diverged}, event at ${ev[0].startS} s`);
+  check("event twin: it never holds the event (no lane closed, no wreck) while the live run queues behind it", !twinEverClosed && maxQ.live > 50 && maxQ.live > maxQ.twin + 50, JSON.stringify(maxQ));
+  check("event twin: its readouts are sampled on the same 10 s grid as the live run's, so the two minute-averages cover the same moments",
+    twin.trend.samples.length === liveTrend.samples.length && twin.trend.samples.every((x, i) => x.t === liveTrend.samples[i].t));
+  // What the operator sets by hand goes into both: a lane closed by hand is closed in the twin too.
+  twin.apply({ ...idle, closedLanes: [true, false, false, false] }, frame);
+  check("event twin: what the operator sets by hand is applied to it as well (here: lane 1 closed)", twin.sim.interventions.closedLanes[0] === true && twin.sim.interventions.closedLanes.filter(Boolean).length === 1);
+  check("event twin wiring: built while there are events and dropped with them or on a rebuild; the loop steps it after each live step; a skip and a hand-set change reach it",
+    /const wantTwin = scenarioEvents\.length > 0;/.test(hookSource) && /twinRef\.current = null;\s*setTwinState\(null\);\s*setSimGen/.test(hookSource) &&
+      /sim\.step\(SIM_DT\);[\s\S]{0,300}d\.twinRef\.current\?\.stepAlong\(\);/.test(pageSource) && /catchUpTwin\(\);\s*\};/.test(hookSource) &&
+      /twinRef\.current\.apply\(manualControls, scenarioFrame\)/.test(hookSource) && /twinRef\.current\.addIncident\(lane, x\)/.test(hookSource) && /twinRef\.current\?\.clearIncidents\(\)/.test(hookSource));
+  check("before/after with events: compares the same run without them (No events) against the run (With events), with no capture needed, in both views",
+    /if \(d\.eventCompare && d\.metrics\) return <EventCompareBlock d=\{d\} direction=\{direction\} \/>;/.test(pageSource) && /<CompareRows rows=\{rows\} was="No events" now="With events" \/>/.test(pageSource) &&
+      /const eventCompare = twinState !== null && twinEvents\.length > 0;/.test(hookSource));
+  check("replay: offered whenever the run on screen has a recording (not only while an obstruction's appearance is inside it), and it plays back, pauses and stops at the end",
+    /\{\(replayAvailable \|\| replayIndex !== null\) && \(/.test(pageSource) && /replayRef\.current\[d\]\.isOf\(byDirection\[d\]\.simRef\.current\) && replayRef\.current\[d\]\.length >= 2/.test(pageSource) &&
+      /setReplayPlaying\(true\);\s*\}\}/.test(pageSource) && /if \(next >= last\) setReplayPlaying\(false\);/.test(pageSource) && /if \(replayIndex === null\) setReplayPlaying\(false\);/.test(pageSource));
 }
 
 /* ───────────────────────────── report ───────────────────────────── */

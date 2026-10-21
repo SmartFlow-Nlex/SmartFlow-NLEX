@@ -71,13 +71,15 @@ function read(): ChartTheme {
 /**
  * Brighter furniture text for dark mode, for the pages that asked for it.
  *
- * The shared dark axis ink (#8590a6) clears WCAG AA on the card surface but
- * reads dim at 11 px on a near-black ground, and the Incident tab's testers
- * called it out. Opt-in rather than a change to the shared token, so the
- * Traffic and Emissions tabs are untouched. Light mode is returned as is.
+ * The shared dark axis ink (#8590a6 then) cleared WCAG AA on the card surface but
+ * read dim at 11 px on a near-black ground, and the Incident tab's testers
+ * called it out. Opt-in rather than a change to the shared token. The shared
+ * token has since been raised for every tab (--chart-text, nlex-daylight.css),
+ * so this stays one step above it. Light mode is returned as is.
  */
 export function liftDarkText(t: ChartTheme): ChartTheme {
-  return t.isDark ? { ...t, text: "#b4bdd0" } : t;
+  // Kept a step above the shared dark chart text (#c3d0ea since 19 Oct 2026), so opting in never dims a chart.
+  return t.isDark ? { ...t, text: "#d6dff2" } : t;
 }
 
 /**
@@ -110,7 +112,7 @@ export function useChartTheme(): ChartTheme {
  * Applying these consistently is also what makes the plots look like one system
  * rather than a dozen separately-styled charts.
  *
- * Night Corridor chart kit (DESIGN.md): transparent ground, 11 px axis text in
+ * Night Corridor chart kit (DESIGN.md): transparent ground, 12 px axis text in
  * the muted ink, no axis lines or ticks, horizontal gridlines only, a raised
  * hairline tooltip with tabular figures, and a crosshair on time axes.
  */
@@ -124,13 +126,15 @@ export function chartBase(t: ChartTheme) {
     "line-height: 1.5",
   ].join("; ") + ";";
   return {
-    textStyle: { color: t.text, fontFamily: t.fontFamily, fontSize: 11 },
+    /* 12 px, not 11: axis, legend and label text is data text, and testers found 11 px too small to
+       read (A11Y-1, 19 Oct 2026). A chart that sets its own size keeps it. */
+    textStyle: { color: t.text, fontFamily: t.fontFamily, fontSize: 12 },
     axisCommon: {
       axisLine: { show: false, lineStyle: { color: t.axis } },
       axisTick: { show: false, lineStyle: { color: t.axis } },
-      axisLabel: { color: t.text, fontSize: 11, fontFamily: t.fontFamily },
+      axisLabel: { color: t.text, fontSize: 12, fontFamily: t.fontFamily },
       splitLine: { lineStyle: { color: t.split, width: 1 } },
-      nameTextStyle: { color: t.text, fontSize: 11, fontFamily: t.fontFamily },
+      nameTextStyle: { color: t.text, fontSize: 12, fontFamily: t.fontFamily },
     },
     /* Vertical gridlines off: the brief asks for horizontal ones only. */
     xAxisOnly: { splitLine: { show: false } },
@@ -147,10 +151,10 @@ export function chartBase(t: ChartTheme) {
       type: "cross",
       lineStyle: { color: t.isDark ? "rgba(244,241,234,0.32)" : "rgba(11,18,32,0.3)", type: "dashed", width: 1 },
       crossStyle: { color: t.isDark ? "rgba(244,241,234,0.32)" : "rgba(11,18,32,0.3)", type: "dashed", width: 1 },
-      label: { backgroundColor: t.tooltipBg, color: t.tooltipText, borderColor: t.tooltipBorder, borderWidth: 1, fontFamily: t.fontFamily, fontSize: 11 },
+      label: { backgroundColor: t.tooltipBg, color: t.tooltipText, borderColor: t.tooltipBorder, borderWidth: 1, fontFamily: t.fontFamily, fontSize: 12 },
     },
     legend: {
-      textStyle: { color: t.text, fontFamily: t.fontFamily, fontSize: 11 },
+      textStyle: { color: t.text, fontFamily: t.fontFamily, fontSize: 12 },
       inactiveColor: t.isDark ? "rgba(244,241,234,0.22)" : "rgba(11,18,32,0.22)",
       icon: "roundRect",
       itemWidth: 14,

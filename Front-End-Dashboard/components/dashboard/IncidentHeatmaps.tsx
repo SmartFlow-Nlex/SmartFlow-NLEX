@@ -10,14 +10,15 @@
  *    Hour x Day-of-week table "When Incidents Happen" draws its Weekday/Weekend
  *    lines from), averaged per day of that weekday in the Range, the same
  *    normalisation that chart and the Patrol Alert Schedule use.
- *  - HourSourceHeatmap (/incident/hourly): the day's per-hour Road / Moto /
- *    Stalled counts, the same figures the chart tooltip lists per hour.
+ *  - HourSourceHeatmap (/incident/hourly): the day's per-hour Accident /
+ *    Breakdown counts, the same figures the chart tooltip lists per hour (the
+ *    event tables the forecast is trained on, since 19 Oct 2026).
  *
  * Cells with no data are drawn in a flat no-data grey and say so in the
  * tooltip; they are never drawn as zero.
  */
 
-import { useRef } from "react";
+import { memo, useMemo, useRef } from "react";
 import type { EChartsOption } from "echarts";
 import DashboardChart from "./DashboardChart";
 import RampKey from "./RampKey";
@@ -63,17 +64,53 @@ function HeatKey({
 const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
-export function HourDayHeatmap({
+/** A cell of the hour x day grid: dow as the API numbers it (0 = Sunday), hour 0-23. */
+export type HeatCell = { dow: number; hour: number };
+
+/* Memoised: the page re-renders on every hovered cell (the breakdown under the grid follows it), and
+   the chart must not be handed a fresh option each time, or the tooltip under the cursor is reset. */
+export const HourDayHeatmap = memo(HourDayHeatmapGrid);
+
+function HourDayHeatmapGrid({
   heatmap,
   range,
+  onHoverCell,
+  onPickCell,
 }: {
-  heatmap: { dow: number; hour: number; v: number }[];
+  heatmap: { dow: number; hour: number; v: number; accident?: number; breakdown?: number }[];
   range: { from: string; to: string };
+  /** The cell under the cursor, or null when it leaves the grid: the page breaks it down below. */
+  onHoverCell?: (c: HeatCell | null) => void;
+  /** A clicked cell, so the breakdown below can stay on it once the cursor moves off. */
+  onPickCell?: (c: HeatCell) => void;
 }) {
   const chartTheme = useChartTheme();
   const T = useThemeTokens();
   const ramp = incidentHeatRamp(chartTheme.isDark);
   const chartRef = useRef<unknown>(null);
+
+  /* Cell hover and click, reported to the page (19 Oct 2026, testers IN-8). One stable handler object:
+     echarts-for-react disposes and rebuilds the chart whenever onEvents changes identity, which under a
+     hover that re-renders the page would wipe the tooltip on every move. The callbacks are read through
+     a ref so the object never has to change. globalout fires when the cursor leaves the whole chart, so
+     the reported hover cannot stay stuck on the last cell. */
+  const cbRef = useRef({ onHoverCell, onPickCell });
+  cbRef.current = { onHoverCell, onPickCell };
+  const cellEvents = useMemo(() => {
+    const cellOf = (p: { seriesIndex?: number; value?: [number, number, number] }) =>
+      p.seriesIndex === 0 && p.value ? { dow: DOW_ORDER[p.value[1]], hour: p.value[0] } : null;
+    return {
+      mouseover: ((p: { seriesIndex?: number; value?: [number, number, number] }) => {
+        const c = cellOf(p);
+        if (c) cbRef.current.onHoverCell?.(c);
+      }) as (p: never) => void,
+      globalout: (() => cbRef.current.onHoverCell?.(null)) as (p: never) => void,
+      click: ((p: { seriesIndex?: number; value?: [number, number, number] }) => {
+        const c = cellOf(p);
+        if (c) cbRef.current.onPickCell?.(c);
+      }) as (p: never) => void,
+    };
+  }, []);
 
   // How many of each weekday fall in the Range, so a cell is "incidents per
   // Friday at 5 PM", not a raw sum that favours whichever weekday occurs most.
@@ -81,7 +118,14 @@ export function HourDayHeatmap({
   const end = new Date(`${range.to}T00:00:00`);
   for (const d = new Date(`${range.from}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) dowCount[d.getDay()]++;
   const totals: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
-  for (const r of heatmap) totals[r.dow][r.hour] += r.v;
+  const accTotals: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
+  const brkTotals: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
+  const hasSplit = heatmap.some((r) => r.accident != null);
+  for (const r of heatmap) {
+    totals[r.dow][r.hour] += r.v;
+    accTotals[r.dow][r.hour] += r.accident ?? 0;
+    brkTotals[r.dow][r.hour] += r.breakdown ?? 0;
+  }
 
   const cells: [number, number, number][] = [];
   const empty: [number, number, number][] = [];
@@ -125,10 +169,16 @@ export function HourDayHeatmap({
         const dow = DOW_ORDER[row];
         const title = `${DOW_LABELS[row]} · ${fmtHour(h)} – ${fmtHour((h + 1) % 24)}`;
         if (seriesIndex === 1) return heatTipEmpty(title, `no ${DOW_LABELS[row]} in this Range`);
+        // The type split rides in the muted lines, so the value line keeps Traffic's shape (testers IN-8).
         return heatTip({
           title,
           value: `${heatValue(totals[dow][h] / dowCount[dow], "incidents / day")} on average`,
-          detail: [`${fmtInt(totals[dow][h])} total across ${fmtInt(dowCount[dow])} ${DOW_LABELS[row]}s`],
+          detail: [
+            ...(hasSplit
+              ? [`Accidents ${fmt1(accTotals[dow][h] / dowCount[dow])} · Breakdowns ${fmt1(brkTotals[dow][h] / dowCount[dow])} per day`]
+              : []),
+            `${fmtInt(totals[dow][h])} total across ${fmtInt(dowCount[dow])} ${DOW_LABELS[row]}s · click to keep it below`,
+          ],
         });
       },
     },
@@ -161,15 +211,21 @@ export function HourDayHeatmap({
           </span>
         </div>
       )}
-      <DashboardChart option={option} height={248} themeTweak={liftDarkText} onChartReady={(c) => { chartRef.current = c; }} />
+      <DashboardChart
+        option={option}
+        height={248}
+        themeTweak={liftDarkText}
+        onChartReady={(c) => { chartRef.current = c; }}
+        onEvents={cellEvents}
+      />
       <HeatKey ramp={ramp} min={0} max={Math.max(max, 0.01)} unit="incidents / day" digits={1} showNone={missingDays.length > 0} onScrub={scrubHeatmap(chartRef, 0, Math.max(max, 0.01))} />
       {missingDays.length > 0 && <p className="inc-caption">No {missingDays.join(", ")} in this Range, so those rows are greyed out as no data.</p>}
     </>
   );
 }
 
-type HourRow = { hour: number; road: number; moto: number; stalled: number; total: number; isWet: boolean | null };
-type SourceKey = "road" | "moto" | "stalled";
+type HourRow = { hour: number; accident: number; breakdown: number; total: number; isWet: boolean | null };
+type SourceKey = "accident" | "breakdown";
 
 export function HourSourceHeatmap({
   hours,
@@ -191,15 +247,14 @@ export function HourSourceHeatmap({
   const ramp = incidentHeatRamp(chartTheme.isDark);
   const chartRef = useRef<unknown>(null);
   const ROWS: { key: SourceKey; label: string }[] = [
-    { key: "road", label: "Road crashes" },
-    { key: "moto", label: "Motorcycle crashes" },
-    { key: "stalled", label: "Stalled vehicles" },
+    { key: "accident", label: "Accidents" },
+    { key: "breakdown", label: "Breakdowns" },
   ];
 
   const cells: [number, number, number][] = [];
   const empty: [number, number, number][] = [];
   let max = 0;
-  const sums: Record<SourceKey, number> = { road: 0, moto: 0, stalled: 0 };
+  const sums: Record<SourceKey, number> = { accident: 0, breakdown: 0 };
   ROWS.forEach((r, row) => {
     hours.forEach((h, i) => {
       if (!hasIncidentLog || !covered[r.key] || !passes(h)) {
@@ -275,7 +330,7 @@ export function HourSourceHeatmap({
         </div>
       ) : (
         <p className="inc-context" style={{ margin: "-4px 0 12px" }}>
-          {hasIncidentLog ? "None of the three sources is logged this far" : "No incident log covers this date"}, so every cell is greyed out as no data.
+          {hasIncidentLog ? "Neither source is logged this far" : "No incident log covers this date"}, so every cell is greyed out as no data.
         </p>
       )}
       <DashboardChart option={option} height={200} themeTweak={liftDarkText} onChartReady={(c) => { chartRef.current = c; }} />

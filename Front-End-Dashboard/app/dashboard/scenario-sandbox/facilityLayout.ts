@@ -1,5 +1,6 @@
 import type { NlexExit } from "../../../lib/nlex-exits";
 import { displayExitName } from "../../../lib/nlex-exits";
+import { fmtKm } from "../../../lib/km-post";
 import type { PlacedFuelStation } from "../../../lib/nlex-fuel-stations";
 import { OSM_TOLL_PLAZAS, OSM_TOLL_PLAZAS_AWAY, type OsmTollPlaza } from "../../../lib/nlex-toll-plazas";
 import type { RampSpec } from "./simulation";
@@ -509,8 +510,8 @@ export function planFacilities(inp: PlanInput): FacilityPlan {
     let basis = c.spec.basis ?? "";
     if (Math.abs(off) > 25) {
       const where = c.spec.booths > 0 || c.spec.kind === "service_area"
-        ? `Its ${c.spec.kind === "service_area" ? "pumps" : "booths"} stand at Km ${realKm.toFixed(2)}`
-        : `Its ramp is at Km ${realKm.toFixed(2)}`;
+        ? `Its ${c.spec.kind === "service_area" ? "pumps" : "booths"} stand at Km ${fmtKm(realKm, 2)}`
+        : `Its ramp is at Km ${fmtKm(realKm, 2)}`;
       const how = `${Math.round(Math.abs(off))} m ${off > 0 ? "further on" : "back"}`;
       basis += beside
         ? ` ${where}, beside the ${beside}; it is drawn ${how}, ${off > 0 ? "past" : "before"} it.`

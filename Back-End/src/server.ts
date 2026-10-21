@@ -111,6 +111,17 @@ function startCacheWarmer(): void {
     "/ai-sandbox/demand-profile?exit=Balintawak&direction=NB",
     "/traffic/analytics?months=12&direction=NB",
     "/traffic/analytics?months=12&direction=SB",
+    // The Traffic Prescriptive tab's booth plan and congestion advice: 7-46 s on a cold database.
+    "/traffic/prescriptive?throughput=350",
+    /* The Emissions Prescriptive tab's other two Range presets (17 Oct 2026, testers EM-11.1): 3 s and
+       11 s cold, six queries each, so they wait their turn here; 12 months is warmed in the list above. */
+    "/emissions/prescriptive?months=3",
+    "/emissions/prescriptive?months=all",
+    /* The Incidents forecast card as it asks for each Range preset (19 Oct 2026): 5-19 s cold. The entry in
+       the list above lacks the volumeToggle the card sends, so it never matched the card's own request. */
+    "/incident/predictive?months=12&weather=all&volumeToggle=off",
+    "/incident/predictive?months=3&weather=all&volumeToggle=off",
+    "/incident/predictive?months=all&weather=all&volumeToggle=off",
   ];
   /* Stagger them.
    *

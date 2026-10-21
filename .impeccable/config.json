@@ -5,5 +5,26 @@
       "maxFindings": 5,
       "maxChars": 8000
     }
+  },
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-font",
+        "value": "arial",
+        "createdAt": "2026-10-19T14:36:20.507Z",
+        "reason": "Claude's call: same email-safe fallback, lower-case spelling as reported"
+      },
+      {
+        "rule": "wide-tracking",
+        "value": "*",
+        "files": [
+          "Back-End/email-templates/supabase-reset-password.html"
+        ],
+        "createdAt": "2026-10-19T14:39:13.612Z",
+        "reason": "Claude's call: the wide tracking is on the one-time reset code ({{ .Token }}) and short uppercase labels, spaced on purpose so the digits are easy to read and type; not body text"
+      }
+    ]
   }
 }

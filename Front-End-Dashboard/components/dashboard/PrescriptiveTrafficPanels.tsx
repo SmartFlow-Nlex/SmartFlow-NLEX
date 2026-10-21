@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import SignalGlyph from "./SignalGlyph";
+import { fmtKm } from "../../lib/km-post";
 import InfoTooltip from "./InfoTooltip";
 import StateNote from "../stage/StateNote";
 import {
@@ -23,17 +24,44 @@ const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 1
 const shortDay = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
+/* True once a load has taken longer than a few seconds, so the panel can say why it is waiting. */
+function useSlow(waiting: boolean, afterMs = 6000) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!waiting) return;
+    const t = window.setTimeout(() => setSlow(true), afterMs);
+    return () => window.clearTimeout(t);
+  }, [waiting, afterMs]);
+  return slow;
+}
+
+/* What Firm / Fair / Loose mean (17 Oct 2026, testers TR-13: "add a tooltip explaining the estimates and how
+   they are measured"). The words read the width of the uplift interval, the same cut-offs as the footnote. */
+/* Second pass (19 Oct 2026): says what the uplift itself is and how its interval is drawn, as
+   build_event_surge.py computes it (median event-day ratio to the exit's no-event, no-holiday
+   weekday-and-month median; bootstrap 95% interval over the past Arena event days). */
+const ESTIMATE_HINT =
+  "How settled the exit's event-day uplift is. Uplift is the median ratio of the exit's entries on past Philippine Arena " +
+  "event days to a normal day (the median of days with no event and no holiday, on the same weekday and month). Its 95% " +
+  "interval comes from resampling those event days (a bootstrap). Firm: the interval is narrower than 0.05× in all, about " +
+  "±0.025× (1.20× is really 1.18–1.22×). Fair: narrower than 0.12×, about ±0.06×. Loose: wider than that; past event days " +
+  "disagreed, so treat the number as rough. The ± figure beside each word is half the interval's width.";
+
 function useForecast() {
   const [data, setData] = useState<ForecastPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
+    setError(null);
     loadForecast()
       .then((d) => alive && setData(d))
       .catch((e) => alive && setError(String(e?.message ?? e)));
     return () => { alive = false; };
-  }, []);
-  return { data, error };
+  }, [attempt]);
+  const slow = useSlow(!data && !error);
+  return { data, error, slow, retry: () => setAttempt((n) => n + 1) };
 }
 
 /* Night Corridor chrome for the three panels: a near-opaque card with a
@@ -64,11 +92,19 @@ const Banner = ({ tone = "info", children }: { tone?: "info" | "alert"; children
 
 /* Empty, loading and error states keep their words; the mascot only
    decorates them (headlights dimmed for "no data", hazards for errors). */
-const Empty = ({ msg }: { msg: string }) => {
+const Empty = ({ msg, slow, onRetry }: { msg: string; slow?: boolean; onRetry?: () => void }) => {
   const kind = /unavailable/i.test(msg) ? "error" : /…$/.test(msg) ? "loading" : "nodata";
   return (
     <article className="chart-card wide nct-card nct-empty-card">
-      <StateNote kind={kind} role={kind === "error" ? "alert" : undefined}>{msg}</StateNote>
+      <StateNote kind={kind} role={kind === "error" ? "alert" : undefined}>
+        {msg}
+        {slow && kind === "loading" && (
+          <span className="nct-empty-note">Still working: the first load after the server starts can take up to a minute.</span>
+        )}
+        {onRetry && kind === "error" && (
+          <button type="button" className="btn-muted nct-empty-retry" onClick={onRetry}>Try again</button>
+        )}
+      </StateNote>
     </article>
   );
 };
@@ -143,6 +179,7 @@ function ActionCard({ rank, signal, tag, tone = "info", action, lead, facts, det
 function usePrescriptive(throughput: number) {
   const [data, setData] = useState<TrafficPrescriptive | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let off = false;
     setData(null);
@@ -151,8 +188,9 @@ function usePrescriptive(throughput: number) {
       .then((d) => { if (!off) setData(d); })
       .catch((e) => { if (!off) setError(e instanceof Error ? e.message : String(e)); });
     return () => { off = true; };
-  }, [throughput]);
-  return { data, error };
+  }, [throughput, attempt]);
+  const slow = useSlow(!data && !error);
+  return { data, error, slow, retry: () => setAttempt((n) => n + 1) };
 }
 
 /** A 24-cell strip: one block per hour, height by booths needed. Where that
@@ -199,10 +237,10 @@ export function BoothStaffingPanel() {
   const [rate, setRate] = useState(350);
   const [view, setView] = useState<"week" | "hour">("week");
   const [showAll, setShowAll] = useState(false);
-  const { data, error } = usePrescriptive(rate);
+  const { data, error, slow, retry } = usePrescriptive(rate);
 
-  if (error) return <Empty msg={`Prescriptive traffic unavailable: ${error}`} />;
-  if (!data) return <Empty msg="Computing the staffing plan…" />;
+  if (error) return <Empty msg={`Prescriptive traffic unavailable: ${error}`} onRetry={retry} />;
+  if (!data) return <Empty msg="Computing the staffing plan…" slow={slow} />;
   if (data.week.length === 0 || !data.shiftPlan) return <Empty msg="No future days in the volume forecast." />;
   if (data.shiftPlan.plazas.length === 0) return <Empty msg="No plaza volumes are recorded to apportion the forecast with." />;
 
@@ -451,6 +489,8 @@ export function BoothStaffingPanel() {
 /* ==================================================================== 2 ====
  * Congestion response advisory.
  */
+const CONGESTION_AUTO_RETRIES = 6;
+const CONGESTION_RETRY_MS = 15_000;
 export function CongestionResponsePanel() {
   /* The fuzzy controller runs server-side now (traffic-prescriptive.service.ts)
      against the same forecast rows this panel used to read. Same memberships,
@@ -459,7 +499,7 @@ export function CongestionResponsePanel() {
      over, because moving a model is only safe if it still gives the same
      answer. Throughput is irrelevant to this half, so the default is fine. */
   const [showRest, setShowRest] = useState(false);
-  const { data, error } = usePrescriptive(350);
+  const { data, error, slow, retry } = usePrescriptive(350);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -476,9 +516,30 @@ export function CongestionResponsePanel() {
     }));
   }, [data]);
 
-  if (error) return <Empty msg={`Prescriptive traffic unavailable: ${error}`} />;
-  if (!data) return <Empty msg="Ranking segments…" />;
-  if (rows.length === 0) return <Empty msg="No congestion forecast available." />;
+  /* No segments is not an answer to sit on (TR-12, 19 Oct 2026). It means the forecast read failed
+     while the server was starting, or the hourly model was rewriting its table; both clear within a
+     minute or two, so the panel asks again on its own, and after that offers the button. The server
+     and loadPrescriptive keep neither kind of empty answer, so each retry is a real read. */
+  const noRows = !!data && rows.length === 0;
+  const [autoTries, setAutoTries] = useState(0);
+  useEffect(() => {
+    if (!noRows || autoTries >= CONGESTION_AUTO_RETRIES) return;
+    const t = window.setTimeout(() => { setAutoTries((n) => n + 1); retry(); }, CONGESTION_RETRY_MS);
+    return () => window.clearTimeout(t);
+    // retry is a fresh closure each render; noRows and autoTries are what decide a new attempt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noRows, autoTries]);
+
+  if (error) return <Empty msg={`Prescriptive traffic unavailable: ${error}`} onRetry={retry} />;
+  if (!data) return <Empty msg="Ranking segments…" slow={slow} />;
+  if (rows.length === 0) {
+    const why = data.congestionUnavailable
+      ? "The congestion forecast could not be read yet. The server may still be starting up."
+      : "The congestion forecast came back empty. The hourly model may be rewriting it.";
+    return autoTries < CONGESTION_AUTO_RETRIES
+      ? <Empty msg={`${why} Trying again in ${CONGESTION_RETRY_MS / 1000} seconds…`} />
+      : <Empty msg={`Congestion forecast unavailable. ${why}`} onRetry={() => { setAutoTries(0); retry(); }} />;
+  }
 
   const act = rows.filter((r) => r.label === "Act");
   const prepare = rows.filter((r) => r.label === "Prepare");
@@ -495,9 +556,13 @@ export function CongestionResponsePanel() {
     Monitor: "No action; re-check next cycle.",
   };
   const tone = (l: string) => (l === "Act" ? "var(--color-danger)" : l === "Prepare" ? "var(--color-warning)" : "var(--text-muted)");
-  // Km-post as served, for the "where" of each card (null stays unknown).
+  // Measured km as served, printed as the official post (null stays unknown).
   const kmOf = (segment: string) => data.congestion.find((c) => c.segment === segment)?.km ?? null;
   const urgencyOf = (segment: string) => data.congestion.find((c) => c.segment === segment)?.urgency ?? null;
+  // Manila wall-clock text ("2026-10-19 14:00"), split rather than parsed so no browser zone shifts it.
+  const [baseD, baseT] = (data.congestionBaseTs ?? "").split(" ");
+  const baseH = baseT ? Number(baseT.slice(0, 2)) : NaN;
+  const baseHour = baseD && Number.isFinite(baseH) ? `${fmtHour(baseH)} ${shortDay(baseD)}` : null;
 
   return (
     <Shell
@@ -519,6 +584,9 @@ export function CongestionResponsePanel() {
         ) : (
           <><b>Corridor clear.</b> No segment crosses Prepare inside the 12-hour horizon.</>
         )}
+        {/* "+2h" counts from the forecast's base hour, so the banner names it (testers asked for the
+            forecast time in plain words). baseTs is Manila wall-clock text; read as such, not as UTC. */}
+        {baseHour && <> <span className="nct-dim">Hours count from the {baseHour} forecast.</span></>}
       </Banner>
 
       {/* Ranked action cards: the action, where, when, how sure; the basis
@@ -536,7 +604,7 @@ export function CongestionResponsePanel() {
               tag={<span className="nct-action-label" style={{ color: tone(r.label) }}>{r.label}</span>}
               action={ACTION[r.label]}
               facts={[
-                { k: "Where", v: <><b>{r.segment}</b>{km != null && <span className="nct-dim"> · km {km}</span>}</> },
+                { k: "Where", v: <><b>{r.segment}</b>{km != null && <span className="nct-dim"> · km {fmtKm(km)}</span>}</> },
                 ...(r.first != null
                   ? [
                       { k: "When", v: <>First High <b>+{r.first}h</b></> },
@@ -597,11 +665,11 @@ export function CongestionResponsePanel() {
  * Event intervention ranking.
  */
 export function EventInterventionPanel() {
-  const { data, error } = useForecast();
+  const { data, error, slow, retry } = useForecast();
   const ranked = useMemo(() => (data ? topsisRank(data.events) : []), [data]);
 
-  if (error) return <Empty msg={`Forecast unavailable: ${error}`} />;
-  if (!data) return <Empty msg="Loading forecast…" />;
+  if (error) return <Empty msg={`Forecast unavailable: ${error}`} onRetry={retry} />;
+  if (!data) return <Empty msg="Loading forecast…" slow={slow} />;
   if (ranked.length === 0) return <Empty msg="No event surge forecast available." />;
 
   // The next scheduled Arena day, named so the plan can say what it is for.
@@ -634,7 +702,7 @@ export function EventInterventionPanel() {
                   {next.isDerived ? " (recurring, inferred)" : ""}.</>,
               }]
             : []),
-          { k: "Estimate", v: top.map((r) => `${r.exit}: ${confidence(r.uncertainty)}`).join(" · ") },
+          { k: "Estimate", v: <>{top.map((r) => `${r.exit}: ${confidence(r.uncertainty)}`).join(" · ")}<InfoTooltip text={ESTIMATE_HINT} /></> },
         ]}
       />
 
@@ -647,7 +715,7 @@ export function EventInterventionPanel() {
               <th className="num">Extra vehicles</th>
               <th className="num">Uplift</th>
               <th className="num">Events seen</th>
-              <th>Estimate</th>
+              <th>Estimate<InfoTooltip text={ESTIMATE_HINT} /></th>
               <th className="num">Score</th>
             </tr>
           </thead>
@@ -659,7 +727,7 @@ export function EventInterventionPanel() {
                 <td className="num">{fmtInt(r.extraVehicles)}</td>
                 <td className="num">{r.uplift.toFixed(2)}×</td>
                 <td className="num">{r.evidence}</td>
-                <td className="dim">{confidence(r.uncertainty)} <span className="nct-dim">(±{(r.uncertainty / 2).toFixed(2)})</span></td>
+                <td className="dim" title={`Uplift ${r.uplift.toFixed(2)}× give or take ${(r.uncertainty / 2).toFixed(2)}`}>{confidence(r.uncertainty)} <span className="nct-dim">(±{(r.uncertainty / 2).toFixed(2)})</span></td>
                 <td className="num strong">{r.closeness.toFixed(2)}</td>
               </tr>
             ))}

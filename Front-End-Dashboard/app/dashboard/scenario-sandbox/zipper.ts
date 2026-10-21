@@ -1,5 +1,6 @@
 import { ASSUMPTIONS } from "./scenarios/assumptions";
 import type { Direction } from "./scenarios/adapter";
+import { fmtKm } from "../../../lib/km-post";
 
 /**
  * Lane reallocation, as far as this sandbox can honestly model it. (The file and its identifiers keep the
@@ -108,13 +109,13 @@ export type StretchPlan =
 const EPS = 1e-9;
 const km2 = (km: number): string => km.toFixed(2);
 
-/** The stretch between two km posts (either order), or why it cannot be simulated. Rounded to the metre. */
+/** The stretch between two MEASURED km (either order), or why it cannot be simulated. Rounded to the metre. The reason prints official km posts. */
 export function planStretch(aKm: number, bKm: number, limits: StretchLimits): StretchPlan {
   if (!Number.isFinite(aKm) || !Number.isFinite(bKm)) return { ok: false, reason: "Enter a km post for both ends of the stretch." };
   const lo = Math.min(aKm, bKm);
   const hi = Math.max(aKm, bKm);
   if (lo < limits.routeFromKm - EPS || hi > limits.routeToKm + EPS) {
-    return { ok: false, reason: `The stretch must lie inside the route, Km ${km2(limits.routeFromKm)} to Km ${km2(limits.routeToKm)}.` };
+    return { ok: false, reason: `The stretch must lie inside the route, Km ${fmtKm(limits.routeFromKm, 2)} to Km ${fmtKm(limits.routeToKm, 2)}.` };
   }
   const len = hi - lo;
   if (len < limits.minKm - EPS) return { ok: false, reason: `The stretch must be at least ${km2(limits.minKm)} km (it is ${km2(len)} km).` };

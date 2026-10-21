@@ -263,6 +263,11 @@ export const getTrafficPrescriptiveHandler = async (req: Request, res: Response)
       message: "Prescriptive traffic unavailable: database not reachable, or no champion volume model.",
     });
   }
+  /* No congestion rows usually means the hourly pipeline was rewriting its table at that moment.
+     Answer with what there is, but do not let the route cache keep it: cached, an empty Congestion
+     Response panel stayed empty for ten minutes and more, until the backend was restarted (testers,
+     TR-12, 17 Oct 2026). */
+  if (data.congestion.length === 0) res.locals.noStore = true;
   res.json({ success: true, source: "database", data });
 };
 

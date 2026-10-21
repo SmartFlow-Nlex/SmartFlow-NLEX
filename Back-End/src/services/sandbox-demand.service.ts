@@ -135,7 +135,7 @@ export async function getDemandProfile(
  * THE BUG THIS EXISTS TO FIX
  * The sandbox anchored its inflow to the volume recorded at the NEAREST
  * interchange. That is an on-ramp figure, not a through-flow: at Balintawak
- * (km 0, the corridor's gateway) the two happen to be close, but eight
+ * (Km 12, the corridor's gateway) the two happen to be close, but eight
  * kilometres north at Meycauayan the plaza records 211 veh/h northbound while
  * the mainline past it carries roughly 2,900. The sandbox was simulating the
  * slip road and calling it the expressway, and it got quietly worse the
@@ -157,7 +157,7 @@ export async function getDemandProfile(
  * and mirrored for southbound. This is exact wherever both sides are
  * transacted. On the southern open-system stretch exits are untolled and so
  * unrecorded, which makes the figure an UPPER BOUND there rather than an
- * equality — but the first northbound off-ramp is CDV/PH Arena at km 14.05,
+ * equality — but the first northbound off-ramp is CDV/PH Arena at Km 26,
  * so for anything south of that nothing has left yet and the bound is tight.
  *
  * Km-posts are not in the warehouse (silver.nlex_exit_reference carries

@@ -38,6 +38,7 @@ import DirectionPill, { DIRECTION_NAME } from "./DirectionPill";
 import FamilyIcon from "./FamilyIcon";
 import ScenePreview from "./ScenePreview";
 import InfoTooltip from "../../../../components/dashboard/InfoTooltip";
+import { fmtKm, fmtKmRange, kmMeasured, kmPost } from "../../../../lib/km-post";
 import {
   HOTSPOT_FAMILIES,
   SITE_FAMILIES,
@@ -543,13 +544,17 @@ function EventRow({
           : event.extraLanes.length > 0
             ? `Lanes ${[event.lane, ...event.extraLanes].sort((a, b) => a - b).join(", ")}`
             : `Lane ${event.lane}`;
-  const km = event.stretchKm ? `${event.stretchKm.fromKm.toFixed(2)}–${event.stretchKm.toKm.toFixed(2)}` : event.positionKm.toFixed(2);
-  const where = `${place} · Km ${km} · starts ${clockLabel(clockStartMin + event.startS / 60)}`;
+  const km = event.stretchKm ? fmtKmRange(event.stretchKm.fromKm, event.stretchKm.toKm, 2) : `Km ${fmtKm(event.positionKm, 2)}`;
+  const where = `${place} · ${km} · starts ${clockLabel(clockStartMin + event.startS / 60)}`;
+  /* Short on the row, whole on hover (UAT 16 Oct 2026, tester J: "Shorten incident labels, e.g. 'Overturned vehicle
+     #3', and show the rest on hover"). The name and the place line are one line each, cut with an ellipsis when the
+     rail is narrow; the title (and, for a screen reader, the row's label) carries everything. */
+  const full = `${event.direction === "NB" ? "Northbound" : "Southbound"} · ${event.name} · ${status} · ${where}`;
   return (
-    <div className={`sandbox-scn-event${invalid ? " is-invalid" : ""}`} data-scn-event={event.id}>
+    <div className={`sandbox-scn-event${invalid ? " is-invalid" : ""}`} data-scn-event={event.id} role="group" aria-label={full}>
       <div className="sandbox-scn-event-head">
         {showDirection && <DirectionPill direction={event.direction} />}
-        <b>{event.name}</b>
+        <b className="sandbox-scn-event-name" title={full}>{event.name}</b>
         <span className={`sandbox-scn-chip ${invalid ? "bad" : p.state}`}>{status}</span>
         {onLocate && (
           <button className="btn-muted" data-scn="locate" onClick={onLocate} title="Zoom the road onto this event">
@@ -560,7 +565,7 @@ function EventRow({
           Remove
         </button>
       </div>
-      <span className="sandbox-scn-meta">{where}</span>
+      <span className="sandbox-scn-meta sandbox-scn-where" title={where}>{where}</span>
       <Bar fraction={total > 0 ? p.elapsedS / total : 0} ticks={event.phases.filter((ph) => !ph.skipped && ph.offsetS > 0).map((ph) => ph.offsetS / total)} />
       {p.state === "active" && (
         <span className="sandbox-scn-meta" data-scn="event-time">
@@ -1020,7 +1025,7 @@ export default function ScenarioPanel(props: Props) {
               Place
               <select data-scn="site-id" value={siteSel.id} onChange={(e) => { setSiteId(e.target.value); setSiteStations([0]); setSiteApproach(false); }}>
                 {sites.map((x) => (
-                  <option key={x.id} value={x.id}>{x.name} · Km {x.km.toFixed(2)}</option>
+                  <option key={x.id} value={x.id}>{x.name} · Km {fmtKm(x.km, 2)}</option>
                 ))}
               </select>
             </label>
@@ -1051,12 +1056,12 @@ export default function ScenarioPanel(props: Props) {
           <div className="sandbox-scn-row">
             <label>
               {stretchNow ? "From (km)" : "Position (km)"}
-              <NumberField value={kmNow} min={fromKm} max={toKm} step={0.05} decimals={2} scn="km" onCommit={setPosKm} />
+              <NumberField value={kmPost(kmNow)} min={kmPost(fromKm)} max={kmPost(toKm)} step={0.05} decimals={2} scn="km" onCommit={(post) => setPosKm(kmMeasured(post))} />
             </label>
             {stretchNow && (
               <label>
                 To (km)
-                <NumberField value={stretchEnd} min={fromKm} max={toKm} step={0.05} decimals={2} scn="km-to" onCommit={setStretchEndKm} />
+                <NumberField value={kmPost(stretchEnd)} min={kmPost(fromKm)} max={kmPost(toKm)} step={0.05} decimals={2} scn="km-to" onCommit={(post) => setStretchEndKm(kmMeasured(post))} />
               </label>
             )}
           </div>

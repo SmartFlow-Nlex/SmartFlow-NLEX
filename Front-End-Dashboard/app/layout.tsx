@@ -9,6 +9,7 @@ import './styles/nc-ops.css';
 import './styles/nc-sandbox.css';
 import './styles/nc-admin.css';
 import './styles/nc-forecast.css';
+import './styles/nc-settings.css';
 // The NLEX daylight theme and its environment (7 Oct 2026) load last, over the layers above.
 import './styles/nlex-environment.css';
 import './styles/nlex-daylight.css';

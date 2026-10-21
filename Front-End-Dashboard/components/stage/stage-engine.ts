@@ -35,12 +35,13 @@ export type StageHandle = {
   dispose(): void;
 };
 
-const MASCOT_SRC = "/brand/nlex-mascot.png";
-const MASCOT_ASPECT = 1107 / 1161;
-/* Headlight centres measured on the PNG (bright-core centroids, 4 Oct 2026). */
+/* The new Navie (20 Oct 2026; the old nlex-mascot.png was deleted). Headlight centres re-measured on it
+   (bright-core centroids). */
+const MASCOT_SRC = "/brand/navie.webp";
+const MASCOT_ASPECT = 644 / 640;
 const HEADLIGHTS: [number, number][] = [
-  [0.2195, 0.6151],
-  [0.7596, 0.6908],
+  [0.2303, 0.7052],
+  [0.7468, 0.7543],
 ];
 
 /* ------------------------------------------------------------------------ */

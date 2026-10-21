@@ -1,4 +1,6 @@
 import { db } from "../config/db.js";
+import { zeroToMeasured } from "../lib/km-post.js";
+// km in gold.ml_weather_speed_contour is on the old Balintawak = 0 scale; returned as MEASURED km (lib/km-post.ts).
 
 // Reads for gold.ml_weather_speed_forecast / ml_weather_speed_contour /
 // ml_weather_speed_metadata — written by
@@ -73,7 +75,7 @@ export async function getIncidentWeatherSpeedFromDb(): Promise<WeatherSpeedData 
       contour: contourRes.rows.map((r) => ({
         exitId: r.exit_id,
         exitName: r.exit_name,
-        km: Number(r.km),
+        km: zeroToMeasured(Number(r.km)),
         hourOfDay: r.hour_of_day,
         scenario: r.scenario,
         predictedSpeedKmh: Number(r.predicted_speed_kmh),

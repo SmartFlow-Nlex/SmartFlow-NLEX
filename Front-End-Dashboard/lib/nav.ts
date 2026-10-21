@@ -9,6 +9,7 @@ import {
   Smartphone,
   TrendingUp,
   Wrench,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 
@@ -25,7 +26,7 @@ import {
  * and are rendered pinned to the bottom, away from the daily-use links.
  */
 export type NavTab = { label: string; href: string; icon: LucideIcon; group: NavGroup };
-export type NavGroup = "Analytics" | "Operations" | "Planning" | "Admin";
+export type NavGroup = "Analytics" | "Operations" | "Planning" | "Admin" | "Account";
 
 export const NAV_TABS: NavTab[] = [
   { label: "Overview", href: "/dashboard", icon: Home, group: "Analytics" },
@@ -41,6 +42,9 @@ export const NAV_TABS: NavTab[] = [
 
   { label: "Data Management", href: "/dashboard/data-management", icon: Brain, group: "Admin" },
   { label: "Audit Log", href: "/dashboard/audit-log", icon: ClipboardList, group: "Admin" },
+
+  // Reached from the sidebar's footer, beside Log out, for every role (19 Oct 2026); not a work tab.
+  { label: "Settings", href: "/dashboard/settings", icon: Settings, group: "Account" },
 ];
 
 /** Daily-use groups, in order. "Admin" is deliberately excluded — it renders last. */

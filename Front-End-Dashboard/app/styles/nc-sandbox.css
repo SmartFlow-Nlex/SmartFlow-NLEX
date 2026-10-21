@@ -338,6 +338,17 @@
 .ds-main .sandbox-page .sandbox-scn-est.is-heavy,
 .ds-main .sandbox-page .ai-plan-warn { color: var(--color-warning); }
 .ds-main .sandbox-page .sandbox-reps-warn { font-size: var(--fs-label); }
+/* A confidence run held off by timed events (17 Oct 2026, testers SB-16.3): a boxed notice that says why and what to
+   do, not one line under a greyed-out button that testers read past. */
+.ds-main .sandbox-page .sandbox-reps-blocked {
+  margin-top: 8px;
+  padding: 8px 12px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 45%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+}
+.ds-main .sandbox-page .sandbox-reps-blocked .sandbox-reps-warn { margin-top: 0; }
+.ds-main .sandbox-page .sandbox-reps-blocked .sandbox-reps-note { margin-top: 6px; color: var(--text-secondary); }
 
 /* Scenario picker (ScenarioPanel): chips and readouts on the token palette. */
 .ds-main .sandbox-page .sandbox-scn-fam {
@@ -734,3 +745,70 @@
 @media (prefers-reduced-motion: reduce) {
   .ds-main .sandbox-page :is(.sandbox-forecast-apply, .ai-command-btn, .ai-plan-apply):hover { transform: none; }
 }
+
+/* --- The scenario's "i": at the top right of its picture ------------------
+   README and verify.ts ("panel") describe it there; the redesign's restyle of the
+   button in globals.css dropped its position, so it sat on a line of its own
+   under the picture. Placed back over the picture's corner, on a solid token
+   surface so it reads over the drawing in either theme, and 24 px to hit. */
+.ds-main .sandbox-page .sandbox-scn-scene { position: relative; }
+.ds-main .sandbox-page .sandbox-scn-info {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
+}
+.ds-main .sandbox-page .sandbox-scn-info:is(:hover, :focus-visible, [aria-expanded="true"]) {
+  color: var(--page-accent);
+  border-color: var(--page-accent);
+}
+
+/* --- Short labels, the rest on hover (UAT 16 Oct 2026, tester J) -----------
+   An event row's name and place line, and a place's name in the list, are one
+   line each, cut with an ellipsis when the rail is narrow; their title carries
+   the whole text (ScenarioPanel EventRow, PlacesList). */
+.ds-main .sandbox-page .sandbox-scn-event-name {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-main .sandbox-page .sandbox-scn-where {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-main .sandbox-page .sb-place-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Legibility floor (UAT 16 Oct 2026, A11Y-1 "text and numbers too small") ---
+   The sandbox's readouts, notes and chips ran at the shared 10-11 px label tokens
+   and, in the older sandbox rules in globals.css, down to 9.6 px. Raised for this
+   page only: its label tokens one step, the small data text to 12 px and the
+   smallest chips and column heads to 11 px. Colours are the theme's tokens, so
+   dark mode keeps its own contrast. */
+.ds-main .sandbox-page {
+  --fs-label: 12px;
+  --fs-micro: 11px;
+}
+.ds-main .sandbox-page :is(
+  .sandbox-scn-meta, .sandbox-scn-phases li, .sandbox-scn-note, .sandbox-scn-detail, .sandbox-scn-cap, .sandbox-scn-est,
+  .sandbox-scn-hot-row span, .sandbox-scn-redraw, .sandbox-compare-foot, .sandbox-compare-head span, .sandbox-compare-row .d,
+  .sandbox-compare-row .now i, .sandbox-reps-note, .sandbox-reps-row .v i, .sandbox-steps li .t i, .sandbox-trends-sub,
+  .sandbox-trends-legend, .sandbox-trend figcaption, .sandbox-trend-tip, .sandbox-trends-table, .sb-places-empty, .sb-place-km,
+  .sandbox-forecast-tile .k, .sandbox-forecast-tile .s, .sandbox-zoom-seg span
+) { font-size: 12px; }
+.ds-main .sandbox-page :is(
+  .sandbox-scn-chip, .sandbox-scn-badge, .sandbox-metric-tag, .sandbox-dir-pill, .sb-place-toll, .sb-places-sec-count,
+  .sb-places-sec-title, .sandbox-scn-group-head, .sandbox-compare-labels .was, .sandbox-compare-labels .now,
+  .sandbox-steps li .n, .sandbox-trend .trend-tick, .sandbox-trend-tip .tip-time
+) { font-size: 11px; }
+.ds-main .sandbox-page .sb-place-name { font-size: 13px; }

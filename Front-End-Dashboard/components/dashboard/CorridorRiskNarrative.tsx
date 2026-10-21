@@ -21,6 +21,7 @@ import NarrativePanel, { NarrativeChip } from "./NarrativePanel";
 
 export type GwrCoefficientForNarrative = {
   exitName: string;
+  /** MEASURED km (Balintawak = 12), forwarded raw: the backend prints it as the official km post. */
   km: number | null;
   variable: string;
   coefficient: number;
@@ -30,6 +31,7 @@ export type GwrCoefficientForNarrative = {
 
 export type SegmentRiskForNarrative = {
   exitName: string;
+  /** MEASURED km (Balintawak = 12), forwarded raw: the backend prints it as the official km post. */
   km: number | null;
   rank: number;
   predictedIncidents: number;

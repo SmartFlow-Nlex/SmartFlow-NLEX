@@ -28,9 +28,17 @@ export type DeploymentTimeStat = {
   avgResponseMin: number | null;
   medianResponseMin: number | null;
   avgServiceMin: number | null;
+  /* How many of the n dispatches carry a usable response / on-scene time, and how many responses
+     were logged as exactly 0 min (17 Oct 2026, testers IN-9): Investigator's median is 0 min over
+     5 dispatches, which drew a zero-length bar that read as a blank row. */
+  responseN: number;
+  serviceN: number;
+  zeroResponseN: number;
 };
 
 export type EventBreakdownData = {
+  /** The window the figures cover, after clamping to the breakdown log. */
+  range: { from: string; to: string };
   breakdownCauses: BreakdownCauseCount[];
   responseTimeByService: DeploymentTimeStat[];
   responseTimeByCause: DeploymentTimeStat[];
@@ -60,7 +68,10 @@ const DEPLOYMENT_STATS_SELECT = `
   COUNT(*)::int AS n,
   ROUND(AVG(${RESPONSE_MIN}), 1) AS avg_response_min,
   ROUND((percentile_cont(0.5) WITHIN GROUP (ORDER BY ${RESPONSE_MIN}))::numeric, 1) AS median_response_min,
-  ROUND(AVG(${SERVICE_MIN}), 1) AS avg_service_min
+  ROUND(AVG(${SERVICE_MIN}), 1) AS avg_service_min,
+  COUNT(${RESPONSE_MIN})::int AS response_n,
+  COUNT(${SERVICE_MIN})::int AS service_n,
+  COUNT(*) FILTER (WHERE ${RESPONSE_MIN} = 0)::int AS zero_response_n
 `;
 
 export async function getEventBreakdownFromDb(filters: EventBreakdownFilters): Promise<EventBreakdownData | null> {
@@ -104,47 +115,58 @@ export async function getEventBreakdownFromDb(filters: EventBreakdownFilters): P
             ).rows[0].lo;
     }
 
+    type StatRow = {
+      n: number;
+      avg_response_min: number | null;
+      median_response_min: number | null;
+      avg_service_min: number | null;
+      response_n: number;
+      service_n: number;
+      zero_response_n: number;
+    };
+    /* Whole days at both ends (17 Oct 2026): event_encoded_date is a timestamp, so BETWEEN against a
+       bare custom end date ("2026-06-30") dropped every breakdown logged after midnight on that day. */
+    const IN_WINDOW = `event_encoded_date >= $1::date AND event_encoded_date < $2::date + 1`;
     const [causeRes, byServiceRes, byCauseRes] = await Promise.all([
       db.query<{ main_cause: string; sub_cause: string; n: number }>(
         `SELECT main_cause, sub_cause, COUNT(*)::int AS n
          FROM silver.nlex_breakdown_events_clean
-         WHERE event_encoded_date BETWEEN $1 AND $2
+         WHERE ${IN_WINDOW}
          GROUP BY 1, 2 ORDER BY n DESC`,
         [lo, hi]
       ),
-      db.query<{ service: string; n: number; avg_response_min: number | null; median_response_min: number | null; avg_service_min: number | null }>(
+      db.query<StatRow & { service: string }>(
         `SELECT d->>'service' AS service, ${DEPLOYMENT_STATS_SELECT}
          FROM silver.nlex_breakdown_events_clean, jsonb_array_elements(deployments) d
-         WHERE d->>'service' IS NOT NULL AND event_encoded_date BETWEEN $1 AND $2
+         WHERE d->>'service' IS NOT NULL AND ${IN_WINDOW}
          GROUP BY 1 ORDER BY n DESC`,
         [lo, hi]
       ),
-      db.query<{ main_cause: string; n: number; avg_response_min: number | null; median_response_min: number | null; avg_service_min: number | null }>(
+      db.query<StatRow & { main_cause: string }>(
         `SELECT main_cause, ${DEPLOYMENT_STATS_SELECT}
          FROM silver.nlex_breakdown_events_clean, jsonb_array_elements(deployments) d
-         WHERE deployments IS NOT NULL AND event_encoded_date BETWEEN $1 AND $2
+         WHERE deployments IS NOT NULL AND ${IN_WINDOW}
          GROUP BY 1 ORDER BY n DESC`,
         [lo, hi]
       ),
     ]);
 
-    const toStat = (n: number, avgR: number | null, medR: number | null, avgS: number | null): Omit<DeploymentTimeStat, "group"> => ({
-      n,
-      avgResponseMin: avgR == null ? null : Number(avgR),
-      medianResponseMin: medR == null ? null : Number(medR),
-      avgServiceMin: avgS == null ? null : Number(avgS),
+    const toStat = (r: StatRow): Omit<DeploymentTimeStat, "group"> => ({
+      n: r.n,
+      avgResponseMin: r.avg_response_min == null ? null : Number(r.avg_response_min),
+      medianResponseMin: r.median_response_min == null ? null : Number(r.median_response_min),
+      avgServiceMin: r.avg_service_min == null ? null : Number(r.avg_service_min),
+      responseN: r.response_n ?? 0,
+      serviceN: r.service_n ?? 0,
+      zeroResponseN: r.zero_response_n ?? 0,
     });
 
     return {
+      // The bounds come off a timestamp column, so they are cut to the day.
+      range: { from: String(lo).slice(0, 10), to: String(hi).slice(0, 10) },
       breakdownCauses: causeRes.rows.map((r) => ({ mainCause: r.main_cause, subCause: r.sub_cause, count: r.n })),
-      responseTimeByService: byServiceRes.rows.map((r) => ({
-        group: r.service,
-        ...toStat(r.n, r.avg_response_min, r.median_response_min, r.avg_service_min),
-      })),
-      responseTimeByCause: byCauseRes.rows.map((r) => ({
-        group: r.main_cause,
-        ...toStat(r.n, r.avg_response_min, r.median_response_min, r.avg_service_min),
-      })),
+      responseTimeByService: byServiceRes.rows.map((r) => ({ group: r.service, ...toStat(r) })),
+      responseTimeByCause: byCauseRes.rows.map((r) => ({ group: r.main_cause, ...toStat(r) })),
     };
   } catch (error) {
     console.error("Failed to fetch event breakdown analytics:", error);

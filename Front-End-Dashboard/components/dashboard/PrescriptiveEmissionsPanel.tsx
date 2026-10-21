@@ -5,6 +5,9 @@ import type { EChartsOption } from "echarts";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
 import StateNote from "../stage/StateNote";
+import { Empty } from "./prescriptiveShell";
+import { fetchJsonWithRetry } from "./prescriptiveTraffic.shared";
+import { Term } from "./emissionsTerms";
 import { useChartTheme, seriesRamp } from "../../lib/chart-theme";
 import {
   AlertTriangle, CalendarRange, ChevronDown, Clock, Flag, Gauge, MapPin, ShieldCheck, Target, TrendingDown,
@@ -92,6 +95,20 @@ type Payload = {
 
 const fmtT = (n: number) => Math.round(n).toLocaleString("en-US");
 
+/* A failed request in words a reader can act on. fetchJsonWithRetry reports "<label> <status>"; a network
+   failure arrives as the browser's own TypeError. The 429 is the API's per-network rate limit (200
+   requests in 15 minutes, app.ts), which a tester on the shared LAN can reach in a session. */
+function explainFailure(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  const status = Number(/ (\d{3})$/.exec(msg)?.[1]);
+  if (status === 429) return "The server is limiting requests from this network for a few minutes (too many in the last 15). Wait a moment, then try again.";
+  if (status === 503) return "The database did not answer in time. It is shared, so this usually clears within a minute.";
+  if (status >= 500) return "The server could not compute the strategies for this Range.";
+  if (status >= 400) return `The request was refused (HTTP ${status}).`;
+  if (e instanceof TypeError) return "Could not reach the backend. Check that it is running on port 4000, then try again.";
+  return msg || "Request failed.";
+}
+
 /** The first `n` characters of `text`, cut at a word boundary. */
 function shorten(text: string, n = 48): string {
   const t = text.trim();
@@ -102,6 +119,14 @@ function shorten(text: string, n = 48): string {
 
 const MONTH = (iso: string) =>
   new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+
+/* What to do, as a headline per strategy; the service's full lever sits behind the Action box. Shared by
+   the answer strip and the cards so the two never word the same action differently. */
+const ACTION_HEAD: Record<Strategy["key"], string> = {
+  clearance: "Clear blockages as fast as your best 10%",
+  deployment: "Put response capacity on the 12 busiest hours",
+  fleet_mix: "Shift heavy-truck travel to smaller vehicles",
+};
 
 /* One field of an action card as a small box: its label and a one-line headline, the full text only when
    the box is opened. The card used to print every field in full, which made each one a wall of prose; the
@@ -166,9 +191,19 @@ export default function PrescriptiveEmissionsPanel({
   /* The four analyses below the chart share one card, one tab at a time, instead of four stacked cards. */
   const [moreTab, setMoreTab] = useState<"ranking" | "classkm" | "window" | "tolling">("ranking");
 
+  /* Load reliably (17 Oct 2026, testers EM-11.1: "failed to load" for one tester, stuck for another).
+     The panel made one bare fetch: a single slow handshake or a 503 while the shared database woke left
+     it on an error with no way back but a reload, and nothing on screen said a cold Range takes 3 to 11
+     seconds (six queries plus a 400-run Monte Carlo). Now transient failures are retried (3 tries, 3 s
+     then 8 s apart), a slow load says why, and an error carries Try again. */
+  const [attempt, setAttempt] = useState(0);
+  const [slow, setSlow] = useState(false);
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
+    setSlow(false);
+    const slowTimer = window.setTimeout(() => !cancelled && setSlow(true), 5000);
     const qs = new URLSearchParams();
     if (from && to) {
       qs.set("from", from);
@@ -176,67 +211,102 @@ export default function PrescriptiveEmissionsPanel({
     } else {
       qs.set("months", months);
     }
-    fetch(`${BACKEND}/api/emissions/prescriptive?${qs}`, { cache: "no-store" })
-      .then(async (res) => {
-        const json = await res.json();
+    fetchJsonWithRetry(`${BACKEND}/api/emissions/prescriptive?${qs}`, "prescriptive strategies")
+      .then((json) => {
         if (cancelled) return;
-        if (!json.success) throw new Error(json.message ?? "Request failed");
+        if (!json?.success) throw new Error(json?.message ?? "Request failed");
         setData(json.data as Payload);
         setError(null);
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Request failed");
+        if (!cancelled) setError(explainFailure(e));
       })
       .finally(() => {
+        window.clearTimeout(slowTimer);
         if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
+      window.clearTimeout(slowTimer);
     };
-  }, [months, from, to]);
+  }, [months, from, to, attempt]);
+
+  /* A Range change keeps the last answer on screen (19 Oct 2026, testers EM-11: the panel swapped to the
+     full loading card on every Range click, so the page jumped and the old answer could not be compared
+     with the new). As on the Incidents tab's Clearance Response Protocol: the previous result stays, faded
+     under an "Updating…" badge until the new one lands; a slow read or a failed refresh says so in a line
+     above it, with Try again. The loading card is now only for the first read, when there is nothing yet. */
+  const updating = loading && data !== null;
+  const retry = () => setAttempt((n) => n + 1);
+  const slowNote =
+    "A Range read for the first time takes up to about 20 seconds: every lane-blocking incident's queue is costed and resampled 400 times. Ranges already read come back at once.";
+  const updatingBadge = updating ? (
+    <span className="inc-updating-badge" role="status" aria-live="polite">
+      Updating…
+    </span>
+  ) : null;
+  const busy = { "aria-busy": updating, "data-rx-busy": updating ? "true" : undefined } as const;
 
   /* The evidence card's head: the title, ⓘ and intro that used to sit in
-     page.tsx. Here so the loading, error and no-data states keep them. */
+     page.tsx. Here so the no-data state keeps them; the first load and a first
+     failure use the shared Empty card, which names the panel in its message. */
   const evidenceHead = (
     <div className="nc-em-card-head">
       <h3>
         Projected % Emission Reduction by Strategy
         <InfoTooltip text="Computed from our own records over the selected Range. Shorter lane blockages and busiest-hours response are limited to blockage times NLEX has already achieved. The heavy-vehicle bar is a what-if (drawn hollow): our records have never shown NLEX lowering truck traffic. Moving trips to other hours is not offered, because in this model a vehicle gives off the same CO2 at any hour." />
+        {updatingBadge}
       </h3>
       <p className="nc-em-context">
-        CO₂ avoided per strategy, as a share of what the corridor actually emitted over the Range.
+        <Term t="CO₂" /> avoided per strategy, as a share of what the corridor actually emitted over the Range.
       </p>
     </div>
   );
 
-  if (loading) {
-    return (
-      <article className="chart-card nc-em-span nc-em-rx-evidence">
-        {evidenceHead}
-        <p className="nc-em-loading">Computing strategies…</p>
-      </article>
+  if (!data) {
+    return loading ? (
+      <Empty msg="Computing emission-reduction strategies for this Range…" note={slow ? slowNote : undefined} />
+    ) : (
+      <Empty
+        kind="error"
+        msg={`Emission-reduction strategies unavailable. ${error ?? "No data returned."}`}
+        onRetry={retry}
+      />
     );
   }
-  if (error || !data) {
-    return (
-      <article className="chart-card nc-em-span nc-em-rx-evidence">
-        {evidenceHead}
-        <StateNote kind="error" title="Strategies unavailable">
-          {error ?? "No data returned."}
-        </StateNote>
-      </article>
-    );
-  }
+
+  /* What the faded result is: the Range it was computed for, so stale figures are never read as current. */
+  const shownRange = `${MONTH(data.basis.from)} – ${MONTH(data.basis.to)}`;
+  const statusLine = (
+    <>
+      {updating && slow && (
+        <p className="inc-status-line nc-em-span" role="status">
+          Still updating. {slowNote} Until then the figures below are for {shownRange}.
+        </p>
+      )}
+      {error && !loading && (
+        <p className="inc-status-line is-warn nc-em-span" role="alert">
+          Couldn&apos;t refresh for the new Range. {error} Showing the last result ({shownRange}), which does not match
+          the Range above.
+          <button type="button" className="btn-muted" onClick={retry}>Try again</button>
+        </p>
+      )}
+    </>
+  );
+
   // A Range with no emissions in it: say so, rather than draw three bars at
   // zero that would read as "nothing saves anything".
   if (data.noData) {
     return (
-      <article className="chart-card nc-em-span nc-em-rx-evidence">
-        {evidenceHead}
-        <StateNote kind="nodata" title="No emissions data in this Range">
-          <span style={{ display: "block", maxWidth: "78ch" }}>{data.noData}</span>
-        </StateNote>
-      </article>
+      <>
+        {statusLine}
+        <article className="chart-card nc-em-span nc-em-rx-evidence nc-em-rx-busy" {...busy}>
+          {evidenceHead}
+          <StateNote kind="nodata" title="No emissions data in this Range">
+            <span style={{ display: "block", maxWidth: "78ch" }}>{data.noData}</span>
+          </StateNote>
+        </article>
+      </>
     );
   }
   const unavailable = data.unavailable ?? [];
@@ -259,14 +329,14 @@ export default function PrescriptiveEmissionsPanel({
       inverse: true,
       data: rows.map((s) => s.label),
       axisTick: { show: false },
-      axisLabel: { color: T.ink, fontSize: 11, interval: 0, width: 120, overflow: "break", lineHeight: 15 },
+      axisLabel: { color: T.ink, fontSize: 12, interval: 0, width: 120, overflow: "break", lineHeight: 15 },
     },
     xAxis: {
       type: "value",
       name: "% of corridor CO₂",
       nameLocation: "middle",
       nameGap: 26,
-      nameTextStyle: { color: T.text, fontSize: 11 },
+      nameTextStyle: { color: T.text, fontSize: 12 },
       splitNumber: 4,
       axisLabel: { color: T.text, hideOverlap: true, formatter: (v: number) => `${v}%` },
       splitLine: { lineStyle: { color: T.split } },
@@ -313,7 +383,7 @@ export default function PrescriptiveEmissionsPanel({
           show: true,
           position: "right",
           color: T.ink,
-          fontSize: 11,
+          fontSize: 12,
           fontFamily: T.fontFamily,
           formatter: (p: { value?: unknown }) => `${Number(p.value ?? 0).toFixed(2)}%`,
         },
@@ -378,12 +448,6 @@ export default function PrescriptiveEmissionsPanel({
       <div className="nc-em-acard-body">
         {(() => {
           /* Headlines for the boxes, from the same strings the full text is. */
-          /* What to do, as a headline per strategy; the full lever is behind the box. */
-          const ACTION_HEAD: Record<Strategy["key"], string> = {
-            clearance: "Clear blockages as fast as your best 10%",
-            deployment: "Put response capacity on the 12 busiest hours",
-            fleet_mix: "Shift heavy-truck travel to smaller vehicles",
-          };
           const longHit = /^(\d+)% of this saving comes from ([\d,]+) incident/.exec(s.focus ?? "");
           const startHead = longHit ? `${longHit[2]} long blockages hold ${longHit[1]}%` : shorten((s.focus ?? "").split(" — ")[0], 44);
           const places = (s.where ?? "Corridor-wide").split(" · ");
@@ -511,8 +575,48 @@ export default function PrescriptiveEmissionsPanel({
 
   return (
     <>
+      {/* The answer in four rows (19 Oct 2026, testers EM-11: "check the output answers the test question").
+          The cards held it, but spread over a headline and eight boxes; a tester asking "what should we do,
+          and what does it save?" had to assemble it. Read off the same lead strategy as card #1. */}
+      {statusLine}
+      {lead && (
+        <section className="chart-card nc-em-span nc-em-rx-answer nc-em-rx-busy" aria-label="Recommendation" {...busy}>
+          <span className="nc-em-action-tag">Recommendation · {shownRange}{updatingBadge}</span>
+          <dl className="nc-em-rows">
+            <div>
+              <dt>Do this</dt>
+              <dd><b>{ACTION_HEAD[lead.key] ?? lead.label}.</b> {takeaway(lead)}</dd>
+            </div>
+            <div>
+              <dt>Expected</dt>
+              <dd>
+                <b>{fmtT(lead.reductionTonnes)} t <Term t="CO₂" /></b> avoided {period}, {lead.reductionPct.toFixed(2)}% of the{" "}
+                {fmtT(data.basis.actualCo2Tonnes)} t the corridor emitted
+                {lead.range && <>; likely {fmtT(lead.range.lowTonnes)}–{fmtT(lead.range.highTonnes)} t</>}
+              </dd>
+            </div>
+            <div>
+              <dt>Basis</dt>
+              <dd>
+                {data.basis.incidentsCounted.toLocaleString()} lane-blocking incidents in the Range, each shortened only to
+                a blockage time NLEX has already achieved
+              </dd>
+            </div>
+            {scenario && (
+              <div className="is-note">
+                <dt>Not this</dt>
+                <dd>
+                  The heavy-vehicle figure ({fmtT(scenario.reductionTonnes)} t) is larger but is a what-if needing a policy
+                  decision, not an operations action
+                </dd>
+              </div>
+            )}
+          </dl>
+        </section>
+      )}
+
       {(lead || scenario) && (
-        <ol className="nc-em-span nc-em-acards" aria-label="Recommended actions, ranked">
+        <ol className="nc-em-span nc-em-acards nc-em-rx-busy" aria-label="Recommended actions, ranked" {...busy}>
           {lead ? (
             <ActionCard
               s={lead}
@@ -573,7 +677,7 @@ export default function PrescriptiveEmissionsPanel({
               <span className="pill nc-em-pill-hollow">What-if only</span>
               <span className="nc-em-scenario-text">
                 <b>Fewer big trucks</b> on NLEX would cut <b>{fmtT(scenario.reductionTonnes)} t</b> of CO₂ — but that would take a
-                company policy decision (MPTC, NLEX's parent company), such as truck tolls or rules, not something the control room can do.
+                company policy decision (MPTC, NLEX&rsquo;s parent company), such as truck tolls or rules, not something the control room can do.
               </span>
               <details className="nc-em-scenario-why">
                 <summary>Why</summary>
@@ -599,7 +703,7 @@ export default function PrescriptiveEmissionsPanel({
       )}
 
       {/* The chart and the analyses side by side on a wide screen, stacked on a narrow one (2026-10-15). */}
-      <div className="nc-em-span nc-em-pair">
+      <div className="nc-em-span nc-em-pair nc-em-rx-busy" {...busy}>
       <article className="chart-card nc-em-span nc-em-rx-evidence">
         {evidenceHead}
         <figure className="nc-em-rx-chart">
@@ -736,7 +840,7 @@ export default function PrescriptiveEmissionsPanel({
             <div className="nc-em-more-pane">
               <div className="nc-em-card-head">
                 <h3>
-                  CO₂ per class-km
+                  <Term t="CO₂" /> per class-km
                   <InfoTooltip text="Grams of CO₂ per vehicle-kilometre for each toll class (the warehouse's emission factors), against each class's share of the distance driven and of the CO₂ over the Range." />
                 </h3>
                 <p className="nc-em-context">

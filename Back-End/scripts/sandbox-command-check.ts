@@ -9,6 +9,7 @@
  */
 import { planFromModelOutput, promptFor, rangesInWords, type Action, type SandboxContext } from "../src/services/sandbox-command.service.js";
 import { sandboxTestContext } from "./sandbox-command-context.js";
+import { kmPost } from "../src/lib/km-post.js";
 
 let checks = 0;
 const failures: string[] = [];
@@ -19,6 +20,14 @@ function check(name: string, ok: boolean, detail = "") {
 const ctx: SandboxContext = sandboxTestContext();
 const plan = (actions: unknown, c: SandboxContext = ctx) => planFromModelOutput({ actions, reply: "ok", unsupported: null }, c);
 const types = (a: readonly Action[]) => a.map((x) => x.type).join(",");
+/* The model and the operator speak in OFFICIAL km posts; the context and the plan are MEASURED km (see km2 in the
+   service). A test means a measured position, so a model answer gives that position's official post, P(m), and a
+   check compares measured km within NEAR (a few metres: the answer's official post is rounded to 4 places). */
+const P = (m: number) => Number(kmPost(m).toFixed(4));
+/** The official post of a measured km as the operator would type it, two places. */
+const P2 = (m: number) => kmPost(m).toFixed(2);
+const NEAR = 0.003;
+const near = (a: unknown, b: number, tol = NEAR) => typeof a === "number" && Math.abs(a - b) <= tol;
 const show = (p: { actions: readonly Action[]; warnings: readonly string[] }) => `${JSON.stringify(p.actions)} | ${p.warnings.join(" / ")}`;
 
 /* ── lanes ── */
@@ -41,13 +50,13 @@ const show = (p: { actions: readonly Action[]; warnings: readonly string[] }) =>
 
 /* ── where ── */
 {
-  const p = plan([{ type: "add_event", direction: "NB", family: "flood", km: 57.2, duration: { kind: "manual", minutes: 45 } }]);
+  const p = plan([{ type: "add_event", direction: "NB", family: "flood", km: P(57.2), duration: { kind: "manual", minutes: 45 } }]);
   const route = p.actions[0] as any;
   const frame = p.actions[1] as any;
   const ev = p.actions[2] as any;
   check(
     "where: an event at a km off the route gets a route round it (exit before → exit after) and a window on it, and stays at its km",
-    types(p.actions) === "set_route,frame,add_event" && route.originExitId === 14 && route.destinationExitId === 15 && frame.fromKm <= 57.2 && frame.toKm >= 57.2 && ev.km === 57.2,
+    types(p.actions) === "set_route,frame,add_event" && route.originExitId === 14 && route.destinationExitId === 15 && frame.fromKm <= 57.2 && frame.toKm >= 57.2 && near(ev.km, 57.2),
     show(p),
   );
 }
@@ -68,15 +77,15 @@ const show = (p: { actions: readonly Action[]; warnings: readonly string[] }) =>
   check("where: an event at a place already on screen needs no step before it", types(p.actions) === "add_event" && (p.actions[0] as any).stations.join() === "1", show(p));
 }
 {
-  const p = plan([{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, km: 22.4 }]);
+  const p = plan([{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, km: P(22.4) }]);
   check("where: an event at a km on the route but off screen gets a window on it first", types(p.actions) === "frame,add_event" && (p.actions[0] as any).fromKm <= 22.4 && (p.actions[0] as any).toKm >= 22.4, show(p));
 }
 {
-  const p = plan([{ type: "close_lane", direction: "SB", lanes: [3], fromKm: 22.1, toKm: 22.3 }]);
-  check("where: a closure off screen moves the window to it, and keeps its stretch", types(p.actions) === "frame,close_lane" && (p.actions[1] as any).fromKm === 22.1 && (p.actions[1] as any).toKm === 22.3, show(p));
+  const p = plan([{ type: "close_lane", direction: "SB", lanes: [3], fromKm: P(22.1), toKm: P(22.3) }]);
+  check("where: a closure off screen moves the window to it, and keeps its stretch", types(p.actions) === "frame,close_lane" && near((p.actions[1] as any).fromKm, 22.1) && near((p.actions[1] as any).toKm, 22.3), show(p));
 }
 {
-  const p = plan([{ type: "set_route", originExitId: 3, destinationExitId: 5 }, { type: "frame", fromKm: 21.9, toKm: 22.5 }, { type: "add_event", direction: "NB", family: "minor_collision", lane: 2, km: 22.2, duration: { kind: "manual", minutes: 20 } }]);
+  const p = plan([{ type: "set_route", originExitId: 3, destinationExitId: 5 }, { type: "frame", fromKm: P(21.9), toKm: P(22.5) }, { type: "add_event", direction: "NB", family: "minor_collision", lane: 2, km: P(22.2), duration: { kind: "manual", minutes: 20 } }]);
   check("where: a sound plan (route, window, event in it) passes as it is", types(p.actions) === "set_route,frame,add_event" && p.warnings.length === 0, show(p));
 }
 {
@@ -169,8 +178,8 @@ const show = (p: { actions: readonly Action[]; warnings: readonly string[] }) =>
   check("usual: a recorded kind of event is marked for the incident-log lookup; flooding is not recorded, so it goes mid-window, said", (p.actions[0] as any).usual === true && (p.actions[1] as any).usual === false && p.warnings.some((w) => /does not record this kind/.test(w)), show(p));
 }
 {
-  const p = plan([{ type: "add_event", direction: "NB", family: "minor_collision", usual: true, km: 20.4 }]);
-  check("usual: a km the operator gave wins over the lookup", (p.actions[0] as any).usual === false && (p.actions[0] as any).km === 20.4, show(p));
+  const p = plan([{ type: "add_event", direction: "NB", family: "minor_collision", usual: true, km: P(20.4) }]);
+  check("usual: a km the operator gave wins over the lookup", (p.actions[0] as any).usual === false && near((p.actions[0] as any).km, 20.4), show(p));
 }
 
 /* ── rain: always both carriageways ── */
@@ -187,29 +196,59 @@ const show = (p: { actions: readonly Action[]; warnings: readonly string[] }) =>
   check("rain: in a one-carriageway view it still goes on both, and the view is not asked to widen for it", r.actions.length === 2 && !r.warnings.some((w) => /not shown in this view/.test(w)), show(r));
 }
 
+/* ── a flood on both carriageways (UAT 16 Oct 2026, SB-13) ── */
+{
+  const p = plan([{ type: "add_event", direction: "both", family: "flood", lane: 4, duration: { kind: "manual", minutes: 30 } }]);
+  const floods = p.actions.filter((x) => x.type === "add_event" && (x as any).family === "flood") as any[];
+  check("flood: written once for \"both\", it goes on each carriageway, the same lane and duration, with no 'no carriageway given' warning",
+    floods.map((f) => f.direction).sort().join() === "NB,SB" && floods.every((f) => f.lane === 4 && f.duration.minutes === 30) && !p.warnings.some((w) => /no carriageway given/.test(w)), show(p));
+  const q = plan([{ type: "add_event", direction: "SB", family: "flood", lane: 4, duration: { kind: "manual", minutes: 30 } }]);
+  check("flood: named for one carriageway it stays on that one", q.actions.filter((x) => x.type === "add_event").map((x) => (x as any).direction).join() === "SB", show(q));
+  // The copy is checked against its own carriageway (code review, 19 Oct 2026).
+  const fl = (p: { actions: readonly Action[] }) => p.actions.filter((x) => x.type === "add_event" && (x as any).family === "flood") as any[];
+  const r = plan([{ type: "set_lane_count", direction: "SB", lanes: 3 }, { type: "add_event", direction: "both", family: "flood", lane: 4, extraLanes: [1, 2, 3], duration: { kind: "manual", minutes: 30 } }]);
+  const [rn, rs] = [fl(r).find((f) => f.direction === "NB"), fl(r).find((f) => f.direction === "SB")];
+  check("flood both ways: a lane the other carriageway lacks is dropped there with a warning, kept where it exists",
+    rn?.lane === 4 && rn?.extraLanes.join() === "1,2,3" && rs?.lane === null && rs?.extraLanes.join() === "1,2,3" && r.warnings.some((w) => /SB has no lane 4 \(it has 3\)/.test(w)), show(r));
+  const s = plan([{ type: "set_lane_count", direction: "SB", lanes: 3 }, { type: "add_event", direction: "both", family: "flood", lane: 1, extraLanes: [2, 3, 4], duration: { kind: "manual", minutes: 30 } }]);
+  check("flood both ways: all four lanes on NB is lanes 1-3 on a three-lane SB",
+    fl(s).map((f) => `${f.direction}:${[f.lane, ...f.extraLanes].join(",")}`).sort().join(" ") === "NB:1,2,3,4 SB:1,2,3", show(s));
+  const t = plan([{ type: "add_event", direction: "both", family: "flood", placeId: "sa:petron-marilao", duration: { kind: "manual", minutes: 30 } }]);
+  check("flood both ways: at a place on one carriageway only it floods that one, and says so",
+    fl(t).map((f) => f.direction).join() === "NB" && near(fl(t)[0].km, 22.5) && t.warnings.some((w) => /Petron NLEX-Marilao is on NB only, so the flood is on NB only/.test(w)), show(t));
+  const u = plan([{ type: "add_event", direction: "both", family: "flood", placeId: "entry:4:SB", duration: { kind: "manual", minutes: 30 } }]);
+  check("flood both ways: at a plaza on both it floods each carriageway's own plaza, with no 'named for' warning",
+    fl(u).map((f) => `${f.direction}@${f.km}`).sort().join() === "NB@20.33,SB@20.03" && !u.warnings.some((w) => /named for/.test(w)), show(u));
+  const v = planFromModelOutput(
+    { actions: [{ type: "set_lane_count", direction: "SB", lanes: 3 }, { type: "add_event", direction: "both", family: "flood", duration: { kind: "manual", minutes: 30 } }], reply: "ok" },
+    ctx, "flood all lanes both directions");
+  check("flood both ways: \"all lanes\" with no lane given covers every lane of each carriageway, 4 on NB and 3 on SB",
+    fl(v).map((f) => `${f.direction}:${[f.lane, ...f.extraLanes].join(",")}`).sort().join(" ") === "NB:1,2,3,4 SB:1,2,3", show(v));
+}
+
 /* ── a stretch, not a point: "within Km 12.30–12.40" (the operator's report, 2026-10-07) ── */
 {
-  const p = plan([{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, fromKm: 20.3, toKm: 20.4, duration: { kind: "p50" } }]);
+  const p = plan([{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, fromKm: P(20.3), toKm: P(20.4), duration: { kind: "p50" } }]);
   const e = p.actions[0] as any;
-  check("stretch: an event given a stretch on screen keeps exactly it, and its km is the middle", types(p.actions) === "add_event" && e.fromKm === 20.3 && e.toKm === 20.4 && e.km === 20.35 && p.warnings.length === 0, show(p));
+  check("stretch: an event given a stretch on screen keeps exactly it, and its km is the middle", types(p.actions) === "add_event" && near(e.fromKm, 20.3) && near(e.toKm, 20.4) && near(e.km, 20.35) && p.warnings.length === 0, show(p));
 }
 {
-  const p = plan([{ type: "add_event", direction: "SB", family: "multi_vehicle_collision", lane: 3, fromKm: 22.4, toKm: 22.3 }]);
+  const p = plan([{ type: "add_event", direction: "SB", family: "multi_vehicle_collision", lane: 3, fromKm: P(22.4), toKm: P(22.3) }]);
   const f = p.actions[0] as any;
   const e = p.actions[1] as any;
-  check("stretch: off screen, the window moves to cover all of it with room either side; a stretch written high to low is put in order", types(p.actions) === "frame,add_event" && f.fromKm <= 22.2 && f.toKm >= 22.5 && e.fromKm === 22.3 && e.toKm === 22.4, show(p));
+  check("stretch: off screen, the window moves to cover all of it with room either side; a stretch written high to low is put in order", types(p.actions) === "frame,add_event" && f.fromKm <= 22.2 && f.toKm >= 22.5 && near(e.fromKm, 22.3) && near(e.toKm, 22.4), show(p));
 }
 {
-  const p = plan([{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, fromKm: 12.3, toKm: 12.4 }]);
+  const p = plan([{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, fromKm: P(12.3), toKm: P(12.4) }]);
   const route = p.actions[0] as any;
   const f = p.actions[1] as any;
   const e = p.actions[2] as any;
-  check("stretch: off the route (Km 12.30–12.40), the route goes round it, the window covers it, and the event keeps exactly 12.30–12.40", types(p.actions) === "set_route,frame,add_event" && route.originExitId === 1 && route.destinationExitId === 2 && f.fromKm <= 12.3 && f.toKm >= 12.4 && e.fromKm === 12.3 && e.toKm === 12.4, show(p));
+  check("stretch: off the route (Km 12.30–12.40), the route goes round it, the window covers it, and the event keeps exactly 12.30–12.40", types(p.actions) === "set_route,frame,add_event" && route.originExitId === 1 && route.destinationExitId === 2 && f.fromKm <= 12.3 && f.toKm >= 12.4 && near(e.fromKm, 12.3) && near(e.toKm, 12.4), show(p));
 }
 {
-  const p = plan([{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, fromKm: 20.3, toKm: 20.31 }]);
+  const p = plan([{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, fromKm: P(20.3), toKm: P(20.31) }]);
   const e = p.actions[0] as any;
-  check("stretch: one shorter than 20 m is a point, and says so", e.fromKm === null && e.toKm === null && Math.abs(e.km - 20.305) < 1e-9 && p.warnings.some((w) => /shorter than 20 m/.test(w)), show(p));
+  check("stretch: one shorter than 20 m is a point, and says so", e.fromKm === null && e.toKm === null && near(e.km, 20.305) && p.warnings.some((w) => /shorter than 20 m/.test(w)), show(p));
 }
 {
   const p = plan([{ type: "add_event", direction: "NB", family: "minor_collision", placeId: "entry:4:NB", site: "booth", fromKm: 20.1, toKm: 20.2 }, { type: "add_event", direction: "NB", family: "rain", fromKm: 20.1, toKm: 20.2, duration: { kind: "manual", minutes: 20 } }]);
@@ -227,19 +266,19 @@ const show = (p: { actions: readonly Action[]; warnings: readonly string[] }) =>
   check("words: a colon or am/pm makes a time, and a shared pm reaches the first time only when it should", clock("crash from 12:30 to 12:40") === "12:30-12:40" && clock("1:30-2:30 pm") === "13:30-14:30" && clock("11:30-12:30 pm") === "11:30-12:30" && clock("12:30-12:40 pm") === "12:30-12:40" && km("12:30-12:40") === "none");
 }
 {
-  const p = planFromModelOutput({ actions: [{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, km: 20.35 }], reply: "ok" }, ctx, "put a crash northbound within 20.30 - 20.40");
+  const p = planFromModelOutput({ actions: [{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, km: P(20.35) }], reply: "ok" }, ctx, `put a crash northbound within ${P2(20.3)} - ${P2(20.4)}`);
   const e = p.actions[0] as any;
-  check("words: the model gave one km for 'within 20.30 - 20.40' — the event gets the stretch back", e.fromKm === 20.3 && e.toKm === 20.4 && p.warnings.some((w) => /is a stretch/.test(w)), show(p));
+  check("words: the model gave one km for 'within 20.30 - 20.40' — the event gets the stretch back", near(e.fromKm, 20.3, 0.01) && near(e.toKm, 20.4, 0.01) && p.warnings.some((w) => /is a stretch/.test(w)), show(p));
 }
 {
-  const p = planFromModelOutput({ actions: [{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, at: "20:30", until: "20:40" }], reply: "ok" }, ctx, "put a crash northbound within 20.30 - 20.40");
+  const p = planFromModelOutput({ actions: [{ type: "add_event", direction: "NB", family: "minor_collision", lane: 2, at: P2(20.3).replace(".", ":"), until: P2(20.4).replace(".", ":") }], reply: "ok" }, ctx, `put a crash northbound within ${P2(20.3)} - ${P2(20.4)}`);
   const e = p.actions[p.actions.length - 1] as any;
-  check("words: the model read 'within 20.30 - 20.40' as a time — it is km, and the event has no clock time", e.fromKm === 20.3 && e.toKm === 20.4 && e.atClock === null && !p.actions.some((x) => x.type === "set_time"), show(p));
+  check("words: the model read 'within 20.30 - 20.40' as a time — it is km, and the event has no clock time", near(e.fromKm, 20.3, 0.01) && near(e.toKm, 20.4, 0.01) && e.atClock === null && !p.actions.some((x) => x.type === "set_time"), show(p));
 }
 {
-  const p = planFromModelOutput({ actions: [{ type: "close_lane", direction: "NB", lanes: [2], fromKm: 20.1, toKm: 20.4 }, { type: "add_event", direction: "NB", family: "minor_collision", lane: 3, km: 20.35 }], reply: "ok" }, ctx, "close lane 2 from 20.10 to 20.40 and put a crash at 20.35");
+  const p = planFromModelOutput({ actions: [{ type: "close_lane", direction: "NB", lanes: [2], fromKm: P(20.1), toKm: P(20.4) }, { type: "add_event", direction: "NB", family: "minor_collision", lane: 3, km: P(20.35) }], reply: "ok" }, ctx, `close lane 2 from ${P2(20.1)} to ${P2(20.4)} and put a crash at ${P2(20.35)}`);
   const e = p.actions.find((x) => x.type === "add_event") as any;
-  check("words: a range that belongs to a closure in the same command is not put on the event", e.fromKm === null && e.km === 20.35, show(p));
+  check("words: a range that belongs to a closure in the same command is not put on the event", e.fromKm === null && near(e.km, 20.35), show(p));
 }
 
 /* ── a clock time: "at 12:30", "from 12:30 to 12:40" ── */

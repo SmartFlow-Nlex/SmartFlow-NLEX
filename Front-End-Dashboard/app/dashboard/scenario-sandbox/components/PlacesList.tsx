@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import type { FacilityKind } from "../facilities";
 import { plazaAwayName } from "../facilityLayout";
 import { displayExitName, type NlexExit } from "../../../../lib/nlex-exits";
+import { fmtKm } from "../../../../lib/km-post";
 
 type Place = { id: string; name: string; kind: FacilityKind; km: number };
 type Junction = Pick<NlexExit, "exit_id" | "exit_name" | "km" | "nb_entry" | "nb_exit" | "sb_entry" | "sb_exit" | "node_type">;
@@ -137,6 +138,8 @@ export default function PlacesList<J extends Junction, P extends Place>({
             <div role="list">
               {sec.rows.map((r) => {
                 const onScreen = r.place ? placesInView.has(r.place.id) : within(r.km, view);
+                // The name is one line, cut with an ellipsis in a narrow rail; hover (and a screen reader) gets all of it.
+                const full = `${r.name} · Km ${fmtKm(r.km, 1)}${r.toll ? ` · ${TOLL_LABEL[r.toll]}` : ""}. ${r.title}`;
                 return (
                   <button
                     key={r.key}
@@ -144,7 +147,8 @@ export default function PlacesList<J extends Junction, P extends Place>({
                     role="listitem"
                     data-place={r.place?.id}
                     className={`sb-place${onScreen ? " is-on" : ""}`}
-                    title={r.title}
+                    title={full}
+                    aria-label={full}
                     onClick={() => {
                       if (r.place) onPlace(r.place as P);
                       else {
@@ -153,7 +157,7 @@ export default function PlacesList<J extends Junction, P extends Place>({
                       }
                     }}
                   >
-                    <span className="sb-place-km">{r.km.toFixed(1)}</span>
+                    <span className="sb-place-km">{fmtKm(r.km, 1)}</span>
                     <span className="sb-place-name">{r.name}</span>
                     {r.toll && <span className={`sb-place-toll t-${r.toll}`}>{TOLL_LABEL[r.toll]}</span>}
                   </button>

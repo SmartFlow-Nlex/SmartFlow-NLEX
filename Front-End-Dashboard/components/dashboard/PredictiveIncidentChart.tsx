@@ -339,7 +339,7 @@ export default function PredictiveIncidentChart({
   // it and cannot change what was scored or forecast. Volume rides along as
   // an extra "model" column so it gets the same mean-and-majority-zone
   // treatment as everything else without a second aggregation pass.
-  type AggKey = ModelKey | "__volume" | "__accA" | "__accP" | "__bdA" | "__bdP";
+  type AggKey = ModelKey | "__volume" | "__volumeF" | "__accA" | "__accP" | "__bdA" | "__bdP";
   const modelsFlat = Object.fromEntries(
     availableModels.map((m) => [
       m.key,
@@ -382,7 +382,12 @@ export default function PredictiveIncidentChart({
           granularity,
           isoDates: daily.map((d) => d.date),
           baseActual: actualData,
-          models: { ...modelsFlat, __volume: daily.map((d) => d.volume ?? null), __accA: accA, __accP: accP, __bdA: bdA, __bdP: bdP },
+          models: {
+            ...modelsFlat,
+            __volume: daily.map((d) => d.volume ?? null),
+            __volumeF: daily.map((d) => (d.predictionType === "future" ? d.volumeForecast ?? null : null)),
+            __accA: accA, __accP: accP, __bdA: bdA, __bdP: bdP,
+          },
           rainfall: daily.map((d) => d.rainfallMm),
           holdoutStart: validationStart,
           futureStart,
@@ -401,15 +406,20 @@ export default function PredictiveIncidentChart({
   const effHoldoutStart = agg ? agg.holdoutStart : validationStart;
   const effFutureStart = agg ? agg.futureStart : futureStart;
   const effLastIndex = effDates.length - 1;
-  // Trimmed to the Past band only, even though real recorded volume exists
-  // through the end of Present (Present is a held-out slice of real history,
-  // not a forecast) -- Volume is drawn as corridor-wide TRAINING context for
-  // the models above it, and letting it run into Present/Future crowded the
-  // one region this chart exists to show cleanly: actual vs. predicted
-  // incident counts. Rainfall is deliberately left alone here; only Volume
-  // was asked to stop at the boundary.
+  /* Volume is drawn wherever the volume-aware models read it (19 Oct 2026, testers IN-10). It used to stop at
+     the end of Past, which left the Present predictions depending on an input the chart did not show and read
+     as a modelling inconsistency. What the models actually take (train_incident_models.py): the recorded day's
+     volume through Past and Present, since Present is held-out history; the traffic module's volume forecast
+     across Future (FUTURE_VOLUME_SQL, sent as volumeForecast). So recorded volume runs solid to the forecast
+     origin and the forecast input runs dashed after it, the same solid/dashed rule the incident lines follow. */
   const rawEffVolume = effModels.__volume ?? daily.map((d) => d.volume ?? null);
-  const effVolume = rawEffVolume.map((v, i) => (i < effHoldoutStart ? v : null));
+  const effVolume = rawEffVolume.map((v, i) => (i < effFutureStart ? v : null));
+  const rawEffVolumeF = effModels.__volumeF ?? daily.map((d) => (d.predictionType === "future" ? d.volumeForecast ?? null : null));
+  // Starts on the last recorded point so the dashed line continues the solid one instead of floating free.
+  const effVolumeF = rawEffVolumeF.map((v, i) =>
+    i >= effFutureStart ? v : i === effFutureStart - 1 && rawEffVolumeF[effFutureStart] != null ? effVolume[i] : null
+  );
+  const hasVolumeForecast = effVolumeF.some((v, i) => v != null && i >= effFutureStart);
 
   const showPast = effHoldoutStart > 0;
   const showPresent = effFutureStart > effHoldoutStart;
@@ -497,7 +507,7 @@ export default function PredictiveIncidentChart({
     markLineData.push({
       xAxis: effFutureStart,
       lineStyle: { type: "solid", color: T.textPrimary, width: 1, opacity: 0.85 },
-      label: { show: true, position: "end", formatter: "FORECAST", color: T.textPrimary, fontSize: 10, fontWeight: 600 },
+      label: { show: true, position: "end", formatter: "FORECAST", color: T.textPrimary, fontSize: 11, fontWeight: 600 },
     });
 
   // Period dividers (W1/W3/… or M1/M3/…) at Weekly/Monthly granularity --
@@ -544,7 +554,7 @@ export default function PredictiveIncidentChart({
           position: "insideEndTop" as const,
           formatter: p.tag,
           color: ink,
-          fontSize: 10,
+          fontSize: 11,
           fontWeight: 600 as const,
           backgroundColor: wash,
           padding: [1, 3] as [number, number],
@@ -636,6 +646,7 @@ export default function PredictiveIncidentChart({
   // bar as a solid one. The path's own bounding box is scaled to itemWidth x itemHeight
   // (28 x 3), so these stay thin lines rather than blocks.
   const SOLID_SWATCH = "path://M0,0h28v3h-28z";
+  const VOLUME_FORECAST_NAME = "Volume forecast (model input)";
   const DASHED_SWATCH = "path://M0,0h8v3h-8zM10,0h8v3h-8zM20,0h8v3h-8z";
   const legendData: (string | { name: string; icon: string })[] = [
     ...(splitOn
@@ -650,6 +661,7 @@ export default function PredictiveIncidentChart({
     // The bar/overlay entries keep a block-like icon (a 3px line would vanish).
     ...(showWeather ? [{ name: "Rainfall", icon: "roundRect" }] : []),
     ...(showVolume ? [{ name: "Vehicle Volume", icon: SOLID_SWATCH }] : []),
+    ...(showVolume && hasVolumeForecast ? [{ name: VOLUME_FORECAST_NAME, icon: DASHED_SWATCH }] : []),
   ];
 
   // Shared by both layouts below and kept as one function so their tooltips
@@ -657,12 +669,15 @@ export default function PredictiveIncidentChart({
   const tooltipFormatter = (params: unknown) => {
     const items = params as { name: string; marker: string; seriesName: string; value: number | null }[];
     let tip = `<b>${items[0].name}</b><br/>`;
+    // The dashed volume line starts on the last recorded day; that day reads once, as recorded.
+    const hasRecordedVolume = items.some((p) => p.seriesName === "Vehicle Volume" && p.value != null);
     items.forEach((p) => {
       if (p.value == null) return;
+      if (p.seriesName === VOLUME_FORECAST_NAME && hasRecordedVolume) return;
       const val =
         p.seriesName === "Rainfall"
           ? `${fmtNum(Number(p.value), 1)} mm`
-          : p.seriesName === "Vehicle Volume"
+          : p.seriesName === "Vehicle Volume" || p.seriesName === VOLUME_FORECAST_NAME
             ? `${fmtInt(Number(p.value))} vehicles`
             : fmtInt(Number(p.value));
       tip += `${p.marker} ${p.seriesName}: <b>${val}</b><br/>`;
@@ -706,6 +721,24 @@ export default function PredictiveIncidentChart({
     itemStyle: { color: VOLUME_INK },
     areaStyle: { color: VOLUME_INK, opacity: 0.08 },
   });
+  // The Future days' volume input: dashed and unfilled, so a forecast input never passes for a count.
+  const volumeForecastSeries = (xAxisIndex: number, yAxisIndex: number) => ({
+    name: VOLUME_FORECAST_NAME,
+    type: "line" as const,
+    xAxisIndex,
+    yAxisIndex,
+    data: effVolumeF,
+    smooth: true,
+    symbol: "none" as const,
+    connectNulls: false,
+    z: 2,
+    lineStyle: { width: 2, color: VOLUME_INK, type: "dashed" as const },
+    itemStyle: { color: VOLUME_INK },
+  });
+  const volumeLayers = (xAxisIndex: number, yAxisIndex: number) =>
+    hasVolumeForecast
+      ? [volumeSeries(xAxisIndex, yAxisIndex), volumeForecastSeries(xAxisIndex, yAxisIndex)]
+      : [volumeSeries(xAxisIndex, yAxisIndex)];
 
   // start/end pinned to 0/100 explicitly (not just omitted) on every build --
   // ECharts treats a dataZoom component's zoomed window as runtime state that
@@ -732,7 +765,10 @@ export default function PredictiveIncidentChart({
       textStyle: { color: T.textMuted, fontSize: 11 },
       showDetail: false,
     },
-    { type: "inside" as const, xAxisIndex, start: 0, end: 100 },
+    /* Wheel zoom only with Ctrl held (19 Oct 2026, testers IN-10). A plain wheel over the chart zoomed the axis
+       instead of scrolling the page, so reading on past the card quietly narrowed the 3-month forecast to a
+       couple of weeks. The slider above, drag-to-pan and Ctrl+wheel still zoom. */
+    { type: "inside" as const, xAxisIndex, start: 0, end: 100, zoomOnMouseWheel: "ctrl" as const, moveOnMouseWheel: false },
   ];
 
   // Split layout: two stacked panels (Accidents on top, Breakdowns below),
@@ -873,7 +909,7 @@ export default function PredictiveIncidentChart({
     ],
     series: [
       ...(showWeather ? [rainfallSeries(0, 2), rainfallSeries(1, 3)] : []),
-      ...(showVolume ? [volumeSeries(0, 4), volumeSeries(1, 5)] : []),
+      ...(showVolume ? [...volumeLayers(0, 4), ...volumeLayers(1, 5)] : []),
       ...SPLIT_PANEL_SERIES,
     ],
   };
@@ -966,7 +1002,7 @@ export default function PredictiveIncidentChart({
       // slot. Drawn under the incident lines (z:2) so it reads as context.
       // connectNulls stays FALSE deliberately — a gap in the warehouse should
       // look like a gap, not like a straight line drawn through missing days.
-      ...(showVolume ? [volumeSeries(0, 2)] : []),
+      ...(showVolume ? volumeLayers(0, 2) : []),
       {
         name: "Actual Count",
         type: "line" as const,
@@ -1130,38 +1166,45 @@ export default function PredictiveIncidentChart({
     </div>
   );
 
-  // Weather split. The pipeline scores every model over the whole holdout; this
-  // re-scores it over only the wet (or only the dry) days of that same window,
-  // which is the question the Weather control is really asking.
-  const wm = data.weatherMetrics;
+  /* Weather split, the way the Traffic forecast card shows its weather evidence: inside the validation
+     evidence, always there, rather than one half at a time behind a page filter (19 Oct 2026, user request).
+     Every model is re-scored over only the dry, and only the wet, days of the same holdout window, so the
+     reader can see whether the forecast holds up in the rain. */
+  const ws = data.weatherSplit;
   const weatherPanel =
-    wm == null ? null : (
-      <div className={`inc-panel${wm.weather === "wet" ? " is-wet" : ""}`}>
-        <div className="inc-panel-head">
-          <h4 className="inc-panel-title">Accuracy on {wm.weather === "wet" ? "wet" : "dry"} days only</h4>
-          <span className="inc-panel-caption">
-            {wm.days} of {modelInfo.scoredDays ?? "—"} holdout days · wet = expressway-average rainfall &gt; 0.3 mm
-          </span>
-        </div>
-        {wm.days === 0 ? (
-          <p className="inc-caption">No {wm.weather} days in the scored window.</p>
-        ) : (
-          <div className="inc-table-wrap">
-            <table className="inc-table" style={{ minWidth: "420px" }}>
-              <thead>
-                <tr>
-                  <th>Model</th>
-                  <th>MAE</th>
-                  <th>RMSE</th>
-                  <th>R² Score</th>
-                </tr>
-              </thead>
-              <tbody>
-                {wm.models
-                  .filter((m) => activeModels.includes(m.model as ModelKey))
-                  .map((m) => {
+    ws == null ? null : (() => {
+      const wetBy = new Map(ws.wet.models.map((m) => [m.model, m]));
+      const rows = ws.dry.models.filter((m) => activeModels.includes(m.model as ModelKey));
+      return (
+        <div className="inc-panel">
+          <div className="inc-panel-head">
+            <h4 className="inc-panel-title">
+              Dry vs wet days
+              <InfoTooltip text="Each model's error on the same held-out window, split into dry days and wet days (expressway-average rainfall above 0.3 mm). MAE is the average miss in incidents per day; lower is better. Change is how much bigger (or smaller) the miss gets on wet days." />
+            </h4>
+            <span className="inc-panel-caption">
+              {ws.dry.days} dry · {ws.wet.days} wet of {modelInfo.scoredDays ?? "—"} holdout days
+            </span>
+          </div>
+          {ws.dry.days === 0 || ws.wet.days === 0 ? (
+            <p className="inc-caption">No {ws.wet.days === 0 ? "wet" : "dry"} days in the scored window, so there is nothing to compare.</p>
+          ) : (
+            <div className="inc-table-wrap">
+              <table className="inc-table" style={{ minWidth: "420px" }}>
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>MAE, dry</th>
+                    <th>MAE, wet</th>
+                    <th>Change on wet days</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((m) => {
                     const meta = META[m.model as ModelKey];
                     const color = meta?.color ?? "var(--text-muted)";
+                    const wet = wetBy.get(m.model);
+                    const change = wet && m.MAE > 0 ? ((wet.MAE - m.MAE) / m.MAE) * 100 : null;
                     return (
                       <tr key={m.model}>
                         <td>
@@ -1176,17 +1219,20 @@ export default function PredictiveIncidentChart({
                           </span>
                         </td>
                         <td>{fmtNum(m.MAE)}</td>
-                        <td>{fmtNum(m.RMSE)}</td>
-                        <td style={{ fontWeight: 600, color }}>{fmtNum(m.R2, 4)}</td>
+                        <td>{wet ? fmtNum(wet.MAE) : "—"}</td>
+                        <td style={{ fontWeight: 600, color: change == null ? undefined : change > 0 ? "var(--color-danger)" : "var(--color-success)" }}>
+                          {change == null ? "—" : `${change > 0 ? "+" : ""}${change.toFixed(1)}%`}
+                        </td>
                       </tr>
                     );
                   })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    );
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    })();
 
   // ---------- Model trust strip ----------
   // Compact pills built from the same response the table reads: the champion,
@@ -1267,15 +1313,10 @@ export default function PredictiveIncidentChart({
             </svg>
             Volume
           </button>
-          {/* Feature-test feedback read the overlay stopping at Past as missing
-              data for Present, when real Present-zone volume exists and this is
-              deliberate (see effVolume's own doc comment above): Volume is
-              training context for the models, not drawn into Present/Future on
-              purpose, to keep those bands focused on actual vs. predicted
-              incident counts. Shown only alongside the toggle actually being on
-              — there's nothing to explain about an overlay that isn't drawn. */}
+          {/* Says what the line is, now that it runs the whole window (see effVolume's doc comment). Shown only
+              with the toggle on: there is nothing to explain about an overlay that isn't drawn. */}
           {showVolume && (
-            <InfoTooltip text="Volume is shown as training context only, stopping at Past by design — even though real volume data exists for Present too. This keeps the Present/Future bands focused on actual vs. predicted incident counts rather than crowding them with a second line." />
+            <InfoTooltip text="The daily vehicle volume the volume-aware models read. Solid: recorded volume, through Past and Present (Present is held-out history, so the models saw the real day's traffic). Dashed: the traffic module's volume forecast, the input the models take for each Future day. Turn Volume off to see the same models fitted without it." />
           )}
           {/* Rainfall toggle — same pill, independent of Volume so the user can
               show either, both, or neither. Like Volume, it switches the

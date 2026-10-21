@@ -1,4 +1,5 @@
 import { db } from "../config/db.js";
+import { exitKmValuesSql, kmKeySql } from "../lib/km-post.js";
 import { getMLPredictiveCongestion } from "./traffic.service.js";
 import {
   OSM_TOLL_PLAZAS, OSM_TOLL_PLAZAS_AWAY, OSM_TOLL_PLAZAS_READ, type OsmTollPlaza,
@@ -208,6 +209,12 @@ export type TrafficPrescriptive = {
   /** Segments on the exit list with no congestion forecast at all. They are
    *  named, not dropped: an empty row and a quiet road look the same. */
   congestionMissing: string[];
+  /** True when the congestion forecast could not be READ (connection or query failure), as opposed
+   *  to read and empty. The panel retries on either, but only this one is an error worth saying. */
+  congestionUnavailable: boolean;
+  /** The Manila wall-clock hour the congestion forecast counts from ("YYYY-MM-DD HH:MM"), so
+   *  "+2h" can be said as a clock time. Null when there are no rows. */
+  congestionBaseTs: string | null;
 };
 
 /* ── fuzzy controller ─────────────────────────────────────────────────────── */
@@ -357,7 +364,7 @@ function boothGroups(plaza: string, rows: ProfileRow[]): BoothGroup[] {
 
 /* ── what the plan is computed from ──────────────────────────────────────── */
 
-type CongestionRow = { segment: string; km?: number | null; hours: number; state: string; probability: number | string };
+type CongestionRow = { segment: string; km?: number | null; hours: number; state: string; probability: number | string; baseTs?: string | null };
 
 type Inputs = {
   champion: { model_name: string; wmape: string | null; accepted: boolean };
@@ -368,7 +375,6 @@ type Inputs = {
   profileFrom: string | null;
   profileTo: string | null;
   typicalDaily: number;
-  congestionRows: CongestionRow[] | null;
   /** The exit list, for naming segments the congestion forecast lacks. */
   segments: string[];
 };
@@ -378,12 +384,14 @@ type Inputs = {
    7 to 46 s a notch on a cold database. Now a notch is arithmetic. One read at
    a time per split, so panels asking together share it. */
 const INPUT_TTL_MS = 10 * 60 * 1000;
+/* No champion row (a retrain mid-write) is kept only briefly, so the next request asks again. */
+const INCOMPLETE_INPUT_TTL_MS = 20 * 1000;
 const inputCache = new Map<string, { at: number; data: Inputs | null }>();
 const inputReads = new Map<string, Promise<Inputs | null>>();
 
 function loadInputs(split: string): Promise<Inputs | null> {
   const hit = inputCache.get(split);
-  if (hit && Date.now() - hit.at < INPUT_TTL_MS) return Promise.resolve(hit.data);
+  if (hit && Date.now() - hit.at < (hit.data ? INPUT_TTL_MS : INCOMPLETE_INPUT_TTL_MS)) return Promise.resolve(hit.data);
   let read = inputReads.get(split);
   if (!read) {
     read = readInputs(split)
@@ -395,6 +403,34 @@ function loadInputs(split: string): Promise<Inputs | null> {
     inputReads.set(split, read);
   }
   return read;
+}
+
+/* The congestion forecast, read and kept apart from the booth inputs (TR-12, 19 Oct 2026).
+ *
+ * It used to be one of the five reads inside readInputs, and getMLPredictiveCongestion answers a
+ * failure with null rather than throwing. Right after a backend start the warmer has the pool of ten
+ * full of cold queries; this read then waited out the 45 s connect timeout, came back null, and the
+ * whole input set -- congestion missing -- was cached with the booth plan. The route answered 200
+ * with no segments, and before the noStore guard the route cache kept that for three hours and kept
+ * serving it stale (its empty-payload check looks at `data` arrays, and this `data` is an object),
+ * so the Congestion Response panel stayed empty until the backend was restarted.
+ *
+ * Kept separately, a failed or empty read is never cached: the next request reads again, and the
+ * booth plan's ten-minute inputs do not have to be thrown away with it. A good read is kept for five
+ * minutes -- the table is rewritten hourly and the read is ~2 s, so this is about bursts, not freshness. */
+const CONGESTION_TTL_MS = 5 * 60 * 1000;
+let congestionCache: { at: number; rows: CongestionRow[] } | null = null;
+let congestionRead: Promise<CongestionRow[] | null> | null = null;
+
+function loadCongestion(): Promise<CongestionRow[] | null> {
+  if (congestionCache && Date.now() - congestionCache.at < CONGESTION_TTL_MS) return Promise.resolve(congestionCache.rows);
+  congestionRead ??= (getMLPredictiveCongestion() as Promise<CongestionRow[] | null>)
+    .then((rows) => {
+      if (rows && rows.length > 0) congestionCache = { at: Date.now(), rows };
+      return rows;
+    })
+    .finally(() => { congestionRead = null; });
+  return congestionRead;
 }
 
 async function readInputs(split: string): Promise<Inputs | null> {
@@ -412,7 +448,7 @@ async function readInputs(split: string): Promise<Inputs | null> {
   const col = champion ? MODEL_COLUMN[champion.model_name] : undefined;
   if (!champion || !col) return null;
 
-  const [futureQ, profileQ, typicalQ, congestionRows, segmentQ] = await Promise.all([
+  const [futureQ, profileQ, typicalQ, segmentQ] = await Promise.all([
     db!.query<{ d: string; v: string | null; dow: number }>(
       `SELECT forecast_date::text AS d, ${col}::text AS v, EXTRACT(dow FROM forecast_date)::int AS dow
          FROM gold.ml_predictive_volume
@@ -438,8 +474,12 @@ async function readInputs(split: string): Promise<Inputs | null> {
               (SUM(total) / NULLIF(COUNT(DISTINCT date), 0))::text AS typical
          FROM gold.fact_traffic_hourly WHERE total IS NOT NULL`,
     ),
-    getMLPredictiveCongestion() as Promise<CongestionRow[] | null>,
-    db!.query<{ name: string }>(`SELECT exit_name AS name FROM gold.exit_km_post ORDER BY km_post`)
+    // Corridor order from the official exit list (lib/km-post.ts), not gold.exit_km_post's hand-entered posts.
+    db!.query<{ name: string }>(
+      `SELECT x.exit_name AS name FROM nlex_exits x
+         JOIN ${exitKmValuesSql()} ON exit_km.key = ${kmKeySql("x.exit_name")}
+        ORDER BY exit_km.measured`,
+    )
       .catch(() => ({ rows: [] as { name: string }[] })),
   ]);
 
@@ -474,7 +514,6 @@ async function readInputs(split: string): Promise<Inputs | null> {
     profileFrom: typicalQ.rows[0]?.lo ?? null,
     profileTo: typicalQ.rows[0]?.hi ?? null,
     typicalDaily: Number(typicalQ.rows[0]?.typical ?? 0),
-    congestionRows,
     segments: segmentQ.rows.map((r) => r.name),
   };
 }
@@ -499,7 +538,8 @@ export async function getTrafficPrescriptive(opts: {
   const pool = opts.pool ?? null;
   const split = opts.split ?? "80_20";
 
-  const inputs = await loadInputs(split);
+  // In parallel: the congestion read is independent of the booth inputs and much cheaper.
+  const [inputs, congestionRows] = await Promise.all([loadInputs(split), loadCongestion()]);
   if (!inputs) return null;
   const { champion, future, corridor, typicalDaily } = inputs;
 
@@ -648,7 +688,7 @@ export async function getTrafficPrescriptive(opts: {
 
   /* ── congestion ─────────────────────────────────────────────────────────── */
   const bySeg = new Map<string, CongestionAdvice>();
-  for (const c of inputs.congestionRows ?? []) {
+  for (const c of congestionRows ?? []) {
     const p = Number(c.probability);
     if (!Number.isFinite(p)) continue;
     const high = String(c.state).toLowerCase() === "high";
@@ -674,7 +714,7 @@ export async function getTrafficPrescriptive(opts: {
     }
   }
   const congestion = [...bySeg.values()].sort((a, b) => b.urgency - a.urgency);
-  const forecastSegments = new Set((inputs.congestionRows ?? []).map((c) => c.segment));
+  const forecastSegments = new Set((congestionRows ?? []).map((c) => c.segment));
   const congestionMissing = inputs.segments.filter((s) => !forecastSegments.has(s));
 
   const worst = overCapacity[0];
@@ -722,5 +762,7 @@ export async function getTrafficPrescriptive(opts: {
     overCapacity,
     congestion,
     congestionMissing,
+    congestionUnavailable: congestionRows == null,
+    congestionBaseTs: congestionRows?.find((c) => c.baseTs)?.baseTs ?? null,
   };
 }

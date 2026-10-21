@@ -2,9 +2,9 @@
 
 import Image from 'next/image';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { User, Lock, Eye, EyeOff, Pause, Play, ArrowRight, ShieldCheck } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Pause, Play, ArrowRight, ArrowLeft, ShieldCheck, RotateCw } from "lucide-react";
 import { supabase } from '../lib/supabase';
-import { logActivity } from "../lib/backend-auth";
+import { deviceTrustHeader, logActivity, notifyPasswordChanged } from "../lib/backend-auth";
 import {
   beginSecondStep,
   dropPasswordOnlySession,
@@ -13,8 +13,21 @@ import {
   secondStepProblem,
   signInTimedOut,
   submitCode,
+  verifiedFactorId,
   type SecondStep,
 } from "../lib/mfa";
+import {
+  deviceTrustFor,
+  forgetDeviceTrust,
+  cooldownMessage,
+  markActivity,
+  passwordStamps,
+  rememberedEmail,
+  saveDeviceTrust,
+  setRememberedEmail,
+} from "../lib/account-device";
+
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 import TitleReveal from '../components/stage/TitleReveal';
 import EffectsToggle from '../components/dashboard/EffectsToggle';
 import ThemeToggle from '../components/dashboard/ThemeToggle';
@@ -59,16 +72,52 @@ const STORY_MS = 7000;
 type Lights = "" | "flash" | "error";
 
 /* Sign-in has two steps (lib/mfa.ts): the password, then a code from the operator's authenticator
-   app. An account that has no authenticator yet adds one at the second step instead. */
-type Step = { kind: "password" } | SecondStep;
+   app. An account that has no authenticator yet adds one at the second step instead.
+
+   A forgotten password (19 Oct 2026, user request) is reset here too: the email address, then the code
+   Supabase emails to it, then -- for an account with an authenticator, because Supabase will not change
+   such an account's password without it -- the authenticator code, then the new password. */
+type Step =
+  | { kind: "password" }
+  | SecondStep
+  | { kind: "forgot-email" }
+  | { kind: "forgot-code"; email: string }
+  | { kind: "forgot-mfa"; factorId: string }
+  | { kind: "forgot-new" };
+
+const isForgot = (k: Step["kind"]) => k.startsWith("forgot-");
+const RESEND_AFTER_S = 60;
+
+/** Say what went wrong while resetting a password, and what to do about it. */
+function resetProblem(error: unknown): string {
+  const e = (error ?? {}) as { code?: string; status?: number; message?: string };
+  if (e.code === "otp_expired" || /expired|invalid/i.test(e.message ?? ""))
+    return "That code is wrong or has expired. Use the code in the newest email, or send a new one.";
+  if (e.code === "same_password") return "Choose a password different from your old one.";
+  if (e.code === "weak_password") return e.message || "That password is too weak. Use at least 8 characters with letters and numbers.";
+  if (e.code === "over_email_send_rate_limit" || e.code === "over_request_rate_limit" || e.status === 429)
+    return "Too many emails were requested. Wait a minute, then try again.";
+  if (e.code === "insufficient_aal") return "Enter your authenticator code before choosing a new password.";
+  return e.message || "Something went wrong. Try again.";
+}
 
 export default function Home() {
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
+  // "Remember me" keeps the email address on this browser (lib/account-device.ts), filled in next time.
+  const [rememberMe, setRememberMe] = useState(false);
 
-  // Sign in form state
-  const [signInUsername, setSignInUsername] = useState("");
+  // Sign in form state. Email only: there are no usernames in this system (19 Oct 2026).
+  const [signInEmail, setSignInEmail] = useState("");
   const [signInPassword, setSignInPassword] = useState("");
+
+  // "Remember this device for 7 days", offered at the code step.
+  const [trustDevice, setTrustDevice] = useState(false);
+
+  // Resetting a forgotten password.
+  const [resetEmail, setResetEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [resendIn, setResendIn] = useState(0);
 
   // Loading and Error States
   const [errorMessage, setErrorMessage] = useState("");
@@ -80,22 +129,78 @@ export default function Home() {
   const [code, setCode] = useState("");
   const [keyCopied, setKeyCopied] = useState(false);
   const usernameRef = useRef<HTMLInputElement | null>(null);
+  const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const codeRef = useRef<HTMLInputElement | null>(null);
   const passwordSent = useRef(false); // a password has been submitted in this visit
   const checking = useRef(false); // a code is being checked right now
   const [stepped, setStepped] = useState(false); // the card has shown a second step at least once
 
   function goToDashboard() {
+    // Navie introduces itself on the first Overview visit after this sign-in (components/overview/NavieGreeting).
+    try {
+      sessionStorage.setItem("smartflow-just-signed-in", String(Date.now()));
+    } catch {
+      /* storage blocked: Navie greets as on a return visit */
+    }
     window.location.assign('/dashboard');
   }
 
   // A session that stopped after the password is never resumed (lib/mfa.ts): a reload, or a
-  // bounce back from the dashboard, starts again from the password.
+  // bounce back from the dashboard, starts again from the password. The one exception is the link in a
+  // password-reset email, which opens a session meant only for choosing a new password.
+  const viaResetLink = useRef(false);
   useEffect(() => {
+    viaResetLink.current = /type=recovery/.test(window.location.hash);
     void supabase.auth.getSession().then(({ data }) => {
-      if (data.session && !isFullySignedIn(data.session) && !passwordSent.current) dropPasswordOnlySession();
+      if (data.session && !isFullySignedIn(data.session) && !passwordSent.current && !viaResetLink.current) dropPasswordOnlySession();
     });
+    const remembered = rememberedEmail();
+    if (remembered) {
+      setSignInEmail(remembered);
+      setRememberMe(true);
+    }
+    // Back from the dashboard after a spell of inactivity (lib/idle.ts): say so, then tidy the address.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("signedOut") === "idle") {
+      const minutes = Number(params.get("after"));
+      setSuccessMessage(`You were signed out after ${Number.isFinite(minutes) && minutes > 0 ? `${minutes} minutes` : "a while"} without activity. Sign in again to continue.`);
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    // The link in Navie's reset email: redeem its token here, then carry on to the new password.
+    const resetHash = params.get("reset");
+    if (resetHash) {
+      passwordSent.current = true;
+      window.history.replaceState(null, "", window.location.pathname);
+      setStepped(true);
+      setIsLoading(true);
+      void supabase.auth.verifyOtp({ token_hash: resetHash, type: "recovery" }).then(async ({ error }) => {
+        if (error) {
+          setIsLoading(false);
+          setStep({ kind: "forgot-email" });
+          setErrorMessage("That reset link has expired or was already used. Send yourself a new one.");
+          return;
+        }
+        await afterResetVerified();
+        setIsLoading(false);
+      });
+    }
+    // The reset link lands here with a recovery session: carry on from it.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event !== "PASSWORD_RECOVERY") return;
+      window.history.replaceState(null, "", window.location.pathname);
+      setTimeout(() => void afterResetVerified(), 0);
+    });
+    return () => subscription.unsubscribe();
+    // afterResetVerified only reads setters and Supabase; running this once is the point
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The resend countdown for the reset email.
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = window.setTimeout(() => setResendIn((n) => n - 1), 1000);
+    return () => window.clearTimeout(t);
+  }, [resendIn]);
 
   async function handleSignInSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -106,8 +211,9 @@ export default function Home() {
     passwordSent.current = true;
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: signInUsername,
+      const email = signInEmail.trim();
+      const { data: signedIn, error } = await supabase.auth.signInWithPassword({
+        email,
         password: signInPassword,
       });
 
@@ -115,6 +221,25 @@ export default function Home() {
         setErrorMessage(error.message);
         setIsLoading(false);
         return;
+      }
+
+      setRememberedEmail(rememberMe ? email : null);
+
+      // A remembered device skips the code, if the backend still honours its pass for this account.
+      const userId = signedIn.user?.id ?? null;
+      const accessToken = signedIn.session?.access_token ?? null;
+      if (accessToken && deviceTrustFor(userId)) {
+        const honoured = await fetch(`${BACKEND}/api/auth/trusted-device/check`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${accessToken}`, ...deviceTrustHeader(userId) },
+        }).then((r) => r.ok).catch(() => false);
+        if (honoured) {
+          markActivity();
+          await Promise.race([logActivity({ type: "session.login" }, accessToken), new Promise((r) => setTimeout(r, 1500))]);
+          goToDashboard();
+          return;
+        }
+        forgetDeviceTrust(); // expired, revoked or for another server: ask for the code as usual
       }
 
       // The password was right. That opens nothing yet: the code does.
@@ -134,18 +259,167 @@ export default function Home() {
     }
   }
 
-  /** Back to the password, ending the half-finished sign-in. */
+  /** Back to the password, ending the half-finished sign-in (or password reset). */
   function backToPassword() {
     dropPasswordOnlySession();
     setErrorMessage("");
     setCode("");
     setSignInPassword("");
     setKeyCopied(false);
+    setNewPassword("");
+    setConfirmPassword("");
     setStep({ kind: "password" });
   }
 
+  /* ---- Forgotten password ---- */
+
+  function startForgot() {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setResetEmail(signInEmail.trim());
+    setStepped(true);
+    setStep({ kind: "forgot-email" });
+  }
+
+  async function sendResetCode(email: string) {
+    setErrorMessage("");
+    setIsLoading(true);
+    /* Navie sends the email when the backend is set up for it (19 Oct 2026): a 6-digit code and a link, from
+       the Navie mailbox (Back-End/src/routes/auth.routes.ts). Otherwise Supabase sends its own email, which
+       carries a link only, unless the project's template adds a code. */
+    let via: "navie" | "supabase" = "supabase";
+    try {
+      const r = await fetch(`${BACKEND}/api/auth/password-reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const j = await r.json().catch(() => null);
+      // Navie sent either the reset link or, inside the 30-day wait, a notice saying when the next change is
+      // allowed (Back-End/src/routes/auth.routes.ts). The page is not told which: the inbox is.
+      if (r.ok) via = "navie";
+      else if (r.status !== 503) {
+        setIsLoading(false);
+        setErrorMessage(resetProblem({ code: j?.code, status: r.status, message: j?.message }));
+        return;
+      }
+    } catch {
+      /* backend unreachable: Supabase sends it instead */
+    }
+    if (via === "supabase") {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/` });
+      if (error) {
+        setIsLoading(false);
+        setErrorMessage(resetProblem(error));
+        return;
+      }
+    }
+    setIsLoading(false);
+    setResendIn(RESEND_AFTER_S);
+    setStep({ kind: "forgot-code", email });
+  }
+
+  function handleResetEmailSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    const email = resetEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setErrorMessage("Enter the email address you sign in with.");
+      return;
+    }
+    void sendResetCode(email);
+  }
+
+  /** The emailed code (or link) was right: the session it opened may only change the password. */
+  async function afterResetVerified() {
+    // Within 30 days of the last change the reset ends here (19 Oct 2026, user request): say so, and close
+    // the session the link opened so it cannot change anything.
+    const { data: s } = await supabase.auth.getSession();
+    const refused = cooldownMessage(s.session?.user.user_metadata);
+    if (refused) {
+      try {
+        await supabase.auth.signOut({ scope: "local" });
+      } catch {
+        /* local tokens are cleared regardless */
+      }
+      setStep({ kind: "password" });
+      setSuccessMessage("");
+      setErrorMessage(refused);
+      return;
+    }
+    try {
+      const factorId = await verifiedFactorId();
+      setCode("");
+      setErrorMessage("");
+      setStepped(true);
+      setStep(factorId ? { kind: "forgot-mfa", factorId } : { kind: "forgot-new" });
+    } catch (err: unknown) {
+      setErrorMessage(resetProblem(err));
+    }
+  }
+
+  async function handleResetMfaSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (step.kind !== "forgot-mfa" || isLoading) return;
+    if (!/^\d{6}$/.test(code)) {
+      setErrorMessage("Enter the 6-digit code from your authenticator app.");
+      return;
+    }
+    setErrorMessage("");
+    setIsLoading(true);
+    try {
+      await submitCode(step.factorId, code);
+      setCode("");
+      setStep({ kind: "forgot-new" });
+    } catch (err: unknown) {
+      setCode("");
+      setErrorMessage(secondStepProblem(err));
+    }
+    setIsLoading(false);
+  }
+
+  async function handleNewPasswordSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (isLoading) return;
+    if (newPassword.length < 8) {
+      setErrorMessage("Use at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setErrorMessage("The two passwords do not match.");
+      return;
+    }
+    setErrorMessage("");
+    setIsLoading(true);
+    // The stamps revoke every remembered device and start the 30-day cool-down (lib/account-device.ts).
+    const { data, error } = await supabase.auth.updateUser({ password: newPassword, data: passwordStamps() });
+    if (error) {
+      setIsLoading(false);
+      setErrorMessage(resetProblem(error));
+      return;
+    }
+    forgetDeviceTrust();
+    const { data: current } = await supabase.auth.getSession();
+    const [emailed] = await Promise.all([
+      notifyPasswordChanged("reset", current.session?.access_token),
+      Promise.race([logActivity({ type: "session.password_reset" }, current.session?.access_token), new Promise((r) => setTimeout(r, 1500))]),
+    ]);
+    // Sign in afresh with the new password: the reset session is ended here.
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      /* local tokens are cleared regardless */
+    }
+    setIsLoading(false);
+    setSignInEmail(data.user?.email ?? resetEmail);
+    setSignInPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setStep({ kind: "password" });
+    setSuccessMessage(`Your password has been changed${emailed ? " and we've emailed you a confirmation" : ""}. Sign in with your new password.`);
+  }
+
   async function verifyCode(value: string) {
-    if (step.kind === "password" || checking.current) return;
+    if ((step.kind !== "verify" && step.kind !== "enroll") || checking.current) return;
     if (!/^\d{6}$/.test(value)) {
       setErrorMessage("Enter the 6-digit code from your authenticator app.");
       return;
@@ -156,6 +430,20 @@ export default function Home() {
 
     try {
       const accessToken = await submitCode(step.factorId, value);
+      markActivity();
+      // "Remember this device for 7 days": a pass from the backend, kept on this browser only.
+      if (trustDevice) {
+        try {
+          const r = await fetch(`${BACKEND}/api/auth/trusted-device`, { method: "POST", headers: { authorization: `Bearer ${accessToken}` } });
+          const j = await r.json().catch(() => null);
+          const { data: s } = await supabase.auth.getSession();
+          if (r.ok && j?.data?.token && s.session?.user) {
+            saveDeviceTrust({ userId: s.session.user.id, email: s.session.user.email ?? "", token: j.data.token, expiresAt: j.data.expiresAt });
+          }
+        } catch {
+          /* not remembered this time; the sign-in itself still goes ahead */
+        }
+      }
       // The audit log's entries, under the token the code just earned: a first-time setup, then
       // the sign-in itself. Not awaited past a moment: the dashboard opens either way.
       const firstTime = step.kind === "enroll";
@@ -203,7 +491,8 @@ export default function Home() {
   // focus by hand matters here: the form that held it has just been replaced.
   useEffect(() => {
     if (isLoading) return;
-    if (step.kind !== "password") codeRef.current?.focus();
+    if (step.kind === "verify" || step.kind === "enroll" || step.kind === "forgot-mfa") codeRef.current?.focus();
+    else if (step.kind === "forgot-email" || step.kind === "forgot-new") firstFieldRef.current?.focus();
     else if (stepped) usernameRef.current?.focus();
   }, [step.kind, isLoading, stepped]);
 
@@ -352,14 +641,23 @@ export default function Home() {
           <div className="login-card-head">
             <span className="login-accent" aria-hidden="true" />
             {step.kind !== "password" && (
-              <button type="button" className="si-link" onClick={backToPassword} disabled={isLoading}>
-                Use a different account
+              <button type="button" className="si-back" onClick={backToPassword} disabled={isLoading}>
+                <ArrowLeft size={15} strokeWidth={2.4} aria-hidden="true" />
+                {isForgot(step.kind) ? "Back to sign in" : "Use a different account"}
               </button>
             )}
           </div>
 
           <h2 id="si-card-title">
-            {step.kind === "password" ? "Sign In to Dashboard" : step.kind === "enroll" ? "Set Up Authenticator" : "Enter Your Code"}
+            {{
+              password: "Sign In to Dashboard",
+              enroll: "Set Up Authenticator",
+              verify: "Enter Your Code",
+              "forgot-email": "Reset Your Password",
+              "forgot-code": "Check Your Email",
+              "forgot-mfa": "Confirm It\u2019s You",
+              "forgot-new": "Choose a New Password",
+            }[step.kind]}
           </h2>
 
           {step.kind === "password" ? (
@@ -373,17 +671,18 @@ export default function Home() {
             {successMessage && <div className="login-alert success" role="status">{successMessage}</div>}
 
             <label className="field-group">
-              <span>Username / Email</span>
+              <span>Email</span>
               <div className="input-with-icon">
-                <User className="input-icon-left" size={20} aria-hidden="true" />
+                <Mail className="input-icon-left" size={20} aria-hidden="true" />
                 <input
                   ref={usernameRef}
-                  type="text"
-                  name="username"
-                  autoComplete="username"
-                  placeholder="Enter your username or email"
-                  value={signInUsername}
-                  onChange={(e) => setSignInUsername(e.target.value)}
+                  type="email"
+                  name="email"
+                  autoComplete="email"
+                  inputMode="email"
+                  placeholder="Enter your email"
+                  value={signInEmail}
+                  onChange={(e) => setSignInEmail(e.target.value)}
                   required
                   disabled={isLoading}
                 />
@@ -427,7 +726,7 @@ export default function Home() {
                 <span>Remember me</span>
               </label>
 
-              <button type="button" className="forgot-link" disabled={isLoading}>
+              <button type="button" className="forgot-link" disabled={isLoading} onClick={startForgot}>
                 Forgot password?
               </button>
             </div>
@@ -443,6 +742,89 @@ export default function Home() {
               {isLoading
                 ? <i className="submit-spinner" aria-hidden="true" />
                 : <ArrowRight className="submit-arrow" size={22} strokeWidth={2} aria-hidden="true" />}
+            </button>
+          </form>
+          ) : step.kind === "forgot-email" ? (
+          <form onSubmit={handleResetEmailSubmit} className="login-form" noValidate onFocus={() => setHoldFocus(true)} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHoldFocus(false); }}>
+            <p className="mfa-lead">Enter the email address you sign in with. We&rsquo;ll email you a link to reset your password.</p>
+            {errorMessage && <div className="login-alert danger" role="alert">{errorMessage}</div>}
+            <label className="field-group">
+              <span>Email</span>
+              <div className="input-with-icon">
+                <Mail className="input-icon-left" size={20} aria-hidden="true" />
+                <input ref={firstFieldRef} type="email" name="email" autoComplete="email" inputMode="email" placeholder="Enter your email" value={resetEmail} onChange={(e) => setResetEmail(e.target.value)} required disabled={isLoading} />
+              </div>
+            </label>
+            <button type="submit" className="submit-button" disabled={isLoading} onPointerEnter={flashLights} onFocus={flashLights}>
+              <span>{isLoading ? "Sending..." : "Send reset link"}</span>
+              {isLoading ? <i className="submit-spinner" aria-hidden="true" /> : <ArrowRight className="submit-arrow" size={22} strokeWidth={2} aria-hidden="true" />}
+            </button>
+          </form>
+          ) : step.kind === "forgot-code" ? (
+          <div className="login-form mfa-form">
+            {/* A link only, no code (19 Oct 2026, user choice). The link opens this page, which carries on to the
+                authenticator code (if the account has one) and the new password. */}
+            {/* Short and in order (20 Oct 2026, user request: the paragraph was too wordy). "If an account uses"
+                stays in the small print: the page never says whether the address has an account. */}
+            <p className="mfa-lead">Navie sent an email to <b>{step.email}</b>.</p>
+            <ol className="si-steps">
+              <li><span>Open the email from <b>Navie (SmartFlow NLEX)</b>.</span></li>
+              <li><span>Click <b>Reset password</b> in this browser.</span></li>
+            </ol>
+            <p className="si-hint">
+              Changed your password in the last 30 days? The email tells you when you can change it again instead.
+            </p>
+            {errorMessage && <p className="mfa-error" role="alert">{errorMessage}</p>}
+            <div className="si-resend-row">
+              <span>No email? Check Spam, or</span>
+              <button type="button" className="si-resend" disabled={isLoading || resendIn > 0} onClick={() => void sendResetCode(step.email)}>
+                <RotateCw size={14} strokeWidth={2.4} aria-hidden="true" />
+                {resendIn > 0 ? `Resend in ${resendIn} s` : "Resend"}
+              </button>
+            </div>
+          </div>
+          ) : step.kind === "forgot-mfa" ? (
+          <form onSubmit={handleResetMfaSubmit} className="login-form mfa-form" noValidate onFocus={() => setHoldFocus(true)} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHoldFocus(false); }}>
+            <p className="mfa-lead">Your account has an authenticator, so enter the code it shows for SmartFlow NLEX before choosing a new password.</p>
+            <div className="mfa-field">
+              <label className="field-group">
+                <span>Authenticator code</span>
+                <div className="input-with-icon">
+                  <ShieldCheck className="input-icon-left" size={20} aria-hidden="true" />
+                  <input ref={codeRef} className="mfa-code" type="text" name="one-time-code" inputMode="numeric" autoComplete="one-time-code" placeholder="Enter the 6-digit code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} required disabled={isLoading} aria-invalid={errorMessage ? true : undefined} aria-describedby={errorMessage ? "reset-mfa-error" : undefined} />
+                </div>
+              </label>
+              {errorMessage && <p id="reset-mfa-error" className="mfa-error" role="alert">{errorMessage}</p>}
+            </div>
+            <button type="submit" className="submit-button" disabled={isLoading} onPointerEnter={flashLights} onFocus={flashLights}>
+              <span>{isLoading ? "Verifying..." : "Verify"}</span>
+              {isLoading ? <i className="submit-spinner" aria-hidden="true" /> : <ArrowRight className="submit-arrow" size={22} strokeWidth={2} aria-hidden="true" />}
+            </button>
+          </form>
+          ) : step.kind === "forgot-new" ? (
+          <form onSubmit={handleNewPasswordSubmit} className="login-form" noValidate onFocus={() => setHoldFocus(true)} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHoldFocus(false); }}>
+            <p className="mfa-lead">Choose a new password of at least 8 characters. You&rsquo;ll sign in with it straight after.</p>
+            {errorMessage && <div className="login-alert danger" role="alert">{errorMessage}</div>}
+            <label className="field-group">
+              <span>New password</span>
+              <div className="input-with-icon">
+                <Lock className="input-icon-left" size={20} aria-hidden="true" />
+                <input ref={firstFieldRef} type={showPassword ? "text" : "password"} name="new-password" autoComplete="new-password" placeholder="At least 8 characters" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={8} disabled={isLoading} />
+                <button type="button" className="icon-button-right" aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((v) => !v)} disabled={isLoading}>
+                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              </div>
+            </label>
+            <label className="field-group">
+              <span>Confirm new password</span>
+              <div className="input-with-icon">
+                <Lock className="input-icon-left" size={20} aria-hidden="true" />
+                <input type={showPassword ? "text" : "password"} name="confirm-password" autoComplete="new-password" placeholder="Type it again" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required disabled={isLoading} />
+              </div>
+            </label>
+            <button type="submit" className="submit-button" disabled={isLoading} onPointerEnter={flashLights} onFocus={flashLights}>
+              <span>{isLoading ? "Saving..." : "Change password"}</span>
+              {isLoading ? <i className="submit-spinner" aria-hidden="true" /> : <ArrowRight className="submit-arrow" size={22} strokeWidth={2} aria-hidden="true" />}
             </button>
           </form>
           ) : (
@@ -501,6 +883,13 @@ export default function Home() {
                 </div>
               </label>
               {errorMessage && <p id="mfa-code-error" className="mfa-error" role="alert">{errorMessage}</p>}
+            </div>
+
+            <div className="mfa-remember">
+              <label className="remember-row">
+                <input type="checkbox" checked={trustDevice} onChange={(e) => setTrustDevice(e.target.checked)} disabled={isLoading} />
+                <span>Remember this device for 7 days</span>
+              </label>
             </div>
 
             <button

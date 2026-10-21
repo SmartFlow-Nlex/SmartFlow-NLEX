@@ -25,7 +25,11 @@ export type MascotMood =
   /** Headlights fading out (logout confirmed). */
   | "off";
 
-const SRC = "/brand/nlex-mascot.png";
+/* The new Navie (public/brand/nlex_mascot.png, 20 Oct 2026), as a light web copy cropped to the car. The old
+   /brand/nlex-mascot.png was deleted when the new pictures arrived, which left every small mascot -- the logout
+   dialog, the empty and error states -- as a broken image. The headlight and mirror marks in globals.css were
+   re-measured on this picture. */
+const SRC = "/brand/navie.webp";
 
 export default function Mascot({
   size = 96,
@@ -82,7 +86,7 @@ export default function Mascot({
       aria-hidden="true"
     >
       <span className="mc-body">
-        <img className="mc-img" src={SRC} alt="" width={1107} height={1161} draggable={false} decoding="async" />
+        <img className="mc-img" src={SRC} alt="" width={644} height={640} draggable={false} decoding="async" />
         <i className="mc-light is-l" />
         <i className="mc-light is-r" />
         {mood === "error" ? (

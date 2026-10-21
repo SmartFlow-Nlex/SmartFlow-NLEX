@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { fmtKm } from "../lib/km-post.js";
 import {
   type MaintenanceConflict,
   createMaintenanceScheduleInDb,
@@ -30,7 +31,9 @@ const audit = (req: Request, action: string, targetId: string, details: Record<s
 // NOTE: these endpoints are also consumed by the mobile app — no mock fallbacks;
 // a database failure must surface as an error, never as fake success.
 
-const kmText = (a: number, b: number) => (a === b ? `Km ${a}` : `Km ${Math.min(a, b)}–${Math.max(a, b)}`);
+// start_km/end_km are stored as MEASURED km; a message shows the official post (lib/km-post.ts).
+const kmText = (a: number, b: number) =>
+  a === b ? `Km ${fmtKm(a)}` : `Km ${fmtKm(Math.min(a, b))}–${fmtKm(Math.max(a, b))}`;
 
 // 409 body for an overlap: a readable message plus the rows it collides with, so
 // the dashboard can list them and the mobile app can show its own wording.

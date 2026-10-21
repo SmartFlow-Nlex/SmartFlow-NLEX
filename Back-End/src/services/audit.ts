@@ -58,7 +58,7 @@ export interface Actor {
 /** Who made the request: the bearer token's user if Supabase accepts it, else the name the page sent, else anonymous. */
 export async function actorOf(req: Request): Promise<Actor> {
   const token = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : undefined;
-  const user = await verifiedUser(token);
+  const user = await verifiedUser(token, req.header("x-device-trust") ?? undefined);
   if (user) return { user: user.email, role: user.role, verified: true };
   const claimed = req.header("x-user");
   return { user: claimed || "anonymous", role: null, verified: false };

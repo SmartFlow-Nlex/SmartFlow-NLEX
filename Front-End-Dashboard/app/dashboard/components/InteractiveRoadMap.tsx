@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { cachedJson } from "../../../lib/cached-json";
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -10,6 +11,7 @@ import { cachedJson } from "../../../lib/cached-json";
 ══════════════════════════════════════════════════════════════════════════════ */
 
 import { useNlexExits, accessLabel, displayExitName, type NlexExit } from "../../../lib/nlex-exits";
+import { fmtKm } from "../../../lib/km-post";
 
 /* Twelve vehicles per carriageway, across three lanes, and they drive the road
  * they are on.
@@ -119,10 +121,12 @@ function carJourney(bands: Band[], dir: "NB" | "SB") {
     const speed = CAR_SPEED[band.colorClass];
     if (!speed) return;
     const w = band.pct / 100 / n;
-    /* Anchored where the band is drawn: the block's left edge going north,
-       its right edge going south, because a block is the road ahead of its
-       exit and the two directions run opposite ways along one axis. */
-    const a = dir === "NB" ? i / n : (i + 1) / n - w;
+    /* Exactly where the band is drawn, read from the band itself: usually the
+       block's left edge going north and its right edge going south, but at the
+       two terminal exits the queue sits on the approach and is drawn at the
+       OTHER end. Assuming the usual side there made the cars brake over clear
+       road short of the red at Sta. Ines (user report, 16 Oct 2026). */
+    const a = band.anchor === "left" ? i / n : (i + 1) / n - w;
     const mid = a + w / 2;
     const half = Math.max(w, CAR_MIN_ZONE) / 2;
     zones.push({ a: mid - half, b: mid + half, speed });
@@ -435,6 +439,10 @@ export default function InteractiveRoadMap() {
   /* What the reader is pointing at on the road itself, as opposed to which
      exit they are near. A band is a queue on one carriageway, so it can say
      things the exit rail cannot: how much road it covers and what it costs. */
+  const router = useRouter();
+  /** The Live Map, zoomed on this exit and carriageway (it reads ?exit= and ?dir=). */
+  const openOnLiveMap = (exitName: string, direction: string) =>
+    router.push(`/dashboard/map-comparison?exit=${encodeURIComponent(exitName)}&dir=${encodeURIComponent(direction)}`);
   const [hoveredJam, setHoveredJam] = useState<{
     exit: string;
     dir: "NB" | "SB";
@@ -755,6 +763,14 @@ export default function InteractiveRoadMap() {
                   }
                   onMouseLeave={() => setHoveredJam(null)}
                   onBlur={() => setHoveredJam(null)}
+                  /* A jam opens the Live Map zoomed on it (20 Oct 2026, user request). */
+                  onClick={() => openOnLiveMap(r.exit.exit_name, dir)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openOnLiveMap(r.exit.exit_name, dir);
+                    }
+                  }}
                 />
               )}
             </span>
@@ -842,7 +858,7 @@ export default function InteractiveRoadMap() {
           <>
             <span className="ds-rd-rail-name">
               {displayExitName(focused.exit.exit_name)}
-              <em>km {focused.exit.km.toFixed(1)}</em>
+              <em>km {fmtKm(focused.exit.km)}</em>
             </span>
             <span className="ds-rd-rail-facts">
               {railFacts("NB", focused.nb, focused.nbAccess)}
@@ -894,12 +910,12 @@ export default function InteractiveRoadMap() {
                       onMouseLeave={() => setActiveStation(null)}
                       onFocus={() => setActiveStation(r.exit.exit_name)}
                       onBlur={() => setActiveStation(null)}
-                      aria-label={`${displayExitName(r.exit.exit_name)}, km ${r.exit.km.toFixed(1)}. Northbound ${
+                      aria-label={`${displayExitName(r.exit.exit_name)}, km ${fmtKm(r.exit.km)}. Northbound ${
                         r.nbAccess === "No Access" ? "no ramp" : r.nb.status.toLowerCase()
                       }. Southbound ${r.sbAccess === "No Access" ? "no ramp" : r.sb.status.toLowerCase()}.`}
                     >
                       <span className="ds-rd-node" aria-hidden="true"><HexagonRoad /></span>
-                      <span className="ds-rd-km">{r.exit.km.toFixed(1)}</span>
+                      <span className="ds-rd-km">{fmtKm(r.exit.km)}</span>
                     </button>
                   </li>
                 );

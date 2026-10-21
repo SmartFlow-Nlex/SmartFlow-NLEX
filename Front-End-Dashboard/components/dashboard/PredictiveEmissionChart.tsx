@@ -19,8 +19,9 @@
  *   - No Weather toggle. The volume module trained weather-free twins, so its
  *     toggle changes the forecast itself. No such twins exist for CO2, so a
  *     toggle here would be a control that does nothing.
- *   - No Future width buttons. The volume run stores 28 future days and can show
- *     2wk/1mo; this run stores exactly the 7-day validated horizon.
+ *   - Fewer Future widths. The run stores 90 days, but a width is offered only
+ *     where the horizon study says the model beat the baseline; with the current
+ *     run that is the 7-day validated horizon alone (see `horizons`).
  *
  * HORIZON is 7 days, versus 14 for volume, per the modelling diagram. The two
  * sets of error metrics are therefore NOT directly comparable.
@@ -39,6 +40,7 @@ import { useThemeTokens, zoneTints } from "./useThemeTokens";
 import { useChartTheme } from "../../lib/chart-theme";
 import { fmtAxis, gapMarkArea, nowMarkLine, withAlpha } from "../../lib/chart-kit";
 import EvidenceModal from "./EvidenceModal";
+import { Term } from "./emissionsTerms";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -327,6 +329,61 @@ export default function PredictiveEmissionChart() {
     }));
   }, [data]);
 
+  /* Which "Ahead" widths to offer: the validated horizon always, then each longer step only where the run
+     stores that many days and some stretch the step adds beat the baseline in the horizon study. Read
+     from the payload, so a retrain changes the control by itself. */
+  const horizons = useMemo(() => {
+    const none = { offered: [] as { label: string; d: number }[], hidden: null as string | null, why: null as string | null };
+    if (!data) return none;
+    const base = data.horizonDays;
+    const stored = data.split.futureDays > 0 ? data.split.futureDays : base;
+    const buckets = data.horizonAccuracy ?? [];
+    const steps = [
+      { label: `${base} d`, d: Math.min(base, stored) },
+      ...[
+        { label: "2 wk", d: 14 },
+        { label: "1 mo", d: 28 },
+        { label: "2 mo", d: 60 },
+        { label: "3 mo", d: 90 },
+      ].filter((s) => s.d > base),
+    ];
+    const offered: { label: string; d: number }[] = [];
+    const dropped: string[] = [];
+    let failedAt: HzBucket | null = null;
+    let notStored = false;
+    steps.forEach((s, i) => {
+      if (i === 0) return void offered.push(s);
+      if (s.d > stored) return void (notStored = true);
+      // What this step adds beyond the previous one; offered if any of it is usable.
+      const added = buckets.filter((bk) => bk.hHi > steps[i - 1].d && bk.hLo <= s.d);
+      if (buckets.length === 0 || added.length === 0 || added.some((bk) => bk.usable)) return void offered.push(s);
+      dropped.push(s.label);
+      failedAt ??= added[0];
+    });
+    if (offered.length === steps.length) return { ...none, offered };
+    const f = failedAt as HzBucket | null;
+    const why = f
+      ? `The run stores ${stored} days ahead, but tested on past data the model loses to simply repeating last week from day ${f.hLo}` +
+        (f.wmape != null && f.baselineWmape != null ? ` (days ${f.hLo}–${f.hHi}: ${f.wmape.toFixed(1)}% error against ${f.baselineWmape.toFixed(1)}%)` : "") +
+        `, so ${dropped.join(", ")} ${dropped.length === 1 ? "is" : "are"} not offered. They appear here by themselves once a retrained model beats that baseline.`
+      : notStored
+        ? `The published forecast stores only ${stored} days ahead.`
+        : null;
+    const hidden = f
+      ? offered.length === 1
+        ? "longer ranges lose to repeating last week, so are not offered"
+        : `${dropped.join(", ")} not offered: ${dropped.length === 1 ? "it loses" : "they lose"} to repeating last week`
+      : notStored
+        ? `only ${stored} days stored`
+        : null;
+    return { offered, hidden, why };
+  }, [data]);
+
+  // Keep the drawn width on an offered step: the default (7) and the stored run can disagree.
+  useEffect(() => {
+    if (horizons.offered.length && !horizons.offered.some((h) => h.d === futureDays)) setFutureDays(horizons.offered[0].d);
+  }, [horizons, futureDays]);
+
   const option: EChartsOption | null = useMemo(() => {
     if (!view) return null;
     const { holdoutStart, futureStart } = view;
@@ -613,8 +670,8 @@ export default function PredictiveEmissionChart() {
 
   const titleRow = (
     <h3>
-      Corridor CO₂ Walk-Forward Forecast
-      <InfoTooltip text="Modeled daily CO₂ for the corridor: the model's past fit, its held-out test period, and the forecast ahead. Pick a model above." />
+      Corridor <Term t="CO₂" /> Walk-Forward Forecast
+      <InfoTooltip text="Modeled daily CO₂ (carbon dioxide) for the corridor: the model's past fit, its held-out test period, and the forecast ahead. Pick a model above." />
     </h3>
   );
 
@@ -934,62 +991,36 @@ export default function PredictiveEmissionChart() {
 
         <div className="fc-group">
           <span className="fc-label">Ahead</span>
-          <div className="nc-em-seg">
-            {/* Same steps as the volume panel, EXCEPT that a range is dropped when
-                everything it newly shows failed the gates.
-                  7d -> 2wk adds days 8-14 and nothing else, and that whole
-                  stretch loses to repeating last week — so the option exists
-                  only to display unusable output.
-                  7d -> 1mo also spans those days, but the majority it adds
-                  (15-30) is usable, and the weak part is shaded on the chart.
-                An option is offered when it buys something; days you cannot
-                avoid drawing get a warning instead. Computed from
-                gold.ml_horizon_accuracy, so a retrain that fixes the weak
-                stretch brings the option back on its own. */}
-            {[
-              { label: "7 d", d: 7 },
-              { label: "2 wk", d: 14 },
-              { label: "1 mo", d: 28 },
-              { label: "2 mo", d: 60 },
-              { label: "3 mo", d: 90 },
-            ]
-              /* A range whose added days all failed the horizon study is shown greyed out with the reason,
-                 not removed: a missing button reads as "the system cannot do this", when it can and the
-                 published model just has not earned it. It comes back by itself after a retrain passes. */
-              .map((it, i, arr) => {
-                const buckets = data.horizonAccuracy ?? [];
-                const prev = i === 0 ? 0 : arr[i - 1].d;
-                const added = buckets.filter((bk) => bk.hHi > prev && bk.hLo <= it.d);
-                const failed = i > 0 && buckets.length > 0 && added.length > 0 && !added.some((bk) => bk.usable);
-                const beyond = it.d > data.split.futureDays;
-                const worst = added.length ? added.reduce((a, b) => ((b.wmape ?? 0) > (a.wmape ?? 0) ? b : a)) : null;
-                return { ...it, failed, beyond, worst };
-              })
-              .map((it) => (
+          {/* Only the horizons the published forecast can back (17 Oct 2026, testers EM-9: "the week option
+              cannot be clicked"; "the forecast only covers 7 days but other day options are offered"). Every
+              longer step used to be drawn as a disabled button, and with the current run all of them were,
+              so the strip was one live button and four dead ones. A step is now offered only if the run
+              stores that many days AND some stretch it adds beat the baseline in gold.ml_horizon_accuracy.
+              With one horizon left there is nothing to choose, so it is stated rather than drawn as a
+              control, and why the rest are missing is on the note. A retrain that passes brings them back
+              with no code change. */}
+          {horizons.offered.length > 1 ? (
+            <div className="nc-em-seg">
+              {horizons.offered.map((it) => (
                 <button
                   key={it.label}
                   type="button"
                   className={futureDays === it.d ? "is-on" : ""}
                   aria-pressed={futureDays === it.d}
                   onClick={() => setFutureDays(it.d)}
-                  disabled={it.beyond || it.failed}
-                  title={
-                    it.beyond
-                      ? `The published forecast stores ${data.split.futureDays} days ahead.`
-                      : it.failed
-                        ? `Not offered yet: tested on past data, the published model loses to simply repeating last week this far ahead${
-                            it.worst?.wmape != null && it.worst?.baselineWmape != null
-                              ? ` (${it.worst.wmape.toFixed(1)}% error against ${it.worst.baselineWmape.toFixed(1)}%)`
-                              : ""
-                          }. It is offered automatically once a retrained model passes.`
-                        : undefined
-                  }
                 >
                   {it.label}
                 </button>
               ))}
-          </div>
-          <span className="fc-note">validated at {VALIDATED_HORIZON}d</span>
+            </div>
+          ) : (
+            <span className="nc-em-seg">
+              <span className="nc-em-seg-fixed">{horizons.offered[0]?.label ?? `${data.horizonDays} d`}</span>
+            </span>
+          )}
+          <span className="fc-note nc-em-hz-note" title={horizons.why ?? undefined}>
+            validated at {data.horizonDays}d{horizons.hidden ? ` · ${horizons.hidden}` : ""}
+          </span>
         </div>
       </div>
 

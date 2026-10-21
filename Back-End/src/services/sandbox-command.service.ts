@@ -1,4 +1,5 @@
 import { chat, extractJson, GlmError, isGlmConfigured } from "../lib/glm.client.js";
+import { kmMeasured, kmPost } from "../lib/km-post.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════
    AI SANDBOX — NATURAL-LANGUAGE COMMAND PARSER
@@ -301,7 +302,14 @@ function normalise(ctx: SandboxContext): Norm {
    abbreviated an array with "..." (see the notes in lib/glm.client.ts).
 ───────────────────────────────────────────────────────────────────────────── */
 
-const km2 = (n: number) => n.toFixed(2);
+/* The model and the operator talk in OFFICIAL km posts, the numbers on every other page (lib/km-post.ts); the
+   context, the checks and the simulation run on MEASURED km, the real positions. So every km written into the prompt
+   or a warning goes out through km2 (measured -> official), and every km in the model's answer comes back through
+   answerInMeasuredKm (official -> measured) before the checks see it. Where two exits share a post (Bocaue, Km 27)
+   the post names a 620 m stretch; a point given as Km 27 lands in the middle of it. */
+const km2 = (n: number) => kmPost(n).toFixed(2);
+/** An official post already, printed the same way. */
+const post2 = (p: number) => p.toFixed(2);
 const nameOf = (n: Norm, id: number | null) => n.exits.find((e) => e.exit_id === id)?.exit_name ?? "?";
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const weekdayOf = (iso: string) => {
@@ -350,7 +358,7 @@ FAMILY and its variant fields (leave a field out to use the usual value):
   minor_collision                         {"label":"rear_end"|"sideswipe"|"hit_and_run"}
   multi_vehicle_collision, self_accident  {}
   overturned_vehicle, flood, scheduled_roadworks   {}   duration must be manual
-  (A flood brings its own heavy rain first, then the water rises, so never add a separate rain event for it. A flood may cover every lane: "all lanes", "lahat ng linya", "buong kalsada" → lane 1 and extraLanes with every other lane of that carriageway; both directions → one flood on each.)
+  (A flood brings its own heavy rain first, then the water rises, so never add a separate rain event for it. A flood may cover every lane: "all lanes", "lahat ng linya", "buong kalsada" → lane 1 and extraLanes with every other lane of that carriageway; both directions → one flood on each, or one flood with "direction":"both".)
   rain                                    {"intensity":"light"|"moderate"|"heavy"}   duration must be manual; it rains on BOTH carriageways (one rain action is enough; it is added to each)`;
 
 /* The words operators use. Tagalog and Taglish first, because English is the model's default and needs no help;
@@ -742,7 +750,12 @@ function checkActions(raw: unknown, n: Norm, warnings: string[]): Action[] {
           break;
         }
         const what = "Event";
-        let d = dirOf(a, what);
+        /* Weather on both carriageways at once (UAT 16 Oct 2026, SB-13: "allow both carriageways to be affected"). Rain
+           always goes on both (below); a flood goes on one, or on each when the model writes "direction":"both" for
+           "both directions" rather than one action per carriageway, which the prompt also accepts. It starts on the
+           named place's carriageway, so the place is never "named for" the other one. */
+        const floodBothWays = family === "flood" && typeof a.direction === "string" && a.direction.trim().toLowerCase() === "both";
+        let d = floodBothWays ? (typeof a.placeId === "string" ? placeById.get(a.placeId)?.direction : undefined) ?? n.focus : dirOf(a, what);
         const v = (a.variant && typeof a.variant === "object" ? a.variant : {}) as Record<string, unknown>;
         const variant: VariantFields = {};
         if (family === "breakdown_in_lane" || family === "breakdown_shoulder") {
@@ -847,16 +860,20 @@ function checkActions(raw: unknown, n: Norm, warnings: string[]): Action[] {
         if (stretch !== null) frameStretch(stretch, what);
         else if (km !== null && placeId === null) frameOn(km, what);
 
-        // Lane: only on the road, and only for a family that has one.
-        let lane: number | null = null;
-        let extraLanes: number[] = [];
-        if (placeId === null && !NO_LANE.has(family)) {
-          const l = num(a.lane);
-          const cap = lanes[d];
-          if (l !== null && Number.isInteger(l) && l >= 1 && (cap == null ? l <= LANES_MAX + 1 : l <= cap)) lane = l;
-          else if (l !== null) warnings.push(`${what}: ${d} has no lane ${l} (it has ${cap ?? "?"}); the usual lane for it is used.`);
-          if (MULTI_LANE.has(family)) extraLanes = laneList(a.extraLanes, d, what).filter((x) => x !== lane);
-        }
+        // Lane: only on the road, and only for a family that has one. Per carriageway: a flood on both is checked on each.
+        const lanesOn = (cd: Dir): { lane: number | null; extraLanes: number[] } => {
+          let lane: number | null = null;
+          let extraLanes: number[] = [];
+          if (placeId === null && !NO_LANE.has(family)) {
+            const l = num(a.lane);
+            const cap = lanes[cd];
+            if (l !== null && Number.isInteger(l) && l >= 1 && (cap == null ? l <= LANES_MAX + 1 : l <= cap)) lane = l;
+            else if (l !== null) warnings.push(`${what}: ${cd} has no lane ${l} (it has ${cap ?? "?"}); the usual lane for it is used.`);
+            if (MULTI_LANE.has(family)) extraLanes = laneList(a.extraLanes, cd, what).filter((x) => x !== lane);
+          }
+          return { lane, extraLanes };
+        };
+        const { lane, extraLanes } = lanesOn(d);
 
         let startMinutes = clamp(Math.round((num(a.startMinutes) ?? 0) * 10) / 10, 0, START_MAX_MIN);
 
@@ -926,6 +943,21 @@ function checkActions(raw: unknown, n: Norm, warnings: string[]): Action[] {
             rainNoted = true;
             warnings.push("Rain falls on the whole road, so it is added to both carriageways.");
           }
+          break;
+        }
+        if (floodBothWays) {
+          /* The copy is checked against its own carriageway, not the first one's: the two can have different lane
+             counts, and a place on one carriageway only (a gas station, the Bocaue Barrier) floods that one. A plaza
+             on both floods at each carriageway's own plaza, whose km differs. */
+          out.push(ev);
+          const od = other(d);
+          const p = typeof a.placeId === "string" ? placeById.get(a.placeId) : undefined;
+          const twin = p ? n.places.find((q) => q.direction === od && q.name === p.name) : undefined;
+          if (p && !twin) {
+            warnings.push(`${what}: ${p.name} is on ${d} only, so the flood is on ${d} only.`);
+            break;
+          }
+          out.push({ ...ev, direction: od, km: twin && stretch === null ? twin.km : km, ...lanesOn(od) });
           break;
         }
         out.push(ev);
@@ -1145,10 +1177,26 @@ export function rangesInWords(command: string, corridor: KmSpan): WordRanges {
 }
 
 /** The model's actions with a range from the words put back on the one event that lost it (see rangesInWords). */
+/** The model's answer with every km field turned from an official post into a measured km (see km2). */
+function answerInMeasuredKm(raw: unknown): unknown {
+  if (!Array.isArray(raw)) return raw;
+  return raw.map((x) => {
+    if (!x || typeof x !== "object") return x;
+    const a = { ...(x as Record<string, unknown>) };
+    for (const f of ["km", "fromKm", "toKm"] as const) {
+      const v = num(a[f]);
+      if (v !== null) a[f] = Number(kmMeasured(v).toFixed(3));
+    }
+    return a;
+  });
+}
+
+/* Runs on the model's answer BEFORE answerInMeasuredKm, so everything in it is an official post: the operator's
+   words, the model's numbers and the corridor ends it is checked against. */
 function withWordRanges(raw: unknown, command: string, n: Norm, warnings: string[]): unknown {
   if (!Array.isArray(raw) || !command) return raw;
-  const kms = n.exits.map((e) => e.km).filter((k): k is number => typeof k === "number");
-  const corridor = kms.length ? { fromKm: Math.min(...kms), toKm: Math.max(...kms) } : { fromKm: n.route.fromKm, toKm: n.route.toKm };
+  const kms = n.exits.map((e) => e.km).filter((k): k is number => typeof k === "number").map(kmPost);
+  const corridor = kms.length ? { fromKm: Math.min(...kms), toKm: Math.max(...kms) } : { fromKm: kmPost(n.route.fromKm), toKm: kmPost(n.route.toKm) };
   const words = rangesInWords(command, corridor);
   if (!words.km && !words.clock) return raw;
   const items = raw.filter((x): x is Record<string, unknown> => !!x && typeof x === "object");
@@ -1171,7 +1219,7 @@ function withWordRanges(raw: unknown, command: string, n: Norm, warnings: string
       };
       if (asTime(ev.at)) fixed.at = null;
       if (asTime(ev.until)) fixed.until = null;
-      warnings.push(`Event: Km ${km2(words.km.fromKm)}–${km2(words.km.toKm)} is a stretch, so the event covers all of it.`);
+      warnings.push(`Event: Km ${post2(words.km.fromKm)}–${post2(words.km.toKm)} is a stretch, so the event covers all of it.`);
     }
   }
   if (words.clock && !clockOf(ev.at)) {
@@ -1203,13 +1251,22 @@ function withAllLanes(raw: unknown, command: string, n: Norm, warnings: string[]
     const x = a as Record<string, unknown>;
     const family = typeof x.family === "string" ? x.family : "";
     if (x.type !== "add_event" || !MULTI_LANE.has(family as FamilyKey)) return a;
-    const d = x.direction === "SB" ? "SB" : x.direction === "NB" ? "NB" : null;
-    const count = d ? n.dirs[d]?.lanes ?? null : null;
+    // A "both" flood is split per carriageway later (checkActions), and that split drops any lane a carriageway
+    // does not have. So "both" takes every lane of the wider carriageway here and the narrower one is trimmed there.
+    const d = x.direction === "SB" ? "SB" : x.direction === "NB" ? "NB" : x.direction === "both" ? "both" : null;
+    const count =
+      d === "both"
+        ? Math.max(n.dirs.NB?.lanes ?? 0, n.dirs.SB?.lanes ?? 0) || null
+        : d ? n.dirs[d]?.lanes ?? null : null;
     if (!d || count == null || count < 1) return a;
     const all = Array.from({ length: count }, (_, i) => i + 1);
     const had = [x.lane, ...(Array.isArray(x.extraLanes) ? x.extraLanes : [])].filter((v) => typeof v === "number");
     if (had.length === count) return a;
-    warnings.push(`${family === "flood" ? "Flood" : "Event"} on ${d}: "all lanes" read as lanes ${all.join(", ")}.`);
+    warnings.push(
+      d === "both"
+        ? `${family === "flood" ? "Flood" : "Event"} on both carriageways: "all lanes" read as every lane of each.`
+        : `${family === "flood" ? "Flood" : "Event"} on ${d}: "all lanes" read as lanes ${all.join(", ")}.`,
+    );
     return { ...x, lane: 1, extraLanes: all.slice(1) };
   });
 }
@@ -1217,7 +1274,7 @@ function withAllLanes(raw: unknown, command: string, n: Norm, warnings: string[]
 export function planFromModelOutput(parsed: Record<string, unknown>, ctx: SandboxContext, command = ""): CommandPlan {
   const n = normalise(ctx);
   const warnings: string[] = [];
-  const actions = checkActions(withAllLanes(withWordRanges(parsed.actions, command, n, warnings), command, n, warnings), n, warnings);
+  const actions = checkActions(answerInMeasuredKm(withAllLanes(withWordRanges(parsed.actions, command, n, warnings), command, n, warnings)), n, warnings);
   const reply = typeof parsed.reply === "string" && parsed.reply.trim().length > 0 ? parsed.reply.trim() : "Command understood.";
   const unsupported = typeof parsed.unsupported === "string" && parsed.unsupported.trim().length > 0 ? parsed.unsupported.trim() : null;
   return { actions, reply, unsupported, warnings };

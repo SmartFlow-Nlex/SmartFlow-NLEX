@@ -3,6 +3,9 @@
  * Rejects any data that does NOT belong to the NLEX corridor.
  */
 import type { RawRow } from "./parser.js";
+// Rejection messages name the corridor and a row's km as official km posts (lib/km-post.ts); the accept
+// bounds below stay on the DPWH chainage they test.
+import { fmtKm, KM_POST_END, KM_POST_START } from "../lib/km-post.js";
 import type { DatasetType } from "./classifier.js";
 
 export interface CleanResult {
@@ -208,7 +211,7 @@ function cleanIncident(rows: RawRow[], type: "road_crash" | "stalled_vehicle" | 
     const isValidKm = km !== null && isNlexKmPost(km);
 
     if (!isPlaza && !isValidKm) {
-      rejected.push({ row, reason: `Location '${location}' is NOT in the NLEX corridor (Km ${NLEX_KM_MIN}–${NLEX_KM_MAX}).` });
+      rejected.push({ row, reason: `Location '${location}' is NOT in the NLEX corridor (Km ${KM_POST_START}–${KM_POST_END}).` });
       continue;
     }
 
@@ -266,7 +269,7 @@ function cleanAccidentBreakdownEvent(rows: RawRow[], type: "accident_data" | "br
     }
 
     if (!isNlexKmPost(km)) {
-      rejected.push({ row, reason: `Km ${km.toFixed(1)} is NOT in the NLEX corridor (Km ${NLEX_KM_MIN}-${NLEX_KM_MAX}).` });
+      rejected.push({ row, reason: `Km ${fmtKm(km)} is NOT in the NLEX corridor (Km ${KM_POST_START}–${KM_POST_END}).` });
       continue;
     }
 

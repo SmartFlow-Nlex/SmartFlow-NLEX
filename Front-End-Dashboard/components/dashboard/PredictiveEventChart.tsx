@@ -348,7 +348,7 @@ export default function PredictiveEventChart() {
           rich: {
             add: { color: K.ink, fontWeight: 600, fontSize: 13, lineHeight: 17 },
             pct: { color: K.ink2, fontWeight: 400, fontSize: 11, lineHeight: 17 },
-            ctx: { color: K.muted, fontSize: 10, lineHeight: 14 },
+            ctx: { color: K.muted, fontSize: 11, lineHeight: 14 },
           },
         },
       },

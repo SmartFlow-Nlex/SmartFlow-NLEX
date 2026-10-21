@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import type { StageEvent } from "./stage-bus";
+import { emitStage, type StageEvent } from "./stage-bus";
 import type { NlexMascotHandles } from "./mascot/createNlexMascotModel";
 import type { FaceExpression } from "./mascot/face";
 
@@ -259,6 +259,15 @@ export function createMascot3D(
   let flash = 0;
   let pending = false;
   let intro: "wait" | "drive" | "turn" | "done" = "wait";
+  /* Said once per car, when it first comes to rest: the Overview's speech bubble waits for it (20 Oct 2026),
+     so Navie talks after driving in rather than while still far down the road. Deferred, because the bus
+     also feeds this car's own event handler. */
+  let arrivalAnnounced = false;
+  const announceArrival = () => {
+    if (arrivalAnnounced) return;
+    arrivalAnnounced = true;
+    setTimeout(() => emitStage({ type: "arrived" }), 0);
+  };
   let introT = 0;
   let roadMode = true; // false on narrow screens, where the car does not stand on the painted road
   let turnFrom = 0; // the yaw the car arrives with, eased to face the reader
@@ -472,6 +481,7 @@ export function createMascot3D(
       if (still) {
         // A settled frame: facing the reader, at rest, smiling.
         intro = "done";
+        announceArrival();
         hopT = -1;
         sq = sqV = 0;
         shakeT = -1;
@@ -598,6 +608,7 @@ export function createMascot3D(
         handles.wheels.forEach((w) => (w.rotation.x += dt * 4 * (1 - u)));
         if (u >= 1) {
           intro = "done";
+          announceArrival();
           sqV += 2.2;
           f?.play("excited", 1.1);
           burst();
@@ -855,6 +866,9 @@ export function createMascot3D(
         f?.talk(0.8);
         burst();
         spin = Math.max(spin, 5);
+        emitStage({ type: "clicked" });
+      } else if (e.type === "talk") {
+        f?.talk(e.seconds);
       }
     },
     setLight(light) {

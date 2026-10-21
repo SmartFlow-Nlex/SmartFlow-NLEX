@@ -4,6 +4,7 @@ import { getTrafficAnalyticsFromDb } from "./traffic.service.js";
 import { getEmissionsAnalyticsFromDb } from "./emissions.service.js";
 import { getCorridorStatusFull } from "./corridor-status.service.js";
 import { getMaintenanceSchedulesFromDb } from "./maintenance.service.js";
+import { fmtKmRange, nearExitsText } from "../lib/km-post.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════
    AI EXPLAIN — PLAIN-LANGUAGE BRIEFINGS FOR THE NON-PREDICTIVE MODULES
@@ -99,7 +100,9 @@ async function buildOverview(months: "3" | "12" | "all"): Promise<Built | null> 
     );
   }
   if (d.highlights?.worstSegmentKm != null) {
-    facts.push(`Most congested point: km ${d.highlights.worstSegmentKm}.`);
+    // An incident hotspot bin, already an official km post (incident.service.ts); 0 is the group south of Km 12.
+    const bin = d.highlights.worstSegmentKm;
+    facts.push(`Most congested point: ${bin === 0 ? "south of Km 12 (before Balintawak)" : `Km ${bin}–${bin === 12 ? 14 : bin + 4}`}.`);
   }
   if (d.coverage) {
     facts.push(
@@ -317,33 +320,57 @@ async function buildMaintenance(): Promise<Built | null> {
     };
   }
 
+  /* The row is nlex_maintenance_schedules as maintenance.service.ts selects it: starts_at / ends_at,
+     start_km / end_km (MEASURED km; printed as official posts through lib/km-post), direction and the
+     lane_closure text. This used to read start_time, location and lanes_affected, none of which exist, so
+     every briefing said nothing was dated in the future and cancelled work was counted as planned. */
+  type Row = {
+    title: string; start_km: number; end_km: number; direction: string; lane_closure: string;
+    starts_at: string | Date; ends_at: string | Date; status: string;
+  };
+  const all = rows as Row[];
   const byStatus = new Map<string, number>();
-  for (const r of rows) byStatus.set(r.status, (byStatus.get(r.status) ?? 0) + 1);
+  for (const r of all) byStatus.set(r.status, (byStatus.get(r.status) ?? 0) + 1);
 
   const facts = [
-    `${rows.length} maintenance schedules recorded.`,
-    `By status: ${[...byStatus.entries()].map(([s, n]) => `${s} ${n}`).join(", ")}.`,
+    `${all.length} maintenance schedules recorded.`,
+    `By status: ${[...byStatus.entries()].map(([s, n]) => `${s.replace("_", " ")} ${n}`).join(", ")}.`,
   ];
 
-  const now = Date.now();
-  const upcoming = rows
-    .filter((r: any) => r.start_time && new Date(r.start_time).getTime() >= now)
-    .sort((a: any, b: any) => +new Date(a.start_time) - +new Date(b.start_time))
-    .slice(0, 6);
+  // Cancelled work closes nothing; everything below is about the plan that still stands.
+  const live = all.filter((r) => r.status !== "cancelled" && r.status !== "completed");
+  const ms = (t: string | Date) => new Date(t).getTime();
+  const pht = (t: string | Date) =>
+    new Date(t).toLocaleString("en-US", { timeZone: "Asia/Manila", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+  const describe = (r: Row) => {
+    const lo = Math.min(r.start_km, r.end_km);
+    const hi = Math.max(r.start_km, r.end_km);
+    // The exits either end, named as the page names them (lib/km-post.ts's nearExitsText).
+    return `"${r.title}", ${r.direction} ${fmtKmRange(lo, hi)} (${nearExitsText(lo, hi)}), ${r.lane_closure}, ${pht(r.starts_at)} to ${pht(r.ends_at)} PHT`;
+  };
 
+  const now = Date.now();
+  const underway = live.filter((r) => ms(r.starts_at) <= now && ms(r.ends_at) > now);
+  const upcoming = live
+    .filter((r) => ms(r.starts_at) > now)
+    .sort((a, b) => ms(a.starts_at) - ms(b.starts_at));
+  // Past their end but never closed out, or past their start but never begun: the page flags both.
+  const overrun = live.filter((r) => ms(r.ends_at) <= now);
+  const lateStart = live.filter((r) => r.status === "scheduled" && ms(r.starts_at) <= now && ms(r.ends_at) > now);
+
+  if (underway.length) {
+    facts.push(`On the road now (${underway.length}): ${underway.slice(0, 4).map(describe).join("; ")}.`);
+  }
   if (upcoming.length) {
-    facts.push(
-      `Next scheduled: ${upcoming
-        .map(
-          (r: any) =>
-            `${r.location ?? r.exit_name ?? "unnamed location"} on ${String(r.start_time).slice(0, 10)}` +
-            `${r.lanes_affected != null ? `, ${r.lanes_affected} lane(s) affected` : ""}` +
-            `${r.status ? ` [${r.status}]` : ""}`,
-        )
-        .join("; ")}.`,
-    );
+    facts.push(`Next scheduled (${upcoming.length} in all): ${upcoming.slice(0, 6).map(describe).join("; ")}.`);
   } else {
-    facts.push("No schedules are dated in the future — every record is in the past.");
+    facts.push("No work that is still planned starts in the future; nothing is scheduled ahead.");
+  }
+  if (lateStart.length) {
+    facts.push(`${lateStart.length} schedule(s) passed their start time but are still marked scheduled, not in progress.`);
+  }
+  if (overrun.length) {
+    facts.push(`${overrun.length} schedule(s) are past their end time but were never marked completed or cancelled.`);
   }
 
   return {

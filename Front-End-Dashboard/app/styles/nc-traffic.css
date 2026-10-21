@@ -960,3 +960,20 @@ select.nct-select.is-warn { color: var(--color-warning); border-color: var(--col
   .nct-split,
   .nct-split.is-event { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Prescriptive (15 Oct 2026, user request): the advisory and the event ranking each take a full row.
+   In a third-width column the advisory's three action cards stacked into a tall narrow tower beside a
+   much shorter table; full width, they sit side by side and the table gets its room. */
+.viz-traffic .nct-span-resp,
+.viz-traffic .nct-span-event { grid-column: 1 / -1; }
+.viz-traffic .nct-span-resp .nct-actions-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 980px) { .viz-traffic .nct-span-resp .nct-actions-3 { grid-template-columns: minmax(0, 1fr); } }
+
+/* Empty / loading panels: a plain note when a first load is slow, and a Try again button on an error
+   (17 Oct 2026, testers TR-12). */
+.nct-empty-note { display: block; margin-top: 6px; font-size: 13px; color: var(--text-muted); }
+.nct-empty-retry { margin-top: 10px; }
+
+/* Year filter above the Arena events full list (17 Oct 2026, testers TR-5). */
+.nct-year-filter { align-self: flex-start; flex-wrap: wrap; margin: 0 20px 10px; }
+

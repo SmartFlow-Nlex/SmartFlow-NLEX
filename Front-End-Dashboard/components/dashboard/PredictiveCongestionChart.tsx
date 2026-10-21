@@ -9,6 +9,7 @@ import CongestionNarrative from "./CongestionNarrative";
 import { loadForecast } from "./prescriptiveTraffic.shared";
 import { REPLAY_ACTUAL, REPLAY_FORECAST, useMeasuredWidth } from "./replayViz";
 import { plazaLabel } from "../../lib/nlex-exits";
+import { fmtKm } from "../../lib/km-post";
 import { useChartTheme, heatRamp, type ChartTheme } from "../../lib/chart-theme";
 import { useTrafficPalette, type TrafficPalette } from "./trafficPalette";
 import SignalGlyph from "./SignalGlyph";
@@ -187,7 +188,8 @@ function jamTooltip(exit: string, state: State, j: Jam | null | undefined): stri
     <div style="margin-top:7px; color:var(--text-muted); font-size:0.74em; line-height:1.45;">${basis}</div>`;
 }
 
-// Corridor position now arrives per row from the API (gold.exit_km_post), which
+// Corridor position now arrives per row from the API as MEASURED km (sorting
+// and spans use it; every label prints the official post through fmtKm), which
 // carries all 20 exits. The hardcoded table here held only 10, so half the
 // corridor rendered "km —" AND sorted to the end — and congestion propagates
 // between NEIGHBOURS, so a wrong row order hides the one pattern worth seeing.
@@ -319,6 +321,17 @@ function baseLabel(baseTs: string | null | undefined): string | null {
   const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
   return d.toLocaleString("en-US", { weekday: "short", day: "numeric", month: "short",
                                      hour: "numeric", hour12: true }).replace(" ", " ");
+}
+
+/** The hour starting `hoursAhead` after the base, in words: "Fri 17 Oct, 3 PM". */
+function hourStamp(baseTs: string | null | undefined, hoursAhead: number): string | null {
+  if (!baseTs) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(baseTs);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  d.setHours(d.getHours() + hoursAhead);
+  const day = d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" });
+  return `${day}, ${d.toLocaleTimeString("en-US", { hour: "numeric", hour12: true })}`;
 }
 
 type ModelInfo = {
@@ -461,7 +474,7 @@ function EvBlock({ n, title, children }: { n: number; title: string; children: R
 }
 
 const kmLabel = (e?: { km: number | null; est: boolean }) =>
-  e?.km == null ? "—" : `${e.km}${e.est ? "*" : ""}`;
+  e?.km == null ? "—" : `${fmtKm(e.km)}${e.est ? "*" : ""}`;
 
 type CellItem = {
   value: [number, number, number];
@@ -909,12 +922,15 @@ export default function PredictiveCongestionChart() {
       .sort((a, b) => a - b);
     const contiguous =
       severeIdx.length > 1 && severeIdx[severeIdx.length - 1] - severeIdx[0] === severeIdx.length - 1;
+    // Kept with their exit, so a span printed as km posts can also say which exits it runs between.
     const severeKms = [...atRisk]
-      .map((seg) => KMI.get(seg)?.km)
-      .filter((k): k is number => k != null)
-      .sort((a, b) => a - b);
-    const kmFrom = severeKms.length ? severeKms[0] : null;
-    const kmTo = severeKms.length ? severeKms[severeKms.length - 1] : null;
+      .map((seg) => ({ seg, km: KMI.get(seg)?.km }))
+      .filter((r): r is { seg: string; km: number } => r.km != null)
+      .sort((a, b) => a.km - b.km);
+    const kmFrom = severeKms.length ? severeKms[0].km : null;
+    const kmTo = severeKms.length ? severeKms[severeKms.length - 1].km : null;
+    const kmFromExit = severeKms.length ? severeKms[0].seg : null;
+    const kmToExit = severeKms.length ? severeKms[severeKms.length - 1].seg : null;
 
     // Every hour identical means the 12 columns carry no information, and a
     // "peak window" label would invent a worst hour that does not exist.
@@ -966,6 +982,8 @@ export default function PredictiveCongestionChart() {
       severePerHour,
       kmFrom,
       kmTo,
+      kmFromExit,
+      kmToExit,
       flatHours,
       allHours,
       maxHour,
@@ -1161,7 +1179,7 @@ export default function PredictiveCongestionChart() {
       axisLabel: {
         interval: 0,
         color: K.ink2, fontWeight: 600, fontSize: 11, lineHeight: 13,
-        rich: { a: { fontSize: 10, color: K.muted, fontWeight: 500 } },
+        rich: { a: { fontSize: 11, color: K.muted, fontWeight: 500 } },
         formatter: (v: string) => {
           const [dow, date] = v.split("\n");
           return date ? `${dow}\n{a|${date}}` : dow;
@@ -1316,15 +1334,18 @@ export default function PredictiveCongestionChart() {
              the day view labels every other column; the cells are still one
              per hour and the tooltip names each one. */
           interval: frameHours > 20 ? 2 : frameHours > 14 ? 1 : 0,
-          color: K.ink2, fontWeight: 600, fontSize: 10, lineHeight: 12,
+          // 11 px, the floor for chart text (A11Y-1); hideOverlap drops a label rather than smear two.
+          color: K.ink2, fontWeight: 600, fontSize: 11, lineHeight: 13, hideOverlap: true,
           // Second line is the clock time, deliberately quieter than the horizon.
           // An elapsed column printed "10AM" in the same weight as a future
           // one, which is what let a stale forecast read as upcoming. Past
           // hours are greyed so the boundary between done and due is visible.
           rich: {
-            a: { fontSize: 10, color: K.muted, fontWeight: 500 },
-            past: { fontSize: 11, color: K.faint, fontWeight: 600 },
-            pastc: { fontSize: 10, color: K.faint2, fontWeight: 500 },
+            a: { fontSize: 11, color: K.muted, fontWeight: 500 },
+            /* Elapsed hours: muted italic. The 24% neutral they used was 2:1 on the card, below any
+               reading floor; italic and the lighter ink still set them apart from the hours to come. */
+            past: { fontSize: 11, color: K.muted, fontWeight: 500, fontStyle: "italic" },
+            pastc: { fontSize: 11, color: K.muted, fontWeight: 400, fontStyle: "italic" },
           },
           formatter: (v: string, idx: number) => {
             const [hz, clock] = v.split("\n");
@@ -1352,14 +1373,14 @@ export default function PredictiveCongestionChart() {
         // Same two-line format in both, so a column reads the same
         // wherever the eye lands.
         axisLabel: {
-          show: true, color: K.ink2, fontSize: 10, fontWeight: 600, lineHeight: 12,
+          show: true, color: K.ink2, fontSize: 11, fontWeight: 600, lineHeight: 13, hideOverlap: true,
           // An elapsed column printed "10AM" in the same weight as a future
           // one, which is what let a stale forecast read as upcoming. Past
           // hours are greyed so the boundary between done and due is visible.
           rich: {
-            a: { fontSize: 10, color: K.muted, fontWeight: 500 },
-            past: { fontSize: 11, color: K.faint, fontWeight: 600 },
-            pastc: { fontSize: 10, color: K.faint2, fontWeight: 500 },
+            a: { fontSize: 11, color: K.muted, fontWeight: 500 },
+            past: { fontSize: 11, color: K.muted, fontWeight: 500, fontStyle: "italic" },
+            pastc: { fontSize: 11, color: K.muted, fontWeight: 400, fontStyle: "italic" },
           },
           formatter: (v: string, idx: number) => {
             const [hz, clock] = v.split("\n");
@@ -1388,7 +1409,7 @@ export default function PredictiveCongestionChart() {
         // without a ladder of numbers competing with the bar values themselves.
         interval: segments.length,
         splitLine: { show: true, lineStyle: { color: K.hover } },
-        axisLabel: { show: true, color: K.muted, fontSize: 10,
+        axisLabel: { show: true, color: K.muted, fontSize: 11,
                      formatter: (v: number) => (v === 0 ? "0" : `${v} exits`) },
         axisLine: { show: false },
         axisTick: { show: false },
@@ -1516,7 +1537,7 @@ export default function PredictiveCongestionChart() {
       : nCongested > segments.length * 0.6
       ? `all but ${clear.length} exit${clear.length === 1 ? "" : "s"} (${clear.join(", ")} keep${clear.length === 1 ? "s" : ""} moving)`
       : model.contiguous && kmSpan != null
-      ? `${nCongested} neighbouring exits over about ${kmSpan} km, km ${model.kmFrom} to ${model.kmTo}`
+      ? `${nCongested} neighbouring exits over about ${kmSpan} km, km ${fmtKm(model.kmFrom)} (${model.kmFromExit}) to km ${fmtKm(model.kmTo)} (${model.kmToExit})`
       : `${nCongested} of ${segments.length} exits (${model.congestedSegments.join(", ")})`;
 
   /* Presentation of the same "who": the variant is picked by exactly the
@@ -1695,8 +1716,11 @@ export default function PredictiveCongestionChart() {
         {stat(`${nCongested} of ${segments.length}`, nCongested > 0 ? "exits with a jam" : "all moving",
               nCongested > 0 ? (nSevere > 0 ? "var(--color-danger)" : "var(--color-warning)") : "var(--color-success)",
               nCongested > 0 ? `${nCongested} of ${segments.length} exits are expected to carry a jam somewhere in this window` : undefined)}
-        {stat(kmSpan != null ? `km ${model.kmFrom}–${model.kmTo}` : "—",
-              kmSpan != null ? `${kmSpan} km affected` : "none predicted", undefined,
+        {stat(kmSpan != null ? `km ${fmtKm(model.kmFrom)}–${fmtKm(model.kmTo)}` : "—",
+              // The exits at either end beside the posts, so the span is a place and not only two numbers.
+              kmSpan != null
+                ? model.kmFromExit === model.kmToExit ? `${model.kmFromExit} only` : `${model.kmFromExit} to ${model.kmToExit}, ${kmSpan} km`
+                : "none predicted", undefined,
               kmSpan != null ? (model.contiguous ? "One continuous stretch" : "Not contiguous — clear exits sit between the affected ones") : undefined)}
         {isWeek
           ? (() => {
@@ -1860,15 +1884,25 @@ export default function PredictiveCongestionChart() {
               }
             : null
         }
-        horizons={hzAcc.map((a) => ({
-          horizon: a.horizon,
-          accuracy: a.accuracy,
-          persistenceAccuracy: a.persistenceAccuracy,
-        }))}
+        /* Only the hours ahead this view shows (TR-9, 19 Oct 2026): sending all 48 measured rows to +168h
+           had the 12-hour view described with week-ahead figures. The first row is kept if nothing fits. */
+        horizons={(() => {
+          const reach = model.skippedHours + model.maxHour;
+          const inView = hzAcc.filter((a) => a.horizon <= reach);
+          return (inView.length ? inView : hzAcc.slice(0, 1)).map((a) => ({
+            horizon: a.horizon,
+            accuracy: a.accuracy,
+            persistenceAccuracy: a.persistenceAccuracy,
+          }));
+        })()}
+        severeBelowKmh={evalInfo?.thresholds_kmh?.severe_below ?? null}
+        heavyBelowKmh={evalInfo?.thresholds_kmh?.heavy_below ?? null}
         exitsTotal={segments.length}
         exitsSevere={nSevere}
         hoursCovered={hourLabels.length}
         neverPredictsHeavy={!model.everHeavy}
+        windowStart={hourStamp(model.baseTs, model.skippedHours + 1)}
+        windowEnd={hourStamp(model.baseTs, model.skippedHours + model.maxHour + 1)}
       />
 
       {/* Row 7: model evidence, one strip that opens it in a modal. */}

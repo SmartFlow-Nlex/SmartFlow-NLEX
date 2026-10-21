@@ -20,6 +20,7 @@
 import type { Session } from "@supabase/supabase-js";
 import { renderSVG } from "uqr";
 import { supabase } from "./supabase";
+import { deviceTrustFor } from "./account-device";
 
 /** How the authenticator app labels the account. */
 const ISSUER = "SmartFlow NLEX";
@@ -43,7 +44,24 @@ function claimOf(accessToken: string, name: string): unknown {
  * library can deadlock it.
  */
 export function isFullySignedIn(session: Session | null): boolean {
+  return passedCode(session) || (!!session && !!deviceTrustFor(session.user.id));
+}
+
+/**
+ * Whether this session passed the authenticator code itself, as opposed to signing in on a remembered
+ * device (19 Oct 2026). Changing the password needs this: Supabase requires the code for it.
+ * In the browser a remembered device is only a hint for the interface; the API checks the pass's
+ * signature (Back-End/src/lib/device-trust.ts).
+ */
+export function passedCode(session: Session | null): boolean {
   return !!session && claimOf(session.access_token, "aal") === "aal2";
+}
+
+/** The account's verified authenticator, if it has one (for asking for a code outside sign-in). */
+export async function verifiedFactorId(): Promise<string | null> {
+  const { data, error } = await supabase.auth.mfa.listFactors();
+  if (error) throw error;
+  return data.totp[0]?.id ?? null;
 }
 
 /**

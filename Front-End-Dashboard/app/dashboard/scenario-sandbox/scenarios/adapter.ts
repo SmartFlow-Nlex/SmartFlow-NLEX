@@ -2,6 +2,7 @@ import type { Interventions } from "../simulation";
 import { ASSUMPTIONS, closureStretch, incidentSlotsFor, operatorLaneToEngineIndex, type ClosureStretch, type RainIntensity } from "./assumptions";
 import { TEMPLATE_BY_FAMILY, assertNever, phaseOffsetFractions, type CarriagewayReach, type FamilyKey, type PhaseDef, type ScenarioVariant, type VehicleKind } from "./catalogue";
 import { resolveDuration, type CalibrationLevel, type DurationMode, type ResolvedDuration } from "./sampler";
+import { fmtKm, fmtKmRange } from "../../../../lib/km-post";
 
 /* ══════════════════════════════════════════════════════════════════════════════
    SCENARIO ADAPTER
@@ -518,14 +519,14 @@ export function eventProblems(event: ScenarioEvent, road: Road): readonly string
   const positionM = road.metresAt(event.positionKm);
   const own = eventStretchM(event, road);
   if (own !== null && event.stretchKm) {
-    const range = `Km ${event.stretchKm.fromKm.toFixed(2)}–${event.stretchKm.toKm.toFixed(2)}`;
+    const range = fmtKmRange(event.stretchKm.fromKm, event.stretchKm.toKm, 2);
     if (!Number.isFinite(own.fromM) || !Number.isFinite(own.toM) || own.fromM < -1 || own.toM > road.segmentLengthM + 1) {
       problems.push(`${range} runs outside the simulated stretch`);
     } else if (own.toM - own.fromM < MIN_EVENT_STRETCH_M - 0.5) {
       problems.push(`${range} is shorter than ${MIN_EVENT_STRETCH_M} m; give a single km instead`);
     }
   } else if (!Number.isFinite(positionM) || positionM < 0 || positionM > road.segmentLengthM) {
-    problems.push(`Km ${event.positionKm.toFixed(2)} is outside the simulated stretch`);
+    problems.push(`Km ${fmtKm(event.positionKm, 2)} is outside the simulated stretch`);
   }
   if (effect !== "speed_zone") {
     if (event.lane === null) problems.push("it has no lane");
@@ -553,7 +554,7 @@ export function eventProblems(event: ScenarioEvent, road: Road): readonly string
       // A flood may close the whole carriageway (the engine queues traffic behind it); nothing else may.
       if (count >= road.laneCount && event.variant.family !== "flood") problems.push(`"${p.label}" blocks ${count} lane${count === 1 ? "" : "s"}, which is every lane of a ${road.laneCount}-lane road`);
       else if (own === null && p.wreckLengthM !== null && Number.isFinite(positionM) && closureStretch(positionM, p.wreckLengthM, road.segmentLengthM) === null) {
-        problems.push(`"${p.label}" leaves no closure stretch at Km ${event.positionKm.toFixed(2)}`);
+        problems.push(`"${p.label}" leaves no closure stretch at Km ${fmtKm(event.positionKm, 2)}`);
       }
     }
   }

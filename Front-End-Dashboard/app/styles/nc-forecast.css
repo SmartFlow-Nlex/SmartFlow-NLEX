@@ -91,3 +91,33 @@
   letter-spacing: 1px;
   text-transform: uppercase;
 }
+
+/* --- One card language across Traffic, Incidents and Emissions (16 Oct 2026, user request) -------
+   Card titles everywhere take the Traffic tab's title style (.nct-title), whatever markup a page's
+   cards still use; the Emissions cards' bare headings and the older incident title class included. */
+.viz-emissions .nc-em-fc-head h3,
+.viz-emissions .nc-em-card-head h3,
+.viz-emissions .nc-em-acard h3,
+.inc-card-title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0;
+  color: var(--text-primary);
+}
+/* Control labels: one small muted uppercase label everywhere. */
+.inc-subhead.fc-label,
+.viz-emissions .nc-em-ctl-label,
+.fc-label {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* Past / Present / Future swatches: one size and shape on every forecast card (each keeps the tint of
+   its own chart's bands, which is what it is a key to). */
+.fc-legend-item > i,
+.inc-zone-swatch,
+.viz-emissions .nc-em-zone > i { width: 12px; height: 10px; border-radius: 3px; }

@@ -20,6 +20,10 @@ type DeploymentTimeStat = {
   avgResponseMin: number | null;
   medianResponseMin: number | null;
   avgServiceMin: number | null;
+  // How many of n carry a usable response / on-scene time, and how many responses were logged as 0 min.
+  responseN?: number;
+  serviceN?: number;
+  zeroResponseN?: number;
 };
 type EventBreakdownData = {
   breakdownCauses: { mainCause: string; subCause: string; count: number }[];
@@ -128,12 +132,12 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
   const slowest = responseRows.find((r) => r.n >= 5) ?? responseRows[0] ?? null;
 
   const responseOption: EChartsOption = {
-    grid: { left: 118, right: 64, top: 8, bottom: 28 },
+    grid: { left: 118, right: 104, top: 8, bottom: 30 },
     xAxis: { type: "value", name: M.axis, nameLocation: "middle", nameGap: 24, splitNumber: 3, axisLabel: { formatter: (v: number) => `${v} min` } },
     yAxis: {
       type: "category",
       data: displayRows.map((r) => r.group),
-      axisLabel: {},
+      axisLabel: { fontSize: 12 },
       axisTick: { show: false },
       // Hovering an axis label shows the full service name for the acronyms.
       triggerEvent: true,
@@ -144,7 +148,8 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
         const i = (p as { dataIndex: number }).dataIndex;
         const r = displayRows[i];
         const full = responseView === "service" ? `<br/><span style="color:var(--text-muted)">${fullServiceName(r.group)}</span>` : "";
-        const zero = M.pick(r) === 0 ? `<br/><span style="color:var(--text-muted)">0 min: dispatch and arrival were logged at the same time</span>` : "";
+        const zeroN = r.zeroResponseN ? `<br/><span style="color:var(--text-muted)">${fmtInt(r.zeroResponseN)} of ${fmtInt(r.n)} logged at 0 min (dispatch and arrival at the same minute)</span>` : "";
+        const zero = M.pick(r) === 0 ? `<br/><span style="color:var(--text-muted)">0 min: dispatch and arrival were logged at the same time</span>${zeroN}` : zeroN;
         return `<b>${r.group}</b>${full}<br/>Median response: ${r.medianResponseMin ?? "—"} min<br/>` +
           `Avg response: ${r.avgResponseMin ?? "—"} min<br/>Avg on-scene service time: ${r.avgServiceMin ?? "—"} min<br/>` +
           `${fmtInt(r.n)} dispatches${zero}`;
@@ -156,7 +161,15 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
         // A value label on every bar: a 0-minute group (Investigators are logged
         // on scene, dispatch time = arrival time) has no bar to see and used to
         // read as an empty row.
-        label: { show: true, position: "right", formatter: (p: unknown) => `${(p as { value: number }).value} min`, fontSize: 11, color: chartTheme.ink },
+        // A small group says how small (testers IN-9): Investigator's 0 min rests on 5 dispatches.
+        label: {
+          show: true, position: "right", fontSize: 12, color: chartTheme.ink,
+          formatter: (p: unknown) => {
+            const { value, dataIndex } = p as { value: number; dataIndex: number };
+            const r = displayRows[dataIndex];
+            return r && r.n < 20 ? `${value} min · ${fmtInt(r.n)} disp.` : `${value} min`;
+          },
+        },
         data: displayRows.map((r) => ({ value: M.pick(r), itemStyle: { color: RAMP[1], borderRadius: [0, 4, 4, 0] } })),
         barMaxWidth: 16,
       },
@@ -238,6 +251,28 @@ export default function EventBreakdownPanel({ months = "12", from, to }: Props) 
             </div>
           )}
         </div>
+        {/* Why a row can look blank (testers IN-9: "Investigator row is blank"). Not missing data: the
+            Investigator unit is logged on scene, dispatch time = arrival time, so most of its few
+            dispatches read 0 min and the median is 0, a bar of no length. Said in words under the chart. */}
+        {(() => {
+          const zeroRows = displayRows.filter((r) => M.pick(r) === 0);
+          if (zeroRows.length === 0) return null;
+          return (
+            <p className="inc-caption" style={{ marginTop: 6 }}>
+              {zeroRows.map((r, i) => (
+                <span key={r.group}>
+                  {i > 0 ? "; " : ""}
+                  <b>{r.group}</b> reads 0 min
+                  {r.zeroResponseN != null ? `: ${fmtInt(r.zeroResponseN)} of its ${fmtInt(r.n)} dispatches were logged with dispatch and arrival at the same minute` : ""}
+                </span>
+              ))}
+              . A real 0, not a gap, so there is no bar to draw.
+            </p>
+          );
+        })()}
+        {responseView === "service" && (
+          <p className="inc-caption" style={{ marginTop: 6 }}>Hover a service name for its full name. Bars with fewer than 20 dispatches show their count.</p>
+        )}
         <p className="inc-caption" style={{ marginTop: 6 }}>Follows Range. Weather and Incident type do not apply: the dispatch log carries neither.</p>
         <details className="nc-details">
           <summary>How this is measured</summary>

@@ -8,6 +8,7 @@ import InfoTooltip from "./InfoTooltip";
 import { shadeFor } from "./PredictiveCorridorChart";
 import { fmtInt, fmtNum } from "./incidentPredictive.shared";
 import CorridorRiskNarrative from "./CorridorRiskNarrative";
+import { fmtKm } from "../../lib/km-post";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -179,7 +180,7 @@ export default function CorridorRiskModelsPanel() {
         const d = (p as { data: { exitName: string; km: number; horizonDay: number; predicted: number | null; lastObserved: number | null; forecastDate: string | null } }).data;
         if (d.predicted == null) return `<b>${d.exitName}</b><br/>No forecast for this day`;
         const dateLabel = d.forecastDate ? new Date(`${d.forecastDate}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : `Day ${d.horizonDay}`;
-        return `<b>${d.exitName}</b> (Km ${d.km})<br/>${dateLabel}${d.horizonDay > 1 ? ` · rollout day ${d.horizonDay}` : " · direct forecast"}<br/>Predicted: ${fmtNum(d.predicted, 2)}` +
+        return `<b>${d.exitName}</b> (Km ${fmtKm(d.km)})<br/>${dateLabel}${d.horizonDay > 1 ? ` · rollout day ${d.horizonDay}` : " · direct forecast"}<br/>Predicted: ${fmtNum(d.predicted, 2)}` +
           (d.lastObserved != null ? `<br/>Last observed: ${fmtInt(d.lastObserved)}` : "");
       },
     },
@@ -389,7 +390,7 @@ export default function CorridorRiskModelsPanel() {
             <tbody>
               {exitsWithSignal.map((row) => (
                 <tr key={row.exitId} style={{ borderTop: "1px solid var(--border-default)" }}>
-                  <td style={{ padding: "4px 0", color: "var(--text-secondary)", fontWeight: 600 }}>{row.exitName} (Km {row.km})</td>
+                  <td style={{ padding: "4px 0", color: "var(--text-secondary)", fontWeight: 600 }}>{row.exitName} (Km {fmtKm(row.km)})</td>
                   <td style={{ padding: "4px 0", color: "var(--text-muted)" }}>
                     {row.coefs
                       .map((c) => `${VARIABLE_LABEL[c.variable] ?? c.variable} (${c.coefficient > 0 ? "+" : ""}${fmtNum(c.coefficient, 2)})`)

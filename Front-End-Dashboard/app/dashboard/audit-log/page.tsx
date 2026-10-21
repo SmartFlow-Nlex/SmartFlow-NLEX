@@ -7,6 +7,7 @@ import PageHeader from "../../../components/dashboard/PageHeader";
 import StateNote from "../../../components/stage/StateNote";
 import { SortableTh, useTableSort } from "../../../lib/table-sort";
 import { logActivity } from "../../../lib/backend-auth";
+import { fmtKmRange } from "../../../lib/km-post";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -117,7 +118,8 @@ function mapLog(r: RawLog): LogRow {
   const bits: string[] = [];
   if (typeof d.title === "string") bits.push(d.title);
   if (typeof d.filename === "string") bits.push(d.filename);
-  if (d.startKm != null && d.endKm != null) bits.push(`Km ${d.startKm}–${d.endKm}`);
+  // Maintenance logs carry the stored (measured) km; show the official posts.
+  if (d.startKm != null && d.endKm != null) bits.push(fmtKmRange(Number(d.startKm), Number(d.endKm), 2));
   const from = r.from_status ?? null;
   const to = r.to_status ?? (typeof d.to === "string" ? d.to : null);
   if (from && to && from !== to) bits.push(`${status(from)} → ${status(to)}`);

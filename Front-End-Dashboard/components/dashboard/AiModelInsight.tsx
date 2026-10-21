@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
+import { Sparkles } from "lucide-react";
 
 /**
  * The Narrative Explanation panel's body: a language model's read of the
@@ -45,6 +46,10 @@ type Insight = {
   summary: string;
   perModel: { model: string; verdict: string }[];
   caveat: string | null;
+  /** A closing "What this means: ..." line, from the endpoints that return one. */
+  meaning?: string | null;
+  /** "template" when the server composed the text from the figures because the language model failed. */
+  source?: "ai" | "template";
 };
 
 type Props = {
@@ -210,6 +215,19 @@ export default function AiModelInsight(props: Props) {
 
   return (
     <div className="nc-insight">
+      {/* Everything the language model wrote sits in this one box, labelled, so it cannot be mistaken
+          for the measured figures and the card's own text around it (16 Oct 2026, user request). */}
+      <div className="nc-ai">
+      <div className="nc-ai-head">
+        <Sparkles size={13} strokeWidth={2.2} aria-hidden="true" />
+        {/* A composed read-out is not the language model's, so it is not labelled as if it were. */}
+        <span className="nc-ai-label">{insight.source === "template" ? "Summary" : "AI summary"}</span>
+        <span className="nc-ai-sub">
+          {insight.source === "template"
+            ? "written from the figures on this card (the AI service did not answer)"
+            : "generated from the metrics on this card"}
+        </span>
+      </div>
       <p className="nc-insight-takeaway">{takeaway}</p>
 
       {shown.length > 0 && (
@@ -225,6 +243,12 @@ export default function AiModelInsight(props: Props) {
       )}
 
       {insight.caveat && <p className="nc-insight-caveat">{insight.caveat}</p>}
+
+      {insight.meaning && (
+        <p className="nc-insight-takeaway" style={{ marginTop: 8 }}>
+          <b>What this means:</b> {insight.meaning.replace(/^what this means:\s*/i, "")}
+        </p>
+      )}
 
       {(restOfSummary || more.length > 0) && (
         <details className="nc-details">
@@ -245,10 +269,9 @@ export default function AiModelInsight(props: Props) {
           </div>
         </details>
       )}
+      </div>
 
-      <p className="nc-insight-note">
-        Written by the language model from the validation metrics shown on this card. Check any figure against the numbers above before acting on it.
-      </p>
+      <p className="nc-insight-note">Check any figure against the measured numbers before acting on it.</p>
     </div>
   );
 }

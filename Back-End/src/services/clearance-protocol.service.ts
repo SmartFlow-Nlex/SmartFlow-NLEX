@@ -93,17 +93,32 @@ export function kaplanMeier(obs: Observation[]): SurvivalPoint[] {
   const n0 = obs.length;
   if (n0 === 0) return [{ minute: 0, survival: 1, atRisk: 0 }];
   const sorted = [...obs].sort((a, b) => a.duration - b.duration);
-  const eventTimes = Array.from(new Set(sorted.filter((o) => !o.censored).map((o) => o.duration))).sort((a, b) => a - b);
 
+  /* One pass over the sorted sample, a tie group at a time (19 Oct 2026). The earlier version re-scanned
+     the WHOLE sample for d(t) at every distinct event time -- O(n x distinct times) -- and durations come
+     from second-precision timestamps, so nearly every event is its own time: 11,819 breakdowns over 12
+     months (6,476 times) cost seconds, and Range "All" (48k breakdowns) about 40 s, all of it synchronous,
+     so the Node event loop stalled and EVERY dashboard request waited behind it. That is the "Breakdown
+     never loads" half of testers' IN-15..IN-21. Output is identical: points only at times with at least
+     one real clearance, n(t) = everyone with duration >= t (the group's start index), d(t) = the
+     uncensored members of the tie group. */
   const points: SurvivalPoint[] = [{ minute: 0, survival: 1, atRisk: n0 }];
   let survival = 1;
-  let idx = 0; // how many observations (any kind) have duration strictly < current t
-  for (const t of eventTimes) {
-    while (idx < sorted.length && sorted[idx].duration < t) idx++;
-    const atRisk = n0 - idx;
-    const d = sorted.filter((o) => o.duration === t && !o.censored).length;
-    survival = survival * (1 - d / Math.max(atRisk, 1));
-    points.push({ minute: t, survival, atRisk });
+  let i = 0; // start of the current tie group: how many observations have duration strictly < t
+  while (i < sorted.length) {
+    const t = sorted[i].duration;
+    const atRisk = n0 - i;
+    let d = 0;
+    let j = i;
+    while (j < sorted.length && sorted[j].duration === t) {
+      if (!sorted[j].censored) d++;
+      j++;
+    }
+    if (d > 0) {
+      survival = survival * (1 - d / Math.max(atRisk, 1));
+      points.push({ minute: t, survival, atRisk });
+    }
+    i = j;
   }
   return points;
 }
@@ -466,6 +481,12 @@ export { DEFAULT_UNIT_COST_PER_HOUR, DEFAULT_DELAY_COST_PER_VEH_HOUR, DEFAULT_UN
 type RateCacheEntry = { at: number; value: number };
 let rateCache: RateCacheEntry | null = null;
 const RATE_CACHE_TTL_MS = 10 * 60 * 1000;
+/* Single-flight for the nested forecast (19 Oct 2026, testers IN-15..IN-21: "not loading or reflecting
+   changes"). Each slider step is a different URL, so the route cache's own per-URL single-flight never
+   coalesced them: dragging Max units 1 -> 6 on a cold rate cache started five copies of this ~3 s forecast
+   read at once, plus each one's own sample query, against a pool of ten -- the request the operator
+   actually wanted (the last one) queued behind four it no longer needed. One shared promise now. */
+let rateInflight: Promise<number | null> | null = null;
 
 async function computeIncidentsPerHourPerUnit(): Promise<number | null> {
   const anchors = await getIncidentPredictiveAnchors();
@@ -484,9 +505,7 @@ async function computeIncidentsPerHourPerUnit(): Promise<number | null> {
   return totalPredicted / horizonHours / numZones;
 }
 
-async function getIncidentsPerHourPerUnit(): Promise<number | null> {
-  if (rateCache && Date.now() - rateCache.at < RATE_CACHE_TTL_MS) return rateCache.value;
-
+async function refreshIncidentsPerHourPerUnit(): Promise<number | null> {
   let result = await computeIncidentsPerHourPerUnit();
   if (result == null) {
     // One short retry before accepting "no output yet" -- cheap (only runs
@@ -500,6 +519,75 @@ async function getIncidentsPerHourPerUnit(): Promise<number | null> {
 
   rateCache = { at: Date.now(), value: result };
   return result;
+}
+
+async function getIncidentsPerHourPerUnit(): Promise<number | null> {
+  if (rateCache && Date.now() - rateCache.at < RATE_CACHE_TTL_MS) return rateCache.value;
+
+  if (!rateInflight) {
+    rateInflight = refreshIncidentsPerHourPerUnit()
+      .catch(() => null)
+      .finally(() => {
+        rateInflight = null;
+      });
+  }
+  // Expired but present: answer with the last real rate now and let the
+  // refresh above land for the next request. The forecast behind it is
+  // rewritten by a weekly retrain, so a rate a few minutes past its TTL is
+  // still the right one -- whereas waiting on it made the first control
+  // change after every ten-minute lull pay the full ~3 s forecast read.
+  if (rateCache) return rateCache.value;
+  return rateInflight;
+}
+
+// ---------------------------------------------------------------------------
+// The clearance-duration sample, cached on the filters that actually select it
+// ---------------------------------------------------------------------------
+
+/* Only type/severity/weather/Range pick WHICH events go into the curve. Demand level, Max units, beta and
+   delta change only the in-memory KM-to-MILP arithmetic (~0.1 s), yet clearanceCache is keyed on every
+   filter, so each slider step re-ran the bounds query and the event scan -- 1.5-2.7 s per step with
+   weather Wet/Dry or type Breakdown (the hourly_weather join and the deployments JSON unnest), the
+   "graphs and info do not change with the controls" testers saw while a drag queued up. Cached and
+   single-flighted here on just those four, so a slider is pure compute once its sample is read. */
+type ClearanceSample = { lo: string; hi: string; rawMinutes: (number | null)[] };
+const sampleCache = new Map<string, { at: number; data: ClearanceSample }>();
+/* A sample holds every event's minutes (tens of thousands of numbers for a wide Range), and each custom Range
+   is its own key, so the cache is bounded: expired entries go on every write, and past this many the oldest
+   written goes (a Map iterates in insertion order, and a refresh re-inserts its key). */
+const SAMPLE_CACHE_MAX = 32;
+const sampleInflight = new Map<string, Promise<ClearanceSample>>();
+
+function sampleKey(filters: ClearanceProtocolFilters): string {
+  return JSON.stringify({
+    type: filters.type,
+    // No severity column on the breakdown table, so it must not split that cache.
+    severity: filters.type === "accident" ? filters.severity : null,
+    weather: filters.weather,
+    months: filters.months,
+    from: filters.from ?? null,
+    to: filters.to ?? null,
+  });
+}
+
+async function getClearanceSample(filters: ClearanceProtocolFilters): Promise<ClearanceSample> {
+  const key = sampleKey(filters);
+  const hit = sampleCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+  const running = sampleInflight.get(key);
+  if (running) return running;
+  const p = loadClearanceSample(filters)
+    .then((data) => {
+      const now = Date.now();
+      for (const [k, e] of sampleCache) if (now - e.at >= CACHE_TTL_MS) sampleCache.delete(k);
+      sampleCache.delete(key);
+      sampleCache.set(key, { at: now, data });
+      while (sampleCache.size > SAMPLE_CACHE_MAX) sampleCache.delete(sampleCache.keys().next().value!);
+      return data;
+    })
+    .finally(() => sampleInflight.delete(key));
+  sampleInflight.set(key, p);
+  return p;
 }
 
 /**
@@ -552,6 +640,9 @@ export type ClearanceProtocolOk = {
   };
   evpi: number;
   vss: number;
+  /** False when the forecast behind the coverage-opportunity cost was unavailable: the answer is real but
+   *  degraded, so the controller keeps it out of the 3-hour route cache and the next request tries again. */
+  coverageCostApplied: boolean;
   assumptions: string[];
   sensitivity: { beta: number; delayCostMultiplier: number; unitsAtDispatch: number; maxEscalation: number }[];
   deltaSensitivity: { deltaResponseMin: number; unitsAtDispatch: number; maxEscalation: number; derivedCostPerUncoveredIncident: number }[];
@@ -569,6 +660,112 @@ export type ClearanceProtocolInsufficientData = {
 
 export type ClearanceProtocolResult = ClearanceProtocolOk | ClearanceProtocolInsufficientData;
 
+/** Bounds, Range resolution and the raw clearance durations -- the only DB work behind the panel. Throws
+ *  on a query error (caught by getClearanceProtocolFromDb) so a failed read is never cached as a sample. */
+async function loadClearanceSample(filters: ClearanceProtocolFilters): Promise<ClearanceSample> {
+  if (!db) throw new Error("database not configured");
+  // Bounds + range resolution mirror getIncidentAnalyticsFromDb's own
+  // (incident.service.ts) exactly: clamp to real data, trailing window
+  // counted back from the last actual day, not today's wall-clock date.
+  const bounds = await db.query(
+    `SELECT LEAST(a.lo, b.lo)::text AS lo, GREATEST(a.hi, b.hi)::text AS hi
+     FROM (SELECT min(event_start_date)::date AS lo, max(event_start_date)::date AS hi FROM silver.nlex_accident_events_clean) a,
+          (SELECT min(event_encoded_date)::date AS lo, max(event_encoded_date)::date AS hi FROM silver.nlex_breakdown_events_clean) b`,
+  );
+  const minDate: string = bounds.rows[0].lo;
+  const maxDate: string = bounds.rows[0].hi;
+
+  let lo: string;
+  let hi: string;
+  if (filters.from && filters.to) {
+    const [f, t] = filters.from <= filters.to ? [filters.from, filters.to] : [filters.to, filters.from];
+    lo = f < minDate ? minDate : f;
+    hi = t > maxDate ? maxDate : t;
+  } else if (filters.months === "all") {
+    lo = minDate;
+    hi = maxDate;
+  } else {
+    hi = maxDate;
+    lo = (
+      await db.query(`SELECT GREATEST(($1::date - ($2 || ' months')::interval)::date, $3::date)::text AS lo`, [hi, filters.months, minDate])
+    ).rows[0].lo;
+  }
+
+  const wx = filters.weather !== "all" ? filters.weather : null;
+  let rawMinutes: (number | null)[];
+
+  if (filters.type === "accident") {
+    let severityClause = "";
+    if (filters.severity === "pdo") severityClause = "AND number_of_injured = 0 AND number_of_fatality = 0";
+    else if (filters.severity === "injury") severityClause = "AND number_of_injured > 0 AND number_of_fatality = 0";
+    else if (filters.severity === "fatal") severityClause = "AND number_of_fatality > 0";
+
+    const { rows } = await db.query(
+      `WITH wxall AS (
+         SELECT (timestamp_utc + interval '8 hours')::date AS d,
+                EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
+                AVG(rainfall) > 0.3 AS wet
+         FROM hourly_weather
+         WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1 AND $2
+         GROUP BY 1, 2
+       )
+       -- site_cleared, NOT blockage_cleared -- see this file's "Clearance
+       -- method" assumption: blockage_cleared equals event_start_date
+       -- exactly (0-minute "clearance") in 21-32% of rows across every
+       -- severity, a spike no real road-reopening-time distribution would
+       -- produce, consistent with a data-entry default rather than a
+       -- genuine timestamp. Reverted after checking.
+       SELECT EXTRACT(EPOCH FROM (e.site_cleared - e.event_start_date)) / 60.0 AS raw_duration_min
+       FROM silver.nlex_accident_events_clean e
+       WHERE e.event_start_date::date BETWEEN $1 AND $2
+         ${severityClause}
+         AND ($3::text IS NULL OR EXISTS (
+           SELECT 1 FROM wxall w WHERE w.d = e.event_start_date::date AND w.h = EXTRACT(hour FROM e.event_start_date)::int AND w.wet = ($3 = 'wet')
+         ))`,
+      [lo, hi, wx],
+    );
+    rawMinutes = rows.map((r: { raw_duration_min: string | null }) => (r.raw_duration_min == null ? null : Number(r.raw_duration_min)));
+  } else {
+    // Breakdown: same deployments-array derivation incident.service.ts
+    // uses for its own breakdown MTTC -- last departure across every
+    // logged unit, minus the encoded report time. Only events that HAVE a
+    // deployments log with at least one real departure_time contribute;
+    // see assumptions[] for what that excludes.
+    const { rows } = await db.query(
+      `WITH wxall AS (
+         SELECT (timestamp_utc + interval '8 hours')::date AS d,
+                EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
+                AVG(rainfall) > 0.3 AS wet
+         FROM hourly_weather
+         WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1 AND $2
+         GROUP BY 1, 2
+       ),
+       scoped AS (
+         SELECT b.event_number, b.event_encoded_date, b.deployments
+         FROM silver.nlex_breakdown_events_clean b
+         WHERE b.event_encoded_date::date BETWEEN $1 AND $2
+           AND ($3::text IS NULL OR EXISTS (
+             SELECT 1 FROM wxall w WHERE w.d = b.event_encoded_date::date AND w.h = EXTRACT(hour FROM b.event_encoded_date)::int AND w.wet = ($3 = 'wet')
+           ))
+       ),
+       per_event AS (
+         SELECT s.event_number, s.event_encoded_date,
+                MAX(NULLIF(d->>'departure_time', '')::timestamp) AS last_departure
+         FROM scoped s, jsonb_array_elements(s.deployments) d
+         WHERE s.deployments IS NOT NULL
+           AND d->>'departure_time' IS NOT NULL AND d->>'departure_time' <> ''
+         GROUP BY s.event_number, s.event_encoded_date
+       )
+       SELECT EXTRACT(EPOCH FROM (last_departure - event_encoded_date)) / 60.0 AS raw_duration_min
+       FROM per_event`,
+      [lo, hi, wx],
+    );
+    rawMinutes = rows.map((r: { raw_duration_min: string | null }) => (r.raw_duration_min == null ? null : Number(r.raw_duration_min)));
+  }
+
+  return { lo, hi, rawMinutes };
+}
+
 export async function getClearanceProtocolFromDb(filters: ClearanceProtocolFilters): Promise<ClearanceProtocolResult | null> {
   if (!db) return null;
 
@@ -577,104 +774,7 @@ export async function getClearanceProtocolFromDb(filters: ClearanceProtocolFilte
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.data as ClearanceProtocolResult;
 
   try {
-    // Bounds + range resolution mirror getIncidentAnalyticsFromDb's own
-    // (incident.service.ts) exactly: clamp to real data, trailing window
-    // counted back from the last actual day, not today's wall-clock date.
-    const bounds = await db.query(
-      `SELECT LEAST(a.lo, b.lo)::text AS lo, GREATEST(a.hi, b.hi)::text AS hi
-       FROM (SELECT min(event_start_date)::date AS lo, max(event_start_date)::date AS hi FROM silver.nlex_accident_events_clean) a,
-            (SELECT min(event_encoded_date)::date AS lo, max(event_encoded_date)::date AS hi FROM silver.nlex_breakdown_events_clean) b`,
-    );
-    const minDate: string = bounds.rows[0].lo;
-    const maxDate: string = bounds.rows[0].hi;
-
-    let lo: string;
-    let hi: string;
-    if (filters.from && filters.to) {
-      const [f, t] = filters.from <= filters.to ? [filters.from, filters.to] : [filters.to, filters.from];
-      lo = f < minDate ? minDate : f;
-      hi = t > maxDate ? maxDate : t;
-    } else if (filters.months === "all") {
-      lo = minDate;
-      hi = maxDate;
-    } else {
-      hi = maxDate;
-      lo = (
-        await db.query(`SELECT GREATEST(($1::date - ($2 || ' months')::interval)::date, $3::date)::text AS lo`, [hi, filters.months, minDate])
-      ).rows[0].lo;
-    }
-
-    const wx = filters.weather !== "all" ? filters.weather : null;
-    let rawMinutes: (number | null)[];
-
-    if (filters.type === "accident") {
-      let severityClause = "";
-      if (filters.severity === "pdo") severityClause = "AND number_of_injured = 0 AND number_of_fatality = 0";
-      else if (filters.severity === "injury") severityClause = "AND number_of_injured > 0 AND number_of_fatality = 0";
-      else if (filters.severity === "fatal") severityClause = "AND number_of_fatality > 0";
-
-      const { rows } = await db.query(
-        `WITH wxall AS (
-           SELECT (timestamp_utc + interval '8 hours')::date AS d,
-                  EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
-                  AVG(rainfall) > 0.3 AS wet
-           FROM hourly_weather
-           WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1 AND $2
-           GROUP BY 1, 2
-         )
-         -- site_cleared, NOT blockage_cleared -- see this file's "Clearance
-         -- method" assumption: blockage_cleared equals event_start_date
-         -- exactly (0-minute "clearance") in 21-32% of rows across every
-         -- severity, a spike no real road-reopening-time distribution would
-         -- produce, consistent with a data-entry default rather than a
-         -- genuine timestamp. Reverted after checking.
-         SELECT EXTRACT(EPOCH FROM (e.site_cleared - e.event_start_date)) / 60.0 AS raw_duration_min
-         FROM silver.nlex_accident_events_clean e
-         WHERE e.event_start_date::date BETWEEN $1 AND $2
-           ${severityClause}
-           AND ($3::text IS NULL OR EXISTS (
-             SELECT 1 FROM wxall w WHERE w.d = e.event_start_date::date AND w.h = EXTRACT(hour FROM e.event_start_date)::int AND w.wet = ($3 = 'wet')
-           ))`,
-        [lo, hi, wx],
-      );
-      rawMinutes = rows.map((r: { raw_duration_min: string | null }) => (r.raw_duration_min == null ? null : Number(r.raw_duration_min)));
-    } else {
-      // Breakdown: same deployments-array derivation incident.service.ts
-      // uses for its own breakdown MTTC -- last departure across every
-      // logged unit, minus the encoded report time. Only events that HAVE a
-      // deployments log with at least one real departure_time contribute;
-      // see assumptions[] for what that excludes.
-      const { rows } = await db.query(
-        `WITH wxall AS (
-           SELECT (timestamp_utc + interval '8 hours')::date AS d,
-                  EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
-                  AVG(rainfall) > 0.3 AS wet
-           FROM hourly_weather
-           WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1 AND $2
-           GROUP BY 1, 2
-         ),
-         scoped AS (
-           SELECT b.event_number, b.event_encoded_date, b.deployments
-           FROM silver.nlex_breakdown_events_clean b
-           WHERE b.event_encoded_date::date BETWEEN $1 AND $2
-             AND ($3::text IS NULL OR EXISTS (
-               SELECT 1 FROM wxall w WHERE w.d = b.event_encoded_date::date AND w.h = EXTRACT(hour FROM b.event_encoded_date)::int AND w.wet = ($3 = 'wet')
-             ))
-         ),
-         per_event AS (
-           SELECT s.event_number, s.event_encoded_date,
-                  MAX(NULLIF(d->>'departure_time', '')::timestamp) AS last_departure
-           FROM scoped s, jsonb_array_elements(s.deployments) d
-           WHERE s.deployments IS NOT NULL
-             AND d->>'departure_time' IS NOT NULL AND d->>'departure_time' <> ''
-           GROUP BY s.event_number, s.event_encoded_date
-         )
-         SELECT EXTRACT(EPOCH FROM (last_departure - event_encoded_date)) / 60.0 AS raw_duration_min
-         FROM per_event`,
-        [lo, hi, wx],
-      );
-      rawMinutes = rows.map((r: { raw_duration_min: string | null }) => (r.raw_duration_min == null ? null : Number(r.raw_duration_min)));
-    }
+    const { lo, hi, rawMinutes } = await getClearanceSample(filters);
 
     const observations = toObservations(rawMinutes);
     const sampleSize = observations.length;
@@ -815,6 +915,7 @@ export async function getClearanceProtocolFromDb(filters: ClearanceProtocolFilte
       kpi: { projectedMttr, baselineMttr, rag, targets, metricLabel, indicative: filters.type === "breakdown" },
       evpi: solution.evpi,
       vss: solution.vss,
+      coverageCostApplied: incidentsPerHourPerUnit != null,
       assumptions,
       sensitivity,
       deltaSensitivity,
@@ -823,7 +924,8 @@ export async function getClearanceProtocolFromDb(filters: ClearanceProtocolFilte
       censoredCount,
     };
 
-    clearanceCache.set(cacheKey, { at: Date.now(), data });
+    // A degraded answer (coverage cost skipped) is served but not kept: the next request retries the forecast.
+    if (data.coverageCostApplied) clearanceCache.set(cacheKey, { at: Date.now(), data });
     return data;
   } catch (error) {
     console.error("Database query failed for clearance protocol:", error);

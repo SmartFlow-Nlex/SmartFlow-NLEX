@@ -11,6 +11,8 @@ import {
   describeActiveEvents,
   describeBoundary,
   effectiveState,
+  eventState,
+  formatClock,
   nextBoundaryAfter,
   ownershipKey,
   removeEvent,
@@ -35,6 +37,8 @@ import { borrowedLanes, crossoverM, type ZipperState } from "./zipper";
 import { drawForecastEvents, type ExitIncidents } from "./scenarios/forecastIncidents";
 import { placeFuelStations } from "../../../lib/nlex-fuel-stations";
 import { recentAverage, TrendLog } from "./trends";
+import { fmtKm, fmtKmRange } from "../../../lib/km-post";
+import { NoEventTwin } from "./eventTwin";
 
 /**
  * One carriageway's worth of simulation: its own TrafficSim, its own scenario
@@ -57,6 +61,9 @@ import { recentAverage, TrendLog } from "./trends";
  */
 
 const WARMUP_S = 60;
+/** The fixed step every engine here takes: the page's SIM_DT and the skip's. The no-event twin (eventTwin.ts) steps at
+ *  it too, so its clock and the live run's land on the same instants. */
+const STEP_S = 0.05;
 
 export type DemandHour = { hour: number; vehPerHour: number; mix: Record<1 | 2 | 3, number> };
 export type DemandProfile = {
@@ -87,7 +94,17 @@ export type Baseline = {
   takenWith: string;
   /** True when the figures are the mean of the last minute (recentAverage); false for a single reading, taken too early in a run to average. */
   averaged?: boolean;
+  /** Scenario time (s after warm-up) it was captured at: which events the comparison is about (the ones not over by then). */
+  atS?: number;
+  /** The scenario events already running when it was captured: their effect is on both sides of the comparison. */
+  eventsRunning?: readonly string[];
 };
+
+/** A scenario event as the before/after reads it: what it is, and whether it has started, is running or is over. */
+export type CompareEvent = { readonly id: string; readonly name: string; readonly state: "pending" | "active" | "done"; readonly startsInS: number };
+
+/** The no-event twin's state for the page: still catching up from the start of the run (`progress` 0-1), or level. */
+export type TwinState = { readonly ready: boolean; readonly progress: number };
 
 /** What every direction shares, computed once by the page and handed to each hook call. */
 /** The key a booth or pump shut by hand is held under in the facility engine (an event's is its own id). */
@@ -162,6 +179,13 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
 
   const simRef = useRef<TrafficSim | null>(null);
   const [scenarioBinding] = useState(createEngineBinding);
+  /* The same run without the scenario events (eventTwin.ts): the "Before" of the before/after while this carriageway
+     has events. Built when the first event is added, dropped with the last one and on every rebuild. `simGen` counts
+     rebuilds, so the effect that builds it knows when the run it was built against has been replaced. */
+  const twinRef = useRef<NoEventTwin | null>(null);
+  const [twinState, setTwinState] = useState<TwinState | null>(null);
+  const twinPumpRef = useRef(false);
+  const [simGen, setSimGen] = useState(0);
 
   const [laneCount, setLaneCount] = useState(4);
   const [inflow, setInflow] = useState(4500);
@@ -355,8 +379,8 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     if (direction === "SB" && barrier && southboundFromBarrier(entryKm, hr, EXITS, flowAt) != null) {
       const south = entryKm <= movementKm(barrier.exit_name, "exit", "SB", barrier.km);
       return south
-        ? `Mainline flow at Km ${entryKm.toFixed(2)}: ${mainline.toLocaleString()} veh/h — the southbound cars counted paying at ${barrier.exit_name}, plus those joining and minus those leaving between it and here.`
-        : `Mainline flow at Km ${entryKm.toFixed(2)}: ${mainline.toLocaleString()} veh/h — entries minus exits north of here, balanced to the southbound count at ${barrier.exit_name}.`;
+        ? `Mainline flow at Km ${fmtKm(entryKm, 2)}: ${mainline.toLocaleString()} veh/h — the southbound cars counted paying at ${barrier.exit_name}, plus those joining and minus those leaving between it and here.`
+        : `Mainline flow at Km ${fmtKm(entryKm, 2)}: ${mainline.toLocaleString()} veh/h — entries minus exits north of here, balanced to the southbound count at ${barrier.exit_name}.`;
     }
     const feeders = EXITS.filter((e) => (direction === "NB" ? e.km <= entryKm + 1e-6 : e.km >= entryKm - 1e-6)).filter((e) => {
       const f = flowAt(e.exit_name, hr);
@@ -364,7 +388,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     });
     const names = feeders.slice(0, 3).map((e) => String(e.exit_name)).join(" + ");
     const more = feeders.length > 3 ? ` +${feeders.length - 3} more` : "";
-    return `Mainline flow at Km ${entryKm.toFixed(2)}: ${mainline.toLocaleString()} veh/h — entries minus exits upstream (${names}${more}).`;
+    return `Mainline flow at Km ${fmtKm(entryKm, 2)}: ${mainline.toLocaleString()} veh/h — entries minus exits upstream (${names}${more}).`;
   }, [hourOfDay, demand, direction, fromKm, toKm, mainlineAtKm, EXITS, flowAt, activeHour, nearestExit, forecastInflow]);
 
   useEffect(() => {
@@ -503,6 +527,10 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
       buildInterventions(laneCount, segLengthM),
     );
     simRef.current = sim;
+    // The twin was the old run's; the effect below builds a new one for this run if there are events.
+    twinRef.current = null;
+    setTwinState(null);
+    setSimGen((g) => g + 1);
     setClosedLanes(Array(laneCount).fill(false));
     setClosedBooths({});
     setSpeedLimit(null);
@@ -530,15 +558,18 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
 
   useEffect(() => {
     if (simRef.current) simRef.current.cfg.inflowVehPerHour = inflow;
+    if (twinRef.current) twinRef.current.sim.cfg.inflowVehPerHour = inflow;
   }, [inflow]);
 
   // The booths shut by hand, into the engine: each station held or released under the operator's own key.
   useEffect(() => {
-    const sim = simRef.current;
-    if (!sim) return;
-    for (const f of sim.fac.list) {
-      const shut = closedBooths[f.spec.id] ?? [];
-      f.stations.forEach((_, i) => (shut.includes(i) ? sim.fac.closeStation(f.spec.id, i, OPERATOR_BOOTHS) : sim.fac.openStation(f.spec.id, i, OPERATOR_BOOTHS)));
+    // The live run and its no-event twin alike: a booth shut by hand is the operator's, on both sides of the comparison.
+    for (const sim of [simRef.current, twinRef.current?.sim ?? null]) {
+      if (!sim) continue;
+      for (const f of sim.fac.list) {
+        const shut = closedBooths[f.spec.id] ?? [];
+        f.stations.forEach((_, i) => (shut.includes(i) ? sim.fac.closeStation(f.spec.id, i, OPERATOR_BOOTHS) : sim.fac.openStation(f.spec.id, i, OPERATOR_BOOTHS)));
+      }
     }
   }, [closedBooths]);
 
@@ -607,7 +638,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
   const interventionSummary =
     [
       closedLaneList ? `${closedLaneList} closed` : null,
-      closedLaneList ? `Km ${shownClosureFromKm.toFixed(2)}–${shownClosureToKm.toFixed(2)}` : null,
+      closedLaneList ? fmtKmRange(shownClosureFromKm, shownClosureToKm, 2) : null,
       effIncidentCount > 0 ? `${effIncidentCount} incident${effIncidentCount === 1 ? "" : "s"}` : null,
       eff.speedLimitKmh != null ? `${eff.speedLimitKmh} km/h zone` : null,
       ...boothsShut.map(([id, s]) => {
@@ -620,6 +651,46 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
       .filter(Boolean)
       .join(" · ") || "none applied";
 
+  /* What the before/after compares against the baseline (17 Oct 2026, testers SB-17). It was gated on
+     anyIntervention, which sees only what is on the road this instant (a closed lane, a limit, an obstacle, a shut
+     booth): an event that had not started, had finished, was at a booth or pump, or was in a phase that blocks no
+     lane left the panel asking the operator to "add an event" with the event in the list. Every valid event not
+     already over when the baseline was taken now counts, and says where it is in its timeline. */
+  const invalidEventIds = new Set(owners.invalid.map((i) => i.eventId));
+  const compareEvents: readonly CompareEvent[] = baseline
+    ? scenarioEvents
+        .filter((e) => !invalidEventIds.has(e.id) && e.endS > (baseline.atS ?? -Infinity))
+        .map((e) => ({ id: e.id, name: e.name, state: eventState(e, scenarioNowS), startsInS: Math.max(0, e.startS - scenarioNowS) }))
+    : [];
+  const anyChange = anyIntervention || eff.active.length > 0 || compareEvents.length > 0;
+  const compareSummary =
+    [
+      anyIntervention || eff.active.length > 0 ? interventionSummary : null,
+      ...compareEvents.filter((e) => e.state === "pending").map((e) => `${e.name} — starts in ${formatClock(e.startsInS)}`),
+      ...compareEvents.filter((e) => e.state === "done").map((e) => `${e.name} — over`),
+    ]
+      .filter(Boolean)
+      .join(" · ") || interventionSummary;
+
+  /* With events on this carriageway the before/after is the same run without them (the twin above) against the run
+     with them, read at the same moment: every valid event counts, whenever it was added and whether or not a baseline
+     was ever captured. Without events it stays the captured baseline against now. */
+  const twinEvents: readonly CompareEvent[] = scenarioEvents
+    .filter((e) => !invalidEventIds.has(e.id))
+    .map((e) => ({ id: e.id, name: e.name, state: eventState(e, scenarioNowS), startsInS: Math.max(0, e.startS - scenarioNowS) }));
+  const eventCompare = twinState !== null && twinEvents.length > 0;
+  // What the operator set by hand (on both sides of that comparison), without what the events are doing: null for nothing.
+  const handClosed = closedLanes.map((c, i) => (c ? `L${i + 1}` : null)).filter(Boolean).join(", ");
+  const handSetSummary =
+    [
+      handClosed ? `${handClosed} closed` : null,
+      speedLimit != null ? `${speedLimit} km/h zone` : null,
+      incidentCount > 0 ? `${incidentCount} incident${incidentCount === 1 ? "" : "s"}` : null,
+      boothsShut.length > 0 ? `${boothsShut.length === 1 ? "a plaza's" : `${boothsShut.length} plazas'`} booths shut` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || null;
+
   // Live-apply interventions (same discipline as the single-direction page: composeInterventions
   // via the binding is the ONLY writer of this direction's engine state).
   useEffect(() => {
@@ -627,6 +698,8 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     if (!sim) return;
     scenarioCtxRef.current = { controls: manualControls, events: scenarioEvents, frame: scenarioFrame };
     const { owners: next } = scenarioBinding.apply(sim, manualControls, scenarioEvents, scenarioFrame);
+    // The operator's own settings go into the no-event twin too, so the only difference left between them is the events.
+    if (twinRef.current?.live === sim) twinRef.current.apply(manualControls, scenarioFrame);
     const now = scenarioTimeS(sim.time, scenarioFrame);
     const due = nextBoundaryAfter(scenarioEvents, roadOf(sim, scenarioFrame), now);
     scenarioDueRef.current = due === null ? Infinity : due;
@@ -634,6 +707,55 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     // manualControls/scenarioFrame are rebuilt from the values listed on every render, same as the original.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [closedLanes, speedLimit, closureM, closureEndM, zoneM[0], zoneM[1], closureKm, closureEndKm, placingClosure, scenarioEvents, direction, fromKm, toKm, scenarioBinding, publishOwners]);
+
+  /* Bring the no-event twin level with the live run, a slice at a time so the animation keeps its frames (the same
+     budget as a skip's). Needed when it is first built (it starts at 0 while the live run may be minutes in) and after
+     a skip, which steps only the live run. Once level the page's loop keeps it there, one step after each live one. */
+  const catchUpTwin = useCallback(() => {
+    if (twinPumpRef.current) return;
+    twinPumpRef.current = true;
+    let twin: NoEventTwin | null = null;
+    let from = 0;
+    const pump = () => {
+      // Whichever twin is current at each slice: one replaced mid-pump (a rebuild) hands over to the new one rather than
+      // leaving it to the loop, which only keeps a twin level and never closes a gap.
+      const cur = twinRef.current;
+      if (!cur) { twinPumpRef.current = false; return; }
+      if (cur !== twin) { twin = cur; from = cur.sim.time; }
+      if (cur.catchUp(25, () => performance.now())) {
+        twinPumpRef.current = false;
+        setTwinState({ ready: true, progress: 1 });
+        return;
+      }
+      const span = cur.live.time - from;
+      setTwinState({ ready: false, progress: span > 0 ? (cur.sim.time - from) / span : 0 });
+      setTimeout(pump, 0);
+    };
+    setTimeout(pump, 0);
+  }, []);
+
+  /* The twin exists while this carriageway has scenario events (forecast incidents included, which a loaded day adds
+     the moment the run is built). It is built from the live run's own config, given what the operator has set by hand
+     (the closure and limit levers, obstacles dropped by hand, booths shut) and none of the events. */
+  const wantTwin = scenarioEvents.length > 0;
+  useEffect(() => {
+    const sim = simRef.current;
+    if (!wantTwin || !sim) {
+      twinRef.current = null;
+      setTwinState(null);
+      return;
+    }
+    if (twinRef.current?.live === sim) return;
+    const twin = new NoEventTwin(sim, buildInterventions(sim.cfg.laneCount, sim.cfg.length), STEP_S);
+    twin.apply(manualControls, scenarioFrame);
+    for (const i of scenarioBinding.operatorIncidents(sim)) twin.addIncident(i.lane, i.x);
+    for (const f of twin.sim.fac.list) for (const i of closedBooths[f.spec.id] ?? []) twin.sim.fac.closeStation(f.spec.id, i, OPERATOR_BOOTHS);
+    twinRef.current = twin;
+    setTwinState(twin.caughtUp ? { ready: true, progress: 1 } : { ready: false, progress: 0 });
+    catchUpTwin();
+    // Keyed on whether there are events and which run this is: the settings above are read as they are when it is built.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantTwin, simGen]);
 
   const addScenarioEvent = useCallback(
     (spec: NewEventSpec): { ok: true; event: ScenarioEvent } | { ok: false; reason: string } => {
@@ -734,10 +856,14 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     skipRef.current = token;
     const what = describeBoundary(scenarioEventsRef.current, road, target, from);
     setSkip({ label: what ? what.label : "the next phase", intervalStartS: what ? what.intervalStartS : from, targetS: target, nowS: from });
+    // The live run is about to jump ahead of its no-event twin; the comparison waits until the twin has caught up.
+    if (twinRef.current) setTwinState({ ready: false, progress: 0 });
     const finish = () => {
       skipRef.current = null;
       setSkip(null);
       resetSimAccumulator();
+      // The skip stepped only the live run: bring the no-event twin up to it.
+      catchUpTwin();
     };
     const pump = () => {
       if (token.cancel || simRef.current !== sim) {
@@ -763,12 +889,13 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
       finish();
     };
     setTimeout(pump, 0);
-  }, [scenarioFrame, scenarioBinding, publishOwners, resetSimAccumulator, trend]);
+  }, [scenarioFrame, scenarioBinding, publishOwners, resetSimAccumulator, trend, catchUpTwin]);
 
   const clearIncidents = useCallback(() => {
     const sim = simRef.current;
     if (!sim) return;
     scenarioBinding.clearOperatorIncidents(sim);
+    twinRef.current?.clearIncidents();
     setIncidentCount(0);
   }, [scenarioBinding]);
 
@@ -778,6 +905,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
       const sim = simRef.current;
       if (!sim) return;
       sim.addIncident(lane, x);
+      if (twinRef.current?.live === sim) twinRef.current.addIncident(lane, x);
       setIncidentCount(scenarioBinding.operatorIncidents(sim).length);
     },
     [scenarioBinding],
@@ -795,6 +923,8 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
       co2RatePerMin: avg ? avg.co2KgPerMin : metrics.co2RatePerMin,
       avgTravelTimeS: metrics.avgTravelTimeS,
       averaged: avg !== null,
+      atS: scenarioTimeS(simRef.current?.time ?? metrics.elapsedS, scenarioFrame),
+      eventsRunning: eff.active.map((a) => a.name),
       takenWith:
         [
           closed ? `${closed} closed` : null,
@@ -806,7 +936,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
           .join(" · ") || "a clear road",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metrics, eff.closedLanes, eff.speedLimitKmh, effIncidentCount, activeScenarioText]);
+  }, [metrics, eff.closedLanes, eff.speedLimitKmh, effIncidentCount, activeScenarioText, eff.active, scenarioFrame]);
 
   return {
     direction,
@@ -827,6 +957,8 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     addScenarioEvent, removeScenarioEvent,
     metrics, setMetrics, baseline, setBaseline, captureBaseline, trend, peakUnmetVehPerHour,
     eff, effIncidentCount, activeScenarioText, anyIntervention, interventionSummary,
+    compareEvents, anyChange, compareSummary,
+    twinRef, twinState, twinEvents, eventCompare, handSetSummary,
     manualControls, scenarioFrame, scenarioRoad, scenarioNowS,
     kmAt, mAt, clampKm, spanM,
     ramps,

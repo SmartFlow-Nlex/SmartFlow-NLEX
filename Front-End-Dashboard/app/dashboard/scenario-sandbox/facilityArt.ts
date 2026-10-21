@@ -3,6 +3,7 @@ import type { Facility, FacilityEngine, FacilityStats, FPath, PathRole } from ".
 import { DRAW_W_FRAC, poseAt } from "./facilities";
 import type { EventSite } from "./scenarios/adapter";
 import { drawPerson, type SceneGeometry } from "./sceneArt";
+import { fmtKm } from "../../../lib/km-post";
 
 /* ══════════════════════════════════════════════════════════════════════════════
    DRAWING THE PLACES
@@ -921,8 +922,11 @@ const fmtWait = (s: number) => (s < 60 ? `${Math.round(s)} s` : `${Math.floor(s 
 
 /** A scenario event at a plaza, as the overlay labels it. */
 export type SiteMark = { site: EventSite; name: string; text: string; state: "pending" | "active"; secondsUntilStart: number | null };
+/** Where an event's label was drawn and everything it would have said, for the hover that shows the rest. */
+export type SiteLabelHit = { left: number; top: number; w: number; h: number; full: string; active: boolean };
 
-export function drawFacilityOverlay(g: FacGeom, view: FacilityView, highlight: string | null, marks: readonly SiteMark[] = []): void {
+export function drawFacilityOverlay(g: FacGeom, view: FacilityView, highlight: string | null, marks: readonly SiteMark[] = []): SiteLabelHit[] {
+  const labelHits: SiteLabelHit[] = [];
   const c = g.ctx;
   c.save();
   clipToFacilitySide(g);
@@ -1007,7 +1011,8 @@ export function drawFacilityOverlay(g: FacGeom, view: FacilityView, highlight: s
       c.arc(x, y, r, 0, Math.PI * 2);
       c.stroke();
     }
-    const text = `${m.name} · ${m.text}`;
+    // The name only; the phase and time left show on hover (page.tsx drawLabelProbe), as on the road.
+    const text = m.name;
     c.font = "700 10px system-ui";
     const tw = c.measureText(text).width + 12;
     const tx = Math.max(2, Math.min(g.cssW - tw - 2, x - tw / 2));
@@ -1019,6 +1024,7 @@ export function drawFacilityOverlay(g: FacGeom, view: FacilityView, highlight: s
     c.textAlign = "left";
     c.textBaseline = "top";
     c.fillText(text, tx + 6, ty + 2.5);
+    labelHits.push({ left: tx, top: ty, w: tw, h: 15, full: `${m.name} · ${m.text}`, active: m.state === "active" });
   }
 
   // Labels sit in the gutter's outer band, unclipped so they are never cut by the canvas edge.
@@ -1033,7 +1039,7 @@ export function drawFacilityOverlay(g: FacGeom, view: FacilityView, highlight: s
       if (st) parts.push(`${st.inside} in · ${st.openStations}/${st.stations} pumps`);
     } else {
       const toll = f.stations.length > 0;
-      parts.push(`${f.spec.name}${f.spec.km != null ? ` · Km ${f.spec.km.toFixed(2)}` : ""}`);
+      parts.push(`${f.spec.name}${f.spec.km != null ? ` · Km ${fmtKm(f.spec.km, 2)}` : ""}`);
       if (toll && st) {
         parts.push(`${st.openStations}/${st.stations} booths`);
         parts.push(st.queued > 0 ? `${st.queued} queued` : "no queue");
@@ -1057,9 +1063,27 @@ export function drawFacilityOverlay(g: FacGeom, view: FacilityView, highlight: s
     c.textBaseline = "top";
     c.fillText(text, x + 6, y + 3);
   }
+  return labelHits;
 }
 
 /** How far past the carriageway edge the facilities on a road reach, in lane units. 0 when there are none. */
+/** Each place's footprint from the road edge out to its outermost lane, screen px: the ground the rain falls on at a
+ *  toll plaza or service area (sceneArt's SceneGeometry.wetAreas; UAT 16 Oct 2026, SB-13). Its canopy is drawn
+ *  inside this, so the rain falls over the booths too. */
+export function facilityWetAreas(g: FacGeom, list: readonly Facility[]): { x: number; y: number; w: number; h: number }[] {
+  const out: { x: number; y: number; w: number; h: number }[] = [];
+  for (const f of list) {
+    const us = f.paths.flatMap((p) => p.pts.map((q) => q.u));
+    if (us.length === 0) continue;
+    const xa = g.xPx(Math.min(...us));
+    const xb = g.xPx(Math.max(...us));
+    const ya = g.yOf(0.5);
+    const yb = g.yOf(f.wMax + 0.3);
+    out.push({ x: Math.min(xa, xb), y: Math.min(ya, yb), w: Math.abs(xb - xa), h: Math.abs(yb - ya) });
+  }
+  return out;
+}
+
 export function facilityDepth(list: readonly Facility[] | undefined): number {
   if (!list || list.length === 0) return 0;
   let d = 0;

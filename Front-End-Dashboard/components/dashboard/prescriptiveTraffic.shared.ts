@@ -32,6 +32,7 @@ export type CongestionRow = {
   state: string;
   probability: string | number;
   baseTs: string;
+  /** Measured km (Balintawak = 12); show it through fmtKm, never raw. */
   km: number;
 };
 
@@ -109,15 +110,31 @@ export function championValue(row: VolumeRow, champion: string | null): number |
 
 let cache: Promise<ForecastPayload> | null = null;
 
+/* Retried before giving up (17 Oct 2026, testers TR-12): right after the backend starts, the first
+   request can fail or time out while the database wakes up, and the panel used to sit on that error
+   until the page was reloaded. Three tries, 3 s then 8 s apart, cover a cold start. */
+export async function fetchJsonWithRetry(url: string, label: string, tries = 3): Promise<any> {
+  const waits = [3000, 8000];
+  let last: unknown = null;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) return await r.json();
+      last = new Error(`${label} ${r.status}`);
+      if (r.status >= 400 && r.status < 500) break; // a bad request will not get better by asking again
+    } catch (e) {
+      last = e;
+    }
+    if (i < tries - 1) await new Promise((res) => setTimeout(res, waits[i] ?? 8000));
+  }
+  throw last instanceof Error ? last : new Error(`${label} failed`);
+}
+
 export function loadForecast(): Promise<ForecastPayload> {
   if (!cache) {
     // No cache:"no-store" -- the server now sets a cache and gzips, and the
     // browser is allowed to keep the response for the same reasons.
-    cache = fetch(`${BACKEND}/api/traffic/forecast?months=all`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`forecast ${r.status}`);
-        return r.json();
-      })
+    cache = fetchJsonWithRetry(`${BACKEND}/api/traffic/forecast?months=all`, "forecast")
       .then((j) => {
         const d = j?.data ?? {};
         return {
@@ -195,6 +212,7 @@ export type OverCapacity = {
 };
 export type CongestionAdvice = {
   segment: string;
+  /** Measured km (Balintawak = 12); show it through fmtKm, never raw. */
   km: number | null;
   probability: number;
   hoursAhead: number;
@@ -222,6 +240,10 @@ export type TrafficPrescriptive = {
   congestion: CongestionAdvice[];
   /** Segments on the exit list with no congestion forecast. */
   congestionMissing: string[];
+  /** The congestion forecast could not be read at all (as opposed to read and empty). */
+  congestionUnavailable?: boolean;
+  /** Manila wall-clock hour the congestion forecast counts from, "YYYY-MM-DD HH:MM". */
+  congestionBaseTs?: string | null;
 };
 
 /* Keyed by throughput: changing the dial is a different question, not a
@@ -232,14 +254,15 @@ export function loadPrescriptive(throughput: number): Promise<TrafficPrescriptiv
   const key = String(throughput);
   const hit = prescriptiveCache.get(key);
   if (hit) return hit;
-  const req = fetch(`${BACKEND}/api/traffic/prescriptive?throughput=${throughput}`)
-    .then((r) => {
-      if (!r.ok) throw new Error(`prescriptive ${r.status}`);
-      return r.json();
-    })
+  const req = fetchJsonWithRetry(`${BACKEND}/api/traffic/prescriptive?throughput=${throughput}`, "prescriptive")
     .then((j) => {
       if (!j?.success) throw new Error(j?.message ?? "request failed");
-      return j.data as TrafficPrescriptive;
+      const data = j.data as TrafficPrescriptive;
+      /* An answer without congestion rows (the read failed while the server was starting, or the
+         hourly model was rewriting its table) is used once but not kept, so the Congestion Response
+         panel's retry asks the server again instead of being handed this copy (TR-12). */
+      if (!Array.isArray(data?.congestion) || data.congestion.length === 0) prescriptiveCache.delete(key);
+      return data;
     })
     .catch((e) => {
       // A failed fetch must not be cached, or every later mount replays it.

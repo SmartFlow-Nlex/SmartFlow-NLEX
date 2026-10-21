@@ -55,6 +55,8 @@ export type ReplayVehicle = {
 
 export type ReplayFrame = {
   time: number;
+  /** The page's step counter when this frame was taken: the same moment on both carriageways, whatever each run's own clock reads. */
+  seq?: number;
   vehicles: ReplayVehicle[];
   /** Who was on the hard shoulder (responders on their way, a vehicle pulled over). */
   shoulder?: ReplayVehicle[];
@@ -96,6 +98,8 @@ type Source = {
  * which a per-step buffer would do within a minute. */
 const DEFAULT_HZ = 8;
 const DEFAULT_WINDOW_S = 90;
+/** The frames a buffer takes per simulated second by default: the page plays a recording back at this rate times the run's speed. */
+export const REPLAY_HZ = DEFAULT_HZ;
 
 /** One vehicle as the canvas will need it again. Copied field by field, not by reference: the engine mutates its
  *  vehicles in place every step, so storing the object would give a buffer of N pointers to one ever-changing present. */
@@ -129,6 +133,7 @@ function snapshot(v: Vehicle): ReplayVehicle {
 export class ReplayBuffer {
   private frames: ReplayFrame[] = [];
   private lastAt = -Infinity;
+  private run: object | null = null;
   private readonly interval: number;
   private readonly capacity: number;
 
@@ -137,14 +142,23 @@ export class ReplayBuffer {
     this.capacity = Math.max(2, Math.ceil(windowS * hz));
   }
 
-  /** Throttled; call every step and it keeps its own cadence. */
-  record(sim: Source): void {
+  /** Throttled; call every step and it keeps its own cadence. `seq` is the caller's step counter (see ReplayFrame.seq). */
+  record(sim: Source, seq?: number): void {
+    /* A recording belongs to one run, as a TrendLog does (17 Oct 2026, testers SB-15). A rebuild (a new hour, lane
+       count or window) restarts the engine's clock at 0, and the old frames stayed: the throttle below then waited
+       for the new run to pass the old one's last time before it recorded anything, and scrubbing back showed
+       vehicles from a run that no longer exists. */
+    if (sim !== this.run || sim.time < this.lastAt) {
+      this.clear();
+      this.run = sim;
+    }
     if (sim.time - this.lastAt < this.interval) return;
     this.lastAt = sim.time;
 
     const iv = sim.interventions;
     this.frames.push({
       time: sim.time,
+      seq,
       vehicles: sim.vehicles.map(snapshot),
       shoulder: sim.shoulder && sim.shoulder.length > 0 ? sim.shoulder.map(snapshot) : undefined,
       fac: sim.fac && sim.fac.list.length > 0 ? snapshotFacilities(sim.fac) : undefined,
@@ -164,6 +178,11 @@ export class ReplayBuffer {
 
   get length(): number {
     return this.frames.length;
+  }
+
+  /** Whether the frames held are `sim`'s (false once it has been rebuilt: they belong to the run it replaced). */
+  isOf(sim: object | null): boolean {
+    return sim !== null && sim === this.run;
   }
 
   /** Seconds of history held, 0 when there is nothing to review. */
@@ -197,6 +216,23 @@ export class ReplayBuffer {
     }
     // Pick whichever neighbour is actually closer.
     if (lo > 0 && Math.abs(this.frames[lo - 1].time - time) < Math.abs(this.frames[lo].time - time)) return lo - 1;
+    return lo;
+  }
+
+  /** The frame nearest a step of the caller's counter (ReplayFrame.seq), or -1 when none carries one. How the other
+   *  carriageway is lined up with the one being scrubbed: their run clocks differ whenever one was rebuilt alone. */
+  indexAtSeq(seq: number): number {
+    const n = this.frames.length;
+    if (n === 0 || this.frames[0].seq === undefined) return -1;
+    let lo = 0;
+    let hi = n - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((this.frames[mid].seq ?? -Infinity) < seq) lo = mid + 1;
+      else hi = mid;
+    }
+    const at = (i: number) => Math.abs((this.frames[i].seq ?? Infinity) - seq);
+    if (lo > 0 && at(lo - 1) < at(lo)) return lo - 1;
     return lo;
   }
 
@@ -264,6 +300,7 @@ export class ReplayBuffer {
   clear(): void {
     this.frames = [];
     this.lastAt = -Infinity;
+    this.run = null;
   }
 }
 

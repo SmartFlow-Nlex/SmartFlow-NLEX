@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Calendar, Check, ChevronDown, Info, MapPin, MoreVertical, Plus, Search, Trash2, Wrench, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, Calendar, Check, ChevronDown, ChevronUp, Info, MapPin, MoreVertical, Plus, Search, Trash2, Wrench, X } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
 import { apiFetch } from "../../../lib/api";
+import { cachedJson } from "../../../lib/cached-json";
 import StateNote from "../../../components/stage/StateNote";
 import styles from "../traffic/traffic.module.css";
 import { supabase } from "../../../lib/supabase";
@@ -12,6 +13,8 @@ import { useToast } from "../../../lib/toast";
 import { SortableTh, useTableSort } from "../../../lib/table-sort";
 import { useNlexExits, exitNearestKm, displayExitName, CORRIDOR_KM, type NlexExit } from "../../../lib/nlex-exits";
 import { LANE_SEGMENTS } from "../../../lib/nlex-lanes";
+import { KM_POST_END, KM_POST_START, fmtKm, kmMeasured } from "../../../lib/km-post";
+import { nearExitsText } from "../../../lib/exit-lookup";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -185,14 +188,157 @@ const fmtWindow =(startIso: string, endIso: string) => {
   return `${new Date(startIso).toLocaleString("en-US", opt)} → ${new Date(endIso).toLocaleString("en-US", opt)}`;
 };
 
+/* start_km / end_km are stored as measured km; people see the official km post.
+   Two decimals, the precision the form takes. */
 const kmRange = (s: Schedule) =>
-  `Km ${s.start_km}${s.end_km !== s.start_km ? `–${s.end_km}` : ""}`;
+  `Km ${fmtKm(Number(s.start_km), 2)}${s.end_km !== s.start_km ? `–${fmtKm(Number(s.end_km), 2)}` : ""}`;
+
+/* The form's km boxes hold official km posts (what the operator reads on the
+   road). A box's text is a finished post when it is one this corridor has:
+   Km 12 (Balintawak) to Km 87 (Sta. Ines), two decimals at most. */
+const KM_POST_TEXT = /^\d{1,2}(\.\d{1,2})?$/;
+const isKmPost = (v: string) => KM_POST_TEXT.test(v) && Number(v) >= KM_POST_START && Number(v) <= KM_POST_END;
+
+/* The measured km a typed post stands for; NaN until the box holds a finished post. */
+const formKmMeasured = (v: string) => (isKmPost(v) ? kmMeasured(Number(v)) : NaN);
+
+/* Whether half-typed text can still become a post between `min` and `max` (by default the whole corridor,
+   Km 12–87) by typing more: "1" can (Km 12–19), "8" can (Km 80–87), "87." can (Km 87), but "9" cannot
+   (Km 9.x lies south of Balintawak and Km 9x past Sta. Ines), and neither can "88", "87.5", a third digit or
+   a third decimal. The box refuses any keystroke that fails this, so it can never hold a number that is not
+   a km post (or, for the end box, one on the wrong side of the start). */
+function canBecomeKmPost(s: string, min = KM_POST_START, max = KM_POST_END): boolean {
+  if (s === "") return true;
+  const m = /^(\d{1,2})(\.(\d{0,2}))?$/.exec(s);
+  if (!m) return false;
+  const reaches = (lo: number, hi: number) => hi >= min && lo <= max;
+  const int = Number(m[1]);
+  if (m[2] !== undefined) {
+    const dec = m[3] ?? "";
+    const lo = Number(`${m[1]}.${dec || "0"}`);
+    return reaches(lo, lo + (dec.length === 2 ? 0 : dec.length === 1 ? 0.09 : 0.99));
+  }
+  if (m[1].length === 2) return reaches(int, int + 0.99);
+  // One digit so far: a post of its own, or the first of two.
+  return reaches(int, int + 0.99) || reaches(int * 10, int * 10 + 9.99);
+}
+
+/* Pasted or typed text as the box keeps it: "Km 23.5", " 23,5 " and "23.5" are all 23.5. */
+const normalizeKmText = (raw: string) => raw.replace(/km/gi, "").replace(/\s+/g, "").replace(/,/g, ".");
 
 // Nearest exit to a km-post, against the shared corridor list.
 const nearestExitName = (exits: NlexExit[], km: number) => {
   const x = exitNearestKm(exits, km);
   return x ? displayExitName(x.exit_name) : "-";
 };
+
+/* A km post box. It only takes posts it is allowed to hold: the corridor's, Km 12 (Balintawak) to Km 87
+   (Sta. Ines), two decimals at most, or the narrower `limit` the end box gets from the direction (northbound
+   ends at or past the start, southbound at or before it). A keystroke that cannot lead to an allowed post
+   is refused on the spot and the reason shown; a half-typed post ("1", "8") is flagged when the box is
+   left; a rule the other box breaks (`problem`) is shown once this one holds a finished post. Up/Down
+   arrows and the steppers move one km, held at the ends of what is allowed. The value is the official post
+   as typed; the form converts it to measured km when it saves. */
+function KmPostField({
+  id,
+  value,
+  onChange,
+  placeholder,
+  hint,
+  limit,
+  problem,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  /** Shown under a finished post, e.g. the nearest exit. */
+  hint: ReactNode;
+  /** A narrower range than the corridor's, and the sentence that explains it. */
+  limit?: { min: number; max: number; why: string } | null;
+  /** A rule this box breaks against the other one, e.g. the direction's order. */
+  problem?: string | null;
+}) {
+  const min = limit?.min ?? KM_POST_START;
+  const max = limit?.max ?? KM_POST_END;
+  // Left since its last edit: a half-typed post is flagged then, never while it is still being typed.
+  const [left, setLeft] = useState(false);
+  const [refused, setRefused] = useState(false); // a keystroke was just refused
+  const refusedTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(refusedTimer.current), []);
+
+  const done = isKmPost(value);
+  const rangeNote = limit?.why ?? `Km posts run from ${KM_POST_START} to ${KM_POST_END} only.`;
+  const error =
+    left && value !== "" && !done
+      ? `Enter a km post from ${min} to ${max}.`
+      : done && problem
+        ? problem
+        : null;
+  const note = error ?? (refused ? rangeNote : done ? hint : `Km ${min}–${max}`);
+
+  const take = (raw: string) => {
+    const next = normalizeKmText(raw);
+    if (canBecomeKmPost(next, min, max)) {
+      setRefused(false);
+      setLeft(false);
+      onChange(next);
+    } else {
+      setRefused(true);
+      window.clearTimeout(refusedTimer.current);
+      refusedTimer.current = window.setTimeout(() => setRefused(false), 2400);
+    }
+  };
+  const step = (by: number) => {
+    setRefused(false);
+    setLeft(false);
+    if (!done) return onChange(String(by > 0 ? min : max));
+    onChange(String(Math.min(max, Math.max(min, Math.round((Number(value) + by) * 100) / 100))));
+  };
+
+  return (
+    <>
+      <div className="nc-km-field">
+        <input
+          id={id}
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          spellCheck={false}
+          className="ms-input nc-ops-num"
+          placeholder={placeholder}
+          value={value}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={`${id}-note`}
+          onChange={(e) => take(e.target.value)}
+          onBlur={() => {
+            setLeft(true);
+            if (value.endsWith(".")) onChange(value.slice(0, -1));
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+              e.preventDefault();
+              step(e.key === "ArrowUp" ? 1 : -1);
+            }
+          }}
+        />
+        <span className="nc-km-steps">
+          <button type="button" tabIndex={-1} aria-label="One km higher" disabled={done && Number(value) >= max} onClick={() => step(1)}>
+            <ChevronUp size={14} aria-hidden="true" />
+          </button>
+          <button type="button" tabIndex={-1} aria-label="One km lower" disabled={done && Number(value) <= min} onClick={() => step(-1)}>
+            <ChevronDown size={14} aria-hidden="true" />
+          </button>
+        </span>
+      </div>
+      <span id={`${id}-note`} className={`nc-ops-sub${error ? " is-error" : refused ? " is-warn" : ""}`}>
+        {note}
+      </span>
+      {/* Announced, unlike the note itself, which changes on every keystroke. */}
+      <span className="sr-only" role="status">{error ?? (refused ? rangeNote : "")}</span>
+    </>
+  );
+}
 
 // Modern dropdown — same look and behavior as the Traffic tab's custom select
 function Select({
@@ -347,6 +493,56 @@ function StatusControl({
 
 const todayLocal = () => phDate(Date.now());
 
+/* Quieter hours for the work (17 Oct 2026, testers: "suggest schedule times that avoid peak traffic when
+   creating work"). Read from the same hour-by-weekday toll volumes the Traffic tab's heatmap shows, for the
+   chosen direction: the two carriageways peak at opposite ends of the day (southbound about 7 AM, northbound
+   about 6 PM), so one corridor-wide answer would be wrong for one of them. */
+type HourDow = { dow: number; hour: number; v: number }[];
+
+/** The quietest run of `len` hours starting on day `dow` (0 = Sunday), carried into the next day past midnight. */
+function quietWindow(rows: HourDow, dow: number, len: number) {
+  const at = new Map(rows.map((r) => [r.dow * 24 + r.hour, r.v]));
+  const vol = (h: number) => at.get(((dow + Math.floor(h / 24)) % 7) * 24 + (h % 24));
+  let best: { start: number; avg: number } | null = null;
+  for (let h = 0; h < 24; h++) {
+    const run = Array.from({ length: len }, (_, k) => vol(h + k));
+    if (run.some((x) => x == null)) continue;
+    const avg = (run as number[]).reduce((s, x) => s + x, 0) / len;
+    if (!best || avg < best.avg) best = { start: h, avg };
+  }
+  const day = Array.from({ length: 24 }, (_, h) => vol(h) ?? null);
+  const known = day.filter((x): x is number => x != null);
+  if (!best || known.length < 24) return null;
+  const peakV = Math.max(...known);
+  // The busiest quarter of the day, for warning about a start time inside it.
+  const busyFloor = [...known].sort((a, b) => b - a)[5];
+  return { start: best.start, end: (best.start + len) % 24, nextDay: best.start + len >= 24, avg: best.avg, peakHour: day.indexOf(peakV), peakV, day, busyFloor, vol };
+}
+
+const fmtHourOfDay = (h: number) => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? "AM" : "PM"}`;
+
+/* Whose toll counts stand for a stretch (UAT wave 2: "for the chosen segment", not the whole carriageway).
+   Nothing counts traffic on the mainline itself; what is counted is traffic through the plazas. So a
+   stretch is read through the interchanges on it, or, inside one gap between interchanges, the two either
+   side, which is where the traffic on it gets on and off. Measured km in; only interchanges whose name the
+   toll table also uses (case aside: "Cdv/Ph Arena" is "CDV/PH Arena" there) come back. */
+function plazasForStretch(exits: NlexExit[], tolled: string[], aM: number, bM: number): string[] {
+  if (Number.isNaN(aM) || Number.isNaN(bM) || tolled.length === 0) return [];
+  const lo = Math.min(aM, bM);
+  const hi = Math.max(aM, bM);
+  const byLower = new Map(tolled.map((p) => [p.toLowerCase(), p]));
+  const sorted = [...exits].sort((x, y) => x.km - y.km);
+  const before = [...sorted].reverse().find((x) => x.km <= lo);
+  const after = sorted.find((x) => x.km >= hi);
+  const picked = sorted.filter((x) => x === before || x === after || (x.km > lo && x.km < hi));
+  return [...new Set(picked.map((x) => byLower.get(x.exit_name.toLowerCase().trim())).filter((p): p is string => !!p))];
+}
+
+const fmtMonthYear = (iso: string) =>
+  new Date(`${iso}T12:00:00+08:00`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: TZ });
+const listNames = (xs: string[]) =>
+  xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+
 const emptyForm = {
   title: "",
   description: "",
@@ -398,6 +594,8 @@ function analyse(list: Schedule[], now: number) {
 export default function MaintenancePage() {
   // Same corridor list as the map and the AI sandbox. See lib/nlex-exits.
   const { exits: NLEX_EXITS } = useNlexExits();
+  // "Pulilan to San Simon" beside a km range, so a row says where it is without a km lookup.
+  const nearOf = (s: Pick<Schedule, "start_km" | "end_km">) => nearExitsText(NLEX_EXITS, Number(s.start_km), Number(s.end_km));
   const toast = useToast();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -436,6 +634,20 @@ export default function MaintenancePage() {
     });
   }, []);
   const [cancelTarget, setCancelTarget] = useState<Schedule | null>(null);
+  /* Where "Cancel schedule" was opened from. Closing it without confirming goes back there, so the
+     details pop-up is not simply gone (testers, MS-8.2: closing looked like it changed something). */
+  const [cancelFromDetail, setCancelFromDetail] = useState(false);
+  /* Closing without confirming -- X, Escape, the backdrop or "Keep it" -- sends nothing and leaves
+     nothing behind: no half-typed reason waiting in the box next time, no error from an earlier try.
+     Not while a cancel is in flight, because that request lands whether or not the pop-up is open. */
+  const closeCancel = () => {
+    if (mutating) return;
+    if (cancelFromDetail && cancelTarget) setDetail(cancelTarget);
+    setCancelFromDetail(false);
+    setCancelTarget(null);
+    setCancelReason("");
+    setActionError(null);
+  };
   const [cancelReason, setCancelReason] = useState("");
   /*
    * Deleting is deliberately separate from cancelling, and both are offered.
@@ -452,19 +664,55 @@ export default function MaintenancePage() {
   const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null);
   const [mutating, setMutating] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Same rules as closeCancel: closing sends nothing, not mid-request, and goes back to the details
+  // pop-up when that is where it was opened.
+  const [deleteFromDetail, setDeleteFromDetail] = useState(false);
+  const closeDelete = () => {
+    if (mutating) return;
+    if (deleteFromDetail && deleteTarget) setDetail(deleteTarget);
+    setDeleteFromDetail(false);
+    setDeleteTarget(null);
+    setActionError(null);
+  };
+  const closeDetail = () => {
+    if (mutating) return;
+    setDetail(null);
+  };
 
+  /* Escape closes the pop-up on top, exactly as its X does (MS-8.2): the confirmations first, then
+     the details. The schedule form is left to its own buttons, so a stray key cannot throw away a
+     half-filled form. */
+  useEffect(() => {
+    if (!cancelTarget && !deleteTarget && !detail) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || formOpen) return;
+      if (cancelTarget) closeCancel();
+      else if (deleteTarget) closeDelete();
+      else closeDetail();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
+
+  /* Only the newest list read may land (19 Oct 2026, MS-7.3 / MS-8). A read begun before a cancel or a
+     restore -- the first load on a slow connection, or the one after an earlier action -- could finish
+     after the one that follows the change and put the old status back: the job showed as Scheduled
+     again, or vanished from the Cancelled tab, and Restore then answered "already scheduled". */
+  const readSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++readSeq.current;
     try {
       const r = await apiFetch(`${BACKEND}/api/maintenance/list`, { cache: "no-store" });
       const json = await r.json();
+      if (seq !== readSeq.current) return;
       if (!json.success) throw new Error(json.message ?? "Request failed");
       setSchedules(json.data);
       setUpdatedAt(Date.now());
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load");
+      if (seq === readSeq.current) setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
-      setLoading(false);
+      if (seq === readSeq.current) setLoading(false);
     }
   }, []);
 
@@ -499,7 +747,9 @@ export default function MaintenancePage() {
     return { active, kmAffected, startingSoon, conflicts, next: upcoming[0] ?? null, alerts, issueIds };
   }, [schedules, now]);
 
-  const filteredVisible = useMemo(() => {
+  /* Every filter but status; the status tabs count from this, so each tab's number is what it would
+     show (MS-8: a cancel is seen to move one job from Scheduled to Cancelled, not to vanish). */
+  const filteredAnyStatus = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const d0 = phDayStart(now);
     let from = -Infinity;
@@ -516,7 +766,6 @@ export default function MaintenancePage() {
     }
     return schedules.filter((s) => {
       if (issuesOnly && !ops.issueIds.has(s.id)) return false;
-      if (statusFilter !== "all" && s.status !== statusFilter) return false;
       if (directionFilter !== "all" && s.direction !== directionFilter && s.direction !== "Both") return false;
       if (closureFilter !== "all") {
         const n = closedLanes(s.lane_closure);
@@ -533,7 +782,25 @@ export default function MaintenancePage() {
         s.direction.toLowerCase().includes(q)
       );
     });
-  }, [schedules, statusFilter, directionFilter, closureFilter, dateFilter, customFrom, customTo, searchQuery, now, issuesOnly, ops]);
+  }, [schedules, directionFilter, closureFilter, dateFilter, customFrom, customTo, searchQuery, now, issuesOnly, ops]);
+
+  const filteredVisible = useMemo(
+    () => (statusFilter === "all" ? filteredAnyStatus : filteredAnyStatus.filter((s) => s.status === statusFilter)),
+    [filteredAnyStatus, statusFilter],
+  );
+  const statusCounts = useMemo(() => {
+    const n: Record<Status | "all", number> = { all: filteredAnyStatus.length, scheduled: 0, in_progress: 0, completed: 0, cancelled: 0 };
+    for (const s of filteredAnyStatus) n[s.status] += 1;
+    return n;
+  }, [filteredAnyStatus]);
+
+  /* A completed or cancelled job never raises an alert, so "Needs attention" on with either tab is
+     empty by definition: the cancelled job looked gone from the Cancelled tab too. Picking one of
+     those tabs therefore lifts the issues-only view. */
+  const pickStatus = (s: Status | "all") => {
+    setStatusFilter(s);
+    if (s === "completed" || s === "cancelled") setIssuesOnly(false);
+  };
 
   const kpi = useMemo(() => analyse(filteredVisible, now), [filteredVisible, now]);
 
@@ -575,11 +842,26 @@ export default function MaintenancePage() {
       });
       const json = await r.json();
       if (!json.success) throw new Error(json.message ?? "Update failed");
+      /* The row the server saved, in place at once (testers, MS-8): a cancelled job shows as
+         Cancelled straight away rather than depending on the list re-read that follows. */
+      if (json.data?.id) setSchedules((cur) => cur.map((x) => (x.id === json.data.id ? { ...x, ...json.data } : x)));
       await refresh();
       setDetail(null);
+      setCancelFromDetail(false);
       setCancelTarget(null);
       setCancelReason("");
-      toast.success(`"${s.title}" is now ${STATUS_META[to].label.toLowerCase()}.`);
+      /* Say where the row went (MS-8: "cancel seems to delete"). Viewed from the Scheduled tab, a
+         cancelled job leaves the list, which is right for the filter but read as a deletion. A
+         restored job whose start has already passed is flagged, so nobody takes it for upcoming work. */
+      const startPassed = new Date(s.starts_at).getTime() < Date.now();
+      toast.success(
+        `"${s.title}" is now ${STATUS_META[to].label.toLowerCase()}.`,
+        to === "cancelled"
+          ? "Kept on record under the Cancelled tab, where it can be restored."
+          : s.status === "cancelled"
+            ? `Restored to the Scheduled tab.${startPassed ? " Its start time has passed: edit the window or start the work." : ""}`
+            : undefined,
+      );
     } catch (e) {
       // Re-sync with the database so a stale row never sits next to the error
       await refresh();
@@ -607,6 +889,7 @@ export default function MaintenancePage() {
       // the operator already wanted.
       if (!json.success && r.status !== 404) throw new Error(json.message ?? "Delete failed");
       await refresh();
+      setDeleteFromDetail(false);
       setDeleteTarget(null);
       setDetail(null);
       toast.success(`"${s.title}" was deleted.`);
@@ -630,8 +913,9 @@ export default function MaintenancePage() {
       title: s.title,
       description: s.description ?? "",
       // Stored low-to-high; a southbound form reads in travel order, high to low.
-      startKm: String(s.direction === "SB" ? Math.max(s.start_km, s.end_km) : Math.min(s.start_km, s.end_km)),
-      endKm: String(s.direction === "SB" ? Math.min(s.start_km, s.end_km) : Math.max(s.start_km, s.end_km)),
+      // Stored measured, shown as the official post (two decimals at most).
+      startKm: fmtKm(s.direction === "SB" ? Math.max(s.start_km, s.end_km) : Math.min(s.start_km, s.end_km), 2),
+      endKm: fmtKm(s.direction === "SB" ? Math.min(s.start_km, s.end_km) : Math.max(s.start_km, s.end_km), 2),
       // Older rows may say "Both", which the form no longer offers. They open
       // as northbound if they run up the km posts, southbound if down.
       direction: s.direction === "Both" ? "NB" : s.direction,
@@ -651,13 +935,14 @@ export default function MaintenancePage() {
   };
 
   const submitForm = async (force = false) => {
+    // Official km posts, as typed; checked as posts, saved as measured km.
     const startKm = Number(form.startKm);
     const endKm = Number(form.endKm);
     if (form.title.trim().length < 3) return setFormError("Give the work a short title (at least 3 characters).");
     if (form.startKm === "" || form.endKm === "" || Number.isNaN(startKm) || Number.isNaN(endKm))
       return setFormError("Enter a start km and an end km.");
-    if (startKm < KM_MIN || startKm > KM_MAX || endKm < KM_MIN || endKm > KM_MAX)
-      return setFormError(`Km posts on this corridor run from ${KM_MIN} (${displayExitName(byKm[0]?.exit_name ?? "")}) to ${KM_MAX} (${displayExitName(byKm[byKm.length - 1]?.exit_name ?? "")}).`);
+    if (startKm < KM_POST_START || startKm > KM_POST_END || endKm < KM_POST_START || endKm > KM_POST_END)
+      return setFormError(`Km posts on this corridor run from ${KM_POST_START} (${displayExitName(byKm[0]?.exit_name ?? "")}) to ${KM_POST_END} (${displayExitName(byKm[byKm.length - 1]?.exit_name ?? "")}).`);
     // Start is where traffic reaches the works first: northbound runs up the
     // km posts, southbound down them.
     if (form.direction === "NB" ? endKm < startKm : endKm > startKm)
@@ -676,6 +961,11 @@ export default function MaintenancePage() {
     if (!force && conflicts.some((c) => c.kind === "critical"))
       return setFormError("This closes the same lane as existing work. Change the window, location or lanes, or choose Schedule anyway.");
 
+    // Stored measured (the API checks 12–88.25 on that scale); 3 decimals is a metre.
+    const toStored = (post: number) => Math.round(kmMeasured(post) * 1000) / 1000;
+    const startM = toStored(startKm);
+    const endM = toStored(endKm);
+
     setSaving(true);
     setFormError(null);
     setServerConflict(false);
@@ -688,8 +978,8 @@ export default function MaintenancePage() {
           description: form.description.trim() || undefined,
           // The API, map and mobile app all read start..end as a span from the
           // lower km post to the higher one; direction carries the travel order.
-          startKm: Math.min(startKm, endKm),
-          endKm: Math.max(startKm, endKm),
+          startKm: Math.min(startM, endM),
+          endKm: Math.max(startM, endM),
           direction: form.direction,
           laneClosure: closureText(form.lanes, form.fullClosure, form.lanesLegacy),
           startsAt: startsAt.toISOString(),
@@ -731,10 +1021,95 @@ export default function MaintenancePage() {
   const set = <K extends keyof typeof emptyForm>(k: K, v: (typeof emptyForm)[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
-  /* Exits along the corridor by km post, and the corridor's ends. The km of
-     each exit is the NLEX km post (Balintawak 12 -> Sta. Ines 88.25; see
-     lib/nlex-exits), so picking an exit fills its km and nobody has to type
-     one. The box stays editable for works that start between two exits. */
+  /* Hour-by-weekday volumes, fetched once the form opens. Optional: the form saves without them.
+     Keyed "<dir>|<plazas>": "NB|" is the whole carriageway, which is also the fallback and carries the plazas
+     that have counts in the window (byPlaza, not meta.plazas, which lists every plaza ever loaded, Sta. Ines
+     and Angeles among them, and would name plazas that add nothing to the sum); "NB|Pulilan,San Simon" is the
+     stretch's own interchanges. A key whose read failed or came back short holds null, so it is not asked
+     for again and the form can say there is none. */
+  type VolumeRead = { rows: HourDow; from: string; to: string; plazas: string[] } | null | "loading";
+  const [hourDow, setHourDow] = useState<Record<string, VolumeRead>>({});
+  const readVolumes = useCallback((dir: string, plazas: string[]) => {
+    const key = `${dir}|${plazas.join(",")}`;
+    if (key in hourDow) return;
+    setHourDow((m) => (key in m ? m : { ...m, [key]: "loading" }));
+    const q = plazas.length ? `&plazas=${encodeURIComponent(plazas.join(","))}` : "";
+    cachedJson<{ success: boolean; data?: { hourDow?: HourDow; range?: { from: string; to: string }; byPlaza?: { plaza: string; v: number }[] } }>(
+      `${BACKEND}/api/traffic/analytics?months=12&direction=${dir}${q}`,
+    )
+      .then((j) => {
+        const rows = j.data?.hourDow;
+        // A full week of hours or nothing: a plaza with no counts in the window comes back empty.
+        const ok = j.success && rows && rows.length >= 168 && j.data?.range;
+        setHourDow((m) => ({ ...m, [key]: ok ? { rows: rows!, from: j.data!.range!.from, to: j.data!.range!.to, plazas: (j.data?.byPlaza ?? []).filter((b) => b.v > 0).map((b) => b.plaza) } : null }));
+      })
+      .catch(() => setHourDow((m) => ({ ...m, [key]: null })));
+  }, [hourDow]);
+
+  const corridorRead = hourDow[`${form.direction}|`];
+  const tolledPlazas = corridorRead && corridorRead !== "loading" ? corridorRead.plazas : null;
+  const stretchPlazas = useMemo(
+    () => plazasForStretch(NLEX_EXITS, tolledPlazas ?? [], formKmMeasured(form.startKm), formKmMeasured(form.endKm)),
+    [NLEX_EXITS, tolledPlazas, form.startKm, form.endKm],
+  );
+  const stretchKey = stretchPlazas.length ? `${form.direction}|${stretchPlazas.join(",")}` : null;
+  useEffect(() => {
+    if (!formOpen) return;
+    readVolumes(form.direction, []);
+    if (stretchKey) readVolumes(form.direction, stretchPlazas);
+  }, [formOpen, form.direction, stretchKey, stretchPlazas, readVolumes]);
+
+  /* The suggestion for the date and length chosen: work of up to 12 hours gets the quietest window of the same
+     length on that weekday; longer work crosses a peak whatever its start, so it gets none and the form says
+     why. Read from the stretch's own interchanges where they have counts, otherwise from the whole
+     carriageway, and the note says which. */
+  const quiet = useMemo(() => {
+    if (!form.startDate) return null;
+    const own = stretchKey ? hourDow[stretchKey] : null;
+    // Wait for the stretch's own read before falling back, so the note does not flick from one source to the other.
+    if (corridorRead === undefined || corridorRead === "loading" || own === undefined || own === "loading") return { kind: "loading" as const };
+    const read = own ?? corridorRead;
+    if (!read) return { kind: "none" as const };
+    const stretchSet = !Number.isNaN(formKmMeasured(form.startKm)) && !Number.isNaN(formKmMeasured(form.endKm));
+    const start = new Date(`${form.startDate}T${form.startTime || "00:00"}:00+08:00`).getTime();
+    const end = new Date(`${form.endDate || form.startDate}T${form.endTime || "00:00"}:00+08:00`).getTime();
+    const hours = Math.round((end - start) / 3_600_000);
+    if (!Number.isFinite(hours) || hours < 1) return null;
+    if (hours > 12) return { kind: "long" as const, hours };
+    const dow = new Date(`${form.startDate}T12:00:00+08:00`).getUTCDay();
+    const w = quietWindow(read.rows, dow, hours);
+    if (!w) return { kind: "none" as const };
+    const startHour = Number((form.startTime || "00:00").slice(0, 2));
+    const dayName = new Date(`${form.startDate}T12:00:00+08:00`).toLocaleDateString("en-US", { weekday: "long", timeZone: TZ });
+    const startVol = w.day[startHour];
+    // Whether the work as entered runs through the day's single busiest hour, wherever it starts.
+    const crossesPeak = Array.from({ length: hours }, (_, k) => startHour + k).some((h) => h % 24 === w.peakHour && h < 24);
+    return {
+      kind: "window" as const,
+      ...w,
+      hours,
+      dayName,
+      startBusy: startVol != null && startVol >= w.busyFloor,
+      crossesPeak,
+      alreadyQuiet: startHour === w.start,
+      // The stretch's interchanges, or [] when the whole carriageway stands in for them.
+      plazas: own ? stretchPlazas : [],
+      // Set when a stretch is entered but none of its interchanges has toll counts (SCTEX, Sta. Ines...).
+      unmetered: !own && stretchSet,
+      period: `${fmtMonthYear(read.from)} – ${fmtMonthYear(read.to)}`,
+    };
+  }, [hourDow, corridorRead, stretchKey, stretchPlazas, form.startDate, form.startTime, form.endDate, form.endTime, form.startKm, form.endKm]);
+
+  const applyQuiet = () => {
+    if (quiet?.kind !== "window") return;
+    const pad = (h: number) => `${String(h).padStart(2, "0")}:00`;
+    const endDate = quiet.nextDay ? phDate(new Date(`${form.startDate}T12:00:00+08:00`).getTime() + 86_400_000) : form.startDate;
+    setForm((f) => ({ ...f, startTime: pad(quiet.start), endTime: pad(quiet.end), endDate }));
+  };
+
+  /* Exits along the corridor by km, and the corridor's ends. These are
+     MEASURED km (Balintawak 12 -> Sta. Ines 88.25; see lib/km-post), used to
+     draw the corridor view. The form itself takes official posts, 12 to 87. */
   const byKm = useMemo(() => [...NLEX_EXITS].sort((a, b) => a.km - b.km), [NLEX_EXITS]);
   const KM_MIN = byKm[0]?.km ?? 0;
   const KM_MAX = byKm[byKm.length - 1]?.km ?? CORRIDOR_KM;
@@ -748,7 +1123,8 @@ export default function MaintenancePage() {
   const conflicts = useMemo(() => {
     const out: { s: Schedule; kind: ConflictKind; detail: string }[] = [];
     if (!formOpen || form.startKm === "" || form.endKm === "" || !form.startDate || !form.endDate) return out;
-    const sKm = Number(form.startKm), eKm = Number(form.endKm);
+    // Compared against stored work on the measured scale.
+    const sKm = formKmMeasured(form.startKm), eKm = formKmMeasured(form.endKm);
     const from = phToMs(form.startDate, form.startTime);
     const to = phToMs(form.endDate, form.endTime);
     if ([sKm, eKm, from, to].some(Number.isNaN) || to <= from) return out;
@@ -767,7 +1143,7 @@ export default function MaintenancePage() {
       const mins = Math.round((oTo - oFrom) / 60_000);
       const dur = `${Math.floor(mins / 60) > 0 ? `${Math.floor(mins / 60)}h ` : ""}${mins % 60 ? `${mins % 60}m` : ""}`.trim();
       if (kmOverlap) {
-        out.push({ s, kind: !sameWay ? "opposing" : lanesClash(closure, s.lane_closure) ? "critical" : "operational", detail: ` Overlap: Km ${kmLo}–${kmHi} · ${dur}` });
+        out.push({ s, kind: !sameWay ? "opposing" : lanesClash(closure, s.lane_closure) ? "critical" : "operational", detail: ` Overlap: Km ${fmtKm(kmLo, 2)}–${fmtKm(kmHi, 2)} · ${dur}` });
       } else if (sameWay) {
         const gap = Math.max(lo - sHi, sLo - hi);
         if (gap <= NEARBY_KM) out.push({ s, kind: "nearby", detail: ` ${gap.toFixed(1)} km apart · ${dur} of shared time` });
@@ -847,7 +1223,9 @@ export default function MaintenancePage() {
       return { dir, rows: Math.max(rowEnds.length, 1), placed };
     };
     const ticks: { pct: number; label: string }[] = [];
-    for (let km = Math.ceil(KM_MIN / 10) * 10; km <= KM_MAX; km += 10) ticks.push({ pct: pct(km), label: `Km ${km}` });
+    // Ticks on round official posts, drawn where each post really is.
+    for (let post = Math.ceil(KM_POST_START / 10) * 10; post <= KM_POST_END; post += 10)
+      ticks.push({ pct: pct(kmMeasured(post)), label: `Km ${post}` });
     return { lanes: [lane("NB"), lane("SB")], ticks, exitPcts: byKm.map((x) => pct(x.km)), count: scoped.length };
   }, [planned, byKm, KM_MIN, KM_MAX, corridorScope, now, statusFilter]);
 
@@ -857,10 +1235,26 @@ export default function MaintenancePage() {
   const setDirection = (d: (typeof DIRECTIONS)[number]) =>
     setForm((f) => (f.direction === d ? f : { ...f, direction: d, startKm: f.endKm, endKm: f.startKm }));
 
-  const stretchLanes = lanesOnStretch(form.startKm === "" ? NaN : Number(form.startKm), form.endKm === "" ? NaN : Number(form.endKm), form.direction);
+  // Lanes, length and nearest exits all work on measured km; the length is real road, not a post difference.
+  const formStartM = formKmMeasured(form.startKm);
+  const formEndM = formKmMeasured(form.endKm);
+  /* Start is where traffic reaches the works first, so the end lies on the side the carriageway runs:
+     northbound up the km posts (end at the start or higher), southbound down them (at the start or lower).
+     The end box refuses posts on the wrong side as they are typed; `endProblem` catches the one case it
+     cannot, a start changed afterwards past an end already entered. */
+  const startPost = isKmPost(form.startKm) ? Number(form.startKm) : null;
+  const endLimit =
+    startPost == null
+      ? null
+      : form.direction === "NB"
+        ? { min: startPost, max: KM_POST_END, why: `Northbound runs up the km posts, so it ends at Km ${form.startKm} or higher.` }
+        : { min: KM_POST_START, max: startPost, why: `Southbound runs down the km posts, so it ends at Km ${form.startKm} or lower.` };
+  const endProblem =
+    endLimit && isKmPost(form.endKm) && (Number(form.endKm) < endLimit.min || Number(form.endKm) > endLimit.max) ? endLimit.why : null;
+  const stretchLanes = lanesOnStretch(formStartM, formEndM, form.direction);
   const segmentNote =
-    form.startKm !== "" && form.endKm !== "" && !Number.isNaN(Number(form.startKm)) && !Number.isNaN(Number(form.endKm))
-      ? `${Math.abs(Number(form.endKm) - Number(form.startKm)).toFixed(1)} km · near ${nearestExitName(NLEX_EXITS, Number(form.startKm))} → ${nearestExitName(NLEX_EXITS, Number(form.endKm))}`
+    !Number.isNaN(formStartM) && !Number.isNaN(formEndM) && !endProblem
+      ? `${Math.abs(formEndM - formStartM).toFixed(1)} km · near ${nearestExitName(NLEX_EXITS, formStartM)} → ${nearestExitName(NLEX_EXITS, formEndM)}`
       : null;
 
   const check = (
@@ -882,21 +1276,32 @@ export default function MaintenancePage() {
         }
       />
 
-      {/* Row A — filters + primary action */}
+      {/* Row A — filters, in two tidy rows (16 Oct 2026, user request): status and search on top; the
+          three dropdowns, the "needs attention" chip and Clear filters below, every label beside its
+          control so the rows never change height when a chip appears. */}
       <div className={`${styles.filterRow} nc-ops-filters`}>
+        <div className="nc-ops-frow">
         <div className={styles.filterGroup}>
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 4h11M4.5 8h7M6.5 12h3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
           <span className={styles.filterLabel}>Status</span>
           <div className={`${styles.segmented} nc-ops-status-filter`}>
             {(["all", "scheduled", "in_progress", "completed", "cancelled"] as const).map((s) => (
-              <button key={s} className={statusFilter === s ? "active" : ""} onClick={() => setStatusFilter(s)} aria-pressed={statusFilter === s}>
+              <button key={s} className={statusFilter === s ? "active" : ""} onClick={() => pickStatus(s)} aria-pressed={statusFilter === s}>
                 {statusFilter === s && check}
                 {s === "all" ? "All" : STATUS_META[s].label}
+                {!loading && <span className="nc-ops-tab-n">{statusCounts[s]}</span>}
               </button>
             ))}
           </div>
         </div>
+        <label className="ms-search-bar nc-ops-search">
+          <Search size={15} aria-hidden="true" />
+          <span className="sr-only">Search schedules</span>
+          <input type="text" placeholder="Search schedules…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+        </label>
+        </div>
 
+        <div className="nc-ops-frow">
         <div className={`${styles.filterGroup} nc-ops-filter-sel`}>
           <span className={styles.filterLabel}>Date</span>
           <Select
@@ -950,21 +1355,19 @@ export default function MaintenancePage() {
           />
         </div>
 
-        {issuesOnly && (
-          <button type="button" className="btn-muted nc-ops-clear" onClick={() => setIssuesOnly(false)}>
-            Needs attention only · {visible.length} ✕
-          </button>
+        {(issuesOnly || filtersActive) && (
+          <div className="nc-ops-factive">
+            {issuesOnly && (
+              <button type="button" className="nc-ops-chip" onClick={() => setIssuesOnly(false)} aria-label="Stop showing only schedules that need attention">
+                Needs attention · {visible.length} <X size={13} aria-hidden="true" />
+              </button>
+            )}
+            {filtersActive && (
+              <button type="button" className="nct-link-btn nc-ops-clear" onClick={clearFilters}>Clear filters</button>
+            )}
+          </div>
         )}
-
-        {filtersActive && (
-          <button type="button" className="btn-muted nc-ops-clear" onClick={clearFilters}>Clear filters</button>
-        )}
-
-        <label className="ms-search-bar nc-ops-search">
-          <Search size={15} aria-hidden="true" />
-          <span className="sr-only">Search schedules</span>
-          <input type="text" placeholder="Search schedules…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-        </label>
+        </div>
       </div>
 
       {/* Row B — what needs attention right now */}
@@ -993,7 +1396,7 @@ export default function MaintenancePage() {
         <article className={styles.kpiTile}>
           <h3>Next Up</h3>
           <div className={styles.kpiValue}>{loading ? "…" : kpi.next ? fmtClock(kpi.next.starts_at) : "—"}</div>
-          <p className={styles.kpiHint}>{kpi.next ? `${kpi.next.direction} · ${kmRange(kpi.next)}` : filtersActive ? "nothing upcoming in this view" : "nothing upcoming"}</p>
+          <p className={styles.kpiHint}>{kpi.next ? `${kpi.next.direction} · ${kmRange(kpi.next)} · ${nearOf(kpi.next)}` : filtersActive ? "nothing upcoming in this view" : "nothing upcoming"}</p>
         </article>
       </div>
 
@@ -1015,13 +1418,13 @@ export default function MaintenancePage() {
                       <span className="nc-ops-alerts-n">{i + 1}</span>
                       <strong>{a.schedule.title}</strong>
                       <span className="nc-ops-alerts-reason">{a.reason}</span>
-                      <span className="nc-ops-sub">{a.schedule.direction} {kmRange(a.schedule)}</span>
+                      <span className="nc-ops-sub">{a.schedule.direction} {kmRange(a.schedule)} · {nearOf(a.schedule)}</span>
                     </button>
                   </li>
                 ))}
               </ul>
             </div>
-            <button type="button" className="btn-muted nc-ops-alerts-view" onClick={() => setIssuesOnly(true)}>
+            <button type="button" className="btn-muted nc-ops-alerts-view" onClick={() => { setIssuesOnly(true); if (statusFilter === "completed" || statusFilter === "cancelled") setStatusFilter("all"); }}>
               {ops.alerts.length > MAX_ALERTS ? `View all ${ops.alerts.length}` : "View issues"} →
             </button>
           </div>
@@ -1079,7 +1482,7 @@ export default function MaintenancePage() {
                 <div key={s.id} className="nc-ops-tl-grid">
                   <div className="nc-ops-tl-label">
                     <strong>{s.title}</strong>
-                    <span className="nc-ops-sub">{s.direction} · {kmRange(s)}</span>
+                    <span className="nc-ops-sub">{s.direction} · {kmRange(s)} · {nearOf(s)}</span>
                   </div>
                   <div className="nc-ops-tl-track">
                     {timeline.ticks.map((t) => <i key={t.label} className="nc-ops-tl-gridline" style={{ left: `${t.pct}%` }} />)}
@@ -1162,8 +1565,8 @@ export default function MaintenancePage() {
                         onAdvance={(to) => changeStatus(s, to)}
                         onEdit={() => openEdit(s)}
                         onView={() => { setActionError(null); setDetail(s); }}
-                        onDelete={() => { setActionError(null); setDeleteTarget(s); }}
-                        onCancel={() => { setActionError(null); setCancelReason(""); setCancelTarget(s); }}
+                        onDelete={() => { setActionError(null); setDeleteFromDetail(false); setDeleteTarget(s); }}
+                        onCancel={() => { setActionError(null); setCancelReason(""); setCancelFromDetail(false); setCancelTarget(s); }}
                       />
                     </td>
                     <td className="nc-ops-td-work">
@@ -1174,7 +1577,10 @@ export default function MaintenancePage() {
                         </span>
                       )}
                     </td>
-                    <td className="nc-ops-td-loc nc-ops-num" data-label="Location">{kmRange(s)}</td>
+                    <td className="nc-ops-td-loc nc-ops-num" data-label="Location">
+                      {kmRange(s)}
+                      <span className="nc-ops-near">{nearOf(s)}</span>
+                    </td>
                     <td className="nc-ops-td-dir" data-label="Direction">
                       <span className={`nc-ops-dir is-${s.direction}`}>{s.direction}</span>
                     </td>
@@ -1195,7 +1601,7 @@ export default function MaintenancePage() {
 
       {/* Detail modal */}
       {detail && (
-        <div className={`${styles.detailBackdrop} nc-ops-backdrop`} role="dialog" aria-modal="true" aria-label={detail.title} onClick={() => setDetail(null)}>
+        <div className={`${styles.detailBackdrop} nc-ops-backdrop`} role="dialog" aria-modal="true" aria-label={detail.title} onClick={closeDetail}>
           <div className={`${styles.detailModal} nc-ops-modal is-detail`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
             <div className={`${styles.detailHeader} nc-ops-modal-head`}>
@@ -1204,7 +1610,7 @@ export default function MaintenancePage() {
                 <h3>{detail.title}</h3>
                 <p><span className={`ms-badge ${STATUS_META[detail.status].badge}`}>{STATUS_META[detail.status].label}</span></p>
               </div>
-              <button className={styles.detailClose} onClick={() => setDetail(null)} aria-label="Close">
+              <button className={styles.detailClose} onClick={closeDetail} aria-label="Close">
                 <X size={18} />
               </button>
             </div>
@@ -1244,7 +1650,7 @@ export default function MaintenancePage() {
                 <button
                   className="btn-muted"
                   disabled={mutating}
-                  onClick={() => { setCancelReason(""); setCancelTarget(detail); setDetail(null); }}
+                  onClick={() => { setActionError(null); setCancelReason(""); setCancelFromDetail(true); setCancelTarget(detail); setDetail(null); }}
                 >
                   Cancel schedule
                 </button>
@@ -1252,7 +1658,7 @@ export default function MaintenancePage() {
               <button
                 className="btn-danger nc-ops-push"
                 disabled={mutating}
-                onClick={() => { setDeleteTarget(detail); setDetail(null); }}
+                onClick={() => { setActionError(null); setDeleteFromDetail(true); setDeleteTarget(detail); setDetail(null); }}
               >
                 <Trash2 size={14} aria-hidden="true" /> Delete
               </button>
@@ -1268,7 +1674,7 @@ export default function MaintenancePage() {
           difference, because "cancel" and "delete" sitting side by side is
           otherwise a guess. */}
       {deleteTarget && (
-        <div className={`${styles.detailBackdrop} nc-ops-backdrop`} role="dialog" aria-modal="true" aria-label="Delete schedule" onClick={() => setDeleteTarget(null)}>
+        <div className={`${styles.detailBackdrop} nc-ops-backdrop`} role="dialog" aria-modal="true" aria-label="Delete schedule" onClick={closeDelete}>
           <div className={`${styles.detailModal} nc-ops-modal is-confirm`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
             <div className={`${styles.detailHeader} nc-ops-modal-head`}>
@@ -1277,7 +1683,7 @@ export default function MaintenancePage() {
                 <h3>Delete this schedule?</h3>
                 <p className="nc-ops-num">{deleteTarget.title} · {kmRange(deleteTarget)}</p>
               </div>
-              <button className={styles.detailClose} onClick={() => setDeleteTarget(null)} aria-label="Close">
+              <button className={styles.detailClose} onClick={closeDelete} aria-label="Close">
                 <X size={18} />
               </button>
             </div>
@@ -1297,7 +1703,7 @@ export default function MaintenancePage() {
               >
                 {mutating ? "Deleting…" : "Delete permanently"}
               </button>
-              <button className="btn-muted" disabled={mutating} onClick={() => setDeleteTarget(null)}>
+              <button className="btn-muted" disabled={mutating} onClick={closeDelete}>
                 Keep it
               </button>
             </div>
@@ -1311,7 +1717,7 @@ export default function MaintenancePage() {
 
       {/* Cancel-with-reason modal */}
       {cancelTarget && (
-        <div className={`${styles.detailBackdrop} nc-ops-backdrop`} role="dialog" aria-modal="true" aria-label="Cancel schedule" onClick={() => setCancelTarget(null)}>
+        <div className={`${styles.detailBackdrop} nc-ops-backdrop`} role="dialog" aria-modal="true" aria-label="Cancel schedule" onClick={closeCancel}>
           <div className={`${styles.detailModal} nc-ops-modal is-confirm`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.detailAccent} />
             <div className={`${styles.detailHeader} nc-ops-modal-head`}>
@@ -1320,7 +1726,7 @@ export default function MaintenancePage() {
                 <h3>Cancel this maintenance schedule?</h3>
                 <p className="nc-ops-num">{cancelTarget.title} · {kmRange(cancelTarget)}</p>
               </div>
-              <button className={styles.detailClose} onClick={() => setCancelTarget(null)} aria-label="Close">
+              <button className={styles.detailClose} onClick={closeCancel} aria-label="Close">
                 <X size={18} />
               </button>
             </div>
@@ -1333,6 +1739,7 @@ export default function MaintenancePage() {
                 <label htmlFor="ms-cancel-reason">Cancellation reason <span className="ms-req">*</span></label>
                 <textarea
                   id="ms-cancel-reason"
+                  autoFocus
                   className="ms-input ms-textarea"
                   rows={3}
                   placeholder="Why is this work being cancelled?"
@@ -1350,7 +1757,7 @@ export default function MaintenancePage() {
               >
                 {mutating ? "Cancelling…" : "Cancel Schedule"}
               </button>
-              <button className="btn-muted" disabled={mutating} onClick={() => setCancelTarget(null)}>
+              <button className="btn-muted" disabled={mutating} onClick={closeCancel}>
                 Keep it
               </button>
             </div>
@@ -1378,144 +1785,217 @@ export default function MaintenancePage() {
             </div>
 
             <div className="nc-ops-form-body">
-              <div className="ms-input-group">
-                <label htmlFor="ms-title">Title <span className="ms-req">*</span></label>
-                <input
-                  id="ms-title"
-                  type="text"
-                  className="ms-input"
-                  placeholder="e.g. Road resurfacing, toll booth repair…"
-                  value={form.title}
-                  onChange={(e) => set("title", e.target.value)}
-                />
-              </div>
-
-              <p className="ms-section-label">Location</p>
-              {/* Direction first: it decides which way the stretch runs, so the
-                  start and end read in travel order. */}
-              <div className="ms-input-group">
-                <label id="ms-direction-label">Direction <span className="ms-req">*</span></label>
-                <div className="nc-ops-seg2" role="group" aria-labelledby="ms-direction-label">
-                  {DIRECTIONS.map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      className={form.direction === d ? "active" : ""}
-                      onClick={() => setDirection(d)}
-                      aria-pressed={form.direction === d}
-                    >
-                      {form.direction === d && check}
-                      {d} <span className="nc-ops-seg2-name">{DIRECTION_LABEL[d]}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="nc-ops-grid-loc">
+              {/* Three sections in the order a supervisor thinks of the job (16 Oct 2026, user request):
+                  what the work is, where it is, and when it runs. */}
+              <section className="nc-ops-fsec" aria-labelledby="ms-sec-work">
+                <h4 id="ms-sec-work" className="nc-ops-fsec-title"><Wrench size={15} aria-hidden="true" /> Work</h4>
                 <div className="ms-input-group">
-                  <label htmlFor="ms-start-km">Start Km <span className="ms-req">*</span></label>
+                  <label htmlFor="ms-title">Title <span className="ms-req">*</span></label>
                   <input
-                    id="ms-start-km"
-                    type="number" step={0.01} min={KM_MIN} max={KM_MAX} className="ms-input nc-ops-num"
-                    placeholder={form.direction === "NB" ? "e.g. 32" : "e.g. 38"} value={form.startKm}
-                    onChange={(e) => set("startKm", e.target.value)}
+                    id="ms-title"
+                    type="text"
+                    className="ms-input"
+                    placeholder="e.g. Road resurfacing, toll booth repair…"
+                    value={form.title}
+                    onChange={(e) => set("title", e.target.value)}
                   />
-                  {form.startKm !== "" && !Number.isNaN(Number(form.startKm)) && (
-                    <span className="nc-ops-sub">Near {nearestExitName(NLEX_EXITS, Number(form.startKm))}</span>
-                  )}
                 </div>
                 <div className="ms-input-group">
-                  <label htmlFor="ms-end-km">End Km <span className="ms-req">*</span></label>
-                  <input
-                    id="ms-end-km"
-                    type="number" step={0.01} min={KM_MIN} max={KM_MAX} className="ms-input nc-ops-num"
-                    placeholder={form.direction === "NB" ? "e.g. 38" : "e.g. 32"} value={form.endKm}
-                    onChange={(e) => set("endKm", e.target.value)}
+                  <label htmlFor="ms-description">Description</label>
+                  <textarea
+                    id="ms-description"
+                    className="ms-input ms-textarea"
+                    rows={2}
+                    placeholder="Scope of work, crew, equipment, traffic advisory notes…"
+                    value={form.description}
+                    onChange={(e) => set("description", e.target.value)}
                   />
-                  {form.endKm !== "" && !Number.isNaN(Number(form.endKm)) && (
-                    <span className="nc-ops-sub">Near {nearestExitName(NLEX_EXITS, Number(form.endKm))}</span>
-                  )}
                 </div>
-              </div>
+              </section>
 
-              {segmentNote && (
-                <p className="nc-ops-segment-note">
-                  <MapPin size={13} aria-hidden="true" /> {DIRECTION_LABEL[form.direction]} · {segmentNote}
-                </p>
-              )}
-
-              <div className="ms-input-group">
-                <label id="ms-lanes-label">Lanes closed ({form.direction}) · {stretchLanes} lanes here</label>
-                <div className="nc-ops-lanes" role="group" aria-labelledby="ms-lanes-label">
-                  <span className="nc-ops-lanes-edge" aria-hidden="true">Median</span>
-                  {LANE_OPTIONS.filter((l) => l === "Shoulder" || Number(l.slice(5)) <= stretchLanes || form.lanes.includes(l)).map((l) => {
-                    const on = form.fullClosure || form.lanes.includes(l);
-                    const hint = l === "Lane 1" ? "inner" : l === `Lane ${stretchLanes}` ? "outer" : "";
-                    return (
+              <section className="nc-ops-fsec" aria-labelledby="ms-sec-where">
+                <h4 id="ms-sec-where" className="nc-ops-fsec-title"><MapPin size={15} aria-hidden="true" /> Where</h4>
+                <div className="ms-input-group">
+                  <label id="ms-direction-label">Direction <span className="ms-req">*</span></label>
+                  <div className="nc-ops-seg2" role="group" aria-labelledby="ms-direction-label">
+                    {DIRECTIONS.map((d) => (
                       <button
-                        key={l}
+                        key={d}
                         type="button"
-                        disabled={form.fullClosure}
-                        className={on ? "active" : ""}
-                        aria-pressed={on}
-                        onClick={() => setForm((f) => ({
-                          ...f,
-                          lanesLegacy: "",
-                          lanes: f.lanes.includes(l) ? f.lanes.filter((x) => x !== l) : [...f.lanes, l],
-                        }))}
+                        className={form.direction === d ? "active" : ""}
+                        onClick={() => setDirection(d)}
+                        aria-pressed={form.direction === d}
                       >
-                        {l}{hint ? <span className="nc-ops-seg2-name"> {hint}</span> : null}
+                        {form.direction === d && check}
+                        {d} <span className="nc-ops-seg2-name">{DIRECTION_LABEL[d]}</span>
                       </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="nc-ops-grid-loc">
+                  <div className="ms-input-group">
+                    <label htmlFor="ms-start-km">Start Km <span className="ms-req">*</span></label>
+                    <KmPostField
+                      id="ms-start-km"
+                      value={form.startKm}
+                      onChange={(v) => set("startKm", v)}
+                      placeholder={form.direction === "NB" ? "e.g. 32" : "e.g. 38"}
+                      hint={<>Near {nearestExitName(NLEX_EXITS, formStartM)}</>}
+                    />
+                  </div>
+                  <div className="ms-input-group">
+                    <label htmlFor="ms-end-km">End Km <span className="ms-req">*</span></label>
+                    <KmPostField
+                      id="ms-end-km"
+                      value={form.endKm}
+                      onChange={(v) => set("endKm", v)}
+                      placeholder={form.direction === "NB" ? "e.g. 38" : "e.g. 32"}
+                      hint={<>Near {nearestExitName(NLEX_EXITS, formEndM)}</>}
+                      limit={endLimit}
+                      problem={endProblem}
+                    />
+                  </div>
+                </div>
+                {segmentNote && (
+                  <p className="nc-ops-segment-note">
+                    <MapPin size={13} aria-hidden="true" /> {DIRECTION_LABEL[form.direction]} · {segmentNote}
+                  </p>
+                )}
+                <div className="ms-input-group">
+                  {/* The carriageway as one full-width strip, median on the left and road edge on the
+                      right, with Full closure on the heading line (16 Oct 2026, user request): squeezed
+                      between side labels, the strip wrapped Shoulder onto a second line. */}
+                  <div className="nc-ops-lanes-head">
+                    <label id="ms-lanes-label">Lanes closed ({form.direction}) · {stretchLanes} lanes here</label>
+                    <button
+                      type="button"
+                      className={`nc-ops-full${form.fullClosure ? " active" : ""}`}
+                      aria-pressed={form.fullClosure}
+                      onClick={() => setForm((f) => ({ ...f, fullClosure: !f.fullClosure, lanesLegacy: "" }))}
+                    >
+                      Full closure
+                    </button>
+                  </div>
+                  <div className="nc-ops-lanes-road" role="group" aria-labelledby="ms-lanes-label">
+                    {LANE_OPTIONS.filter((l) => l === "Shoulder" || Number(l.slice(5)) <= stretchLanes || form.lanes.includes(l)).map((l) => {
+                      const on = form.fullClosure || form.lanes.includes(l);
+                      const hint = l === "Lane 1" ? "inner" : l === `Lane ${stretchLanes}` ? "outer" : "";
+                      return (
+                        <button
+                          key={l}
+                          type="button"
+                          disabled={form.fullClosure}
+                          className={on ? "active" : ""}
+                          aria-pressed={on}
+                          onClick={() => setForm((f) => ({
+                            ...f,
+                            lanesLegacy: "",
+                            lanes: f.lanes.includes(l) ? f.lanes.filter((x) => x !== l) : [...f.lanes, l],
+                          }))}
+                        >
+                          {l}{hint ? <span className="nc-ops-seg2-name"> {hint}</span> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="nc-ops-lanes-ends" aria-hidden="true"><span>← Median</span><span>Road edge →</span></div>
+                  <span className="nc-ops-sub">
+                    {form.lanesLegacy
+                      ? `Currently saved as “${form.lanesLegacy}” — pick the lanes to be specific.`
+                      : <><b>Saved as: {closureText(form.lanes, form.fullClosure, form.lanesLegacy)}</b> · Lanes are counted from the median in the direction of travel: Lane 1 is the inner (fast) lane, the highest number the outer (slow) lane.</>}
+                  </span>
+                </div>
+              </section>
+
+              <section className="nc-ops-fsec" aria-labelledby="ms-sec-when">
+                <h4 id="ms-sec-when" className="nc-ops-fsec-title"><Calendar size={15} aria-hidden="true" /> When <span className="nc-ops-fsec-aside">PHT (UTC+8)</span></h4>
+                <div className="nc-ops-when">
+                  <div className="nc-ops-when-col">
+                    <span className="nc-ops-when-k">Starts</span>
+                    <div className="nc-ops-when-row">
+                      <div className="ms-input-group">
+                        <label htmlFor="ms-start-date">Date <span className="ms-req">*</span></label>
+                        <input id="ms-start-date" type="date" min={editId ? undefined : todayLocal()} className="ms-input" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} />
+                      </div>
+                      <div className="ms-input-group">
+                        <label htmlFor="ms-start-time">Time</label>
+                        <input id="ms-start-time" type="time" className="ms-input" value={form.startTime} onChange={(e) => set("startTime", e.target.value)} />
+                      </div>
+                    </div>
+                  </div>
+                  <span className="nc-ops-when-arrow" aria-hidden="true">→</span>
+                  <div className="nc-ops-when-col">
+                    <span className="nc-ops-when-k">Ends</span>
+                    <div className="nc-ops-when-row">
+                      <div className="ms-input-group">
+                        <label htmlFor="ms-end-date">Date <span className="ms-req">*</span></label>
+                        <input id="ms-end-date" type="date" min={form.startDate || (editId ? undefined : todayLocal())} className="ms-input" value={form.endDate} onChange={(e) => set("endDate", e.target.value)} />
+                      </div>
+                      <div className="ms-input-group">
+                        <label htmlFor="ms-end-time">Time</label>
+                        <input id="ms-end-time" type="time" className="ms-input" value={form.endTime} onChange={(e) => set("endTime", e.target.value)} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {/* Advice only: none of these notes stops the schedule saving. */}
+                {quiet?.kind === "window" && (() => {
+                  const dirWord = DIRECTION_LABEL[form.direction].toLowerCase();
+                  const where = quiet.plazas.length
+                    ? `the ${listNames(quiet.plazas.map(displayExitName))} toll plaza${quiet.plazas.length === 1 ? "" : "s"}`
+                    : "every toll plaza";
+                  const source = (
+                    <span className="nc-ops-quiet-src">
+                      Average {quiet.dayName}, {dirWord} vehicles through {where}, {quiet.period}
+                      {quiet.unmetered ? ". No interchange on this stretch has toll counts, so the whole carriageway stands in." : "."}
+                    </span>
+                  );
+                  if (quiet.alreadyQuiet) {
+                    return (
+                      <p className="nc-ops-quiet is-ok" role="note">
+                        <Check size={14} aria-hidden="true" />
+                        <span>This is the lightest {quiet.hours}-hour window {dirWord} on a typical {quiet.dayName}. {source}</span>
+                      </p>
                     );
-                  })}
-                  <span className="nc-ops-lanes-edge" aria-hidden="true">Road edge</span>
-                  <button
-                    type="button"
-                    className={`is-full${form.fullClosure ? " active" : ""}`}
-                    aria-pressed={form.fullClosure}
-                    onClick={() => setForm((f) => ({ ...f, fullClosure: !f.fullClosure, lanesLegacy: "" }))}
-                  >
-                    Full closure
-                  </button>
-                </div>
-                <span className="nc-ops-sub">
-                  {form.lanesLegacy
-                    ? `Currently saved as “${form.lanesLegacy}” — pick the lanes to be specific.`
-                    : `Saved as: ${closureText(form.lanes, form.fullClosure, form.lanesLegacy)} · Lanes are counted from the median, in the direction of travel: Lane 1 is the inner (fast) lane, the highest lane number is the outer (slow) lane. Same for NB and SB.`}
-                </span>
-              </div>
-
-              <p className="ms-section-label">Window · PHT (UTC+8)</p>
-              <div className="nc-ops-grid-win">
-                <div className="ms-input-group">
-                  <label htmlFor="ms-start-date">Start date <span className="ms-req">*</span></label>
-                  <input id="ms-start-date" type="date" min={editId ? undefined : todayLocal()} className="ms-input" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} />
-                </div>
-                <div className="ms-input-group">
-                  <label htmlFor="ms-start-time">Start time</label>
-                  <input id="ms-start-time" type="time" className="ms-input" value={form.startTime} onChange={(e) => set("startTime", e.target.value)} />
-                </div>
-                <div className="ms-input-group">
-                  <label htmlFor="ms-end-date">End date <span className="ms-req">*</span></label>
-                  <input id="ms-end-date" type="date" min={form.startDate || (editId ? undefined : todayLocal())} className="ms-input" value={form.endDate} onChange={(e) => set("endDate", e.target.value)} />
-                </div>
-                <div className="ms-input-group">
-                  <label htmlFor="ms-end-time">End time</label>
-                  <input id="ms-end-time" type="time" className="ms-input" value={form.endTime} onChange={(e) => set("endTime", e.target.value)} />
-                </div>
-              </div>
-
-              <div className="ms-input-group">
-                <label htmlFor="ms-description">Description</label>
-                <textarea
-                  id="ms-description"
-                  className="ms-input ms-textarea"
-                  rows={2}
-                  placeholder="Scope of work, crew, equipment, traffic advisory notes…"
-                  value={form.description}
-                  onChange={(e) => set("description", e.target.value)}
-                />
-              </div>
+                  }
+                  const warn = quiet.startBusy || quiet.crossesPeak;
+                  return (
+                    <div className={`nc-ops-quiet${warn ? " is-busy" : ""}`} role="note">
+                      {warn && <AlertTriangle size={14} aria-hidden="true" className="nc-ops-quiet-icon" />}
+                      <span>
+                        {quiet.startBusy ? (
+                          <><b>{fmtHourOfDay(Number(form.startTime.slice(0, 2)))} is one of the six busiest hours {dirWord} on a {quiet.dayName}.</b>{" "}</>
+                        ) : quiet.crossesPeak ? (
+                          <><b>This window runs through the {fmtHourOfDay(quiet.peakHour)} peak.</b>{" "}</>
+                        ) : null}
+                        Lightest {quiet.hours}-hour window on a {quiet.dayName}: <b>{fmtHourOfDay(quiet.start)} to {fmtHourOfDay(quiet.end)}{quiet.nextDay ? " (next day)" : ""}</b>,
+                        about {Math.round(quiet.avg).toLocaleString("en-US")} vehicles an hour against {quiet.peakV.toLocaleString("en-US")} at the {fmtHourOfDay(quiet.peakHour)} peak.{" "}
+                        {source}
+                      </span>
+                      <button type="button" className="btn-muted" onClick={applyQuiet}>
+                        Use {fmtHourOfDay(quiet.start)} to {fmtHourOfDay(quiet.end)}
+                      </button>
+                    </div>
+                  );
+                })()}
+                {quiet?.kind === "long" && (
+                  <p className="nc-ops-quiet is-plain" role="note">
+                    <Info size={14} aria-hidden="true" />
+                    <span>Work of {quiet.hours} hours runs through at least one peak whatever time it starts, so no lighter window is suggested. Up to 12 hours gets one.</span>
+                  </p>
+                )}
+                {quiet?.kind === "none" && (
+                  <p className="nc-ops-quiet is-plain" role="note">
+                    <Info size={14} aria-hidden="true" />
+                    <span>No hourly toll counts could be read for the {DIRECTION_LABEL[form.direction].toLowerCase()} carriageway, so no lighter window can be suggested.</span>
+                  </p>
+                )}
+                {quiet?.kind === "loading" && (
+                  <p className="nc-ops-quiet is-plain" role="status">
+                    <span>Reading hourly toll counts to suggest a lighter time…</span>
+                  </p>
+                )}
+              </section>
 
               {conflicts.length > 0 && (
                 <div className={`nc-ops-conflict${hasCritical ? " is-direct" : ""}`} role="status">
@@ -1553,12 +2033,12 @@ export default function MaintenancePage() {
             </div>
 
             <div className="nc-ops-actions is-form">
-              <button className="nc-pill" disabled={saving} onClick={() => submitForm()}>
-                <Calendar size={15} aria-hidden="true" />
-                {saving ? "Saving…" : editId ? "Save changes" : "Schedule Maintenance"}
-              </button>
               <button className="btn-muted" disabled={saving} onClick={() => setFormOpen(false)}>
                 Discard
+              </button>
+              <button className="btn-primary nc-ops-submit" disabled={saving} onClick={() => submitForm()}>
+                <Calendar size={15} aria-hidden="true" />
+                {saving ? "Saving…" : editId ? "Save changes" : "Schedule maintenance"}
               </button>
             </div>
           </div>

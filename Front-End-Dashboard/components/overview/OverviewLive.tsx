@@ -6,12 +6,14 @@ import { ArrowUpRight, BarChart3, Car, CheckCircle2, ChevronDown, ChevronRight, 
 import { useCorridorLive } from "../../lib/use-corridor-live";
 import type { ExitStatus } from "../../lib/corridor-status";
 import { displayExitName, type NlexExit } from "../../lib/nlex-exits";
+import { KM_POST_END, KM_POST_START, fmtKm } from "../../lib/km-post";
 import SignalGlyph from "../dashboard/SignalGlyph";
 import InfoTooltip from "../dashboard/InfoTooltip";
 import StateNote from "../stage/StateNote";
 import TitleReveal from "../stage/TitleReveal";
 import PageGroupName from "../dashboard/PageGroupName";
 import EvidenceModal from "../dashboard/EvidenceModal";
+import NavieGreeting from "./NavieGreeting";
 
 /**
  * The Overview's live block: what the corridor is doing right now and where it
@@ -124,7 +126,7 @@ export default function OverviewLive() {
         <b className="ov-hot-name">{displayExitName(s.exit)}</b>
         <span className="ov-hot-word">{s.status === "congested" ? "Congested" : "Slow"}</span>
         <span className="ov-hot-meta">
-          {exit ? `Km ${exit.km.toFixed(1)} · ` : ""}
+          {exit ? `Km ${fmtKm(exit.km)} · ` : ""}
           {s.direction === "NB" ? "Northbound" : "Southbound"}
         </span>
         <span className="ov-hot-facts">{facts.length ? facts.join(" · ") : "No queue figures reported"}</span>
@@ -137,7 +139,19 @@ export default function OverviewLive() {
     <section className="ov-hero" data-section="Overview" aria-labelledby="ov-title">
       {/* The stage draws the 3D car over this box. No flat picture stands in while it loads (user
           request, 7 Oct 2026: it popped up on slow loads); the car simply drives in when ready. */}
-      <div className="ov-hero-mascot" data-stage-anchor="mascot" />
+      <div className="ov-hero-mascot" data-stage-anchor="mascot">
+        {/* Navie's speech bubble: an introduction right after sign-in, a welcome back after that. */}
+        <NavieGreeting
+          live={{
+            loading: loading && !tally,
+            failed,
+            stale,
+            congested: tally?.congested ?? 0,
+            slow: tally?.slow ?? 0,
+            worstExit: hot[0] ? displayExitName(hot[0].s.exit) : null,
+          }}
+        />
+      </div>
 
       <div className="ov-hero-copy">
         <p className="ds-page-eyebrow">
@@ -146,7 +160,7 @@ export default function OverviewLive() {
         </p>
         <TitleReveal as="h1" text="Overview" className="ov-hero-title" id="ov-title" />
         <p className="ov-hero-span ov-span">
-          Balintawak <b>Km 12</b> <span aria-hidden="true">→</span><span className="sr-only">to</span> Sta. Ines <b>Km 88.25</b> · both carriageways
+          Balintawak <b>Km {KM_POST_START}</b> <span aria-hidden="true">→</span><span className="sr-only">to</span> Sta. Ines <b>Km {KM_POST_END}</b> · both carriageways
         </p>
 
         <div className="ov-hero-cols">
@@ -163,8 +177,12 @@ export default function OverviewLive() {
                   {stale ? <SignalGlyph state="slow" size={20} title="" /> : <span className="ov-live-dot" aria-hidden="true" />}
                   <span>
                     <b>{stale ? "Feed stale" : "Live"}</b> · Waze jam reports · {ageText(live.ageMinutes)}
-                    {live.windowMinutes ? ` · ${live.windowMinutes}-minute window` : ""}
+                    {live.windowMinutes ? ` · ${live.windowMinutes}‑minute window` : ""}
                   </span>
+                  {/* The whole card opens the Live Map, where these reports are drawn (17 Oct 2026, testers OV-5). */}
+                  <Link href="/dashboard/map-comparison" className="ov-card-go" aria-label="Open the Live Map" title="Open the Live Map">
+                    <ArrowUpRight size={17} strokeWidth={2.2} aria-hidden="true" />
+                  </Link>
                 </>
               )}
             </div>

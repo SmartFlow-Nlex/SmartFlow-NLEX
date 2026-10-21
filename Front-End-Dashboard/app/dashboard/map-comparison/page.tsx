@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { ChevronDown, Clock, Map, Maximize2, Milestone } from "lucide-react";
 import type { Feature } from "geojson";
 import TrafficMapPanel, { MAJOR_EXITS } from "../../../components/maps/TrafficMapPanel";
@@ -20,6 +20,7 @@ const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
 import { displayExitName, FALLBACK_EXITS, useNlexExits, type NlexExit } from "../../../lib/nlex-exits";
 import { corridorGuard, type LngLat } from "../../../lib/corridor-shape";
+import { fmtKm } from "../../../lib/km-post";
 import { isActiveReport, WAZE_REPORT_TYPES } from "../../../lib/waze-reports";
 import { lookOf } from "../../../lib/waze-report-look";
 import nlexGeometry from "../../../components/maps/nlex-geometry.json";
@@ -105,6 +106,29 @@ export default function MapComparisonPage() {
       })
     );
   };
+
+  /* Arriving from a jam on the Overview's road strip (?exit=Name&dir=NB, 20 Oct 2026): pick that exit and zoom
+     both maps on it. The maps start listening only once they have loaded, so the request is also left on
+     window.__nlexPendingFly, which each map reads when it is ready (components/maps/TrafficMapPanel.tsx). */
+  const focusedFromUrl = useRef(false);
+  useEffect(() => {
+    if (focusedFromUrl.current || exits.length === 0) return;
+    const wanted = new URLSearchParams(window.location.search).get("exit");
+    if (!wanted) return;
+    const x = exits.find((e) => e.exit_name === wanted);
+    if (!x) return;
+    focusedFromUrl.current = true;
+    const detail = { lng: Number(x.longitude), lat: Number(x.latitude), name: x.exit_name, zoom: 13.5 };
+    (window as unknown as { __nlexPendingFly?: typeof detail }).__nlexPendingFly = detail;
+    flyToExit(x);
+    window.dispatchEvent(new CustomEvent("nlex:flyto", { detail }));
+    const t = window.setTimeout(() => {
+      delete (window as unknown as { __nlexPendingFly?: unknown }).__nlexPendingFly;
+    }, 15000);
+    return () => window.clearTimeout(t);
+    // flyToExit only sets state and dispatches; running once per arrival is the point
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exits]);
 
   const resetView = () => {
     setSelectedExit("");
@@ -245,7 +269,7 @@ export default function MapComparisonPage() {
                           <span className="lm-exit-id">{x.exit_id}</span>
                           {displayExitName(x.exit_name)}
                           <span className="lm-exit-km">
-                            Km {x.km}
+                            Km {fmtKm(x.km)}
                           </span>
                         </button>
                       </li>

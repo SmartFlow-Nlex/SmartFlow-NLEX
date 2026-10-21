@@ -31,11 +31,12 @@ export function Shell({
   updating?: boolean;
 }) {
   return (
-    <article className="chart-card wide inc-card">
-      <div className="inc-card-head">
-        <div className="inc-card-titles">
-          <h3 className="inc-card-title">
-            {title} <InfoTooltip text={hint} />
+    <article className="chart-card wide inc-card nct-card">
+      {/* The same frame as the Traffic tab's prescriptive panels (16 Oct 2026). */}
+      <div className="nct-card-head-split">
+        <div className="nct-head-text">
+          <h3 className="nct-title">
+            {title}<InfoTooltip text={hint} />
             {updating && (
               <span className="inc-updating-badge" role="status" aria-live="polite">
                 Updating…
@@ -50,20 +51,27 @@ export function Shell({
   );
 }
 
-export const Banner = ({ children }: { children: React.ReactNode }) => <div className="inc-note">{children}</div>;
+export const Banner = ({ children }: { children: React.ReactNode }) => <div className="nct-banner">{children}</div>;
 
-export const Foot = ({ children }: { children: React.ReactNode }) => <p className="inc-caption">{children}</p>;
+export const Foot = ({ children }: { children: React.ReactNode }) => <p className="nct-foot">{children}</p>;
 
-/** Loading (no `kind`) or an unavailable state (`kind`), which keeps its own words beside the mascot. */
-export const Empty = ({ msg, kind }: { msg: string; kind?: "nodata" | "error" }) => (
+/** Loading (no `kind`) or an unavailable state (`kind`), which keeps its own words beside the mascot.
+    `note` explains a slow load; `onRetry` puts a Try again button under an error (17 Oct 2026, testers IN-15). */
+export const Empty = ({ msg, kind, note, onRetry }: { msg: string; kind?: "nodata" | "error"; note?: string; onRetry?: () => void }) => (
   <article className="chart-card wide inc-card" style={{ minHeight: 220, justifyContent: "center" }}>
     {kind ? (
       <StateNote kind={kind} role={kind === "error" ? "alert" : undefined}>
         {msg}
+        {onRetry && kind === "error" && (
+          <button type="button" className="btn-muted inc-retry" onClick={onRetry}>Try again</button>
+        )}
       </StateNote>
     ) : (
       <div className="inc-loading" role="status">
-        {msg}
+        <span>
+          {msg}
+          {note && <span className="inc-loading-note">{note}</span>}
+        </span>
       </div>
     )}
   </article>

@@ -32,6 +32,7 @@ the [lane reallocation](#lane-reallocation) control.
 | `../components/ScenarioPanel.tsx` | The Add-event panel and the event list. Pure layout: every number, label and badge it shows is built by `adapter.ts`/`catalogue.ts` and just rendered here. Takes per-direction data: one carriageway (NB-only/SB-only) or two (Both, with an "Add to" picker, grouped lists and the skip guard). |
 | `../useDirectionSim.ts` | One carriageway's whole simulation as a hook (its `TrafficSim`, engine binding, events, interventions, demand, metrics, baseline). Called twice from `page.tsx`, once per direction. |
 | `../bothMetrics.ts` | The corridor totals for Both mode (sum / max / flow-weighted; density has none). Pure. |
+| `../eventTwin.ts` | `NoEventTwin`: the same run without the scenario events, stepped alongside the live one, which the before/after compares against while a carriageway has events (see [Before / after with events](#before--after-with-events)). |
 | `../components/DirectionPill.tsx` | The NB / SB pill that names a carriageway on every control, row and readout in Both mode. |
 | `../page.tsx` | Wiring, the carriageway selector and the canvas (`render` for one carriageway, `renderBoth` for two): calls `useDirectionSim` per direction, drives the shared animation loop (`applyAtBoundary` each frame, `stepToScenarioTime` for "skip to next phase" via the hook), and feeds each direction's *effective* state (operator settings with the scenario laid over them) into the recommendation / before-after / baseline / assistant-context readouts. |
 
@@ -290,7 +291,40 @@ What stays is the setup rather than the run: the route and km window, the **Lane
 hour of day, the view (NB / SB / Both) and the run speed. `useDirectionSim`'s `resetAll` does each
 carriageway's part; `page.tsx`'s `resetEverything` does the rest.
 
-### Fast-forward cost and the skip guard
+## Before / after with events
+
+Testers (UAT 16 Oct 2026, SB-17): "Scenario events are not applied in the baseline comparison." The before/after
+compared a baseline the operator captured with the road now. That measures something changed after the capture, which
+suits a lane closed by hand, but not an event already on the road when Capture was pressed (a loaded forecast day draws
+its incidents the moment the run is built), and against a snapshot minutes old it also measures the traffic drifting.
+
+- **With events on a carriageway** the before/after is **No events** against **With events**: the same run, built
+  from the live engine's own config (seed, hour, inflow, lanes, ramps, plazas) and holding what the operator set by hand,
+  but none of the events (`NoEventTwin`, `eventTwin.ts`), stepped one step after each live step. The engine is
+  deterministic, so the two are the same run vehicle for vehicle until the first event's vehicles are picked out of the
+  traffic (`SCENE_LEAD_S` before it starts); every difference after that is the events'. Both sides are the last
+  minute's mean on the same 10 s grid. No capture is needed; a pending event says it has not started, an ended one that
+  the difference left is the recovery.
+- **Without events** it is the captured baseline against now, as before, and the tiles' "vs baseline" figures always are.
+- **Cost and limits.** The twin exists only while the carriageway has events, so a run with events steps two engines.
+  It is built when the first event is added, from the settings as they are then, and caught up from the start in 25 ms
+  slices (the panel shows how far); a closure, limit or inflow changed and changed back before that is not replayed into
+  it. From then on every hand-set change (closures, limits, obstacles, booths, inflow) goes into both. A skip steps the
+  live run only; the twin catches up after it. `verify.ts` checks on the real engine that the two are identical until the
+  lead-in and differ after, that the clocks and sample grids match, and that the twin never holds the event.
+
+## Replay
+
+The **Replay** button is there whenever the run on screen has a recording (the last 90 simulated seconds, 8 frames a
+second, per carriageway; a rebuild starts a new one). It used to appear only while an incident or closure that had just
+appeared was still inside the recording, which at 10x is nine seconds, and never for rain (testers SB-15, blocked).
+With an obstruction recorded it is **Replay incident** and starts just before the latest one; otherwise it starts at the
+oldest frame. The engine pauses, and the recording **plays back** at the run's speed: Pause and Play, frame steps and the
+slider (dragging while it plays carries on from there), and it stops on the last frame, which says so (**Play again**
+starts over). **Back to live**, the transport's Play or Space returns to the live road, which carried on from where it was
+paused. In Both mode the other carriageway is shown at the same step.
+
+## Fast-forward cost and the skip guard
 
 "Skip to next phase" steps the engine without drawing. Measured (Chrome, development machine,
 2026-09-24, Both mode, through the real UI): roughly **2–5 ms of wall time per simulated second at
@@ -702,7 +736,9 @@ time they were written.
   change over the run). `page.tsx` refuses a confidence run outright while the carriageway has any scenario event
   (`if (focused.scenarioEvents.length > 0) return;`, with an operator-facing note explaining why) and
   always in Both mode ("Confidence runs support one carriageway at a time."), rather
-  than running something that would silently misrepresent the events. Making a confidence run
+  than running something that would silently misrepresent the events. Both reasons are shown when both
+  apply (the events note names the events, and appears in Both mode too), the section's folded summary
+  says it is off, a run already going stops if an event is added, and an older result says what it was run on. Making a confidence run
   scenario-aware would mean teaching `replicate()` to accept a timed intervention schedule, which is
   a `simulation.ts` change and therefore outside this feature as scoped.
 - **Persistence**: each direction's `scenarioEvents` is plain in-memory React state (`useState` in

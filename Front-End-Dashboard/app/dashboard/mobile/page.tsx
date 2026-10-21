@@ -808,7 +808,7 @@ export default function MobileControlPage() {
                             rows={2}
                             maxLength={MAX_MESSAGE}
                             value={a.message}
-                            placeholder="e.g. Lane closure at Km 15.2 southbound until 06:00."
+                            placeholder="e.g. Lane closure at Km 15 southbound until 06:00."
                             onChange={(e) => patchAdvisory(a.id, { message: e.target.value })}
                           />
                           <span

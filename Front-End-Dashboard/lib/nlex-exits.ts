@@ -22,7 +22,7 @@ export type NlexExit = {
   exit_name: string;
   latitude: number;
   longitude: number;
-  /** Km-post along the corridor: Balintawak is 0, Sta. Ines is 76.25. */
+  /** MEASURED km along the corridor (lib/km-post.ts): Balintawak is 12, Sta. Ines 88.25. For calculation; show it with fmtKm() as the official km post. */
   km: number;
   /** Per-direction access, from silver.nlex_exit_reference. */
   nb_entry: boolean;

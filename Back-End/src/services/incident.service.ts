@@ -6,6 +6,7 @@ import { RECORD_END } from "../etl/toll-hourly.js";
 // is derived instead of hardcoded.
 import { searchExitsInDb } from "./map-comparison.service.js";
 import { buildExitToExitSegments, segmentIndexForKm } from "../lib/exit-segments.js";
+import { KM_POST_START, kmPostSql } from "../lib/km-post.js";
 
 // ---------------------------------------------------------------------------
 // Incident analytics for the descriptive dashboard.
@@ -15,9 +16,9 @@ import { buildExitToExitSegments, segmentIndexForKm } from "../lib/exit-segments
 // scripts/medallion/10-bronze-accident-breakdown.sql's own migration note),
 // plus hourly_weather for exposure.
 //
-// The old trio is untouched and still backs getIncidentHourlyFromDb and the
-// predictive endpoint below — this migration covers only the descriptive
-// /analytics query, not those.
+// The old trio is untouched and still backs the predictive endpoint's
+// corridor apportionment below. The hourly drill-down moved onto the event
+// tables on 19 Oct 2026 (see getIncidentHourlyFromDb).
 // ---------------------------------------------------------------------------
 
 export type IncidentSource = "all" | "accident" | "breakdown";
@@ -77,21 +78,18 @@ const RESPONSE_MIN = `
 const HOUR_OF = `EXTRACT(hour FROM rt::time)::int`;
 const KM_OF = `(regexp_match(location, 'Km\\s*(\\d+)'))[1]::int`;
 
-// Client-table event union, scoped to this function only. Deliberately
-// separate from INCIDENTS_CTE above, which getIncidentHourlyFromDb and the
-// predictive endpoint still read — those haven't been migrated in this pass.
+// Client-table event union, scoped to this file. Deliberately
+// separate from INCIDENTS_CTE above, which the predictive endpoint's corridor
+// apportionment still reads. getIncidentHourlyFromDb reads this one too.
 //
 // No cause/type columns here: the causes/types queries below read
 // main_cause/sub_cause/type_of_event straight off each source table instead,
 // because the two tables' cause vocabularies don't share a domain (mechanical
 // fault vs. driver behavior) and the previous single ranked list conflated
-// them (see the earlier audit). corridor_km, not km_value: the source
-// tables' raw km_value follows the Philippine DPWH km-post convention
-// (Balintawak ~ km 12), not this dashboard's Balintawak-as-km-0 scale —
-// corridor_km (= km_value - 12.0, added in scripts/medallion/
-// 10-bronze-accident-breakdown.sql) is already on the same scale as
-// nlex_exits, so hotspot bins line up with the exit list instead of sitting
-// ~12km off it.
+// them (see the earlier audit). corridor_km is km_value - 12.0 (scripts/
+// medallion/10-bronze-accident-breakdown.sql), i.e. the old Balintawak = 0
+// scale; the hotspot query below adds the 12 back and bins on the official
+// km post (lib/km-post.ts), so its bins read the same as every other km shown.
 const EVENTS_CTE = `
   events AS (
     SELECT event_start_date::date AS d,
@@ -208,6 +206,7 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
       types,
       weatherExposure,
       weatherIncidents,
+      weatherCells,
       jamSpeedWx,
       kpi,
       accidentClearance,
@@ -221,12 +220,21 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
          FROM events WHERE ${WHERE} GROUP BY 1 ORDER BY 1`,
         params
       ),
-      // Hotspots: 5-km bins on corridor_km (Balintawak-relative), not the
-      // source tables' raw km_value (DPWH-relative) — both tables carry it
-      // natively, so there's no location text to regex-parse anymore.
+      // Hotspots: 5-km bins of the OFFICIAL km post (Km 15-19, 20-24, ...), the
+      // numbers an operator reads on every other page. km_bin is therefore an
+      // official post, not a measured km: the page prints it as it is.
+      // corridor_km is Balintawak = 0, so 12 is added back before converting.
+      //
+      // The first bin starts at the corridor, Km 12-14, not at Km 10. About 7%
+      // of records sit at DPWH km 0-11.9, south of Balintawak, where the
+      // official list has no posts (the Balintawak approaches and the Harbor
+      // Link side, and some mis-keyed rows); they are one group, km_bin 0, which
+      // the page names "South of Km 12" rather than "Km 0-4".
       db.query(
         `WITH ${EVENTS_CTE}, ${WXALL_CTE}
-         SELECT (FLOOR(corridor_km / 5) * 5)::int AS km_bin, COUNT(*)::int AS total,
+         SELECT (CASE WHEN ${kmPostSql("(corridor_km + 12)")} < ${KM_POST_START} THEN 0
+                      ELSE GREATEST(FLOOR(${kmPostSql("(corridor_km + 12)")} / 5) * 5, ${KM_POST_START}) END)::int AS km_bin,
+                COUNT(*)::int AS total,
                 COUNT(*) FILTER (WHERE src = 'accident')::int AS accident,
                 COUNT(*) FILTER (WHERE src = 'breakdown')::int AS breakdown,
                 SUM(inj)::int AS injuries, SUM(fat)::int AS fatalities
@@ -235,10 +243,14 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
          GROUP BY 1 ORDER BY 2 DESC`,
         params
       ),
-      // Hour x day-of-week frequency
+      // Hour x day-of-week frequency. Split by event type as well as the total (19 Oct 2026, testers
+      // IN-8): the panel under the heatmap breaks the hovered or selected cell into accidents and
+      // breakdowns, which the total alone cannot give. `v` stays the total its callers already read.
       db.query(
         `WITH ${EVENTS_CTE}, ${WXALL_CTE}
-         SELECT EXTRACT(dow FROM d)::int AS dow, h AS hour, COUNT(*)::int AS v
+         SELECT EXTRACT(dow FROM d)::int AS dow, h AS hour, COUNT(*)::int AS v,
+                COUNT(*) FILTER (WHERE src = 'accident')::int AS accident,
+                COUNT(*) FILTER (WHERE src = 'breakdown')::int AS breakdown
          FROM events WHERE ${WHERE}
          GROUP BY 1, 2 ORDER BY 1, 2`,
         params
@@ -294,15 +306,47 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
          FROM wx`,
         [lo, hi]
       ),
-      // Incidents on wet vs dry hours, by event type
+      // Incidents on wet vs dry hours, by event type.
+      /* Not narrowed by the Weather filter (17 Oct 2026, testers IN-2): this block IS the wet-vs-dry
+         comparison, and its hour denominators above never followed the filter. Filtering only the
+         counts left Weather=Wet with no dry side (the Crash Rate in Rain tile went blank) and
+         Weather=Dry with zero wet crashes (the tile read 0.00x). Incident type still applies. */
       db.query(
         `WITH ${EVENTS_CTE}, ${WX_CTE}
          SELECT (w.rain > 0.3) AS wet, e.src, COUNT(*)::int AS n
          FROM events e JOIN wx w ON w.d = e.d AND w.h = e.h
          WHERE e.d BETWEEN $1 AND $2 AND ($3::text IS NULL OR e.src = $3)
-           AND ($4::text IS NULL OR (w.rain > 0.3) = ($4 = 'wet'))
          GROUP BY 1, 2`,
-        params
+        [lo, hi, src]
+      ),
+      /* The same wet-vs-dry comparison cut by day of week and hour of day (19 Oct 2026, testers IN-7:
+         "add an hour/day filter"). Exposure hours and incident counts per (dow, hour), so the card can
+         sum any day/hour selection and still divide incidents by the hours of that weather in the
+         same slots. Summed over every slot, these equal the two blocks above. */
+      db.query(
+        `WITH ${EVENTS_CTE}, ${WX_CTE},
+         expo AS (
+           SELECT EXTRACT(dow FROM d)::int AS dow, h,
+                  COUNT(*) FILTER (WHERE rain > 0.3)::int AS wet_hours,
+                  COUNT(*) FILTER (WHERE rain <= 0.3)::int AS dry_hours
+           FROM wx GROUP BY 1, 2
+         ),
+         inc AS (
+           SELECT EXTRACT(dow FROM e.d)::int AS dow, e.h,
+                  COUNT(*) FILTER (WHERE w.rain > 0.3 AND e.src = 'accident')::int AS wet_accident,
+                  COUNT(*) FILTER (WHERE w.rain > 0.3 AND e.src = 'breakdown')::int AS wet_breakdown,
+                  COUNT(*) FILTER (WHERE w.rain <= 0.3 AND e.src = 'accident')::int AS dry_accident,
+                  COUNT(*) FILTER (WHERE w.rain <= 0.3 AND e.src = 'breakdown')::int AS dry_breakdown
+           FROM events e JOIN wx w ON w.d = e.d AND w.h = e.h
+           WHERE e.d BETWEEN $1 AND $2 AND ($3::text IS NULL OR e.src = $3)
+           GROUP BY 1, 2
+         )
+         SELECT x.dow, x.h AS hour, x.wet_hours AS "wetHours", x.dry_hours AS "dryHours",
+                COALESCE(i.wet_accident, 0) AS "wetAccident", COALESCE(i.wet_breakdown, 0) AS "wetBreakdown",
+                COALESCE(i.dry_accident, 0) AS "dryAccident", COALESCE(i.dry_breakdown, 0) AS "dryBreakdown"
+         FROM expo x LEFT JOIN inc i ON i.dow = x.dow AND i.h = x.h
+         ORDER BY 1, 2`,
+        [lo, hi, src]
       ),
       // Traffic impact: avg jam speed on wet vs dry hours (unchanged)
       db.query(
@@ -457,6 +501,8 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
         wetHours: weatherExposure.rows[0].wet_hours,
         dryHours: weatherExposure.rows[0].dry_hours,
         incidents: wxInc,
+        // Per day-of-week x hour, for the Dry vs Wet card's Day and Hour filters.
+        cells: weatherCells.rows,
         jam: jamWx,
       },
     };
@@ -481,11 +527,16 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
 //
 // The subtlety this endpoint exists to get right is the difference between
 // "zero incidents happened in this hour" and "the incident log doesn't reach
-// this day yet". The three source tables end on different dates (road/moto stop
-// earlier than stalled), and the forecast horizon runs past all of them — so a
+// this day yet". The source tables can end on different dates, and the forecast
+// horizon runs past all of them — so a
 // day inside the horizon would otherwise render 24 confident zero bars that are
 // really absence of data. sourceCoverage reports each table's last logged day so
 // the caller can label an uncovered source instead of drawing a zero for it.
+//
+// Counted from the accident and breakdown event tables (EVENTS_CTE), the same rows ml_daily_actuals sums and
+// the forecast is trained on (19 Oct 2026, testers IN-10). It read the legacy road/moto/stalled trio before,
+// which logs a fraction of them (23 incidents on 30 Jun against the 129 the daily chart and the models use),
+// so every model curve sat four to five times above the bars it was drawn against.
 // ---------------------------------------------------------------------------
 
 export type IncidentHourlyPoint = {
@@ -496,9 +547,8 @@ export type IncidentHourlyPoint = {
   temperatureC: number | null;
   /** null (not false) when rainfallMm is null — unknown weather, not dry weather. */
   isWet: boolean | null;
-  road: number;
-  moto: number;
-  stalled: number;
+  accident: number;
+  breakdown: number;
   total: number;
 };
 
@@ -527,25 +577,41 @@ export async function getIncidentHourlyFromDb(date: string) {
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.data;
 
   try {
-    const DATE_OF = (col = "date") =>
-      `CASE WHEN ${col} LIKE '%/%' THEN to_date(${col}, 'MM/DD/YYYY') ELSE ${col}::date END`;
-
     const modelCols = Object.values(INCIDENT_MODEL_COLUMN)
       .map((col) => `${col}::float AS ${col}`)
       .join(",\n                ");
 
-    const [hourly, coverage, dayRes, profileRes] = await Promise.all([
+    // Both event tables end on RECORD_END today; read rather than assumed, so a reload that extends one
+    // of them moves its coverage without a code change. Never past RECORD_END, which nothing else reads.
+    const coverage = await db.query<{ src: "accident" | "breakdown"; last_logged: string | null }>(
+      `SELECT 'accident' AS src, LEAST(MAX(event_start_date)::date, '${RECORD_END}'::date)::text AS last_logged
+         FROM silver.nlex_accident_events_clean
+       UNION ALL
+       SELECT 'breakdown', LEAST(MAX(event_encoded_date)::date, '${RECORD_END}'::date)::text
+         FROM silver.nlex_breakdown_events_clean`
+    );
+    const logEnd = coverage.rows.map((r) => r.last_logged).filter((d): d is string => d != null).sort().pop() ?? RECORD_END;
+    /* The weekday shape is read from the 90 days before this date, or before the end of the log when the date
+       lies past it. A forecast day two months out used to look back into days with no log at all, find no
+       shape, and draw no model curve (every day after about 28 Sep on today's horizon; testers IN-10). */
+    const profileEnd = date <= logEnd ? date : subtractDays(logEnd, -1);
+
+    const [hourly, dayRes, profileRes] = await Promise.all([
       // generate_series(0,23) is the spine so every hour of the day appears even
       // when it had no incidents and no weather station reported — a gap in the
       // x-axis would misread as "no such hour" rather than "nothing happened".
       db.query(
-        `WITH ${INCIDENTS_CTE},
+        `WITH ${EVENTS_CTE},
               wx AS (
                 SELECT EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
                        AVG(rainfall) AS rain,
                        AVG(temperature) AS temp
                 FROM hourly_weather
-                WHERE (timestamp_utc + interval '8 hours')::date = $1::date
+                -- The bare range lets the timestamp index answer it (0.3 s, against a 4.5 s scan with the
+                -- cast alone); the cast stays as the exact test. Both read the same session time zone.
+                WHERE timestamp_utc >= $1::date - interval '8 hours'
+                  AND timestamp_utc < $1::date + interval '16 hours'
+                  AND (timestamp_utc + interval '8 hours')::date = $1::date
                 GROUP BY 1
               ),
               hrs AS (SELECT generate_series(0, 23) AS h)
@@ -553,31 +619,18 @@ export async function getIncidentHourlyFromDb(date: string) {
                 ROUND(wx.rain::numeric, 3)::float                 AS rainfall_mm,
                 ROUND(wx.temp::numeric, 1)::float                 AS temperature_c,
                 (wx.rain > 0.3)                                   AS is_wet,
-                COUNT(i.d) FILTER (WHERE i.src = 'road')::int     AS road,
-                COUNT(i.d) FILTER (WHERE i.src = 'moto')::int     AS moto,
-                COUNT(i.d) FILTER (WHERE i.src = 'stalled')::int  AS stalled,
-                COUNT(i.d)::int                                   AS total
+                COUNT(e.d) FILTER (WHERE e.src = 'accident')::int  AS accident,
+                COUNT(e.d) FILTER (WHERE e.src = 'breakdown')::int AS breakdown,
+                COUNT(e.d)::int                                    AS total
          FROM hrs
          LEFT JOIN wx ON wx.h = hrs.h
-         LEFT JOIN incidents i
-                ON i.d = $1::date
-               AND i.rt IS NOT NULL
-               AND EXTRACT(hour FROM i.rt::time)::int = hrs.h
+         LEFT JOIN events e
+                ON e.d = $1::date
+               AND e.d <= '${RECORD_END}'::date
+               AND e.h = hrs.h
          GROUP BY 1, 2, 3, 4
          ORDER BY 1`,
         [date]
-      ),
-      // Last logged day per source table, so the caller can tell an honest zero
-      // from an out-of-range day.
-      db.query(
-        `SELECT 'road' AS src, max(${DATE_OF()})::text AS last_logged FROM nlex_road_crashes WHERE date IS NOT NULL
-         UNION ALL
-         SELECT 'moto', max(${DATE_OF()})::text FROM nlex_motorcycle_crashes WHERE date IS NOT NULL
-         UNION ALL
-         SELECT 'stalled', max(${DATE_OF()})::text FROM nlex_stalled_vehicles WHERE date IS NOT NULL`
-          // The stalled table runs to 2026-07-25, past RECORD_END; the dashboard reads none of that, so it
-          // must not report it as the last day logged.
-          .replace(/max\((.+?)\)::text FROM (nlex_\w+) WHERE date IS NOT NULL/g, `LEAST(max($1), '${RECORD_END}'::date)::text FROM $2 WHERE date IS NOT NULL`)
       ),
       // Every model's predicted DAILY total for this date. Absent for days
       // outside the walk-forward window (ml_predictive_incidents holds only
@@ -597,16 +650,15 @@ export async function getIncidentHourlyFromDb(date: string) {
       // normalised to a fraction before being applied — so raw counts are
       // enough and no per-day averaging is needed.
       db.query(
-        `WITH ${INCIDENTS_CTE}
-         SELECT EXTRACT(hour FROM rt::time)::int AS hour, COUNT(*)::float AS v
-         FROM incidents
-         WHERE rt IS NOT NULL
-           AND EXTRACT(dow FROM d) = EXTRACT(dow FROM $1::date)
-           AND d < $1::date
-           AND d >= $1::date - interval '90 days'
+        `WITH ${EVENTS_CTE}
+         SELECT h AS hour, COUNT(*)::float AS v
+         FROM events
+         WHERE EXTRACT(dow FROM d) = EXTRACT(dow FROM $1::date)
+           AND d < $2::date
+           AND d >= $2::date - interval '90 days'
          GROUP BY 1
          ORDER BY 1`,
-        [date]
+        [date, profileEnd]
       ),
     ]);
 
@@ -619,9 +671,8 @@ export async function getIncidentHourlyFromDb(date: string) {
       rainfall_mm: number | null;
       temperature_c: number | null;
       is_wet: boolean | null;
-      road: number;
-      moto: number;
-      stalled: number;
+      accident: number;
+      breakdown: number;
       total: number;
     };
     const hours: IncidentHourlyPoint[] = (hourly.rows as HourRow[]).map((r) => ({
@@ -629,18 +680,17 @@ export async function getIncidentHourlyFromDb(date: string) {
       rainfallMm: r.rainfall_mm,
       temperatureC: r.temperature_c,
       isWet: r.is_wet,
-      road: r.road,
-      moto: r.moto,
-      stalled: r.stalled,
+      accident: r.accident,
+      breakdown: r.breakdown,
       total: r.total,
     }));
 
     const sourceCoverage = Object.fromEntries(
-      coverage.rows.map((r: { src: string; last_logged: string | null }) => [
+      coverage.rows.map((r) => [
         r.src,
         { lastLogged: r.last_logged, covered: r.last_logged != null && date <= r.last_logged },
       ])
-    ) as Record<"road" | "moto" | "stalled", { lastLogged: string | null; covered: boolean }>;
+    ) as Record<"accident" | "breakdown", { lastLogged: string | null; covered: boolean }>;
 
     // An hour counts toward a weather slice only when its weather is known.
     const known = hours.filter((h) => h.isWet !== null);
@@ -959,12 +1009,9 @@ const DAILY_WET_SQL = `
 `;
 
 // Daily vehicle volume for the incident forecast chart's exposure overlay —
-// observed history only, deliberately NOT the traffic module's volume
-// forecast: this tab is about the incident forecast, and volume already has
-// its own home (the Traffic module's own predictive tabs). Extending this
-// line across the Future band would put a second, unrelated forecast on a
-// chart whose Future band is about incidents, so the overlay stops wherever
-// actual_volume runs out instead of borrowing a prediction to fill the rest.
+// observed history only. The Future band's volume is a separate field
+// (FUTURE_VOLUME_SQL below): it is a forecast the models took as input, not a
+// measurement, and the chart draws it dashed so the two are never confused.
 //
 // Read from gold.ml_predictive_volume rather than gold.daily_traffic_volume
 // so history matches the same scale the incident trainer's volume feature
@@ -981,6 +1028,20 @@ const DAILY_VOLUME_SQL = `
   WHERE forecast_date >= $1::date AND forecast_date <= $2::date
     AND split_label = '80_20'
     AND actual_volume IS NOT NULL
+  ORDER BY forecast_date ASC
+`;
+
+/* The volume the volume-aware models actually read on Future days (17 Oct 2026, testers IN-10). Hiding it left
+   the forecast depending on an input the chart never showed. Same table and the same COALESCE order as
+   train_incident_models.py's FUTURE_VOLUME_SQL, returned as its own field (volumeForecast) so `volume` above
+   stays observed-only and the chart can draw the two differently. */
+const FUTURE_VOLUME_SQL = `
+  SELECT forecast_date::text AS date,
+         COALESCE(pred_lstm, pred_prophet, pred_sarimax, pred_holtwinters, pred_holts_linear, pred_xgboost)::float AS volume
+  FROM gold.ml_predictive_volume
+  WHERE is_future AND split_label = '80_20'
+    AND forecast_date >= $1::date AND forecast_date <= $2::date
+    AND COALESCE(pred_lstm, pred_prophet, pred_sarimax, pred_holtwinters, pred_holts_linear, pred_xgboost) IS NOT NULL
   ORDER BY forecast_date ASC
 `;
 
@@ -1106,9 +1167,23 @@ export async function getIncidentPredictiveAnchors(): Promise<IncidentPredictive
 // function's previous behavior) silently added the ~90-day holdout window on
 // top of every Range, which is what made "3 mo" render as ~6 months of axis
 // and "12 mo" as ~15.
+//
+// A preset now ends at the forecast ORIGIN instead (19 Oct 2026, testers IN-10). Once the pipeline wrote a
+// 90-day horizon, "3 mo" back from the far edge was the forecast alone plus ONE observed day: the Present band
+// was a single day, the metrics table was scored on n = 1, and the volume the models read had nowhere to be
+// drawn. "N months" is now N months of observed days ending the day before the forecast, the same window the
+// Descriptive tab and the corridor shares below use for that preset (3 mo = 2 Apr - 30 Jun = the holdout),
+// with the whole forecast after it. No `months` keeps the old far-edge anchor for the callers that omit it.
+//
+// And now from the start of the scored window, the way the Traffic forecast reads its Range (19 Oct 2026,
+// user: "the date range is not working well"). Counting back from the forecast origin, "3 mo" was exactly the
+// 90-day holdout, so the Past band and its trained-days note vanished, and "12 mo" cut the Past to 275 days.
+// On Traffic a preset is how much TRAINING history is drawn before the scored window: 3 mo = 3 months of
+// Past, then the whole Present and the whole Future, on every preset. The metrics, scored over the Present,
+// therefore no longer change with the Range either, which is what "fixed by evaluation" says.
 export function resolveIncidentHistoricalWindow(
   filters: Pick<IncidentPredictiveFilters, "months" | "from" | "to">,
-  anchors: Pick<IncidentPredictiveAnchors, "maxForecastDate">
+  anchors: Pick<IncidentPredictiveAnchors, "maxForecastDate" | "futureStart" | "validationStart">
 ): { historicalStart: string; historicalEnd: string | null } {
   const contextDays =
     filters.months === undefined
@@ -1117,7 +1192,11 @@ export function resolveIncidentHistoricalWindow(
         ? MAX_CONTEXT_DAYS
         : MONTHS_TO_CONTEXT_DAYS[filters.months] ?? PAST_CONTEXT_DAYS;
 
-  const historicalStart = filters.from ?? subtractDays(anchors.maxForecastDate, contextDays);
+  const anchor =
+    filters.months !== undefined
+      ? anchors.validationStart ?? anchors.futureStart ?? anchors.maxForecastDate
+      : anchors.maxForecastDate;
+  const historicalStart = filters.from ?? subtractDays(anchor, contextDays);
   // null = no upper trim. Future rows are fetched unconditionally regardless
   // of this value, so the old "only honour `to` if it falls past the forecast
   // bands" special case no longer needs encoding here — it's structurally
@@ -1235,26 +1314,21 @@ function pickPrediction(
 
 const LOCATION_KM_RE = /Km\s*(\d+(?:\.\d+)?)/i;
 
-// Km figures in the legacy crash tables (nlex_road_crashes/nlex_motorcycle_crashes)
-// follow the Philippine DPWH km-post convention
-// (Balintawak ~ km 12), not this dashboard's Balintawak-as-km-0 scale — the
-// same offset already found and fixed in incident-severity.service.ts and in
-// train_incident_spatial_models.py. A literal "Km N" figure parsed out of
-// these tables' free-text `location` therefore needs the same -12.0
-// correction before it's compared against the exit list's own (Balintawak-
-// relative) km. Without it, "Km 16+800" (4.8km past Balintawak) was being
-// matched against whichever exit sits nearest RAW km 16.8 instead — off by
-// roughly one 12km stretch, 2-4 exits down the corridor, on every row.
-const LOCATION_KM_OFFSET = 12.0;
-
-// Applied per SOURCE, not blanket: verified against the data, nlex_road_crashes
-// spans km 14-79 and nlex_motorcycle_crashes sits in the same band (a fit for
-// DPWH's Balintawak-at-12 through ~88), but nlex_stalled_vehicles — 85% of
-// these legacy rows — spans only km 4-30, and 30% of it would go negative
-// under a -12 shift. That table is the generated one and doesn't follow the
-// DPWH scale, so it is left as it was rather than shifted on a guess.
+// A literal "Km N" figure in a legacy table's free-text `location`, and what
+// to SUBTRACT from it to put it on the exit list's scale. The exits are on the
+// measured scale now (Balintawak = Km 12; lib/km-post.ts).
+//
+// The crash tables (nlex_road_crashes / nlex_motorcycle_crashes) use the DPWH
+// km-post convention, Balintawak ~ km 12: already the exits' scale, so 0.
+// This used to be 12, from when the exits ran Balintawak = 0; once they moved
+// to the Km 12 scale that correction put every crash ~12 km south of where it
+// happened, 2-4 exits down the corridor.
+//
+// nlex_stalled_vehicles is the exception, found against the data: it spans
+// only km 4-30, so it was written on the old Balintawak = 0 scale, and 12 is
+// added (an offset of -12) to bring it onto the exits'.
 function kmOffsetForSource(src: string | null | undefined): number {
-  return src === "stalled" ? 0 : LOCATION_KM_OFFSET;
+  return src === "stalled" ? -12 : 0;
 }
 
 // Strip to lowercase alphanumerics so punctuation/spacing differences
@@ -1268,7 +1342,7 @@ function normalizeLocationText(s: string): string {
 // Maps one incident's free-text `location` to the exit it most likely
 // happened near. Two strategies, tried in order:
 //   1. A literal "Km N" figure — corrected to corridor-relative (see
-//      LOCATION_KM_OFFSET above), then snapped to the exit whose own km-post
+//      kmOffsetForSource above), then snapped to the exit whose own km-post
 //      is closest.
 //   2. A plaza/exit name written directly ("Balintawak", "Bocaue Barrier") —
 //      the ETL cleaner validates incoming locations against exactly this kind
@@ -1488,7 +1562,9 @@ export function buildIncidentPredictiveResponse(
   exitRows: { exit_id: number; exit_name: string; km: number }[] = [],
   // Rolling-origin long-horizon accuracy (measure_incident_horizon_accuracy.py).
   // Optional/defaulted to [] for the same reason volumeByDate/locationRows are.
-  horizonAccuracy: IncidentPredictiveResult["horizonAccuracy"] = []
+  horizonAccuracy: IncidentPredictiveResult["horizonAccuracy"] = [],
+  // The traffic module's volume forecast for Future days (FUTURE_VOLUME_SQL). Optional like volumeByDate.
+  volumeForecastByDate: Map<string, number> = new Map()
 ): IncidentPredictiveResult {
   const actualByDate = new Map(actuals.map((r) => [r.date, Number(r.total)]));
   const predByDate = new Map(predictions.map((r) => [r.date, r]));
@@ -1555,6 +1631,8 @@ export function buildIncidentPredictiveResponse(
       // overlay breaks rather than drawing a zero — a zero here would read as
       // "no traffic that day", which is never what a gap means.
       volume: volumeByDate.get(date) ?? null,
+      // Future rows only: the volume input the volume-aware models read for that day.
+      volumeForecast: pred?.prediction_type === "future" ? volumeForecastByDate.get(date) ?? null : null,
       models,
       modelsNoVolume: Object.keys(modelsNoVolume).length > 0 ? modelsNoVolume : undefined,
       modelsNoWeather: Object.keys(modelsNoWeather).length > 0 ? modelsNoWeather : undefined,
@@ -1720,13 +1798,13 @@ export function buildIncidentPredictiveResponse(
     toAlignedValidationRows(holdoutPredictions, holdoutActualByDate, wetByDate, availableModels, includeVolume, includeWeather)
   );
 
-  const weatherMetrics =
-    filters.weather === "all"
-      ? null
-      : (() => {
-          const wantWet = filters.weather === "wet";
+  /* Both halves, every request (19 Oct 2026, user request: "make it work like the Traffic predictive tab").
+     The Predictive tab no longer has a Weather filter, so the dry/wet comparison is shown side by side in the
+     card's validation evidence, the way Traffic shows its weather evidence, instead of one half at a time
+     behind a page filter. Scoring is in memory over the holdout rows already loaded, so it costs no query. */
+  const scoreWeatherHalf = (wantWet: boolean) => {
           const rows = holdoutAligned.filter((r) => r.isWet === wantWet);
-          if (rows.length === 0) return { weather: filters.weather, days: 0, models: [] };
+          if (rows.length === 0) return { days: 0, models: [] };
 
           const models = availableModels
             .map((m) => {
@@ -1742,8 +1820,11 @@ export function buildIncidentPredictiveResponse(
             })
             .filter((r): r is NonNullable<typeof r> => r !== null)
             .sort((a, b) => a.MAE - b.MAE);
-          return { weather: filters.weather, days: rows.length, models };
-        })();
+          return { days: rows.length, models };
+  };
+  const weatherSplit = { dry: scoreWeatherHalf(false), wet: scoreWeatherHalf(true) };
+  const weatherMetrics =
+    filters.weather === "all" ? null : { weather: filters.weather, ...weatherSplit[filters.weather] };
 
   return {
     summary: {
@@ -1769,6 +1850,7 @@ export function buildIncidentPredictiveResponse(
         (metadata.evaluation as { train_rows?: number } | undefined)?.train_rows ?? null,
     },
     weatherMetrics,
+    weatherSplit,
     // Legacy-source apportionment of totalPredictedNext7Days by each exit's
     // historical share of incidents in the current Range — NOT a trained
     // per-location model, and no longer what the Predictive tab's Corridor
@@ -1961,6 +2043,20 @@ export async function getIncidentPredictiveFromDb(
     // read off from/to's presence, not months'.
     const isCustomRange = Boolean(filters.from && filters.to);
 
+    /* Where the corridor apportionment takes its per-exit shares from (17 Oct 2026, testers IN-13). A preset used
+       to end at the far edge of the FORECAST, so "3 mo" read 30 Jun - 28 Sep: one day of logged incidents (23)
+       split the whole 90-day forecast and 11 exits came out at zero. A preset now means N months of logged
+       incidents ending the day before the forecast starts, the convention /analytics already uses; a custom
+       from/to is still taken literally. */
+    const lastObserved = anchors.futureStart ? subtractDays(anchors.futureStart, 1) : null;
+    const useObservedShareWindow = !isCustomRange && lastObserved != null;
+    const shareFrom = !useObservedShareWindow
+      ? historicalStart
+      : filters.months === "all"
+        ? anchors.minActualDate
+        : subtractDays(lastObserved!, (filters.months ? MONTHS_TO_CONTEXT_DAYS[filters.months] : PAST_CONTEXT_DAYS) - 1);
+    const shareTo = useObservedShareWindow ? lastObserved : historicalEnd;
+
     // wetRes's lower bound is widened to also cover the full validation window
     // (not just the resolved Range) — it feeds both fullDaily (Range-scoped)
     // and the holdout join used by weatherMetrics (Range-independent), and a
@@ -1970,7 +2066,7 @@ export async function getIncidentPredictiveFromDb(
         ? anchors.validationStart
         : historicalStart;
 
-    const [actualsRes, predsRes, wetRes, volumeRes, holdoutActualsRes, holdoutPredsRes, locationsRes, exitRows] = await Promise.all([
+    const [actualsRes, predsRes, wetRes, volumeRes, holdoutActualsRes, holdoutPredsRes, locationsRes, exitRows, futureVolumeRes] = await Promise.all([
       // Range-bounded: this is what the chart draws. Pushed into SQL rather
       // than fetched whole and sliced in JS, so a narrow Range is a smaller
       // result set, not just a smaller rendered array.
@@ -2031,19 +2127,21 @@ export async function getIncidentPredictiveFromDb(
          WHERE prediction_type = 'validation'
          ORDER BY forecast_date ASC`
       ),
-      // Raw location text for every incident in the resolved Range — feeds the
+      // Raw location text for every incident in the share window above — feeds the
       // legacy-source corridorForecast still read by the Prescriptive tab's
-      // VmsAdvisoryPanel/PrescriptiveDeploymentPanel. Bounded the same way
-      // `actuals` is so it answers to the same Range control.
+      // PrescriptiveDeploymentPanel. Answers to the same Range control, over logged days.
       db.query<{ location: string | null; src: string | null }>(
         `WITH ${INCIDENTS_CTE}
          SELECT location, src FROM incidents WHERE d >= $1::date AND ($2::date IS NULL OR d <= $2::date) AND location IS NOT NULL`,
-        [historicalStart, historicalEnd]
+        [shareFrom, shareTo]
       ),
       // The corridor's one authoritative exit list (see the import above) —
       // empty query string matches every exit_name via the ILIKE '%...%' the
       // shared helper already uses for its search box.
       searchExitsInDb(""),
+      anchors.futureStart
+        ? db.query<{ date: string; volume: string | number | null }>(FUTURE_VOLUME_SQL, [anchors.futureStart, anchors.maxForecastDate])
+        : Promise.resolve({ rows: [] as { date: string; volume: string | number | null }[] }),
     ]);
 
     const wetByDate = new Map(wetRes.rows.map((r) => [r.date, r.is_wet]));
@@ -2056,6 +2154,9 @@ export async function getIncidentPredictiveFromDb(
       volumeRes.rows
         .filter((r) => r.volume != null)
         .map((r) => [r.date, Number(r.volume)])
+    );
+    const volumeForecastByDate = new Map(
+      futureVolumeRes.rows.filter((r) => r.volume != null).map((r) => [r.date, Number(r.volume)])
     );
     const [accidentSplit, horizonAccuracy] = await Promise.all([
       getAccidentSplit(historicalStart, historicalEnd),
@@ -2076,9 +2177,10 @@ export async function getIncidentPredictiveFromDb(
       volumeByDate,
       locationsRes.rows,
       exitRows ?? [],
-      horizonAccuracy
+      horizonAccuracy,
+      volumeForecastByDate
     );
-    return { ...response, accidentSplit };
+    return { ...response, accidentSplit, corridorShareWindow: { from: shareFrom, to: shareTo } };
   } catch (error) {
     console.error("ML incident forecast: query threw (connectivity or SQL error):", error);
     return null;

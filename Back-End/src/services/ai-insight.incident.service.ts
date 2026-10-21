@@ -1,4 +1,6 @@
 import { chat, extractJson, GlmError } from "../lib/glm.client.js";
+import { fmtKm } from "../lib/km-post.js";
+// km values arriving from the page are MEASURED; prompts print the official post (lib/km-post.ts).
 import { validate, type Insight } from "./ai-insight.service.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -216,7 +218,7 @@ function buildIncidentModelsMessage(req: IncidentModelsInsightRequest): string {
           ? `${h.actualSecondaryCount} actually had a follow-on`
           : null,
       ].filter(Boolean);
-      lines.push(`- ${h.name}${h.km != null ? ` (Km ${h.km})` : ""}: ${parts.join(", ")}`);
+      lines.push(`- ${h.name}${h.km != null ? ` (Km ${fmtKm(h.km)})` : ""}: ${parts.join(", ")}`);
     }
   }
 
@@ -543,7 +545,7 @@ function buildCorridorRiskMessage(req: CorridorRiskInsightRequest): string {
           c.significant == null ? null : c.significant ? "statistically significant" : "NOT significant",
         ].filter(Boolean);
         lines.push(
-          `- ${c.exitName}${c.km != null ? ` (Km ${num(c.km, 1)})` : ""}, ${c.variable}: ${bits.join(", ")}`,
+          `- ${c.exitName}${c.km != null ? ` (Km ${fmtKm(c.km)})` : ""}, ${c.variable}: ${bits.join(", ")}`,
         );
       }
     }
@@ -571,7 +573,7 @@ function buildCorridorRiskMessage(req: CorridorRiskInsightRequest): string {
           `${num(e.predictedIncidents, 2)} incidents expected`,
           e.lastObservedCount != null ? `${int(e.lastObservedCount)} observed in the last comparable period` : null,
         ].filter(Boolean);
-        lines.push(`- #${e.rank} ${e.exitName}${e.km != null ? ` (Km ${num(e.km, 1)})` : ""}: ${bits.join(", ")}`);
+        lines.push(`- #${e.rank} ${e.exitName}${e.km != null ? ` (Km ${fmtKm(e.km)})` : ""}: ${bits.join(", ")}`);
       }
     }
   }

@@ -46,6 +46,9 @@ export type SceneGeometry = {
   readonly carWid: number;
   /** Seconds of animation clock; frozen while the run is paused. */
   readonly t: number;
+  /** Ground past the road edge that rain falls on too: the toll plazas' and service areas' footprints, screen px
+   *  (UAT 16 Oct 2026, SB-13: "Rain renders on the road but not at toll gates"). None: the road only, as before. */
+  readonly wetAreas?: readonly { readonly x: number; readonly y: number; readonly w: number; readonly h: number }[];
 };
 
 /* ── small helpers ─────────────────────────────────────────────────────────── */
@@ -476,12 +479,16 @@ const DROP_FAR_RGB = "135,206,250";
 export function drawRain(g: SceneGeometry, intensity: RainIntensity | number): void {
   const cfg = rainLook(typeof intensity === "number" ? intensity : RAIN_LEVEL_OF[intensity]);
   const c = g.ctx;
-  const y0 = g.roadTop;
+  const wet = g.wetAreas ?? [];
+  // The band the drops fall through: the road, stretched to take in any plaza beside it. Clipped to exactly the road
+  // and those footprints, so nothing falls on the verge or the median between them.
+  const y0 = Math.min(g.roadTop, ...wet.map((r) => r.y));
   const w = g.cssW;
-  const h = g.roadH;
+  const h = Math.max(g.roadTop + g.roadH, ...wet.map((r) => r.y + r.h)) - y0;
   c.save();
   c.beginPath();
-  c.rect(0, y0, w, h);
+  c.rect(0, g.roadTop, w, g.roadH);
+  for (const r of wet) c.rect(r.x, r.y, r.w, r.h);
   c.clip();
 
   const sheen = c.createLinearGradient(0, y0, 0, y0 + h);

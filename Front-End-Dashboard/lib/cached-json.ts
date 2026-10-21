@@ -19,9 +19,13 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const running = inflight.get(url) as Promise<T> | undefined;
   if (running) return running;
   const p = fetch(url, init)
-    .then((r) => r.json() as Promise<T>)
-    .then((value) => {
-      store.set(url, { at: Date.now(), value });
+    .then(async (r) => {
+      const value = (await r.json()) as T;
+      /* Only a real answer is kept (17 Oct 2026, testers IN-2). A 503 "database not reachable" is still JSON,
+         so it used to be stored like data and served for the next five minutes after the backend had
+         recovered: every KPI tile sat on "—" until a reload. The caller still gets the body, to show it. */
+      const failed = !r.ok || (value as { success?: unknown } | null)?.success === false;
+      if (!failed) store.set(url, { at: Date.now(), value });
       return value;
     })
     .finally(() => inflight.delete(url));

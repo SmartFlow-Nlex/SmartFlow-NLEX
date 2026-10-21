@@ -1,4 +1,5 @@
 import { db } from "../config/db.js";
+import { exitKmValuesSql, kmKeySql } from "../lib/km-post.js";
 import { forecastTable } from "./forecast-source.js";
 import { jamProfileAvailable, jamProfileSql, volumeProfileSql } from "./jam-profile.js";
 
@@ -720,12 +721,14 @@ export async function getMLPredictiveVolume(window: ForecastWindow = {}) {
 export async function getMLPredictiveCongestion() {
   if (!db) return null;
   try {
-    // km_post joins in so the map can order segments south to north. The
-    // frontend used to carry a hardcoded table of 10 exits, which left the other
-    // 10 showing "km —" and, worse, unordered — congestion propagates between
-    // NEIGHBOURS, so a wrong row order hides the only pattern worth seeing.
-    // `estimated` marks positions calibrated from coordinates rather than taken
-    // from the NLEX reference, so the UI can be honest about which is which.
+    // The exit's km joins in so the card can order segments south to north --
+    // congestion propagates between NEIGHBOURS, so a wrong row order hides the
+    // only pattern worth seeing. It is the MEASURED km from the official exit
+    // list (lib/km-post.ts), the same position every other page uses; the
+    // page prints it as the official post. It used to come from
+    // gold.exit_km_post, whose hand-entered values disagree with the road and
+    // with the rest of the system. `kmEstimated` stays for the card's sake
+    // and is always false now: every exit has an official post.
     // Prefer the table only this pipeline writes; see forecast-source.
     const src = await forecastTable(db);
 
@@ -754,12 +757,12 @@ export async function getMLPredictiveCongestion() {
              -- Date, which serialised 09:00 as "01:00Z". Any client that then
              -- formatted it in a non-Manila zone would show the wrong hour.
              to_char(c.base_ts, 'YYYY-MM-DD HH24:MI') AS "baseTs",
-             k.km_post::float AS "km", COALESCE(k.estimated, false) AS "kmEstimated"
+             k.measured AS "km", false AS "kmEstimated"
              ${jamCols}
       FROM ${src} c
-      LEFT JOIN gold.exit_km_post k ON k.exit_name = c.segment_name
+      LEFT JOIN ${exitKmValuesSql().replace(" AS exit_km(", " AS k(")} ON k.key = ${kmKeySql("c.segment_name")}
       ${jamJoin}
-      ORDER BY k.km_post NULLS LAST, c.segment_name ASC, c.hours_ahead ASC`);
+      ORDER BY k.measured NULLS LAST, c.segment_name ASC, c.hours_ahead ASC`);
     return rows;
   } catch (error) {
     console.error("Failed to fetch ML congestion:", error);

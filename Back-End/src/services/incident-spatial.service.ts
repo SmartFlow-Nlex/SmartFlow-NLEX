@@ -1,4 +1,7 @@
 import { db } from "../config/db.js";
+import { zeroToMeasured } from "../lib/km-post.js";
+// km in the gold spatial tables is on the old Balintawak = 0 scale (train_incident_spatial_models.py);
+// it is compared with corridor_km on that same scale below, and returned as MEASURED km (lib/km-post.ts).
 import { buildExitToExitSegments } from "../lib/exit-segments.js";
 
 // Reads for gold.ml_incident_spatial_coefficients / ml_incident_segment_risk /
@@ -199,8 +202,8 @@ export async function getIncidentSpatialFromDb(): Promise<IncidentSpatialData | 
         .map((id) => nameByExit.get(id) ?? String(id));
       segmentDrafts.push({
         label: seg.label,
-        kmStart: seg.segmentStart,
-        kmEnd: seg.segmentEnd,
+        kmStart: zeroToMeasured(seg.segmentStart),
+        kmEnd: zeroToMeasured(seg.segmentEnd),
         predictedIncidents: usable.length > 0 ? usable.reduce((s, v) => s + v, 0) / usable.length : 0,
         coverage: usable.length === 2 ? "full" : usable.length === 1 ? "partial" : "none",
         noDataExits,
@@ -223,7 +226,7 @@ export async function getIncidentSpatialFromDb(): Promise<IncidentSpatialData | 
         exitName: r.exit_name,
         latitude: Number(r.latitude),
         longitude: Number(r.longitude),
-        km: Number(r.km),
+        km: zeroToMeasured(Number(r.km)),
         variable: r.variable,
         coefficient: Number(r.coefficient),
         stdError: r.std_error == null ? null : Number(r.std_error),
@@ -235,7 +238,7 @@ export async function getIncidentSpatialFromDb(): Promise<IncidentSpatialData | 
         exitName: r.exit_name,
         latitude: Number(r.latitude),
         longitude: Number(r.longitude),
-        km: Number(r.km),
+        km: zeroToMeasured(Number(r.km)),
         forecastDate: r.forecast_date,
         horizonDay: r.horizon_day,
         predictedIncidents: Number(r.predicted_incidents),

@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { solve } from "yalps";
-import { fmtInt } from "./incidentPredictive.shared";
+import { fmtInt, fmtDateRange } from "./incidentPredictive.shared";
 import { Gauge, Radar, Truck } from "lucide-react";
 import { Shell, Empty, ActionCard } from "./prescriptiveShell";
+// km arrives MEASURED (exits and segment midpoints); shown as the official km post.
+import { fmtKm } from "../../lib/km-post";
+import { cachedJson } from "../../lib/cached-json";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -23,12 +26,45 @@ type PredictiveSlice = {
   kmSegmentForecast: KmSegmentForecastPoint[] | null;
   corridorForecastModel: string | null;
   corridorForecastDays: number;
+  /** The champion's daily forecast over the same horizon: which days the cards' "When" names. */
+  forecastDays: { date: string; predicted: number }[];
 };
 
 // Mirrors PredictiveCorridorChart.tsx's own independent fetch of this same
 // field — see that file's doc comment for why weather-incident-risk rides a
 // separate small fetch rather than threading through the predictive response.
-type WeatherIncidentRisk = { auc: number | null; base_rate: number; scenarios: { rain_mm: number; probability: number }[] };
+type WeatherIncidentRisk = {
+  auc: number | null;
+  base_rate: number;
+  scenarios: { rain_mm: number; probability: number }[];
+  /* What the same model says about its own inputs. Rain was the only scenario shown, under "As rainfall
+     rises", while the model reports rain as not significant (p 0.39; 14.0% to 14.3% from 0 to 100 mm) and
+     volume as its top driver. Read so the card can say which input actually moves the risk. */
+  rainPValue?: number | null;
+  rainSignificant?: boolean;
+  topDriver?: { feature: string; effectSize: number } | null;
+  volumeScenarios?: { volume: number; probability: number }[];
+};
+
+const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`);
+const fmtDay = (d: string) =>
+  new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+/** An official km-post span, from measured ends: "Km 25–30". */
+const kmSpan = (lo: number, hi: number) => (Math.abs(hi - lo) < 0.05 ? `Km ${fmtKm(lo)}` : `Km ${fmtKm(lo)}–${fmtKm(hi)}`);
+
+/* The advisory's recommended speed. Nothing in the warehouse records a speed policy, so this is the posted
+   NLEX limit, not a model output: 100 km/h for light vehicles, 80 km/h for trucks and buses, 60 km/h minimum.
+   The advisory asks for the 60 km/h floor, the lowest speed it can ask for short of closing a lane. Confirm
+   against current NLEX traffic operations policy before quoting it as one. */
+const POSTED_LIGHT_KMH = 100;
+const POSTED_HEAVY_KMH = 80;
+const ADVISED_KMH = 60;
+
+/* Density is counted over the same fixed length of road everywhere: predicted incidents within 2.5 km either
+   side of a site, per km of corridor in that window (19 Oct 2026, testers IN-13). It used to divide by the
+   gap to the neighbouring exits, so two exits 0.6 km apart (the Bocaue pair) or a 0.4 km segment ranked
+   hottest from the small denominator alone, the artefact the 80% cutoff below already refuses to rank by. */
+const DENSITY_WINDOW_KM = 5;
 
 // The optimization: a Maximal Covering Location Problem (MCLP), a classic
 // 0/1 integer linear program —
@@ -47,7 +83,26 @@ type WeatherIncidentRisk = { auc: number | null; base_rate: number; scenarios: {
 // C(n, K) site combination by hand. Still exact (branch-and-cut proves
 // optimality, it doesn't approximate it), but it's the solver doing linear
 // programming now, not a bespoke search.
-type Row = { key: string; label: string; km: number; predictedIncidents: number; ratePerKm: number };
+/** km, lo and hi are MEASURED. An exit is a point (lo = hi = km); a segment spans lo to hi, km its middle. */
+type Row = { key: string; label: string; km: number; lo: number; hi: number; predictedIncidents: number; ratePerKm: number };
+
+/** Predicted incidents per km over the DENSITY_WINDOW_KM of corridor centred on `centre`. Segment totals are
+    spread evenly along their length; the window is clipped to the corridor so an end site is not diluted. */
+function windowDensity(centre: number, all: Row[], corridorLo: number, corridorHi: number): number {
+  const lo = Math.max(centre - DENSITY_WINDOW_KM / 2, corridorLo);
+  const hi = Math.min(centre + DENSITY_WINDOW_KM / 2, corridorHi);
+  const len = hi - lo;
+  if (len <= 0) return 0;
+  let mass = 0;
+  for (const r of all) {
+    if (r.hi - r.lo < 1e-9) {
+      if (r.km >= lo && r.km <= hi) mass += r.predictedIncidents;
+    } else {
+      mass += (r.predictedIncidents * Math.max(0, Math.min(hi, r.hi) - Math.max(lo, r.lo))) / (r.hi - r.lo);
+    }
+  }
+  return mass / len;
+}
 
 function solveMclp(weights: number[], covers: number[][], k: number): { chosen: number[]; coveredWeight: number } {
   const n = weights.length;
@@ -100,6 +155,9 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
   const [radiusKm, setRadiusKm] = useState(8);
   const [predictive, setPredictive] = useState<PredictiveSlice | null>(null);
   const [weatherRisk, setWeatherRisk] = useState<WeatherIncidentRisk | null>(null);
+  // Logged incidents per hour of day over the same Range (the Descriptive heatmap, summed over weekdays):
+  // the advisory's hours. Corridor-wide; there is no per-site hourly record.
+  const [hourTotals, setHourTotals] = useState<number[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -125,6 +183,9 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
           kmSegmentForecast: json.data.kmSegmentForecast,
           corridorForecastModel: json.data.corridorForecastModel,
           corridorForecastDays: json.data.corridorForecastDays,
+          forecastDays: ((json.data.daily ?? []) as { date: string; predicted: number | null; predictionType: string | null }[])
+            .filter((d) => d.predictionType === "future" && d.predicted != null)
+            .map((d) => ({ date: d.date, predicted: d.predicted as number })),
         });
         setError(null);
       })
@@ -144,6 +205,26 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
       .catch(() => {
         // Supplementary — the deployment plan is the point of this card, so a
         // failed fetch here just omits the speed-advisory rain context.
+      });
+    /* The page's own analytics request, reused rather than repeated: the same URL the incident page builds
+       (from and to for a custom range, else months; no weather or source filter, which the page adds only when
+       one is set) through the same memo, so this rides on its fetch or its cached body. */
+    const aqs = new URLSearchParams();
+    if (from && to) {
+      aqs.set("from", from);
+      aqs.set("to", to);
+    } else if (months) {
+      aqs.set("months", months);
+    }
+    cachedJson<{ success: boolean; data?: { heatmap?: { hour: number; v: number }[] } }>(`${BACKEND}/api/incident/analytics?${aqs}`, 5 * 60_000)
+      .then((json) => {
+        if (cancelled || !json.success) return;
+        const totals = Array<number>(24).fill(0);
+        for (const r of json.data?.heatmap ?? []) if (r.hour >= 0 && r.hour < 24) totals[r.hour] += r.v;
+        setHourTotals(totals.some((v) => v > 0) ? totals : null);
+      })
+      .catch(() => {
+        // Supplementary as well: without it the advisory names its days but not its hours.
       });
     return () => {
       cancelled = true;
@@ -165,21 +246,19 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
   const exitRows: Row[] = (predictive?.corridorForecast ?? [])
     .slice()
     .sort((a, b) => a.km - b.km)
-    .map((x, i, arr) => {
-      const prevKm = i > 0 ? arr[i - 1].km : null;
-      const nextKm = i < arr.length - 1 ? arr[i + 1].km : null;
-      const widthKm =
-        prevKm != null && nextKm != null ? (nextKm - prevKm) / 2 : prevKm != null ? x.km - prevKm : nextKm != null ? nextKm - x.km : null;
-      return {
-        key: `exit-${x.exitId}`, label: x.exitName, km: x.km, predictedIncidents: x.predictedIncidents,
-        ratePerKm: widthKm && widthKm > 0 ? x.predictedIncidents / widthKm : x.predictedIncidents,
-      };
-    });
+    .map((x) => ({
+      key: `exit-${x.exitId}`, label: x.exitName, km: x.km, lo: x.km, hi: x.km, predictedIncidents: x.predictedIncidents, ratePerKm: 0,
+    }));
   const kmRows: Row[] = (predictive?.kmSegmentForecast ?? []).map((x) => ({
-    key: `seg-${x.segmentStart}`, label: x.label, km: (x.segmentStart + x.segmentEnd) / 2, predictedIncidents: x.predictedIncidents,
-    ratePerKm: x.predictedIncidents / Math.max(x.segmentEnd - x.segmentStart, 1e-9),
+    key: `seg-${x.segmentStart}`, label: x.label, km: (x.segmentStart + x.segmentEnd) / 2, lo: x.segmentStart, hi: x.segmentEnd,
+    predictedIncidents: x.predictedIncidents, ratePerKm: 0,
   }));
-  const rows = useKmView ? kmRows : exitRows;
+  const baseRows = useKmView ? kmRows : exitRows;
+  const corridorLo = Math.min(...baseRows.map((r) => r.lo));
+  const corridorHi = Math.max(...baseRows.map((r) => r.hi));
+  const rows: Row[] = baseRows.map((r) => ({ ...r, ratePerKm: windowDensity(r.km, baseRows, corridorLo, corridorHi) }));
+  /** Where a row is, as the operator reads it: an exit's post, or a segment's span of posts. */
+  const placeOf = (r: Row) => kmSpan(r.lo, r.hi);
 
   // Only reachable with no successful load yet -- predictive === null -- or a
   // genuinely empty ranking, so there is nothing stale to fall back to; a
@@ -223,8 +302,40 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
     alertRows.push(r);
     cumulative += r.predictedIncidents;
   }
+  // The three densest stretches, each at least one window from the others: the Bocaue pair 0.6 km apart is
+  // one stretch to advise, not two of the three.
   const byRate = [...rows].sort((a, b) => b.ratePerKm - a.ratePerKm);
-  const speedAdvisoryRows = byRate.slice(0, Math.min(3, byRate.length));
+  const speedAdvisoryRows: Row[] = [];
+  for (const r of byRate) {
+    if (speedAdvisoryRows.length >= 3 || r.ratePerKm <= 0) break;
+    if (speedAdvisoryRows.some((p) => Math.abs(p.km - r.km) < DENSITY_WINDOW_KM)) continue;
+    speedAdvisoryRows.push(r);
+  }
+  const stretchOf = (r: Row) => kmSpan(Math.max(r.km - DENSITY_WINDOW_KM / 2, corridorLo), Math.min(r.km + DENSITY_WINDOW_KM / 2, corridorHi));
+  const corridorDensity = totalWeight / Math.max(corridorHi - corridorLo, 1e-9);
+
+  // When: the forecast's own busiest days, and the hours incidents cluster in over the same Range.
+  const forecastDays = predictive.forecastDays;
+  const horizonMean = forecastDays.length > 0 ? forecastDays.reduce((s, d) => s + d.predicted, 0) / forecastDays.length : null;
+  const byPredictedDay = [...forecastDays].sort((a, b) => b.predicted - a.predicted);
+  const busiestDay = byPredictedDay[0] ?? null;
+  // The three highest, read in calendar order.
+  const peakDays = byPredictedDay.slice(0, 3).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const windowDates = forecastDays.length > 0 ? fmtDateRange(forecastDays[0].date, forecastDays[forecastDays.length - 1].date) : null;
+  const peakBlock = (() => {
+    if (!hourTotals) return null;
+    const all = hourTotals.reduce((s, v) => s + v, 0);
+    let best = 0;
+    for (let h = 1; h <= 21; h++) if (hourTotals[h] + hourTotals[h + 1] + hourTotals[h + 2] > hourTotals[best] + hourTotals[best + 1] + hourTotals[best + 2]) best = h;
+    const share = all > 0 ? (hourTotals[best] + hourTotals[best + 1] + hourTotals[best + 2]) / all : 0;
+    return { from: best, to: best + 3, share };
+  })();
+  // Which input moves the risk model, in its own words: rain only when its test says so.
+  const rainMatters = weatherRisk?.rainSignificant === true;
+  const volumeDrives = weatherRisk?.topDriver?.feature?.includes("volume") ?? false;
+  const rainSpan = weatherRisk && weatherRisk.scenarios.length > 1
+    ? { lo: weatherRisk.scenarios[0], hi: weatherRisk.scenarios[weatherRisk.scenarios.length - 1] }
+    : null;
 
   const slider = (label: string, value: number, min: number, max: number, step: number, onChange: (v: number) => void, suffix: string) => (
     <label className="inc-slider">
@@ -244,6 +355,18 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
     ? "this fleet size/radius combination reaches most of the ranking's predicted risk."
     : "a larger fleet or wider radius would be needed to cover most of the ranking's predicted risk.";
   const spreadWide = alertRows.length > rows.length / 2;
+  /* The span between the southern- and northernmost alert, named by those two sites as well as their posts
+     (19 Oct 2026, testers: nearest exit beside every bare km). In the By Km view a site is a segment whose
+     label already names its two exits ("Marilao to CDV/PH Arena"), so the end exits are taken from it. */
+  const alertSpan = (() => {
+    if (alertRows.length === 0) return null;
+    const south = alertRows.reduce((a, r) => (r.lo < a.lo ? r : a));
+    const north = alertRows.reduce((a, r) => (r.hi > a.hi ? r : a));
+    const southName = useKmView ? south.label.split(" to ")[0] : south.label;
+    const northName = useKmView ? north.label.split(" to ").slice(-1)[0] : north.label;
+    const span = kmSpan(south.lo, north.hi);
+    return southName === northName ? `${span} (${southName})` : `${span}, ${southName} to ${northName}`;
+  })();
   const modelName = predictive.corridorForecastModel ? `${predictive.corridorForecastModel} ` : "";
 
   return (
@@ -298,7 +421,7 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
                     <em>{i + 1}</em>
                     <b>{r.label}</b>
                     <span>
-                      Km {r.km} · {fmtInt(r.predictedIncidents)} predicted
+                      {placeOf(r)} · {fmtInt(r.predictedIncidents)} predicted
                     </span>
                   </li>
                 ))}
@@ -345,9 +468,9 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
           <thead>
             <tr>
               <th>{useKmView ? "Segment" : "Exit"}</th>
-              <th>Km</th>
+              <th>Km post</th>
               <th>Predicted incidents</th>
-              <th>Rate /km</th>
+              <th title={`Predicted incidents per km over the ${DENSITY_WINDOW_KM} km centred on this site`}>Per km ({DENSITY_WINDOW_KM} km window)</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -355,9 +478,10 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
             {visible.map((r) => (
               <tr key={r.key} className={r.staffed ? "is-staffed" : undefined}>
                 <td style={{ whiteSpace: "nowrap" }}>{r.label}</td>
-                <td className="is-muted">{r.km}</td>
+                {/* Official km post (lib/km-post.ts); this printed the measured km raw before (19 Oct 2026, testers IN-5). */}
+                <td className="is-muted" style={{ whiteSpace: "nowrap" }}>{placeOf(r).replace("Km ", "")}</td>
                 <td style={{ fontWeight: 600 }}>{fmtInt(r.predictedIncidents)}</td>
-                <td className="is-muted">{r.ratePerKm.toFixed(2)}</td>
+                <td className="is-muted">{r.ratePerKm.toFixed(1)}</td>
                 <td>{r.staffed ? <span className="inc-staffed">Staffed</span> : <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
               </tr>
             ))}
@@ -378,9 +502,27 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
           tag={spreadWide ? <span className="inc-pill">Risk spread wide</span> : undefined}
           facts={[
             { label: "Action", value: `Monitor these ${unitWord} closely` },
-            { label: "Where", value: <><b>{alertRows.length}</b> of {rows.length} {unitWord}, listed below</> },
-            { label: "When", value: <>The {predictive.corridorForecastDays}-day forecast window</> },
-            { label: "Effect", value: <>Watches at least <b>80%</b> of predicted incidents</> },
+            {
+              label: "Where",
+              value: (
+                <>
+                  <b>{alertRows.length}</b> of {rows.length} {unitWord}
+                  {alertSpan ? <>, between <b>{alertSpan}</b></> : null}, listed below with their km posts
+                </>
+              ),
+            },
+            {
+              label: "When",
+              value: windowDates ? (
+                <>
+                  <b>{windowDates}</b>, the {predictive.corridorForecastDays}-day forecast
+                  {busiestDay && <> · busiest day {fmtDay(busiestDay.date)}</>}
+                </>
+              ) : (
+                <>The {predictive.corridorForecastDays}-day forecast window</>
+              ),
+            },
+            { label: "Effect", value: <>Watches <b>{totalWeight > 0 ? ((cumulative / totalWeight) * 100).toFixed(0) : "0"}%</b> of predicted incidents ({fmtInt(cumulative)} of {fmtInt(totalWeight)})</> },
             { label: "Basis", value: "80% cumulative cutoff, not a fixed top-N" },
           ]}
           details={
@@ -396,25 +538,43 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
         >
           <div className="inc-list">
             <div className="inc-list-head">
-              <span>{useKmView ? "Segment" : "Exit"}</span>
-              <span>Predicted incidents</span>
+              <span>{useKmView ? "Segment" : "Exit"} · km post</span>
+              <span>Predicted · share</span>
             </div>
             <div className="ds-scroll-fade" style={{ display: "flex", flexDirection: "column", maxHeight: "220px", overflowY: "auto" }}>
               {alertRows.map((r) => (
                 <div key={r.key} className="inc-list-row">
-                  <span>{r.label}</span>
-                  <b>{fmtInt(r.predictedIncidents)}</b>
+                  <span>
+                    {r.label} <span style={{ color: "var(--text-muted)" }}>· {placeOf(r)}</span>
+                  </span>
+                  <b>
+                    {fmtInt(r.predictedIncidents)}
+                    <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> · {totalWeight > 0 ? ((r.predictedIncidents / totalWeight) * 100).toFixed(1) : "0"}%</span>
+                  </b>
                 </div>
               ))}
             </div>
           </div>
         </ActionCard>
 
+        {/* Enriched 19 Oct 2026 (testers IN-13: "add more detail"): each stretch by exit and official km post,
+            the speed to ask for, the days and hours to ask for it, and which input the risk model says moves
+            the risk. It said "As rainfall rises" before, beside chips that rose 14.0% to 14.3% over 0-100 mm
+            from a model that reports rain as not significant. */}
         <ActionCard
           icon={Gauge}
-          title="Proactive speed advisory"
+          title={`Advise ${ADVISED_KMH} km/h on ${speedAdvisoryRows.length} stretch${speedAdvisoryRows.length === 1 ? "" : "es"}`}
+          lede="The densest stretches of predicted incidents, on the days and hours the forecast and the log put the risk."
           facts={[
-            { label: "Action", value: "Advise reduced speed here first" },
+            {
+              label: "Action",
+              value: (
+                <>
+                  Signs and radio: <b>{ADVISED_KMH} km/h, all vehicles</b> on these stretches{" "}
+                  <em>(posted {POSTED_LIGHT_KMH} km/h light vehicles, {POSTED_HEAVY_KMH} km/h trucks and buses)</em>
+                </>
+              ),
+            },
             {
               label: "Where",
               value: (
@@ -424,48 +584,132 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
                       <em>{i + 1}</em>
                       <b>{r.label}</b>
                       <span>
-                        {useKmView ? "" : `Km ${r.km} · `}{r.ratePerKm.toFixed(2)} incidents/km
+                        {placeOf(r)} · advise {stretchOf(r)} · {fmtInt(r.ratePerKm)} predicted per km in {predictive.corridorForecastDays} days
+                        {corridorDensity > 0 ? ` (${(r.ratePerKm / corridorDensity).toFixed(1)}× the corridor)` : ""}
                       </span>
                     </li>
                   ))}
                 </ol>
               ),
             },
-            { label: "When", value: "As rainfall rises" },
-            { label: "Basis", value: <>Top 3 {useKmView ? "segments" : "exits"} by density — predicted incidents per km, not raw count — so a short stretch with concentrated risk outranks a long one with more incidents spread thin</> },
+            {
+              label: "When",
+              value: (
+                <>
+                  {peakDays.length > 0 ? (
+                    <>
+                      Highest forecast days{" "}
+                      {peakDays.map((d, i) => (
+                        <span key={d.date}>
+                          {i > 0 ? ", " : ""}
+                          <b>{fmtDay(d.date)}</b> ({fmtInt(d.predicted)} predicted
+                          {horizonMean ? `, ${d.predicted >= horizonMean ? "+" : ""}${(((d.predicted - horizonMean) / horizonMean) * 100).toFixed(0)}% on the window's mean` : ""})
+                        </span>
+                      ))}
+                    </>
+                  ) : (
+                    <>Across the {predictive.corridorForecastDays}-day forecast</>
+                  )}
+                  {peakBlock && (
+                    <>
+                      {" "}· busiest hours <b>{fmtHour(peakBlock.from)} – {fmtHour(peakBlock.to % 24)}</b> ({(peakBlock.share * 100).toFixed(0)}% of
+                      logged incidents, corridor-wide)
+                    </>
+                  )}
+                </>
+              ),
+            },
+            {
+              label: "Trigger",
+              value: !weatherRisk ? (
+                "Risk-model context unavailable right now; advise on the days and hours above"
+              ) : rainMatters ? (
+                <>Rising rainfall: the risk model finds rain significant (p {weatherRisk.rainPValue?.toFixed(2) ?? "—"})</>
+              ) : (
+                <>
+                  {volumeDrives ? <>Heavy-traffic days, the risk model&apos;s top driver. </> : null}
+                  Rain alone barely moves it{weatherRisk.rainPValue != null ? <> (p {weatherRisk.rainPValue.toFixed(2)}, not significant)</> : null}
+                  {rainSpan ? <>: {(rainSpan.lo.probability * 100).toFixed(1)}% at {rainSpan.lo.rain_mm} mm, {(rainSpan.hi.probability * 100).toFixed(1)}% at {rainSpan.hi.rain_mm} mm</> : null}
+                </>
+              ),
+            },
             ...(weatherRisk
               ? [
                   {
                     label: "Effect",
                     value: (
-                      <div className="inc-rain-chips" aria-label="Probability of a corridor-wide high-incident day by rainfall">
-                        {weatherRisk.scenarios.map((s) => (
-                          <div key={s.rain_mm} className="inc-rain-chip">
-                            <span>{s.rain_mm}mm rain</span>
-                            <b>{(s.probability * 100).toFixed(1)}%</b>
+                      <>
+                        {volumeDrives && (weatherRisk.volumeScenarios?.length ?? 0) > 0 && (
+                          <div className="inc-rain-chips" aria-label="Probability of a corridor-wide high-incident day by daily traffic volume">
+                            {(weatherRisk.volumeScenarios ?? []).map((s) => (
+                              <div key={s.volume} className="inc-rain-chip">
+                                <span>{(s.volume / 1e6).toFixed(2)}M vehicles</span>
+                                <b>{(s.probability * 100).toFixed(1)}%</b>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
+                        )}
+                        <div
+                          className="inc-rain-chips"
+                          aria-label="Probability of a corridor-wide high-incident day by rainfall"
+                          style={volumeDrives ? { marginTop: 6, opacity: 0.75 } : undefined}
+                        >
+                          {weatherRisk.scenarios.map((s) => (
+                            <div key={s.rain_mm} className="inc-rain-chip">
+                              <span>{s.rain_mm}mm rain</span>
+                              <b>{(s.probability * 100).toFixed(1)}%</b>
+                            </div>
+                          ))}
+                        </div>
+                      </>
                     ),
                   },
-                  { label: "Confidence", value: <>Weather-incident-risk model, <b>AUC {weatherRisk.auc?.toFixed(3) ?? "—"}</b></> },
+                  {
+                    label: "Confidence",
+                    value: (
+                      <>
+                        Weather-incident-risk model, <b>AUC {weatherRisk.auc?.toFixed(3) ?? "—"}</b>: the chance of a corridor-wide
+                        high-incident day, not of an incident on these stretches
+                      </>
+                    ),
+                  },
                 ]
               : []),
+            {
+              label: "Basis",
+              value: (
+                <>
+                  Predicted incidents per km over the {DENSITY_WINDOW_KM} km centred on each site, from the {modelName}
+                  {predictive.corridorForecastDays}-day ranking; stretches at least {DENSITY_WINDOW_KM} km apart
+                </>
+              ),
+            },
           ]}
           details={
             <>
               <p style={{ margin: 0 }}>
-                Top 3 {useKmView ? "segments" : "exits"} by density (predicted incidents per km, from the same{" "}
-                {modelName}{predictive.corridorForecastDays}-day ranking the staging plan above uses) — advise
-                reduced speed here first as rainfall rises. Density, not raw incident count, is deliberate: it is
-                a different ranking from the Hotspot alert above, which watches whichever locations carry the most
-                predicted volume regardless of how spread out that volume is.
+                The three densest stretches of predicted incidents (per km, over the {DENSITY_WINDOW_KM} km of road centred on
+                each {useKmView ? "segment" : "exit"}, from the same {modelName}{predictive.corridorForecastDays}-day ranking the
+                staging plan above uses), at least {DENSITY_WINDOW_KM} km apart so one stretch is not advised twice. Density, not raw
+                count, is deliberate: it is a different ranking from the Hotspot alert, which watches whichever locations carry the
+                most predicted incidents however spread out they are. A fixed window replaced the gap to the neighbouring exits as
+                the denominator, which ranked two exits 600 m apart hottest from the short gap alone.
               </p>
               <p style={{ margin: "8px 0 0" }}>
-                The percentages below are the weather-incident-risk model&apos;s own probability of a corridor-wide
-                high-incident day at each rainfall level{weatherRisk ? ` (AUC ${weatherRisk.auc?.toFixed(3) ?? "—"})` : ""}
-                — a corridor-wide read, not specific to these 3 locations, since no per-location weather-incident
-                model exists in this warehouse. {weatherRisk ? "Higher rainfall raises the probability; use it as a trigger for when to start advising reduced speed, not where." : "Unavailable right now — the advisory still ranks locations by density, just without the rainfall-probability context."}
+                {ADVISED_KMH} km/h is the expressway minimum, the lowest an advisory can ask for short of closing a lane; the posted
+                limits are {POSTED_LIGHT_KMH} km/h for light vehicles and {POSTED_HEAVY_KMH} km/h for trucks and buses. These are the
+                published limits, not a model output: nothing in the warehouse records a speed policy.
+              </p>
+              <p style={{ margin: "8px 0 0" }}>
+                The days are the champion forecast&apos;s highest in the window; the hours are the busiest three-hour block of logged
+                incidents over the selected Range, corridor-wide, since no per-location hourly record exists. The percentages are
+                the weather-incident-risk model&apos;s own probability of a corridor-wide high-incident day
+                {weatherRisk ? ` (AUC ${weatherRisk.auc?.toFixed(3) ?? "—"})` : ""} at each traffic volume and rainfall level.
+                {weatherRisk && !rainMatters
+                  ? " That model finds traffic volume, not rain, moves the risk, so the advisory is timed on busy days rather than on rainfall."
+                  : weatherRisk
+                    ? " Higher rainfall raises the probability; use it as the trigger for when to start advising."
+                    : " That model is unavailable right now, so the advisory is timed on the forecast days and logged hours alone."}
               </p>
             </>
           }

@@ -1,5 +1,28 @@
 import { db } from "../config/db.js";
+import { exitDisplayName, fmtKm, kmMeasured, kmPost, KM_POST_ANCHORS, KM_POST_START, nearestExitName } from "../lib/km-post.js";
 import { clearedIncidents, EMISSIONS_TABLE, exposureByHour, idleKg, IDLING_KG_PER_VEHICLE_MINUTE, recordBounds } from "./emissions-source.js";
+
+/* Exit names beside every km the Prescriptive tab prints (19 Oct 2026, testers: a bare "Southbound Km 50–60"
+   meant nothing to a reader who knows the road by its exits), from lib/km-post.ts's one exit-name map, so the
+   names match the rest of the dashboard. */
+const SOUTH_OF_CORRIDOR = `south of Km ${KM_POST_START}, before Balintawak`;
+
+/** "Km 50–60 near San Simon", "Km 10–20 from Balintawak to Paso de Blas Valenzuela": a 10-km stretch of official posts
+    and the exits on it (the nearest one when none falls inside). Below the first post, no km is printed:
+    NLEX has no posts south of Km 12. */
+function stretchLabel(lo10: number): string {
+  if (lo10 + 10 <= KM_POST_START) return SOUTH_OF_CORRIDOR;
+  const on = KM_POST_ANCHORS.filter(([, , p]) => p >= lo10 && p < lo10 + 10).map(([k]) => exitDisplayName(k));
+  const names = [...new Set(on)];
+  const where = names.length > 1 ? `from ${names[0]} to ${names[names.length - 1]}` : `near ${names[0] ?? nearestExitName(kmMeasured(lo10 + 5))}`;
+  return `Km ${lo10}–${lo10 + 10} ${where}`;
+}
+
+/** One measured km as "Km 59.2 near San Simon" (official post), or the south-of-corridor wording. */
+function pointLabel(measured: number): string {
+  const post = kmPost(measured);
+  return post < KM_POST_START ? SOUTH_OF_CORRIDOR : `Km ${fmtKm(measured)} near ${nearestExitName(measured)}`;
+}
 
 /* ══════════════════════════════════════════════════════════════════════════════
    PRESCRIPTIVE EMISSIONS — three strategies, computed from the warehouse
@@ -357,8 +380,9 @@ export async function getPrescriptiveStrategies(
       if (!(v > 0)) continue;
       if (!biggest || v > pick(biggest)) biggest = x;
       if (x.e.km != null && x.e.direction != null) {
-        const lo10 = Math.floor(x.e.km / 10) * 10;
-        const k = `${BOUND[x.e.direction] ?? x.e.direction} Km ${lo10}–${lo10 + 10}`;
+        // 10-km stretches of the official km post (lib/km-post.ts); x.e.km is DPWH chainage, which is on the measured scale.
+        const lo10 = Math.floor(kmPost(x.e.km) / 10) * 10;
+        const k = `${BOUND[x.e.direction] ?? x.e.direction} ${stretchLabel(lo10)}`;
         const s = byStretch.get(k) ?? { kg: 0, long: 0 };
         s.kg += v;
         if (x.e.minutes >= 60) s.long++;
@@ -375,7 +399,7 @@ export async function getPrescriptiveStrategies(
        a stretch that leads because of one afternoon is not a stretch that needs a standing patrol. */
     const lone =
       biggest && total > 0 && pick(biggest) / total >= 0.2
-        ? ` One incident alone is ${share(pick(biggest))}% of it (${biggest.e.day}, ${BOUND[biggest.e.direction ?? ""] ?? "direction not recorded"}${biggest.e.km != null ? ` Km ${biggest.e.km.toFixed(1)}` : ""}, lane blocked ${(biggest.e.minutes / 60).toFixed(1)} h), so read the stretch shares as where the long blockages happened this Range, not as a fixed pattern.`
+        ? ` One incident alone is ${share(pick(biggest))}% of it (${biggest.e.day}, ${BOUND[biggest.e.direction ?? ""] ?? "direction not recorded"}${biggest.e.km != null ? ` ${pointLabel(biggest.e.km)}` : ""}, lane blocked ${(biggest.e.minutes / 60).toFixed(1)} h), so read the stretch shares as where the long blockages happened this Range, not as a fixed pattern.`
         : "";
     const topHours = [...byHour.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
     return {

@@ -14,14 +14,14 @@
  * lane plan, if the team gets one, should replace it (run the builder's way, or edit the block by hand with
  * its own `source`).
  *
- * Km-posts are those of lib/nlex-exits.ts (Balintawak 12, Sta. Ines 88.25). Ranges are [fromKm, toKm), and
+ * Km values are MEASURED km, those of lib/nlex-exits.ts (Balintawak 12, Sta. Ines 88.25; lib/km-post.ts). Ranges are [fromKm, toKm), and
  * `lanes` is through lanes in that direction, excluding shoulders, ramps and toll plaza booth fans.
  */
 
 export type LaneSegment = {
-  /** Km-post where this width begins, inclusive. Balintawak is 0. */
+  /** Measured km where this width begins, inclusive (Balintawak is 12). */
   fromKm: number;
-  /** Km-post where it ends, exclusive. */
+  /** Measured km where it ends, exclusive. */
   toKm: number;
   /** Through lanes per direction, excluding shoulders and ramps. */
   lanes: number;

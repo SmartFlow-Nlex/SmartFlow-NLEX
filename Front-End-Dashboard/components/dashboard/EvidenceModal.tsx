@@ -120,7 +120,8 @@ export default function EvidenceModal({
           View <Maximize2 size={13} strokeWidth={2.2} aria-hidden="true" />
         </span>
         {strip && <span aria-hidden className="nct-trust-break" style={{ order: 3 }} />}
-        {strip}
+        {/* The facts in their own grid, so they always fill the row as equal tiles. */}
+        {strip && <span className="ev-facts" style={{ order: 4 }}>{strip}</span>}
       </button>}
 
       {open &&

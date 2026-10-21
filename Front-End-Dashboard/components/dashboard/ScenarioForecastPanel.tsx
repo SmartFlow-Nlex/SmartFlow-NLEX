@@ -54,6 +54,7 @@ export type Scenario = {
     coverageEnd: string | null;
     predictedForDate: number | null;
     model: string | null;
+    /** km is MEASURED (Balintawak = 12); print it through fmtKm. */
     byExit: { exitName: string; km: number; perDay: number }[];
     horizonDays: number;
     /** Whole incidents per hour (0-23), corridor-wide — the Incident page's hourly drill-down for the same model. */

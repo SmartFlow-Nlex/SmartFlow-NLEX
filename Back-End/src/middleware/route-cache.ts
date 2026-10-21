@@ -118,7 +118,17 @@ function prefixOf(url: string): string {
   return m ? m[1] : url;
 }
 
+/* A write also bumps its group's generation (17 Oct 2026, testers' MS-8: "cancel seems to delete it").
+   Clearing the entries was not enough on its own: a read that STARTED before the write -- a background
+   refresh, or another page's poll -- finished after it and put the old answer back, so the maintenance
+   page was served a list where the cancelled job was still "scheduled": gone from Scheduled, missing
+   from Cancelled, and Restore acting on stale data. An answer is now stored only if its group's
+   generation is the one it started under, so nothing read before a write can outlive it. */
+const generation = new Map<string, number>();
+const generationOf = (url: string) => generation.get(prefixOf(url)) ?? 0;
+
 export function invalidatePrefix(prefix: string): void {
+  generation.set(prefix, (generation.get(prefix) ?? 0) + 1);
   for (const key of store.keys()) if (key.startsWith(prefix)) store.delete(key);
 }
 
@@ -223,9 +233,14 @@ export function routeCache(req: Request, res: Response, next: NextFunction): voi
 /** Run the route's own handler, keeping its answer when it is the same for everybody. */
 function runHandler(res: Response, next: NextFunction, url: string, bypass: boolean): void {
   const originalJson = res.json.bind(res);
+  const startedUnder = generationOf(url);
   res.json = ((body: unknown) => {
     // authRequired: authenticateToken let this through, so the answer depends on who asked.
-    if (res.statusCode === 200 && !res.locals.authRequired) store.set(url, { at: Date.now(), status: 200, body });
+    // startedUnder: a write to this group since the handler began makes this answer stale.
+    // noStore: the route answered, but with something incomplete it does not want kept (17 Oct 2026).
+    if (res.statusCode === 200 && !res.locals.authRequired && !res.locals.noStore && generationOf(url) === startedUnder) {
+      store.set(url, { at: Date.now(), status: 200, body });
+    }
     res.setHeader("X-Cache", bypass ? "REFRESH" : "MISS");
     return originalJson(body);
   }) as typeof res.json;

@@ -16,6 +16,8 @@ import { mapPalette } from "../../lib/map-palette";
 import { isDisputedReport, isReportType, isUnconfirmedReport } from "../../lib/waze-reports";
 import { lookOf } from "../../lib/waze-report-look";
 import nlexRamps from "./nlex-ramps.json";
+import { fmtKm } from "../../lib/km-post";
+import { nearExitsText } from "../../lib/exit-lookup";
 import { corridorKm } from "./corridor-km";
 import { useActiveClosures, type Closure } from "./useActiveClosures";
 import {
@@ -461,9 +463,9 @@ export default function TrafficMapPanel({
     // The header's exit search broadcasts a pick; both panels fly to it together
     // so the two maps stay on the same place for comparison.
     const onFlyTo = (e: Event) => {
-      const d = (e as CustomEvent<{ lng: number; lat: number }>).detail;
+      const d = (e as CustomEvent<{ lng: number; lat: number; zoom?: number }>).detail;
       if (!d || !Number.isFinite(d.lng) || !Number.isFinite(d.lat)) return;
-      map.flyTo({ center: [d.lng, d.lat], zoom: 12.5, duration: 900 });
+      map.flyTo({ center: [d.lng, d.lat], zoom: d.zoom ?? 12.5, duration: 900 });
     };
     // "Whole corridor" returns both panels to the opening view.
     const onResetView = () => {
@@ -496,6 +498,9 @@ export default function TrafficMapPanel({
 
     window.addEventListener("nlex:flyto", onFlyTo);
     window.addEventListener("nlex:resetview", onResetView);
+    // A zoom asked for before this map was ready (a jam clicked on the Overview), taken up now.
+    const pending = (window as unknown as { __nlexPendingFly?: { lng: number; lat: number; zoom?: number } }).__nlexPendingFly;
+    if (pending) onFlyTo(new CustomEvent("nlex:flyto", { detail: pending }));
     window.addEventListener("nlex:showreport", onShowReport);
     flyToHandlerRef.current = onFlyTo;
     resetViewHandlerRef.current = onResetView;
@@ -1020,25 +1025,9 @@ export default function TrafficMapPanel({
         },
       });
 
-      /* The forecast finish, part 1: a dashed casing. Only on the forecast map
-         and only on stretches that were forecast (level >= 0), so a predicted
-         segment can never be mistaken for a live one, even in a screenshot. */
-      if (!isRealtimeEndpoint) {
-        map.addLayer({
-          id: "lm-forecast-edge",
-          type: "line",
-          source: "nlex-corridor",
-          filter: [">=", ["get", "level"], 0],
-          layout: { "line-join": "round", "line-cap": "butt" },
-          paint: {
-            "line-color": PALETTE.ink,
-            "line-width": ["interpolate", ["linear"], ["zoom"], 8, 8, 12, 12.5, 16, 14.5, 18, 22],
-            "line-opacity": 0.85,
-            "line-dasharray": [1.1, 0.9],
-            "line-offset": OFFSET,
-          },
-        });
-      }
+      /* (The forecast map's dashed dark casing was removed on 16 Oct 2026: at corridor zoom it read as
+         stray black lines around every stretch. The soft hatch below and the panel's own forecast
+         labelling say "predicted" without it.) */
 
       /* The median: a fine dashed line between the two carriageways. */
       map.addLayer({
@@ -1122,6 +1111,7 @@ export default function TrafficMapPanel({
           layout: { "line-join": "round", "line-cap": "butt" },
           paint: {
             "line-pattern": "lm-hatch",
+            "line-opacity": 0.35, // a hint of texture, not noise (16 Oct 2026)
             "line-width": ["interpolate", ["linear"], ["zoom"], 8, 5, 12, 9, 16, 11, 18, 18],
             "line-offset": OFFSET,
           },
@@ -1425,25 +1415,6 @@ export default function TrafficMapPanel({
         },
       });
 
-      /* Forecast finish on the predicted queues too: a dashed edge between
-         the casing and the queue. */
-      if (!isRealtimeEndpoint) {
-        map.addLayer({
-          id: "lm-forecast-jam-edge",
-          type: "line",
-          source: "traffic",
-          filter: ["all", ["==", ["get", "feature_type"], "jam"], ["has", "direction_source"]],
-          layout: { "line-join": "round", "line-cap": "butt" },
-          paint: {
-            "line-color": PALETTE.ink,
-            "line-opacity": 0.9,
-            "line-width": ["interpolate", ["linear"], ["zoom"], 8, 10, 12, 15.5, 16, 18, 18, 27],
-            "line-dasharray": [1.1, 0.9],
-            "line-offset": OFFSET,
-          },
-        });
-      }
-
       map.addLayer({
         id: "jam-extent",
         type: "line",
@@ -1485,6 +1456,7 @@ export default function TrafficMapPanel({
           layout: { "line-join": "round", "line-cap": "butt" },
           paint: {
             "line-pattern": "lm-hatch",
+            "line-opacity": 0.35, // a hint of texture, not noise (16 Oct 2026)
             "line-width": ["interpolate", ["linear"], ["zoom"], 8, 7, 12, 12, 16, 14, 18, 23],
             "line-offset": OFFSET,
           },
@@ -1666,10 +1638,14 @@ export default function TrafficMapPanel({
             type: "line",
             source: "traffic",
             filter: jamFilter(dir, [hasSpeed, [">=", speedOf, band.min], ["<", speedOf, band.max]]),
-            layout: { "line-join": "round", "line-cap": "butt", visibility: reducedRef.current ? "none" : "visible" },
-            paint: { "line-color": PALETTE.dash, "line-opacity": 0.85, "line-width": DASH_W, "line-dasharray": dashAt(0), "line-offset": OFFSET },
+            layout: { "line-join": "round", "line-cap": "butt" },
+            /* Still dashes (16 Oct 2026, user report of glitching lines): animating line-dasharray
+               re-rasterises the dash pattern on every step, so the dashes flickered and snapped.
+               The motion now comes only from the smooth scrolling glow (jam-flow), whose speed
+               already follows the queue's severity. */
+            paint: { "line-color": PALETTE.dash, "line-opacity": 0.6, "line-width": DASH_W, "line-dasharray": STATIC_DASH, "line-offset": OFFSET },
           }, "jam-mark-nb");
-          flowLayers.push({ id, rate: band.rate, dir, key: -1 });
+          void band.rate;
         }
       }
 
@@ -1865,7 +1841,7 @@ export default function TrafficMapPanel({
             `<div class="mjp">
                <div class="mjp-head is-${lvl >= 3 ? "congested" : "slow"}">
                  Predicted &middot; ${lvl >= 3 ? "Congested" : "Slow"}
-                 <span>${p.rel_km == null ? "" : `km ${Math.round(Number(p.rel_km))}`}</span>
+                 <span>${p.rel_km == null ? "" : `km ${fmtKm(Number(p.rel_km), 0)}`}</span>
                </div>
                ${/* Night Corridor order of importance: the delay answers first,
                     then the queue and where it is, then confidence and its
@@ -1909,7 +1885,7 @@ export default function TrafficMapPanel({
                <div class="mjp-head is-${lvl >= 3 ? "congested" : lvl >= 1 ? "slow" : "clear"}">
                  ${LEVEL_WORD[lvl] ?? "Reported"}
                  <span>${String(p.direction ?? "")}${
-                   p.rel_km == null ? "" : ` &middot; km ${Math.round(Number(p.rel_km))}`
+                   p.rel_km == null ? "" : ` &middot; km ${fmtKm(Number(p.rel_km), 0)}`
                  }</span>
                </div>
                ${delay != null && delay > 0 ? answerRow("Est. delay", mins(delay)) : ""}
@@ -1947,8 +1923,10 @@ export default function TrafficMapPanel({
         closureCard.show(
           e.lngLat,
           `<div class="mjp">
-             <div class="mjp-head is-closure">Maintenance <span>${p.direction === "SB" ? "Southbound" : "Northbound"} &middot; km ${esc(p.start_km)}–${esc(p.end_km)}</span></div>
+             <div class="mjp-head is-closure">Maintenance <span>${p.direction === "SB" ? "Southbound" : "Northbound"} &middot; km ${fmtKm(Number(p.start_km))}–${fmtKm(Number(p.end_km))}</span></div>
              <div class="mjp-where">${esc(p.title)}</div>
+             ${/* The exits either end, so the km range needs no lookup. */ ""}
+             ${r("Exits", esc(nearExitsText(FALLBACK_EXITS, Number(p.start_km), Number(p.end_km))))}
              ${r("Lanes closed", esc(p.lane_closure))}
              ${r("Status", p.status === "in_progress" ? "In progress" : esc(p.status))}
              ${r("Scheduled", `${esc(when(p.starts_at))} – ${esc(when(p.ends_at))}`)}
@@ -2323,7 +2301,7 @@ export default function TrafficMapPanel({
                 </svg>
               </div>
               <span class="toll-pin-name">${displayExitName(toll.shortName)}${
-                kmStat ? `<span class="toll-pin-km">Km ${kmStat.km}</span>` : ""
+                kmStat ? `<span class="toll-pin-km">Km ${fmtKm(kmStat.km)}</span>` : ""
               }</span>
             </div>
           `;
@@ -2394,9 +2372,8 @@ export default function TrafficMapPanel({
               <div class="mjp">
                 <div class="mjp-head is-exit">
                   ${esc(displayExitName(toll.name))}
-                  <!-- One decimal. The list carries two (69.15), which is a
-                       centimetre-accurate claim about a kilometre post. -->
-                  <span>${stat ? `km ${Math.round(stat.km)}` : esc(toll.type)}</span>
+                  <!-- The exit's official km post, printed whole. -->
+                  <span>${stat ? `km ${fmtKm(stat.km)}` : esc(toll.type)}</span>
                 </div>
                 ${row("Where", esc(toll.location))}
                 ${access ? row("Access", esc(access)) : ""}

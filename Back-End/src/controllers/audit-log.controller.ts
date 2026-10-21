@@ -57,6 +57,21 @@ export const recordActivity = async (req: Request, res: Response) => {
       }, requestIdOf(req)).catch(() => null);
       break;
     }
+    case "session.password_reset":
+      audit(req, { action: "session.password_reset", module: "session", entityType: "session", outcome: "success" });
+      break;
+    case "session.password_changed":
+      audit(req, { action: "session.password_changed", module: "session", entityType: "session", outcome: "success" });
+      break;
+    case "session.idle_timeout":
+      audit(req, { action: "session.idle_timeout", module: "session", entityType: "session", outcome: "success", details: { minutes: a.minutes } });
+      break;
+    case "settings.updated":
+      audit(req, { action: "settings.updated", module: "session", entityType: "account", outcome: "success", details: { fields: a.fields } });
+      break;
+    case "session.signed_out_everywhere":
+      audit(req, { action: "session.signed_out_everywhere", module: "session", entityType: "session", outcome: "success" });
+      break;
     case "audit.exported":
       audit(req, { action: "audit.exported", module: "audit_log", entityType: "audit_log", outcome: "success", details: { rows: a.rows, format: a.format } });
       break;

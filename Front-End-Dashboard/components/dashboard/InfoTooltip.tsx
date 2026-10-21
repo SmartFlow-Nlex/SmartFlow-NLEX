@@ -74,10 +74,14 @@ export default function InfoTooltip({ text }: { text: string }) {
 
   return (
     <>
-    {/* A word joiner, so a title never wraps between its last word and the icon. */}
-    {"\u2060"}
+    {/* Glued to the title's last word (16 Oct 2026, user request). The trigger is a plain inline span
+        holding only a word joiner, with the icon drawn absolutely inside its padding: an inline-flex
+        box is an "atomic" inline, which browsers will break a line before even after a word joiner,
+        so the icon used to drop onto a line of its own under long titles. Headings that were flex
+        rows flow as plain text instead (.info-tip in globals.css). */}
     <span
       ref={ref}
+      className="info-tip"
       onMouseEnter={open}
       onMouseLeave={close}
       onFocus={open}
@@ -86,12 +90,14 @@ export default function InfoTooltip({ text }: { text: string }) {
       role="button"
       aria-label={text}
       style={{
-        display: "inline-flex", verticalAlign: "middle", marginLeft: "5px",
+        position: "relative", display: "inline", paddingLeft: "19px", whiteSpace: "nowrap",
         color: show ? "var(--action)" : "var(--text-muted)", cursor: "help",
         transition: "color 120ms ease",
       }}
     >
-      <Info size={13} strokeWidth={2.25} aria-hidden="true" />
+      {"\u2060"}
+      <Info size={13} strokeWidth={2.25} aria-hidden="true"
+            style={{ position: "absolute", right: 0, top: "50%", transform: "translateY(-50%)" }} />
       {show &&
         pos &&
         typeof document !== "undefined" &&

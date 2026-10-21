@@ -26,6 +26,7 @@
     "express-rate-limit": "^8.5.2",
     "morgan": "^1.10.0",
     "multer": "^2.2.0",
+    "nodemailer": "^10.1.7",
     "pg": "^8.13.3",
     "xlsx": "^0.18.5",
     "yalps": "^0.6.4",
@@ -37,6 +38,7 @@
     "@types/morgan": "^1.9.9",
     "@types/multer": "^2.2.0",
     "@types/node": "^22.13.10",
+    "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.20.0",
     "tsx": "^4.19.2",
     "typescript": "^5.8.2"

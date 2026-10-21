@@ -5,6 +5,7 @@ import { cachedJson } from "../../../lib/cached-json";
 import { attachCategoryClick } from "../../../lib/chart-click";
 import { useChartTheme, applyChartTheme, heatRamp, seriesRamp, seriesPair } from "../../../lib/chart-theme";
 import { areaFade } from "../../../lib/chart-kit";
+import { heatTip, heatValue, scrubHeatmap } from "../../../lib/heat-tooltip";
 import ReactECharts from "echarts-for-react";
 import type { EChartsOption, LineSeriesOption } from "echarts";
 import { Activity, ArrowDownWideNarrow, ArrowUpNarrowWide, Building2, CalendarClock, Clock, Gauge, TrendingUp, X } from "lucide-react";
@@ -142,6 +143,11 @@ export default function TrafficPage() {
   // that is actually visible on both grounds.
   const NEUTRAL = chartTheme.isDark ? "rgba(244, 241, 234, 0.24)" : "rgba(11, 18, 32, 0.22)";
   const CELL_GAP = chartTheme.isDark ? "#0a1121" : "#fdfdfc";
+  /* Above/below a baseline (17 Oct 2026, testers TR-5: "reuse the Volume-by-Plaza bar colouring for dark-mode
+     visibility"). The pair's outer steps are right by day, but at night the deep step (#2f5fba) sinks into the
+     navy card, so night takes the plaza chart's two brighter steps and both directions stay visible. */
+  const ABOVE = chartTheme.isDark ? RAMP[1] : PAIR_B;
+  const BELOW = chartTheme.isDark ? RAMP[0] : PAIR_A;
   const [activeTab, setActiveTab] = useState<"Descriptive" | "Predictive" | "Prescriptive">("Descriptive");
 
   // Global filters (Row A)
@@ -161,6 +167,8 @@ export default function TrafficPage() {
   const [impactMode, setImpactMode] = useState<"Events" | "Holidays">("Holidays");
   const [allPlazasOpen, setAllPlazasOpen] = useState(false);
   const [impactListOpen, setImpactListOpen] = useState(false);
+  // The Arena list runs to dozens of events across several years; a year filter saves the scroll (testers TR-5).
+  const [eventYear, setEventYear] = useState<string>("all");
   const [detail, setDetail] = useState<Detail | null>(null);
 
   const [data, setData] = useState<Analytics | null>(null);
@@ -298,11 +306,11 @@ export default function TrafficPage() {
       xAxis: {
         type: "category",
         data: labels,
-        axisLabel: { formatter: axis.formatter, interval: axis.interval, fontSize: 11, hideOverlap: true },
+        axisLabel: { formatter: axis.formatter, interval: axis.interval, fontSize: 12, hideOverlap: true },
         axisTick: { show: false },
       },
       // scale:true so the weekly rhythm is visible instead of a flat line on a zero base
-      yAxis: { type: "value", scale: true, splitNumber: 3, name: "vehicles", nameGap: 12, nameTextStyle: { align: "right" }, axisLabel: { formatter: (v: number) => fmtCompact(v), fontSize: 11 } },
+      yAxis: { type: "value", scale: true, splitNumber: 3, name: "vehicles", nameGap: 12, nameTextStyle: { align: "right" }, axisLabel: { formatter: (v: number) => fmtCompact(v), fontSize: 12 } },
       tooltip: { trigger: "axis", axisPointer: { label: { formatter: (o) => bucketLabelFor(grain)(String((o as { value: unknown }).value)) } }, valueFormatter: (v) => (v == null ? "—" : `${fmtInt(Number(v))} vehicles`) },
       // A legend whenever there is more than one line. The old condition hid it
       // precisely when the chart split into northbound and southbound — the case
@@ -312,7 +320,8 @@ export default function TrafficPage() {
       legend: { show: showLegend, bottom: 0, left: "center", itemGap: 18, padding: 0 },
       series,
     };
-  }, [data, grain, splitDirection, direction, trendRows]);
+    // chartTheme: the series colours are the theme's own, so a theme switch must redraw (testers TR-5).
+  }, [data, grain, splitDirection, direction, trendRows, chartTheme]);
 
   const heatmapOption = useMemo<EChartsOption | null>(() => {
     if (!data || data.hourDow.length === 0) return null;
@@ -328,13 +337,14 @@ export default function TrafficPage() {
     return {
       // Legend lives in a slim strip below the plot, never on it
       grid: { left: 40, right: 10, top: 6, bottom: 26 },
-      xAxis: { type: "category", data: Array.from({ length: 24 }, (_, h) => fmtHour(h)), splitArea: { show: false }, axisLabel: { interval: 3, fontSize: 11 }, axisTick: { show: false } },
+      xAxis: { type: "category", data: Array.from({ length: 24 }, (_, h) => fmtHour(h)), splitArea: { show: false }, axisLabel: { interval: 3, fontSize: 12 }, axisTick: { show: false } },
       // inverse:true puts Mon at the top, Sun at the bottom
-      yAxis: { type: "category", data: DOW_LABELS, inverse: true, splitArea: { show: false }, axisLabel: { interval: 0, fontSize: 11 }, axisTick: { show: false } },
+      yAxis: { type: "category", data: DOW_LABELS, inverse: true, splitArea: { show: false }, axisLabel: { interval: 0, fontSize: 12 }, axisTick: { show: false } },
       tooltip: {
         formatter: (p) => {
           const v = (p as unknown as { value: [number, number, number] }).value;
-          return `${DOW_LABELS[v[1]]} ${fmtHour(v[0])}<br/><b>${fmtInt(v[2])}</b> vehicles/hr on average`;
+          // The shared heatmap tooltip (lib/heat-tooltip), so a Traffic cell and an Incident cell read alike.
+          return heatTip({ title: `${DOW_LABELS[v[1]]} ${fmtHour(v[0])}`, value: heatValue(v[2], "vehicles/hr", 0), detail: ["on average"] });
         },
       },
       visualMap: {
@@ -384,10 +394,11 @@ export default function TrafficPage() {
       rows: display,
       others,
       option: {
-        grid: { left: 120, right: 46, top: 8, bottom: 18 },
-        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => fmtCompact(v), fontSize: 11 } },
+        // Room for the longest plaza name ("Paso de Blas Valenzuela") at the 12 px floor; it overflowed 120.
+        grid: { left: 158, right: 46, top: 8, bottom: 18 },
+        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => fmtCompact(v), fontSize: 12 } },
         // interval:0 — every plaza name must be readable, that IS the chart
-        yAxis: { type: "category", data: display.map((r) => r.plaza), axisLabel: { interval: 0, fontSize: 11 }, axisTick: { show: false } },
+        yAxis: { type: "category", data: display.map((r) => r.plaza), axisLabel: { interval: 0, fontSize: 12, width: 144, overflow: "truncate" }, axisTick: { show: false } },
         tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (v) => `${fmtInt(Number(v))} vehicles` },
         /* No legend. There is one series, so it drew a single chip reading
            "Volume by plaza" beneath a chart whose axis already says that, and
@@ -428,8 +439,8 @@ export default function TrafficPage() {
     const hi = Math.ceil(Math.max(...speeds)) + 1;
     return {
       grid: { left: 36, right: 14, top: 26, bottom: 26 },
-      xAxis: { type: "category", data: data.speedByHour.map((r) => fmtHour(r.hour)), axisLabel: { interval: 3, fontSize: 11 }, axisTick: { show: false } },
-      yAxis: { type: "value", min: lo, max: hi, splitNumber: 4, axisLabel: { formatter: "{value}", fontSize: 11 }, name: "km/h", nameGap: 10, nameTextStyle: { fontSize: 11 } },
+      xAxis: { type: "category", data: data.speedByHour.map((r) => fmtHour(r.hour)), axisLabel: { interval: 3, fontSize: 12 }, axisTick: { show: false } },
+      yAxis: { type: "value", min: lo, max: hi, splitNumber: 4, axisLabel: { formatter: "{value}", fontSize: 12 }, name: "km/h", nameGap: 10, nameTextStyle: { fontSize: 12 } },
       tooltip: {
         trigger: "axis",
         formatter: (p) => {
@@ -472,6 +483,18 @@ export default function TrafficPage() {
     holiday?: Analytics["holidayImpact"][number];
   };
 
+  const eventYears = useMemo(
+    () => (data ? [...new Set(data.eventImpact.map((e) => e.date.slice(0, 4)))].sort().reverse() : []),
+    [data],
+  );
+  // A year picked earlier can drop out when the filters reload the list; it then reads as "All years" rather
+  // than an empty table under a button that is no longer there.
+  const yearShown = eventYears.includes(eventYear) ? eventYear : "all";
+  const eventsShown = useMemo(
+    () => (data ? (yearShown === "all" ? data.eventImpact : data.eventImpact.filter((e) => e.date.startsWith(yearShown))) : []),
+    [data, yearShown],
+  );
+
   const impactChart = useMemo<{ option: EChartsOption; rows: ImpactRow[] } | null>(() => {
     if (!data) return null;
     const rows: ImpactRow[] =
@@ -489,9 +512,10 @@ export default function TrafficPage() {
     return {
       rows: display,
       option: {
-        grid: { left: 128, right: 42, top: 8, bottom: 46 },
-        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => `${v}%`, fontSize: 11 } },
-        yAxis: { type: "category", data: display.map((r) => r.label), axisLabel: { interval: 0, fontSize: 11 }, axisTick: { show: false } },
+        // Wide enough for a 23-character label at the 12 px floor; anything longer is cut with an ellipsis.
+        grid: { left: 168, right: 42, top: 8, bottom: 46 },
+        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => `${v}%`, fontSize: 12 } },
+        yAxis: { type: "category", data: display.map((r) => r.label), axisLabel: { interval: 0, fontSize: 12, width: 154, overflow: "truncate" }, axisTick: { show: false } },
         tooltip: {
           axisPointer: { type: "shadow" },
           formatter: (p) => {
@@ -524,14 +548,14 @@ export default function TrafficPage() {
         series: [
           // Two zero-width entries purely so the legend can name what the two bar
           // colours mean; the real bars are the third series below.
-          { name: "Above baseline", type: "bar", data: [], itemStyle: { color: PAIR_B } },
-          { name: "Below baseline", type: "bar", data: [], itemStyle: { color: PAIR_A } },
+          { name: "Above baseline", type: "bar", data: [], itemStyle: { color: ABOVE } },
+          { name: "Below baseline", type: "bar", data: [], itemStyle: { color: BELOW } },
           {
             name: "Deviation",
             type: "bar",
             data: display.map((r) => ({
               value: r.pct,
-              itemStyle: { color: r.pct >= 0 ? PAIR_B : PAIR_A, borderRadius: r.pct >= 0 ? [0, 4, 4, 0] : [4, 0, 0, 4] },
+              itemStyle: { color: r.pct >= 0 ? ABOVE : BELOW, borderRadius: r.pct >= 0 ? [0, 4, 4, 0] : [4, 0, 0, 4] },
             })),
             barMaxWidth: 12,
             markLine: { symbol: "none", silent: true, lineStyle: { color: NEUTRAL, width: 1 }, data: [{ xAxis: 0 }], label: { show: false } },
@@ -539,7 +563,8 @@ export default function TrafficPage() {
         ],
       },
     };
-  }, [data, impactMode, impactSort]);
+    // chartTheme: this memo never listed it, so after a switch to dark the bars kept the DAY colours (TR-5).
+  }, [data, impactMode, impactSort, chartTheme]);
 
   // Separate from `takeaways` because it depends on the Events/Holidays toggle.
     const sparkOption = useMemo<EChartsOption | null>(() => {
@@ -550,7 +575,7 @@ export default function TrafficPage() {
       yAxis: { type: "value", show: false, min: "dataMin" },
       series: [{ type: "line", data: derived.sparkline, symbol: "none", lineStyle: { width: 2, color: PAIR_A }, areaStyle: areaFade(PAIR_A) as LineSeriesOption["areaStyle"] }],
     };
-  }, [derived]);
+  }, [derived, chartTheme]);
 
   // ---------- Click-to-inspect handlers ----------
   const filtersNote = `Filters: ${plazaSel.length > 0 ? `${plazaSel.length} plaza(s)` : "all plazas"} · ${vClass === "All" ? "all classes" : vClass}${data ? ` · ${data.range.from} to ${data.range.to}` : ""}`;
@@ -746,28 +771,8 @@ export default function TrafficPage() {
   const heatChart = useRef<unknown>(null);
   const speedChart = useRef<unknown>(null);
 
-  const scrub = (
-    ref: React.MutableRefObject<unknown>,
-    lo: number,
-    hi: number,
-  ) => (t: number | null) => {
-    const chart = ref.current as
-      | { dispatchAction: (a: Record<string, unknown>) => void }
-      | null;
-    if (!chart) return;
-    if (t == null) {
-      chart.dispatchAction({ type: "selectDataRange", visualMapIndex: 0, selected: [lo, hi] });
-      return;
-    }
-    // A band rather than a point: an exact value would match almost nothing.
-    const v = lo + t * (hi - lo);
-    const pad = (hi - lo) * 0.08;
-    chart.dispatchAction({
-      type: "selectDataRange",
-      visualMapIndex: 0,
-      selected: [Math.max(lo, v - pad), Math.min(hi, v + pad)],
-    });
-  };
+  // The shared scrubber (lib/heat-tooltip), which was lifted from this page; the Incident grids use the same one.
+  const scrub = scrubHeatmap;
 
   /* The key needs the same domain the chart coloured against, or pointing at a
      shade would report a value the heatmap never used. */
@@ -904,12 +909,6 @@ export default function TrafficPage() {
         )}
 
         {activeTab === "Descriptive" && loading && data && <span className={styles.updating}>Updating…</span>}
-
-        {activeTab === "Prescriptive" && (
-          <span className={styles.filterNote}>
-            Staffing, congestion response and event ranking use the Predictive tab&apos;s own forecast. Range does not apply.
-          </span>
-        )}
 
         {chips.length > 0 && (
           <div className="nct-chips" aria-label="Active filters">
@@ -1143,7 +1142,8 @@ export default function TrafficPage() {
                 colors={heatRamp(chartTheme)}
                 min={heatMinValue}
                 max={heatMaxValue}
-                format={(v) => `${fmtCompact(v)} vehicles`}
+                // Same figure and unit as the cell tooltip; the key used to say "4K vehicles" for a cell reading "4,123 vehicles/hr".
+                format={(v) => heatValue(v, "vehicles/hr", 0)}
                 lowLabel="Quieter"
                 highLabel="Busier"
                 onScrub={scrub(heatChart, heatMinValue, heatMaxValue)}
@@ -1298,7 +1298,7 @@ export default function TrafficPage() {
                 <h3>{impactMode === "Events" ? "Arena Events — Full List" : "Holidays — Full List"}</h3>
                 <p>
                   {impactMode === "Events"
-                    ? `${data.eventImpact.length} events vs same-weekday baseline · click a row for details`
+                    ? `${eventsShown.length} event${eventsShown.length === 1 ? "" : "s"}${yearShown === "all" ? "" : ` in ${yearShown}`} vs same-weekday baseline · click a row for details`
                     : `${data.holidayImpact.length} holidays · click a row for details`}
                 </p>
               </div>
@@ -1306,6 +1306,15 @@ export default function TrafficPage() {
                 {closeIcon}
               </button>
             </div>
+            {impactMode === "Events" && eventYears.length > 1 && (
+              <div className={`${styles.segmented} nct-year-filter`} role="group" aria-label="Filter events by year">
+                {["all", ...eventYears].map((y) => (
+                  <button key={y} className={yearShown === y ? "active" : ""} aria-pressed={yearShown === y} onClick={() => setEventYear(y)}>
+                    {y === "all" ? "All years" : y}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className={styles.plazaTableWrap}>
               {impactMode === "Events" ? (
                 <table className={styles.plazaTable}>
@@ -1313,7 +1322,7 @@ export default function TrafficPage() {
                     <tr><th>Date</th><th>Event</th><th>Plaza volume</th><th>Baseline</th><th>Deviation</th></tr>
                   </thead>
                   <tbody>
-                    {data.eventImpact.map((e) => (
+                    {eventsShown.map((e) => (
                       <tr
                         key={`${e.date}-${e.label}`}
                         className={styles.clickableRow}
@@ -1325,7 +1334,7 @@ export default function TrafficPage() {
                         <td className={styles.plazaNum}>{fmtInt(e.baseline)}</td>
                         <td className={styles.plazaNum}>
                           {e.deviationPct != null ? (
-                            <span className={e.deviationPct >= 0 ? "nct-dev-pos" : "nct-dev-neg"} style={{ ["--dev" as string]: e.deviationPct >= 0 ? PAIR_B : PAIR_A }}>{fmtPct(e.deviationPct)}</span>
+                            <span className={e.deviationPct >= 0 ? "nct-dev-pos" : "nct-dev-neg"} style={{ ["--dev" as string]: e.deviationPct >= 0 ? ABOVE : BELOW }}>{fmtPct(e.deviationPct)}</span>
                           ) : "—"}
                         </td>
                       </tr>
@@ -1348,7 +1357,7 @@ export default function TrafficPage() {
                         <td className={styles.plazaNum}>{h.volume > 0 ? fmtInt(h.volume) : "—"}</td>
                         <td className={styles.plazaNum}>{h.baseline > 0 ? fmtInt(h.baseline) : "—"}</td>
                         <td className={styles.plazaNum}>
-                          <span className={h.deviationPct >= 0 ? "nct-dev-pos" : "nct-dev-neg"} style={{ ["--dev" as string]: h.deviationPct >= 0 ? PAIR_B : PAIR_A }}>{fmtPct(h.deviationPct)}</span>
+                          <span className={h.deviationPct >= 0 ? "nct-dev-pos" : "nct-dev-neg"} style={{ ["--dev" as string]: h.deviationPct >= 0 ? ABOVE : BELOW }}>{fmtPct(h.deviationPct)}</span>
                         </td>
                         <td className={styles.plazaNum}>{h.occurrences}</td>
                       </tr>

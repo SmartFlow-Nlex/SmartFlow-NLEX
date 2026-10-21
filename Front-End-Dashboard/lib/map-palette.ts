@@ -14,10 +14,14 @@
  * repeated here rather than read from the stylesheet.
  */
 
-/** Dark: #2fbf6b / #f6c544 / #ff5a4a / no data #586377. Light: #12804a / #946500 / #c8322a / #7d8799. */
+/** Dark: #2fbf6b / #f6c544 / #ff5a4a / no data #6b778c. Light: #12804a / #946500 / #c8322a / #7d8799. */
 const STATUS_DARK = { clear: "#2fbf6b", slow: "#f6c544", congested: "#ff5a4a" } as const;
 const STATUS_LIGHT = { clear: "#12804a", slow: "#946500", congested: "#c8322a" } as const;
-const NO_DATA_DARK = "#586377";
+/* Night no-data grey (19 Oct 2026): #586377 was 2.7:1 on the navy cards and map surfaces (#0c1d41),
+   2.5:1 on raised navy, under the 3:1 floor for marks. #6b778c is 3.7:1 there (3.4:1 raised, 3.6:1 on the
+   roadbed) and is still the same blue-grey, well clear of the green / yellow / red ramp. --signal-none in
+   globals.css and components/dashboard/trafficPalette.ts use the same value; change all three together. */
+const NO_DATA_DARK = "#6b778c";
 const NO_DATA_LIGHT = "#7d8799";
 
 /**

@@ -1350,7 +1350,8 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--text-muted);
+  /* --mode-tab-ink: brighter at night only (nlex-daylight.css, testers TR-1). */
+  color: var(--mode-tab-ink, var(--text-muted));
   font-size: var(--fs-label);
   font-weight: 600;
   letter-spacing: 2px;
@@ -1370,16 +1371,17 @@
 }
 .modeTab > svg:first-child { display: none; } /* the old check mark */
 .modeName { display: inline-flex; align-items: center; gap: 8px; }
-.modeName svg { color: var(--text-muted); transition: color var(--transition-fast); }
+.modeName svg { color: var(--mode-tab-ink, var(--text-muted)); transition: color var(--transition-fast); }
 .modeTabActive .modeName svg { color: var(--page-accent); }
 .modeHint {
   font-size: var(--fs-body);
   font-weight: 300;
   letter-spacing: 0;
   text-transform: none;
-  color: var(--text-muted);
+  /* The tabs sit on the sky art, not a card: --mode-tab-hint is the scene ink (nlex-daylight.css). */
+  color: var(--mode-tab-hint, var(--text-muted));
 }
-.modeTabActive .modeHint { color: var(--text-secondary); }
+.modeTabActive .modeHint { color: var(--mode-tab-hint, var(--text-secondary)); }
 /* The accent underline slides to the active mode (--mode-i on .modeTabs). */
 .modeIndicator {
   position: absolute;

@@ -12,6 +12,7 @@ import {
   Menu,
   User,
   X,
+  Settings as SettingsIcon,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase";
@@ -32,6 +33,9 @@ import { NAV_TABS as tabs, NAV_GROUPS, navEntryFor, accentFor } from "../../lib/
 import EditorialGrid from "../../components/stage/EditorialGrid";
 import SectionProgress from "../../components/stage/SectionProgress";
 import Mascot from "../../components/stage/Mascot";
+import LoadingGate from "../../components/dashboard/LoadingGate";
+import IdleGuard from "../../components/dashboard/IdleGuard";
+import { displayNameOf, idleMinutesOf, DEFAULT_IDLE_MINUTES } from "../../lib/account-device";
 import NlexEnvironment from "../../components/environment/NlexEnvironment";
 
 // The Night Corridor stage: one WebGL canvas behind the shell, client-only, and
@@ -45,6 +49,10 @@ if (typeof window !== "undefined") installBackendAuth();
 // breadcrumb and the page headers read the same list.
 
 const MOBILE_BREAKPOINT = 980;
+
+/** How long a refused page's notice stays up before the redirect. Testers asked for 3-5 s, and one
+ *  found 4 s still too short (UAT AC-4, 16 Oct 2026), so it takes the top of that range. */
+const BLOCKED_NOTICE_S = 5;
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -74,6 +82,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [userRole, setUserRole] = useState<Role | null>(null);
   const [userEmail, setUserEmail] = useState<string>("");
   const [userFullName, setUserFullName] = useState<string>("");
+  // Sign-out after inactivity, in minutes: the account's own choice from Settings, else 15 (19 Oct 2026).
+  const [idleMinutes, setIdleMinutes] = useState<number>(DEFAULT_IDLE_MINUTES);
+  const idleOut = useRef(false);
 
   // Fetch logged-in user details from Supabase
   useEffect(() => {
@@ -91,7 +102,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         setUserEmail(session.user.email || "");
         const metadata = session.user.user_metadata;
         setUserRole(isRole(metadata?.role) ? metadata.role : FALLBACK_ROLE);
-        setUserFullName(metadata?.full_name || session.user.email || "");
+        setUserFullName(displayNameOf(metadata, session.user.email));
+        setIdleMinutes(idleMinutesOf(metadata));
         setAuthState("authed");
       } else {
         setUserRole(null);
@@ -129,8 +141,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // No session: leave for the login screen.
   useEffect(() => {
-    if (authState === "anon") router.replace(LOGIN_ROUTE);
+    if (authState === "anon" && !idleOut.current) router.replace(LOGIN_ROUTE);
   }, [authState, router]);
+
+  // Signed out after a spell without activity (components/dashboard/IdleGuard.tsx). The sign-in page says why.
+  const handleIdleTimeout = useCallback(async () => {
+    idleOut.current = true;
+    await Promise.race([logActivity({ type: "session.idle_timeout", minutes: idleMinutes }), new Promise((r) => setTimeout(r, 1500))]);
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      /* local tokens are cleared regardless */
+    }
+    router.replace(`${LOGIN_ROUTE}?signedOut=idle&after=${idleMinutes}`);
+  }, [idleMinutes, router]);
 
   /*
    * Log out means ending the session. The button used to only navigate to the
@@ -174,9 +198,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // Route guard. Replaces push() with replace() so that the page the user was
   // refused does not sit in history for the back button to return them to.
+  //
+  // The notice stays up for a few seconds first, counting down (17 Oct 2026, all three testers: the
+  // "not available to your role" screen was gone before it could be read, so a refused page looked like
+  // a glitch that bounced them home). "Go now" skips the wait.
+  const [blockedLeft, setBlockedLeft] = useState<number | null>(null);
   useEffect(() => {
-    if (authState !== "authed" || !userRole) return;
-    if (!canAccess(userRole, pathname)) router.replace(FALLBACK_ROUTE);
+    if (authState !== "authed" || !userRole || canAccess(userRole, pathname)) {
+      setBlockedLeft(null);
+      return;
+    }
+    setBlockedLeft(BLOCKED_NOTICE_S);
+    const tick = window.setInterval(() => setBlockedLeft((n) => (n == null ? n : Math.max(1, n - 1))), 1000);
+    const leave = window.setTimeout(() => router.replace(FALLBACK_ROUTE), BLOCKED_NOTICE_S * 1000);
+    return () => {
+      window.clearInterval(tick);
+      window.clearTimeout(leave);
+    };
   }, [authState, pathname, userRole, router]);
 
   // Which pages are actually used: the audit log's page views, once signed in and allowed there.
@@ -320,27 +358,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
    * render it is never constructed.
    */
   if (authState !== "authed" || !userRole || !canAccess(userRole, pathname)) {
-    const message =
-      authState === "checking"
-        ? "Checking your session…"
-        : authState === "anon"
-          ? "Redirecting to sign in…"
-          : "You do not have access to that page. Returning to the overview…";
+    /* Only a refused page gets the notice card. The session check and the sign-in redirect show the bare
+       scenery (19 Oct 2026, user request: the loading card was unnecessary). */
+    const refused = authState === "authed" && userRole != null;
     return (
       <>
         <NlexEnvironment scene="page" />
         <NightCorridorStage variant="dashboard" />
-        <div className="ds-auth-gate" role="status" aria-live="polite">
-          {/* The loader is the mascot's headlights, not a spinner. */}
-          <Mascot size={132} mood={authState === "authed" ? "error" : "loading"} />
-          <p>{message}</p>
-        </div>
+        {refused && (
+          <LoadingGate
+            title="Not available for your role"
+            detail={`Your account doesn't have access to ${crumb?.label ?? "this page"}. Ask an administrator if you need it.`}
+            tone="warn"
+            countdown={{ left: blockedLeft ?? BLOCKED_NOTICE_S, total: BLOCKED_NOTICE_S }}
+            action={{ label: "Go to Overview now", onClick: () => router.replace(FALLBACK_ROUTE) }}
+          />
+        )}
       </>
     );
   }
 
   return (
     <>
+    {/* Signs out after the account's idle limit, with a minute's warning. */}
+    <IdleGuard minutes={idleMinutes} onTimeout={handleIdleTimeout} />
     {/* The NLEX environment behind every page, tab and sub-tab. */}
     <NlexEnvironment scene={pathname === "/dashboard" ? "hero" : "page"} />
     <NightCorridorStage variant="dashboard" />
@@ -399,6 +440,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <span className="ds-user-role">{displayRoleName}</span>
             </div>
           </div>
+          <Link href="/dashboard/settings" prefetch={true} className={`ds-logout-button ds-settings-link${pathname === "/dashboard/settings" ? " active" : ""}`} data-label="Settings">
+            <SettingsIcon size={16} strokeWidth={2.2} /> <span className="ds-sidebar-tab-label">Settings</span>
+          </Link>
           <button type="button" className="ds-logout-button" onClick={() => setShowLogoutConfirm(true)} data-label="Log out">
             <LogOut size={16} strokeWidth={2.2} /> <span className="ds-sidebar-tab-label">Log out</span>
           </button>

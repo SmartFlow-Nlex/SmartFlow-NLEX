@@ -1,4 +1,5 @@
 import { db } from "../config/db.js";
+import { kmPost } from "../lib/km-post.js";
 import { forecastTable } from "./forecast-source.js";
 import { directionSql, jamProfileAvailable, jamProfileSql, queuePlacementSql, volumeProfileSql } from "./jam-profile.js";
 
@@ -47,8 +48,10 @@ export async function getRealtimeMapDataFromDb() {
 // [DEV-04] Exit reference for the whole corridor — the single list every tab
 // should use. nlex_exits gives identity and position; the km-post is derived
 // from dim_location, whose segments carry length_meters, by running a cumulative
-// sum along segment_order. Balintawak is km 0 and Sta. Ines is km 76.25, which
-// matches the corridor's published length.
+// sum along segment_order, plus 12: Balintawak is Km 12 and Sta. Ines measures
+// 88.25 (76.25 km of road, the corridor's published length). That `km` is the
+// MEASURED position every calculation uses; `km_post` beside it is the official
+// km post a person is shown (lib/km-post.ts), e.g. Sta. Ines Km 87.
 //
 // Deriving km rather than hardcoding it is the point: the dashboard previously
 // carried three different hand-written exit lists (9 exits in the AI sandbox,
@@ -114,7 +117,7 @@ export async function searchExitsInDb(query: string) {
        ORDER BY x.exit_id`,
       [`%${query}%`]
     );
-    return rows;
+    return rows.map((x) => ({ ...x, km_post: x.km == null ? null : kmPost(Number(x.km)) }));
   } catch (error) {
     console.error("Database query failed for exit search:", error);
     return null;

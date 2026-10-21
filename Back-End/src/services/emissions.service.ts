@@ -14,6 +14,8 @@ export type EmissionsAnalyticsFilters = {
   months: "3" | "12" | "all";
   from?: string;
   to?: string;
+  /** 1, 2 or 3 to restrict every class-attributable panel to one vehicle class; omitted means all. */
+  vehicleClass?: 1 | 2 | 3;
 };
 
 type EmissionsCacheEntry = { at: number; data: unknown };
@@ -69,36 +71,70 @@ export async function getEmissionsAnalyticsFromDb(filters: EmissionsAnalyticsFil
     const params = [lo, hi];
     const WHERE = `e.date BETWEEN $1 AND $2`;
 
-    const [trend, heatmap, classes, kpi, aqiMonthly, aqiKpi, exits, delay] = await Promise.all([
+    /* The Class filter (17 Oct 2026, tester review): the tab's Class control sent vehicleClass, but this
+       service stopped reading it when the source moved to gold.fact_emissions_hourly, so picking a class
+       changed nothing while the chip said it had. That table carries the three class counts as columns
+       rather than a vehicle_class row key, so the filter is applied as an expression: one class's CO2 is
+       its count x segment km x its factor, the same arithmetic the per-class columns already use (and
+       which sums to co2_tonnes). With no class chosen every query reads exactly what it read before. */
+    const k = filters.vehicleClass;
+    const CO2 = k ? `(e.class_${k} * e.segment_km * f.f${k} / 1e6)` : `e.co2_tonnes`;
+    const JOIN_F = k ? FACTORS : "";
+    /** A class column, or 0 when the filter excludes that class. */
+    const cls = (n: 1 | 2 | 3, expr: string) => (k && k !== n ? "0" : expr);
+    // Hourly detail only for short windows, the same rule the traffic endpoint uses: a year of hourly rows
+    // is a payload nobody reads. The tab has offered Hourly for ranges up to two weeks all along; the
+    // series it needs went missing in the same move.
+    const spanDays = Math.round((Date.parse(hi) - Date.parse(lo)) / 86_400_000);
+    const includeHourly = spanDays <= 14;
+
+    const [trend, hourly, heatmap, classes, kpi, aqiMonthly, aqiKpi, exits, delay] = await Promise.all([
       // Daily CO2 (tonnes) by vehicle class, and by direction: northbound, southbound, and the
       // plazas the record does not split by direction (bothdir), so the three add up to the day.
       db.query(
         `SELECT e.date::text AS d,
-                ROUND((SUM(e.class_1 * e.segment_km) * MAX(f.f1) / 1e6)::numeric, 2)::float AS c1,
-                ROUND((SUM(e.class_2 * e.segment_km) * MAX(f.f2) / 1e6)::numeric, 2)::float AS c2,
-                ROUND((SUM(e.class_3 * e.segment_km) * MAX(f.f3) / 1e6)::numeric, 2)::float AS c3,
-                ROUND(COALESCE(SUM(e.co2_tonnes) FILTER (WHERE e.direction = 'NB'), 0)::numeric, 2)::float AS nb,
-                ROUND(COALESCE(SUM(e.co2_tonnes) FILTER (WHERE e.direction = 'SB'), 0)::numeric, 2)::float AS sb,
-                ROUND(COALESCE(SUM(e.co2_tonnes) FILTER (WHERE e.direction IS NULL OR e.direction NOT IN ('NB', 'SB')), 0)::numeric, 2)::float AS bothdir
+                ${cls(1, `ROUND((SUM(e.class_1 * e.segment_km) * MAX(f.f1) / 1e6)::numeric, 2)::float`)} AS c1,
+                ${cls(2, `ROUND((SUM(e.class_2 * e.segment_km) * MAX(f.f2) / 1e6)::numeric, 2)::float`)} AS c2,
+                ${cls(3, `ROUND((SUM(e.class_3 * e.segment_km) * MAX(f.f3) / 1e6)::numeric, 2)::float`)} AS c3,
+                ROUND(COALESCE(SUM(${CO2}) FILTER (WHERE e.direction = 'NB'), 0)::numeric, 2)::float AS nb,
+                ROUND(COALESCE(SUM(${CO2}) FILTER (WHERE e.direction = 'SB'), 0)::numeric, 2)::float AS sb,
+                ROUND(COALESCE(SUM(${CO2}) FILTER (WHERE e.direction IS NULL OR e.direction NOT IN ('NB', 'SB')), 0)::numeric, 2)::float AS bothdir
          FROM ${EMISSIONS_TABLE} e ${FACTORS}
          WHERE ${WHERE}
          GROUP BY 1 ORDER BY 1`,
         params
       ),
+      // The same split per hour, for short ranges only.
+      includeHourly
+        ? db.query(
+            `SELECT e.date::text AS d, e.hour::int AS hour,
+                    ${cls(1, `ROUND((SUM(e.class_1 * e.segment_km) * MAX(f.f1) / 1e6)::numeric, 3)::float`)} AS c1,
+                    ${cls(2, `ROUND((SUM(e.class_2 * e.segment_km) * MAX(f.f2) / 1e6)::numeric, 3)::float`)} AS c2,
+                    ${cls(3, `ROUND((SUM(e.class_3 * e.segment_km) * MAX(f.f3) / 1e6)::numeric, 3)::float`)} AS c3,
+                    ROUND(COALESCE(SUM(${CO2}) FILTER (WHERE e.direction = 'NB'), 0)::numeric, 3)::float AS nb,
+                    ROUND(COALESCE(SUM(${CO2}) FILTER (WHERE e.direction = 'SB'), 0)::numeric, 3)::float AS sb,
+                    ROUND(COALESCE(SUM(${CO2}) FILTER (WHERE e.direction IS NULL OR e.direction NOT IN ('NB', 'SB')), 0)::numeric, 3)::float AS bothdir
+             FROM ${EMISSIONS_TABLE} e ${FACTORS}
+             WHERE ${WHERE}
+             GROUP BY 1, 2 ORDER BY 1, 2`,
+            params
+          )
+        : Promise.resolve(null),
       // CO2 tonnes per hour-of-day x day-of-week (client derives weekday/weekend profile)
       db.query(
         `SELECT EXTRACT(dow FROM e.date)::int AS dow, e.hour::int AS hour,
-                ROUND(SUM(e.co2_tonnes)::numeric, 2)::float AS v
-         FROM ${EMISSIONS_TABLE} e WHERE ${WHERE}
+                ROUND(SUM(${CO2})::numeric, 2)::float AS v
+         FROM ${EMISSIONS_TABLE} e ${JOIN_F} WHERE ${WHERE}
          GROUP BY 1, 2 ORDER BY 1, 2`,
         params
       ),
-      // Volume and emissions by vehicle class, with the per-km factors
+      // Volume and emissions by vehicle class, with the per-km factors. All three rows always come back
+      // (a filtered-out class at zero), so a client indexing them by position never mislabels one.
       db.query(
         `WITH s AS (
-           SELECT SUM(class_1) AS v1, SUM(class_1 * segment_km) AS k1,
-                  SUM(class_2) AS v2, SUM(class_2 * segment_km) AS k2,
-                  SUM(class_3) AS v3, SUM(class_3 * segment_km) AS k3
+           SELECT ${cls(1, "SUM(class_1)")} AS v1, ${cls(1, "SUM(class_1 * segment_km)")} AS k1,
+                  ${cls(2, "SUM(class_2)")} AS v2, ${cls(2, "SUM(class_2 * segment_km)")} AS k2,
+                  ${cls(3, "SUM(class_3)")} AS v3, ${cls(3, "SUM(class_3 * segment_km)")} AS k3
              FROM ${EMISSIONS_TABLE} e WHERE ${WHERE})
          SELECT f.vehicle_class AS class, f.class_label AS label, f.co2_g_per_km::float AS co2_g_per_km,
                 ROUND(CASE f.vehicle_class WHEN 1 THEN s.v1 WHEN 2 THEN s.v2 ELSE s.v3 END)::bigint AS volume,
@@ -110,13 +146,14 @@ export async function getEmissionsAnalyticsFromDb(filters: EmissionsAnalyticsFil
          ORDER BY 1`,
         params
       ),
-      // KPI: current vs previous period CO2 (tonnes)
+      // KPI: current vs previous period CO2 (tonnes). The previous period narrows with the current one, or
+      // the delta would set one class against all three.
       db.query(
         `SELECT
-           ROUND((SUM(co2_tonnes) FILTER (WHERE date BETWEEN $1 AND $2))::numeric, 1)::float AS cur_t,
-           ROUND((SUM(co2_tonnes) FILTER (WHERE date >= $1::date - ($2::date - $1::date + 1) AND date < $1::date))::numeric, 1)::float AS prev_t
-         FROM ${EMISSIONS_TABLE}
-         WHERE date >= $1::date - ($2::date - $1::date + 1) AND date <= $2`,
+           ROUND((SUM(${CO2}) FILTER (WHERE e.date BETWEEN $1 AND $2))::numeric, 1)::float AS cur_t,
+           ROUND((SUM(${CO2}) FILTER (WHERE e.date >= $1::date - ($2::date - $1::date + 1) AND e.date < $1::date))::numeric, 1)::float AS prev_t
+         FROM ${EMISSIONS_TABLE} e ${JOIN_F}
+         WHERE e.date >= $1::date - ($2::date - $1::date + 1) AND e.date <= $2`,
         params
       ),
       // Measured air quality: monthly hours per AQI level + avg PM2.5
@@ -147,20 +184,27 @@ export async function getEmissionsAnalyticsFromDb(filters: EmissionsAnalyticsFil
     const totalCo2T = kpi.rows[0].cur_t ?? 0;
     const data = {
       range: { from: lo, to: hi },
-      meta: { minDate, maxDate, source: EMISSIONS_TABLE, exits: exits.rows[0]?.n ?? 0 },
+      meta: { minDate, maxDate, source: EMISSIONS_TABLE, exits: exits.rows[0]?.n ?? 0, vehicleClass: k ?? null },
       kpis: {
         totalCo2T,
         prevCo2T: kpi.rows[0].prev_t ?? 0,
         avgAqi: aqiKpi.rows[0].avg_aqi,
         aqiSamples: aqiKpi.rows[0].samples,
         avgPm25: aqiKpi.rows[0].avg_pm25,
-        delayCarbonT: Math.round(delay.tonnes * 10) / 10,
-        delayCarbonPct: totalCo2T > 0 ? Math.round((delay.tonnes / totalCo2T) * 10000) / 100 : 0,
-        delayIncidents: delay.incidents,
-        delayLongIncidents: delay.longIncidents,
-        delayLongSharePct: Math.round(delay.longSharePct * 10) / 10,
+        // Queue idling is computed from all vehicles on the blocked segment and is not split by class, so
+        // under a class filter it is left out rather than set against one class's total.
+        ...(k
+          ? {}
+          : {
+              delayCarbonT: Math.round(delay.tonnes * 10) / 10,
+              delayCarbonPct: totalCo2T > 0 ? Math.round((delay.tonnes / totalCo2T) * 10000) / 100 : 0,
+              delayIncidents: delay.incidents,
+              delayLongIncidents: delay.longIncidents,
+              delayLongSharePct: Math.round(delay.longSharePct * 10) / 10,
+            }),
       },
       dailyTrend: trend.rows,
+      hourlyTrend: hourly ? hourly.rows : null,
       heatmap: heatmap.rows,
       classes: classes.rows.map((r) => ({ ...r, volume: Number(r.volume) })),
       aqiMonthly: aqiMonthly.rows,

@@ -17,7 +17,13 @@ export type StageEvent =
   /** The sign-in request failed: let the wheels settle. */
   | { type: "error" }
   /** The car itself was clicked or tapped (sent by the stage, not by pages). */
-  | { type: "poke" };
+  | { type: "poke" }
+  /** The car finished driving in and faces the reader (sent by the car; the Overview's bubble waits for it). */
+  | { type: "arrived" }
+  /** The car was clicked while at rest (sent by the car, for the Overview's bubble to answer). */
+  | { type: "clicked" }
+  /** Move the car's mouth as if talking, for `seconds` (sent by the Overview's speech bubble). */
+  | { type: "talk"; seconds: number };
 
 type Listener = (e: StageEvent) => void;
 

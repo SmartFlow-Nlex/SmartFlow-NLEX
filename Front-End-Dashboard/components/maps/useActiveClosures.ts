@@ -9,8 +9,8 @@ import { BACKEND, authedJson } from "../../lib/api";
  * Reads the existing GET /api/maintenance/list through the app's own client
  * helper (authedJson). Nothing is written. "Active" is the schedule's own
  * lifecycle status, in_progress: the operator has marked the work as under
- * way. start_km / end_km are read exactly as the Maintenance page reads them,
- * as km posts.
+ * way. start_km / end_km are read exactly as the Maintenance page reads them:
+ * measured km, as stored (show them with fmtKm, from lib/km-post).
  *
  * One request is shared by every map on the page (and the corridor strip),
  * refreshed once a minute while anything is listening. A failure leaves the

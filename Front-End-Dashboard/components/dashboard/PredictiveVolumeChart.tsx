@@ -1048,7 +1048,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                     position: "insideEndTop" as const,
                     formatter: p.tag,
                     color: ink,
-                    fontSize: 10,
+                    fontSize: 11, // 11 px floor (A11Y-1)
                     fontWeight: 600 as const,
                     backgroundColor: wash,
                     padding: [1, 3],

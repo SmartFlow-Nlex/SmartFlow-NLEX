@@ -52,6 +52,10 @@ export type Insight = {
   perModel: { model: string; verdict: string }[];
   /** The single most important caveat, or null when there is nothing to add. */
   caveat: string | null;
+  /** One closing "What this means: ..." line, for the endpoints that ask for it. */
+  meaning?: string | null;
+  /** "template" when the text was composed from the figures because the language model failed. */
+  source?: "ai" | "template";
 };
 
 const UNITS: Record<Quantity, { noun: string; unit: string; audience: string }> = {
@@ -231,37 +235,65 @@ export type CongestionInsightRequest = {
     exitsSevere: number;
     hoursCovered: number;
     neverPredictsHeavy?: boolean;
+    windowStart?: string | null;
+    windowEnd?: string | null;
+    severeBelowKmh?: number | null;
+    heavyBelowKmh?: number | null;
   };
 };
 
+/* Two benchmarks, named apart (17 Oct 2026, testers TR-9: "the narrative report has an error"). The card
+   compares the model's overall accuracy with the EXIT-HOUR PROFILE (each exit doing what it usually does at
+   that hour), and its per-hour accuracy with NOTHING CHANGES (each exit staying as it is now). This prompt
+   used to call both "nothing changes", so the read-out could hang the profile's 60% on the wrong idea and
+   contradict the card it sits under. It is also told the window the map covers, so it can open with the
+   dates and times a reader is looking at, and where measured accuracy stops. */
+/* 19 Oct 2026, testers TR-9 again ("error in the narrative report"; "write narratives as plain sentences
+   with context for non-analytics readers"). Two more faults, both in what the model was TOLD:
+     - the classes were defined here as Severe under 30 km/h and Heavy 30-60 km/h, while the card and the
+       trainer cut at 10 and 20 km/h, so the read-out defined Severe differently from the legend above it;
+     - every measured horizon to +168h was sent whatever range the map showed, so a 12-hour view was
+       described with week-ahead figures.
+   The cuts now come from the payload, the client sends only the horizons the map shows, the reply ends
+   with a "What this means" line, and a reply that fails or quotes a percentage it was not given is
+   replaced by a read-out composed from the figures (congestionTemplate), so the panel never shows an
+   error or a wrong number where the report should be. */
 const CONGESTION_SYSTEM = `You explain a traffic congestion CLASSIFIER to traffic operations staff who are not statisticians. Reply with JSON only.
 
 OUTPUT SHAPE
 {
-  "summary": "2-4 sentences: how far ahead this map can be trusted and what that means for acting on it",
-  "perModel": [{"model": "<exact name as given>", "verdict": "one sentence"}],
-  "caveat": "the single most important limitation, or null"
+  "summary": "2-3 short plain sentences on how far ahead this map can be trusted. Do NOT restate the forecast window or how many exits are expected to be Severe: the reader is told both in the sentence just before yours.",
+  "perModel": [{"model": "<exact name as given>", "verdict": "one plain sentence"}],
+  "caveat": "the single most important limitation, or null",
+  "meaning": "ONE short sentence beginning exactly 'What this means:' telling a control-room operator what to do with this map"
 }
 
 WHAT THE MODEL DOES
-It labels every exit-hour on the corridor as Clear, Heavy or Severe from Waze jam reports: Severe means jams running under 30 km/h, Heavy means 30-60 km/h, Clear means no jam was reported. It is scored on held-out hours by ACCURACY: the share of exit-hours whose label it got right.
+It labels every exit-hour on the corridor as Clear, Heavy or Severe from Waze jam reports, using the speed cuts given in the message (CLASSES). Clear means no jam was reported or traffic is moving. It is scored on held-out hours by ACCURACY: the share of exit-hours whose label it got right.
 
 HOW TO READ THE NUMBERS
 - Accuracy is a percentage of exit-hours classified correctly. It is NOT an error and NOT a probability of congestion.
-- The benchmark is "nothing changes": assume each exit stays in the state it is in now. A forecaster that cannot beat that benchmark adds nothing, however high its raw accuracy looks.
+- There are TWO different benchmarks. Never confuse them, and never call one by the other's name:
+  1. The EXIT-HOUR PROFILE: assume each exit does what it usually does at this hour on this weekday. It is compared with the model's OVERALL accuracy.
+  2. NOTHING CHANGES: assume each exit stays in the state it is in right now. It is given PER HOUR AHEAD.
+  A forecaster that cannot beat a benchmark adds nothing over it, however high its raw accuracy looks.
 - Accuracy is given PER HOUR AHEAD. Whether it holds up or decays across the horizon is the single most useful thing for a reader deciding how far ahead to plan.
-- The benchmark itself decays with distance. A model whose accuracy holds flat while the benchmark falls is becoming MORE valuable further out, not less.
+- "Nothing changes" decays with distance. A model whose accuracy holds flat while that benchmark falls is becoming MORE valuable further out, not less.
+- Accuracy was measured only for the hours ahead listed. If the map shows more hours than that, the hours beyond the last listed one have NO measured accuracy: say so plainly, and do not extend the trend.
 
 RULES
 - Never state a number that was not given to you. Never estimate one.
 - Every claim must be traceable to a number above. You know NOTHING about how the model was built, what data it saw, or how it will behave in future. Do not speculate.
 - If a model is marked rejected, say so and give the stated reason.
 - Translate into consequences a control room can act on: how far ahead the map is worth trusting, and what a wrong label would cost.
+- Never state a date or a clock time: the window is said for you, in a sentence placed before yours. Speak of "hours ahead" instead.
+- Define a class only with the CLASSES speeds given in the message. Never state any other speed.
 - Do not recommend retraining, more data, or model changes. The reader operates this system, they do not build it.
-- Plain English. No jargon that is not defined in the sentence that uses it.
+- Plain English in short sentences, for a reader who has never studied statistics. Give a percentage a meaning where it helps ("right about two times in three"). No jargon that is not defined in the sentence that uses it. Do not use words like "horizon", "classifier", "persistence", "benchmark" or "held-out" in the output; say "hours ahead", "the model", "assuming nothing changes", "tested on past hours it had not seen".
+- Quote percentages exactly as given (one decimal place), or not at all.
 
 THE CAVEAT FIELD
-Use it ONLY for a limitation the supplied numbers demonstrate — accuracy that decays sharply with distance, a model that barely clears the benchmark, a class the model never predicts. If the numbers show no such problem, return null. Never invent a limitation you were not told about.`;
+Use it ONLY for a limitation the supplied numbers demonstrate — accuracy that decays sharply with distance, a model that barely clears a benchmark, a class the model never predicts, hours on the map beyond the measured horizon. If the numbers show no such problem, return null. Never invent a limitation you were not told about.`;
 
 function buildCongestionMessage(req: CongestionInsightRequest): string {
   const pct = (v: number | null | undefined) =>
@@ -273,15 +305,17 @@ function buildCongestionMessage(req: CongestionInsightRequest): string {
     "READER: a traffic control centre deciding how far ahead to act on the congestion map.",
   );
 
+  const { severe, heavy } = speedCuts(req);
+  lines.push(`CLASSES: Severe = jams crawling under ${severe} km/h; Heavy = jams at ${severe}-${heavy} km/h; Clear = no jam reported, or moving faster than that.`);
+
   if (req.situation) {
     const s = req.situation;
+    const window = s.windowStart && s.windowEnd ? `, from ${s.windowStart} to ${s.windowEnd} (Philippine time)` : "";
     lines.push(
-      `CURRENTLY SHOWN: the next ${s.hoursCovered} hours, ${s.exitsSevere} of ${s.exitsTotal} exits expected to be severe at some point.`,
+      `CURRENTLY SHOWN: the next ${s.hoursCovered} hours${window}, ${s.exitsSevere} of ${s.exitsTotal} exits expected to be Severe at some point.`,
     );
     if (s.neverPredictsHeavy) {
-      lines.push(
-        "NOTE: the model never outputs the Heavy class on this corridor — reported jams almost always run under 30 km/h, so in practice it decides between Clear and Severe.",
-      );
+      lines.push("NOTE: in this window the model never outputs the Heavy class, so in practice it is deciding between Clear and Severe.");
     }
   }
 
@@ -296,36 +330,163 @@ function buildCongestionMessage(req: CongestionInsightRequest): string {
   if (req.baseline && pct(req.baseline.accuracy)) {
     lines.push(
       "",
-      `BENCHMARK TO BEAT: ${req.baseline.model} at ${pct(req.baseline.accuracy)}. A model at or below this adds nothing.`,
+      `OVERALL BENCHMARK, the exit-hour profile (each exit does what it usually does at this hour and weekday): ${req.baseline.model} at ${pct(req.baseline.accuracy)}. Compare the model's OVERALL accuracy with this. This is NOT the "nothing changes" benchmark.`,
     );
   }
 
   if (req.horizons?.length) {
-    lines.push("", "ACCURACY BY HOUR AHEAD (model vs the \"nothing changes\" benchmark)");
+    lines.push("", "ACCURACY BY HOUR AHEAD (model vs the \"nothing changes\" benchmark: each exit stays as it is now)");
     for (const h of req.horizons) {
       const a = pct(h.accuracy) ?? "n/a";
       const p = pct(h.persistence) ?? "n/a";
       lines.push(`- +${h.horizon}h: model ${a}, nothing-changes ${p}${h.n ? `, scored on ${h.n.toLocaleString()} exit-hours` : ""}`);
+    }
+    const lastMeasured = Math.max(...req.horizons.map((h) => h.horizon));
+    if (req.situation && req.situation.hoursCovered > lastMeasured) {
+      lines.push(
+        `NOTE: accuracy was measured only up to +${lastMeasured}h. The map shows ${req.situation.hoursCovered} hours, so hours beyond +${lastMeasured}h have NO measured accuracy.`,
+      );
     }
   }
 
   return lines.join("\n");
 }
 
+/** The card's speed cuts; 10 and 20 km/h are the trainer's (congestionEval.thresholds_kmh). */
+function speedCuts(req: CongestionInsightRequest): { severe: number; heavy: number } {
+  return { severe: req.situation?.severeBelowKmh ?? 10, heavy: req.situation?.heavyBelowKmh ?? 20 };
+}
+
+const pct1 = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? null : `${(v * 100).toFixed(1)}%`);
+
+/** "about 2 times in 3" style wording for a share, for readers who do not think in percentages. */
+function timesIn(v: number): string {
+  const options: [number, number][] = [[1, 2], [3, 5], [2, 3], [7, 10], [3, 4], [4, 5], [9, 10]];
+  let best = options[0];
+  for (const o of options) if (Math.abs(o[0] / o[1] - v) < Math.abs(best[0] / best[1] - v)) best = o;
+  return `about ${best[0]} times in ${best[1]}`;
+}
+
+/* The read-out composed from the figures alone: what the panel shows when the language model fails,
+   times out or quotes a number it was not given. Every figure in it is one the request carried. */
+/* The opening sentence: the window's dates and times and what the map expects in it. Composed here for
+   the AI reply too, not asked of the model, because a date or a count restated by a language model is a
+   date or a count it can get wrong, and this is the sentence the panel shows first. */
+function congestionOpening(req: CongestionInsightRequest): string | null {
+  const s = req.situation;
+  if (!s) return null;
+  const { severe } = speedCuts(req);
+  const window = s.windowStart && s.windowEnd ? `From ${s.windowStart} to ${s.windowEnd}` : `Over the next ${s.hoursCovered} hours`;
+  return s.exitsSevere > 0
+    ? `${window}, the map expects ${s.exitsSevere} of ${s.exitsTotal} exits to reach Severe (traffic crawling under ${severe} km/h) at some point.`
+    : `${window}, the map does not expect any of the ${s.exitsTotal} exits to reach Severe (traffic crawling under ${severe} km/h).`;
+}
+
+export function congestionTemplate(req: CongestionInsightRequest): Insight {
+  const m = req.models[0];
+  const s = req.situation;
+  const hz = (req.horizons ?? []).filter((h) => h.accuracy != null);
+  const first = hz[0];
+  const last = hz[hz.length - 1];
+  const sentences: string[] = [];
+
+  const opening = congestionOpening(req);
+  if (opening) sentences.push(opening);
+  if (m?.accuracy != null) {
+    const base = req.baseline?.accuracy;
+    sentences.push(
+      `Tested on past hours it had not seen, ${m.model} labelled ${pct1(m.accuracy)} of exit-hours correctly, ${timesIn(m.accuracy)}` +
+        (base != null ? `; assuming each exit does what it usually does at that hour got ${pct1(base)}.` : "."),
+    );
+  }
+  // The first hour ahead at which assuming nothing changes does as well as the model, if any.
+  const firstLoss = hz.find((h) => h.persistence != null && h.accuracy! <= h.persistence);
+  if (first && last && last.horizon !== first.horizon) {
+    sentences.push(
+      `It was right ${pct1(first.accuracy)} of the time ${first.horizon} hour${first.horizon === 1 ? "" : "s"} ahead and ${pct1(last.accuracy)} at ${last.horizon} hours ahead` +
+        (last.persistence != null ? `, where assuming nothing changes was right ${pct1(last.persistence)} of the time.` : "."),
+    );
+  }
+
+  const lastMeasured = last?.horizon ?? 0;
+  const beyond = s && lastMeasured > 0 && s.hoursCovered > lastMeasured;
+  const meaning = !last
+    ? "What this means: treat the map as a guide and confirm on the live map before sending units."
+    : !firstLoss
+      ? "What this means: for every hour ahead it was tested on, the map beats assuming today's conditions continue, so it is worth planning on; confirm on the live map before sending units."
+      : firstLoss === first
+        // No nearer hour to plan on when it already loses at the first one tested.
+        ? `What this means: even ${firstLoss.horizon} hour${firstLoss.horizon === 1 ? "" : "s"} ahead the map is no better than assuming today's conditions continue, so treat it as rough and go by the live map before sending units.`
+        : `What this means: from ${firstLoss.horizon} hour${firstLoss.horizon === 1 ? "" : "s"} ahead the map is no better than assuming today's conditions continue, so plan on the nearer hours and treat the later ones as rough.`;
+
+  return {
+    summary: sentences.join(" ") || "There are no measured figures to describe for this view.",
+    perModel: m
+      ? [{
+          model: m.model,
+          verdict:
+            m.accepted === false
+              ? `Rejected${m.rejectedReason ? `: ${m.rejectedReason}` : ""}.`
+              : m.accuracy != null && req.baseline?.accuracy != null
+                ? `Accepted; right on ${pct1(m.accuracy)} of past exit-hours, ${m.accuracy > req.baseline.accuracy ? "better than" : "no better than"} the usual-for-the-hour guess (${pct1(req.baseline.accuracy)}).`
+                : "Accepted.",
+        }]
+      : [],
+    caveat: beyond ? `Accuracy was only measured up to ${lastMeasured} hours ahead; the later hours on the map have no measured accuracy.` : null,
+    meaning,
+    source: "template",
+  };
+}
+
+/* A percentage in the reply that is not one of the request's (to within rounding) is a made-up number. */
+function quotesUnknownPercent(text: string, req: CongestionInsightRequest): boolean {
+  const known = [
+    ...req.models.map((m) => m.accuracy),
+    req.baseline?.accuracy,
+    ...(req.horizons ?? []).flatMap((h) => [h.accuracy, h.persistence]),
+  ].filter((v): v is number => v != null && Number.isFinite(v)).map((v) => v * 100);
+  for (const hit of text.matchAll(/(\d+(?:\.\d+)?)\s*%/g)) {
+    const n = Number(hit[1]);
+    if (!known.some((k) => Math.abs(k - n) <= 0.51)) return true;
+  }
+  return false;
+}
+
 export async function generateCongestionInsight(req: CongestionInsightRequest): Promise<Insight> {
   if (req.models.length === 0) {
     throw new GlmError("No model metrics were supplied.", "bad_model_output");
   }
-  const content = await chat({
-    system: CONGESTION_SYSTEM,
-    user: buildCongestionMessage(req),
-    json: true,
-    maxTokens: 1400,
-    temperature: 0.3,
-  });
-  const raw = extractJson(content);
-  // Same shaping as the forecast path, with this endpoint's own roster.
-  return validate(raw, { quantity: "volume", metrics: req.models.map((m) => ({ model: m.model })), horizonDays: 1 });
+  try {
+    const content = await chat({
+      system: CONGESTION_SYSTEM,
+      user: buildCongestionMessage(req),
+      json: true,
+      maxTokens: 1400,
+      temperature: 0.3,
+    });
+    const raw = extractJson(content);
+    // Same shaping as the forecast path, with this endpoint's own roster.
+    const out = validate(raw, { quantity: "volume", metrics: req.models.map((m) => ({ model: m.model })), horizonDays: 1 });
+    const o = (raw ?? {}) as Record<string, unknown>;
+    const said = typeof o.meaning === "string" ? o.meaning.trim() : "";
+    const meaning = said ? (/^what this means:/i.test(said) ? said : `What this means: ${said}`) : congestionTemplate(req).meaning;
+    const all = [out.summary, out.caveat ?? "", meaning ?? "", ...out.perModel.map((p) => p.verdict)].join(" ");
+    const { severe, heavy } = speedCuts(req);
+    // A speed other than the card's cuts, or a percentage it was not given, and the reply is not used.
+    const badSpeed = [...all.matchAll(/(\d+)\s*km\/h/gi)].some((h) => ![severe, heavy].includes(Number(h[1])));
+    // So is one that names a date or clock time itself: the opening sentence below already does, correctly.
+    const datesItself = /\b\d{1,2}\s?(?:AM|PM)\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}\b|\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/.test(all);
+    if (out.summary === "No summary was produced." || badSpeed || datesItself || quotesUnknownPercent(all, req)) {
+      console.warn("[ai-insight] congestion reply failed the figure check; serving the composed read-out");
+      return congestionTemplate(req);
+    }
+    const opening = congestionOpening(req);
+    return { ...out, summary: opening ? `${opening} ${out.summary}` : out.summary, meaning, source: "ai" };
+  } catch (err) {
+    // Never an error where the report should be: the figures can always be read out plainly.
+    console.warn("[ai-insight] congestion narrative fell back to the composed read-out:", err instanceof Error ? err.message : err);
+    return congestionTemplate(req);
+  }
 }
 
 /* ── Event surge: an uplift, benchmarked against ignoring the event ───────── */

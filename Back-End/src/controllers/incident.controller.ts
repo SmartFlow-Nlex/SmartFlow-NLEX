@@ -207,10 +207,24 @@ export const getIncidentSeverity = async (_req: Request, res: Response) => {
 // breakdown deployment's response_time_min, reported as Actual vs Predicted
 // median response minutes by cause and by service — the trained-model
 // counterpart to /event-breakdown's descriptive-only numbers. Single
-// "as of the last training run" snapshot, no query params, same as
-// /spatial and /severity.
-export const getIncidentBreakdownResponse = async (_req: Request, res: Response) => {
-  const data = await getBreakdownResponseFromDb();
+// "as of the last training run" snapshot, same as /spatial and /severity.
+// Optional dow (0 = Sunday .. 6) and block (0 = 12-3 AM .. 7 = 9 PM-12 AM) cut the group medians to the
+// held-out dispatches reported in that day and time (19 Oct 2026, testers IN-12). Without them the
+// response is the whole-holdout snapshot it always was.
+const BreakdownResponseQuerySchema = z.object({
+  dow: z.coerce.number().int().min(0).max(6).optional(),
+  block: z.coerce.number().int().min(0).max(7).optional(),
+});
+
+export const getIncidentBreakdownResponse = async (req: Request, res: Response) => {
+  const parsed = BreakdownResponseQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      message: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+    });
+  }
+  const data = await getBreakdownResponseFromDb(parsed.data);
   if (!data) {
     return res.status(503).json({
       success: false,
@@ -241,6 +255,9 @@ export const getClearanceProtocol = async (req: Request, res: Response) => {
   }
 
   const validated = ClearanceProtocolResponseSchema.parse(data);
+  // Degraded (no coverage cost): answer it, but keep it out of the 3-hour route cache so a transient
+  // forecast miss is not what every later reader of this control combination is handed.
+  if (validated.status === "ok" && !validated.coverageCostApplied) res.locals.noStore = true;
   res.json({ success: true, source: "database", data: validated });
 };
 

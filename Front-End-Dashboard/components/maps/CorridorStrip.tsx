@@ -4,8 +4,10 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEve
 import { ChevronDown, Construction } from "lucide-react";
 import { useChartTheme } from "../../lib/chart-theme";
 import { mapPalette } from "../../lib/map-palette";
-import { displayExitName } from "../../lib/nlex-exits";
+import { FALLBACK_EXITS, displayExitName } from "../../lib/nlex-exits";
+import { nearExitsText } from "../../lib/exit-lookup";
 import { lookOf } from "../../lib/waze-report-look";
+import { KM_POST_END, KM_POST_START, fmtKm, fmtKmRange, kmMeasured } from "../../lib/km-post";
 import { corridorKm } from "./corridor-km";
 import type { CorridorSnapshot } from "./livemap-graphics";
 import { fmtDelayShort, fmtDistance, levelWord } from "./livemap-graphics";
@@ -50,7 +52,7 @@ export function LegendKey() {
 }
 
 /**
- * The whole corridor in one line: Km 12 Balintawak on the left to Km 88.25
+ * The whole corridor in one line: Km 12 Balintawak on the left to Km 87
  * Sta. Ines on the right, northbound above southbound, coloured by the same
  * states the map draws for the selected time (Live or the forecast hour).
  * Queues are bars of their real length, reports and closures are icons, and
@@ -212,8 +214,8 @@ export default function CorridorStrip({
                 left: `${pct(Math.min(c.start_km, c.end_km))}%`,
                 width: `${pct(Math.max(c.start_km, c.end_km)) - pct(Math.min(c.start_km, c.end_km))}%`,
               }}
-              title={`${c.title} · km ${c.start_km}–${c.end_km} · ${c.lane_closure}`}
-              aria-label={`Maintenance: ${c.title}, km ${c.start_km} to ${c.end_km}. Show on the map.`}
+              title={`${c.title} · ${fmtKmRange(Math.min(c.start_km, c.end_km), Math.max(c.start_km, c.end_km))}, ${nearExitsText(FALLBACK_EXITS, Number(c.start_km), Number(c.end_km))} · ${c.lane_closure}`}
+              aria-label={`Maintenance: ${c.title}, km ${fmtKm(Math.min(c.start_km, c.end_km))} to ${fmtKm(Math.max(c.start_km, c.end_km))}, ${nearExitsText(FALLBACK_EXITS, Number(c.start_km), Number(c.end_km))}. Show on the map.`}
               onClick={() => {
                 const p = K.pointAtKm((Number(c.start_km) + Number(c.end_km)) / 2);
                 window.dispatchEvent(new CustomEvent("nlex:flyto", { detail: { lng: p[0], lat: p[1], name: c.title } }));
@@ -247,8 +249,8 @@ export default function CorridorStrip({
                 type="button"
                 className={`lm-strip-alert${a.unconfirmed ? " is-unconfirmed" : ""}`}
                 style={{ left: `${pct(a.km)}%`, ["--alert" as string]: look.colour }}
-                title={`${look.label} · km ${a.km.toFixed(1)}`}
-                aria-label={`${look.label} at km ${a.km.toFixed(1)}. Open the report.`}
+                title={`${look.label} · km ${fmtKm(a.km)}`}
+                aria-label={`${look.label} at km ${fmtKm(a.km)}. Open the report.`}
                 onClick={() => window.dispatchEvent(new CustomEvent("nlex:showreport", { detail: a.detail }))}
               >
                 <Icon size={10} aria-hidden="true" />
@@ -266,7 +268,7 @@ export default function CorridorStrip({
         <div className="lm-strip-title">
           <h2>Corridor</h2>
           <span className="lm-strip-span">
-            Km {first.km} {displayExitName(first.name)} → Km {last.km} {displayExitName(last.name)}
+            Km {fmtKm(first.km)} {displayExitName(first.name)} → Km {fmtKm(last.km)} {displayExitName(last.name)}
           </span>
         </div>
         <div className="lm-strip-mode" role="group" aria-label="Strip shows">
@@ -327,7 +329,7 @@ export default function CorridorStrip({
               <span className="lm-strip-cursor" data-dir={cursor.dir ?? ""} style={{ left: `${pct(cursor.km)}%` }} aria-hidden="true">
                 {cursorExit && (
                   <span className={`lm-strip-chip${pct(cursor.km) > 80 ? " is-flip" : ""}`}>
-                    <b>Km {cursor.km.toFixed(1)}</b>
+                    <b>Km {fmtKm(cursor.km)}</b>
                     {cursor.dir ?? ""} · near {displayExitName(cursorExit.name)}
                   </span>
                 )}
@@ -335,18 +337,20 @@ export default function CorridorStrip({
             )}
           </div>
           <div className="lm-strip-ruler" aria-hidden="true">
-            {Array.from({ length: Math.floor((last.km - 15) / 5) + 1 }, (_, i) => 15 + i * 5).map((k) => (
-              <span key={`m${k}`} className={`lm-ruler-tick${k % 10 === 0 ? " is-major" : ""}`} style={{ left: `${pct(k)}%` }}>
-                {k % 10 === 0 && k > first.km + 4 && k < last.km - 4 ? <em>{k}</em> : null}
+            {/* Ticks sit on round official posts (every 5 from Km 15), drawn where
+                that post really is on the measured track. */}
+            {Array.from({ length: Math.floor((KM_POST_END - 15) / 5) + 1 }, (_, i) => 15 + i * 5).map((k) => (
+              <span key={`m${k}`} className={`lm-ruler-tick${k % 10 === 0 ? " is-major" : ""}`} style={{ left: `${pct(kmMeasured(k))}%` }}>
+                {k % 10 === 0 && k > KM_POST_START + 4 && k < KM_POST_END - 4 ? <em>{k}</em> : null}
               </span>
             ))}
-            <span className="lm-ruler-end is-start">Km {first.km}</span>
-            <span className="lm-ruler-end is-end">Km {last.km}</span>
+            <span className="lm-ruler-end is-start">Km {fmtKm(first.km)}</span>
+            <span className="lm-ruler-end is-end">Km {fmtKm(last.km)}</span>
           </div>
         </div>
         <p className="lm-strip-readout sr-only" aria-live="polite">
           {cursor && cursorExit
-            ? `Km ${cursor.km.toFixed(1)} · ${cursor.dir ?? ""} · near ${displayExitName(cursorExit.name)}`
+            ? `Km ${fmtKm(cursor.km)} · ${cursor.dir ?? ""} · near ${displayExitName(cursorExit.name)}`
             : " "}
         </p>
       </div>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Clock } from "lucide-react";
 import { Shell, Empty, ActionCard } from "./prescriptiveShell";
+import InfoTooltip from "./InfoTooltip";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -195,6 +196,24 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
   const maxHour = Math.max(...allHours, 1e-9);
   const dayCountPhrase = rows.map((r) => `${r.days} ${DOW_FULL[r.label]}${r.days === 1 ? "" : "s"}`).join(", ");
 
+  /* What the Confidence figures mean (19 Oct 2026, testers IN-14: "explain the confidence values, e.g. 52,
+     53"). They were day counts, not a score: 12 months holds 52 or 53 of each weekday, and every hour's
+     average is taken over that many days. A count alone does not say how steady the window is, so each row
+     now carries a computed uncertainty too. An hour's incidents over N days are treated as a Poisson
+     count, whose standard error is the square root of the count, so the average of the window's hours
+     moves by about 1 / sqrt(incidents in the window) between one set of N such days and another. */
+  const windowUncertainty = (r: DayRow): number | null => {
+    if (!r.primary) return null;
+    const [s, e] = r.primary;
+    let total = 0;
+    for (let h = s; h < e; h++) total += hourByDow[r.dow][h % 24];
+    return total > 0 ? 1 / Math.sqrt(total) : null;
+  };
+  const fmtPm = (u: number | null) => (u == null ? "—" : `±${Math.max(1, Math.round(u * 100))}%`);
+  const widestU = windowUncertainty(widest);
+  const confidenceHint =
+    "Not a score out of 100. The day figures (52, 53 …) are how many of that weekday the selected Range contains: 12 months holds 52 or 53 of each, 3 months about 13. Every hour's average is taken over that many days. The ± figure is computed: treating the window's incident count as Poisson (standard error = √count), it is how far the window's average would typically move with a different set of the same weekdays. More days, and more incidents in the window, make it smaller. Read it as a floor: holidays and events make real days vary more than a Poisson count does.";
+
   return (
     <Shell title="Patrol Alert Schedule" hint={hint} updating={loading && !error}>
       {error && (
@@ -220,7 +239,16 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
           { label: "Basis", value: "Hours whose average incident count sits above that day's own 24-hour mean — not a fixed rush-hour assumption" },
           {
             label: "Confidence",
-            value: <>Based on {dayCountPhrase} observed in the selected Range — more occurrences of a weekday means a more reliable average hourly rhythm for it</>,
+            value: (
+              <>
+                <b>{widest.days} {DOW_FULL[widest.label]}{widest.days === 1 ? "" : "s"}</b> observed, so this window&apos;s average is good to about{" "}
+                <b>{fmtPm(widestU)}</b> at best
+                <InfoTooltip text={confidenceHint} />
+                <span className="inc-facts-note">
+                  The day figures are counts of that weekday in the Range, not a percentage. Every day&apos;s count and ± are in the table below.
+                </span>
+              </>
+            ),
           },
         ]}
         details={
@@ -255,6 +283,9 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
               <th>Day</th>
               <th style={{ textAlign: "left" }}>Alert window</th>
               <th style={{ textAlign: "left" }}>Peak hour</th>
+              <th style={{ textAlign: "left" }} title="How many of this weekday the Range contains, and the window average's computed uncertainty">
+                Days · ±
+              </th>
               <th style={{ textAlign: "left" }}>Shape (12 AM – 12 AM)</th>
             </tr>
           </thead>
@@ -264,7 +295,7 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
                 <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.label}</td>
                 {r.primary == null ? (
                   <>
-                    <td colSpan={2} className="is-none">
+                    <td colSpan={3} className="is-none">
                       No {r.label} in this Range
                     </td>
                     <td />
@@ -275,6 +306,9 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
                       {windowLabel(r.primary)}
                     </td>
                     <td className="is-muted" style={{ textAlign: "left", whiteSpace: "nowrap", color: "var(--text-secondary)" }}>{fmtHour(r.profile.peakHour)}</td>
+                    <td className="is-muted" style={{ textAlign: "left", whiteSpace: "nowrap", color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
+                      {r.days} days · {fmtPm(windowUncertainty(r))}
+                    </td>
                     <td style={{ textAlign: "left" }}>
                       <div className="inc-shape">
                         {r.profile.hours.map((v, h) => {
@@ -320,6 +354,13 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
           </tbody>
         </table>
       </div>
+      {/* The shape bars encode two things and had no key (testers: "a legend explaining what each colour
+          means"). Height and shade are said in words, with the ramp itself as the swatch. */}
+      <p className="inc-caption inc-sched-key">
+        <span className="inc-sched-key-ramp" aria-hidden="true" />
+        Each bar is one hour: <b>height</b> is the average incidents per day at that hour, <b>shade</b> its rank among all
+        168 hours of the week, quietest to busiest. The day in the accent colour has the longest alert window. Hover a bar for its numbers.
+      </p>
     </Shell>
   );
 }

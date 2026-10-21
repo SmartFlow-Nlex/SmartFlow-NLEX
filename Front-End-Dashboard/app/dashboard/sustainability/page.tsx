@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cachedJson } from "../../../lib/cached-json";
 import { attachCategoryClick } from "../../../lib/chart-click";
 import { useChartTheme, applyChartTheme, seriesRamp, seriesPair } from "../../../lib/chart-theme";
@@ -22,11 +22,21 @@ import DateRangePicker from "../traffic/components/DateRangePicker";
 import { rangeDays, grainBlockedReason, bestGrainFor, bucketLabelFor, timeAxisLabels } from "../../../lib/granularity";
 import styles from "../traffic/traffic.module.css";
 import CountUpValue from "../../../components/dashboard/CountUpValue";
+import RampKey from "../../../components/dashboard/RampKey";
+import { POLLUTANT_NAMES, Term, spelled } from "../../../components/dashboard/emissionsTerms";
+import { fmtHeatNumber, heatTip, heatValue } from "../../../lib/heat-tooltip";
+
+/** The heat grid's unit, shared by a cell's tooltip and the colour key's readout. */
+const HEAT_UNIT = "t CO₂ / h";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
 const CLASS_SHORT = ["Class 1 · Light", "Class 2 · Medium", "Class 3 · Heavy"];
 const AQI_BANDS = ["Good (AQI 1–2)", "Moderate (AQI 3)", "Poor (AQI 4–5)"] as const;
+/** The Fleet Mix chart's reference row: each class's share of the vehicles counted. */
+const BASELINE_LABEL = "Vehicles (baseline)";
+/** What the class-vs-class cards say once the Class filter leaves only one class to compare. */
+const ONE_CLASS_NOTE = "This card compares the three vehicle classes. Set Class to All classes to see it.";
 
 /* The chart kit's 28% → 0% area fade. Its gradient object types `type` as a
    plain string where ECharts wants the literal "linear", hence the cast. */
@@ -38,7 +48,8 @@ const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
 // ---------- Data contract ----------
 type Analytics = {
   range: { from: string; to: string };
-  meta: { minDate: string; maxDate: string; source?: string; exits?: number };
+  /** vehicleClass: the class the response is narrowed to, or null for all three. */
+  meta: { minDate: string; maxDate: string; source?: string; exits?: number; vehicleClass?: number | null };
   kpis: {
     totalCo2T: number;
     prevCo2T: number;
@@ -55,7 +66,7 @@ type Analytics = {
   /** nb + sb + bothdir = the day: bothdir is the plazas the record does not split by direction. */
   dailyTrend: { d: string; c1: number; c2: number; c3: number; nb: number; sb: number; bothdir?: number }[];
   /** Present only for ranges of 14 days or less; null otherwise. */
-  hourlyTrend: { d: string; hour: number; c1: number; c2: number; c3: number; nb: number; sb: number }[] | null;
+  hourlyTrend: { d: string; hour: number; c1: number; c2: number; c3: number; nb: number; sb: number; bothdir?: number }[] | null;
   heatmap: { dow: number; hour: number; v: number }[];
   classes: { class: number; label: string; co2_g_per_km: number; volume: number; co2_t: number; pm25_kg: number; no2_kg: number }[];
   aqiMonthly: { m: string; good: number; moderate: number; poor: number; pm25: number | null }[];
@@ -82,6 +93,8 @@ const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 1
 const fmtPct = (p: number) => `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
 const monthLabel = (m: string) =>
   new Date(`${m}-01T00:00:00`).toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+/** One bucket of a grain, as a word: "month" for monthly. */
+const heroPeriodOf = (g: Granularity) => (g === "hourly" ? "hour" : g === "daily" ? "day" : g === "weekly" ? "week" : "month");
 
 function weekStart(dateStr: string): string {
   const dt = new Date(`${dateStr}T00:00:00`);
@@ -180,7 +193,16 @@ export default function SustainabilityPage() {
     const days = data.dailyTrend.length;
     const avgDailyT = days > 0 ? kpis.totalCo2T / days : 0;
 
-    return { deltaPct, heavyVolPct, heavyCo2Pct, avgDailyT, totVol, totCo2 };
+    /* The class-vs-class panels (heavy share, fleet mix) compare classes, so once the Class filter narrows
+       the response to one class they have nothing to compare: every share is 0% or 100%. */
+    const oneClass = data.meta.vehicleClass != null;
+    // The per-km factors, as the API reports them, for the heavy-share explanations.
+    const factorText = [...classes]
+      .sort((a, b) => a.class - b.class)
+      .map((c) => `Class ${c.class} ${fmtInt(c.co2_g_per_km)}`)
+      .join(", ");
+
+    return { deltaPct, heavyVolPct, heavyCo2Pct, avgDailyT, totVol, totCo2, oneClass, factorText };
   }, [data]);
 
     // ---------- Hero: CO2 trend by class ----------
@@ -260,7 +282,7 @@ export default function SustainabilityPage() {
          the series list down to one, and the legend then named the one line on
          the chart -- which the Class control the reader just used already told
          them. */
-      legend: { show: classView === "All", bottom: 0, left: "center", itemWidth: 14, itemHeight: 8, itemGap: 18, padding: 0, textStyle: { fontSize: 11 } },
+      legend: { show: classView === "All", bottom: 0, left: "center", itemWidth: 14, itemHeight: 8, itemGap: 18, padding: 0 },
       // Drawn from data already in hand: the response carries c1, c2 and c3 per
       // bucket, so this hides series rather than asking for different numbers.
       series: [mk(CLASS_SHORT[0], "c1", RAMP[0]), mk(CLASS_SHORT[1], "c2", RAMP[1]), mk(CLASS_SHORT[2], "c3", RAMP[2])]
@@ -319,7 +341,7 @@ export default function SustainabilityPage() {
         xAxis: { type: "category", boundaryGap: false, data: Array.from({ length: 24 }, (_, h) => fmtHour(h)), axisLabel: { interval: 3 }, axisTick: { show: false } },
         yAxis: { type: "value", name: "avg t CO₂ / day", nameGap: 12, nameTextStyle: { align: "left" }, splitNumber: 3, axisLabel: { formatter: (v: number) => `${v} t` } },
         tooltip: { trigger: "axis", valueFormatter: (v) => (v == null ? "—" : `${fmt1(Number(v))} t`) },
-        legend: { show: true, bottom: 0, left: "center", itemWidth: 14, itemHeight: 8, itemGap: 18, padding: 0, textStyle: { fontSize: 11 } },
+        legend: { show: true, bottom: 0, left: "center", itemWidth: 14, itemHeight: 8, itemGap: 18, padding: 0 },
         series: [
           {
             name: "Weekdays",
@@ -333,7 +355,9 @@ export default function SustainabilityPage() {
               symbol: "circle",
               symbolSize: 8,
               itemStyle: { color: PAIR_A, borderColor: chartTheme.tooltipBg, borderWidth: 2 },
-              label: { show: true, position: "top", fontSize: 11, color: chartTheme.ink, fontFamily: chartTheme.fontFamily, formatter: `Peak · ${fmtHour(peakIdx)}` },
+              // "Weekday": the card's answer is the all-days peak (4 PM on the 12-month Range), this line's
+              // is 6 PM, and an unqualified "Peak" here read as a contradiction (17 Oct 2026 review).
+              label: { show: true, position: "top", fontSize: 12, color: chartTheme.ink, fontFamily: chartTheme.fontFamily, formatter: `Weekday peak · ${fmtHour(peakIdx)}` },
               data: [{ name: "Peak", coord: [peakIdx, Number(timeProfile.weekday[peakIdx].toFixed(2))] }],
             },
           },
@@ -367,7 +391,7 @@ export default function SustainabilityPage() {
           data: timeProfile.dowAvg.map((v, i) => ({
             value: Number(v.toFixed(1)),
             itemStyle: { color: i === maxIdx ? PAIR_A : RAMP[0], borderRadius: [4, 4, 0, 0] },
-            label: i === maxIdx ? { show: true, position: "top", fontSize: 11, color: chartTheme.ink, fontFamily: chartTheme.fontFamily, formatter: () => `${fmt1(v)} t` } : undefined,
+            label: i === maxIdx ? { show: true, position: "top", fontSize: 12, color: chartTheme.ink, fontFamily: chartTheme.fontFamily, formatter: () => `${fmt1(v)} t` } : undefined,
           })),
           barMaxWidth: 26,
         },
@@ -377,102 +401,172 @@ export default function SustainabilityPage() {
   }, [timeProfile, timeView, chartTheme]);
 
   // ---------- Fleet mix vs pollution load ----------
+  /* The vehicle row is off by default (19 Oct 2026, testers EM-5, a second round: "traffic volume looks out
+     of place here", from two testers, after the 17 Oct pass had only renamed and faded it). It is still the
+     yardstick the chart's question needs ("which classes pollute out of proportion to their numbers"), since
+     every pollutant here is vehicles x km x a per-class factor; but a count of vehicles among three
+     pollutant bars kept reading as a fourth pollutant. So the comparison now travels with each pollutant bar
+     instead (its tooltip gives every class's share against its share of vehicles, as a multiple), and the
+     faded vehicle bar is one toggle away for a reader who wants to see it drawn. */
+  const [fleetBaseline, setFleetBaseline] = useState(false);
+  /* Sort and filter (testers EM-5): pollutants in their listed order or by heavy-vehicle (Class 2 + 3)
+     share, and all three classes or the heavy two alone, which starts their segments at 0% so their
+     widths can be read off the axis rather than estimated mid-stack. */
+  const [fleetSort, setFleetSort] = useState<"listed" | "heavy">("listed");
+  const [fleetClasses, setFleetClasses] = useState<"all" | "heavy">("all");
   const fleetRows = useMemo(() => {
-    if (!data || data.classes.length === 0 || !derived) return null;
+    if (!data || data.classes.length === 0 || !derived || derived.oneClass) return null;
     const cls = [...data.classes].sort((a, b) => a.class - b.class);
     const metric = (key: "volume" | "co2_t" | "no2_kg" | "pm25_kg") => {
       const tot = cls.reduce((s, c) => s + c[key], 0);
       return { values: cls.map((c) => c[key]), shares: cls.map((c) => (tot > 0 ? (c[key] / tot) * 100 : 0)), tot };
     };
+    // `code` is what the axis prints; `name` is the full pollutant name printed under it.
+    const pollutant = (code: "CO₂" | "NO₂" | "PM2.5", key: "co2_t" | "no2_kg" | "pm25_kg", unit: string) => ({
+      label: code,
+      name: POLLUTANT_NAMES[code].split(":")[0],
+      full: spelled(code),
+      unit,
+      isBase: false,
+      ...metric(key),
+    });
     return {
       cls,
-      rows: [
-        { label: "Traffic volume", unit: "vehicles", ...metric("volume") },
-        { label: "CO₂", unit: "t", ...metric("co2_t") },
-        { label: "NO₂", unit: "kg", ...metric("no2_kg") },
-        { label: "PM2.5", unit: "kg", ...metric("pm25_kg") },
-      ],
+      base: { label: BASELINE_LABEL, name: "toll-plaza counts", full: "Share of the vehicles counted at the toll plazas", unit: "vehicles", isBase: true, ...metric("volume") },
+      pollutants: [pollutant("CO₂", "co2_t", "t"), pollutant("NO₂", "no2_kg", "kg"), pollutant("PM2.5", "pm25_kg", "kg")],
     };
   }, [data, derived]);
 
+  /** The rows as drawn, top to bottom: the baseline first when it is on, then the pollutants in the chosen order. */
+  const fleetShown = useMemo(() => {
+    if (!fleetRows) return null;
+    const heavyOf = (r: { shares: number[] }) => (r.shares[1] ?? 0) + (r.shares[2] ?? 0);
+    const ordered = fleetSort === "heavy" ? [...fleetRows.pollutants].sort((a, b) => heavyOf(b) - heavyOf(a)) : fleetRows.pollutants;
+    return fleetBaseline ? [fleetRows.base, ...ordered] : ordered;
+  }, [fleetRows, fleetSort, fleetBaseline]);
+
   // The heavy CO2 share is the card's answer; the takeaway sets it against
-  // the heavy share of traffic.
+  // the heavy share of vehicles, which is the baseline.
   const fleetTakeaway =
-    derived && derived.heavyVolPct > 0
-      ? `From just ${derived.heavyVolPct.toFixed(1)}% of traffic`
+    derived && !derived.oneClass && derived.heavyVolPct > 0
+      ? `From just ${derived.heavyVolPct.toFixed(1)}% of vehicles · ${fleetBaseline ? "compare each bar with the faded vehicle baseline" : "hover a bar to set each class against its share of vehicles"}`
       : null;
 
   const fleetOption = useMemo<EChartsOption | null>(() => {
-    if (!fleetRows) return null;
-    const rows = [...fleetRows.rows].reverse(); // display top-to-bottom: volume first
+    if (!fleetRows || !fleetShown) return null;
+    const rows = [...fleetShown].reverse(); // a category axis draws index 0 at the bottom
+    const veh = fleetRows.base.shares;
+    const classIdx = fleetClasses === "heavy" ? [1, 2] : [0, 1, 2];
     return {
-      grid: { left: 92, right: 16, top: 10, bottom: 54 },
+      grid: { left: 150, right: 16, top: 10, bottom: 54 },
       xAxis: { type: "value", max: 100, interval: 25, axisLabel: { formatter: "{value}%" } },
-      yAxis: { type: "category", data: rows.map((r) => r.label), axisLabel: { interval: 0, color: chartTheme.ink }, axisTick: { show: false } },
-      tooltip: {
-          axisPointer: { type: "shadow" },
-        trigger: "axis",
-        formatter: (p) => {
-          const items = p as { seriesIndex: number; dataIndex: number; value: number; marker: string }[];
-          const r = rows[items[0].dataIndex];
-          const lines = items
-            .map((x) => `${x.marker} ${CLASS_SHORT[x.seriesIndex]}: ${x.value.toFixed(1)}% (${fmtCompact(r.values[x.seriesIndex])} ${r.unit})`)
-            .join("<br/>");
-          return `<b>${r.label}</b><br/>${lines}`;
+      yAxis: {
+        type: "category",
+        data: rows.map((r) => r.label),
+        axisTick: { show: false },
+        /* The full pollutant name printed under each code (testers EM-5: "full pollutant name on hover"):
+           on the axis rather than only on hover, so it reads on a touch screen too. The baseline's name
+           is in the quieter ink, so the eye lands on the pollutants first. */
+        axisLabel: {
+          interval: 0,
+          color: chartTheme.ink,
+          lineHeight: 16,
+          formatter: (v: string) => {
+            const r = rows.find((x) => x.label === v);
+            if (!r) return v;
+            return r.isBase ? `{base|Vehicles}\n{sub|${r.name}}` : `{code|${v}}\n{sub|${r.name}}`;
+          },
+          rich: {
+            code: { color: chartTheme.ink, fontSize: 13, fontWeight: 600, fontFamily: chartTheme.fontFamily, lineHeight: 17 },
+            base: { color: chartTheme.text, fontSize: 13, fontStyle: "italic", fontFamily: chartTheme.fontFamily, lineHeight: 17 },
+            sub: { color: chartTheme.text, fontSize: 12, fontFamily: chartTheme.fontFamily, lineHeight: 15 },
+          },
         },
       },
-      legend: { show: true, bottom: 0, left: "center", itemWidth: 14, itemHeight: 8, itemGap: 18, padding: 0, textStyle: { fontSize: 11 } },
-      series: fleetRows.cls.map((c, ci) => ({
+      tooltip: {
+        axisPointer: { type: "shadow" },
+        trigger: "axis",
+        formatter: (p) => {
+          const items = p as { seriesName: string; dataIndex: number; value: number; marker: string }[];
+          const r = rows[items[0].dataIndex];
+          const lines = items
+            .map((x) => {
+              const ci = CLASS_SHORT.indexOf(x.seriesName);
+              // Each class against its share of the vehicles: the comparison the baseline bar used to carry.
+              const vs = !r.isBase && veh[ci] > 0 ? ` · <b>${(x.value / veh[ci]).toFixed(1)}×</b> its ${veh[ci].toFixed(1)}% of vehicles` : "";
+              return `${x.marker} ${x.seriesName}: ${x.value.toFixed(1)}% (${fmtCompact(r.values[ci])} ${r.unit})${vs}`;
+            })
+            .join("<br/>");
+          const foot = r.isBase
+            ? `<br/><span style="opacity:.75">The yardstick: a pollutant bar wider than this for a class means that class pollutes out of proportion to its numbers.</span>`
+            : `<br/><span style="opacity:.75">Above 1× a class emits more than its share of the vehicles.</span>`;
+          return `<b>${r.full}</b><br/>${lines}${foot}`;
+        },
+      },
+      legend: { show: true, bottom: 0, left: "center", itemWidth: 14, itemHeight: 8, itemGap: 18, padding: 0 },
+      // Series follow the class, not the filter: a class keeps its ramp step whether or not Class 1 is drawn.
+      series: classIdx.map((ci) => ({
         name: CLASS_SHORT[ci],
         type: "bar" as const,
         stack: "share",
-        data: rows.map((r) => Number(r.shares[ci].toFixed(1))),
+        // The baseline drawn at reduced strength: it is the reference, not a result.
+        data: rows.map((r) => ({ value: Number(r.shares[ci].toFixed(1)), itemStyle: r.isBase ? { opacity: 0.4 } : undefined })),
         itemStyle: { color: RAMP[ci], borderColor: chartTheme.tooltipBg, borderWidth: 1 },
         barMaxWidth: 18,
       })),
     };
     // chartTheme supplies the stack divider colour.
-  }, [fleetRows, chartTheme]);
+  }, [fleetRows, fleetShown, fleetClasses, chartTheme]);
 
   // ---------- Heavy-vehicle share of CO2 over time ----------
+  /* Reconciled with the Heavy-Vehicle Impact tile (17 Oct 2026, testers EM-6.2: "the chart does not match
+     the tile"). Both were right and measured different things: the tile is the share over the whole Range
+     (55.8% for the last 12 months), while this card's big figure is the latest period alone (57.1% for
+     June 2026), and its dashed line was an unweighted mean of the periods, a third number again. The line
+     is now the tile's own figure, labelled as such, and the headline says which period it is. */
   const heavyShareRows = useMemo(() => {
+    if (derived?.oneClass) return [];
     return trendRows.map((r) => ({
       label: r.label,
       share: r.total > 0 ? ((r.c2 + r.c3) / r.total) * 100 : 0,
     }));
-  }, [trendRows]);
+  }, [trendRows, derived]);
 
   const heavyShareTakeaway = useMemo(() => {
-    if (heavyShareRows.length < 2) return null;
+    if (heavyShareRows.length < 2 || !derived) return null;
     const first = heavyShareRows[0].share;
     const last = heavyShareRows[heavyShareRows.length - 1].share;
-    const dir = last - first > 0.5 ? "Rising" : first - last > 0.5 ? "Falling" : "Steady";
-    // "Now x%" is the card's answer, drawn above this line from the same last row.
-    return `${dir} across the range (from ${first.toFixed(1)}%)`;
-  }, [heavyShareRows]);
+    const dir = last - first > 0.5 ? "rising" : first - last > 0.5 ? "falling" : "steady";
+    // "x% in the latest period" is the card's answer, drawn above this line from the same last row.
+    return `Whole Range: ${derived.heavyCo2Pct.toFixed(1)}%, the Heavy-Vehicle Impact tile's figure (dashed line) · ${dir} from ${first.toFixed(1)}% in the first ${heroPeriodOf(grain)}`;
+  }, [heavyShareRows, derived, grain]);
 
   const heavyShareOption = useMemo<EChartsOption | null>(() => {
-    if (heavyShareRows.length === 0) return null;
+    if (heavyShareRows.length === 0 || !derived) return null;
     const labels = heavyShareRows.map((r) => r.label);
-    const boundaryKey = grain === "monthly" ? (l: string) => l : (l: string) => l.slice(0, 7);
-    const labelInterval = (i: number) => i === 0 || boundaryKey(labels[i]) !== boundaryKey(labels[i - 1]);
-    const avg = heavyShareRows.reduce((s, r) => s + r.share, 0) / heavyShareRows.length;
+    const timeAxis = timeAxisLabels(labels, grain);
+    const rangeShare = Number(derived.heavyCo2Pct.toFixed(1));
     return {
       grid: { left: 44, right: 16, top: 16, bottom: 26 },
-      xAxis: { type: "category", data: labels, axisLabel: { interval: labelInterval, hideOverlap: true }, axisTick: { show: false } },
+      xAxis: { type: "category", data: labels, axisLabel: { formatter: timeAxis.formatter, interval: timeAxis.interval, hideOverlap: true }, axisTick: { show: false } },
       yAxis: {
         type: "value",
         splitNumber: 3,
         axisLabel: { formatter: "{value}%" },
-        min: (v: { min: number }) => Math.max(0, Math.floor(v.min - 2)),
-        max: (v: { max: number }) => Math.ceil(v.max + 2),
+        // Room for the Range line even when every period sits on one side of it.
+        min: (v: { min: number }) => Math.max(0, Math.floor(Math.min(v.min, rangeShare) - 2)),
+        max: (v: { max: number }) => Math.ceil(Math.max(v.max, rangeShare) + 2),
       },
       tooltip: {
         trigger: "axis",
         formatter: (p) => {
           const items = p as { dataIndex: number; value: number }[];
           const r = trendRows[items[0].dataIndex];
-          return `<b>${r.label}</b><br/>Heavy-vehicle share: <b>${items[0].value}%</b><br/>${fmtInt(r.c2 + r.c3)} t of ${fmtInt(r.total)} t CO₂`;
+          return (
+            `<b>${bucketLabelFor(grain)(r.label)}</b><br/>Heavy-vehicle (Class 2–3) share of CO₂: <b>${items[0].value}%</b><br/>` +
+            `${fmtInt(r.c2 + r.c3)} t of ${fmtInt(r.total)} t CO₂ in this ${heroPeriodOf(grain)}<br/>` +
+            `<span style="opacity:.75">Whole Range: ${rangeShare}% (the Heavy-Vehicle Impact tile)</span>`
+          );
         },
       },
       /* No legend: one line, on a chart whose title and y-axis both already
@@ -491,14 +585,14 @@ export default function SustainabilityPage() {
             silent: true,
             symbol: "none",
             lineStyle: { color: chartTheme.text, type: "dashed", width: 1, opacity: 0.7 },
-            label: { fontSize: 11, color: chartTheme.text, fontFamily: chartTheme.fontFamily, formatter: `avg ${avg.toFixed(1)}%`, position: "insideEndTop" },
-            data: [{ yAxis: Number(avg.toFixed(1)) }],
+            label: { fontSize: 12, color: chartTheme.text, fontFamily: chartTheme.fontFamily, formatter: `whole Range ${rangeShare}%`, position: "insideEndTop" },
+            data: [{ yAxis: rangeShare }],
           },
         },
       ],
     };
-    // chartTheme colours the average markLine's label.
-  }, [heavyShareRows, trendRows, grain, chartTheme]);
+    // chartTheme colours the Range markLine's label.
+  }, [heavyShareRows, trendRows, grain, derived, chartTheme]);
 
   // ---------- Measured air quality ----------
   const aqiOption = useMemo<EChartsOption | null>(() => {
@@ -522,10 +616,10 @@ export default function SustainabilityPage() {
           const lines = items
             .map((x) => `${x.marker} ${AQI_BANDS[x.seriesIndex]}: ${x.value}% (${fmtInt(r[keys[x.seriesIndex]])} readings)`)
             .join("<br/>");
-          return `<b>${labels[i]}</b><br/>${lines}<br/>Avg PM2.5: ${r.pm25 != null ? `${fmt1(r.pm25)} µg/m³` : "—"}`;
+          return `<b>${labels[i]}</b><br/>${lines}<br/>Avg ${spelled("PM2.5")}: ${r.pm25 != null ? `${fmt1(r.pm25)} µg/m³` : "—"}`;
         },
       },
-      legend: { show: true, bottom: 0, left: "center", itemWidth: 14, itemHeight: 8, itemGap: 18, padding: 0, textStyle: { fontSize: 11 } },
+      legend: { show: true, bottom: 0, left: "center", itemWidth: 14, itemHeight: 8, itemGap: 18, padding: 0 },
       series: keys.map((k, ki) => ({
         name: AQI_BANDS[ki],
         type: "bar" as const,
@@ -560,7 +654,8 @@ export default function SustainabilityPage() {
      Presentation only: the same `heatmap` rows the "When Emissions Happen"
      card already reads, laid out as a grid. Each cell is that weekday-hour's
      total over the Range divided by how many of that weekday the Range holds,
-     the same per-day averaging timeProfile uses. No click: tooltip only. */
+     the same per-day averaging timeProfile uses. No click: the tooltip, and
+     the colour key under it, which highlights the cells a shade stands for. */
   const heatGrid = useMemo(() => {
     if (!data || data.heatmap.length === 0) return null;
     const dowCount = [0, 0, 0, 0, 0, 0, 0];
@@ -576,7 +671,8 @@ export default function SustainabilityPage() {
         days: dowCount[r.dow],
       }));
     if (cells.length === 0) return null;
-    const vals = cells.map((c) => c.avg);
+    // From the values as drawn (2 dp), so the end cells sit inside the visualMap rather than just past it.
+    const vals = cells.map((c) => Number(c.avg.toFixed(2)));
     const min = Math.min(...vals);
     const max = Math.max(...vals);
     const top = cells.reduce((a, b) => (b.avg > a.avg ? b : a));
@@ -586,6 +682,11 @@ export default function SustainabilityPage() {
     const colors = chartTheme.isDark
       ? [chartTheme.seqLightest, RAMP[2], RAMP[1], RAMP[0]]
       : [chartTheme.seqLightest, RAMP[0], RAMP[1], RAMP[2]];
+    /* Laid out like Traffic's hour x day heatmap (17 Oct 2026, testers EM-8): the same tooltip order (day
+       and hour, then the value with its unit) and the shared RampKey under the grid. The visualMap stays
+       hidden but continuous, so scrubbing the key can narrow it with selectDataRange; cells outside the
+       band drop to one flat neutral, as on Traffic. */
+    const neutral = chartTheme.isDark ? "rgba(244, 241, 234, 0.24)" : "rgba(11, 18, 32, 0.22)";
     const option: EChartsOption = {
       grid: { left: 44, right: 12, top: 8, bottom: 30 },
       xAxis: {
@@ -596,14 +697,22 @@ export default function SustainabilityPage() {
         axisTick: { show: false },
       },
       yAxis: { type: "category", data: DOW_LABELS, inverse: true, axisTick: { show: false }, splitLine: { show: false } },
-      visualMap: { show: false, min, max, dimension: 2, inRange: { color: colors } },
+      visualMap: { show: false, type: "continuous", min, max, dimension: 2, calculable: false, inRange: { color: colors }, outOfRange: { color: neutral } },
+      /* Through the shared heat-tooltip helpers (19 Oct 2026, testers EM-8: "copy Traffic's"), so a cell and
+         the colour key's readout print the same figure with the same unit, as every heatmap on the dashboard
+         does. confine keeps the box inside the card for the cells along the right edge. */
       tooltip: {
         trigger: "item",
+        confine: true,
         formatter: (p) => {
           const c = cells[(p as { dataIndex: number }).dataIndex];
           if (!c) return "";
           const day = DOW_LABELS[c.row];
-          return `<b>${day} · ${fmtHour(c.hour)} – ${fmtHour((c.hour + 1) % 24)}</b><br/>${fmt1(c.avg)} t CO₂ on an average ${day}<br/>${fmtInt(c.total)} t total across ${fmtInt(c.days)} ${day}s`;
+          return heatTip({
+            title: `${day} ${fmtHour(c.hour)} – ${fmtHour((c.hour + 1) % 24)}`,
+            value: heatValue(c.avg, HEAT_UNIT),
+            detail: [`on an average ${day} over the Range`, `${fmtInt(c.total)} t across its ${fmtInt(c.days)} ${day}s`],
+          });
         },
       },
       series: [
@@ -627,11 +736,12 @@ export default function SustainabilityPage() {
     const totals = trendRows.map((x) => x.total);
     const avg = totals.reduce((s, v) => s + v, 0) / totals.length;
     const rank = 1 + totals.filter((v) => v > r.total).length;
-    const periodWord = grain === "daily" ? "day" : grain === "weekly" ? "week" : "month";
-    const title = grain === "weekly" ? `Week of ${r.label}` : r.label;
+    const periodWord = heroPeriodOf(grain);
+    const title = bucketLabelFor(grain)(r.label);
     setDetail({
       title,
-      subtitle: `Modeled CO₂ · ${periodWord}ly`,
+      // The grain's own name: "day" + "ly" printed "dayly", and an hour read as a month.
+      subtitle: `Modeled CO₂ · ${grain}`,
       rows: [
         ["Total CO₂", `${fmtInt(r.total)} t`],
         [CLASS_SHORT[0], `${fmtInt(r.c1)} t`],
@@ -681,16 +791,18 @@ export default function SustainabilityPage() {
   };
 
   const onFleetClick = (p: { dataIndex: number }) => {
-    if (!fleetRows) return;
-    const rows = [...fleetRows.rows].reverse();
+    if (!fleetRows || !fleetShown) return;
+    // The same top-to-bottom order the chart draws, reversed onto its category indices.
+    const rows = [...fleetShown].reverse();
     const r = rows[p.dataIndex];
     if (!r) return;
+    const veh = fleetRows.base.shares;
     setDetail({
-      title: r.label,
-      subtitle: "Share by vehicle class",
+      title: r.full,
+      subtitle: r.isBase ? "The baseline: share of vehicles by class" : "Share by vehicle class, against each class's share of vehicles",
       rows: fleetRows.cls.map((c, ci) => [
         CLASS_SHORT[ci],
-        `${r.shares[ci].toFixed(1)}% · ${fmtCompact(r.values[ci])} ${r.unit}`,
+        `${r.shares[ci].toFixed(1)}% · ${fmtCompact(r.values[ci])} ${r.unit}${!r.isBase && veh[ci] > 0 ? ` · ${(r.shares[ci] / veh[ci]).toFixed(1)}× its ${veh[ci].toFixed(1)}% of vehicles` : ""}`,
       ]) as [string, string][],
       note: `Emission factors (CO₂ g/km): ${fleetRows.cls.map((c, ci) => `${CLASS_SHORT[ci].split(" ")[0]} ${c.class}: ${fmtInt(c.co2_g_per_km)}`).join(" · ")}. ${filtersNote}`,
     });
@@ -701,16 +813,17 @@ export default function SustainabilityPage() {
     if (!r) return;
     const share = r.total > 0 ? ((r.c2 + r.c3) / r.total) * 100 : 0;
     setDetail({
-      title: grain === "weekly" ? `Week of ${r.label}` : r.label,
+      title: bucketLabelFor(grain)(r.label),
       subtitle: "Heavy-vehicle share of modeled CO₂",
       rows: [
-        ["Heavy-vehicle share", `${share.toFixed(1)}%`],
+        [`Heavy-vehicle share, this ${heroPeriodOf(grain)}`, `${share.toFixed(1)}%`],
+        ...(derived ? [["Heavy-vehicle share, whole Range", `${derived.heavyCo2Pct.toFixed(1)}%`] as [string, string]] : []),
         [CLASS_SHORT[1], `${fmtInt(r.c2)} t`],
         [CLASS_SHORT[2], `${fmtInt(r.c3)} t`],
         [CLASS_SHORT[0], `${fmtInt(r.c1)} t`],
         ["Total CO₂", `${fmtInt(r.total)} t`],
       ],
-      note: `Heavy = Class 2 + Class 3 (buses, trucks). ${filtersNote}`,
+      note: `Heavy = Class 2 + Class 3 (buses, trucks). The whole-Range share is the Heavy-Vehicle Impact tile's figure. ${filtersNote}`,
     });
   };
 
@@ -726,13 +839,30 @@ export default function SustainabilityPage() {
         [AQI_BANDS[0], `${fmtInt(r.good)} readings (${tot > 0 ? ((r.good / tot) * 100).toFixed(1) : "—"}%)`],
         [AQI_BANDS[1], `${fmtInt(r.moderate)} readings (${tot > 0 ? ((r.moderate / tot) * 100).toFixed(1) : "—"}%)`],
         [AQI_BANDS[2], `${fmtInt(r.poor)} readings (${tot > 0 ? ((r.poor / tot) * 100).toFixed(1) : "—"}%)`],
-        ["Avg PM2.5", r.pm25 != null ? `${fmt1(r.pm25)} µg/m³` : "—"],
+        [`Avg ${spelled("PM2.5")}`, r.pm25 != null ? `${fmt1(r.pm25)} µg/m³` : "—"],
       ],
-      note: `AQI is the 1–5 OpenWeatherMap scale measured at expressway stations — the observed counterpart to the modeled emissions. ${filtersNote}`,
+      note: `AQI (Air Quality Index) is the 1–5 OpenWeatherMap scale measured at expressway stations — the observed counterpart to the modeled emissions. ${filtersNote}`,
     });
   };
 
-  const chartFrame = (option: EChartsOption | null, emptyNote: string, onClick?: (p: never) => void) => {
+  /* Scrubbing the heat grid's key highlights the matching cells, as on Traffic: the hidden visualMap is
+     narrowed to a band around the value under the cursor, and released when the cursor leaves. */
+  const heatChart = useRef<unknown>(null);
+  const scrubHeat = (t: number | null) => {
+    const chart = heatChart.current as { dispatchAction: (a: Record<string, unknown>) => void; isDisposed?: () => boolean } | null;
+    if (!chart || chart.isDisposed?.() || !heatGrid) return;
+    const { min: lo, max: hi } = heatGrid;
+    if (t == null) {
+      chart.dispatchAction({ type: "selectDataRange", visualMapIndex: 0, selected: [lo, hi] });
+      return;
+    }
+    // A band rather than a point: an exact value would match almost nothing.
+    const v = lo + t * (hi - lo);
+    const pad = (hi - lo) * 0.08;
+    chart.dispatchAction({ type: "selectDataRange", visualMapIndex: 0, selected: [Math.max(lo, v - pad), Math.min(hi, v + pad)] });
+  };
+
+  const chartFrame = (option: EChartsOption | null, emptyNote: string, onClick?: (p: never) => void, onReady?: (chart: unknown) => void) => {
     if (loading && !data) return <ChartSkeleton />;
     if (error)
       return (
@@ -758,8 +888,11 @@ export default function SustainabilityPage() {
         // and ECharts' item click never fires with the right index. Resolve the
         // category from the cursor position instead.
         onChartReady={
-          onClick
-            ? (chart) => attachCategoryClick(chart as never, onClick as never)
+          onClick || onReady
+            ? (chart) => {
+                if (onClick) attachCategoryClick(chart as never, onClick as never);
+                onReady?.(chart);
+              }
             : undefined
         }
       />
@@ -780,7 +913,7 @@ export default function SustainabilityPage() {
   const lastTrend = trendRows.length > 0 ? trendRows[trendRows.length - 1] : null;
   const trendMean = trendRows.length > 0 ? trendRows.reduce((s, r) => s + visibleOf(r), 0) / trendRows.length : 0;
   const lastVsMean = lastTrend && trendMean > 0 ? ((visibleOf(lastTrend) - trendMean) / trendMean) * 100 : null;
-  const heroPeriod = grain === "hourly" ? "hour" : grain === "daily" ? "day" : grain === "weekly" ? "week" : "month";
+  const heroPeriod = heroPeriodOf(grain);
   const lastShare = heavyShareRows.length > 0 ? heavyShareRows[heavyShareRows.length - 1].share : null;
   const aqiTotals =
     data && data.aqiMonthly.length > 0
@@ -947,7 +1080,9 @@ export default function SustainabilityPage() {
           <div className={`${styles.kpiRow} ds-rise nc-em-kpis`}>
             <article className={styles.kpiTile}>
               <span className={styles.kpiIcon} aria-hidden="true"><Leaf size={15} /></span>
-              <h3>Total CO₂ (Modeled)<InfoTooltip text="Tonnes of CO₂ over the Range: the hourly toll counts at every exit × that exit's segment length × the DENR/DOTC factor for each vehicle class. Modeled, not a sensor reading — and the same record the CO₂ forecast is trained on, so the two agree." /></h3>
+              {/* One span per label: the tile's h3 is a flex row, and loose words beside an <abbr> would
+                  each become a flex item with their spaces dropped. */}
+              <h3><span>Total <Term t="CO₂" /> (Modeled)</span><InfoTooltip text="Tonnes of CO₂ (carbon dioxide) over the Range: the hourly toll counts at every exit × that exit's segment length × the DENR/DOTC factor for each vehicle class. Modeled, not a sensor reading — and the same record the CO₂ forecast is trained on, so the two agree." /></h3>
               <div className={styles.kpiValue} title={data ? `${fmtInt(data.kpis.totalCo2T)} tonnes` : undefined}>
                 {kpiValue(data ? `${fmtCompact(data.kpis.totalCo2T)} t` : null)}
               </div>
@@ -960,7 +1095,7 @@ export default function SustainabilityPage() {
             </article>
             <article className={styles.kpiTile}>
               <span className={styles.kpiIcon} aria-hidden="true"><CalendarClock size={15} /></span>
-              <h3>Avg Daily CO₂<InfoTooltip text="Modeled CO₂ divided by the number of days in the Range." /></h3>
+              <h3><span>Avg Daily <Term t="CO₂" /></span><InfoTooltip text="Modeled CO₂ divided by the number of days in the Range." /></h3>
               <div className={styles.kpiValue}>{kpiValue(derived ? `${fmtInt(derived.avgDailyT)} t` : null)}</div>
               <div className={`${styles.sparkBox} nc-em-spark`}>
                 {sparkOption && <ReactECharts option={applyChartTheme(sparkOption, chartTheme)} style={{ width: "100%", height: "100%" }} opts={{ renderer: "canvas" }} />}
@@ -969,10 +1104,16 @@ export default function SustainabilityPage() {
             </article>
             <article className={styles.kpiTile}>
               <span className={styles.kpiIcon} aria-hidden="true"><Truck size={15} /></span>
-              <h3>Heavy-Vehicle Impact<InfoTooltip text="How much of the modeled CO₂ comes from trucks and buses versus their share of traffic — heavy classes emit far more per vehicle." /></h3>
-              <div className={styles.kpiValue}>{kpiValue(derived ? `${derived.heavyCo2Pct.toFixed(1)}%` : null)}</div>
+              {/* Says which window and which denominator (17 Oct 2026, testers EM-6.2): this is the whole
+                  Range, and "traffic" meant the share of vehicles counted. */}
+              <h3>Heavy-Vehicle Impact<InfoTooltip text={`Share of the modeled CO₂ over the whole Range that comes from Class 2–3 (buses and trucks), against their share of the vehicles counted at the toll plazas. Heavy classes emit far more per kilometre${derived ? ` (g CO₂/km: ${derived.factorText})` : ""}. The Heavy-Vehicle Share of CO₂ chart below breaks the same share down period by period; its dashed line is this figure.`} /></h3>
+              <div className={styles.kpiValue}>{kpiValue(derived ? (derived.oneClass ? "—" : `${derived.heavyCo2Pct.toFixed(1)}%`) : null)}</div>
               <p className={styles.kpiHint}>
-                {derived ? `of CO₂ from just ${derived.heavyVolPct.toFixed(1)}% of traffic` : "—"}
+                {derived
+                  ? derived.oneClass
+                    ? "Compares classes · set Class to all"
+                    : `of the Range's CO₂, from just ${derived.heavyVolPct.toFixed(1)}% of vehicles`
+                  : "—"}
               </p>
             </article>
             <article className={styles.kpiTile}>
@@ -985,24 +1126,31 @@ export default function SustainabilityPage() {
             </article>
             <article className={styles.kpiTile}>
               <span className={styles.kpiIcon} aria-hidden="true"><Timer size={15} /></span>
-              <h3>Delay-Induced CO₂<InfoTooltip text="Idling CO₂ from the queues behind accidents that blocked a lane in the Range. Each queue builds for as long as the lane is blocked (not for as long as the site takes to clear) and drains as it reopens (area λ×T²/2 at that segment's vehicles per hour), so long incidents carry most of it. Moving vehicles' CO₂ does not change with speed in this model: this is the part a delay adds." /></h3>
-              <div className={styles.kpiValue}>{kpiValue(data?.kpis.delayCarbonT != null ? `${fmtInt(data.kpis.delayCarbonT)} t` : null)}</div>
+              <h3><span>Delay-Induced <Term t="CO₂" /></span><InfoTooltip text="Idling CO₂ from the queues behind accidents that blocked a lane in the Range. Each queue builds for as long as the lane is blocked (not for as long as the site takes to clear) and drains as it reopens (area λ×T²/2 at that segment's vehicles per hour), so long incidents carry most of it. Moving vehicles' CO₂ does not change with speed in this model: this is the part a delay adds. Counted over all vehicles, so it is not shown for a single class." /></h3>
+              <div className={styles.kpiValue}>{kpiValue(data?.kpis.delayCarbonT != null ? `${fmtInt(data.kpis.delayCarbonT)} t` : data ? "—" : null)}</div>
               <p className={styles.kpiHint}>
                 {data?.kpis.delayCarbonT != null
                   ? `${(data.kpis.delayCarbonPct ?? 0).toFixed(2)}% of CO₂ · ${(data.kpis.delayLongSharePct ?? 0).toFixed(0)}% from ${fmtInt(data.kpis.delayLongIncidents ?? 0)} lane blockages over 3\u00a0h`
-                  : "—"}
+                  : data?.meta.vehicleClass != null
+                    ? "Not split by class · set Class to all"
+                    : "—"}
               </p>
             </article>
             <article className={styles.kpiTile}>
               <span className={styles.kpiIcon} aria-hidden="true"><Wind size={15} /></span>
-              <h3>Measured Air Quality<InfoTooltip text="Latest measured pollutant readings near the corridor, shown alongside the modeled CO₂ for context." /></h3>
-              <div className={styles.kpiValue}>
+              {/* Was described as the "latest" readings; the figure is the Range's average (17 Oct 2026). */}
+              <h3>Measured Air Quality<InfoTooltip text="Average AQI (Air Quality Index, OpenWeatherMap's 1 = good to 5 = very poor scale) over the Range, from the hourly readings at the expressway stations, with their average PM2.5 (fine particulate matter). Measured, not modeled, and not split by vehicle class: shown beside the modeled CO₂ for context." /></h3>
+              <div className={styles.kpiValue} title={POLLUTANT_NAMES.AQI}>
                 {kpiValue(data?.kpis.avgAqi != null ? `${data.kpis.avgAqi.toFixed(1)} / 5` : null)}
               </div>
               <p className={styles.kpiHint}>
-                {data?.kpis.avgAqi != null
-                  ? `${aqiWord(data.kpis.avgAqi)} · avg PM2.5 ${data.kpis.avgPm25 != null ? fmt1(data.kpis.avgPm25) : "—"} µg/m³`
-                  : "no station readings in range"}
+                {data?.kpis.avgAqi != null ? (
+                  <>
+                    {aqiWord(data.kpis.avgAqi)} · avg <Term t="PM2.5" /> {data.kpis.avgPm25 != null ? fmt1(data.kpis.avgPm25) : "—"} µg/m³
+                  </>
+                ) : (
+                  "no station readings in range"
+                )}
               </p>
             </article>
           </div>
@@ -1011,7 +1159,7 @@ export default function SustainabilityPage() {
           <article className={`${styles.chartCard} ${styles.chart1} ${styles.hero}`}>
             <div className={styles.chartHead}>
               <div className={styles.headText}>
-                <h3>CO₂ Emissions Trend by Vehicle Class<InfoTooltip text="Modeled CO₂ per day, week or month, split by vehicle class so you can see which classes drive the total." /></h3>
+                <h3><Term t="CO₂" /> Emissions Trend by Vehicle Class<InfoTooltip text="Modeled CO₂ (carbon dioxide) per hour, day, week or month, split by vehicle class so you can see which classes drive the total. Hourly is offered for ranges up to two weeks." /></h3>
                 {lastTrend && (
                   <p className="nc-em-answer">
                     <b>{fmtInt(visibleOf(lastTrend))} t</b>
@@ -1104,40 +1252,87 @@ export default function SustainabilityPage() {
           <article className={`${styles.chartCard} ${styles.chart3} nc-em-half`}>
             <div className={styles.chartHead}>
               <div className={styles.headText}>
-                <h3>Fleet Mix vs Pollution Load<InfoTooltip text="Each vehicle class's share of traffic next to its share of CO₂ — the gap shows which classes pollute out of proportion to their numbers." /></h3>
+                <h3>Fleet Mix vs Pollution Load<InfoTooltip text="Each vehicle class's share of three modeled pollutants: CO₂ (carbon dioxide), NO₂ (nitrogen dioxide) and PM2.5 (fine particulate matter). All three are modeled as vehicles × km × a per-class factor, so where a class's pollutant share is larger than its share of the vehicles counted, it pollutes out of proportion to its numbers. Hover a bar for that multiple; Vehicle baseline draws the vehicle shares as a faded bar on top. Click a class in the legend to hide it." /></h3>
                 {fleetTakeaway && derived && (
                   <p className="nc-em-answer">
                     <b>{derived.heavyCo2Pct.toFixed(1)}%</b>
-                    <span>of CO₂ from heavy vehicles (Class 2–3)</span>
+                    <span>of <Term t="CO₂" /> from heavy vehicles (Class 2–3)</span>
                   </p>
                 )}
                 {fleetTakeaway && <p className={styles.subtitle}>{fleetTakeaway}</p>}
               </div>
             </div>
-            <div className={styles.chartBody}>{chartFrame(fleetOption, "No data for the selected range", onFleetClick)}</div>
+            {fleetRows && !error && (
+              <div className={`${styles.heroFilters} nc-em-fleet-ctl`} role="group" aria-label="Fleet mix view">
+                <div className={styles.heroFilterGroup}>
+                  <span className={styles.heroFilterLabel}>Sort</span>
+                  <div className={styles.segmentedSmall}>
+                    {([["listed", "Listed"], ["heavy", "Heavy share"]] as const).map(([k, label]) => (
+                      <button
+                        key={k}
+                        className={fleetSort === k ? "active" : ""}
+                        aria-pressed={fleetSort === k}
+                        onClick={() => setFleetSort(k)}
+                        title={k === "heavy" ? "Pollutants ordered by the share that comes from Class 2 + 3, largest first" : "CO₂, NO₂, PM2.5"}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className={styles.heroFilterGroup}>
+                  <span className={styles.heroFilterLabel}>Classes</span>
+                  <div className={styles.segmentedSmall}>
+                    {([["all", "All"], ["heavy", "Class 2–3"]] as const).map(([k, label]) => (
+                      <button
+                        key={k}
+                        className={fleetClasses === k ? "active" : ""}
+                        aria-pressed={fleetClasses === k}
+                        onClick={() => setFleetClasses(k)}
+                        title={k === "heavy" ? "Only the heavy classes, starting from 0% so their shares read straight off the axis" : "All three classes, stacked to 100%"}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className={styles.segmentedSmall}>
+                  <button
+                    className={fleetBaseline ? "active" : ""}
+                    aria-pressed={fleetBaseline}
+                    onClick={() => setFleetBaseline((v) => !v)}
+                    title="Draw each class's share of the vehicles counted as a faded bar on top: the yardstick for the pollutant bars"
+                  >
+                    Vehicle baseline
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className={styles.chartBody}>{chartFrame(fleetOption, derived?.oneClass ? ONE_CLASS_NOTE : "No data for the selected range", onFleetClick)}</div>
           </article>
 
           {/* where it is heading + measured reality */}
           <article className={`${styles.chartCard} ${styles.chart4} nc-em-half`}>
             <div className={styles.chartHead}>
               <div className={styles.headText}>
-                <h3>Heavy-Vehicle Share of CO₂<InfoTooltip text="The fraction of modeled CO₂ attributable to heavy vehicles over the Range." /></h3>
-                {heavyShareTakeaway && lastShare != null && (
+                <h3>Heavy-Vehicle Share of <Term t="CO₂" /><InfoTooltip text="The share of modeled CO₂ from Class 2–3 (buses and trucks) in each hour, day, week or month, at the trend chart's granularity. The big figure is the latest period; the dashed line is the share over the whole Range, the same figure as the Heavy-Vehicle Impact tile, so the two differ by exactly how far the latest period sits from the Range. Incomplete first and last weeks or months are left off, as on the trend chart." /></h3>
+                {heavyShareTakeaway && lastShare != null && trendRows.length > 0 && (
                   <p className="nc-em-answer">
                     <b>{lastShare.toFixed(1)}%</b>
-                    <span>now, latest {heroPeriod}</span>
+                    <span>in the latest {heroPeriod} · {bucketLabelFor(grain)(trendRows[trendRows.length - 1].label)}</span>
                   </p>
                 )}
                 {heavyShareTakeaway && <p className={styles.subtitle}>{heavyShareTakeaway}</p>}
               </div>
             </div>
-            <div className={styles.chartBody}>{chartFrame(heavyShareOption, "No data for the selected range", onHeavyShareClick)}</div>
+            <div className={styles.chartBody}>{chartFrame(heavyShareOption, derived?.oneClass ? ONE_CLASS_NOTE : "No data for the selected range", onHeavyShareClick)}</div>
           </article>
 
           <article className={`${styles.chartCard} ${styles.chart5} nc-em-half`}>
             <div className={styles.chartHead}>
               <div className={styles.headText}>
-                <h3>Measured Air Quality by Month<InfoTooltip text="Monthly measured pollutant levels near the corridor, for comparison against the modeled emissions." /></h3>
+                {/* The ⓘ promised pollutant levels; the bars are the share of readings in each AQI band (17 Oct 2026). */}
+                <h3>Measured Air Quality by Month<InfoTooltip text="For each month, the share of hourly station readings near the corridor in each AQI (Air Quality Index, OpenWeatherMap's 1–5 scale) band; the tooltip adds that month's average PM2.5 (fine particulate matter). Measured, not modeled, and not split by vehicle class: a reading cannot be attributed to one." /></h3>
                 {aqiGoodPct != null && aqiTotals && (
                   <p className="nc-em-answer">
                     <b>{aqiGoodPct.toFixed(1)}%</b>
@@ -1158,7 +1353,7 @@ export default function SustainabilityPage() {
           <article className={`${styles.chartCard} ${styles.chart1} nc-em-heat`}>
             <div className={styles.chartHead}>
               <div className={styles.headText}>
-                <h3>CO₂ by Hour and Weekday<InfoTooltip text="Average modeled CO₂ in each hour of each weekday over the Range: that slot's total divided by the number of those weekdays in the Range." /></h3>
+                <h3><Term t="CO₂" /> by Hour and Weekday<InfoTooltip text="Average modeled CO₂ in each hour of each weekday over the Range: that slot's total divided by the number of those weekdays in the Range. Point along the colour key below to read a shade's value and pick out the matching hours." /></h3>
                 {heatGrid && (
                   <p className="nc-em-answer">
                     <b>{DOW_LABELS[heatGrid.top.row]} · {fmtHour(heatGrid.top.hour)}</b>
@@ -1172,14 +1367,19 @@ export default function SustainabilityPage() {
                 )}
               </div>
             </div>
-            <div className={`${styles.chartBody} nc-em-heat-body`}>{chartFrame(heatGrid?.option ?? null, "No data for the selected range")}</div>
+            <div className={`${styles.chartBody} nc-em-heat-body`}>
+              {chartFrame(heatGrid?.option ?? null, "No data for the selected range", undefined, (c) => { heatChart.current = c; })}
+            </div>
             {heatGrid && data && !error && (
-              <div className="nc-em-heat-key" aria-hidden="true">
-                <span>{fmt1(heatGrid.min)} t</span>
-                <i style={{ background: `linear-gradient(90deg, ${heatGrid.colors.join(", ")})` }} />
-                <span>{fmt1(heatGrid.max)} t</span>
-                <span className="nc-em-heat-unit">avg t CO₂ in the hour</span>
-              </div>
+              <RampKey
+                colors={heatGrid.colors}
+                min={heatGrid.min}
+                max={heatGrid.max}
+                format={(v) => heatValue(v, HEAT_UNIT)}
+                lowLabel={`Less · ${fmtHeatNumber(heatGrid.min)} t`}
+                highLabel={`${fmtHeatNumber(heatGrid.max)} t · More`}
+                onScrub={scrubHeat}
+              />
             )}
           </article>
         </div>

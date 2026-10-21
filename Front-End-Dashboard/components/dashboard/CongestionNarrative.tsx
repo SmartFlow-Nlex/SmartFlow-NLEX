@@ -33,6 +33,10 @@ export default function CongestionNarrative({
   exitsSevere,
   hoursCovered,
   neverPredictsHeavy,
+  windowStart,
+  windowEnd,
+  severeBelowKmh,
+  heavyBelowKmh,
 }: {
   modelInfo: CongestionNarrativeModel | null;
   horizons: CongestionNarrativeHorizon[];
@@ -40,6 +44,12 @@ export default function CongestionNarrative({
   exitsSevere: number;
   hoursCovered: number;
   neverPredictsHeavy: boolean;
+  /** First and last hour on the map in words, so the read-out can say which hours it is about (testers TR-9). */
+  windowStart?: string | null;
+  windowEnd?: string | null;
+  /** The legend's speed cuts, so the read-out defines Severe and Heavy the same way (testers TR-9, 19 Oct). */
+  severeBelowKmh?: number | null;
+  heavyBelowKmh?: number | null;
 }) {
   if (!modelInfo) return null;
 
@@ -57,7 +67,7 @@ export default function CongestionNarrative({
       metrics={[{ model: modelInfo.model }]}
       horizonDays={hoursCovered}
       endpoint="/api/ai-insight/congestion-narrative"
-      subjectKey={`congestion:${modelInfo.model}:${last?.horizon ?? 0}:${exitsSevere}/${exitsTotal}`}
+      subjectKey={`congestion:${modelInfo.model}:${last?.horizon ?? 0}:${hoursCovered}:${windowStart ?? ""}:${exitsSevere}/${exitsTotal}`}
       chips={
         <>
           <NarrativeChip tone={modelInfo.accepted ? "good" : "neutral"}>
@@ -72,8 +82,8 @@ export default function CongestionNarrative({
             <NarrativeChip tone={beatsBenchmark ? "good" : "neutral"}>
               <span style={{ fontWeight: 600 }}>
                 {beatsBenchmark
-                  ? `still beats no-change at +${last.horizon}h`
-                  : `no better than no-change by +${last.horizon}h`}
+                  ? `still beats "nothing changes" ${last.horizon}h ahead`
+                  : `no better than "nothing changes" by ${last.horizon}h ahead`}
               </span>
             </NarrativeChip>
           )}
@@ -81,14 +91,15 @@ export default function CongestionNarrative({
       }
       contextLine={
         <>
-          Read from this model&apos;s held-out accuracy per hour ahead
+          {/* Plain words for readers outside analytics (TR-9): "held-out" and "benchmark" meant nothing to testers. */}
+          Read from how often this model was right on past hours it had not seen
           {first && last && (
             <>
-              {" "}· {pct(first.accuracy)} at +{first.horizon}h to {pct(last.accuracy)} at +{last.horizon}h
+              {" "}· {pct(first.accuracy)} {first.horizon} hour{first.horizon === 1 ? "" : "s"} ahead to {pct(last.accuracy)} {last.horizon} hours ahead
             </>
           )}
           {modelInfo.baseline?.accuracy != null && (
-            <> · benchmark {modelInfo.baseline.model} {pct(modelInfo.baseline.accuracy)}</>
+            <> · guessing each exit&apos;s usual state for the hour: {pct(modelInfo.baseline.accuracy)}</>
           )}
         </>
       }
@@ -107,7 +118,11 @@ export default function CongestionNarrative({
           accuracy: h.accuracy,
           persistence: h.persistenceAccuracy,
         })),
-        situation: { exitsTotal, exitsSevere, hoursCovered, neverPredictsHeavy },
+        situation: {
+          exitsTotal, exitsSevere, hoursCovered, neverPredictsHeavy,
+          windowStart: windowStart ?? null, windowEnd: windowEnd ?? null,
+          severeBelowKmh: severeBelowKmh ?? null, heavyBelowKmh: heavyBelowKmh ?? null,
+        },
       })}
     />
   );

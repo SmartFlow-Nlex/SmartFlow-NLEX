@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { cachedJson } from "../../../lib/cached-json";
 import { attachCategoryClick } from "../../../lib/chart-click";
 import { useChartTheme, applyChartTheme, liftDarkText, seriesRamp, seriesPair, seriesNominal } from "../../../lib/chart-theme";
 import { useNlexExits } from "../../../lib/nlex-exits";
-import { createExitLookup, postRangeForBin } from "../../../lib/exit-lookup";
+import { createExitLookup, postRangeForBin, SOUTH_OF_CORRIDOR_BIN } from "../../../lib/exit-lookup";
 import ReactECharts from "echarts-for-react";
 import type { EChartsOption } from "echarts";
 import { AlertTriangle, ArrowDownWideNarrow, ArrowUpNarrowWide, CloudRain, HeartPulse, MapPin, Timer, Siren, X } from "lucide-react";
@@ -14,7 +14,7 @@ import ChartSkeleton, { KpiSkeleton } from "../../../components/dashboard/ChartS
 import CustomSelect from "../../../components/dashboard/CustomSelect";
 import PageHeader from "../../../components/dashboard/PageHeader";
 import ModeTabLabel, { modeIndex } from "../../../components/dashboard/ModeTabLabel";
-import { HourDayHeatmap } from "../../../components/dashboard/IncidentHeatmaps";
+import { HourDayHeatmap, type HeatCell } from "../../../components/dashboard/IncidentHeatmaps";
 import { areaFade } from "../../../lib/chart-kit";
 import PredictiveIncidentChart from "../../../components/dashboard/PredictiveIncidentChart";
 import PredictiveCorridorChart from "../../../components/dashboard/PredictiveCorridorChart";
@@ -65,7 +65,8 @@ type Analytics = {
   };
   dailyTrend: { d: string; accident: number; breakdown: number }[];
   hotspots: { km_bin: number; total: number; accident: number; breakdown: number; injuries: number; fatalities: number }[];
-  heatmap: { dow: number; hour: number; v: number }[];
+  // accident/breakdown split the cell's total (v); optional so an older cached response still draws.
+  heatmap: { dow: number; hour: number; v: number; accident?: number; breakdown?: number }[];
   /* The API splits causes in two. Accidents are logged against a driver or
      road cause, breakdowns against a mechanical fault, and the service keeps
      them as separate rankings on purpose -- "a different vocabulary entirely",
@@ -80,9 +81,19 @@ type Analytics = {
     wetHours: number;
     dryHours: number;
     incidents: { wet: Record<"accident" | "breakdown", number>; dry: Record<"accident" | "breakdown", number> };
+    /** The same comparison per day of week (0 = Sunday) x hour, for the card's Day and Hour filters. */
+    cells?: WeatherCell[];
     jam: { wet: { speed: number; jam_level: number } | null; dry: { speed: number; jam_level: number } | null };
   };
 };
+
+type WeatherCell = {
+  dow: number; hour: number; wetHours: number; dryHours: number;
+  wetAccident: number; wetBreakdown: number; dryAccident: number; dryBreakdown: number;
+};
+/** Dry vs Wet card's own filters: a day (0 = Sunday, as the API numbers them) or a day group, and an hour. */
+type WxDay = "all" | "weekday" | "weekend" | `${number}`;
+type WxHour = "all" | `${number}`;
 
 type Granularity = "daily" | "weekly" | "monthly";
 type RangeMode = "3" | "12" | "all" | "custom";
@@ -96,13 +107,42 @@ const fmtInt = (n: number) => Math.round(n).toLocaleString("en-US");
 const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`);
 const fmtPct = (p: number) => `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
-const kmLabel = (bin: number) => `Km ${bin}–${bin + 4}`;
-/** Balintawak-relative range first, the roadside km-post equivalent beside it. */
-const kmLabelBoth = (bin: number) => `${kmLabel(bin)} (post ${postRangeForBin(bin)})`;
-const fmtDay = (d: string) =>
-  new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+/* A hotspot bin is already an official km post (the backend bins on them; lib/exit-lookup.ts), so it is
+   labelled with its posts: Km 12–14, Km 15–19 … and "South of Km 12" for records before Balintawak, where
+   NLEX has no posts. Never a Km 0. */
+const kmLabel = (bin: number) => (bin === SOUTH_OF_CORRIDOR_BIN ? `South of Km ${postRangeForBin(bin).replace("below ", "")}` : `Km ${postRangeForBin(bin)}`);
+/** Kept for its callers: the label already is the roadside km post, so there is nothing to put beside it. */
+const kmLabelBoth = kmLabel;
 const weekdayOf = (dateStr: string) =>
   new Date(`${dateStr}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" });
+
+/* The hour x day grid and the type breakdown under it. Hover state lives here, not on the page: a hover that
+   re-rendered the whole tab handed every chart on it fresh click handlers, and echarts-for-react rebuilds a
+   chart whose handlers change. Here only the breakdown re-renders; the grid itself is memoised. */
+function HeatmapWithBreakdown({
+  heatmap,
+  range,
+  renderMix,
+}: {
+  heatmap: Analytics["heatmap"];
+  range: Analytics["range"];
+  renderMix: (focus: { cell: HeatCell; pinned: boolean } | null, clearPin: () => void) => ReactNode;
+}) {
+  const [hover, setHover] = useState<HeatCell | null>(null);
+  const [pin, setPin] = useState<HeatCell | null>(null);
+  // Clicking the kept cell again lets it go.
+  const pick = useCallback((c: HeatCell) => setPin((p) => (p && p.dow === c.dow && p.hour === c.hour ? null : c)), []);
+  const clearPin = useCallback(() => setPin(null), []);
+  // A new Range or filter is a new grid: a kept cell from the old one would describe numbers no longer shown.
+  useEffect(() => setPin(null), [heatmap]);
+  const focus = hover ? { cell: hover, pinned: !!pin && pin.dow === hover.dow && pin.hour === hover.hour } : pin ? { cell: pin, pinned: true } : null;
+  return (
+    <>
+      <HourDayHeatmap heatmap={heatmap} range={range} onHoverCell={setHover} onPickCell={pick} />
+      {renderMix(focus, clearPin)}
+    </>
+  );
+}
 
 function weekStart(dateStr: string): string {
   const dt = new Date(`${dateStr}T00:00:00`);
@@ -151,6 +191,9 @@ export default function IncidentPage() {
   const [timeView, setTimeView] = useState<"hour" | "dow">("hour");
   const [causeMode, setCauseMode] = useState<CauseMode>("Accident causes");
   const [allHotspotsOpen, setAllHotspotsOpen] = useState(false);
+  // Dry vs Wet card: narrow the comparison to a day and/or hour (19 Oct 2026, testers IN-7).
+  const [wxDay, setWxDay] = useState<WxDay>("all");
+  const [wxHour, setWxHour] = useState<WxHour>("all");
   const [detail, setDetail] = useState<Detail | null>(null);
 
   // Earliest observed / latest forecast date reported by the predictive
@@ -179,6 +222,8 @@ export default function IncidentPage() {
   const [data, setData] = useState<Analytics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Bumped by the KPI strip's Try again: refetches the same query.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (rangeMode === "custom" && (!customFrom || !customTo)) return;
@@ -197,18 +242,36 @@ export default function IncidentPage() {
     // Memoised per query string: switching tabs or returning to this page
     // renders from memory instead of refetching. Five minutes, refreshed
     // quietly in the background once stale. See lib/cached-json.
-    cachedJson<{ success: boolean; message?: string; data: Analytics }>(`${BACKEND}/api/incident/analytics?${qs}`)
+    /* A deadline on the request (19 Oct 2026, testers IN-2). With the backend's database pool stuck, the
+       request never settled and every KPI tile sat on its skeleton, or on "No data" and a dash after a
+       failure, with nothing to say why. Now it fails after 45 s (an uncached "All" measures about 7 s) and
+       the strip says so, with Try again. The deadline is this effect's own, raced against the request:
+       cachedJson shares one fetch per URL, so an abort signal passed in would abort it for every caller
+       waiting on it (the deployment panel reads the same URL), and a re-run that joined the fetch in flight
+       would have no deadline at all once the first run's timer was cleared. The shared fetch is never aborted. */
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      deadline = setTimeout(() => reject(new Error("The incident analytics request timed out")), 45_000);
+    });
+    Promise.race([cachedJson<{ success: boolean; message?: string; data: Analytics }>(`${BACKEND}/api/incident/analytics?${qs}`, 5 * 60_000), timeout])
       .then((json) => {
         if (cancelled) return;
         if (!json.success) throw new Error(json.message ?? "Request failed");
         setData(json.data);
       })
-      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : "Failed to load"))
-      .finally(() => !cancelled && setLoading(false));
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Failed to load");
+      })
+      .finally(() => {
+        clearTimeout(deadline);
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
+      clearTimeout(deadline);
     };
-  }, [rangeMode, customFrom, customTo, weather, source]);
+  }, [rangeMode, customFrom, customTo, weather, source, reloadKey]);
 
   /* How long a window is on screen, and what that allows.
 
@@ -246,23 +309,24 @@ export default function IncidentPage() {
     const wetRate = wx.wetHours > 0 ? (wetCrashes / wx.wetHours) * 24 : 0;
     const dryRate = wx.dryHours > 0 ? (dryCrashes / wx.dryHours) * 24 : 0;
 
-    /* The wet-vs-dry multiplier needs both sides. The API applies the Weather
-       filter to the incident counts but not to the hours of exposure, so under
-       Wet or Dry one side is always zero: Wet gave a dry rate of 0 (a null
-       multiplier, drawn as a bare dash) and Dry gave a wet rate of 0 (a
-       "0.00x" that looked like a real result). Accidents-only too: choosing
-       Breakdowns removes every crash. Say which one it is. */
+    /* The wet-vs-dry multiplier needs both sides. The API used to apply the
+       Weather filter to the incident counts but not to the hours of exposure,
+       so under Wet or Dry one side was always zero, and this tile was blanked
+       with "set Weather to All". Since 17 Oct the API keeps this one block
+       whole whatever Weather says (it IS the wet-vs-dry comparison), so the
+       tile now answers under every Weather setting (19 Oct 2026, testers IN-2).
+       Accidents-only still: choosing Breakdowns removes every crash. When it is
+       genuinely empty, say which reason it is. */
     let rainMultiplier: number | null = null;
     let rainEmptyReason: string | null = null;
-    if (weather !== "all") rainEmptyReason = "Compares wet with dry hours: set Weather to All";
-    else if (source === "breakdown") rainEmptyReason = "Counts crashes only: Incident type is set to Breakdowns";
+    if (source === "breakdown") rainEmptyReason = "Counts crashes only: Incident type is set to Breakdowns";
     else if (wx.wetHours === 0) rainEmptyReason = "No wet hours in this Range";
     else if (wx.dryHours === 0) rainEmptyReason = "No dry hours in this Range";
     else if (dryRate === 0) rainEmptyReason = "No crashes in dry hours to compare against";
     else rainMultiplier = wetRate / dryRate;
 
     return { deltaPct, topHotspot, hotspotTotal, wetRate, dryRate, rainMultiplier, rainEmptyReason };
-  }, [data, weather, source]);
+  }, [data, source]);
 
     // ---------- Trend ----------
   type TrendRow = { label: string; accident: number; breakdown: number; total: number };
@@ -515,13 +579,13 @@ export default function IncidentPage() {
           // Two lines per segment: the km range, then the exit it sits nearest.
           axisLabel: {
             interval: 0,
-            lineHeight: 13,
+            lineHeight: 15,
             formatter: (_v: string, i: number) => {
               const r = display[i];
               const n = exitAt.nameForBin(r.km_bin) ?? "";
               return `{k|${kmLabelBoth(r.km_bin)}}\n{n|${n.length > 22 ? `${n.slice(0, 21)}…` : n}}`;
             },
-            rich: { k: { fontSize: 11, fontWeight: 600, color: chartTheme.ink, lineHeight: 13 }, n: { fontSize: 10, lineHeight: 13 } },
+            rich: { k: { fontSize: 12, fontWeight: 600, color: chartTheme.ink, lineHeight: 15 }, n: { fontSize: 11, lineHeight: 15 } },
           },
           axisTick: { show: false },
         },
@@ -599,35 +663,81 @@ export default function IncidentPage() {
     };
   }, [data, causeMode, causeSort, chartTheme]);
 
-  const weatherChart = useMemo<EChartsOption | null>(() => {
-    if (!data || !derived) return null;
+  /* The wet-vs-dry block for the card's Day and Hour selection (19 Oct 2026, testers IN-7). Summed from the
+     API's per day x hour cells, so incidents are still divided by the hours of that weather in the same
+     slots. With both filters on All it is the API's own whole-range block, unchanged. An hour filter changes
+     the unit: one hour a day cannot be scaled to a 24-hour day honestly, so it reads per hour of that weather. */
+  const weatherSlot = useMemo(() => {
+    if (!data) return null;
     const w = data.weather;
+    const filtered = wxDay !== "all" || wxHour !== "all";
+    const perHour = wxHour !== "all";
+    if (!filtered || !w.cells) {
+      return { wetHours: w.wetHours, dryHours: w.dryHours, wet: w.incidents.wet, dry: w.incidents.dry, filtered: false, perHour: false, available: !!w.cells };
+    }
+    const dayOk = (dow: number) =>
+      wxDay === "all" ? true : wxDay === "weekday" ? dow >= 1 && dow <= 5 : wxDay === "weekend" ? dow === 0 || dow === 6 : dow === Number(wxDay);
+    const hourOk = (h: number) => wxHour === "all" || h === Number(wxHour);
+    const acc = { wetHours: 0, dryHours: 0, wet: { accident: 0, breakdown: 0 }, dry: { accident: 0, breakdown: 0 } };
+    for (const c of w.cells) {
+      if (!dayOk(c.dow) || !hourOk(c.hour)) continue;
+      acc.wetHours += c.wetHours;
+      acc.dryHours += c.dryHours;
+      acc.wet.accident += c.wetAccident;
+      acc.wet.breakdown += c.wetBreakdown;
+      acc.dry.accident += c.dryAccident;
+      acc.dry.breakdown += c.dryBreakdown;
+    }
+    return { ...acc, filtered: true, perHour, available: true };
+  }, [data, wxDay, wxHour]);
+  const wxDayLabel = (d: WxDay) =>
+    d === "all" ? "Every day" : d === "weekday" ? "Weekdays" : d === "weekend" ? "Weekends" : ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"][Number(d)];
+  const wxSlotPhrase =
+    wxDay === "all" && wxHour === "all"
+      ? null
+      : `${wxDayLabel(wxDay)}${wxHour !== "all" ? `, ${fmtHour(Number(wxHour))} – ${fmtHour((Number(wxHour) + 1) % 24)}` : ""}`;
+  // Rate per day of that weather (× 24) or, under an hour filter, per hour of it.
+  const wxRate = (n: number, hours: number, perHour: boolean) => (hours > 0 ? (n / hours) * (perHour ? 1 : 24) : null);
+
+  const weatherChart = useMemo<EChartsOption | null>(() => {
+    if (!data || !derived || !weatherSlot) return null;
+    const w = weatherSlot;
     if (w.wetHours === 0 && w.dryHours === 0) return null;
     const cats = ["Accidents", "Breakdowns"] as const;
     const keys = ["accident", "breakdown"] as const;
+    const unit = w.perHour ? "per hour" : "per day";
     // Per day of that weather = incidents / hours-of-exposure × 24, so rare wet
     // hours compare fairly against abundant dry hours.
-    const rate = (n: number, hours: number) => (hours > 0 ? Number(((n / hours) * 24).toFixed(1)) : 0);
+    const rate = (n: number, hours: number) => {
+      const r = wxRate(n, hours, w.perHour);
+      return r == null ? null : Number(r.toFixed(w.perHour ? 2 : 1));
+    };
     return {
-      grid: { left: 52, right: 16, top: 10, bottom: 68 },
-      xAxis: { type: "category", data: [...cats], axisLabel: { interval: 0 }, axisTick: { show: false } },
-      yAxis: { type: "value", name: "avg incidents / day", nameGap: 8, splitNumber: 3 },
+      grid: { left: 52, right: 16, top: 24, bottom: 68 },
+      xAxis: { type: "category", data: [...cats], axisLabel: { interval: 0, fontSize: 12 }, axisTick: { show: false } },
+      yAxis: { type: "value", name: w.perHour ? "avg incidents / hour" : "avg incidents / day", nameGap: 10, nameTextStyle: { align: "left" }, splitNumber: 3 },
       tooltip: {
         trigger: "axis",
+        axisPointer: { type: "shadow" },
         formatter: (p) => {
-          const items = p as { seriesName: string; dataIndex: number; value: number }[];
+          const items = p as { seriesName: string; dataIndex: number; value: number | null }[];
           const i = items[0].dataIndex;
           const k = keys[i];
-          return `<b>${cats[i]}</b><br/>Dry weather: ${items.find((x) => x.seriesName === "Dry weather")?.value} per day — ${fmtInt(w.incidents.dry[k])} incidents over ${fmtInt(w.dryHours)} dry hrs<br/>Wet weather: ${items.find((x) => x.seriesName === "Wet weather")?.value} per day — ${fmtInt(w.incidents.wet[k])} incidents over ${fmtInt(w.wetHours)} wet hrs`;
+          const v = (name: string) => items.find((x) => x.seriesName === name)?.value;
+          const fmtV = (x: number | null | undefined) => (x == null ? "no hours of it" : `${x} ${unit}`);
+          return `<b>${cats[i]}</b>${wxSlotPhrase ? ` · ${wxSlotPhrase}` : ""}<br/>Dry weather: ${fmtV(v("Dry weather"))}, ${fmtInt(w.dry[k])} incidents over ${fmtInt(w.dryHours)} dry hrs<br/>Wet weather: ${fmtV(v("Wet weather"))}, ${fmtInt(w.wet[k])} incidents over ${fmtInt(w.wetHours)} wet hrs`;
         },
       },
-      legend: { show: true, bottom: 0, left: "center", padding: 0 },
+      legend: { show: true, bottom: 0, left: "center", padding: 0, textStyle: { fontSize: 12 } },
+      /* Thicker bars (testers IN-7: "make the bars thicker"): two categories in a half-width card left the
+         26 px cap looking like hairlines in a wide plot. A value label on each so the pair reads without
+         hovering, and a sliver of surface between the two bars of a pair so they read as two marks. */
       series: [
-        { name: "Dry weather", type: "bar", data: keys.map((k) => rate(w.incidents.dry[k], w.dryHours)), itemStyle: { color: RAMP[2], borderRadius: [4, 4, 0, 0] }, barMaxWidth: 26 },
-        { name: "Wet weather", type: "bar", data: keys.map((k) => rate(w.incidents.wet[k], w.wetHours)), itemStyle: { color: RAMP[0], borderRadius: [4, 4, 0, 0] }, barMaxWidth: 26 },
+        { name: "Dry weather", type: "bar", data: keys.map((k) => rate(w.dry[k], w.dryHours)), itemStyle: { color: RAMP[2], borderRadius: [4, 4, 0, 0] }, barMaxWidth: 64, barGap: "4%", barCategoryGap: "30%", label: { show: true, position: "top", fontSize: 12, fontWeight: 600, color: chartTheme.ink } },
+        { name: "Wet weather", type: "bar", data: keys.map((k) => rate(w.wet[k], w.wetHours)), itemStyle: { color: RAMP[0], borderRadius: [4, 4, 0, 0] }, barMaxWidth: 64, label: { show: true, position: "top", fontSize: 12, fontWeight: 600, color: chartTheme.ink } },
       ],
     };
-  }, [data, derived, chartTheme]);
+  }, [data, derived, weatherSlot, wxSlotPhrase, chartTheme]);
 
   // ---------- Click-to-inspect ----------
   const filtersNote = `${weather === "all" ? "All weather" : weather === "wet" ? "Wet hours only (rainfall > 0.3 mm)" : "Dry hours only"}${data ? ` · ${data.range.from} to ${data.range.to}` : ""}`;
@@ -692,7 +802,7 @@ export default function IncidentPage() {
     if (!derived) return;
     setDetail({
       title: kmLabelBoth(r.km_bin),
-      subtitle: "Incident hotspot (5-km segment) · post = roadside km-post, Balintawak = 12",
+      subtitle: "Incident hotspot (5-km segment of official km posts, Balintawak = Km 12)",
       rows: [
         ["Nearest exit", exitAt.nameForBin(r.km_bin) ?? "—"],
         ["Total incidents", fmtInt(r.total)],
@@ -736,22 +846,31 @@ export default function IncidentPage() {
   };
 
   const onWeatherClick = (p: { dataIndex: number; seriesName?: string }) => {
-    if (!data || !derived) return;
+    if (!data || !derived || !weatherSlot) return;
     const keys = ["accident", "breakdown"] as const;
     const k = keys[p.dataIndex];
     const w = data.weather;
+    const s = weatherSlot;
+    const unit = s.perHour ? "per hour" : "per day";
+    const fmtRate = (n: number, hours: number) => {
+      const r = wxRate(n, hours, s.perHour);
+      return r == null ? "—" : `${r.toFixed(s.perHour ? 2 : 1)} ${unit}`;
+    };
     setDetail({
-      title: `${SOURCE_LABEL[k]} — weather impact`,
+      title: `${SOURCE_LABEL[k]} — weather impact${wxSlotPhrase ? ` · ${wxSlotPhrase}` : ""}`,
       subtitle: "Wet = expressway-average rainfall > 0.3 mm in that hour",
       rows: [
-        ["Incidents in dry hours", `${fmtInt(w.incidents.dry[k])} over ${fmtInt(w.dryHours)} hrs`],
-        ["Incidents in wet hours", `${fmtInt(w.incidents.wet[k])} over ${fmtInt(w.wetHours)} hrs`],
-        ["Rate in dry weather", w.dryHours > 0 ? `${((w.incidents.dry[k] / w.dryHours) * 24).toFixed(1)} per day` : "—"],
-        ["Rate in wet weather", w.wetHours > 0 ? `${((w.incidents.wet[k] / w.wetHours) * 24).toFixed(1)} per day` : "—"],
-        ["Avg jam speed (dry)", w.jam.dry ? `${w.jam.dry.speed} km/h` : "—"],
-        ["Avg jam speed (wet)", w.jam.wet ? `${w.jam.wet.speed} km/h` : "—"],
+        ["Incidents in dry hours", `${fmtInt(s.dry[k])} over ${fmtInt(s.dryHours)} hrs`],
+        ["Incidents in wet hours", `${fmtInt(s.wet[k])} over ${fmtInt(s.wetHours)} hrs`],
+        ["Rate in dry weather", fmtRate(s.dry[k], s.dryHours)],
+        ["Rate in wet weather", fmtRate(s.wet[k], s.wetHours)],
+        // Jam speeds are whole-range only: the API does not cut them by day or hour.
+        ["Avg jam speed (dry, whole Range)", w.jam.dry ? `${w.jam.dry.speed} km/h` : "—"],
+        ["Avg jam speed (wet, whole Range)", w.jam.wet ? `${w.jam.wet.speed} km/h` : "—"],
       ],
-      note: "Rates are exposure-normalized: incidents ÷ hours with that weather, scaled to a 24-hour day. Wet hours are much rarer than dry, so raw counts can't be compared directly.",
+      note: s.perHour
+        ? "Rates are exposure-normalized: incidents ÷ hours with that weather in the chosen hour of the day. Wet hours are much rarer than dry, so raw counts can't be compared directly."
+        : "Rates are exposure-normalized: incidents ÷ hours with that weather, scaled to a 24-hour day. Wet hours are much rarer than dry, so raw counts can't be compared directly.",
     });
   };
 
@@ -781,8 +900,19 @@ export default function IncidentPage() {
 
   // A skeleton rather than an ellipsis: the tile keeps its height, so the KPI
   // row does not resize under the cursor as the numbers arrive.
+  /* "No data" is kept for a value the loaded data genuinely lacks; a request that failed says Unavailable,
+     and the hint under it says it did not load rather than printing a dash (19 Oct 2026, testers IN-2). */
   const kpiValue = (v: string | null) =>
-    loading && !data ? <KpiSkeleton /> : v == null ? <span className="inc-kpi-empty">No data</span> : <CountUpValue text={v} />;
+    loading && !data ? (
+      <KpiSkeleton />
+    ) : !data && error ? (
+      <span className="inc-kpi-empty">Unavailable</span>
+    ) : v == null ? (
+      <span className="inc-kpi-empty">No data</span>
+    ) : (
+      <CountUpValue text={v} />
+    );
+  const pendingHint = error ? "Not loaded: see the note above" : "Loading…";
 
   // One-glance explanation of what a KPI tile actually measures — same
   // portal-based popup used on every Predictive-tab card title.
@@ -792,17 +922,26 @@ export default function IncidentPage() {
   // One sticky bar under the mode switch, on every tab, so the strip above the
   // page means the same thing whichever tab is open. Defined once rather than
   // duplicated, so a change to Range or Weather can't drift between the tabs.
+  /* The same bar as the Traffic tab's (19 Oct 2026, user request): Custom is a Descriptive control only.
+     The forecast and plan cards take the presets, which set how much history they read. */
+  /* Custom stays a Descriptive control. Carried onto Predictive or Prescriptive it used to send an empty
+     from/to, and the forecast card waited forever for a range it would never get (19 Oct 2026). Those tabs
+     read 12 mo instead, and show it, until a preset is pressed; Descriptive keeps the custom dates. */
+  const presetRange: "3" | "12" | "all" = rangeMode === "custom" ? "12" : rangeMode;
+  const shownRange = activeTab === "Descriptive" ? rangeMode : presetRange;
+
   const rangeFilter = (
     <div className={styles.filterGroup}>
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)" }} aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="3" stroke="currentColor" strokeWidth="1.4" /><path d="M2 6h12" stroke="currentColor" strokeWidth="1.4" /><path d="M5.5 2V4M10.5 2V4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
       <span className={styles.filterLabel}>Range</span>
-      <div className={styles.segmented}>
-        {(["3", "12", "all", "custom"] as const).map((m) => (
-          <button key={m} className={rangeMode === m ? "active" : ""} aria-pressed={rangeMode === m} onClick={() => setRangeMode(m)}>
+      <div className={styles.segmented} role="group" aria-label="Range">
+        {(activeTab === "Descriptive" ? (["3", "12", "all", "custom"] as const) : (["3", "12", "all"] as const)).map((m) => (
+          <button key={m} className={shownRange === m ? "active" : ""} aria-pressed={shownRange === m} onClick={() => setRangeMode(m)}>
             {RANGE_LABEL[m]}
           </button>
         ))}
       </div>
-      {rangeMode === "custom" && (
+      {activeTab === "Descriptive" && rangeMode === "custom" && (
         <DateRangePicker
           startDate={customFrom}
           minDate={data?.meta.minDate}
@@ -819,8 +958,9 @@ export default function IncidentPage() {
 
   const weatherFilter = (
     <div className={styles.filterGroup}>
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)" }} aria-hidden="true"><path d="M4.5 11.5a3 3 0 1 1 .4-5.97 4 4 0 0 1 7.75 1.1A2.5 2.5 0 0 1 12 11.5H4.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" /><path d="M6 13.2v1M9 13.2v1M12 13.2v1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
       <span className={styles.filterLabel}>Weather</span>
-      <div className={styles.segmented}>
+      <div className={styles.segmented} role="group" aria-label="Weather">
         {(["all", "dry", "wet"] as const).map((w) => (
           <button key={w} className={weather === w ? "active" : ""} aria-pressed={weather === w} onClick={() => setWeather(w)}>
             {w === "all" ? "All" : w === "dry" ? "Dry" : "Wet"}
@@ -851,13 +991,13 @@ export default function IncidentPage() {
   // filter's own setter with its default value: exactly what pressing the
   // default pill (12 mo, All, All types) already does.
   const activeFilters: { key: string; label: string; clear: () => void }[] = [];
-  if (rangeMode !== "12")
+  if (shownRange !== "12")
     activeFilters.push({
       key: "range",
-      label: rangeMode === "custom" ? (customFrom && customTo ? `${customFrom} – ${customTo}` : "Custom range") : `Range ${RANGE_LABEL[rangeMode]}`,
+      label: shownRange === "custom" ? (customFrom && customTo ? `${customFrom} – ${customTo}` : "Custom range") : `Range ${RANGE_LABEL[shownRange]}`,
       clear: () => setRangeMode("12"),
     });
-  if (activeTab !== "Prescriptive" && weather !== "all")
+  if (activeTab === "Descriptive" && weather !== "all")
     activeFilters.push({ key: "weather", label: weather === "wet" ? "Wet hours" : "Dry hours", clear: () => setWeather("all") });
   if (activeTab === "Descriptive" && source !== "all")
     activeFilters.push({ key: "source", label: SOURCE_LABEL[source], clear: () => setSource("all") });
@@ -896,8 +1036,59 @@ export default function IncidentPage() {
   const dryBreakdownRate = data && data.weather.dryHours > 0 ? (data.weather.incidents.dry.breakdown / data.weather.dryHours) * 24 : null;
   /* Incident types in view: what the hour x day grid cannot say. Same Range, Weather
      and Incident type as everything else on the tab, from rows already loaded. */
-  const incidentMix = (() => {
+  /* The hovered or clicked cell, broken into its types (19 Oct 2026, testers IN-8: "use the white space below
+     the heatmap for incident-type details"). Falls back to the whole grid when no cell is in focus. */
+  const renderIncidentMix = (focus: { cell: HeatCell; pinned: boolean } | null, clearPin: () => void) => {
     if (!data || error) return null;
+    const cellRow = focus ? data.heatmap.find((r) => r.dow === focus.cell.dow && r.hour === focus.cell.hour) : null;
+    if (focus && cellRow && cellRow.accident != null) {
+      const dowCount = [0, 0, 0, 0, 0, 0, 0];
+      const end = new Date(`${data.range.to}T00:00:00`);
+      for (const d = new Date(`${data.range.from}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) dowCount[d.getDay()]++;
+      const days = Math.max(1, dowCount[focus.cell.dow]);
+      const dayName = DOW_LABELS[DOW_ORDER.indexOf(focus.cell.dow)];
+      const acc = cellRow.accident ?? 0;
+      const brk = cellRow.breakdown ?? 0;
+      const all = acc + brk;
+      const pct = (n: number) => (all > 0 ? `${((n / all) * 100).toFixed(0)}%` : "0%");
+      // This weekday's average hour, so the cell reads against its own day rather than the week.
+      const dayTotal = data.heatmap.filter((r) => r.dow === focus.cell.dow).reduce((s, r) => s + r.v, 0);
+      const vsDay = dayTotal > 0 ? all / (dayTotal / 24) : null;
+      return (
+        <div className="inc-mix" aria-live="polite">
+          <div className="inc-mix-head">
+            <h4 className="inc-subhead">
+              {dayName} · {fmtHour(focus.cell.hour)} – {fmtHour((focus.cell.hour + 1) % 24)}
+            </h4>
+            {focus.pinned ? (
+              <button type="button" className="btn-muted inc-mix-clear" onClick={clearPin}>Show whole grid</button>
+            ) : (
+              <span className="inc-mix-hint">Click the cell to keep it here</span>
+            )}
+          </div>
+          <div className="inc-mix-bar" role="img" aria-label={`${pct(acc)} accidents, ${pct(brk)} breakdowns`}>
+            {acc > 0 && <span style={{ width: `${(acc / all) * 100}%`, background: TYPE_HUES[0] }} />}
+            {brk > 0 && <span style={{ width: `${(brk / all) * 100}%`, background: TYPE_HUES[2] }} />}
+          </div>
+          <div className="inc-mix-rows">
+            <div className="inc-mix-row">
+              <i style={{ background: TYPE_HUES[0] }} aria-hidden="true" />
+              <span className="inc-mix-name">Accidents</span>
+              <span className="inc-mix-count">{fmt1(acc / days)} / day · {pct(acc)}</span>
+            </div>
+            <div className="inc-mix-row">
+              <i style={{ background: TYPE_HUES[2] }} aria-hidden="true" />
+              <span className="inc-mix-name">Breakdowns</span>
+              <span className="inc-mix-count">{fmt1(brk / days)} / day · {pct(brk)}</span>
+            </div>
+          </div>
+          <p className="inc-mix-facts" style={{ gridColumn: "auto" }}>
+            <b>{fmtInt(all)}</b> incidents across {fmtInt(dowCount[focus.cell.dow])} {dayName}s in the Range
+            {vsDay != null && <> · <b>{vsDay.toFixed(1)}×</b> {dayName}&apos;s average hour</>}.
+          </p>
+        </div>
+      );
+    }
     const acc = data.dailyTrend.reduce((s, r) => s + r.accident, 0);
     const brk = data.dailyTrend.reduce((s, r) => s + r.breakdown, 0);
     const all = acc + brk;
@@ -914,7 +1105,10 @@ export default function IncidentPage() {
     const topBrkCause = data.breakdownCauses[0];
     return (
       <div className="inc-mix">
-        <h4 className="inc-subhead">Incident types in view</h4>
+        <div className="inc-mix-head">
+          <h4 className="inc-subhead">Incident types in view</h4>
+          <span className="inc-mix-hint">Hover a cell for its own split</span>
+        </div>
         <div className="inc-mix-bar" role="img" aria-label={`${pct(acc)} accidents, ${pct(brk)} breakdowns`}>
           {acc > 0 && <span style={{ width: `${(acc / all) * 100}%`, background: TYPE_HUES[0] }} title={`Accidents: ${fmtInt(acc)} (${pct(acc)})`} />}
           {brk > 0 && <span style={{ width: `${(brk / all) * 100}%`, background: TYPE_HUES[2] }} title={`Breakdowns: ${fmtInt(brk)} (${pct(brk)})`} />}
@@ -947,9 +1141,9 @@ export default function IncidentPage() {
         </div>
       </div>
     );
-  })();
+  };
 
-  const answer = (value: ReactNode, label: ReactNode) =>
+  const answer =(value: ReactNode, label: ReactNode) =>
     data && !error ? (
       <p className="inc-answer inc-chart-answer">
         <span className="inc-answer-value">{value}</span>
@@ -963,20 +1157,16 @@ export default function IncidentPage() {
 
       {modeTabs}
 
-      {/* Sticky filter bar: Predictive shows Range + Weather, Prescriptive Range
-          only, Descriptive adds Incident type and the "Updating…" note. */}
+      {/* Sticky filter bar, as on the Traffic tab: Predictive and Prescriptive take the Range presets only;
+          Descriptive adds Custom, Weather, Incident type and the "Updating…" note. The forecast card
+          carries its own Weather toggle (models fitted with or without rainfall). */}
       <div className={styles.filterRow}>
         {rangeFilter}
-        {activeTab !== "Prescriptive" && weatherFilter}
+        {activeTab === "Descriptive" && weatherFilter}
         {activeTab === "Descriptive" && sourceFilter}
         {activeTab === "Descriptive" && loading && data && <span className={styles.updating}>Updating…</span>}
         <span className={styles.spacer} />
         {filterChips}
-        {activeTab === "Descriptive" && data && (
-          <span className="inc-readout">
-            Data <b>{fmtDay(data.range.from)} – {fmtDay(data.range.to)}</b>
-          </span>
-        )}
       </div>
 
       <div className={styles.modeStage} key={activeTab}>
@@ -984,10 +1174,8 @@ export default function IncidentPage() {
           <>
             <div className={styles.spanFull}>
               <PredictiveIncidentChart
-                months={rangeMode === "custom" ? "all" : rangeMode}
-                from={rangeMode === "custom" ? customFrom : undefined}
-                to={rangeMode === "custom" ? customTo : undefined}
-                weather={weather}
+                months={presetRange}
+                weather="all"
                 onDataBoundsChange={setPredictiveDataBounds}
                 onWeatherApplicableChange={setWeatherApplicable}
               />
@@ -1005,23 +1193,17 @@ export default function IncidentPage() {
           <>
             <div className={styles.spanFull}>
               <PrescriptiveDeploymentPanel
-                months={rangeMode === "custom" ? "all" : rangeMode}
-                from={rangeMode === "custom" ? customFrom : undefined}
-                to={rangeMode === "custom" ? customTo : undefined}
+                months={presetRange}
               />
             </div>
             <div className={styles.spanFull}>
               <PatrolAlertWindowPanel
-                months={rangeMode === "custom" ? "all" : rangeMode}
-                from={rangeMode === "custom" ? customFrom : undefined}
-                to={rangeMode === "custom" ? customTo : undefined}
+                months={presetRange}
               />
             </div>
             <div className={styles.spanFull}>
               <ClearanceResponsePanel
-                months={rangeMode === "custom" ? "all" : rangeMode}
-                from={rangeMode === "custom" ? customFrom : undefined}
-                to={rangeMode === "custom" ? customTo : undefined}
+                months={presetRange}
               />
             </div>
           </>
@@ -1030,6 +1212,17 @@ export default function IncidentPage() {
         {activeTab === "Descriptive" && (
           <>
             {/* KPI strip: the answer, its context, the method behind the (i). */}
+            {error && (
+              <div className={`${styles.spanFull} inc-notice is-warning`} role="alert">
+                <AlertTriangle size={16} aria-hidden="true" />
+                <span>
+                  {data
+                    ? <>Couldn&apos;t refresh the incident analytics ({error}). The tiles and charts show the last loaded result.</>
+                    : <>Couldn&apos;t load the incident analytics ({error}), so the tiles below have no values yet. This is a connection problem, not an empty Range.</>}
+                </span>
+                <button type="button" className="btn-muted inc-retry" onClick={() => setReloadKey((k) => k + 1)}>Try again</button>
+              </div>
+            )}
             <div className={`${styles.kpiRow} ds-rise`}>
               <article className={styles.kpiTile}>
                 <span className={styles.kpiIcon} aria-hidden="true"><AlertTriangle size={15} /></span>
@@ -1044,10 +1237,12 @@ export default function IncidentPage() {
                       <span className={derived.deltaPct <= 0 ? styles.deltaUp : styles.deltaDown}>{fmtPct(derived.deltaPct)}</span>{" "}
                       vs previous period
                     </>
+                  ) : derived && data && data.range.from <= data.meta.minDate ? (
+                    "Range starts at the first record: no earlier period to compare"
                   ) : derived ? (
                     "No incidents in the previous period to compare against"
                   ) : (
-                    "—"
+                    pendingHint
                   )}
                 </p>
               </article>
@@ -1058,7 +1253,7 @@ export default function IncidentPage() {
                   {kpiInfo("Total people injured across all incidents in the Range, including incidents that also had a fatality.")}
                 </h3>
                 <div className={styles.kpiValue}>{kpiValue(data ? fmtInt(data.kpis.injuries) : null)}</div>
-                <p className={styles.kpiHint}>{data ? `${fmtInt(data.kpis.fatalities)} fatalities in range` : "—"}</p>
+                <p className={styles.kpiHint}>{data ? `${fmtInt(data.kpis.fatalities)} fatalities in range` : pendingHint}</p>
               </article>
               <article className={styles.kpiTile}>
                 <span className={styles.kpiIcon} aria-hidden="true"><Timer size={15} /></span>
@@ -1078,7 +1273,7 @@ export default function IncidentPage() {
                         ? "No breakdowns in this Range and Weather"
                         : data
                           ? `None of the ${fmtInt(data.kpis.avgTimeToFirstResponder.totalBreakdowns)} breakdowns in range has a dispatch response logged`
-                          : "breakdowns only"}
+                          : pendingHint}
                 </p>
               </article>
               <article className={styles.kpiTile}>
@@ -1090,25 +1285,25 @@ export default function IncidentPage() {
                 <div className={styles.kpiValue}>{kpiValue(derived?.topHotspot ? kmLabel(derived.topHotspot.km_bin) : null)}</div>
                 <p className={styles.kpiHint}>
                   {derived?.topHotspot && derived.hotspotTotal > 0
-                    ? `Post ${postRangeForBin(derived.topHotspot.km_bin)} · near ${exitAt.nameForBin(derived.topHotspot.km_bin) ?? "—"} · ${((derived.topHotspot.total / derived.hotspotTotal) * 100).toFixed(1)}% of located incidents`
+                    ? `${kmLabel(derived.topHotspot.km_bin)} · near ${exitAt.nameForBin(derived.topHotspot.km_bin) ?? "—"} · ${((derived.topHotspot.total / derived.hotspotTotal) * 100).toFixed(1)}% of located incidents`
                     : data
                       ? "No incident in this Range and Weather has a resolved location"
-                      : "—"}
+                      : pendingHint}
                 </p>
               </article>
               <article className={styles.kpiTile}>
                 <span className={styles.kpiIcon} aria-hidden="true"><CloudRain size={15} /></span>
                 <h3>
                   Crash Rate in Rain
-                  {kpiInfo("Road and motorcycle crashes per day during rainy hours vs. dry hours, normalized for how often each occurs. Above 1× means rain sees more crashes per hour of exposure.")}
+                  {kpiInfo("Accidents (crashes) per day during rainy hours vs. dry hours, normalized for how often each occurs. Above 1× means rain sees more crashes per hour of exposure. Always compares both weathers, so the Weather filter does not change it.")}
                 </h3>
                 <div className={styles.kpiValue}>{kpiValue(derived?.rainMultiplier != null ? `${derived.rainMultiplier.toFixed(2)}×` : null)}</div>
                 <p className={styles.kpiHint}>
                   {derived
                     ? derived.rainMultiplier != null
-                      ? `${derived.wetRate.toFixed(1)} vs ${derived.dryRate.toFixed(1)} crashes/day, wet vs dry`
+                      ? `${derived.wetRate.toFixed(1)} vs ${derived.dryRate.toFixed(1)} crashes/day, wet vs dry${weather !== "all" ? " · always both weathers" : ""}`
                       : derived.rainEmptyReason
-                    : "—"}
+                    : pendingHint}
                 </p>
               </article>
             </div>
@@ -1157,7 +1352,7 @@ export default function IncidentPage() {
                 <div className={styles.headText}>
                   <h3>
                     When Incidents Happen
-                    <InfoTooltip text="Average incidents per day by hour (weekdays vs. weekends) or by day of week, normalized for how many of each day type are actually in the Range — so 5 weekdays vs. 2 weekend days compare fairly." />
+                    <InfoTooltip text="Average incidents per day by hour (weekdays vs. weekends) or by day of week, normalized for how many of each day type are actually in the Range — so 5 weekdays vs. 2 weekend days compare fairly. By day, the busiest day is the deeper, labelled bar." />
                   </h3>
                 </div>
                 <div className={styles.segmentedSmall}>
@@ -1183,7 +1378,7 @@ export default function IncidentPage() {
                 <div className={styles.headText}>
                   <h3>
                     Hotspots by Km Segment
-                    <InfoTooltip text="Top 10 km segments by total located incidents in the Range. Hover a bar for its injury and fatality counts." />
+                    <InfoTooltip text="Top 10 km segments by total located incidents in the Range, each named by its nearest exit. Bar shade repeats the length: deeper purple = more incidents. Hover a bar for its injury and fatality counts." />
                   </h3>
                 </div>
                 <button
@@ -1255,22 +1450,68 @@ export default function IncidentPage() {
                 <div className={styles.headText}>
                   <h3>
                     Dry vs Wet: Incidents per Day
-                    <InfoTooltip text="Average incidents per day by type, dry vs. wet hours — normalized by hours of exposure (× 24) so rare wet hours compare fairly against far more abundant dry ones, not raw counts." />
+                    <InfoTooltip text="Average incidents per day by type, dry vs. wet hours — normalized by hours of exposure (× 24) so rare wet hours compare fairly against far more abundant dry ones, not raw counts. Day and Hour narrow both sides to the same slots; choosing an hour reads per hour of that weather instead of per day." />
                   </h3>
                 </div>
+                {/* Day and Hour (testers IN-7). Card-local: they narrow this comparison only, never the tab. */}
+                <div className={styles.heroFilterGroup} style={{ flexWrap: "wrap", rowGap: 6 }}>
+                  <span className={styles.heroFilterLabel}>Day</span>
+                  <CustomSelect
+                    value={wxDay}
+                    onChange={(v) => setWxDay(v as WxDay)}
+                    disabled={weatherSlot?.available === false}
+                    title={weatherSlot?.available === false ? "Reload the page: this response predates the day and hour breakdown" : undefined}
+                    options={[
+                      { label: "Every day", value: "all" },
+                      { label: "Weekdays", value: "weekday" },
+                      { label: "Weekends", value: "weekend" },
+                      ...DOW_ORDER.map((d, i) => ({ label: DOW_LABELS[i], value: String(d) })),
+                    ]}
+                  />
+                  <span className={styles.heroFilterLabel}>Hour</span>
+                  <CustomSelect
+                    value={wxHour}
+                    onChange={(v) => setWxHour(v as WxHour)}
+                    disabled={weatherSlot?.available === false}
+                    options={[{ label: "All hours", value: "all" }, ...Array.from({ length: 24 }, (_, h) => ({ label: `${fmtHour(h)} – ${fmtHour((h + 1) % 24)}`, value: String(h) }))]}
+                  />
+                </div>
               </div>
-              {derived?.rainMultiplier != null &&
-                answer(
-                  `${derived.rainMultiplier.toFixed(2)}×`,
+              {(() => {
+                if (!weatherSlot) return null;
+                const s = weatherSlot;
+                if (!s.filtered) {
+                  return derived?.rainMultiplier != null
+                    ? answer(
+                        `${derived.rainMultiplier.toFixed(2)}×`,
+                        <>
+                          crash rate in wet vs dry hours
+                          {wetBreakdownRate != null && dryBreakdownRate != null ? (
+                            <>
+                              {" "}· breakdowns <b>{wetBreakdownRate.toFixed(1)}</b> vs <b>{dryBreakdownRate.toFixed(1)}</b> per day
+                            </>
+                          ) : null}
+                        </>
+                      )
+                    : null;
+                }
+                // The slot's own multiplier, on the same accidents-only rule as the KPI tile.
+                const wetR = wxRate(s.wet.accident, s.wetHours, s.perHour);
+                const dryR = wxRate(s.dry.accident, s.dryHours, s.perHour);
+                const mult = wetR != null && dryR != null && dryR > 0 && source !== "breakdown" ? wetR / dryR : null;
+                return answer(
+                  mult != null ? `${mult.toFixed(2)}×` : "—",
                   <>
-                    crash rate in wet vs dry hours
-                    {wetBreakdownRate != null && dryBreakdownRate != null ? (
-                      <>
-                        {" "}· breakdowns <b>{wetBreakdownRate.toFixed(1)}</b> vs <b>{dryBreakdownRate.toFixed(1)}</b> per day
-                      </>
-                    ) : null}
+                    {mult != null ? "crash rate in wet vs dry hours" : source === "breakdown" ? "crash rate: Incident type is set to Breakdowns" : "no crash rate: one weather has no hours or no crashes here"} on <b>{wxSlotPhrase}</b>
+                    {" "}· <b>{fmtInt(s.wetHours)}</b> wet and <b>{fmtInt(s.dryHours)}</b> dry hours
                   </>
-                )}
+                );
+              })()}
+              {weatherSlot?.filtered && weatherSlot.wetHours > 0 && weatherSlot.wetHours < 24 && (
+                <p className="inc-caption" style={{ margin: "-6px 0 10px" }}>
+                  Only {fmtInt(weatherSlot.wetHours)} wet hours fall in this slot, so the wet rate rests on few hours and moves a lot with each incident.
+                </p>
+              )}
               <div className={styles.chartBody}>{chartFrame(weatherChart, "No weather data in range", onWeatherClick)}</div>
             </article>
 
@@ -1289,8 +1530,7 @@ export default function IncidentPage() {
                 <div className={styles.placeholder} style={{ height: 200 }}>Live data unavailable — is the backend running on port 4000?</div>
               ) : data && data.heatmap.length > 0 ? (
                 <>
-                  <HourDayHeatmap heatmap={data.heatmap} range={data.range} />
-                  {incidentMix}
+                  <HeatmapWithBreakdown heatmap={data.heatmap} range={data.range} renderMix={renderIncidentMix} />
                 </>
               ) : (
                 <div className={styles.placeholder} style={{ height: 200 }}>No data for the selected filters</div>

@@ -1,4 +1,5 @@
 import { db } from "../config/db.js";
+import { fmtKm, zeroToMeasured, KM_POST_START, kmMeasured } from "../lib/km-post.js";
 // Reused rather than duplicated: the corridor's one authoritative exit list
 // (see its own doc comment for why km is derived rather than hardcoded).
 // gold.ml_incident_severity_predictions stores each prediction's raw
@@ -32,8 +33,9 @@ const SEVERITY_LABEL: Record<number, string> = { 0: "Property Damage Only", 1: "
 // fit_cox_ph for why these are separate toggled views rather than every
 // curve on one chart, and for n: sample size behind this one curve, as low
 // as 15 for the thinnest "both" cells.
-// kmLo/kmHi: the 'km' dimension's raw corridor-relative segment bounds,
-// alongside the formatted "Km {lo}-{hi}" group label -- null for every other
+// kmLo/kmHi: the 'km' dimension's segment bounds as MEASURED km (converted
+// from the stored Balintawak = 0 values at read time), with the group label
+// rebuilt on the official km posts -- null for every other
 // dimension. Carried through so a future km-convention change can reformat
 // these numbers at read time instead of requiring a retrain, the same
 // reason train_incident_severity_models.py now stores them (see its
@@ -154,16 +156,14 @@ export async function getIncidentSeverityFromDb(): Promise<IncidentSeverityData 
         corridor_km: number; secondary_incident_risk: number | null; actual_had_secondary: boolean | null;
         predicted_clearance_min: number | null;
       }>(
-        // km_value here is the model's own training feature (DPWH km-post
-        // convention, per train_incident_severity_models.py) — NOT the same
-        // scale as nlex_exits' Balintawak-as-km-0 positions this gets
-        // compared against below. Corrected to corridor_km at read time with
-        // the same -12.0 offset silver.nlex_accident_events_clean applies,
-        // rather than re-exporting the gold table (see the km-offset
-        // investigation this fix came out of). The model itself doesn't need
-        // retraining: km_value was only ever a plain numeric feature there,
-        // never joined against the exit list.
-        `SELECT km_value - 12.0 AS corridor_km, secondary_incident_risk, actual_had_secondary, predicted_clearance_min
+        // km_value here is the model's own training feature, on the DPWH
+        // km-post convention (Balintawak ~ km 12) -- the same scale as the
+        // exit list it is compared against below, which is measured from
+        // Balintawak = Km 12 (lib/km-post.ts). So it is used as it is. It used
+        // to have 12 taken off, from when the exits ran Balintawak = 0; after
+        // they moved to the Km 12 scale that put every row ~12 km south.
+        // (Named corridor_km for the code below; it is a measured km.)
+        `SELECT km_value AS corridor_km, secondary_incident_risk, actual_had_secondary, predicted_clearance_min
          FROM gold.ml_incident_severity_predictions
          WHERE secondary_incident_risk IS NOT NULL`
       ),
@@ -272,15 +272,28 @@ export async function getIncidentSeverityFromDb(): Promise<IncidentSeverityData 
 
     const avg = avgRes.rows[0];
     return {
-      survivalCurve: curveRes.rows.map((r) => ({
-        group: r.group_label,
-        dimension: r.dimension,
-        timeMin: Number(r.time_min),
-        survivalProbability: Number(r.survival_probability),
-        n: r.n,
-        kmLo: r.km_lo == null ? null : Number(r.km_lo),
-        kmHi: r.km_hi == null ? null : Number(r.km_hi),
-      })),
+      survivalCurve: curveRes.rows.map((r) => {
+        // The 'km' groups are stored on the old Balintawak = 0 scale, labels
+        // included ("Km -12–8": the lowest quantile edge sits on a few rows
+        // with no usable position). Read back as measured km, and the label
+        // rebuilt from the official km posts every other page shows, with the
+        // low end held at the corridor's start (Km 12), never below it.
+        const kmLo = r.km_lo == null ? null : zeroToMeasured(Number(r.km_lo));
+        const kmHi = r.km_hi == null ? null : zeroToMeasured(Number(r.km_hi));
+        const group =
+          r.dimension === "km" && kmLo != null && kmHi != null
+            ? `Km ${fmtKm(Math.max(kmLo, kmMeasured(KM_POST_START)), 0)}–${fmtKm(kmHi, 0)}`
+            : r.group_label;
+        return {
+          group,
+          dimension: r.dimension,
+          timeMin: Number(r.time_min),
+          survivalProbability: Number(r.survival_probability),
+          n: r.n,
+          kmLo,
+          kmHi,
+        };
+      }),
       severityBreakdown,
       avgPredictedClearanceMin: avg?.avg_clearance == null ? null : Number(avg.avg_clearance),
       meanPredictedClearanceMin: avg?.avg_clearance_mean == null ? null : Number(avg.avg_clearance_mean),

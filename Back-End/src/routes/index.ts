@@ -11,10 +11,12 @@ import maintenanceRoutes from "./maintenance.routes.js";
 import auditLogRoutes from "./audit-log.routes.js";
 import uploadRoutes from "./upload.routes.js";
 import mobileConfigRoutes from "./mobile-config.routes.js";
+import authRoutes from "./auth.routes.js";
 
 const router = Router();
 
 router.use("/health", healthRoutes);
+router.use("/auth", authRoutes);
 router.use("/dashboard", dashboardRoutes);
 router.use("/traffic", trafficRoutes);
 router.use("/incident", incidentRoutes);

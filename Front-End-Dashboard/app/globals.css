@@ -83,7 +83,7 @@
 
   /* Type scale (the brief's, and nothing else): */
   --fs-micro: 10px;                          /* breadcrumb, nav group labels */
-  --fs-label: 11px;                          /* eyebrows, labels, table heads, pills */
+  --fs-label: 12px;                          /* eyebrows, labels, table heads, pills; 11px read too small (UAT A11Y-1) */
   --fs-caption: 15px;                        /* secondary prose, at body size, weight 300 */
   --fs-body: 15px;                           /* body, table cells, fields */
   --fs-title: 20px;                          /* section and card headlines */
@@ -252,7 +252,7 @@
     --signal-clear: #2fbf6b;
     --signal-slow: #f6c544;
     --signal-congested: #ff5a4a;
-    --signal-none: #586377;
+    --signal-none: #6b778c; /* 3.7:1 on navy; matches lib/map-palette.ts NO_DATA_DARK */
 
     --accent-traffic: #4f8dff;
     --accent-incident: #f7a86b;
@@ -316,7 +316,7 @@
   --signal-clear: #2fbf6b;
   --signal-slow: #f6c544;
   --signal-congested: #ff5a4a;
-  --signal-none: #586377;
+  --signal-none: #6b778c; /* 3.7:1 on navy; matches lib/map-palette.ts NO_DATA_DARK */
 
   --accent-traffic: #4f8dff;
   --accent-incident: #f7a86b;
@@ -3284,9 +3284,10 @@ body {
   transition: width 220ms ease, box-shadow 140ms ease;
   /* Pointable, because the queue's length and what it costs are stated here
      and nowhere else on this panel -- the exit rail describes an exit in both
-     directions, which is a different question. */
+     directions, which is a different question. The plain arrow, not the
+     question-mark help cursor testers took for a missing value (OV-8). */
   pointer-events: auto;
-  cursor: help;
+  cursor: pointer; /* opens the Live Map on this jam (20 Oct 2026) */
 }
 
 .ds-rd-jam:hover,
@@ -5420,7 +5421,7 @@ body {
   border-radius: 6px;
   background: var(--bg-inverse, #0f172a);
   color: #f8fafc;
-  font-size: 10px;
+  font-size: 11px; /* was 10 (A11Y-1) */
   font-weight: 700;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -5693,7 +5694,7 @@ body {
   color: var(--text-primary);
 }
 .nlex-pop-sub {
-  font-size: 10.5px;
+  font-size: 11.5px; /* was 10.5; nothing on a data popup under 11 px (A11Y-1) */
   font-weight: 500;
   color: var(--text-secondary);
   line-height: 1.3;
@@ -5734,7 +5735,7 @@ body {
 .nlex-pop-foot {
   padding: 7px 12px;
   border-top: 1px solid var(--border-default);
-  font-size: 10px;
+  font-size: 11px; /* was 10 (A11Y-1) */
   color: var(--text-muted);
   background: var(--bg-surface-hover);
 }
@@ -10682,8 +10683,10 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   flex-shrink: 0;
   /* 2ch for the digits themselves plus 8px (4px each side) of padding, not
      a width that only just fits two tabular-nums digits — "19" was clipping
-     against the box edge at the old 1.7em. */
-  width: calc(2ch + 8px);
+     against the box edge at the old 1.7em. The extra 2px is the 1px border on
+     each side, which border-box also takes out of the width (without it the
+     digits clipped to "1E : 5S" once the sandbox text went to 12px, UAT A11Y-1). */
+  width: calc(2ch + 10px);
   height: 22px;
   padding: 0 4px;
   border: 1px solid var(--border-default);
@@ -11973,8 +11976,9 @@ b, strong { font-weight: 600; }
   opacity: 0.68;
   animation: mc-breathe 3s ease-in-out infinite;
 }
-.mc-light.is-l { left: 21.95%; top: 61.51%; }
-.mc-light.is-r { left: 75.96%; top: 69.08%; }
+/* Lens and mirror centres measured on public/brand/navie.webp (20 Oct 2026). */
+.mc-light.is-l { left: 23.03%; top: 70.52%; }
+.mc-light.is-r { left: 74.68%; top: 75.43%; }
 @keyframes mc-breathe {
   0%, 100% { opacity: 0.55; }
   50%      { opacity: 0.8; }
@@ -11997,8 +12001,8 @@ b, strong { font-weight: 600; }
   mix-blend-mode: screen;
   animation: mc-hazard 1s steps(1, end) infinite;
 }
-.mc-hazard.is-l { left: 10.4%; top: 42.2%; }
-.mc-hazard.is-r { left: 91.7%; top: 55.1%; }
+.mc-hazard.is-l { left: 7.29%; top: 54.1%; }
+.mc-hazard.is-r { left: 94.38%; top: 60.99%; }
 @keyframes mc-hazard {
   0%   { opacity: 1; }
   50%  { opacity: 0; }
@@ -12033,7 +12037,8 @@ b, strong { font-weight: 600; }
   height: var(--mc-face, 28px);
   flex: none;
   border-radius: 50%;
-  background: url("/brand/nlex-mascot.png") no-repeat 61.4% 0% / 158% auto, color-mix(in srgb, var(--expressway-blue) 18%, transparent);
+  /* The new Navie (navie.webp, 20 Oct 2026): the cap and eyes, framed from the top centre. */
+  background: url("/brand/navie.webp") no-repeat 50% 4% / 150% auto, color-mix(in srgb, var(--expressway-blue) 18%, transparent);
   box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
@@ -13835,7 +13840,7 @@ h1, h2, h3, h4, h5 { letter-spacing: -0.01em; }
 .sandbox-trend .trend-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .sandbox-trend .trend-grid { stroke: var(--trend-grid); stroke-width: 1; }
 .sandbox-trend .trend-axis { stroke: var(--trend-axis); stroke-width: 1; }
-.sandbox-trend .trend-tick { fill: var(--trend-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.sandbox-trend .trend-tick { fill: var(--trend-muted); font-size: 11px; font-variant-numeric: tabular-nums; } /* 11 px floor (A11Y-1) */
 .sandbox-trend .trend-end { fill: var(--trend-ink-2); font-size: 11px; font-weight: 700; }
 .sandbox-trend .trend-dot { stroke: var(--trend-surface); stroke-width: 2; }
 .sandbox-trend .trend-base { stroke-width: 1.5; stroke-dasharray: 5 4; opacity: 0.85; }
@@ -13920,3 +13925,55 @@ h1, h2, h3, h4, h5 { letter-spacing: -0.01em; }
 }
 .sandbox-zoom-seg button:disabled { opacity: 0.4; cursor: default; }
 .sandbox-main.is-expanded .sandbox-zoom-seg span { color: #c3cbe0; }
+
+/* Info icons sit right after the title's last word on every page (16 Oct 2026, user request).
+   Headings laid out as flex rows put the title text and the icon in separate boxes, so a wrapped
+   title pushed the icon to the far end or onto its own line; they flow as plain text instead. */
+:is(h1, h2, h3, h4, h5, h6):has(> .info-tip) { display: block; }
+
+/* --- Narrative Explanation and Validation evidence, one look on every tab (16 Oct 2026) ---------
+   Narrative: the card's own text (what the read-out was based on) is a small muted line; the language
+   model's words sit in one labelled "AI summary" box, so generated text is never confused with the
+   card's measured figures. */
+.nc-narrative-context { font-size: var(--fs-label); letter-spacing: 0.2px; line-height: 1.5; color: var(--text-muted); }
+.nc-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  border-radius: var(--radius-md);
+  border: 1px dashed color-mix(in srgb, var(--color-purple) 45%, transparent);
+  background: color-mix(in srgb, var(--color-purple) 7%, var(--bg-surface));
+}
+.nc-ai-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--color-purple); }
+.nc-ai-label { font-size: var(--fs-label); font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; }
+.nc-ai-sub { font-size: var(--fs-label); color: var(--text-muted); }
+.nc-ai .nc-insight-takeaway { font-size: 15.5px; font-weight: 500; line-height: 1.55; }
+.nc-ai .nc-details { margin-top: 0; }
+.nc-insight-note { font-weight: 500; letter-spacing: 0.2px; text-transform: none; }
+
+/* Validation evidence: the title and "View" on one line, then the facts as one row of equal tiles
+   that fill the width and share one height; each tile is a small label over its value, the value
+   flowing as one line of text (a green "beats ..." note stays on the same line). */
+.ev-trust .nct-trust-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; width: 100%; text-align: left; }
+.ev-trust .nct-trust-title { margin: 0; }
+.ev-trust .nct-trust-toggle { margin-left: auto; }
+.ev-trust .nct-trust-break { flex-basis: 100%; height: 0; }
+.ev-trust .ev-facts {
+  flex: 1 1 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  align-items: stretch;
+  gap: 10px;
+}
+.ev-trust .ev-facts > * { order: 0 !important; }
+.ev-trust .nct-trust-pill {
+  display: block;
+  min-width: 0;
+  padding: 10px 14px 11px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  line-height: 1.45;
+}
+.ev-trust .nct-trust-k { display: block; margin-bottom: 4px; }
+.ev-trust .ev-facts > .nct-dim { align-self: center; }

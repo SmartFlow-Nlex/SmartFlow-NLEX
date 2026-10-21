@@ -10,6 +10,12 @@ const EmissionsAnalyticsQuerySchema = z.object({
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
+/* The Descriptive tab's Class control (17 Oct 2026): it has always sent vehicleClass, and zod stripped it
+   as an unknown key, so the filter did nothing. Coerced from the query string to the number the service takes. */
+const EmissionsDescriptiveQuerySchema = EmissionsAnalyticsQuerySchema.extend({
+  vehicleClass: z.coerce.number().int().min(1).max(3).optional().transform((v) => v as 1 | 2 | 3 | undefined),
+});
+
 /* The Prescriptive tab takes the same Range as the Descriptive one, plus its
    own policy input. heavyShiftPp is a TARGET the reader chooses, not an
    observed change — capped at the corridor's entire Class-3 share, since
@@ -32,7 +38,7 @@ export const getEmissionsPrescriptive = async (req: Request, res: Response) => {
 
 // GET /api/emissions/analytics — descriptive dashboard aggregates
 export const getEmissionsAnalytics = async (req: Request, res: Response) => {
-  const query = EmissionsAnalyticsQuerySchema.parse(req.query);
+  const query = EmissionsDescriptiveQuerySchema.parse(req.query);
   const data = await getEmissionsAnalyticsFromDb(query);
 
   if (!data) {

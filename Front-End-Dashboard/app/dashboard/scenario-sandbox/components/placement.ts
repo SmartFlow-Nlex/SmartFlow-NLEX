@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { Direction, EventSite } from "../scenarios/adapter";
 import type { FamilyKey } from "../scenarios/catalogue";
 import type { FacilityKind } from "../facilities";
+import { fmtKmRange } from "../../../../lib/km-post";
 
 /* ══════════════════════════════════════════════════════════════════════════════
    WHERE AN EVENT GOES
@@ -15,7 +16,7 @@ import type { FacilityKind } from "../facilities";
      - "here"                      — a click on the road, or on a booth;
      - "at that plaza"             — a toll plaza, service area or ramp, and which
        booths or pumps;
-     - "at Km 20.15"               — typed.
+     - "at Km 20.15"               — typed, as an official km post.
    Everything here is pure or a fetch; ScenarioPanel keeps the state.
 ══════════════════════════════════════════════════════════════════════════════ */
 
@@ -113,7 +114,7 @@ export function useHotspots(family: FamilyKey, direction: Direction, fromKm: num
 
 export type Candidate = {
   key: string;
-  /** "Km 20.10–20.20 · Lane 1" or "Meycauayan Toll Plaza (entry)". */
+  /** "Km 19.4–19.5 · Lane 1" (official km posts) or "Meycauayan Toll Plaza (entry)". */
   label: string;
   /** "51 recorded" and what that is out of. */
   detail: string;
@@ -137,7 +138,7 @@ export function candidatesFrom(hot: Hotspots | null, sites: readonly SiteOption[
     const mid = Math.min(toKm, Math.max(fromKm, (s.fromKm + s.toKm) / 2));
     out.push({
       key: `km:${s.fromKm}`,
-      label: `Km ${s.fromKm.toFixed(2)}–${s.toKm.toFixed(2)}${s.lane != null ? ` · Lane ${s.lane}` : ""}`,
+      label: `${fmtKmRange(s.fromKm, s.toKm, 2)}${s.lane != null ? ` · Lane ${s.lane}` : ""}`,
       detail: `${s.count.toLocaleString()} recorded${s.lane != null && s.laneShare != null ? `, ${Math.round(s.laneShare * 100)}% of those in a lane were in Lane ${s.lane}` : ""}`,
       count: s.count,
       place: { positionKm: mid, lane: s.lane, site: null, note: `Busiest 100 m of this stretch for this kind of event in the incident log.`, incomplete: false },

@@ -55,9 +55,9 @@ export type FacilitySpec = {
   turnFraction?: number;
   /** What the booths do: take payment, or issue a ticket. Null when untolled. */
   tollMode?: "pay" | "ticket" | null;
-  /** The km-post it represents, for labels. */
+  /** The MEASURED km it represents (lib/km-post.ts); labels print it with fmtKm() as the official km post. */
   km?: number;
-  /** The km-post of the interchange it belongs to, from the exit list: where the
+  /** The measured km of the interchange it belongs to, from the exit list: where the
    *  road would otherwise draw that interchange as a plain ramp wedge. */
   interchangeKm?: number;
   /** Where the numbers came from, in words an operator can check. */

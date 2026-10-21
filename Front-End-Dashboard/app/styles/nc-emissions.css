@@ -108,26 +108,17 @@
    Hour × weekday heat grid
    =========================================================================== */
 .viz-emissions .nc-em-heat-body { height: 300px; }
-.viz-emissions .nc-em-heat-key {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
-  margin-top: 10px;
-  font-size: var(--fs-label);
-  font-weight: 600;
-  letter-spacing: 1px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
+/* The grid's key is the shared RampKey now (17 Oct 2026, testers EM-8), styled by traffic.module.css. */
+
+/* Pollutant abbreviations carry their full name on hover (17 Oct 2026, testers EM-10). A dotted
+   underline in the text's own colour at half strength: visible as a hint in either theme, quiet in a title. */
+.viz-emissions abbr.nc-em-abbr {
+  text-decoration: underline dotted;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, currentColor 50%, transparent);
+  text-underline-offset: 0.2em;
+  cursor: help;
 }
-.viz-emissions .nc-em-heat-key i {
-  display: block;
-  width: 140px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  box-shadow: inset 0 0 0 1px var(--border-default);
-}
-.viz-emissions .nc-em-heat-unit { margin-left: 6px; letter-spacing: 2px; text-transform: uppercase; }
 
 /* ===========================================================================
    Predictive: the forecast cards
@@ -240,6 +231,27 @@
 }
 .viz-emissions .nc-em-seg > button:disabled,
 .viz-emissions .nc-em-seg > .nc-em-seg-off { opacity: 0.42; cursor: not-allowed; }
+/* A single offered option, stated rather than offered (17 Oct 2026, testers EM-9): drawn as the selected
+   chip, but with no hover or pointer, because there is nothing to choose. */
+.viz-emissions .nc-em-seg > .nc-em-seg-fixed {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--page-accent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--page-accent) 16%, transparent);
+  color: var(--text-primary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+/* The note beside it says why longer widths are missing, so it may run long: let it wrap, and mark it
+   as carrying more on hover. */
+.viz-emissions .fc-note.nc-em-hz-note { white-space: normal; }
+.viz-emissions .fc-note.nc-em-hz-note[title] { text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 0.2em; cursor: help; }
 
 /* What the chart shows: zones with their split counts, and the averaging pill. */
 .viz-emissions .nc-em-zones {
@@ -590,7 +602,6 @@
   .viz-emissions .nc-em-fc-top .nc-em-fc-head { flex-basis: 100%; }
   .viz-emissions .nc-em-controls { gap: 12px 18px; }
   .viz-emissions .nc-em-heat-body { height: 260px; }
-  .viz-emissions .nc-em-heat-key i { width: 96px; }
   .viz-emissions .nc-em-rows > div,
   .viz-emissions .nc-em-basis-rows > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .viz-emissions .nc-em-chip { white-space: normal; }
@@ -602,7 +613,11 @@
 }
 
 /* Action-card fields as small boxes (2026-10-15): icon, label and a written headline; the full text opens
-   below. Two tiers: what to do (larger), then the facts behind it (compact). */
+   below. Two tiers: what to do (larger), then the facts behind it (compact).
+   Dark mode (17 Oct 2026, testers EM-11.1: "text unreadable"): these rules leaned on --surface-card and
+   --color-primary, which no theme defines, so their light fallbacks applied in both themes. Each box sat on
+   70% white under dark mode's near-white text, and the blue links fell to about 3:1. They now read the
+   theme's own --bg-surface and --action. */
 .viz-emissions .nc-em-tiles {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
@@ -617,15 +632,15 @@
   min-width: 0;
   border: 1px solid var(--border-default);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-card, #fff) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 70%, transparent);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 6%, transparent);
   transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 .viz-emissions .nc-em-tile:has(.nc-em-tile-head:not(:disabled)):hover {
-  border-color: color-mix(in srgb, var(--color-primary, #2563eb) 45%, var(--border-default));
+  border-color: color-mix(in srgb, var(--action) 45%, var(--border-default));
   box-shadow: 0 4px 14px color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
-.viz-emissions .nc-em-tile.is-open { grid-column: 1 / -1; border-color: color-mix(in srgb, var(--color-primary, #2563eb) 45%, var(--border-default)); }
+.viz-emissions .nc-em-tile.is-open { grid-column: 1 / -1; border-color: color-mix(in srgb, var(--action) 45%, var(--border-default)); }
 .viz-emissions .nc-em-tiles.is-facts .nc-em-tile { background: color-mix(in srgb, var(--text-primary) 3%, transparent); box-shadow: none; }
 .viz-emissions .nc-em-tile-head {
   display: grid;
@@ -644,7 +659,7 @@
 }
 .viz-emissions .nc-em-tile.is-compact .nc-em-tile-head { padding: 9px 12px 10px; gap: 4px 6px; }
 .viz-emissions .nc-em-tile-head:disabled { cursor: default; }
-.viz-emissions .nc-em-tile-head:focus-visible { outline: 2px solid var(--color-primary, #2563eb); outline-offset: 2px; border-radius: 12px; }
+.viz-emissions .nc-em-tile-head:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; border-radius: 12px; }
 .viz-emissions .nc-em-tile-icon {
   grid-area: icon;
   display: grid;
@@ -652,8 +667,8 @@
   width: 26px;
   height: 26px;
   border-radius: 8px;
-  color: var(--color-primary, #2563eb);
-  background: color-mix(in srgb, var(--color-primary, #2563eb) 10%, transparent);
+  color: var(--action);
+  background: color-mix(in srgb, var(--action) 10%, transparent);
 }
 .viz-emissions .nc-em-tile.is-compact .nc-em-tile-icon { width: 22px; height: 22px; border-radius: 6px; }
 .viz-emissions .nc-em-tile.is-note .nc-em-tile-icon { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 12%, transparent); }
@@ -721,7 +736,7 @@
   cursor: pointer;
   border-radius: inherit;
 }
-.viz-emissions .nc-em-fold-row:focus-visible { outline: 2px solid var(--color-primary, #2563eb); outline-offset: -2px; }
+.viz-emissions .nc-em-fold-row:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
 .viz-emissions .nc-em-fold-title { font-size: 16px; font-weight: 600; color: var(--text-primary); }
 .viz-emissions .nc-em-fold-value { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .viz-emissions .nc-em-fold-value b { color: var(--text-primary); font-size: 16px; }
@@ -734,7 +749,7 @@
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-primary, #2563eb);
+  color: var(--action);
 }
 .viz-emissions .nc-em-fold-btn {
   justify-self: start;
@@ -747,7 +762,7 @@
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-primary, #2563eb);
+  color: var(--action);
   cursor: pointer;
 }
 .viz-emissions .nc-em-more-tabs {
@@ -770,9 +785,9 @@
   cursor: pointer;
 }
 .viz-emissions .nc-em-more-tabs button.is-on {
-  color: var(--color-primary, #2563eb);
-  border-color: color-mix(in srgb, var(--color-primary, #2563eb) 50%, var(--border-default));
-  background: color-mix(in srgb, var(--color-primary, #2563eb) 9%, transparent);
+  color: var(--action);
+  border-color: color-mix(in srgb, var(--action) 50%, var(--border-default));
+  background: color-mix(in srgb, var(--action) 9%, transparent);
 }
 .viz-emissions .nc-em-more-pane { display: grid; gap: 10px; }
 
@@ -810,7 +825,7 @@
 .viz-emissions .nc-em-takeaway {
   margin: 2px 0 0;
   padding: 8px 12px;
-  border-left: 3px solid var(--page-accent, var(--color-primary, #2563eb));
+  border-left: 3px solid var(--page-accent, var(--action));
   border-radius: 0 8px 8px 0;
   background: color-mix(in srgb, var(--page-accent, #2563eb) 7%, transparent);
   font-size: var(--fs-body);
@@ -857,9 +872,81 @@
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-primary, #2563eb);
+  color: var(--action);
 }
 .viz-emissions .nc-em-scenario-why[open] summary { margin-bottom: 6px; }
 .viz-emissions .nc-em-scenario-why p { margin: 0; max-width: 90ch; color: var(--text-secondary); line-height: 1.5; }
 .viz-emissions .nc-em-scenario-line > .nc-em-scenario-why:not([open]) { flex: 0 0 auto; order: 0; }
 .viz-emissions .nc-em-scenario-why ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; max-width: 95ch; color: var(--text-secondary); line-height: 1.5; }
+
+/* The recommendation strip above the ranked cards (19 Oct 2026, testers EM-11): the answer in four labelled
+   rows. Same row style as the evidence card's basis; the accent edge marks it as the panel's answer. */
+.viz-emissions .nc-em-rx-answer {
+  display: grid;
+  gap: 10px;
+  padding: 16px 22px 14px;
+  border-left: 3px solid var(--page-accent);
+}
+.viz-emissions .nc-em-rx-answer .nc-em-action-tag { color: var(--color-success); }
+.viz-emissions .nc-em-rx-answer .nc-em-rows > div { grid-template-columns: 96px minmax(0, 1fr); padding: 7px 0; }
+.viz-emissions .nc-em-rx-answer .nc-em-rows dd b { font-weight: 600; color: var(--text-primary); }
+@media (max-width: 640px) {
+  .viz-emissions .nc-em-rx-answer { padding: 14px 16px 12px; }
+  .viz-emissions .nc-em-rx-answer .nc-em-rows > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
+
+/* The shared loading and error card (prescriptiveShell's Empty) carries a slow-load note and a Try again
+   button that no stylesheet placed: the note ran on in the same line as the message, in the same weight.
+   Scoped here so it holds whatever the shared sheets later add. */
+.viz-emissions .inc-loading > span { display: grid; justify-items: center; gap: 8px; max-width: 62ch; text-align: center; }
+.viz-emissions .inc-loading-note { display: block; font-size: 13px; line-height: 1.5; color: var(--text-muted); }
+.viz-emissions .inc-loading > span::before {
+  content: "";
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--page-accent) 25%, transparent);
+  border-top-color: var(--page-accent);
+  animation: nc-em-spin 0.9s linear infinite;
+}
+@keyframes nc-em-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .viz-emissions .inc-loading > span::before { animation: none; }
+}
+.viz-emissions .inc-retry { display: inline-flex; margin-left: 10px; vertical-align: middle; }
+
+/* Prescriptive: a Range change keeps the last result on screen, faded, while the new one is computed
+   (19 Oct 2026, testers EM-11; the same treatment as the Incidents tab's .inc-busy-body). It stays
+   interactive: cards can still be opened and folded, and the Range control above is never dimmed. */
+.viz-emissions .nc-em-rx-busy { transition: opacity 0.18s ease; }
+.viz-emissions .nc-em-rx-busy[data-rx-busy="true"] { opacity: 0.5; }
+.viz-emissions .nc-em-rx-answer .nc-em-action-tag .inc-updating-badge { letter-spacing: 0.02em; }
+.viz-emissions .inc-status-line.nc-em-span { font-size: 13px; line-height: 1.5; }
+@media (prefers-reduced-motion: reduce) {
+  .viz-emissions .nc-em-rx-busy { transition: none; }
+}
+
+/* Fleet Mix vs Pollution Load's view controls (testers EM-5): the hero card's filter strip, wrapping on a
+   half-width card instead of running past its edge. */
+.viz-emissions .nc-em-fleet-ctl { flex-wrap: wrap; row-gap: 8px; }
+
+/* Larger small print on this tab's data text (19 Oct 2026, testers A11Y-1: "text and numbers too small").
+   The 11 px label step is the global token's, so it is raised here only, and through max() so a later
+   global increase still wins. Covers table heads, labelled-row keys, status tags, filter chips, the tiles'
+   labels and the heat grid's colour key. */
+.viz-emissions .nc-em-table th,
+.viz-emissions .nc-em-facts dt,
+.viz-emissions .nc-em-rows dt,
+.viz-emissions .nc-em-status,
+.viz-emissions .nc-em-chip,
+.viz-emissions .nc-em-answer-label,
+.viz-emissions .nc-em-rx-chart-head,
+.viz-emissions .nc-em-hz-label,
+.viz-emissions .nc-em-tile-label,
+.viz-emissions [class*="rampKeyEnd"],
+.viz-emissions [class*="rampKeyReadout"] { font-size: max(12px, var(--fs-label)); }
+.viz-emissions .nc-em-tile-more,
+.viz-emissions .nc-em-fold-cta,
+.viz-emissions .nc-em-fold-btn,
+.viz-emissions .nc-em-scenario-why summary { font-size: 13px; }
+.viz-emissions .nc-em-more-tabs button { font-size: 14px; }

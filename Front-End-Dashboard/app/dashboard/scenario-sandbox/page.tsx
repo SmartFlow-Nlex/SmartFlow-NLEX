@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { displayExitName, useNlexExits, type NlexExit } from "../../../lib/nlex-exits";
 import { lanesForSegment, laneSources } from "../../../lib/nlex-lanes";
+import { fmtKm, fmtKmRange, kmMeasured, kmPost } from "../../../lib/km-post";
 import { Car } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
-import ScenarioForecastPanel, { forecastIncidentsAt, forecastInflowAt, useScenarioForecast } from "../../../components/dashboard/ScenarioForecastPanel";
+import ScenarioForecastPanel, { forecastHour, forecastIncidentsAt, forecastInflowAt, useScenarioForecast } from "../../../components/dashboard/ScenarioForecastPanel";
 import ForecastDayPicker from "../../../components/dashboard/ForecastDayPicker";
 import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import filterStyles from "../traffic/traffic.module.css";
@@ -18,6 +19,7 @@ import {
   canvasMarks,
   describeBoundary,
   describeOwner,
+  formatClock,
   nextBoundaryAfter,
   roadOf,
   sceneMarks,
@@ -50,13 +52,14 @@ import { PAINT_WHITE, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFo
 import { drawMotorcycle } from "./motorcycleArt";
 import { useDirectionSim, type DirectionApi, type SharedRoadInputs } from "./useDirectionSim";
 import { getRecommendation } from "./recommendation";
-import { ReplayBuffer } from "./replay";
+import { REPLAY_HZ, ReplayBuffer } from "./replay";
 import {
   FACILITY_LABEL_PX,
   GUTTER_LANE_PX_MAX,
   gutterLanePx,
   hasBarrier,
   drawFacilityGround,
+  facilityWetAreas,
   drawFacilityOverlay,
   drawFacilityVehicles,
   drawParkedCars,
@@ -514,7 +517,7 @@ const hhmm2 = (h: number, m: number) => `${String(h).padStart(2, "0")}:${String(
 /** One proposed action as a line an operator can check before applying. */
 function describeAction(a: CommandAction, look: CommandLookup): string {
   const on = (d: Direction) => `on ${DIRECTION_NAME[d]}`;
-  const span = (f: number | null, t: number | null) => (f != null && t != null ? `, Km ${f.toFixed(2)}–${t.toFixed(2)}` : "");
+  const span = (f: number | null, t: number | null) => (f != null && t != null ? `, ${fmtKmRange(f, t, 2)}` : "");
   switch (a.type) {
     case "set_route": {
       const name = (id: number) => {
@@ -524,7 +527,7 @@ function describeAction(a: CommandAction, look: CommandLookup): string {
       return `Set the route ${name(a.originExitId)} → ${name(a.destinationExitId)}`;
     }
     case "frame":
-      return `Show Km ${a.fromKm.toFixed(2)}–${a.toKm.toFixed(2)}`;
+      return `Show ${fmtKmRange(a.fromKm, a.toKm, 2)}`;
     case "frame_place":
       return `Go to ${look.placeName(a.placeId)}`;
     case "set_view":
@@ -546,7 +549,7 @@ function describeAction(a: CommandAction, look: CommandLookup): string {
       const what = `${getTemplate(a.family).displayName}${detail ? ` (${detail})` : ""}`;
       const where = a.placeId
         ? `at ${look.placeName(a.placeId)}${a.site === "approach" ? ", on the approach" : a.stations.length ? `, ${a.site === "pump" ? "pump" : "booth"} ${a.stations.map((x) => x + 1).join(", ")}` : ""}`
-        : `${a.lane != null ? `in lane ${[a.lane, ...a.extraLanes].join(", ")}` : ""}${a.fromKm != null && a.toKm != null ? ` over Km ${a.fromKm.toFixed(2)}–${a.toKm.toFixed(2)}` : a.km != null ? ` at Km ${a.km.toFixed(2)}` : " mid-window"}`;
+        : `${a.lane != null ? `in lane ${[a.lane, ...a.extraLanes].join(", ")}` : ""}${a.fromKm != null && a.toKm != null ? ` over ${fmtKmRange(a.fromKm, a.toKm, 2)}` : a.km != null ? ` at Km ${fmtKm(a.km, 2)}` : " mid-window"}`;
       const when = a.atClock ? `starting at ${hhmm2(a.atClock.hour, a.atClock.minute)}` : a.startMinutes > 0 ? `starting in ${a.startMinutes} min` : "starting now";
       const long =
         a.duration.kind === "manual" ? `for ${a.duration.minutes} min`
@@ -596,6 +599,12 @@ const eventHasLane = (f: FamilyKey) => f !== "breakdown_shoulder" && f !== "rain
 const EVENT_MULTI_LANE = new Set<FamilyKey>(["multi_vehicle_collision", "overturned_vehicle", "flood", "scheduled_roadworks"]);
 
 const fmt = (n: number, d = 0) => n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+/** "Overturned vehicle #3, Heavy rain #4 and 2 more": a list of events kept to a line. */
+const eventList = (events: readonly { name: string }[]): string => {
+  const shown = events.slice(0, 2).map((e) => e.name);
+  const more = events.length - shown.length;
+  return more > 0 ? `${shown.join(", ")} and ${more} more` : shown.join(" and ");
+};
 
 export default function AiSandboxPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -611,6 +620,8 @@ export default function AiSandboxPage() {
   const placingArmedRef = useRef(false);
   const metricAccRef = useRef<number>(0);
   const simAccRef = useRef<number>(0);
+  /** Steps the loop has taken, both carriageways together: what lines the two replay recordings up (ReplayFrame.seq). */
+  const stepSeqRef = useRef<number>(0);
   /** Running cost of one sim.step(), ms, per direction — what a skip's estimated duration is worked out from. Null until the animation loop has stepped that direction. */
   const stepCostRef = useRef<Record<Direction, number | null>>({ NB: null, SB: null });
 
@@ -846,8 +857,8 @@ export default function AiSandboxPage() {
   const dirLabel = focusDirection === "NB" ? "Northbound" : "Southbound";
 
   const locationLabel = nearestExit
-    ? `${dirLabel} · Km ${fromKm.toFixed(2)}–${toKm.toFixed(2)} · ${(segLengthM / 1000).toFixed(2)} km · near ${displayExitName(nearestExit.exit_name)}`
-    : `${dirLabel} · Km ${fromKm.toFixed(2)}–${toKm.toFixed(2)}`;
+    ? `${dirLabel} · ${fmtKmRange(fromKm, toKm, 2)} · ${(segLengthM / 1000).toFixed(2)} km · near ${displayExitName(nearestExit.exit_name)}`
+    : `${dirLabel} · ${fmtKmRange(fromKm, toKm, 2)}`;
 
   // The render loop runs outside React, so these reach it through refs.
   const locationRef = useRef(locationLabel);
@@ -910,6 +921,50 @@ export default function AiSandboxPage() {
   const [replayHasEvent, setReplayHasEvent] = useState(false);
   const replayIndexRef = useRef<number | null>(null);
   replayIndexRef.current = replayIndex;
+  /* Whose recording the slider walks while reviewing. The other carriageway is shown at the same moment, found by
+     the loop's step counter (17 Oct 2026, testers SB-15: Both, the view the tab opens on, drew the live road
+     whatever the slider said, so scrubbing moved nothing). Pinned when review starts, so moving focus to the other
+     carriageway mid-review does not swap the recording under the slider. */
+  const [replayLead, setReplayLead] = useState<Direction>("NB");
+  const replayLeadRef = useRef<Direction>("NB");
+  replayLeadRef.current = replayLead;
+  /* Playing while reviewing means "catch up", however it was pressed: the button already did this, but Space in full
+     screen and a "play" command resumed the engine under a frozen frame, and the recording then moved on beneath
+     the slider (each new frame shifts the oldest out, so the same index became a different moment). */
+  useEffect(() => {
+    if (running && replayIndexRef.current !== null) setReplayIndex(null);
+  }, [running]);
+  /* Playing the recording back (19 Oct 2026, testers SB-15, second pass). Review used to be a frozen frame and a
+     slider: "Replay incident" stopped a second before the incident and nothing moved until the slider was dragged,
+     and the transport's Play meant "back to live", so the one way to watch it happen was to scrub by hand. It now
+     plays from there at the run's speed, can be paused and dragged at any point (a drag while playing carries on from
+     where it was dropped), and stops on the last recorded frame, which says so. The engine stays paused throughout. */
+  const [replayPlaying, setReplayPlaying] = useState(false);
+  const replayLenRef = useRef(0);
+  replayLenRef.current = replayLen;
+  useEffect(() => {
+    if (replayIndex === null) setReplayPlaying(false);
+  }, [replayIndex]);
+  useEffect(() => {
+    if (!replayPlaying) return;
+    /* Frames are recorded REPLAY_HZ times a simulated second, so at 1x one goes by every 125 ms. Ticks of 50 ms that
+       move on as many frames as are due keep a 10x replay from re-rendering the page sixty times a second. */
+    const TICK_MS = 50;
+    let due = 0;
+    const t = setInterval(() => {
+      const i = replayIndexRef.current;
+      if (i === null) return;
+      due += (TICK_MS / 1000) * simSpeed * REPLAY_HZ;
+      const n = Math.floor(due);
+      if (n === 0) return;
+      due -= n;
+      const last = replayLenRef.current - 1;
+      const next = Math.min(last, i + n);
+      setReplayIndex(next);
+      if (next >= last) setReplayPlaying(false);
+    }, TICK_MS);
+    return () => clearInterval(t);
+  }, [replayPlaying, simSpeed]);
 
   /* Full screen used to be the road and nothing else: the controls rail stayed
    * behind the overlay, so the one mode meant for watching the simulation was
@@ -1078,6 +1133,25 @@ export default function AiSandboxPage() {
     },
     onIncidentCoverage: setIncidentCovered,
   });
+  /* Picking a forecast day moves the clock to that day's busiest forecast hour (17 Oct 2026, testers SB-8). The hour
+     was set once, from the observed profile's peak, and never followed the day: a Saturday (forecast peak 11:00) or
+     a Sunday (16:00) still opened at the weekday evening peak, and the forecast was read at that hour. The day's
+     figures come over the network, so the pick is held until they arrive; a time set after it (the clock field, a
+     command) wins. */
+  const [hourFollowsDay, setHourFollowsDay] = useState<string | null>(null);
+  const pickForecastDay = (d: string) => {
+    setHourFollowsDay(d);
+    forecast.selectDay(d);
+  };
+  useEffect(() => {
+    if (hourFollowsDay === null || forecast.busy || forecast.data?.date !== hourFollowsDay) return;
+    const peak = forecastHour(forecast.data, null);
+    if (peak != null) {
+      setHourOfDay(peak);
+      setClockMinuteOffset(0);
+    }
+    setHourFollowsDay(null);
+  }, [hourFollowsDay, forecast.busy, forecast.data]);
   // What the road runs once a forecast is loaded: the chosen day at the chosen hour. Until then nothing is
   // overridden and the observed hourly profile drives it as before.
   const loadedForecast = forecastFollowing ? forecast.data : null;
@@ -1125,6 +1199,8 @@ export default function AiSandboxPage() {
   /** The carriageway the single-road things act on (see focusedDirection). NB-only/SB-only: this IS the (only) active direction. */
   const focused = byDirection[focusDirection];
   const both = view === "Both";
+  /** A recording of the run now on the road, on a carriageway on screen: what the Replay button needs to be offered. */
+  const replayAvailable = activeDirections.some((d) => replayRef.current[d].isOf(byDirection[d].simRef.current) && replayRef.current[d].length >= 2);
 
   /* ── Which carriageway a control or a click acts on ───────────────────────
    *
@@ -1263,6 +1339,12 @@ export default function AiSandboxPage() {
   const [repResult, setRepResult] = useState<ReplicationResult | null>(null);
   const [repProgress, setRepProgress] = useState<number | null>(null);
   const repCancel = useRef(false);
+  /* Which carriageway and set-up a result was run on, and whether a run was cut short by an event (17 Oct 2026,
+     testers SB-16.3). The block on timed events was there, but only as a disabled button and a line that Both mode,
+     the view the tab opens on, replaced with its own; an event added mid-run let the run finish on the set-up from
+     before it (and disabled its Stop button); and a result from before an event stayed on screen unlabelled. */
+  const [repFor, setRepFor] = useState<{ direction: Direction; setup: string } | null>(null);
+  const [repStopped, setRepStopped] = useState(false);
 
   /* ── Reset ─────────────────────────────────────────────────────────────────
    *
@@ -1300,6 +1382,8 @@ export default function AiSandboxPage() {
     if (repProgress != null) { repCancel.current = true; return; }
     repCancel.current = false;
     setRepResult(null);
+    setRepStopped(false);
+    setRepFor({ direction: focusDirection, setup: focused.anyIntervention ? focused.interventionSummary : "a clear road" });
     setRepProgress(0);
     const gen = replicate(
       {
@@ -1339,7 +1423,18 @@ export default function AiSandboxPage() {
       setTimeout(pump, 0);
     };
     setTimeout(pump, 0);
-  }, [both, repProgress, repRuns, segLengthM, classProfile, focused]);
+  }, [both, repProgress, repRuns, segLengthM, classProfile, focused, focusDirection]);
+
+  // An event added (or Both chosen) while a run is going: the run was set up without it, so it stops rather than
+  // finish and be read as the scenario's. Its Stop button is disabled from that moment, so it could not be stopped by hand.
+  const repEvents = activeDirections.flatMap((dn) => byDirection[dn].scenarioEvents);
+  const repBlocked = both || focused.scenarioEvents.length > 0;
+  useEffect(() => {
+    if (repBlocked && repProgress != null) {
+      repCancel.current = true;
+      setRepStopped(true);
+    }
+  }, [repBlocked, repProgress]);
 
   // What the canvas draws for each direction's scenario events: kept in a ref (the render loop runs
   // outside React) and refreshed whenever either direction's own events/binding change — mirrors the
@@ -1371,7 +1466,11 @@ export default function AiSandboxPage() {
     // closure is armed the click belongs to placement, so hovering shows nothing and the cursor stays a crosshair.
     const paintVehicleProbe = () => {
       const armed = placingArmedRef.current;
-      const r = drawVehicleProbes(ctx, roadW(canvas.clientWidth), canvas.clientHeight, armed ? null : pointerRef.current, pinnedVehicleRef.current);
+      const pointer = armed ? null : pointerRef.current;
+      // An event's label sits over the traffic, so the pointer on one means the label (its full text), not the car under it.
+      const label = pointer ? labelAt(pointer.x, pointer.y) : null;
+      const r = drawVehicleProbes(ctx, roadW(canvas.clientWidth), canvas.clientHeight, label ? null : pointer, pinnedVehicleRef.current);
+      if (label) drawLabelProbe(ctx, roadW(canvas.clientWidth), label);
       // A pinned vehicle that has left the road (or whose sim was rebuilt) is no longer there to point at.
       if (pinnedVehicleRef.current && !r.pinnedFound) pinnedVehicleRef.current = null;
       const cursor = r.hovering && !armed ? "pointer" : "";
@@ -1391,6 +1490,7 @@ export default function AiSandboxPage() {
         simAccRef.current += dtReal * simSpeed;
         let guard = 0;
         while (simAccRef.current >= SIM_DT && guard < 3 / SIM_DT) {
+          stepSeqRef.current++;
           for (const direction of activeDirections) {
             const d = byDirection[direction];
             const sim = d.simRef.current;
@@ -1401,12 +1501,15 @@ export default function AiSandboxPage() {
             if (!sim || d.skipRef.current !== null) continue;
             const stepStart = performance.now();
             sim.step(SIM_DT);
+            // The same run without the scenario events (the before/after's "No events" side), one step behind at most.
+            // Inside the timing: while it exists a skip costs both, so its estimate should too.
+            d.twinRef.current?.stepAlong();
             const stepMs = performance.now() - stepStart;
             const prevCost = stepCostRef.current[direction];
             stepCostRef.current[direction] = prevCost === null ? stepMs : prevCost + (stepMs - prevCost) * 0.02;
             // Recorded for review. Throttled inside the buffer, so calling it
             // every step costs a comparison on most of them.
-            replayRef.current[direction].record(sim);
+            replayRef.current[direction].record(sim, stepSeqRef.current);
             // And the readouts over time, for the Trends charts: one comparison per step until a sample is due.
             d.trend.record(sim, d.scenarioFrame.warmupS);
             const sctx = d.scenarioCtxRef.current;
@@ -1424,25 +1527,57 @@ export default function AiSandboxPage() {
         if (metricAccRef.current >= 0.25) {
           metricAccRef.current = 0;
           setReplayLen(replayRef.current[focusDirection].length);
-          setReplayHasEvent(replayRef.current[focusDirection].lastEventIndex() !== null);
+          // Either carriageway on screen: Both mode reviews the two together, so an incident on the other one counts.
+          setReplayHasEvent(activeDirections.some((d) => replayRef.current[d].lastEventIndex() !== null));
           for (const direction of activeDirections) {
             const sim = byDirection[direction].simRef.current;
             if (sim) byDirection[direction].setMetrics(sim.metrics());
           }
         }
       }
+      /* Under review, the canvas is handed recorded frames dressed as sims
+         rather than the live ones. The engine keeps running underneath —
+         nothing here reaches back into it — so letting go returns to a
+         simulation that has carried on, not one frozen at the rewind point.
+         The slider walks one carriageway's recording (replayLead); any other
+         carriageway drawn is the frame taken at the same step. Null: draw the
+         live run (not reviewing, or nothing recorded for that moment). Under
+         review the plazas come from the recording too, on the live geometry. */
+      const reviewed = (d: Direction) => {
+        const ri = replayIndexRef.current;
+        const live = byDirection[d].simRef.current;
+        if (ri === null || !live) return null;
+        const leadFrame = replayRef.current[replayLeadRef.current].frame(ri);
+        if (!leadFrame) return null;
+        const buf = replayRef.current[d];
+        let idx = ri;
+        if (d !== replayLeadRef.current) {
+          // Only a frame of this run taken within half a second of the lead's (a carriageway that was not on screen
+          // then, or has been rebuilt since, has nothing for that moment).
+          idx = leadFrame.seq === undefined || !buf.isOf(live) ? -1 : buf.indexAtSeq(leadFrame.seq);
+          if (idx >= 0 && Math.abs((buf.frame(idx)?.seq ?? Infinity) - (leadFrame.seq ?? 0)) * SIM_DT > 0.5) idx = -1;
+        }
+        const shown = idx < 0 ? null : buf.asSimLike(idx, live.cfg);
+        if (!shown) return null;
+        return { sim: shown, fac: live.fac.list.length > 0 ? buf.facilityViewAt(idx, live.fac.list) : null };
+      };
+      const reviewing = replayIndexRef.current !== null;
       // Both mode draws both carriageways in one canvas (Phase D3); NB-only/SB-only draw the one
       // active direction full-height, exactly as before D3.
       if (view === "Both") {
         const simNB = nb.simRef.current;
         const simSB = sb.simRef.current;
         if (simNB && simSB) {
-          const minutesNow = clockStartMinRef.current + (simNB.time - WARMUP_S) / 60;
+          const recNB = reviewed("NB");
+          const recSB = reviewed("SB");
+          const shownNB = (recNB?.sim ?? simNB) as typeof simNB;
+          const shownSB = (recSB?.sim ?? simSB) as typeof simSB;
+          const minutesNow = clockStartMinRef.current + (shownNB.time - WARMUP_S) / 60;
           const dayFraction = daylightFraction(minutesNow);
           const asphaltColor = daylightAsphalt(minutesNow);
-          const alpha = running ? simAccRef.current : 0;
+          const alpha = reviewing ? 0 : running ? simAccRef.current : 0;
           renderBoth(
-            ctx, canvas, simNB, simSB,
+            ctx, canvas, shownNB, shownSB,
             { fromKm: marksRef.current.fromKm, toKm: marksRef.current.toKm },
             maxLaneRef.current, exitsRef.current,
             scenarioOverlayRef.current.NB ?? null, scenarioOverlayRef.current.SB ?? null,
@@ -1451,8 +1586,8 @@ export default function AiSandboxPage() {
             // engine has not applied yet; drawing it keeps the traffic moving
             // on frames where no step ran.
             alpha,
-            simNB.fac.list.length > 0 ? facilityView(simNB.fac, simNB.facilityStats(), alpha) : null,
-            simSB.fac.list.length > 0 ? facilityView(simSB.fac, simSB.facilityStats(), alpha) : null,
+            recNB ? recNB.fac : simNB.fac.list.length > 0 ? facilityView(simNB.fac, simNB.facilityStats(), alpha) : null,
+            recSB ? recSB.fac : simSB.fac.list.length > 0 ? facilityView(simSB.fac, simSB.facilityStats(), alpha) : null,
             facilityHighlightRef.current,
           );
           paintVehicleProbe();
@@ -1460,27 +1595,14 @@ export default function AiSandboxPage() {
         }
       } else {
         const liveSim = byDirection[focusDirection].simRef.current;
-        /* Under review, the canvas is handed a recorded frame dressed as a
-           sim rather than the live one. The engine keeps running underneath —
-           nothing here reaches back into it — so letting go returns to a
-           simulation that has carried on, not one frozen at the rewind point. */
-        const ri = replayIndexRef.current;
-        const focusedSim =
-          ri !== null && liveSim
-            ? replayRef.current[focusDirection].asSimLike(ri, liveSim.cfg) ?? liveSim
-            : liveSim;
-        if (focusedSim) {
+        const rec = reviewed(focusDirection);
+        const focusedSim = rec?.sim ?? liveSim;
+        if (focusedSim && liveSim) {
           const minutesNow = clockStartMinRef.current + (focusedSim.time - WARMUP_S) / 60;
           const dayFraction = daylightFraction(minutesNow);
           const asphaltColor = daylightAsphalt(minutesNow);
-          const alpha = ri !== null ? 0 : running ? simAccRef.current : 0;
-          // Under review the plazas come from the recording too, drawn on the live geometry.
-          const facView =
-            liveSim && liveSim.fac.list.length > 0
-              ? ri !== null
-                ? replayRef.current[focusDirection].facilityViewAt(ri, liveSim.fac.list)
-                : facilityView(liveSim.fac, liveSim.facilityStats(), alpha)
-              : null;
+          const alpha = reviewing ? 0 : running ? simAccRef.current : 0;
+          const facView = rec ? rec.fac : liveSim.fac.list.length > 0 ? facilityView(liveSim.fac, liveSim.facilityStats(), alpha) : null;
           render(ctx, canvas, focusedSim as NonNullable<typeof liveSim>, locationRef.current, marksRef.current, maxLaneRef.current, exitsRef.current, scenarioOverlayRef.current[focusDirection] ?? null, animClockRef.current, dayFraction, asphaltColor, alpha, facView, facilityHighlightRef.current);
           paintVehicleProbe();
           if (dropGhostRef.current) drawDropGhost(ctx, roadW(canvas.clientWidth), { ...dropGhostRef.current, x: roadX(dropGhostRef.current.x) });
@@ -1491,6 +1613,12 @@ export default function AiSandboxPage() {
     return () => cancelAnimationFrame(rafRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, simSpeed, activeDirections.join(), view, focusDirection, nb.simRef, sb.simRef, nb.scenarioBinding, sb.scenarioBinding, nb.publishOwners, sb.publishOwners, nb.setMetrics, sb.setMetrics]);
+
+  // A run rebuilt while reviewing (a new hour, lane count or window, all allowed while paused) leaves the recording
+  // describing a road that is no longer there, drawn on the new one's geometry: back to live instead.
+  useEffect(() => {
+    if (replayIndex !== null && !replayRef.current[replayLead].isOf(byDirection[replayLead].simRef.current)) setReplayIndex(null);
+  });
 
   // Clicking a vehicle pins its speed bubble to it (it follows the vehicle until the same one, or empty
   // road, is clicked). Only reached when nothing is armed — an armed click belongs to placement below.
@@ -1808,10 +1936,11 @@ export default function AiSandboxPage() {
     setPlaceNote(null);
 
     if (byDirection[armed].placingClosure) {
-      // Two clicks mark the stretch an operator actually closes — "Km 0.20 to
-      // 0.30" — in either order. One click used to move only the start, so the
-      // works always ran on to the end of the span.
-      const km = Number(td.kmAt(x).toFixed(2));
+      // Two clicks mark the stretch an operator actually closes — "Km 20.20 to
+      // 20.30" — in either order. One click used to move only the start, so the
+      // works always ran on to the end of the span. The click snaps to a round
+      // official km post (what the readout prints) and is kept as measured km.
+      const km = kmMeasured(Number(kmPost(td.kmAt(x)).toFixed(2)));
       if (td.closureDraftKm == null) {
         // First click: the stretch is on THIS carriageway. If the mode was armed on the other one,
         // hand it over (its own half-drawn state is cleared by the leave-placing effect below).
@@ -1846,7 +1975,7 @@ export default function AiSandboxPage() {
       const where = at.site.kind === "approach" ? "on the ramp" : `${at.site.kind} ${at.site.stations.map((i) => i + 1).join(", ")}`;
       return { ok: true, line: `${name} → ${at.site.facilityName} · ${where}` };
     }
-    return { ok: true, line: `${name} → ${DIRECTION_NAME[at.direction]}${at.lane != null ? ` · Lane ${at.lane}` : ""} · Km ${at.km.toFixed(2)}` };
+    return { ok: true, line: `${name} → ${DIRECTION_NAME[at.direction]}${at.lane != null ? ` · Lane ${at.lane}` : ""} · Km ${fmtKm(at.km, 2)}` };
   };
   const dragOverRoad = (e: React.DragEvent<HTMLCanvasElement>) => {
     if (!e.dataTransfer.types.includes(SCENARIO_DRAG_TYPE)) return;
@@ -1956,7 +2085,7 @@ export default function AiSandboxPage() {
      Recomputed when the proposal or either road changes; emptied when there is no proposal. */
   useEffect(() => {
     const out: Record<Direction, PlanGhost[]> = { NB: [], SB: [] };
-    const span = (a: number, b: number) => `Km ${Math.min(a, b).toFixed(2)}–${Math.max(a, b).toFixed(2)}`;
+    const span = (a: number, b: number) => fmtKmRange(Math.min(a, b), Math.max(a, b), 2);
     for (const a of plan?.actions ?? []) {
       if (!("direction" in a) && a.type !== "set_reallocation" && a.type !== "remove_event") continue;
       const dir: Direction | null = a.type === "remove_event" ? (a.eventId.startsWith("SB:") ? "SB" : "NB") : a.type === "set_reallocation" ? a.toward : "direction" in a ? a.direction : null;
@@ -2022,7 +2151,7 @@ export default function AiSandboxPage() {
           if (a.fromKm != null && a.toKm != null) push(a.fromKm, a.toKm, lanes, false, `${name} · ${span(a.fromKm, a.toKm)}${when}`);
           else {
             const km = a.km ?? (fromKm + toKm) / 2;
-            push(km, km, lanes, true, `${name} · Km ${km.toFixed(2)}${when}`);
+            push(km, km, lanes, true, `${name} · Km ${fmtKm(km, 2)}${when}`);
           }
           break;
         }
@@ -2170,6 +2299,8 @@ export default function AiSandboxPage() {
     applied: string[];
     notApplied: string[];
     waitDay: string | null;
+    /** The plan sets the clock itself: a forecast day it also picks keeps that time instead of moving to the day's peak hour. */
+    explicitTime: boolean;
     /** "Where it usually happens" lookups still in flight: the plan is not finished until they land. */
     pending: number;
     sig: string;
@@ -2223,7 +2354,7 @@ export default function AiSandboxPage() {
       const hi = Math.min(toKm, Math.max(a.fromKm, a.toKm));
       if ((hi - lo) * 1000 >= MIN_EVENT_STRETCH_M) {
         stretchKm = { fromKm: lo, toKm: hi };
-        if (lo > Math.min(a.fromKm, a.toKm) + 0.0005 || hi < Math.max(a.fromKm, a.toKm) - 0.0005) no(`Km ${Math.min(a.fromKm, a.toKm).toFixed(2)}–${Math.max(a.fromKm, a.toKm).toFixed(2)} runs past the road on screen; the event covers Km ${lo.toFixed(2)}–${hi.toFixed(2)}`);
+        if (lo > Math.min(a.fromKm, a.toKm) + 0.0005 || hi < Math.max(a.fromKm, a.toKm) - 0.0005) no(`${fmtKmRange(Math.min(a.fromKm, a.toKm), Math.max(a.fromKm, a.toKm), 2)} runs past the road on screen; the event covers ${fmtKmRange(lo, hi, 2)}`);
       } else {
         km = (lo + hi) / 2;
       }
@@ -2304,6 +2435,7 @@ export default function AiSandboxPage() {
         ok(a.view === "Both" ? "Both carriageways shown" : `${DIRECTION_NAME[a.view]} shown`);
         break;
       case "set_time":
+        setHourFollowsDay(null);
         setHourOfDay(a.hour);
         setClockMinuteOffset(a.minute);
         ok(`Clock ${hhmm2(a.hour, a.minute)}`);
@@ -2313,14 +2445,15 @@ export default function AiSandboxPage() {
           no(`no forecast for ${a.date}`);
           break;
         }
-        forecast.selectDay(a.date);
+        if (q.explicitTime) forecast.selectDay(a.date);
+        else pickForecastDay(a.date);
         setForecastFollowing(true);
         q.waitDay = a.date;
         ok(`Forecast day ${a.date}`);
         break;
       case "frame":
         showWindow({ fromKm: a.fromKm, toKm: a.toKm });
-        ok(`Window Km ${a.fromKm.toFixed(2)}–${a.toKm.toFixed(2)}`);
+        ok(`Window ${fmtKmRange(a.fromKm, a.toKm, 2)}`);
         break;
       case "frame_place": {
         const hit = (["NB", "SB"] as const).map((d) => ({ d, p: byDirection[d].places.find((x) => x.id === a.placeId) })).find((x) => x.p);
@@ -2515,7 +2648,7 @@ export default function AiSandboxPage() {
     if (!actions.some((a) => a.type === "set_view") && named.some((d) => !activeDirections.includes(d))) actions.unshift({ type: "set_view", view: "Both" });
     const stages = [0, 1, 2, 3, 4, 5].map((n) => actions.filter((a) => commandStage(a) === n)).filter((g) => g.length > 0);
     const now = Date.now();
-    const q: CommandQueue = { stages, dir: planDirection ?? focusDirection, applied: [], notApplied: [], waitDay: null, pending: 0, sig: "", since: now, started: now };
+    const q: CommandQueue = { stages, dir: planDirection ?? focusDirection, applied: [], notApplied: [], waitDay: null, explicitTime: actions.some((a) => a.type === "set_time"), pending: 0, sig: "", since: now, started: now };
     for (const a of q.stages.shift() ?? []) applyCommandAction(a, q);
     if (q.stages.length > 0 || q.pending > 0) {
       cmdQueueRef.current = q;
@@ -2552,7 +2685,8 @@ export default function AiSandboxPage() {
       q.sig = sig;
       q.since = now;
     }
-    const dayReady = q.waitDay === null || (forecast.date === q.waitDay && !forecast.busy);
+    // And the clock has moved to that day's peak hour, if it is going to (hourFollowsDay): that rebuilds the run.
+    const dayReady = q.waitDay === null || (forecast.date === q.waitDay && !forecast.busy && hourFollowsDay === null);
     const runsReady = activeDirections.every((d) => {
       const sim = byDirection[d].simRef.current;
       return !!sim && sim.cfg.length === segLengthM && sim.cfg.laneCount === byDirection[d].laneCount;
@@ -2590,7 +2724,7 @@ export default function AiSandboxPage() {
           : "road";
   const laneNote =
     lanesBy === "road"
-      ? `From the road for Km ${fromKm.toFixed(2)}–${toKm.toFixed(2)} (OpenStreetMap). They follow the stretch on screen.`
+      ? `From the road for ${fmtKmRange(fromKm, toKm, 2)} (OpenStreetMap). They follow the stretch on screen.`
       : lanesBy === "hand"
         ? `Set by hand. The road here has ${roadLanesText}.`
         : lanesBy === "reallocation" && zipper !== null
@@ -2801,7 +2935,7 @@ export default function AiSandboxPage() {
       <PageHeader
         icon={Car}
         title="Scenario Sandbox"
-        subtitle={`Agent-based what-if simulation · ${originExit ? displayExitName(originExit.exit_name) : ""} → ${destExit ? displayExitName(destExit.exit_name) : ""} · Km ${fromKm.toFixed(2)}–${toKm.toFixed(2)}`}
+        subtitle={`Agent-based what-if simulation · ${originExit ? displayExitName(originExit.exit_name) : ""} → ${destExit ? displayExitName(destExit.exit_name) : ""} · ${fmtKmRange(fromKm, toKm, 2)}`}
       />
 
       {/* The two choices that apply to the whole sandbox — which carriageway(s), and which forecast day —
@@ -2826,7 +2960,7 @@ export default function AiSandboxPage() {
             value={forecast.date}
             dates={forecast.data?.availableDates ?? []}
             coverageEnd={forecast.data?.incidents.coverageEnd ?? null}
-            onChange={forecast.selectDay}
+            onChange={pickForecastDay}
             disabled={!forecast.data}
           />
         </div>
@@ -2873,7 +3007,7 @@ export default function AiSandboxPage() {
             {live && (
               <div
                 className="sandbox-live-clock"
-                title="The simulated date and time of day. Ticks forward with the simulation (paused when it's paused, faster at higher speeds) — edit it to jump the clock to a different hour, minute or second; the hour reseeds the road's demand for that hour, the minute and second just move the starting point."
+                title="The simulated date and time of day. Ticks forward with the simulation (paused when it's paused, faster at higher speeds). Picking a forecast day moves it to that day's busiest forecast hour. Edit it to jump the clock to a different hour, minute or second; the hour reseeds the road's demand for that hour, the minute and second just move the starting point."
               >
                 <span className="sandbox-live-clock-label">Simulation time</span>
                 {liveDateText && <span className="sandbox-live-clock-date">{liveDateText}</span>}
@@ -2885,6 +3019,7 @@ export default function AiSandboxPage() {
                   scn="sim-time"
                   onCommit={(totalS) => {
                     const totalMin = totalS / 60;
+                    setHourFollowsDay(null);
                     setHourOfDay(Math.floor(totalMin / 60));
                     setClockMinuteOffset(totalMin % 60);
                   }}
@@ -2928,22 +3063,48 @@ export default function AiSandboxPage() {
                   reading the metrics or watching the other carriageway misses
                   it with no way back — Reset throws the whole run away. This
                   reviews the recording; it does not rewind the engine. */}
-              {(replayHasEvent || replayIndex !== null) && (
+              {/* Offered whenever the run on screen has a recording (UAT 16 Oct 2026, testers SB-15 "blocked"; 19 Oct): it used to appear only
+                  while an incident or closure that had just APPEARED was still inside the 90 s recording, which at 10x is
+                  nine seconds of wall time, and never for rain, so testers often had no Replay to press. With nothing of
+                  the kind recorded it replays the whole recording; with one, from just before the latest. */}
+              {(replayAvailable || replayIndex !== null) && (
                 <button
                   className="btn-muted"
                   data-short="⟲ Replay"
-                  title="Replay the last incident or closure on this carriageway"
+                  title={
+                    replayHasEvent
+                      ? both ? "Replay the last incident or closure on either carriageway" : "Replay the last incident or closure on this carriageway"
+                      : "Replay the last minute and a half of the road"
+                  }
                   onClick={() => {
-                    const buf = replayRef.current[focusDirection];
-                    const at = buf.lastEventIndex();
+                    // The latest one on the road(s) on screen; its carriageway's recording is the one the slider walks.
+                    // Only a recording of the run now on the road counts (one left over from before a rebuild does not).
+                    const usable = activeDirections.filter((d) => replayRef.current[d].isOf(byDirection[d].simRef.current) && replayRef.current[d].length >= 2);
+                    if (usable.length === 0) return;
+                    let lead: Direction = usable.includes(focusDirection) ? focusDirection : usable[0];
+                    let at: number | null = null;
+                    let latest = -Infinity;
+                    for (const d of usable) {
+                      const buf = replayRef.current[d];
+                      const i = buf.lastEventIndex();
+                      const seq = i === null ? undefined : buf.frame(i)?.seq;
+                      if (i !== null && (seq ?? 0) > latest) {
+                        latest = seq ?? 0;
+                        lead = d;
+                        at = i;
+                      }
+                    }
+                    const buf = replayRef.current[lead];
                     setRunning(false);
+                    setReplayLead(lead);
                     // A few frames before it, so the operator sees it happen
                     // rather than arriving to the aftermath.
                     setReplayIndex(at === null ? 0 : Math.max(0, at - 8));
                     setReplayLen(buf.length);
+                    setReplayPlaying(true);
                   }}
                 >
-                  ⟲ Replay incident
+                  {replayHasEvent ? "⟲ Replay incident" : "⟲ Replay"}
                 </button>
               )}
               <button className="btn-muted" onClick={resetEverything} title="Back to a clean start: scenarios, closures, speed limits, incidents, baselines and any lane reallocation are all cleared">
@@ -2994,8 +3155,21 @@ export default function AiSandboxPage() {
               }}>
                 Reviewing
               </span>
+              <button
+                className="btn-muted"
+                data-replay-play
+                title={replayPlaying ? "Pause the replay" : replayIndex >= replayLen - 1 ? "Play the recording again from the start" : "Play the recording from here"}
+                onClick={() => {
+                  if (replayPlaying) { setReplayPlaying(false); return; }
+                  // At the last frame, Play starts the recording again rather than doing nothing.
+                  if (replayIndex >= replayLen - 1) setReplayIndex(0);
+                  setReplayPlaying(true);
+                }}
+              >
+                {replayPlaying ? "❚❚ Pause" : replayIndex >= replayLen - 1 ? "↺ Play again" : "▶ Play"}
+              </button>
               <button className="btn-muted" title="One frame back"
-                onClick={() => setReplayIndex((i) => Math.max(0, (i ?? 0) - 1))}>◀</button>
+                onClick={() => { setReplayPlaying(false); setReplayIndex((i) => Math.max(0, (i ?? 0) - 1)); }}>◀</button>
               <input
                 type="range"
                 min={0}
@@ -3006,17 +3180,17 @@ export default function AiSandboxPage() {
                 aria-label="Scrub through the recording"
               />
               <button className="btn-muted" title="One frame forward"
-                onClick={() => setReplayIndex((i) => Math.min(replayLen - 1, (i ?? 0) + 1))}>▶</button>
+                onClick={() => { setReplayPlaying(false); setReplayIndex((i) => Math.min(replayLen - 1, (i ?? 0) + 1)); }}>▶</button>
               <span style={{
                 fontSize: "var(--fs-label)", color: "var(--text-secondary)",
                 fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
               }}>
                 {(() => {
-                  const f = replayRef.current[focusDirection].frame(replayIndex);
-                  const last = replayRef.current[focusDirection].lastTime;
+                  const f = replayRef.current[replayLead].frame(replayIndex);
+                  const last = replayRef.current[replayLead].lastTime;
                   if (!f || last === null) return "reviewing";
                   const behind = last - f.time;
-                  return behind < 0.2 ? "at the latest frame" : `${behind.toFixed(1)}s behind live`;
+                  return behind < 0.2 ? "end of the recording (the live road is paused here)" : `${behind.toFixed(1)}s behind live`;
                 })()}
               </span>
               <button className="btn-primary" onClick={() => { setReplayIndex(null); setRunning(true); }}>
@@ -3063,7 +3237,7 @@ export default function AiSandboxPage() {
                     dates={forecast.data?.availableDates ?? []}
                     coverageEnd={forecast.data?.incidents.coverageEnd ?? null}
                     onChange={(d) => {
-                      forecast.selectDay(d);
+                      pickForecastDay(d);
                       setForecastFollowing(true);
                     }}
                     disabled={!forecast.data}
@@ -3193,11 +3367,12 @@ export default function AiSandboxPage() {
                     <p>{recommendations[dn].text}</p>
                   </div>
                   <DirectionNotes d={d} direction={dn} />
-                  {d.baseline && d.metrics && d.anyIntervention ? (
+                  {/* With events the comparison needs no capture: it is the same run without them (eventCompare). */}
+                  {d.metrics && (d.eventCompare || (d.baseline && d.anyChange)) ? (
                     <CompareBlock d={d} direction={dn} />
                   ) : (
                     <p className="sandbox-compare-none" data-compare-none={dn}>
-                      No before/after yet: capture a baseline, then change something on this carriageway.
+                      No before/after yet: add an event to compare the run with and without it, or capture a baseline and then change something on this carriageway.
                     </p>
                   )}
                 </section>
@@ -3298,7 +3473,7 @@ export default function AiSandboxPage() {
               <select value={origin} onChange={(e) => setOrigin(Number(e.target.value))}>
                 {EXITS.map((ex, i) => (
                   <option key={ex.exit_id} value={i} disabled={i === destination}>
-                    {displayExitName(ex.exit_name)} (Km {ex.km})
+                    {displayExitName(ex.exit_name)} (Km {fmtKm(ex.km)})
                   </option>
                 ))}
               </select>
@@ -3308,19 +3483,20 @@ export default function AiSandboxPage() {
               <select value={destination} onChange={(e) => setDestination(Number(e.target.value))}>
                 {EXITS.map((ex, i) => (
                   <option key={ex.exit_id} value={i} disabled={i === origin}>
-                    {displayExitName(ex.exit_name)} (Km {ex.km})
+                    {displayExitName(ex.exit_name)} (Km {fmtKm(ex.km)})
                   </option>
                 ))}
               </select>
             </label>
           </div>
-          {/* The stretch under study, as km-posts. An operator asks about
-              "km 3.5 to km 6"; the simulation is parameterised on length, so it
-              models exactly that rather than a fixed sample. */}
+          {/* The stretch under study, as official km posts. An operator asks about
+              "km 20.5 to km 23"; the simulation is parameterised on length, so it
+              models exactly that rather than a fixed sample. The fields show and
+              take official posts; the state underneath stays measured km. */}
           <div className="sandbox-slider-group">
             <div className="sandbox-slider-header">
               <InfoLabel
-                info={`Route runs Km ${routeFromKm.toFixed(2)}–${routeToKm.toFixed(2)}.${nearestExit ? ` Nearest exit: ${displayExitName(nearestExit.exit_name)}.` : ""} Changing the segment resets the run.`}
+                info={`Route runs ${fmtKmRange(routeFromKm, routeToKm, 2)}.${nearestExit ? ` Nearest exit: ${displayExitName(nearestExit.exit_name)}.` : ""} Changing the segment resets the run.`}
               >
                 Segment
               </InfoLabel>
@@ -3475,7 +3651,7 @@ export default function AiSandboxPage() {
               operator scanning the Corridor section for "which way" should still find an answer. */}
           <div className="sandbox-slider-group">
             <div className="sandbox-slider-header">
-              <InfoLabel info="NLEX runs Balintawak (Km 0) north to Sta. Ines. Choose the carriageway with the Carriageway control at the top of the page. The km axis is fixed — Km 0 is always on-screen-left — and it is the TRAFFIC that runs right to left when southbound; each direction's inflow anchors to its own observed volume, independently. Both mode draws the two carriageways stacked with a median between them, Southbound above and Northbound below, sharing this one axis — lane 1 sits against the median on both sides.">
+              <InfoLabel info="NLEX runs from Balintawak (Km 12) north to Sta. Ines (Km 87), on the official km posts. Choose the carriageway with the Carriageway control at the top of the page. The km axis is fixed — the Balintawak end, the lower km posts, is always on-screen-left — and it is the TRAFFIC that runs right to left when southbound; each direction's inflow anchors to its own observed volume, independently. Both mode draws the two carriageways stacked with a median between them, Southbound above and Northbound below, sharing this one axis — lane 1 sits against the median on both sides.">
                 Carriageway
               </InfoLabel>
               <span className="sandbox-slider-value is-info">
@@ -3687,9 +3863,13 @@ export default function AiSandboxPage() {
             summary={
               repProgress != null
                 ? `running ${(repProgress * 100).toFixed(0)}%`
-                : repResult
-                  ? `${repResult.runs} runs · ${fmt(repResult.avgSpeedKmh.mean)} ± ${fmt(repResult.avgSpeedKmh.ci95, 1)} km/h`
-                  : "not run"
+                : repEvents.length > 0
+                  ? `off · ${repEvents.length} timed event${repEvents.length === 1 ? "" : "s"}`
+                  : both
+                    ? "off · one carriageway at a time"
+                    : repResult
+                      ? `${repResult.runs} runs · ${fmt(repResult.avgSpeedKmh.mean)} ± ${fmt(repResult.avgSpeedKmh.ci95, 1)} km/h`
+                      : "not run"
             }
           >
           {/* One animated run is one sample. This re-runs the SAME scenario on
@@ -3713,6 +3893,8 @@ export default function AiSandboxPage() {
               className="btn-primary"
               onClick={runReplications}
               disabled={both || focused.scenarioEvents.length > 0}
+              aria-describedby={repBlocked ? "sandbox-reps-why" : undefined}
+              title={repBlocked ? "Not available: see the reason below" : undefined}
               style={{ marginLeft: 0 }}
             >
               {repProgress != null ? "Stop" : "Run"}
@@ -3721,13 +3903,28 @@ export default function AiSandboxPage() {
               <span className="sandbox-reps-prog">{(repProgress * 100).toFixed(0)}%</span>
             )}
           </div>
-          {both ? (
-            <p className="sandbox-reps-warn" data-reps="both-disabled">{"Confidence runs support one carriageway at a time."}</p>
-          ) : (
-            focused.scenarioEvents.length > 0 && (
-              <p className="sandbox-reps-warn">{"Confidence runs don't yet support timed events."}</p>
-            )
-          )}
+          {/* Every reason it is off, not just the first: Both mode used to print only its own line, so an operator
+              who had added a timed event (in the view the tab opens on) was never told the event blocks it too. */}
+          <div id="sandbox-reps-why" role="status">
+            {both && (
+              <p className="sandbox-reps-warn" data-reps="both-disabled">{"Confidence runs support one carriageway at a time."}</p>
+            )}
+            {repEvents.length > 0 && (
+              <div className="sandbox-reps-blocked" data-reps="events-blocked">
+                <p className="sandbox-reps-warn">
+                  <b>{"Confidence runs don't yet support timed events."}</b>{" "}
+                  {`Each run replays one fixed set of closures, limits and incidents from the start; it cannot follow when an event starts, its phases or when it ends, so with ${eventList(repEvents)} on the road it would report a different scenario from this one.`}
+                </p>
+                <p className="sandbox-reps-note">
+                  {`Remove the event${repEvents.length === 1 ? "" : "s"} in Scenario events (or Reset) to run it on what is set by hand; the events' own effect is read from the before/after and the Trends charts.`}
+                  {repResult ? " The result below was run before them and does not include them." : ""}
+                </p>
+              </div>
+            )}
+            {repStopped && !repResult && (
+              <p className="sandbox-reps-warn" data-reps="stopped">Stopped: the scenario changed while it ran, so its result would not have described it.</p>
+            )}
+          </div>
           {repResult && (
             <div className="sandbox-reps-out">
               {([
@@ -3753,6 +3950,7 @@ export default function AiSandboxPage() {
               <p className="sandbox-reps-note">
                 {repResult.runs} runs &times; {repResult.secondsPerRun}s, first{" "}
                 {repResult.warmupS}s discarded as warm-up. Intervals are Student&rsquo;s t at 95%.
+                {repFor ? ` Run on ${DIRECTION_NAME[repFor.direction]} with ${repFor.setup}.` : ""}
               </p>
             </div>
           )}
@@ -3867,6 +4065,9 @@ export default function AiSandboxPage() {
 /**
  * A km-post field you can actually type in.
  *
+ * It shows and takes the OFFICIAL km post; value, min, max and what onCommit
+ * receives are MEASURED km (lib/km-post.ts), converted here at the edge.
+ *
  * The value shown is derived and clamped to the route, so binding the input
  * straight to it fought every keystroke: "1.15" was re-read after "1", after
  * "1." (NaN) and after "1.1", an emptied field parsed as 0 and snapped to the
@@ -3897,7 +4098,7 @@ function KmInput({
     const n = Number.parseFloat(draft);
     setDraft(null);
     // An unparseable or empty entry reverts rather than silently becoming zero.
-    if (Number.isFinite(n)) onCommit(n);
+    if (Number.isFinite(n)) onCommit(kmMeasured(n));
   };
 
   return (
@@ -3905,11 +4106,11 @@ function KmInput({
       type="number"
       className="sandbox-km-input"
       data-km={testId}
-      min={min}
-      max={max}
+      min={Number(kmPost(min).toFixed(2))}
+      max={Number(kmPost(max).toFixed(2))}
       step={0.05}
       disabled={disabled}
-      value={draft ?? String(Number(value.toFixed(2)))}
+      value={draft ?? fmtKm(value, 2)}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
@@ -4009,7 +4210,7 @@ function ZipperControl({
           restarts is behind the "i". */}
       {state !== null && (
         <span className="sandbox-slider-hint" data-zipper-note="state">
-          {`Km ${stretch.fromKm.toFixed(2)}–${stretch.toKm.toFixed(2)}: NB ${counts.NB} lanes · SB ${counts.SB} lanes (was ${state.base.NB} + ${state.base.SB}). ${state.toward}'s lane 1 is the reallocated lane, against the barrier. Changing either Lanes slider ends it.`}
+          {`${fmtKmRange(stretch.fromKm, stretch.toKm, 2)}: NB ${counts.NB} lanes · SB ${counts.SB} lanes (was ${state.base.NB} + ${state.base.SB}). ${state.toward}'s lane 1 is the reallocated lane, against the barrier. Changing either Lanes slider ends it.`}
         </span>
       )}
     </div>
@@ -4129,7 +4330,7 @@ function InterventionControls({
 
       <div style={{ marginTop: 8 }}>
         <span className="sandbox-mini-label">
-          Closed from Km {d.shownClosureFromKm.toFixed(2)} to Km {d.shownClosureToKm.toFixed(2)} ·{" "}
+          Closed from Km {fmtKm(d.shownClosureFromKm, 2)} to Km {fmtKm(d.shownClosureToKm, 2)} ·{" "}
           {Math.round((d.shownClosureToKm - d.shownClosureFromKm) * 1000)} m
         </span>
         {d.owners.closure && (
@@ -4239,10 +4440,19 @@ function InterventionControls({
 function BaselineSteps({ d, hideCapture }: { d: DirectionApi; hideCapture?: boolean }) {
   const elapsedS = d.metrics?.elapsedS ?? 0;
   const warmedUp = elapsedS >= WARMUP_S;
-  const stepDone = [warmedUp, d.baseline != null, d.baseline != null && d.anyIntervention];
+  const stepDone = [warmedUp, d.baseline != null, d.baseline != null && d.anyChange];
   const activeStep = stepDone.findIndex((x) => !x) + 1; // 0 once all are done
   const stepCls = (n: number) => `sandbox-step${stepDone[n - 1] ? " is-done" : activeStep === n ? " is-now" : ""}`;
   return (
+    <>
+    {/* Said here too, where an operator goes to measure something: an event is measured without any capture. */}
+    {d.eventCompare && (
+      <p className="sandbox-baseline-lede" data-compare-note="events">
+        This carriageway has scenario events, so the before/after under the road compares the same run without them
+        against the run with them, at the same moment. No capture is needed for that; a baseline still measures what you
+        change by hand.
+      </p>
+    )}
     <ol className="sandbox-steps">
       <li className={stepCls(1)}>
         <span className="n">{stepDone[0] ? "✓" : "1"}</span>
@@ -4295,18 +4505,19 @@ function BaselineSteps({ d, hideCapture }: { d: DirectionApi; hideCapture?: bool
           <b>Change something, then read the difference</b>
           {stepDone[2] ? (
             <i>
-              Comparing {d.baseline?.takenWith} &rarr; {d.interventionSummary}. The
+              Comparing {d.baseline?.takenWith} &rarr; {d.compareSummary}. The
               before/after table is under the road.
             </i>
           ) : activeStep === 3 ? (
             <i>
-              Close a lane or set a speed limit in Interventions above. A before/after
-              table then appears under the road.
+              Close a lane or set a speed limit in Interventions above, or add an event in
+              Scenario events. A before/after table then appears under the road.
             </i>
           ) : null}
         </div>
       </li>
     </ol>
+    </>
   );
 }
 
@@ -4318,10 +4529,12 @@ function BaselineSteps({ d, hideCapture }: { d: DirectionApi; hideCapture?: bool
  * each direction gets its own, headed by its own pill.
  */
 function CompareBlock({ d, direction }: { d: DirectionApi; direction: Direction | null }) {
+  // A carriageway with scenario events compares the run with them against the same run without them (EventCompareBlock).
+  if (d.eventCompare && d.metrics) return <EventCompareBlock d={d} direction={direction} />;
   /* One carriageway on screen and nothing to compare yet: say what is missing and offer the button here, where
      the comparison will appear, rather than only in the guide in the controls. (Both mode prints its own line
      per carriageway.) */
-  if (!d.baseline || !d.metrics || !d.anyIntervention) {
+  if (!d.baseline || !d.metrics || !d.anyChange) {
     if (direction !== null || !d.metrics) return null;
     return (
       <div className="sandbox-compare sandbox-compare-empty" data-compare-empty>
@@ -4350,6 +4563,22 @@ function CompareBlock({ d, direction }: { d: DirectionApi; direction: Direction 
     ["CO₂ rate", d.baseline.co2RatePerMin, nowOf.co2, "kg/min", false],
   ];
   const verdict = compareVerdict(d.baseline, nowOf);
+  /* Where the scenario's events stand against this comparison (SB-17): "After" is the road now, so an event that has
+     not started is not in it yet, one that is over shows as the road recovering, and one already running when the
+     baseline was taken is on both sides. Said, rather than left for the operator to infer from flat numbers. */
+  const waiting = d.compareEvents.filter((e) => e.state === "pending");
+  const over = d.compareEvents.filter((e) => e.state === "done");
+  const inBoth = d.baseline.eventsRunning ?? [];
+  const names = (xs: readonly { name: string }[]) => xs.map((x) => x.name).join(", ");
+  const eventNotes = [
+    waiting.length > 0
+      ? `${names(waiting)} ${waiting.length === 1 ? "has" : "have"} not started (next in ${formatClock(Math.min(...waiting.map((e) => e.startsInS)))}), so After does not include ${waiting.length === 1 ? "it" : "them"} yet. "Skip to next phase" in Scenario events gets there sooner.`
+      : null,
+    over.length > 0 ? `${names(over)} ${over.length === 1 ? "is" : "are"} over: After now shows the road recovering.` : null,
+    inBoth.length > 0
+      ? `The baseline was captured while ${inBoth.join(", ")} ${inBoth.length === 1 ? "was" : "were"} running, so ${inBoth.length === 1 ? "its" : "their"} effect is in Before too. Capture before an event starts to measure the event itself.`
+      : null,
+  ].filter((x): x is string => x !== null);
   return (
     <div className="sandbox-compare" data-compare={direction ?? undefined}>
       <div className="sandbox-compare-head">
@@ -4357,45 +4586,141 @@ function CompareBlock({ d, direction }: { d: DirectionApi; direction: Direction 
           {direction !== null && <DirectionPill direction={direction} long />} Baseline vs now
         </b>
         <span>
-          {d.baseline.takenWith} &rarr; {d.interventionSummary}
+          {d.baseline.takenWith} &rarr; {d.compareSummary}
         </span>
       </div>
       <p className={`sandbox-compare-verdict ${verdict.tone}`} data-compare-verdict>
         {verdict.text}
       </p>
-      <div className="sandbox-compare-rows">
-        <div className="sandbox-compare-row sandbox-compare-labels" aria-hidden>
-          <span className="l" />
-          <span className="was">Before</span>
-          <span className="arrow" />
-          <span className="now">After</span>
-          <span className="d" />
-        </div>
-        {compareRows.map(
-          ([label, was, now, unit, higherIsBetter]) => {
-            const pct = was === 0 ? null : ((now - was) / was) * 100;
-            // "Better" is not the same as "bigger": a longer queue and
-            // more CO2 are both worse, so the direction is declared per
-            // metric rather than assumed from the sign.
-            const good = pct == null ? null : higherIsBetter ? pct >= 0 : pct <= 0;
-            return (
-              <div className="sandbox-compare-row" key={label}>
-                <span className="l">{label}</span>
-                <span className="was">{fmt(was, unit === "kg/min" ? 1 : 0)}</span>
-                <span className="arrow">→</span>
-                <span className="now">
-                  {fmt(now, unit === "kg/min" ? 1 : 0)} <i>{unit}</i>
-                </span>
-                <span className={`d ${good == null ? "" : good ? "good" : "bad"}`}>
-                  {pct == null ? "—" : `${pct > 0 ? "+" : ""}${pct.toFixed(0)}%`}
-                </span>
-              </div>
-            );
-          },
-        )}
-      </div>
+      {eventNotes.map((t, i) => (
+        <p className="sandbox-compare-foot" data-compare-events key={i}>
+          {t}
+        </p>
+      ))}
+      <CompareRows rows={compareRows} was="Before" now="After" />
       <p className="sandbox-compare-foot">
         {avg && d.baseline.averaged ? "Both sides are one-minute averages, so the figures hold steady." : "Averaged over the last minute where the run is long enough; re-capture once the road has run a minute for a steadier baseline."}
+      </p>
+    </div>
+  );
+}
+
+/** The Before / After table: label, was, now, unit, and whether a bigger number is the better outcome, per row. */
+function CompareRows({ rows, was: wasLabel, now: nowLabel }: { rows: readonly (readonly [string, number, number, string, boolean])[]; was: string; now: string }) {
+  return (
+    <div className="sandbox-compare-rows">
+      <div className="sandbox-compare-row sandbox-compare-labels" aria-hidden>
+        <span className="l" />
+        <span className="was">{wasLabel}</span>
+        <span className="arrow" />
+        <span className="now">{nowLabel}</span>
+        <span className="d" />
+      </div>
+      {rows.map(
+        ([label, was, now, unit, higherIsBetter]) => {
+          const pct = was === 0 ? null : ((now - was) / was) * 100;
+          // "Better" is not the same as "bigger": a longer queue and
+          // more CO2 are both worse, so the direction is declared per
+          // metric rather than assumed from the sign.
+          const good = pct == null ? null : higherIsBetter ? pct >= 0 : pct <= 0;
+          return (
+            <div className="sandbox-compare-row" key={label}>
+              <span className="l">{label}</span>
+              <span className="was">{fmt(was, unit === "kg/min" ? 1 : 0)}</span>
+              <span className="arrow">→</span>
+              <span className="now">
+                {fmt(now, unit === "kg/min" ? 1 : 0)} <i>{unit}</i>
+              </span>
+              <span className={`d ${good == null ? "" : good ? "good" : "bad"}`}>
+                {pct == null ? "—" : `${pct > 0 ? "+" : ""}${pct.toFixed(0)}%`}
+              </span>
+            </div>
+          );
+        },
+      )}
+    </div>
+  );
+}
+
+/**
+ * Before / after with scenario events (19 Oct 2026, testers SB-17, second pass: "Scenario events are not applied in
+ * the baseline comparison"). Before is the same run without the events — the no-event twin in eventTwin.ts, built
+ * from this run's own seed, hour, inflow and road, holding what the operator set by hand and nothing else, stepped
+ * alongside — and After is this run, both read over the same last minute of the same clock. So the difference is the
+ * events', with no capture to time right: an event already running, or drawn by a forecast day when the run was
+ * built, is in After and not in Before. (The captured baseline still drives the "vs baseline" figures on the tiles.)
+ */
+function EventCompareBlock({ d, direction }: { d: DirectionApi; direction: Direction | null }) {
+  const twin = d.twinRef.current;
+  const live = d.simRef.current;
+  const names = (xs: readonly { name: string }[]) => xs.map((x) => x.name).join(", ");
+  const head = (
+    <div className="sandbox-compare-head">
+      <b>
+        {direction !== null && <DirectionPill direction={direction} long />} Without vs with the events
+      </b>
+      <span>{names(d.twinEvents)}</span>
+    </div>
+  );
+  // Still catching up from the start of the run (just built, or after a skip): no half-way figures.
+  if (!twin || !live || twin.live !== live || !d.twinState?.ready) {
+    return (
+      <div className="sandbox-compare" data-compare={direction ?? undefined} data-compare-twin="building">
+        {head}
+        <p className="sandbox-compare-foot">
+          {`Running the same road without the events up to now, to compare against${d.twinState ? ` (${Math.round(d.twinState.progress * 100)}%)` : ""}…`}
+        </p>
+      </div>
+    );
+  }
+  // Both sides the last minute's mean on the same 10 s grid (TrendLog), or the instant where the run is too young for one.
+  const tAvg = recentAverage(twin.trend.samplesOf(twin.sim));
+  const lAvg = recentAverage(d.trend.samplesOf(live));
+  const tm = twin.sim.metrics();
+  const lm = d.metrics ?? live.metrics();
+  const averaged = tAvg !== null && lAvg !== null;
+  const before = tAvg !== null && lAvg !== null
+    ? { avgSpeedKmh: tAvg.speedKmh, throughputPerMin: tAvg.throughputPerMin, longestQueueM: tAvg.queueM, co2RatePerMin: tAvg.co2KgPerMin }
+    : tm;
+  const nowOf = tAvg !== null && lAvg !== null
+    ? { speed: lAvg.speedKmh, flow: lAvg.throughputPerMin, queue: lAvg.queueM, co2: lAvg.co2KgPerMin }
+    : { speed: lm.avgSpeedKmh, flow: lm.throughputPerMin, queue: lm.longestQueueM, co2: lm.co2RatePerMin };
+  const rows: readonly (readonly [string, number, number, string, boolean])[] = [
+    ["Avg speed", before.avgSpeedKmh, nowOf.speed, "km/h", true],
+    ["Throughput", before.throughputPerMin, nowOf.flow, "/min", true],
+    ["Longest queue", before.longestQueueM, nowOf.queue, "m", false],
+    ["CO₂ rate", before.co2RatePerMin, nowOf.co2, "kg/min", false],
+  ];
+  const waiting = d.twinEvents.filter((e) => e.state === "pending");
+  const over = d.twinEvents.filter((e) => e.state === "done");
+  const running = d.twinEvents.filter((e) => e.state === "active");
+  const verdict =
+    running.length === 0 && over.length === 0
+      ? // Nothing has happened yet: the two are the same run until an event's vehicles are picked out of the traffic.
+        { text: "No difference yet: until an event starts, the run with the events and the run without them are the same run.", tone: "flat" as const }
+      : compareVerdict(before, nowOf);
+  const setByHand = d.handSetSummary;
+  const notes = [
+    waiting.length > 0
+      ? `${names(waiting)} ${waiting.length === 1 ? "has" : "have"} not started (next in ${formatClock(Math.min(...waiting.map((e) => e.startsInS)))}). "Skip to next phase" in Scenario events gets there sooner.`
+      : null,
+    over.length > 0 ? `${names(over)} ${over.length === 1 ? "is" : "are"} over: the difference left is the road recovering.` : null,
+  ].filter((x): x is string => x !== null);
+  return (
+    <div className="sandbox-compare" data-compare={direction ?? undefined} data-compare-twin="ready">
+      {head}
+      <p className={`sandbox-compare-verdict ${verdict.tone}`} data-compare-verdict>
+        {verdict.text}
+      </p>
+      {notes.map((t, i) => (
+        <p className="sandbox-compare-foot" data-compare-events key={i}>
+          {t}
+        </p>
+      ))}
+      <CompareRows rows={rows} was="No events" now="With events" />
+      <p className="sandbox-compare-foot">
+        {`"No events" is this same run (the same seed, hour, inflow and road${setByHand ? `, and what is set by hand: ${setByHand}` : ""}) run alongside without the scenario events, so the difference is the events'. `}
+        {averaged ? "Both sides are the last minute's average." : "Single readings until the run has a minute of figures to average."}
       </p>
     </div>
   );
@@ -4538,7 +4863,7 @@ function RailSection({
         </svg>
         <span className="sandbox-section-title" style={{ margin: 0, flex: "0 0 auto" }}>{title}</span>
         {!open && (
-          <span style={{
+          <span title={summary} style={{
             marginLeft: "auto", fontSize: "0.72rem", color: "var(--text-muted)",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0,
           }}>{summary}</span>
@@ -4581,6 +4906,53 @@ type VehicleHit = {
 type VehicleRef = { id: number; dir: Direction; born: number };
 
 const vehicleHits: VehicleHit[] = [];
+
+/* Scenario event labels as drawn this frame, with the words each leaves out (17 Oct 2026, tester J). A label used to
+   carry the name, phase and time left ("Overturned vehicle #3 · Lane blocked: awaiting response · 12:04 left"), and
+   two or three of them stacked over the lanes they describe. The road shows the name; the rest appears on hover,
+   drawn over the label (drawLabelProbe). The event list keeps every detail. Module-level like vehicleHits. */
+type LabelHit = { left: number; top: number; w: number; h: number; full: string; look: "road" | "roadPending" | "site" | "sitePending" };
+const labelHits: LabelHit[] = [];
+
+/** The label under (x, y), the one drawn last when two overlap (it is the one on top). */
+function labelAt(x: number, y: number): LabelHit | null {
+  for (let i = labelHits.length - 1; i >= 0; i--) {
+    const h = labelHits[i];
+    if (x >= h.left && x <= h.left + h.w && y >= h.top && y <= h.top + h.h) return h;
+  }
+  return null;
+}
+
+/** A hovered label, drawn again over itself with everything it says: same place, same colours, as wide as it needs. */
+function drawLabelProbe(ctx: CanvasRenderingContext2D, cssW: number, h: LabelHit) {
+  const site = h.look === "site" || h.look === "sitePending";
+  const faint = h.look === "roadPending";
+  ctx.save();
+  ctx.font = site ? "700 10px system-ui" : "700 11px Inter, system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  const w = ctx.measureText(h.full).width + (site ? 12 : 14);
+  const lx = Math.max(4, Math.min(h.left, cssW - w - 4));
+  if (site) {
+    ctx.fillStyle = h.look === "site" ? "rgba(220,38,38,0.97)" : "rgba(234,88,12,0.96)";
+    roundRect(ctx, lx, h.top, w, h.h, 4);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(h.full, lx + 6, h.top + 2.5);
+  } else {
+    ctx.fillStyle = "rgba(15,23,42,0.97)";
+    roundRect(ctx, lx, h.top, w, h.h, 4);
+    ctx.fill();
+    ctx.strokeStyle = faint ? "rgba(148,163,184,0.8)" : "#f59e0b";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash(faint ? [4, 3] : []);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = faint ? "#cbd5e1" : "#fde68a";
+    ctx.fillText(h.full, lx + 7, h.top + 3.5);
+  }
+  ctx.restore();
+}
 
 /* The road's zoom, for the drawing and for every click on it.
  *
@@ -4777,6 +5149,24 @@ function kmTickStep(spanKm: number): number {
   return 10;
 }
 
+/**
+ * The km ladder's ticks for a window given in MEASURED km: round OFFICIAL km posts, each drawn where
+ * that post really is (kmMeasured) and labelled with the post itself. The step is chosen on the span of
+ * posts the window covers, so the numbers stay round however the posts stretch against the road.
+ */
+function kmAxisTicks(fromKm: number, toKm: number, zoom: number): { km: number; text: string }[] {
+  const postFrom = kmPost(fromKm);
+  const postTo = kmPost(toKm);
+  const step = kmTickStep(Math.max(1e-6, postTo - postFrom) / zoom);
+  const dp = step < 1 ? 2 : 1;
+  const out: { km: number; text: string }[] = [];
+  for (let i = Math.ceil(postFrom / step - 1e-9); i * step <= postTo + 1e-9; i++) {
+    const post = i * step;
+    out.push({ km: kmMeasured(post), text: post.toFixed(dp) });
+  }
+  return out;
+}
+
 /** A slider's label with its "i": the explanation lives in the popup, not in a paragraph under the control.
  *  What is true of the view right now (a warning, an error) still belongs inline, next to the field. */
 /** A one-road-at-a-time control's own NB / SB choice (README: no separate Focus control), styled as the Command
@@ -4831,7 +5221,7 @@ function ClosureHint({ placing, draftKm }: { placing: boolean; draftKm: number |
   if (!placing) return null;
   const text = draftKm == null
     ? "Click the road where the closure starts · Esc to cancel"
-    : `Starts at Km ${draftKm.toFixed(2)} — now click where it ends · Esc to cancel`;
+    : `Starts at Km ${fmtKm(draftKm, 2)} — now click where it ends · Esc to cancel`;
   return <p className="sandbox-place-hint">{text}</p>;
 }
 
@@ -4891,7 +5281,7 @@ function drawScenarioMarker(ctx: CanvasRenderingContext2D, x: number, y: number,
   ctx.restore();
 }
 
-/** A label per scenario event at its location: name, phase and time left; stacked so two never sit on top of each other. */
+/** A label per scenario event at its location: its name, with the phase and time left on hover (labelHits); stacked so two never sit on top of each other. */
 function drawScenarioLabels(
   ctx: CanvasRenderingContext2D,
   marks: readonly SceneMark[],
@@ -4930,7 +5320,7 @@ function drawScenarioLabels(
     // A scene draws itself. The amber triangle is what is left for an event that has not started, or that is
     // running but holds nothing on the road (it yielded its closure to the operator's own).
     if (!hasSceneArt(m)) drawScenarioMarker(ctx, x, laneY, g.r, faint);
-    const text = `${m.name} · ${g.wording ? g.wording(m) : m.text}`;
+    const text = m.name;
     const w = ctx.measureText(text).width + 14;
     const h = 18;
     const heldStretch = hasSceneArt(m) && m.closedLanes.length > 0 ? m.stretch : null;
@@ -4965,6 +5355,7 @@ function drawScenarioLabels(
     ctx.setLineDash([]);
     ctx.fillStyle = faint ? "#cbd5e1" : "#fde68a";
     ctx.fillText(text, lx + 7, ly + 3.5);
+    labelHits.push({ left: lx, top: ly, w, h, full: `${m.name} · ${g.wording ? g.wording(m) : m.text}`, look: faint ? "roadPending" : "road" });
   }
   ctx.restore();
 }
@@ -5732,7 +6123,7 @@ function drawCarriageway(
   }
 
   // The stretch being drawn: shaded between the first click and the cursor,
-  // with both ends labelled as km-posts.
+  // with both ends labelled as official km posts.
   const draftStretch = sim.interventions.closureDraft;
   if (draftStretch) {
     const x0 = xPx(draftStretch.from);
@@ -5751,8 +6142,8 @@ function drawCarriageway(
     ctx.lineTo(x1, roadTop + roadH);
     ctx.stroke();
     const kmOf = (m: number) => (sb ? toKm - m / 1000 : fromKm + m / 1000);
-    const kmA = kmOf(draftStretch.from).toFixed(2);
-    const kmB = kmOf(draftStretch.to).toFixed(2);
+    const kmA = fmtKm(kmOf(draftStretch.from), 2);
+    const kmB = fmtKm(kmOf(draftStretch.to), 2);
     const label = kmA === kmB ? `Km ${kmA} → click the end` : `Km ${kmA} – ${kmB}`;
     ctx.font = "700 12px Inter, system-ui, sans-serif";
     ctx.textBaseline = "top";
@@ -6274,6 +6665,8 @@ function drawCarriageway(
     carLen: heroLen,
     carWid: Math.max(9, Math.min(heroLen * 0.46, laneH * 0.62)),
     t: animT,
+    // The plazas and service areas beside this carriageway: rain falls on them as on the road.
+    wetAreas: facGeom && facView ? facilityWetAreas(facGeom, facView.list) : undefined,
   };
   /* Each scene's own vehicles as they are drawn this frame — its wrecks and its responders, by event — so the people,
      cones and marks of a scene go round the vehicles that are really there, not at fixed offsets from its point. */
@@ -6488,7 +6881,9 @@ function drawCarriageway(
           m.site ? [{ site: m.site, name: m.name, text: m.text, state: m.state, secondsUntilStart: m.secondsUntilStart }] : [],
         )
       : [];
-    drawFacilityOverlay(facGeom, facView, highlightFacility, siteMarks);
+    for (const hit of drawFacilityOverlay(facGeom, facView, highlightFacility, siteMarks)) {
+      labelHits.push({ left: hit.left, top: hit.top, w: hit.w, h: hit.h, full: hit.full, look: hit.active ? "site" : "sitePending" });
+    }
   }
 
   // incidents
@@ -6617,7 +7012,7 @@ function drawCarriageway(
       ctx.stroke();
 
       // Name tag, sitting on the ramp rather than over the traffic lanes.
-      const label = `${r.name} ${leaves ? "exit" : "entry"} · Km ${km.toFixed(2)}`;
+      const label = `${r.name} ${leaves ? "exit" : "entry"} · Km ${fmtKm(km, 2)}`;
       ctx.font = "600 11px system-ui";
       const w = ctx.measureText(label).width + 10;
       let left = away > 0 ? xEnd - w * 0.1 : xEnd - w * 0.9;
@@ -6643,9 +7038,6 @@ function drawCarriageway(
   // identical x (see drawSharedKmAxis's own comment for why that is exact,
   // not approximate), so a second copy would only be a duplicate, not a check.
   if (drawAxis) {
-    const spanKm = Math.max(1e-6, toKm - fromKm);
-    const step = kmTickStep(spanKm / roadView.zoom);
-    const first = Math.ceil(fromKm / step) * step;
     /* The scale sits outside the carriageway, opposite the ramps.
      *
      * It used to be printed at roadTop + roadH - 3, i.e. inside the bottom
@@ -6665,11 +7057,10 @@ function drawCarriageway(
        gridline brightened to match. */
     const tall = roadH >= 260;
     const axisY = axisBelow ? roadTop + roadH + AXIS_H / 2 : roadTop - AXIS_H / 2;
-    const dp = step < 1 ? 2 : 1;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.font = tall ? "700 12px system-ui" : "600 10px system-ui";
-    for (let km = first; km <= toKm + 1e-9; km += step) {
+    for (const { km, text } of kmAxisTicks(fromKm, toKm, roadView.zoom)) {
       const x = xPx(sb ? (toKm - km) * 1000 : (km - fromKm) * 1000);
       if (x < 2 || x > cssW - 2) continue;
       ctx.strokeStyle = tall ? "rgba(255,255,255,0.26)" : "rgba(255,255,255,0.16)";
@@ -6687,7 +7078,6 @@ function drawCarriageway(
       ctx.moveTo(x, edgeY);
       ctx.lineTo(x, edgeY + (axisBelow ? 4 : -4));
       ctx.stroke();
-      const text = `${km.toFixed(dp)}`;
       const tw = ctx.measureText(text).width;
       const ch = tall ? 17 : 14;
       ctx.fillStyle = "rgba(8,13,25,0.82)";
@@ -6746,6 +7136,7 @@ function render(
   highlightFacility: string | null = null,
 ) {
   vehicleHits.length = 0; // re-recorded by drawCarriageway() below
+  labelHits.length = 0; // likewise
   const viewW = canvas.clientWidth;
   const cssW = roadW(viewW); // the zoomed road: everything below is laid out on it (see roadView)
   const cssH = canvas.clientHeight;
@@ -6869,6 +7260,7 @@ function renderBoth(
   highlightFacility: string | null = null,
 ) {
   vehicleHits.length = 0; // re-recorded by both drawCarriageway() calls below
+  labelHits.length = 0; // likewise
   const viewW = canvas.clientWidth;
   const cssW = roadW(viewW); // the zoomed road: everything below is laid out on it (see roadView)
   const cssH = canvas.clientHeight;
@@ -6927,7 +7319,7 @@ function renderBoth(
     ctx.font = "800 9px system-ui";
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    const label = `${REALLOCATION_NAME.toUpperCase()} · ${zipper.toward} +${zipper.lanes} lane${zipper.lanes === 1 ? "" : "s"}, ${zipper.toward === "NB" ? "SB" : "NB"} −${zipper.lanes} · Km ${marks.fromKm.toFixed(2)}–${marks.toKm.toFixed(2)} · ${zipper.toward} CROSSES INTO ${giver} LANE${zipper.lanes === 1 ? " 1" : "S 1–2"} AT EACH END`;
+    const label = `${REALLOCATION_NAME.toUpperCase()} · ${zipper.toward} +${zipper.lanes} lane${zipper.lanes === 1 ? "" : "s"}, ${zipper.toward === "NB" ? "SB" : "NB"} −${zipper.lanes} · ${fmtKmRange(marks.fromKm, marks.toKm, 2)} · ${zipper.toward} CROSSES INTO ${giver} LANE${zipper.lanes === 1 ? " 1" : "S 1–2"} AT EACH END`;
     // On a dark chip: in the light theme the median is the page's own white, and yellow on it cannot be read.
     const lx = Math.min(wPx(crossM) + 8, cssW / 3);
     ctx.fillStyle = "rgba(8,13,25,0.82)";
@@ -7155,9 +7547,6 @@ function drawSharedKmAxis(
   g: { xPx: (m: number) => number; fromKm: number; toKm: number; cssW: number; axisY: number; /** a dark chip behind each number, for the movable barrier's stripes */ backdrop: boolean },
 ) {
   const { xPx, fromKm, toKm, cssW, axisY, backdrop } = g;
-  const spanKm = Math.max(1e-6, toKm - fromKm);
-  const step = kmTickStep(spanKm / roadView.zoom);
-  const first = Math.ceil(fromKm / step) * step;
   ctx.save();
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -7166,11 +7555,9 @@ function drawSharedKmAxis(
      the median happened to be, which on a full-screen road is the scale an
      operator reads a queue's position from. */
   ctx.font = "700 12px system-ui";
-  const dp = step < 1 ? 2 : 1;
-  for (let km = first; km <= toKm + 1e-9; km += step) {
+  for (const { km, text } of kmAxisTicks(fromKm, toKm, roadView.zoom)) {
     const x = xPx((km - fromKm) * 1000);
     if (x < 2 || x > cssW - 2) continue;
-    const text = `${km.toFixed(dp)}`;
     const tw = ctx.measureText(text).width;
     // A green NLEX km post on the barrier: white numerals, a white rim, a little shadow.
     ctx.fillStyle = "rgba(0,0,0,0.35)";

@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { env } from "../config/env.js";
+import { deviceTrustValid, trustRevokedAt } from "../lib/device-trust.js";
 
 /*
  * Session verification and role authorization.
@@ -91,6 +92,22 @@ function passedSecondStep(token: string): boolean {
   return claimsOf(token).aal === "aal2";
 }
 
+/** The device pass a browser sends in place of the code (lib/device-trust.ts), if any. */
+export const DEVICE_TRUST_HEADER = "x-device-trust";
+
+/* Passed the code, or carries a valid device pass for this very account (19 Oct 2026: "remember this device
+   for 7 days"). The pass never replaces the password: the token itself still has to be a live Supabase
+   session, which only a correct password opens. */
+function signedInEnough(token: string, user: { id?: string; user_metadata?: Record<string, unknown> } | null | undefined, deviceTrust: string | undefined): boolean {
+  return passedSecondStep(token) || deviceTrustValid(deviceTrust, user?.id, trustRevokedAt(user?.user_metadata));
+}
+
+/** True when the request's own token passed the authenticator code (a device pass does not count). */
+export function requestPassedCode(req: Request): boolean {
+  const token = req.headers.authorization?.split(" ")[1];
+  return !!token && passedSecondStep(token);
+}
+
 /**
  * Verify the bearer token and attach the caller's identity and role.
  *
@@ -124,7 +141,10 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
     });
   }
 
-  const known = accepted.get(token);
+  const deviceTrust = req.header(DEVICE_TRUST_HEADER) ?? undefined;
+  // Keyed with the pass, so a token let in on a pass is not let in again without it.
+  const cacheKey = `${token}|${deviceTrust ?? ""}`;
+  const known = accepted.get(cacheKey);
   if (known && Date.now() < known.until) {
     req.user = known.user;
     req.userRole = known.role;
@@ -147,7 +167,7 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
     // that stopped after the password is authentic and still not enough.
     // 401 rather than 403: the caller can fix it, by finishing sign-in. Not
     // by refreshing, though; a refreshed token keeps the level it had.
-    if (!passedSecondStep(token)) {
+    if (!signedInEnough(token, user, deviceTrust)) {
       return res.status(401).json({
         success: false,
         code: "mfa_required",
@@ -160,7 +180,7 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
     const until = Math.min(Date.now() + ACCEPTED_TTL_MS, expiryOf(token));
     if (until > Date.now()) {
       if (accepted.size > 500) accepted.clear(); // bounded: a burst of new tokens simply starts over
-      accepted.set(token, { until, user, role: req.userRole ?? FALLBACK_ROLE });
+      accepted.set(cacheKey, { until, user, role: req.userRole ?? FALLBACK_ROLE });
     }
     next();
   } catch (err) {
@@ -183,19 +203,20 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
  * enough to write log entries under that operator's name.
  */
 const verified = new Map<string, { at: number; user: { email: string; role: string } | null }>();
-export async function verifiedUser(token: string | undefined): Promise<{ email: string; role: string } | null> {
+export async function verifiedUser(token: string | undefined, deviceTrust?: string): Promise<{ email: string; role: string } | null> {
   const supabase = getSupabase();
   if (!token || !supabase) return null;
-  const hit = verified.get(token);
+  const key = `${token}|${deviceTrust ?? ""}`;
+  const hit = verified.get(key);
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.user;
   const lookup = supabase.auth.getUser(token).then(({ data, error }) =>
-    error || !data.user || !passedSecondStep(token)
+    error || !data.user || !signedInEnough(token, data.user, deviceTrust)
       ? null
       : { email: data.user.email ?? data.user.id, role: data.user.user_metadata?.role || FALLBACK_ROLE });
   const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 4_000));
   const user = await Promise.race([lookup.catch(() => null), timeout]);
   if (verified.size > 500) verified.clear();
-  verified.set(token, { at: Date.now(), user });
+  verified.set(key, { at: Date.now(), user });
   return user;
 }
 

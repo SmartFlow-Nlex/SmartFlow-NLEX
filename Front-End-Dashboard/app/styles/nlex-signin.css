@@ -650,12 +650,16 @@
   font-size: clamp(14.5px, 1.1vw, 16px);
   font-weight: 500;
   color: var(--nlex-blue);
-  text-decoration: underline;
+  /* Plain blue text, underlined only when pointed at (20 Oct 2026, user request: the permanent underline
+     read as unfinished). */
+  text-decoration: none;
   text-decoration-thickness: 1.5px;
   text-underline-offset: 4px;
   cursor: pointer;
   transition: color 0.18s ease;
 }
+.forgot-link:hover:not(:disabled),
+.si-link:hover:not(:disabled) { text-decoration: underline; }
 .forgot-link:hover:not(:disabled),
 .si-link:hover:not(:disabled) { color: var(--nlex-blue-deep); }
 .forgot-link:focus-visible,
@@ -919,3 +923,103 @@
   .submit-arrow,
   .submit-spinner { right: 20px; }
 }
+
+/* --- Account additions (19 Oct 2026, user request) ------------------------------------------------
+   "Remember this device for 7 days" under the code, the small hints beside it and under the reset code,
+   and the email address named in the reset step. */
+.mfa-remember { display: flex; flex-direction: column; gap: 6px; }
+.si-hint { margin: 0; font-size: 13px; line-height: 1.45; color: var(--si-label-ink, var(--text-secondary)); }
+.mfa-lead b { font-weight: 650; color: var(--text-primary); overflow-wrap: anywhere; }
+.forgot-link:disabled { opacity: 0.55; cursor: default; text-decoration: none; }
+
+/* "Check your email": two numbered steps (20 Oct 2026). */
+.si-steps { display: flex; flex-direction: column; gap: 10px; margin: 2px 0 0; padding: 0; list-style: none; counter-reset: si-step; }
+.si-steps li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  counter-increment: si-step;
+}
+.si-steps li::before {
+  content: counter(si-step);
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--nlex-blue) 16%, transparent);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--nlex-blue);
+}
+:root[data-theme="dark"] .si-steps li::before { color: #8cc2ff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .si-steps li::before { color: #8cc2ff; } }
+.si-steps b { font-weight: 650; color: var(--text-primary); }
+
+/* "Back to sign in" / "Use a different account": a small pill with an arrow, not a bare link (20 Oct 2026). */
+.si-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--nlex-blue) 28%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--nlex-blue) 8%, transparent);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--nlex-blue);
+  cursor: pointer;
+  transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+.si-back:hover:not(:disabled) { background: color-mix(in srgb, var(--nlex-blue) 14%, transparent); border-color: color-mix(in srgb, var(--nlex-blue) 45%, transparent); }
+.si-back:hover:not(:disabled) svg { transform: translateX(-2px); }
+.si-back svg { transition: transform 0.18s ease; }
+.si-back:focus-visible { outline: 2px solid var(--nlex-blue); outline-offset: 2px; }
+.si-back:disabled { opacity: 0.6; cursor: progress; }
+:root[data-theme="dark"] .si-back { color: #b9d9ff; border-color: rgba(140, 194, 255, 0.35); background: rgba(140, 194, 255, 0.1); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .si-back { color: #b9d9ff; border-color: rgba(140, 194, 255, 0.35); background: rgba(140, 194, 255, 0.1); } }
+
+/* The resend row: a sentence and a pill button; while waiting, the pill counts down, muted but legible. */
+.si-resend-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-surface) 70%, transparent);
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+.si-resend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--nlex-blue);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 650;
+  color: #ffffff;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 0.18s ease, transform 0.18s ease;
+}
+.si-resend:hover:not(:disabled) { background: var(--nlex-blue-deep, #1749bd); }
+.si-resend:focus-visible { outline: 2px solid var(--nlex-blue); outline-offset: 2px; }
+.si-resend:disabled {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-secondary);
+  cursor: default;
+}
+.si-steps li > span { flex: 1; min-width: 0; }
+

@@ -80,6 +80,9 @@
 /* The active filter keeps its tick, so the choice never rests on colour alone. */
 .nc-ops-maint .nc-ops-status-filter button > svg.nc-ops-check { display: inline-block; flex: none; margin-right: 6px; }
 .nc-ops-maint .nc-ops-status-filter button { display: inline-flex; align-items: center; }
+/* How many jobs each tab holds under the other filters, so a cancel visibly moves one from
+   Scheduled to Cancelled. Quieter than the label; inherits its colour, active or not. */
+.nc-ops-maint .nc-ops-status-filter .nc-ops-tab-n { margin-left: 6px; font-variant-numeric: tabular-nums; opacity: 0.66; }
 
 .nc-ops-maint .nc-ops-search {
   display: flex;
@@ -341,6 +344,48 @@
 .nc-ops-maint .ms-input { min-height: 44px; padding: 10px 14px; line-height: 1.4; }
 .nc-ops-maint .ms-textarea { min-height: 0; resize: vertical; line-height: 1.55; }
 .nc-ops-maint .ms-input[type="number"] { font-variant-numeric: tabular-nums; }
+
+/* Km post boxes (KmPostField, maintenance/page.tsx): one-km steppers inside the right edge, where the
+   number box's spinners were, held at the ends of what the box may hold. */
+.nc-ops-maint .nc-km-field { position: relative; }
+.nc-ops-maint .nc-km-field .ms-input { width: 100%; padding-right: 42px; }
+.nc-ops-maint .nc-km-steps {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  bottom: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 28px;
+}
+.nc-ops-maint .nc-km-steps button {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.nc-ops-maint .nc-km-steps button:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 12%, transparent);
+}
+.nc-ops-maint .nc-km-steps button:disabled { opacity: 0.35; cursor: default; }
+/* Not a post this box may hold: the box and the line under it say so. */
+.nc-ops-maint .ms-input[aria-invalid="true"] { border-color: var(--color-danger); }
+.nc-ops-maint .ms-input[aria-invalid="true"]:focus { box-shadow: 0 0 0 3px var(--color-danger-bg); }
+/* A note with something to explain takes an ink dark enough to read at this size (the status hues alone
+   are map colours). Scoped like the field-note rule further down (.ms-input-group > .nc-ops-sub), plus the
+   state class, so it wins over that rule's muted colour. */
+.nc-ops-maint .ms-input-group > .nc-ops-sub.is-error,
+.nc-ops-maint .ms-input-group > .nc-ops-sub.is-warn { font-weight: 500; text-wrap: pretty; }
+.nc-ops-maint .ms-input-group > .nc-ops-sub.is-error { color: color-mix(in srgb, var(--color-danger) 80%, var(--text-primary)); }
+.nc-ops-maint .ms-input-group > .nc-ops-sub.is-warn { color: color-mix(in srgb, var(--color-warning) 75%, var(--text-primary)); }
 .nc-ops-maint .ms-form-row { gap: 14px; }
 
 /* Direction: one pill, two segments. A thumb slides under the chosen side. */
@@ -1497,3 +1542,188 @@ section.nc-ops-maint { gap: 12px; padding-top: 16px; padding-bottom: 36px; }
   justify-self: start;
 }
 .nc-ops-maint .nc-ops-alerts-ok svg { color: var(--color-success); }
+
+/* --- Maintenance filter bar (16 Oct 2026, user request) -------------------------------------
+   Two rows of one height each: status and search, then the dropdowns with any active-filter chip at
+   the end. Every label sits beside its control; the dropdowns are compact pills that size to their
+   text instead of stretching under their labels. */
+.nc-ops-maint .nc-ops-filters { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 10px; }
+.nc-ops-maint .nc-ops-frow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 22px; width: 100%; min-width: 0; }
+.nc-ops-maint .nc-ops-frow > .nc-ops-search { margin-left: auto; flex: 0 1 340px; min-width: 220px; }
+.nc-ops-maint .nc-ops-filter-sel { flex-wrap: nowrap; align-items: center; gap: 10px; }
+.nc-ops-maint .nc-ops-filter-sel .nc-ops-select { display: inline-block; width: auto; }
+.nc-ops-maint .nc-ops-filter-sel .nc-ops-select-btn { min-width: 132px; min-height: 0; height: 32px; padding: 0 12px 0 14px; border-radius: 999px; font-size: var(--fs-body); }
+.nc-ops-maint .nc-ops-filter-sel .nc-ops-select-menu { min-width: 180px; width: max-content; }
+.nc-ops-maint .nc-ops-factive { display: inline-flex; align-items: center; gap: 14px; margin-left: auto; }
+.nc-ops-maint .nc-ops-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px 0 14px;
+  border: 1px solid color-mix(in srgb, var(--page-accent) 40%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--page-accent) 10%, transparent);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--page-accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nc-ops-maint .nc-ops-chip:hover { background: color-mix(in srgb, var(--page-accent) 16%, transparent); }
+.nc-ops-maint .nc-ops-chip:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .nc-ops-maint .nc-ops-frow > .nc-ops-search { flex: 1 1 100%; margin-left: 0; }
+  .nc-ops-maint .nc-ops-factive { margin-left: 0; }
+}
+
+/* --- Schedule maintenance form (16 Oct 2026, user request) ------------------------------------
+   Three soft panels (Work, Where, When), each with a small titled head; the lanes drawn as one
+   connected carriageway strip with Full closure apart from it; the start and end of the window side
+   by side; the actions on the right, Discard before the main button. */
+.nc-ops-maint .nc-ops-form-body { gap: 12px; padding-top: 6px; }
+.nc-ops-maint .nc-ops-fsec {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 16px 18px 18px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--page-accent) 3%, transparent);
+}
+.nc-ops-maint .nc-ops-fsec-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  color: var(--text-primary);
+}
+.nc-ops-maint .nc-ops-fsec-title > svg { color: var(--page-accent); flex: none; }
+.nc-ops-maint .nc-ops-fsec-aside { margin-left: auto; font-size: var(--fs-label); font-weight: 600; letter-spacing: 1px; color: var(--text-muted); }
+
+/* Lanes: the heading with Full closure at its end; the lanes as one full-width strip of equal
+   segments; "Median" and "Road edge" captioned under its two ends. */
+.nc-ops-maint .nc-ops-lanes-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.nc-ops-maint .nc-ops-lanes-road {
+  display: flex;
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-input);
+}
+.nc-ops-maint .nc-ops-lanes-road > button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 44px;
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px dashed var(--border-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.nc-ops-maint .nc-ops-lanes-road > button:last-child { border-right: 0; }
+.nc-ops-maint .nc-ops-lanes-road > button:hover:not(:disabled) { background: color-mix(in srgb, var(--page-accent) 7%, transparent); }
+.nc-ops-maint .nc-ops-lanes-road > button.active { background: var(--color-warning-bg); box-shadow: inset 0 -3px 0 var(--color-warning); }
+.nc-ops-maint .nc-ops-lanes-road > button:disabled { cursor: default; }
+.nc-ops-maint .nc-ops-lanes-road > button:focus-visible { outline: 2px solid var(--page-accent); outline-offset: -2px; }
+.nc-ops-maint .nc-ops-lanes-ends { display: flex; justify-content: space-between; margin-top: -4px; font-size: 12px; color: var(--text-muted); }
+.nc-ops-maint .nc-ops-full {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.nc-ops-maint .nc-ops-full:hover { border-color: var(--hairline-hover, var(--page-accent)); }
+.nc-ops-maint .nc-ops-full.active { border-color: var(--color-danger); background: var(--color-danger-bg); color: var(--color-danger); font-weight: 600; }
+.nc-ops-maint .nc-ops-full:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+.nc-ops-maint .nc-ops-lanes-ends + .nc-ops-sub { font-size: 13px; letter-spacing: 0; text-transform: none; line-height: 1.5; color: var(--text-muted); }
+.nc-ops-maint .nc-ops-lanes-ends + .nc-ops-sub b { font-weight: 600; color: var(--text-secondary); }
+
+/* When: Starts → Ends. */
+.nc-ops-maint .nc-ops-when { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: end; gap: 12px; }
+.nc-ops-maint .nc-ops-when-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.nc-ops-maint .nc-ops-when-k { font-size: 13px; font-weight: 650; color: var(--text-secondary); }
+.nc-ops-maint .nc-ops-when-row { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 10px; }
+.nc-ops-maint .nc-ops-when-arrow { align-self: end; padding-bottom: 12px; color: var(--text-muted); font-size: 16px; }
+
+/* Actions on the right: Discard, then the main button. */
+.nc-ops-maint .nc-ops-actions.is-form { justify-content: flex-end; }
+.nc-ops-maint .nc-ops-submit { display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap; }
+
+@media (max-width: 720px) {
+  .nc-ops-maint .nc-ops-fsec { padding: 14px; }
+  .nc-ops-maint .nc-ops-when { grid-template-columns: minmax(0, 1fr); }
+  .nc-ops-maint .nc-ops-when-arrow { display: none; }
+  .nc-ops-maint .nc-ops-lanes-road { flex-wrap: wrap; }
+  .nc-ops-maint .nc-ops-lanes-road > button { flex: 1 1 30%; border-bottom: 1px dashed var(--border-strong); }
+  .nc-ops-maint .nc-ops-when-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+
+/* The quieter-hours suggestion under When (17 Oct 2026, testers' Maintenance suggestion). Amber when the chosen
+   start sits in the busiest quarter of that day. */
+.nc-ops-quiet {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--page-accent, var(--color-info)) 6%, transparent);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.nc-ops-quiet > span { flex: 1 1 280px; min-width: 0; }
+.nc-ops-quiet b { color: var(--text-primary); font-weight: 600; }
+.nc-ops-quiet.is-busy {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 9%, transparent);
+}
+.nc-ops-quiet.is-ok { justify-content: flex-start; gap: 6px; }
+.nc-ops-quiet.is-ok svg { color: var(--color-success); flex: none; }
+
+
+/* Wave 2 (19 Oct 2026): the suggestion reads the stretch's own toll plazas and says where its numbers come
+   from on a second, quieter line; the amber note carries its icon so the warning is not colour alone; and
+   the states with nothing to suggest (no counts, work over 12 hours, still reading) are plain notes. */
+.nc-ops-quiet-src { display: block; margin-top: 2px; font-size: 12px; color: var(--text-muted); }
+.nc-ops-quiet.is-busy { flex-wrap: wrap; }
+.nc-ops-quiet.is-busy > .nc-ops-quiet-icon { flex: none; align-self: flex-start; margin-top: 3px; color: var(--color-warning); }
+.nc-ops-quiet.is-busy > span { flex: 1 1 240px; }
+.nc-ops-quiet.is-ok { align-items: flex-start; }
+.nc-ops-quiet.is-ok svg { margin-top: 3px; }
+.nc-ops-quiet.is-plain {
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 6px;
+  background: transparent;
+  border-style: dashed;
+}
+.nc-ops-quiet.is-plain svg { flex: none; margin-top: 3px; color: var(--text-muted); }
+.nc-ops-quiet .btn-muted { flex: none; }
+/* The exits either end of a km range, under it in the table: sentence case, quieter than the range. */
+.nc-ops-maint .nc-ops-near { display: block; margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--text-muted); font-variant-numeric: normal; white-space: normal; max-width: 24ch; }

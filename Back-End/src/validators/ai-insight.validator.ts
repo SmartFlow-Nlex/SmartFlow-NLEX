@@ -60,25 +60,32 @@ export const CongestionNarrativeSchema = z.object({
     .object({ model: z.string().min(1).max(80), accuracy: z.number().min(0).max(1).nullable() })
     .nullable()
     .optional(),
-  // One row per hour ahead. Capped at 24: the served map covers 12.
+  /* One row per hour ahead. Capped at a week (17 Oct 2026, testers TR-9): the map now offers Next 24 h and
+     Next 7 days, and the old cap of 24 turned every report asked for on the week view into a 400. */
   horizons: z
     .array(
       z.object({
-        horizon: z.number().int().min(1).max(24),
+        horizon: z.number().int().min(1).max(168),
         accuracy: z.number().min(0).max(1).nullable(),
         persistence: z.number().min(0).max(1).nullable(),
         n: z.number().int().nonnegative().nullable().optional(),
       }),
     )
-    .max(24)
+    .max(168)
     .optional(),
   /** What the map currently shows, so the read-out can speak to it. */
   situation: z
     .object({
       exitsTotal: z.number().int().min(0).max(200),
       exitsSevere: z.number().int().min(0).max(200),
-      hoursCovered: z.number().int().min(1).max(24),
+      hoursCovered: z.number().int().min(1).max(168),
       neverPredictsHeavy: z.boolean().optional(),
+      /** The first and last hour on the map, already in words ("Fri 17 Oct, 3 PM"). */
+      windowStart: z.string().max(40).nullable().optional(),
+      windowEnd: z.string().max(40).nullable().optional(),
+      /** The speed cuts the card uses (km/h), so the read-out cannot define the classes differently (TR-9). */
+      severeBelowKmh: z.number().min(1).max(120).nullable().optional(),
+      heavyBelowKmh: z.number().min(1).max(120).nullable().optional(),
     })
     .optional(),
 });

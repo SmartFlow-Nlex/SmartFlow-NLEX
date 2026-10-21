@@ -54,6 +54,19 @@ const envSchema = z.object({
   // than guessing a project. See middleware/auth.middleware.ts.
   SUPABASE_URL: z.string().optional(),
   SUPABASE_ANON_KEY: z.string().optional(),
+  // Signs "remember this device for 7 days" passes (lib/device-trust.ts). Absent = the feature is off and the
+  // authenticator code is always asked for. At least 32 characters; never commit it.
+  DEVICE_TRUST_SECRET: z.string().optional(),
+  // Supabase's admin key, used ONLY to create password-reset codes and links that Navie emails itself
+  // (routes/auth.routes.ts). Bypasses row security: keep it in the git-ignored .env, never in the frontend.
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+  // Account emails (lib/mailer.ts): the mailbox Supabase also sends from, so every email comes from one sender.
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().default(465),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM_NAME: z.string().default("Navie (SmartFlow NLEX)"),
+  SMTP_FROM_EMAIL: z.string().optional(),
 
   // Either supply POSTGRES_URL whole, or supply the PG_* parts and let
   // buildPostgresUrl() assemble it (see below).

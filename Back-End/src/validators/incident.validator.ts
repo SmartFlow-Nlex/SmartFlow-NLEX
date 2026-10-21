@@ -83,6 +83,8 @@ const IncidentPredictiveDailyPointSchema = z.object({
    * chart's exposure overlay breaks instead of drawing a misleading zero.
    */
   volume: z.number().nullable().optional(),
+  // Future rows only: the traffic module's volume forecast, the input the volume-aware models read (17 Oct 2026).
+  volumeForecast: z.number().nullable().optional(),
   models: z.record(z.string(), z.number().nullable()),
   /**
    * The same models refit without the volume features. Present only when the
@@ -152,6 +154,13 @@ export const IncidentPredictiveResponseSchema = z.object({
     trainedDays: z.number().nullable(),
   }),
   weatherMetrics: IncidentPredictiveWeatherMetricsSchema,
+  /** Every model scored over only the dry, and only the wet, holdout days (always present). */
+  weatherSplit: z
+    .object({
+      dry: z.object({ days: z.number().int().nonnegative(), models: z.array(z.object({ model: z.string(), MAE: z.number(), RMSE: z.number(), R2: z.number().nullable(), isChampion: z.boolean() })) }),
+      wet: z.object({ days: z.number().int().nonnegative(), models: z.array(z.object({ model: z.string(), MAE: z.number(), RMSE: z.number(), R2: z.number().nullable(), isChampion: z.boolean() })) }),
+    })
+    .optional(),
   /**
    * Legacy-source APPORTIONMENT of summary.totalPredictedNext7Days by each
    * exit's historical share of incidents in the current Range — no trained
@@ -191,6 +200,8 @@ export const IncidentPredictiveResponseSchema = z.object({
   unclassifiedLocationShare: z.number().min(0).max(1).nullable(),
   // How many published future days corridorForecast was apportioned over.
   corridorForecastDays: z.number().int().nonnegative(),
+  // The logged-incident window corridorForecast's per-exit shares were counted over (17 Oct 2026).
+  corridorShareWindow: z.object({ from: isoDate, to: isoDate.nullable() }).nullable().optional(),
   // Which model corridorForecast was apportioned from (always the champion
   // now). Null only when corridorForecast itself is null.
   corridorForecastModel: z.string().nullable(),
@@ -340,6 +351,8 @@ export const ClearanceProtocolResponseSchema = z.discriminatedUnion("status", [
     }),
     evpi: z.number(),
     vss: z.number(),
+    // False: the forecast behind the coverage cost was unavailable; served, never cached (19 Oct 2026).
+    coverageCostApplied: z.boolean(),
     assumptions: z.array(z.string()),
     sensitivity: z.array(
       z.object({

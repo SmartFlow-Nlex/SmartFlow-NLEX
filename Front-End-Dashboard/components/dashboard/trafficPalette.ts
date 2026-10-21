@@ -43,7 +43,7 @@ export type TrafficPalette = {
 };
 
 const DARK = {
-  clear: "#2fbf6b", slow: "#f6c544", congested: "#ff5a4a", none: "#586377",
+  clear: "#2fbf6b", slow: "#f6c544", congested: "#ff5a4a", none: "#6b778c",
   accent: "#4f8dff", model: "#ab9dff", surface: "#0a1121",
   ink: "#f4f1ea", ink2: "#b9c2d3", muted: "#8590a6",
 };

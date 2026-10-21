@@ -111,6 +111,10 @@ type PhaseSplitTable = { readonly [F in ClosureFamilyKey]: readonly PhaseShare<P
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Chainage: how event locations in the data relate to the app's km scale.
+   NOTE: appKm below is the OLD "ZERO" scale (Balintawak = 0) the exit list
+   used when this was derived; today's exit list is measured km (Balintawak =
+   12, lib/km-post.ts), i.e. appKm + 12. The table is kept as derived (it is
+   mirrored in calibration.json and checked by verify.ts) and is not shown.
    The derivation is data, shown in full so the 12.04 can be checked; the
    decision to APPLY one constant offset everywhere is the assumption.
    generate/verify: tools/build_calibration.py writes the same table into
@@ -118,7 +122,7 @@ type PhaseSplitTable = { readonly [F in ClosureFamilyKey]: readonly PhaseShare<P
 ───────────────────────────────────────────────────────────────────────────── */
 export type ChainageMatch = {
   readonly appExit: string;
-  /** Km on the app's scale (lib/nlex-exits.ts, Balintawak = 0). */
+  /** Km on the app's OLD "ZERO" scale (Balintawak = 0) as the exit list stood when this was derived; measured km = appKm + 12. */
   readonly appKm: number;
   /** SubLocation label the accident/breakdown export uses for the same place. */
   readonly eventLabel: string;
@@ -473,12 +477,12 @@ export function engineIndexToOperatorLane(index: number, laneCount: number): num
   return LANE1_IS_INNERMOST ? index + 1 : laneCount - index;
 }
 
-/** The app's km (Balintawak = 0) -> absolute NLEX chainage, the scale the event data uses. */
+/** The OLD "ZERO" app km (Balintawak = 0) -> absolute NLEX chainage, the scale the event data uses. Not for today's measured km (Balintawak = 12), which is already on the chainage scale to within ~40 m. */
 export function appKmToChainageKm(appKm: number): number {
   return appKm + CHAINAGE_OFFSET_KM;
 }
 
-/** Absolute NLEX chainage -> the app's km. */
+/** Absolute NLEX chainage -> the OLD "ZERO" app km (Balintawak = 0). */
 export function chainageKmToAppKm(chainageKm: number): number {
   return chainageKm - CHAINAGE_OFFSET_KM;
 }

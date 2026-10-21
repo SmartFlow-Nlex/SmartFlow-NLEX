@@ -138,20 +138,31 @@
 .lm-page .mc-maximise:hover { border-color: var(--hairline-hover); background: color-mix(in srgb, var(--text-primary) 5%, transparent); transform: translateY(-2px); }
 .lm-page .mc-maximise:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
 
-/* --- Footer stats: eyebrow label, 32 px tabular value ---------------------- */
+/* --- Footer stats -----------------------------------------------------------
+   Three equal columns split by hairlines (17 Oct 2026, testers LM-1: "resize or re-space the three KPIs so
+   content stops stacking and white space shrinks"). Each label stays on one line, and where the panel is
+   wide enough the label and its value sit side by side (the @container rule at the end of the file), so the
+   strip is one short row instead of three stacked pairs with empty space beside them. */
 .lm-page .lm-panel .mc-footer-stats {
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 20px 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  padding: 10px 0 12px;
   background: var(--bg-surface);
   border-top: 1px solid var(--border-default);
+  container-type: inline-size;
 }
-.lm-page .lm-panel .mc-stat-item { align-items: flex-start; gap: 2px; }
+.lm-page .lm-panel .mc-stat-item { align-items: flex-start; gap: 3px; min-width: 0; padding: 0 16px; }
+.lm-page .lm-panel .mc-stat-item + .mc-stat-item { border-left: 1px solid var(--border-default); }
 .lm-page .lm-panel .mc-stat-label {
+  max-width: 100%;
+  overflow: hidden;
   font-size: var(--fs-label);
   font-weight: 600;
-  letter-spacing: 2px;
+  letter-spacing: 1px;
   text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-muted);
 }
 .lm-page .lm-panel .mc-stat-value,
@@ -166,6 +177,7 @@
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   letter-spacing: var(--numeral-tracking);
+  white-space: nowrap;
 }
 
 /* --- Header actions: exit picker and the 3D toggle ------------------------ */
@@ -1555,8 +1567,8 @@
 .lm-page .lm-panel .map-head.blue,
 .lm-page .lm-panel .map-head.purple { padding: 12px 18px; }
 
-/* Numbers under each map: a 20 px readout, not a second headline. */
-.lm-page .lm-panel .mc-footer-stats { padding: 10px 18px 12px; gap: 12px; }
+/* Numbers under each map: a 20 px readout, not a second headline. Columns pad themselves (LM-1, above). */
+.lm-page .lm-panel .mc-footer-stats { padding: 10px 0 12px; gap: 0; }
 .lm-page .lm-panel .mc-stat-label { font-size: var(--fs-micro); letter-spacing: 1.5px; }
 .lm-page .lm-panel .mc-stat-value,
 .lm-page .lm-panel .mc-stat-value.blue,
@@ -1677,3 +1689,56 @@
 @media (max-width: 640px) {
   .lm-page .lm-band.is-forecast { flex-wrap: wrap; }
 }
+
+/* LM-1, second pass (19 Oct 2026). Equal thirds with each pair centred only fitted from about 640 px, so
+   on a laptop, where each map is 450-560 px wide, the strip either stacked every label over its value or
+   cut "FORECAST WINDOW" to "FORECAST WI...". The pairs now size to their own content:
+     - 480 px and up (a laptop or wider): one line, label then value, spread across the strip with the
+       hairlines dropped, since spaced-out pairs on one baseline need no dividers;
+     - below that (stacked maps on a narrow window, a phone): the thirds come back with the label over
+       the value, and a label that still does not fit wraps onto a second line instead of being cut.
+   The value comes down from 20 px to 17 px in the one-line form, where it sits beside its label. */
+/* The strip itself is the container, so its own layout is set here and only the pairs change with width. */
+.lm-page .lm-panel .mc-footer-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
+  gap: 0;
+  padding: 10px 8px 11px;
+}
+.lm-page .lm-panel .mc-stat-item { flex: 1 1 0; padding: 0 10px; }
+.lm-page .lm-panel .mc-stat-label { overflow: visible; white-space: normal; text-overflow: clip; text-wrap: balance; letter-spacing: 1px; }
+@container (min-width: 480px) {
+  .lm-page .lm-panel .mc-stat-item { flex: 0 1 auto; flex-direction: row; align-items: baseline; gap: 7px; padding: 0 12px; }
+  .lm-page .lm-panel .mc-stat-item + .mc-stat-item { border-left: 0; }
+  .lm-page .lm-panel .mc-stat-label { white-space: nowrap; }
+  .lm-page .lm-panel .mc-stat-value,
+  .lm-page .lm-panel .mc-stat-value.blue,
+  .lm-page .lm-panel .mc-stat-value.red,
+  .lm-page .lm-panel .mc-stat-value.orange,
+  .lm-page .lm-panel .mc-stat-value.purple,
+  .lm-page .lm-panel .mc-stat-value.green { font-size: 17px; line-height: 1.2; }
+}
+/* ===========================================================================
+   OVERVIEW (shares this sheet: its live block is the Live Map in summary, and the global theme files belong
+   to the theme pass). Scoped to .ov-page, and one class deeper than nlex-daylight.css so it wins although
+   that sheet loads last.
+   =========================================================================== */
+
+/* OV-3, second pass (19 Oct 2026): at night the headline card was its state tint alone, 8-16% coral, amber
+   or green over nothing, so the night artwork showed through and it read lighter and bluer than the
+   Slowest-reading card beside it. The tint now sits on the same card surface that card uses, so the two
+   are equally dark and the headline keeps its colour. Day is unchanged. */
+:root[data-theme="dark"] .ov-page .ov-headline-card.is-congested { background: linear-gradient(135deg, rgba(240, 80, 110, 0.16), rgba(240, 80, 110, 0.08)), var(--bg-surface); }
+:root[data-theme="dark"] .ov-page .ov-headline-card.is-slow { background: linear-gradient(135deg, rgba(229, 154, 20, 0.16), rgba(229, 154, 20, 0.08)), var(--bg-surface); }
+:root[data-theme="dark"] .ov-page .ov-headline-card.is-clear { background: linear-gradient(135deg, rgba(53, 208, 138, 0.14), rgba(53, 208, 138, 0.06)), var(--bg-surface); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ov-page .ov-headline-card.is-congested { background: linear-gradient(135deg, rgba(240, 80, 110, 0.16), rgba(240, 80, 110, 0.08)), var(--bg-surface); }
+  :root:not([data-theme="light"]) .ov-page .ov-headline-card.is-slow { background: linear-gradient(135deg, rgba(229, 154, 20, 0.16), rgba(229, 154, 20, 0.08)), var(--bg-surface); }
+  :root:not([data-theme="light"]) .ov-page .ov-headline-card.is-clear { background: linear-gradient(135deg, rgba(53, 208, 138, 0.14), rgba(53, 208, 138, 0.06)), var(--bg-surface); }
+}
+
+/* OV-5, second pass: the Live card is one big link (its arrow's hit area covers the card), so keyboard focus
+   rings the whole card rather than only the 28 px arrow inside it. */
+.ov-page .ov-fresh:has(.ov-card-go:focus-visible) { outline: 2px solid var(--nlex-blue); outline-offset: 3px; }
+.ov-page .ov-fresh .ov-card-go:focus-visible { outline: none; }

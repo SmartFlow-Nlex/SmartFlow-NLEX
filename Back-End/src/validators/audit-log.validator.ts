@@ -26,6 +26,13 @@ export const ActivitySchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("session.login") }),
   z.object({ type: z.literal("session.authenticator_added") }),
   z.object({ type: z.literal("session.logout") }),
+  // Account events from the sign-in page and Settings (19 Oct 2026). The entry names the verified user;
+  // the body carries no claim about who it was.
+  z.object({ type: z.literal("session.password_reset") }),
+  z.object({ type: z.literal("session.password_changed") }),
+  z.object({ type: z.literal("session.idle_timeout"), minutes: z.number().int().min(1).max(240) }),
+  z.object({ type: z.literal("settings.updated"), fields: z.array(z.enum(["display_name", "idle_minutes"])).min(1).max(5) }),
+  z.object({ type: z.literal("session.signed_out_everywhere") }),
   z.object({ type: z.literal("audit.exported"), rows: z.number().int().min(0).max(1_000_000), format: z.enum(["json", "csv"]) }),
 ]);
 

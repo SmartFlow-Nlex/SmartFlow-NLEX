@@ -1,14 +1,5 @@
-import Mascot from "../../components/stage/Mascot";
-
-/* The route loading state: the mascot's headlights pulse as the loader (the
-   same signal as the session check), with the same words as before. */
+/* The route loading state: nothing over the scenery while a page's code arrives (19 Oct 2026, user request:
+   the loading card was unnecessary). The notice card is kept for messages only; see LoadingGate. */
 export default function DashboardLoading() {
-  return (
-    <section className="ds-content">
-      <div className="ds-loader-container" role="status" aria-live="polite">
-        <Mascot size={96} mood="loading" />
-        <p>Loading dashboard data...</p>
-      </div>
-    </section>
-  );
+  return null;
 }
