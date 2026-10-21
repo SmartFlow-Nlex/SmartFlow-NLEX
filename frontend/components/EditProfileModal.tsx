@@ -11,6 +11,8 @@ import {
   View,
 } from 'react-native';
 import { UserProfile } from '@smartflow/shared';
+import { validateFullName } from '../auth';
+import { initialsFor } from './AppHeader';
 import { useTheme, useThemedStyles } from '../theme';
 import SheetModal from './SheetModal';
 import type { ThemePalette } from '../theme';
@@ -21,6 +23,8 @@ export interface EditProfileModalProps {
   user: UserProfile;
   onClose: () => void;
   onSave: (updated: UserProfile) => void;
+  /** The save is on its way to the account. */
+  busy?: boolean;
 }
 
 const EditProfileModal: React.FC<EditProfileModalProps> = ({
@@ -28,6 +32,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   user,
   onClose,
   onSave,
+  busy = false,
 }) => {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -58,12 +63,9 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
     }
   };
 
-  const initials = draft.displayName
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? '')
-    .join('');
+  // The same monogram as the Profile card behind this sheet.
+  const initials = initialsFor(draft.displayName);
+  const nameProblem = validateFullName(draft.displayName);
 
   return (
     <SheetModal visible={visible} onClose={onClose}>
@@ -107,6 +109,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
                 style={styles.input}
                 value={draft.displayName}
               />
+              {nameProblem !== null ? <Text style={styles.nameError}>{nameProblem}</Text> : null}
             </View>
 
             {/*
@@ -139,10 +142,16 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
 
             <Pressable
               accessibilityRole="button"
+              accessibilityState={{ disabled: busy || nameProblem !== null, busy }}
+              disabled={busy || nameProblem !== null}
               onPress={() => onSave(draft)}
-              style={({ pressed }) => [styles.saveButton, pressed && styles.saveButtonPressed]}
+              style={({ pressed }) => [
+                styles.saveButton,
+                pressed && styles.saveButtonPressed,
+                (busy || nameProblem !== null) && styles.saveButtonDisabled,
+              ]}
             >
-              <Text style={styles.saveButtonText}>Save Changes</Text>
+              <Text style={styles.saveButtonText}>{busy ? 'Saving…' : 'Save Changes'}</Text>
             </Pressable>
           </ScrollView>
       </View>
@@ -273,6 +282,15 @@ const makeStyles = (c: ThemePalette) =>
   },
   saveButtonPressed: {
     opacity: 0.9,
+  },
+  saveButtonDisabled: {
+    opacity: 0.5,
+  },
+  nameError: {
+    color: c.danger,
+    fontSize: Typography.fontSize.xs,
+    fontWeight: Typography.fontWeight.medium,
+    marginTop: 6,
   },
   saveButtonText: {
     color: c.textInverse,

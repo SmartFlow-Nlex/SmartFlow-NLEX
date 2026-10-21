@@ -6,6 +6,7 @@ import {
   TrafficStatus,
   TravelDirection,
 } from '@smartflow/shared';
+import { nameForUser } from '../auth/authApi';
 import { getSupabase } from '../auth/supabaseClient';
 
 /**
@@ -130,12 +131,9 @@ async function requireUser(): Promise<{ id: string; name: string }> {
   if (error !== null || data.user === null) {
     throw new Error('You need to be signed in to post.');
   }
-  const metadata = data.user.user_metadata as { full_name?: unknown } | null;
-  const name =
-    typeof metadata?.full_name === 'string' && metadata.full_name.trim().length > 0
-      ? metadata.full_name.trim()
-      : (data.user.email ?? 'Community User').split('@')[0];
-  return { id: data.user.id, name };
+  // The name every other screen shows: an account with no name saved used to
+  // post as "bela.jabagat" while its profile said "Bela Jabagat".
+  return { id: data.user.id, name: nameForUser(data.user) };
 }
 
 /** Newest first, with each post's likes attached so counts need no second trip. */

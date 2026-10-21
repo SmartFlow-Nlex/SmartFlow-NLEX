@@ -18,6 +18,7 @@ import {
   openRecoverySession,
   register,
   requestPasswordReset,
+  saveFullName,
   saveNewPassword,
   signOutRemote,
 } from './authApi';
@@ -84,6 +85,8 @@ export interface AuthContextValue {
    */
   finishRecovery: (password: string) => Promise<string | null>;
   cancelRecovery: () => Promise<void>;
+  /** Change the profile name on the account; every screen shows the new one at once. */
+  updateFullName: (fullName: string) => Promise<void>;
 }
 
 const AUTH_TOKEN_KEY = 'authToken';
@@ -477,6 +480,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await dropPasswordOnlySession();
   }, []);
 
+  const updateFullName = useCallback(async (fullName: string): Promise<void> => {
+    const saved = await saveFullName(fullName);
+    // The auth listener also hears this change; set it here so the screen
+    // that saved it never shows the old name for a moment.
+    setSession((current) => (current === null ? current : { ...current, fullName: saved }));
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
@@ -493,6 +503,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       submitRecoveryCode,
       finishRecovery,
       cancelRecovery,
+      updateFullName,
     }),
     [
       status,
@@ -508,6 +519,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       submitRecoveryCode,
       finishRecovery,
       cancelRecovery,
+      updateFullName,
     ],
   );
 

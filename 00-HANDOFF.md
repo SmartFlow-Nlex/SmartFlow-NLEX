@@ -18,7 +18,7 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - They work from **mockup screenshots** and expect the app to match them closely ("make it identical"), then send phone screenshots of what is wrong.
 
 ### How Ysa wants things done
-- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-9**, so next is **Ysa-Commit-10**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
+- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-10**, so next is **Ysa-Commit-11**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
 - **"Make the server up":** start Metro from the **repo root**, then give the `exp://` address and a QR code (see §1). Check the phone can really load the bundle, not just the manifest.
 - Never commit `.env` (it holds keys; it is in `.gitignore`).
 - Use real data only — no mock traffic data, no fake posts.
@@ -219,6 +219,11 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - The reset email template is Ysa's own HTML (Supabase → Authentication → Emails → Reset Password). Its mascot image must use the public URL `https://jzkghkoaojdkusbjttgw.supabase.co/storage/v1/object/public/Mascot/navie-email.png`, not a dashboard link.
 - On campus Wi-Fi the Expo server runs as a tunnel (~100 KB/s, ~2 min per app load); tunnel addresses are names, so reset links work there without nip.io.
 
+### 21 Oct — Ysa-Commit-10 (one name and email everywhere)
+- Ysa: check that Settings' profile name and email never mismatch, for every account. They could: Settings read them from `/api/users/current` on an old local server (`EXPO_PUBLIC_API_HOST:3000`) whose backend route is a **mock** answering "NLEX Traveler / user1@example.com" to everyone — it only showed the right person when unreachable (with an error under the name), and Edit Profile "saved" to the same mock.
+- Now the signed-in Supabase user is the only source: Settings reads `session.fullName` / `session.email`; Edit Profile saves through `updateFullName` → `supabase.auth.updateUser({ data: { full_name } })`, and the greeting, Navie, Community and Settings change together. `frontend/hooks/useUserProfile.ts` is deleted. Community posts use `nameForUser` too (an account with no name saved posted as "bela.jabagat" while its profile said "Bela Jabagat").
+- Still the case: old Community posts keep the name they were posted with, and the profile **photo** is not stored anywhere (it lasts while Settings is open). The backend's mock `/api/users` route still exists but nothing calls it.
+
 ---
 
 ## 3. Open issues
@@ -230,7 +235,6 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 | Two small Assistant reply mascots (clear, alert) have a blended "ghost" frame near the end of their loop. | Re-loop them from the source videos if anyone notices. |
 | Unused, kept for now: `MascotGreeting.tsx` + `mascot-hello.*` (the re-cut greeting), `HeroMascot.tsx` + `mascot-car.png`, and the old `trafficModel.ts` functions (only its `CongestionLevel` type is used). | Delete when sure nothing needs them. |
 | **ML Hotspots forecast still covers Jul 1–28**, not today (checked 8 Oct): the dashboard's incident data ends 30 Jun 2026. | Teammate: upload newer NLEX accident + breakdown logs on the dashboard's upload page, then retrain (`python weekly_retrain.py --only incident_spatial`, or the Sunday 22:00 run). The app updates by itself. |
-| **Profile shows "Loading profile…" then an error** under the name: `useUserProfile` calls an old local community server (`EXPO_PUBLIC_API_HOST:3000`) that does not exist. The name still shows. | Point it at Supabase or drop the request. Predates the redesign. |
 | **Southbound maintenance notices likely fail to save on the dashboard**: its form makes the end km lower than the start; its API rejects that. | Dashboard team. |
 | Maintenance rows saved before 3 Oct use the old km scale. Only affects expired rows. | Nothing needed unless reused. |
 | `frontend/lib/nlexReportCorridor.json` is the dashboard's corridor line (from `Main-Dashboard @3d148af`), used to match its Current-alerts list. | Regenerate if the dashboard's road geometry or exit list changes. |

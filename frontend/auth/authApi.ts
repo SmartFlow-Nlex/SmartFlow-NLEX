@@ -438,6 +438,29 @@ export async function saveNewPassword(password: string): Promise<void> {
   }
 }
 
+/**
+ * Save a new profile name on the account itself.
+ *
+ * The name lives in the Supabase user's `full_name`, which is what every
+ * screen reads - the greeting, Navie, Community posts, Settings. Saving it
+ * anywhere else is how the profile came to show a name nothing else used.
+ * Returns the name as stored.
+ */
+export async function saveFullName(fullName: string): Promise<string> {
+  assertConfigured();
+  const nameError = validateFullName(fullName);
+  if (nameError !== null) {
+    throw new Error(nameError);
+  }
+  const { data, error } = await getSupabase().auth.updateUser({
+    data: { full_name: fullName.trim().replace(/\s+/g, ' ') },
+  });
+  if (error !== null) {
+    throw new Error(friendlyAuthMessage(error));
+  }
+  return nameForUser(data.user);
+}
+
 /** Ends the Supabase session. Safe to call when already signed out. */
 export async function signOutRemote(): Promise<void> {
   if (!isSupabaseConfigured) {

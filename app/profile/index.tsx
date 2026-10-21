@@ -22,7 +22,6 @@ import { useNotifications } from '../../frontend/notifications';
 import { useTheme, useThemedStyles } from '../../frontend/theme';
 import type { ThemePalette } from '../../frontend/theme';
 import { Typography } from '../../frontend/constants/typography';
-import { useUserProfile } from '../../frontend/hooks/useUserProfile';
 import { useAuth } from '../../frontend/auth';
 
 export default function ProfileScreen(): React.ReactElement {
@@ -43,7 +42,7 @@ export default function ProfileScreen(): React.ReactElement {
     : notifications.blocked
       ? 'Blocked in system settings'
       : undefined;
-  const { session, signOut } = useAuth();
+  const { session, signOut, updateFullName } = useAuth();
   /**
    * A deep link or a browser refresh lands here with no history behind it, and
    * a bare `router.back()` then fails with "GO_BACK was not handled by any
@@ -58,22 +57,27 @@ export default function ProfileScreen(): React.ReactElement {
   };
 
 
-  // The profile endpoint has no notion of the signed-in account yet, so the
-  // session is what the screen falls back to instead of a stock placeholder.
-  const sessionUser = useMemo<UserProfile | undefined>(
-    () =>
-      session === null
-        ? undefined
-        : {
-            id: 'local-account',
-            displayName: session.fullName,
-            username: session.email.split('@')[0] ?? 'nlextraveler',
-            email: session.email,
-          },
-    [session],
+  /*
+   * Name and email straight from the signed-in account - the same values the
+   * greeting, Navie and Community read. They used to come from a profile
+   * server that was never wired to sign-in: a mock that answers "NLEX
+   * Traveler / user1@example.com" to everyone, so this screen showed the
+   * right person only when that server could not be reached (with an error
+   * under the name), and a saved name went nowhere.
+   */
+  /** The photo picked in Edit Profile. Not stored yet: it lasts while this screen is open. */
+  const [avatarUri, setAvatarUri] = useState<string | undefined>(undefined);
+  const user = useMemo<UserProfile>(
+    () => ({
+      id: 'account',
+      displayName: session?.fullName ?? '',
+      username: session?.email.split('@')[0] ?? '',
+      email: session?.email ?? '',
+      avatarUri,
+    }),
+    [session, avatarUri],
   );
-
-  const { user, isLoading, error, patchUser } = useUserProfile(sessionUser);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isEditModalVisible, setIsEditModalVisible] = useState<boolean>(false);
   const [isThemePickerVisible, setIsThemePickerVisible] = useState<boolean>(false);
   const [settings, setSettings] = useState<SettingsState>({
@@ -91,8 +95,19 @@ export default function ProfileScreen(): React.ReactElement {
   const initials = useMemo(() => initialsFor(user.displayName), [user.displayName]);
 
   const handleSaveProfile = async (updated: UserProfile): Promise<void> => {
-    await patchUser(updated);
-    setIsEditModalVisible(false);
+    setIsSaving(true);
+    try {
+      if (updated.displayName.trim() !== user.displayName) {
+        await updateFullName(updated.displayName);
+      }
+      setAvatarUri(updated.avatarUri);
+      setIsEditModalVisible(false);
+    } catch (caught) {
+      // The sheet stays open with the edit in it, so nothing typed is lost.
+      Alert.alert('Could not save', caught instanceof Error ? caught.message : 'Try again.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleOpenLink = async (url: string): Promise<void> => {
@@ -152,9 +167,7 @@ export default function ProfileScreen(): React.ReactElement {
 
           <View style={styles.userTextGroup}>
             <Text style={styles.userName}>{user.displayName}</Text>
-            <Text style={styles.userSubtitle}>{user.email || `@${user.username}`}</Text>
-            {isLoading ? <Text style={styles.helperText}>Loading profile...</Text> : null}
-            {error ? <Text style={styles.helperText}>{error}</Text> : null}
+            <Text style={styles.userSubtitle}>{user.email}</Text>
           </View>
         </View>
 
@@ -236,6 +249,7 @@ export default function ProfileScreen(): React.ReactElement {
       <EditProfileModal
         onClose={() => setIsEditModalVisible(false)}
         onSave={(updated) => void handleSaveProfile(updated)}
+        busy={isSaving}
         user={user}
         visible={isEditModalVisible}
       />
@@ -335,12 +349,6 @@ const makeStyles = (c: ThemePalette) =>
     color: 'rgba(255,255,255,0.84)',
     fontSize: Typography.fontSize.sm,
     fontWeight: Typography.fontWeight.medium,
-  },
-  helperText: {
-    color: 'rgba(255,255,255,0.84)',
-    fontSize: Typography.fontSize.xs,
-    fontWeight: Typography.fontWeight.medium,
-    marginTop: 6,
   },
   sectionCard: {
     backgroundColor: c.surface,
