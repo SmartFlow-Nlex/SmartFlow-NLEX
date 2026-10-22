@@ -46,3 +46,6 @@ __pycache__/
 # img2threejs skill is its own git clone (embedded .git); committing it would add a broken
 # gitlink. Teammates install it with: git clone https://github.com/img2threejs/img2threejs.git .claude/skills/img2threejs
 .claude/skills/img2threejs/
+
+# Hourly weather loader output (smartflow_scripts/1_data_loading/weather)
+smartflow_scripts/1_data_loading/weather/fetch_weather.log*

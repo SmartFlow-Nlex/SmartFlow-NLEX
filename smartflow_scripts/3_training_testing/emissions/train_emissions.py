@@ -432,13 +432,11 @@ for r in res[res.is_candidate].itertuples():
 if fails: print(f"\n  failed origins: {fails}")
 
 banner("STEP 5: Writing to AWS")
-try:
-    conn.cursor().execute("SELECT 1")
-except Exception:
-    print("  connection went idle during training - reconnecting")
-    conn = psycopg2.connect(PG)
-cur = conn.cursor()
-cur.execute("DELETE FROM gold.ml_model_metrics WHERE target = 'Corridor CO2'")
+# The metric rows are prepared here but written with the forecast in STEP 6, in one transaction on a connection
+# checked just before it. Written here, they sat uncommitted while the future projections ran (minutes, the
+# LSTM among them) and on 2026-10-19 the database closed the idle connection before the forecast was written:
+# both retrain attempts failed with "server closed the connection unexpectedly" and nothing was saved.
+metric_rows = []
 for r in res.itertuples():
     reason = None
     if r.is_candidate and not r.accepted:
@@ -448,11 +446,7 @@ for r in res.itertuples():
         reason = "; ".join(w)
     elif not r.is_candidate:
         reason = "baseline, not a candidate"
-    cur.execute("""
-        INSERT INTO gold.ml_model_metrics
-          (model_name,target,rmse,mae,wmape,r2,mase,mape,rank,accepted,rejected_reason,uses_weather,diagnosis,updated_at)
-        VALUES (%s,'Corridor CO2',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())""",
-        (r.model, r.rmse, r.mae, r.wmape, r.r2, r.mase, r.mape,
+    metric_rows.append((r.model, r.rmse, r.mae, r.wmape, r.r2, r.mase, r.mape,
          int(r.rank) if r.is_candidate else None, bool(r.accepted), reason,
          USES_WEATHER.get(r.model, False), r.diagnosis))
 
@@ -491,6 +485,18 @@ for _n, _f in [*MODELS.items(), ("Derived", None)]:
         fut_pred[_n] = [None] * FUT
         print(f"  {_n:<12} projection FAILED: {e}")
 
+try:
+    conn.cursor().execute("SELECT 1")
+except Exception:
+    print("  connection went idle during training - reconnecting")
+    conn = psycopg2.connect(PG)
+cur = conn.cursor()
+cur.execute("DELETE FROM gold.ml_model_metrics WHERE target = 'Corridor CO2'")
+for row in metric_rows:
+    cur.execute("""
+        INSERT INTO gold.ml_model_metrics
+          (model_name,target,rmse,mae,wmape,r2,mase,mape,rank,accepted,rejected_reason,uses_weather,diagnosis,updated_at)
+        VALUES (%s,'Corridor CO2',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())""", row)
 cur.execute("""
   CREATE TABLE IF NOT EXISTS gold.ml_predictive_emissions (
     id serial PRIMARY KEY,

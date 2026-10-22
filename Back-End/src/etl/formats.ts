@@ -8,6 +8,7 @@ import {
   ROAD_CRASH_SIGNALS, STALLED_SIGNALS, TOLL_HOURLY_REQUIRED, TRAFFIC_SIGNALS,
 } from "./classifier.js";
 import { RECORD_END } from "./toll-hourly.js";
+import { TIR_COLUMNS } from "./toll-tir.js";
 
 /** The dashboard area a layout feeds, which is how the page groups them. */
 export type UploadModule = "traffic" | "incidents" | "emissions" | "not_accepted";
@@ -37,6 +38,12 @@ export function uploadFormats(): { recordEnd: string; formats: UploadFormat[] } 
     formats: [
       {
         type: "toll_hourly", label: "Hourly toll transactions", module: "traffic", columns: TOLL_HOURLY_REQUIRED, needs: "all",
+        lands: ["gold.fact_traffic_hourly", "gold.fact_traffic_hourly_origin", "gold.daily_traffic_volume_corrected", "gold.fact_emissions_hourly"],
+        shows: "Traffic pages, sandbox demand and CO2 actuals; the forecasts after the weekly retrain",
+        reupload: "Each plaza-hour in the file replaces that plaza-hour; the rest are left alone", recordEnd: true, accepted: true,
+      },
+      {
+        type: "toll_hourly", label: "NLEX hourly toll export (plaza codes, a row per class)", module: "traffic", columns: [...TIR_COLUMNS], needs: "all",
         lands: ["gold.fact_traffic_hourly", "gold.fact_traffic_hourly_origin", "gold.daily_traffic_volume_corrected", "gold.fact_emissions_hourly"],
         shows: "Traffic pages, sandbox demand and CO2 actuals; the forecasts after the weekly retrain",
         reupload: "Each plaza-hour in the file replaces that plaza-hour; the rest are left alone", recordEnd: true, accepted: true,

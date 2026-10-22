@@ -82,7 +82,21 @@
 .nc-ops-maint .nc-ops-status-filter button { display: inline-flex; align-items: center; }
 /* How many jobs each tab holds under the other filters, so a cancel visibly moves one from
    Scheduled to Cancelled. Quieter than the label; inherits its colour, active or not. */
-.nc-ops-maint .nc-ops-status-filter .nc-ops-tab-n { margin-left: 6px; font-variant-numeric: tabular-nums; opacity: 0.66; }
+.nc-ops-maint .nc-ops-status-filter .nc-ops-tab-n { margin-left: 6px; font-variant-numeric: tabular-nums; opacity: 0.85; }
+/* Stronger labels on the clear chips (22 Oct 2026, user: "In progress to Cancelled can't be seen that
+   much"; the chips themselves stay see-through). Full ink and bolder, with a soft halo in the surface
+   colour so each letter separates from the bright highway in the scene art; --bg-surface is white by
+   day and navy at night, so the halo follows the theme. */
+.nc-ops-maint .nc-ops-status-filter button {
+  color: var(--text-primary);
+  font-weight: 700;
+  text-shadow: 0 0 4px var(--bg-surface), 0 0 8px var(--bg-surface);
+}
+/* No outlines (user request): the text is the chip. Transparent rather than removed, so no chip changes
+   size; the chosen one is still marked by its tick and its accent tint. */
+.nc-ops-maint .nc-ops-status-filter button,
+.nc-ops-maint .nc-ops-status-filter button:hover:not(:disabled):not(.active),
+.nc-ops-maint .nc-ops-status-filter button.active { border-color: transparent; }
 
 .nc-ops-maint .nc-ops-search {
   display: flex;

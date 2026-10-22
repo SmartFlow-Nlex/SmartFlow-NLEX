@@ -74,7 +74,7 @@
           ]
         }
       ],
-      "icon": "public/logo-dark-bg.png"
+      "icon": "electron/icon.ico"
     },
     "nsis": {
       "oneClick": false,

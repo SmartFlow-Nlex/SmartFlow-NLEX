@@ -73,7 +73,12 @@ from xgboost import XGBRegressor
 # +0.48 — the window, not the model, was setting the number. Widening to 90 days
 # leaves MAE flat (6.78 -> 6.11) and improves WMAPE (28.6% -> 21.1%), so this
 # buys a trustworthy estimate rather than a flattering one.
-VALIDATION_DAYS = 90
+# 294 since 2026-10-23 (user decision, ~77/23): the same scored window as the volume and CO2 models
+# (10 Sep 2025 - 30 Jun 2026), so the three predictive modules are graded on the same days. 90 days covered
+# April-June only. Measured on that day, same 7 models: all incidents R2 0.262 -> 0.326, adj R2 0.085 -> 0.284,
+# gap 0.252 -> 0.157, MAE 12.9 -> 13.4 (the longer window holds the typhoon and holiday months); accidents only
+# R2 0.116 -> 0.300, champion SARIMAX -> Poisson_GLM.
+VALIDATION_DAYS = 294
 # Days left out of SCORING — never out of the series. The day stays in
 # ml_daily_actuals as the 0 the source implies (so the chart shows exactly what
 # silver holds), it is not imputed, and it still feeds the lag/rolling features of

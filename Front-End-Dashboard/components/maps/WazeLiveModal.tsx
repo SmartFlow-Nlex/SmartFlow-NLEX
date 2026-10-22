@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { mapPalette } from "../../lib/map-palette";
 import { useChartTheme } from "../../lib/chart-theme";
-import { AlertCircle, Clock, Gauge, RefreshCw, TrendingUp, X, Radio } from "lucide-react";
+import { RefreshCw, TrendingUp, X, Radio } from "lucide-react";
 import TrafficMapPanel from "./TrafficMapPanel";
 import { WAZE_REPORT_TYPES } from "../../lib/waze-reports";
 // Shared with the map markers and the collapsed legend, so all three
@@ -235,24 +235,27 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
               <p className="wz-empty">Live feed unavailable — is the backend running on port 4000?</p>
             ) : (
               <>
+                {/* Testers LM-1 (22 Oct 2026): each tile is about 80 px wide, so "Avg speed in jams"
+                    and the others broke over two lines, and the icon at the far edge left a gap
+                    beside every number. Short one-line labels, no icons; the full meaning is the
+                    tile's tooltip. */}
                 <div className="wz-kpis">
-                  <div className="wz-kpi speed">
-                    <span className="wz-kpi-label">Avg speed in jams</span>
-                    <span className="wz-kpi-value">{avg ?? "—"}<em>km/h</em><Gauge size={14} /></span>
+                  <div className="wz-kpi speed" title="Average speed inside the current jams on the corridor">
+                    <span className="wz-kpi-label">Jam speed</span>
+                    <span className="wz-kpi-value">{avg ?? "—"}<em>km/h</em></span>
                   </div>
-                  <div className="wz-kpi reports">
-                    <span className="wz-kpi-label">Active reports</span>
+                  <div className="wz-kpi reports" title="Active Waze reports on the corridor, as listed under Current alerts">
+                    <span className="wz-kpi-label">Reports</span>
                     {/* The list below, not the API's own tally. That tally counts every
                         report the feed carried, including the ones off the
                         corridor, so this tile disagreed with both the list
                         under it and the panel behind it. */}
-                    <span className="wz-kpi-value">{data ? corridorAlerts.length : "—"}<AlertCircle size={14} /></span>
+                    <span className="wz-kpi-value">{data ? corridorAlerts.length : "—"}</span>
                   </div>
-                  <div className="wz-kpi delay">
-                    <span className="wz-kpi-label">Current delay</span>
+                  <div className="wz-kpi delay" title="Current delay caused by the jams on the corridor">
+                    <span className="wz-kpi-label">Delay</span>
                     <span className="wz-kpi-value">
                       {delayMin == null ? "—" : delayMin >= 60 ? `${Math.floor(delayMin / 60)}h ${delayMin % 60}m` : `${delayMin}m`}
-                      <Clock size={14} />
                     </span>
                   </div>
                 </div>

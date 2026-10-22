@@ -127,16 +127,30 @@ RECORD_END = "2026-06-30"
 # GREATEST(...,0): the negative-speed/negative-jam floor described in the
 # module docstring — physically impossible values clamped, not dropped, so a
 # noisy row still contributes its other columns.
+# Speed and jams are REAL: Waze Partner Hub jams on the corridor, per exit and hour (silver.waze_jam_hourly_exit,
+# 2022-01-01 to 2026-04-19). They used to be bronze.nlex_traffic_volume's avg_speed_kmh / avg_jam_level, a
+# synthetic capstone table (mean ~5 km/h, negative values) whose "speeds" were generated from its own synthetic
+# volumes - which is why the old model "explained" them so well (fixed 2026-10-21). Waze speed is the speed
+# INSIDE reported jams, so this models how weather and traffic change congestion, not free-flow speed.
+#   speed_kmh      the day's jam speed, weighted by jam reports
+#   speed_kmh_min  the slowest exit-hour's jam speed
+#   jam_level_max  exit-hours with a heavy jam (Waze level 4 or 5) that day - the "gridlock" measure. Level 5
+#                  alone is too rare to use (50 of 287,000 jam exit-hours), and a daily MAX of the 1-5 level is
+#                  4 on almost every day; heavy-jam hours run 77 on a median day and 137 on the worst 5%.
+# Volume is the corridor's actual daily total (gold.daily_traffic_volume_corrected), as every other model uses.
 DAILY_PANEL_SQL = """
-    SELECT date_day AS d,
-           AVG(GREATEST(avg_speed_kmh, 0))::float AS speed_kmh,
-           MIN(GREATEST(avg_speed_kmh, 0))::float AS speed_kmh_min,
-           MAX(GREATEST(avg_jam_level, 0))::float AS jam_level_max,
-           SUM(total_volume)::float AS volume
-    FROM bronze.nlex_traffic_volume
-    WHERE date_day BETWEEN '{lo}' AND '{hi}'
-    GROUP BY date_day
-    ORDER BY date_day
+    SELECT v.date AS d, w.speed_kmh, w.speed_kmh_min, w.jam_level_max, v.total_volume::float AS volume
+    FROM gold.daily_traffic_volume_corrected v
+    JOIN (
+        SELECT date_day AS d,
+               (SUM(speed_kmh_wavg * jam_snapshots) / NULLIF(SUM(jam_snapshots), 0))::float AS speed_kmh,
+               MIN(speed_kmh_wavg)::float AS speed_kmh_min,
+               COUNT(*) FILTER (WHERE jam_level_max >= 4)::float AS jam_level_max
+        FROM silver.waze_jam_hourly_exit
+        WHERE on_corridor AND date_day BETWEEN '{lo}' AND '{hi}'
+        GROUP BY date_day
+    ) w ON w.d = v.date
+    ORDER BY v.date
 """.format(lo=RECORD_START, hi=RECORD_END)
 
 # Mirrors train_incident_models.py's DAILY_RAIN_SQL — kept in sync by hand.
@@ -189,13 +203,21 @@ LEFT JOIN nodes n ON n.node = x.exit_name
 ORDER BY x.exit_id
 """
 
+# Real Waze jam speed per exit and hour (only the exit-hours with a jam reported), against the actual volume at
+# that exit and hour (gold.fact_traffic_hourly, matched to nlex_exits by name: 19 of the 20 exits, all but
+# "SCTEX", which has no toll rows of its own; an hour with no toll rows is 0 vehicles, e.g. a toll holiday).
 EXIT_HOUR_PANEL_SQL = """
-    SELECT date_day AS d, hour_of_day, exit_id,
-           AVG(GREATEST(avg_speed_kmh, 0))::float AS speed_kmh,
-           SUM(total_volume)::float AS volume
-    FROM bronze.nlex_traffic_volume
-    WHERE exit_id IS NOT NULL AND date_day BETWEEN %(lo)s AND %(hi)s
-    GROUP BY date_day, hour_of_day, exit_id
+    SELECT w.date_day AS d, w.hour_of_day, w.nlex_exit_id AS exit_id, w.speed_kmh_wavg::float AS speed_kmh,
+           COALESCE(v.volume, 0)::float AS volume
+    FROM silver.waze_jam_hourly_exit w
+    LEFT JOIN (
+        SELECT f.date AS d, f.hour AS hour_of_day, x.exit_id, SUM(f.total)::float AS volume
+        FROM gold.fact_traffic_hourly f JOIN nlex_exits x ON x.exit_name = f.exit_canonical
+        WHERE f.date BETWEEN %(lo)s AND %(hi)s
+        GROUP BY 1, 2, 3
+    ) v ON v.d = w.date_day AND v.hour_of_day = w.hour_of_day AND v.exit_id = w.nlex_exit_id
+    WHERE w.on_corridor AND w.nlex_exit_id IS NOT NULL AND w.speed_kmh_wavg IS NOT NULL
+      AND w.date_day BETWEEN %(lo)s AND %(hi)s
 """
 
 HOURLY_RAIN_BY_LOCATION_SQL = """
@@ -791,10 +813,16 @@ def main() -> None:
         # level has none of that degeneracy (its own 95th percentile is a
         # clean ~5% tail), so it alone defines "closure" here.
         train_slice = daily.iloc[: len(daily) - args.holdout_days]
+        # Relative to the preceding year, as the high-incident day below: Waze's report volume falls from 2024 on,
+        # so one fixed line (the training 95th percentile of heavy-jam hours) caught no day at all in the 2026
+        # holdout (2026-10-21). A day is a gridlock day when its heavy-jam hours are in the top 5% of the 365
+        # days before it - past days only; the first half-year falls back to the training 95th percentile.
         jam_ceiling = train_slice["jam_level_max"].quantile(0.95)
-        daily["road_closure"] = (daily["jam_level_max"] >= jam_ceiling).astype(int)
-        print(f"  closure rule: daily max jam >= {jam_ceiling:.2f} "
-              f"({daily['road_closure'].mean() * 100:.1f}% of all days)")
+        jam_trailing = daily["jam_level_max"].shift(1).rolling(365, min_periods=180).quantile(0.95)
+        daily["road_closure"] = (daily["jam_level_max"] >= jam_trailing.fillna(jam_ceiling)).astype(int)
+        hold_c = daily["road_closure"].iloc[len(daily) - args.holdout_days:]
+        print(f"  closure rule: heavy-jam exit-hours in the top 5% of the preceding 365 days "
+              f"({daily['road_closure'].mean() * 100:.1f}% of all days, {hold_c.mean() * 100:.1f}% of the holdout)")
 
         # "Any incident" is not a usable target here — the corridor logs at
         # least 2 incidents on every single day in this data (median 26),
@@ -803,10 +831,18 @@ def main() -> None:
         # distribution) is what "weather incident risk" can actually mean on
         # a corridor this busy: not "will anything happen" but "will today
         # run unusually heavy".
+        # Relative to the preceding year, not to the whole training span: incident logging runs higher in 2026
+        # than in 2022-2025, so one fixed line (the training top quartile) marked 67% of the 2026 holdout days
+        # "heavy" and the AUC fell to 0.47 (2026-10-20). A day is high-incident when it is in the top quarter of
+        # the 365 days BEFORE it - past days only, so nothing from the holdout leaks into a training label. The
+        # first days, with under half a year behind them, fall back to the training top quartile.
         incident_ceiling = train_slice["incident_count"].quantile(0.75)
-        daily["high_incident_day"] = (daily["incident_count"] >= incident_ceiling).astype(int)
-        print(f"  high-incident-day rule: incident_count >= {incident_ceiling:.0f} "
-              f"({daily['high_incident_day'].mean() * 100:.1f}% of all days)")
+        trailing = daily["incident_count"].shift(1).rolling(365, min_periods=180).quantile(0.75)
+        ceiling_by_day = trailing.fillna(incident_ceiling)
+        daily["high_incident_day"] = (daily["incident_count"] >= ceiling_by_day).astype(int)
+        hold = daily["high_incident_day"].iloc[len(daily) - args.holdout_days:]
+        print(f"  high-incident-day rule: incident_count in the top quarter of the preceding 365 days "
+              f"({daily['high_incident_day'].mean() * 100:.1f}% of all days, {hold.mean() * 100:.1f}% of the holdout)")
 
         closure_out = fit_logistic_kpi(daily, "road_closure", args.holdout_days)
         risk_out = fit_logistic_kpi(daily, "high_incident_day", args.holdout_days)
@@ -814,7 +850,11 @@ def main() -> None:
         print("\nLoading exit reference and per-(exit, hour) panel...")
         exits_df = pd.read_sql(EXIT_REFERENCE_SQL, conn)
         exit_hour_panel = load_exit_hour_panel(conn, exits_df)
-        print(f"  {len(exit_hour_panel)} exit-hour-day rows across {exits_df['exit_id'].nunique()} exits")
+        # The daily panel drops the days after the speed column goes flat (load_daily_panel); this panel did
+        # not, so its holdout was those dead days and its MAE read 6.24 against 1.0 (2026-10-20). Same cutoff.
+        exit_hour_panel = exit_hour_panel[exit_hour_panel["d"] <= daily["d"].max()].reset_index(drop=True)
+        print(f"  {len(exit_hour_panel)} exit-hour-day rows across {exits_df['exit_id'].nunique()} exits "
+              f"(to {daily['d'].max().date()}, the daily panel's last day with usable speed)")
 
         print("Fitting weather-adjusted speed contour (XGBoost)...")
         contour_out = fit_contour(exit_hour_panel, exits_df, args.holdout_days)

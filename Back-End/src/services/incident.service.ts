@@ -1741,6 +1741,7 @@ export function buildIncidentPredictiveResponse(
     .map((m) => {
       const computed = computeModelMetricsForModel(weatherFilteredRangeAligned, m.key, anchors.seasonalNaiveMae);
       const isChampion = m.key === championModel;
+      const fallback = rawComparison.find((r) => String(r.model) === m.key);
 
       if (computed.n > 0) {
         return {
@@ -1750,12 +1751,13 @@ export function buildIncidentPredictiveResponse(
           WMAPE: computed.wmape,
           MASE: computed.mase,
           R2: computed.r2,
-          // These three are training-time diagnostics (train/test gap etc.)
-          // with no live-recompute equivalent over an arbitrary window — left
-          // null on a live row rather than fabricated.
+          // Train R² and Gap describe the fitted model, not the window: they come
+          // from the training run (Gap = Train R² − full-holdout R²) and read the
+          // same in every Range/Weather slice, as on the Traffic table. Adjusted
+          // R² does depend on the scored days, so a live row leaves it null.
           Adjusted_R2: null,
-          Train_R2: null,
-          Gap: null,
+          Train_R2: numOrNull(fallback?.Train_R2),
+          Gap: numOrNull(fallback?.Gap),
           Diagnosis: null,
           isChampion,
           source: "window" as const,
@@ -1765,7 +1767,6 @@ export function buildIncidentPredictiveResponse(
 
       // No scored rows survive this Range/Weather slice — fall back to the
       // pipeline's full-holdout numbers instead of showing an empty row.
-      const fallback = rawComparison.find((r) => String(r.model) === m.key);
       return {
         model: m.key as string,
         MAE: numOrNull(fallback?.MAE),

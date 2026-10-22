@@ -103,7 +103,7 @@ const num = (v: unknown): number => (typeof v === "number" ? v : Number(String(v
  * build_origin.mjs's, character for character, so a 2026 day lands in the
  * same shape as a 2025 one.
  */
-export function aggregateTollHourly(rows: RawRow[], cutoff: Cutoff = loadCutoff()): TollHourlyAggregate {
+export function aggregateTollHourly(rows: Iterable<RawRow>, cutoff: Cutoff = loadCutoff()): TollHourlyAggregate {
   const cache = new Map<string, ResolvedPlaza>();
   const resolve = (s: string): ResolvedPlaza => {
     let v = cache.get(s);
@@ -247,7 +247,11 @@ async function insertOrigin(c: PoolClient, entries: [string, Sums][]): Promise<n
  * every table moves together or none does. `dryRun` does all of it and rolls
  * back, which is how a load is rehearsed against the real warehouse.
  */
-export async function loadTollHourly(agg: TollHourlyAggregate, opts: { dryRun?: boolean } = {}): Promise<TollHourlyLoad> {
+export async function loadTollHourly(agg: TollHourlyAggregate, opts: { dryRun?: boolean; replaceDays?: boolean } = {}): Promise<TollHourlyLoad> {
+  /* replaceDays: the file is a complete record of every day it covers (NLEX's own yearly export), so it
+     replaces those days whole — every plaza-hour of them, not only the ones it holds. Replacing by plaza-hour
+     alone left the old figure wherever the export has no row (a toll holiday, a quiet hour at a small plaza). */
+  const whole = Boolean(opts.replaceDays);
   const t0 = Date.now();
   const out: TollHourlyLoad = {
     days: agg.dates.length, factRows: 0, originRows: 0, dailyRows: 0, emissionRows: 0,
@@ -270,6 +274,14 @@ export async function loadTollHourly(agg: TollHourlyAggregate, opts: { dryRun?: 
     // and the undo journal of every row about to change.
     out.comparison = await compareToll(c);
     const journal = await UndoJournal.open(c, "toll_hourly");
+    if (whole) {
+      for (const table of ["gold.fact_traffic_hourly", "gold.fact_traffic_hourly_origin"]) {
+        await journal.saveOld(table, DAY_KEY, `FROM ${table} t WHERE t.date = ANY($1::date[])`, [days]);
+        await journal.saveNew(table, DAY_KEY, `SELECT unnest($1::date[]) AS date`, [days]);
+      }
+      await c.query(`DELETE FROM gold.fact_traffic_hourly WHERE date = ANY($1::date[])`, [days]);
+      await c.query(`DELETE FROM gold.fact_traffic_hourly_origin WHERE date = ANY($1::date[])`, [days]);
+    } else {
     await journal.saveOld("gold.fact_traffic_hourly", FACT_KEY, `
       FROM gold.fact_traffic_hourly t JOIN th_fact k
         ON t.date = k.date AND t.hour = k.hour AND t.exit_canonical = k.exit_canonical AND t.status = k.status
@@ -281,6 +293,7 @@ export async function loadTollHourly(agg: TollHourlyAggregate, opts: { dryRun?: 
         ON t.date = k.date AND t.hour = k.hour AND t.entry_canonical = k.entry_canonical AND t.status = k.status
        AND t.direction IS NOT DISTINCT FROM k.direction`);
     await journal.saveNew("gold.fact_traffic_hourly_origin", ORIGIN_KEY, `SELECT * FROM th_origin`);
+    }
     for (const table of ["gold.daily_traffic_volume_corrected", "gold.fact_emissions_hourly"]) {
       await journal.saveOld(table, DAY_KEY, `FROM ${table} t WHERE t.date = ANY($1::date[])`, [days]);
       await journal.saveNew(table, DAY_KEY, `SELECT unnest($1::date[]) AS date`, [days]);

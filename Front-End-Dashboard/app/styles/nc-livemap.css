@@ -1127,7 +1127,8 @@
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--text-primary) 3%, transparent);
 }
-.lm-page .wz-kpi-label { font-size: var(--fs-micro); font-weight: 600; letter-spacing: 1.5px; color: var(--text-muted); }
+/* One line each (LM-1): a label too long for its tile is cut with an ellipsis, never wrapped. */
+.lm-page .wz-kpi-label { font-size: var(--fs-micro); font-weight: 600; letter-spacing: 1.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lm-page .wz-kpi-value { font-size: var(--fs-title); font-weight: 400; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .lm-page .wz-kpi-value em { font-size: var(--fs-micro); color: var(--text-muted); }
 .lm-page .wz-sec { font-size: var(--fs-label); font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); }

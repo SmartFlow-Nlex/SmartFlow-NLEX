@@ -69,6 +69,8 @@ async function createWindow() {
   const window = new BrowserWindow({
     width: 1440, height: 920, minWidth: 1200, minHeight: 760,
     backgroundColor: '#eef5fd', title: 'SmartFlow NLEX', show: false,
+    // The SmartFlow logo on the title bar and taskbar; without it a dev run shows Electron's own icon.
+    icon: path.join(__dirname, 'icon.ico'),
     webPreferences: {
       contextIsolation: true, nodeIntegration: false,
       preload: path.join(__dirname, 'preload.js'),
@@ -86,7 +88,9 @@ async function createWindow() {
     };
     window.webContents.once('did-fail-load', fallbackToStatic);
     window.loadURL(devUrl).catch(fallbackToStatic);
-    window.webContents.openDevTools({ mode: 'detach' });
+    // DevTools on request only (Ctrl+Shift+I, or SMARTFLOW_DEVTOOLS=1). Its detached window carries
+    // Electron's icon, and sharing the taskbar button with it put that icon in place of the SmartFlow logo.
+    if (process.env.SMARTFLOW_DEVTOOLS === '1') window.webContents.openDevTools({ mode: 'detach' });
   } else {
     try {
       await startStaticServer();
@@ -107,6 +111,9 @@ async function createWindow() {
 
   window.once('ready-to-show', () => window.show());
 }
+
+// Same id as build.appId, so Windows groups the taskbar button under SmartFlow rather than Electron.
+app.setAppUserModelId('ph.edu.ust.smartflow.nlex');
 
 app.whenReady().then(() => {
   createWindow();

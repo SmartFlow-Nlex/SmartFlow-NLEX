@@ -455,6 +455,37 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
             ),
       ]);
 
+    // SCTEX's bar for Volume by Plaza (see byPlaza below).
+    const sctexBar: { plaza: string; v: number }[] = [];
+    {
+      const cls = String(params[2] ?? "Total");
+      const col = cls === "Class 1" ? "class_1" : cls === "Class 2" ? "class_2" : cls === "Class 3" ? "class_3" : "total";
+      const wantsSctex = !(filters.plazas && filters.plazas.length > 0 && !filters.plazas.includes("SCTEX"));
+      const southbound = !filters.direction || filters.direction === "SB";
+      if (wantsSctex && southbound) {
+        // Mabiga only: the toll plaza at Mabalacat that is NLEX's connection to SCTEX (the project owner's rule).
+        const via = "SCTEX";
+        const r = wet === null
+          ? await db.query(
+              `SELECT COALESCE(SUM(${col}), 0)::bigint AS v FROM gold.fact_traffic_hourly_origin
+                WHERE date BETWEEN $1 AND $2 AND entry_canonical = $3`,
+              [lo, hi, via],
+            )
+          : await db.query(
+              `WITH wx AS (
+                 SELECT (timestamp_utc + interval '8 hours')::date AS d,
+                        EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h, AVG(rainfall) > 0.3 AS wet
+                 FROM hourly_weather WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1 AND $2 GROUP BY 1, 2)
+               SELECT COALESCE(SUM(o.${col}), 0)::bigint AS v FROM gold.fact_traffic_hourly_origin o
+                 JOIN wx ON wx.d = o.date AND wx.h = o.hour AND wx.wet = $4
+                WHERE o.date BETWEEN $1 AND $2 AND o.entry_canonical = $3`,
+              [lo, hi, via, wet],
+            );
+        const v = Number(r.rows[0]?.v ?? 0);
+        if (v > 0) sctexBar.push({ plaza: "SCTEX", v });
+      }
+    }
+
     const data = {
       range: { from: lo, to: hi },
       meta: { plazas: plazaList.rows.map((r) => r.plaza), minDate, maxDate, jamTo },
@@ -470,7 +501,14 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
       hourlyTrend: hourly
         ? hourly.rows.map((r) => ({ d: r.d, hour: Number(r.hour), nb: Number(r.nb), sb: Number(r.sb) }))
         : null,
-      byPlaza: byPlaza.rows.map((r) => ({ plaza: r.plaza, v: Number(r.v) })),
+      /* 19 plazas where trips PAID, plus SCTEX. SCTEX is an interchange, not an exit: its traffic is what goes
+         through Mabiga, the toll plaza at Mabalacat that connects NLEX and SCTEX (the project owner's rule,
+         2026-10-22). The record only has Mabiga as an ENTRY - vehicles that paid at Mabiga and then entered NLEX
+         (entry "SCTEX" in gold.fact_traffic_hourly_origin, ~620k a year) - so that is the bar, under the same
+         Range/class/direction/weather filters. No file names a Mabiga EXIT; the client's hourly export has an
+         unnamed exit (code 256) that looks like it, held back until the client confirms. Codex had padded SCTEX
+         with 0, which says it carries no traffic. */
+      byPlaza: [...byPlaza.rows.map((r) => ({ plaza: r.plaza as string, v: Number(r.v) })), ...sctexBar].sort((x, y) => y.v - x.v),
       hourDow: hourDow.rows,
       plazaHourProfile: plazaHour.rows.map((r) => ({ plaza: r.plaza, hour: Number(r.hour), v: Number(r.v) })),
       speedByHour: speedByHour.rows,

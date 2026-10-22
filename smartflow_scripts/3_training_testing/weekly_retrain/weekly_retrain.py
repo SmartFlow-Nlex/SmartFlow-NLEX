@@ -219,9 +219,11 @@ GROUPS = [
         inputs=["accidents", "breakdowns", "weather", "traffic_daily"],
         # The accuracy-by-range study describes the champion the first step just chose, so it is re-measured in
         # the same batch: left to a separate manual run it described last month's model (it had, since 2026-10-05).
-        steps=[Step(INCIDENTS, ["train_incident_models.py", "--write-db", "--holdout-days", "90"]),
+        # 294 test days, the window volume and CO2 are scored on (10 Sep 2025 - 30 Jun 2026), since 2026-10-23;
+        # it was 90 (a 93/7 split covering April-June only). See VALIDATION_DAYS in train_incident_models.py.
+        steps=[Step(INCIDENTS, ["train_incident_models.py", "--write-db", "--holdout-days", "294"]),
                Step(INCIDENTS, ["measure_incident_horizon_accuracy.py", "--write-db"]),
-               Step(INCIDENTS, ["train_incident_models.py", "--write-db", "--holdout-days", "90", "--series", "accident"])],
+               Step(INCIDENTS, ["train_incident_models.py", "--write-db", "--holdout-days", "294", "--series", "accident"])],
         tables=[("public.ml_daily_actuals", None), ("public.ml_predictive_incidents", None),
                 ("public.ml_incident_horizon_accuracy", None),
                 ("public.ml_training_metadata", None), ("public.ml_daily_actuals_accident", None),
@@ -410,16 +412,16 @@ def evaluation(cur, where: str):
     """Each target's champion as gold.model_evaluation reports it, plus the newest
     evaluation time (to tell whether a trainer actually wrote new results)."""
     cur.execute("SELECT source, target, model_name, is_champion, primary_metric, primary_value, "
-                f"higher_is_better, beats_best_baseline, mase, evaluated_at FROM gold.model_evaluation WHERE {where}")
+                f"higher_is_better, beats_best_baseline, mase, evaluated_at, accepted FROM gold.model_evaluation WHERE {where}")
     champs, latest = {}, None
-    for src, tgt, model, champ, metric, val, hib, beats, mase, ev in cur.fetchall():
+    for src, tgt, model, champ, metric, val, hib, beats, mase, ev, accepted in cur.fetchall():
         if ev is not None and (latest is None or ev > latest):
             latest = ev
         if champ:
             champs[f"{tgt} [{src}]"] = {
                 "target": tgt, "model": model, "metric": metric,
                 "value": None if val is None else float(val), "higher": hib, "beats": beats,
-                "mase": None if mase is None else float(mase)}
+                "mase": None if mase is None else float(mase), "accepted": accepted}
     return champs, latest
 
 
@@ -566,8 +568,15 @@ def compare(b: dict, a: dict) -> tuple[str, list[str]]:
     fails = []
     if b["beats"] is True and a["beats"] is False:
         fails.append("no longer beats its best baseline")
-    if b["mase"] is not None and b["mase"] < 1 and a["mase"] is not None and a["mase"] >= 1:
-        fails.append(f"MASE rose to {a['mase']:.3f} (was {b['mase']:.3f}, below 1)")
+    # MASE crossing 1 says the scored days were harder than the training years (a typhoon, the holidays), not
+    # that the model got worse: on the actual record the seasonal naive itself scored 1.555. It fails a model
+    # only if the model no longer beats its best baseline on those same days (checked above, by "beats").
+    # "beats" is NULL where a target stores no baseline rows (the volume trainer keeps its baselines to itself):
+    # then the trainer's own verdict decides, which compares with the seasonal naive on the same scored days.
+    beats_now = a["beats"] if a["beats"] is not None else a.get("accepted")
+    if (b["mase"] is not None and b["mase"] < 1 and a["mase"] is not None and a["mase"] >= 1
+            and beats_now is not True):
+        fails.append(f"MASE rose to {a['mase']:.3f} (was {b['mase']:.3f}, below 1) and it no longer beats its best baseline")
     if b["metric"] == a["metric"] and b["value"] is not None and a["value"] is not None and b["higher"] is not None:
         if b["higher"] and b["value"] - a["value"] > SCORE_TOLERANCE:
             fails.append(f"{a['metric']} fell more than {SCORE_TOLERANCE}")

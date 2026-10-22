@@ -1108,7 +1108,7 @@ export default function PredictiveIncidentChart({
         <h4 className="inc-panel-title">Real-World ML Validation Metrics</h4>
       </div>
       <div className="inc-table-wrap">
-        <table className="inc-table" style={{ minWidth: "610px" }}>
+        <table className="inc-table" style={{ minWidth: "760px" }}>
           <thead>
             <tr>
               <th>Model</th>
@@ -1117,6 +1117,8 @@ export default function PredictiveIncidentChart({
               <th><MetricHint hint={metricHintFor("WMAPE")}>WMAPE</MetricHint></th>
               <th><MetricHint hint={metricHintFor("MASE")}>MASE</MetricHint></th>
               <th><MetricHint hint={metricHintFor("R² Score")}>R² Score</MetricHint></th>
+              <th><MetricHint hint={metricHintFor("Train R²")}>Train R²</MetricHint></th>
+              <th><MetricHint hint={metricHintFor("Gap")}>Gap</MetricHint></th>
             </tr>
           </thead>
           <tbody>
@@ -1157,6 +1159,8 @@ export default function PredictiveIncidentChart({
                   >
                     {fmtNum(m.R2, 4)}
                   </td>
+                  <td>{fmtNum(m.Train_R2, 4)}</td>
+                  <td>{fmtNum(m.Gap, 4)}</td>
                 </tr>
               );
             })}

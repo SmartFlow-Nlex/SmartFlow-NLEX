@@ -207,6 +207,10 @@ export function metricHintFor(label: string, row?: ModelMetric | null): string {
         "\n\nBelow 1.0 beats that baseline; at or above 1.0 does not."
       );
     }
+    case "Train R²":
+      return "R² on the training years, from the training run\n\nHow well the model fits the data it learned from. It does not change with Range or Weather.";
+    case "Gap":
+      return "Train R² − full-holdout R², from the training run\n\nA large gap means the model fits its training years far better than unseen days: it memorised rather than learned.";
     case "N":
       return "Number of days this model was actually scored against in the current Range/Weather view.";
     default:

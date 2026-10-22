@@ -1082,7 +1082,7 @@ export default function TrafficPage() {
             <article className={`${styles.chartCard} nct-span-half`}>
               <div className={styles.chartHead}>
                 <div className={styles.headText}>
-                  <h3>Volume by Plaza<InfoTooltip text="Share of the Range's volume handled by each toll plaza. Click a bar for that plaza's summary." /></h3>
+                  <h3>Volume by Plaza<InfoTooltip text="Share of the Range's volume handled by each toll plaza, counted where each trip paid. Click a bar for that plaza's summary. SCTEX is an interchange, not a toll exit: its bar is the vehicles that entered NLEX through the Mabiga toll plaza (Mabalacat), the connection to SCTEX. No data records vehicles leaving NLEX at Mabiga." /></h3>
                   {top3Share != null && !error && (
                     <p className="nct-answer-line">Top 3 plazas carry <b>{top3Share.toFixed(1)}%</b> of the selected volume</p>
                   )}
@@ -1260,7 +1260,7 @@ export default function TrafficPage() {
               <div className={styles.detailIcon}><Building2 size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>Volume by Plaza — Full Ranking</h3>
-                <p>{data.byPlaza.length} toll plazas</p>
+                <p>{data.byPlaza.length} exits · SCTEX = vehicles entering NLEX through Mabiga (Mabalacat)</p>
               </div>
               <button className={styles.detailClose} onClick={() => setAllPlazasOpen(false)} aria-label="Close">
                 {closeIcon}

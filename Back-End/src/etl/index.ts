@@ -24,7 +24,8 @@ import { transformData, type TransformResult } from "./transformer.js";
 import { loadData, type LoadResult } from "./loader.js";
 import type { Published } from "./publish.js";
 import type { UploadComparison } from "./compare.js";
-import { aggregateTollHourly, loadCutoff, loadTollHourly } from "./toll-hourly.js";
+import { aggregateTollHourly, loadCutoff, loadTollHourly, type TollHourlyAggregate } from "./toll-hourly.js";
+import { aggregateTir, isTirFile, readLevelAdjustment, type TirStats } from "./toll-tir.js";
 import type { ExtractionResult, SourceType } from "./extractors/types.js";
 
 export interface PipelineResult {
@@ -88,6 +89,10 @@ const rows = (v: number) => `${n(v)} ${v === 1 ? "row" : "rows"}`;
 export async function runPipeline(filePath: string, originalFilename: string, opts: PipelineOptions = {}): Promise<PipelineResult> {
   const start = Date.now();
   const gates: PipelineGateLog[] = [];
+
+  /* NLEX's own hourly export (TrxDate, Trx_Hour, Entry_Plaza, Exit_Plaza, Bound, Class, Trx_Count) is ~9.5
+     million rows a year: read as a stream, never parsed whole (toll-tir.ts). */
+  if (isTirFile(filePath)) return runTirPipeline(filePath, originalFilename, gates, start, opts);
 
   // ── Validation Gate 1: Source Availability ──
   const parsed: ParseResult = parseFile(filePath, originalFilename);
@@ -307,16 +312,71 @@ async function runTollHourlyPipeline(
   opts: PipelineOptions,
 ): Promise<PipelineResult> {
   const agg = aggregateTollHourly(extraction.rows);
+  return finishTollHourly(agg, extraction.sourceName, extraction.metadata?.detectedFormat ?? "csv", extraction.source, classification, gates, start, opts, extraction.rows.length, []);
+}
+
+/**
+ * NLEX's own hourly export: Gate 1 and 2 from its header, the client's rules applied while it streams in
+ * (toll-tir.ts), then the same Gates 3-4 and load as every toll file.
+ */
+async function runTirPipeline(filePath: string, originalFilename: string, gates: PipelineGateLog[], start: number, opts: PipelineOptions): Promise<PipelineResult> {
+  const adjust = await readLevelAdjustment();
+  let agg: TollHourlyAggregate, stats: TirStats;
+  try {
+    ({ agg, stats } = aggregateTir(filePath, adjust));
+  } catch (e: any) {
+    gates.push({ gate: "Gate 1 — Source Availability & Schema Check", passed: false, details: `Could not read the file: ${e.message}` });
+    return buildFailResult(originalFilename, "csv", "file_upload", "toll_hourly", gates, [e.message], start, opts, 0);
+  }
+  gates.push({
+    gate: "Gate 1 — Source Availability & Schema Check",
+    passed: stats.lines > 0,
+    details: `Read ${n(stats.lines)} rows from NLEX's hourly toll export (${stats.year ?? "no year"}), streamed: the file is never held whole.`,
+  });
+  const classification: ClassifyResult = {
+    type: "toll_hourly",
+    confidence: 1,
+    reason: "Detected NLEX's hourly toll export (TrxDate, Trx_Hour, Entry_Plaza, Exit_Plaza, Bound, Class, Trx_Count): one row per entry plaza, exit plaza, hour and class, plaza codes named from the earlier files.",
+  };
+  gates.push({ gate: "Gate 2 — Field Completeness & Data Type Conformity", passed: true, details: classification.reason });
+
+  const rules: string[] = [];
+  if (stats.class0) rules.push(`${rows(stats.class0)} of Class 0 (${n(stats.trips.class0)} trips) disregarded, as the client advised`);
+  if (stats.entryZero) rules.push(`${rows(stats.entryZero)} with entry plaza 0 (${n(stats.trips.entryZero)} trips) dropped: "no transactions for that pair, not valid or not possible" (client)`);
+  if (stats.uturns) rules.push(`${rows(stats.uturns)} with the same entry and exit at a plaza that is not an open-system barrier (${n(stats.trips.uturns)} trips) dropped: U-turns and cross-reads (client)`);
+  if (stats.badClass) rules.push(`${rows(stats.badClass)} with no readable class rejected`);
+  if (stats.spill) rules.push(`${rows(stats.spill)} dated in ${stats.spillYears.join(", ")} held back: this file is ${stats.year}, and a few stray rows would replace those days' whole record`);
+  if (stats.adjusted) {
+    const a = stats.adjusted;
+    rules.push(`LEVEL ADJUSTED, pending the client's confirmation: ${n(a.rows)} rows paid at exits listed in gold.toll_level_adjustment for ${stats.year} were scaled by ${a.minFactor.toFixed(3)}-${a.maxFactor.toFixed(3)} (${n(Math.round(a.before))} trips as delivered, ${n(Math.round(a.after))} loaded). Delete those rows and load the file again to have it exactly as delivered`);
+  }
+  // NLEX's export holds every trip of every day it covers: it replaces those days whole.
+  return finishTollHourly(agg, originalFilename, "csv", "file_upload", classification, gates, start, opts, stats.lines, rules, true);
+}
+
+async function finishTollHourly(
+  agg: TollHourlyAggregate,
+  sourceName: string,
+  format: string,
+  source: ExtractionResult["source"],
+  classification: ClassifyResult,
+  gates: PipelineGateLog[],
+  start: number,
+  opts: PipelineOptions,
+  totalRows: number,
+  rules: string[],
+  replaceDays = false,
+): Promise<PipelineResult> {
+  const extraction = { sourceName, source, rows: { length: totalRows }, extractionErrors: [] as string[] };
   const first = agg.dates[0];
   const last = agg.dates[agg.dates.length - 1];
-  const format = extraction.metadata?.detectedFormat ?? "csv";
 
-  const held: string[] = [];
+  const held: string[] = [...rules];
   if (agg.heldBack.late > 0 && agg.lateDates) {
     held.push(`${rows(agg.heldBack.late)} dated ${agg.lateDates.first} to ${agg.lateDates.last} (${agg.lateDates.days} days) held back: they are after ${agg.cutoff.date}, ${agg.cutoff.why === "today" ? "today" : "where the corridor's record ends"}`);
   }
   if (agg.heldBack.offCorridorExit > 0) {
-    held.push(`${rows(agg.heldBack.offCorridorExit)} whose exit is not one of the 20 NLEX exits (Lingunan) held back, as they were from the 2025 record`);
+    held.push(`${rows(agg.heldBack.offCorridorExit)} whose exit is not one of the 20 NLEX exits (Lingunan, the SCTEX/TPLEX exits, unnamed codes) held back, as Lingunan always has been`);
   }
   if (agg.heldBack.malformed > 0) held.push(`${rows(agg.heldBack.malformed)} malformed, rejected`);
   gates.push({
@@ -333,10 +393,10 @@ async function runTollHourlyPipeline(
   gates.push({
     gate: "Gate 4 — Schema Transformation & Business Rule Enforcement",
     passed: agg.fact.size > 0,
-    details: `Aggregated to the warehouse grain: ${n(agg.fact.size)} hourly rows by the plaza each trip paid at, ${n(agg.origin.size)} by the plaza it entered. Each plaza-hour in the file replaces the warehouse's figure for it; plazas and hours it does not hold are left alone.`,
+    details: `Aggregated to the warehouse grain: ${n(agg.fact.size)} hourly rows by the plaza each trip paid at, ${n(agg.origin.size)} by the plaza it entered. ${replaceDays ? "The file is a complete record of its days, so it replaces each day whole (every plaza-hour of it)." : "Each plaza-hour in the file replaces the warehouse's figure for it; plazas and hours it does not hold are left alone."}`,
   });
 
-  const loaded = await loadTollHourly(agg, { dryRun: opts.dryRun });
+  const loaded = await loadTollHourly(agg, { dryRun: opts.dryRun, replaceDays });
   const kept = loaded.committed || (opts.dryRun && loaded.errors.length === 0);
   gates.push({
     gate: opts.dryRun ? "Load — Check only (rolled back, nothing written)" : "Load — Gold Layer (Data Warehouse)",
