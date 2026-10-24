@@ -84,6 +84,11 @@ type Analytics = {
     /** The same comparison per day of week (0 = Sunday) x hour, for the card's Day and Hour filters. */
     cells?: WeatherCell[];
     jam: { wet: { speed: number; jam_level: number } | null; dry: { speed: number; jam_level: number } | null };
+    /** Wet/dry hours and incidents by weekday x hour (dow 0 = Sunday), for the Dry vs Wet slice. */
+    byHourDow?: {
+      exposure: { dow: number; hour: number; wet: boolean; hours: number }[];
+      incidents: { dow: number; hour: number; wet: boolean; src: "accident" | "breakdown"; n: number }[];
+    };
   };
 };
 
@@ -188,7 +193,6 @@ export default function IncidentPage() {
   const [hotspotSort, setHotspotSort] = useState<"desc" | "asc">("desc");
   const [causeSort, setCauseSort] = useState<"desc" | "asc">("desc");
   const [grain, setGrain] = useState<Granularity>("monthly");
-  const [timeView, setTimeView] = useState<"hour" | "dow">("hour");
   const [causeMode, setCauseMode] = useState<CauseMode>("Accident causes");
   const [allHotspotsOpen, setAllHotspotsOpen] = useState(false);
   // Dry vs Wet card: narrow the comparison to a day and/or hour (19 Oct 2026, testers IN-7).
@@ -461,108 +465,6 @@ export default function IncidentPage() {
     };
   }, [trendRows, grain, chartTheme, TYPE_HUES]);
 
-  // Weekday/weekend hourly profile + day-of-week averages, normalized per day
-  // so 5 weekdays vs 2 weekend days compare fairly.
-  const timeProfile = useMemo(() => {
-    if (!data || data.heatmap.length === 0) return null;
-    const dowCount = [0, 0, 0, 0, 0, 0, 0]; // index = JS getDay()
-    const end = new Date(`${data.range.to}T00:00:00`);
-    for (const d = new Date(`${data.range.from}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) dowCount[d.getDay()]++;
-    const weekdayDays = dowCount[1] + dowCount[2] + dowCount[3] + dowCount[4] + dowCount[5];
-    const weekendDays = dowCount[0] + dowCount[6];
-    const totalDays = weekdayDays + weekendDays;
-
-    const wkHour = Array<number>(24).fill(0);
-    const weHour = Array<number>(24).fill(0);
-    const dowTotals = Array<number>(7).fill(0);
-    for (const r of data.heatmap) {
-      if (r.dow >= 1 && r.dow <= 5) wkHour[r.hour] += r.v;
-      else weHour[r.hour] += r.v;
-      dowTotals[r.dow] += r.v;
-    }
-
-    const weekday = wkHour.map((v) => (weekdayDays > 0 ? v / weekdayDays : 0));
-    const weekend = weHour.map((v) => (weekendDays > 0 ? v / weekendDays : 0));
-    const allHour = wkHour.map((v, h) => (totalDays > 0 ? (v + weHour[h]) / totalDays : 0));
-    const hourTotals = wkHour.map((v, h) => v + weHour[h]);
-    const peakHour = allHour.indexOf(Math.max(...allHour));
-    const quietHour = allHour.indexOf(Math.min(...allHour));
-
-    // Mon..Sun display order
-    const dowAvg = DOW_ORDER.map((d) => (dowCount[d] > 0 ? dowTotals[d] / dowCount[d] : 0));
-    const dowTotalOrdered = DOW_ORDER.map((d) => dowTotals[d]);
-    const dowDaysOrdered = DOW_ORDER.map((d) => dowCount[d]);
-    const busiestDow = dowAvg.indexOf(Math.max(...dowAvg));
-
-    return { weekday, weekend, hourTotals, peakHour, quietHour, dowAvg, dowTotalOrdered, dowDaysOrdered, busiestDow };
-  }, [data]);
-
-  const timeOption = useMemo<EChartsOption | null>(() => {
-    if (!timeProfile) return null;
-
-    if (timeView === "hour") {
-      const peakIdx = timeProfile.weekday.indexOf(Math.max(...timeProfile.weekday));
-      return {
-        grid: { left: 44, right: 16, top: 10, bottom: 54 },
-        xAxis: { type: "category", boundaryGap: false, data: Array.from({ length: 24 }, (_, h) => fmtHour(h)), axisLabel: { interval: 3 }, axisTick: { show: false } },
-        yAxis: { type: "value", name: "avg incidents / day", nameGap: 10, nameTextStyle: { align: "left" }, splitNumber: 3 },
-        tooltip: { trigger: "axis", valueFormatter: (v) => (v == null ? "—" : `${fmt1(Number(v))} / day`) },
-        legend: { show: true, bottom: 0, left: "center", padding: 0 },
-        series: [
-          {
-            name: "Weekdays",
-            type: "line",
-            data: timeProfile.weekday.map((v) => Number(v.toFixed(2))),
-            symbol: "none",
-            smooth: true,
-            itemStyle: { color: RAMP[2] },
-            lineStyle: { width: 2, color: RAMP[2] },
-            markPoint: {
-              symbol: "circle",
-              symbolSize: 8,
-              itemStyle: { color: RAMP[2], borderColor: chartTheme.tooltipBg, borderWidth: 2 },
-              label: { show: true, position: "top", fontSize: 11, fontWeight: 600, color: chartTheme.ink, formatter: `Peak · ${fmtHour(peakIdx)}` },
-              data: [{ name: "Peak", coord: [peakIdx, Number(timeProfile.weekday[peakIdx].toFixed(2))] }],
-            },
-          },
-          {
-            name: "Weekends",
-            type: "line",
-            data: timeProfile.weekend.map((v) => Number(v.toFixed(2))),
-            symbol: "none",
-            smooth: true,
-            itemStyle: { color: RAMP[0] },
-            lineStyle: { width: 2, color: RAMP[0] },
-          },
-        ],
-      };
-    }
-
-    const maxIdx = timeProfile.busiestDow;
-    return {
-      grid: { left: 44, right: 16, top: 10, bottom: 54 },
-      xAxis: { type: "category", data: DOW_LABELS, axisLabel: { interval: 0 }, axisTick: { show: false } },
-      yAxis: { type: "value", name: "avg incidents / day", nameGap: 10, nameTextStyle: { align: "left" }, splitNumber: 3 },
-      tooltip: {
-        formatter: (p) => {
-          const i = (p as { dataIndex: number }).dataIndex;
-          return `<b>${DOW_LABELS[i]}</b><br/>${fmt1(timeProfile.dowAvg[i])} incidents per ${DOW_LABELS[i]} on average<br/>${fmtInt(timeProfile.dowTotalOrdered[i])} total across ${fmtInt(timeProfile.dowDaysOrdered[i])} ${DOW_LABELS[i]}s`;
-        },
-      },
-      series: [
-        {
-          type: "bar",
-          data: timeProfile.dowAvg.map((v, i) => ({
-            value: Number(v.toFixed(2)),
-            itemStyle: { color: i === maxIdx ? RAMP[2] : RAMP[0], borderRadius: [4, 4, 0, 0] },
-            label: i === maxIdx ? { show: true, position: "top", fontSize: 11, fontWeight: 600, color: chartTheme.ink, formatter: () => fmt1(v) } : undefined,
-          })),
-          barMaxWidth: 26,
-        },
-      ],
-    };
-  }, [timeProfile, timeView, chartTheme]);
-
   const hotspotChart = useMemo<{ option: EChartsOption; rows: Analytics["hotspots"] } | null>(() => {
     if (!data || data.hotspots.length === 0) return null;
     const top = data.hotspots.slice(0, 10);
@@ -762,40 +664,6 @@ export default function IncidentPage() {
       ],
       note: filtersNote,
     });
-  };
-
-  const onTimeClick = (p: { dataIndex: number }) => {
-    if (!timeProfile) return;
-    if (timeView === "hour") {
-      const h = p.dataIndex;
-      const totals = [...timeProfile.hourTotals].sort((a, b) => b - a);
-      const rank = 1 + totals.findIndex((x) => x <= timeProfile.hourTotals[h]);
-      setDetail({
-        title: `${fmtHour(h)} – ${fmtHour((h + 1) % 24)}`,
-        subtitle: "Incident frequency in this hour of day",
-        rows: [
-          ["Avg on a weekday", `${fmt1(timeProfile.weekday[h])} incidents`],
-          ["Avg on a weekend day", `${fmt1(timeProfile.weekend[h])} incidents`],
-          ["Total in range", fmtInt(timeProfile.hourTotals[h])],
-          ["Rank among hours", `#${rank} of 24`],
-        ],
-        note: filtersNote,
-      });
-    } else {
-      const i = p.dataIndex;
-      const avgs = [...timeProfile.dowAvg].sort((a, b) => b - a);
-      const rank = 1 + avgs.findIndex((x) => x <= timeProfile.dowAvg[i]);
-      setDetail({
-        title: DOW_LABELS[i],
-        subtitle: "Incident frequency on this day of week",
-        rows: [
-          ["Avg per day", `${fmt1(timeProfile.dowAvg[i])} incidents`],
-          ["Total in range", `${fmtInt(timeProfile.dowTotalOrdered[i])} across ${fmtInt(timeProfile.dowDaysOrdered[i])} ${DOW_LABELS[i]}s`],
-          ["Rank among days", `#${rank} of 7`],
-        ],
-        note: filtersNote,
-      });
-    }
   };
 
   const showHotspotDetail = (r: Analytics["hotspots"][number]) => {
@@ -1143,7 +1011,7 @@ export default function IncidentPage() {
     );
   };
 
-  const answer =(value: ReactNode, label: ReactNode) =>
+  const answer = (value: ReactNode, label: ReactNode) =>
     data && !error ? (
       <p className="inc-answer inc-chart-answer">
         <span className="inc-answer-value">{value}</span>
@@ -1351,32 +1219,6 @@ export default function IncidentPage() {
               <div className={styles.chartHead}>
                 <div className={styles.headText}>
                   <h3>
-                    When Incidents Happen
-                    <InfoTooltip text="Average incidents per day by hour (weekdays vs. weekends) or by day of week, normalized for how many of each day type are actually in the Range — so 5 weekdays vs. 2 weekend days compare fairly. By day, the busiest day is the deeper, labelled bar." />
-                  </h3>
-                </div>
-                <div className={styles.segmentedSmall}>
-                  {(["hour", "dow"] as const).map((v) => (
-                    <button key={v} className={timeView === v ? "active" : ""} aria-pressed={timeView === v} onClick={() => setTimeView(v)}>
-                      {v === "hour" ? "By hour" : "By day"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {timeProfile &&
-                answer(
-                  fmtHour(timeProfile.peakHour),
-                  <>
-                    peak · quietest around <b>{fmtHour(timeProfile.quietHour)}</b> · busiest day: <b>{DOW_LABELS[timeProfile.busiestDow]}</b>
-                  </>
-                )}
-              <div className={styles.chartBody}>{chartFrame(timeOption, "No data for the selected filters", onTimeClick)}</div>
-            </article>
-
-            <article className={`${styles.chartCard} inc-half`}>
-              <div className={styles.chartHead}>
-                <div className={styles.headText}>
-                  <h3>
                     Hotspots by Km Segment
                     <InfoTooltip text="Top 10 km segments by total located incidents in the Range, each named by its nearest exit. Bar shade repeats the length: deeper purple = more incidents. Hover a bar for its injury and fatality counts." />
                   </h3>
@@ -1477,6 +1319,7 @@ export default function IncidentPage() {
                   />
                 </div>
               </div>
+
               {(() => {
                 if (!weatherSlot) return null;
                 const s = weatherSlot;
@@ -1520,7 +1363,7 @@ export default function IncidentPage() {
                 <div className={styles.headText}>
                   <h3>
                     Incidents by Hour and Day
-                    <InfoTooltip text="Average incidents in each hour of each weekday, normalized for how many of that weekday the Range contains. Same Hour × Day table as When Incidents Happen; follows Range, Weather and Incident type." />
+                    <InfoTooltip text="Average incidents in each hour of each weekday, normalized for how many of that weekday the Range contains. Follows Range, Weather and Incident type. Hover or click a cell for that hour’s accident and breakdown split below the grid." />
                   </h3>
                 </div>
               </div>
@@ -1537,8 +1380,10 @@ export default function IncidentPage() {
               )}
             </article>
 
-            {/* Dispatch response times (breakdown log); follows Range like every other card */}
-            <div className={`${styles.spanHalf} inc-half`}>
+            {/* Dispatch response times (breakdown log); follows Range like every other card.
+                Full width: with When Incidents Happen removed (it repeated the Hour x Day grid) it is the
+                fifth half-width card and would otherwise sit alone beside an empty column. */}
+            <div className={`${styles.spanFull} inc-full`}>
               <EventBreakdownPanel
                 months={rangeMode === "custom" ? "all" : rangeMode}
                 from={rangeMode === "custom" ? customFrom : undefined}

@@ -813,44 +813,6 @@ html:root .viz-incident.viz-incident { --kpi-1: var(--page-accent); }
 .inc-sites li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .inc-sites li > em { font-style: normal; font-size: var(--fs-label); font-weight: 600; color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 14px; }
 .inc-sites li > span { margin-left: auto; color: var(--text-muted); white-space: nowrap; }
-.inc-actions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
-.inc-list { display: flex; flex-direction: column; }
-.inc-list-head {
-  display: flex;
-  justify-content: space-between;
-  padding-bottom: 6px;
-  font-size: var(--fs-label);
-  font-weight: 600;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-.inc-list-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 0;
-  border-top: 1px solid var(--border-default);
-  font-size: var(--fs-body);
-  font-weight: 400;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-.inc-list-row > b { font-weight: 600; color: var(--page-accent); }
-.inc-list-row > span:last-child:not(:first-child) { color: var(--text-muted); font-weight: 300; }
-.inc-rain-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.inc-rain-chip {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 76px;
-  padding: 6px 10px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  font-variant-numeric: tabular-nums;
-}
-.inc-rain-chip span { font-size: var(--fs-label); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); }
-.inc-rain-chip b { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); }
 .inc-staffed {
   display: inline-flex;
   align-items: center;
@@ -985,7 +947,6 @@ html:root .viz-incident.viz-incident { --kpi-1: var(--page-accent); }
   .inc-sites li > span { margin-left: 22px; flex-basis: 100%; }
   .inc-card { padding: 18px 16px 16px; gap: 14px; }
   .inc-rank-grid { grid-template-columns: 22px minmax(0, 1fr) minmax(0, 0.9fr) 52px; column-gap: 8px; }
-  .inc-actions-grid { grid-template-columns: minmax(0, 1fr); }
   .inc-action { padding: 16px; }
   .inc-trust-pill { flex: 1 1 100%; }
   .inc-readout { white-space: normal; }
@@ -1029,3 +990,14 @@ html:root .viz-incident.viz-incident { --kpi-1: var(--page-accent); }
 .inc-mix-hint { font-size: 13px; color: var(--text-muted); }
 .inc-mix-clear { padding: 3px 12px; font-size: 13px; }
 
+/* --- Selected state for the module's segmented pills -------------------------
+   Range, Weather, Granularity and the card toggles mark the chosen pill with a
+   plain class="active". traffic.module.css styles `.active`, but CSS Modules hash
+   that name, so the plain class never matched and no selection was ever shown.
+   Matched here by the module's own (hashed-prefix) class names instead. */
+.viz-incident [class*="segmented"] > button.active {
+  background: color-mix(in srgb, var(--page-accent) 16%, transparent);
+  border-color: var(--page-accent);
+  color: var(--text-primary);
+  box-shadow: none;
+}

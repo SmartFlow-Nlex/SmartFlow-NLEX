@@ -6,10 +6,11 @@
  * Presentation only: both grids re-draw numbers the page has already loaded
  * and fetch nothing of their own.
  *
- *  - HourDayHeatmap (Descriptive): /api/incident/analytics' `heatmap` (the same
- *    Hour x Day-of-week table "When Incidents Happen" draws its Weekday/Weekend
- *    lines from), averaged per day of that weekday in the Range, the same
- *    normalisation that chart and the Patrol Alert Schedule use.
+ *  - HourDayHeatmap (Descriptive): /api/incident/analytics' `heatmap`, the
+ *    Hour x Day-of-week table, averaged per day of that weekday in the Range,
+ *    the same normalisation the Patrol Alert Schedule uses. It replaced the
+ *    "When Incidents Happen" card, which drew Weekday/Weekend lines from the
+ *    same table (removed 23 Oct 2026 as a duplicate).
  *  - HourSourceHeatmap (/incident/hourly): the day's per-hour Accident /
  *    Breakdown counts, the same figures the chart tooltip lists per hour (the
  *    event tables the forecast is trained on, since 19 Oct 2026).

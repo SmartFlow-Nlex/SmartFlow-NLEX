@@ -207,6 +207,8 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
       weatherExposure,
       weatherIncidents,
       weatherCells,
+      wxSliceExposure,
+      wxSliceIncidents,
       jamSpeedWx,
       kpi,
       accidentClearance,
@@ -347,6 +349,25 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
          FROM expo x LEFT JOIN inc i ON i.dow = x.dow AND i.h = x.h
          ORDER BY 1, 2`,
         [lo, hi, src]
+      ),
+      // Wet/dry exposure and incidents by weekday x hour, for the Dry vs Wet card's
+      // hour-band and day-type slice. Same definitions as the two queries above
+      // (wet = expressway-average rain > 0.3 mm), just not collapsed over time, so the
+      // client can re-slice without another request. dow is EXTRACT(dow): 0 = Sunday.
+      db.query(
+        `WITH ${WX_CTE}
+         SELECT EXTRACT(dow FROM d)::int AS dow, h AS hour, (rain > 0.3) AS wet, COUNT(*)::int AS hours
+         FROM wx GROUP BY 1, 2, 3`,
+        [lo, hi]
+      ),
+      db.query(
+        `WITH ${EVENTS_CTE}, ${WX_CTE}
+         SELECT EXTRACT(dow FROM e.d)::int AS dow, e.h AS hour, (w.rain > 0.3) AS wet, e.src, COUNT(*)::int AS n
+         FROM events e JOIN wx w ON w.d = e.d AND w.h = e.h
+         WHERE e.d BETWEEN $1 AND $2 AND ($3::text IS NULL OR e.src = $3)
+           AND ($4::text IS NULL OR (w.rain > 0.3) = ($4 = 'wet'))
+         GROUP BY 1, 2, 3, 4`,
+        params
       ),
       // Traffic impact: avg jam speed on wet vs dry hours (unchanged)
       db.query(
@@ -504,6 +525,7 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
         // Per day-of-week x hour, for the Dry vs Wet card's Day and Hour filters.
         cells: weatherCells.rows,
         jam: jamWx,
+        byHourDow: { exposure: wxSliceExposure.rows, incidents: wxSliceIncidents.rows },
       },
     };
 
