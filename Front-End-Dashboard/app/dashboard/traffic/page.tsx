@@ -18,7 +18,6 @@ import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import PredictiveVolumeChart from "../../../components/dashboard/PredictiveVolumeChart";
 import PredictiveCongestionChart from "../../../components/dashboard/PredictiveCongestionChart";
 import PredictiveEventChart from "../../../components/dashboard/PredictiveEventChart";
-import Forecast48hPanel from "../../../components/dashboard/Forecast48hPanel";
 import styles from "./traffic.module.css";
 import DateRangePicker from "./components/DateRangePicker";
 import { rangeDays, grainBlockedReason, bestGrainFor, bucketLabelFor, timeAxisLabels } from "../../../lib/granularity";
@@ -1187,8 +1186,8 @@ export default function TrafficPage() {
                 weather={weather}
               />
             </div>
-            {/* The hour-by-hour 48 hours after the latest upload, per plaza and class (adviser's brief, 24 Oct 2026). */}
-            <div className={styles.spanFull}><Forecast48hPanel /></div>
+            {/* The hour-by-hour 48-hour forecast (adviser's brief) is the "Hourly" view of the card above since
+                26 Oct 2026, one forecast graph instead of two. */}
             {/* Each on its own full row (8 Oct 2026, user request): side by side, the congestion card was
                 twice the height of the event card and one of them always ended in blank space. Each card
                 splits itself into two columns inside instead (.nct-split). */}

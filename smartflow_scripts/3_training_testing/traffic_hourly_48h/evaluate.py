@@ -48,7 +48,9 @@ def metrics(p, t, base_mae=None, mape_min=50):
     e = p - t
     mae = np.abs(e).mean(); rmse = np.sqrt((e ** 2).mean())
     m = t >= mape_min
-    out = {"MAE": mae, "RMSE": rmse, "WAPE": np.abs(e).sum() / t.sum() * 100,
+    # R2 on the same cells: 1 - squared error / variance of the actual values around their mean.
+    r2 = 1 - (e ** 2).sum() / ((t - t.mean()) ** 2).sum()
+    out = {"MAE": mae, "RMSE": rmse, "R2": r2, "WAPE": np.abs(e).sum() / t.sum() * 100,
            "MAPE": (np.abs(e[m]) / t[m]).mean() * 100 if m.any() else None, "n": int(t.size)}
     if base_mae is not None: out["MASE"] = mae / base_mae
     return {k: (round(float(v), 4) if isinstance(v, (float, np.floating)) else v) for k, v in out.items()}

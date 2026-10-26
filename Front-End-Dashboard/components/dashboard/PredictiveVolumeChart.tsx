@@ -14,6 +14,7 @@ import { areaFade, forecastLineStyle, nowMarkLine } from "../../lib/chart-kit";
 import { useTrafficPalette } from "./trafficPalette";
 import StateNote from "../stage/StateNote";
 import EvidenceModal from "./EvidenceModal";
+import { fetchJsonWithRetry } from "./prescriptiveTraffic.shared";
 
 type ModelType = "LSTM" | "Prophet" | "HoltWinters" | "SARIMAX" | "HoltsLinear";
 
@@ -113,6 +114,26 @@ const toIsoDate = (value: string) => {
 
 const fmtVeh = (n: number) => Math.round(n).toLocaleString("en-US");
 const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`);
+
+/** GET /api/traffic/forecast/48h (Back-End/src/services/forecast-48h.service.ts), corridor total. */
+type Next48 = {
+  run: {
+    modelLabel: string; originTs: string; historyEnd: string; historySynthetic: boolean; intervalLevel: number | null;
+    freshness: { stale: boolean; windowPast: boolean };
+    backtest: {
+      seriesWape: number | null; corridorWape: number | null; corridorBandCoverage: number | null;
+      window: { first: string; last: string } | null;
+      /** Every learned candidate of the same 2025 test (WAPE %), the served one marked. */
+      comparison: {
+        model: string; label: string; served: boolean; wape: number | null; corridorWape: number | null;
+        mase: number | null; mae: number | null; rmse: number | null; r2: number | null; mape: number | null;
+        byHorizon: Record<string, number>; byCondition: Record<string, number>;
+      }[];
+    } | null;
+  };
+  hours: { ts: string; total: number; lo: number | null; hi: number | null; actual: number | null }[];
+  history: { ts: string; total: number }[];
+};
 
 type HourlyPoint = { hour: number; actual: number | null; predicted: number | null; rainfall?: number | null; temperature?: number | null };
 type HourlyForecast = {
@@ -234,6 +255,17 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   //
   // Granularity & zone window controls
   const [granularity, setGranularity] = useState<"Hourly" | "Daily" | "Weekly" | "Monthly" | "Yearly">("Weekly");
+  // The 48-hour model (adviser's brief) in this same chart: its forecast summed per day as one more line in the
+  // Future zone, and hour by hour when one of its days is opened. Absent (no line) when no run has been issued.
+  const [next48, setNext48] = useState<Next48 | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    // Retried like the card's other requests: the database can be briefly unreachable while the backend warms up.
+    fetchJsonWithRetry(`${BACKEND}/api/traffic/forecast/48h`, "48-hour forecast")
+      .then((j) => { if (!cancelled) setNext48((j?.data ?? null) as Next48 | null); })
+      .catch(() => { if (!cancelled) setNext48(null); });
+    return () => { cancelled = true; };
+  }, []);
   // ECharts needs literal colours, so the CSS tokens are resolved at runtime.
   const T = useThemeTokens();
   const chartTheme = useChartTheme();
@@ -860,6 +892,28 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const lastForecastIso = chartData.isoDates[chartData.isoDates.length - 1] ?? null;
   const forecastEndsBeforeToday = lastForecastIso != null && lastForecastIso < todayIso;
 
+  const h48Name = `48-hour model (${next48?.run.modelLabel ?? "Stacked LSTM"})`;
+  // Its own hue: the five daily models take blue / magenta / teal / violet / pink (violet is SARIMAX, and the two
+  // lines were indistinguishable in the hourly view); green, amber and red are road states only.
+  const h48Color = T.isDark ? "#fb923c" : "#c2410c";
+  const h48ByDay = (() => {
+    if (!next48) return null;
+    const m = new Map<string, { sum: number; n: number }>();
+    for (const r of next48.hours) {
+      const e = m.get(r.ts.slice(0, 10)) ?? { sum: 0, n: 0 };
+      e.sum += r.total; e.n += 1;
+      m.set(r.ts.slice(0, 10), e);
+    }
+    return m;
+  })();
+  const h48Daily = !isAggregated && h48ByDay
+    ? isoDates.map((iso, i) => {
+        const e = h48ByDay.get(iso);
+        return i >= futureStart && e && e.n === 24 ? e.sum : null;   // a day the 48 hours cover in full
+      })
+    : null;
+  const showH48 = Boolean(h48Daily?.some((v) => v != null));
+
   const dailyOption: EChartsOption = {
     grid: { left: 80, right: showWeather ? 80 : 24, top: 28, bottom: 104 },
     tooltip: {
@@ -909,6 +963,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
       data: [
         "Actual Volume",
         ...visibleModels.map((k) => `${metricsMeta[k].label} Prediction`),
+        ...(showH48 ? [h48Name] : []),
         ...(showWeather ? ["Rainfall (mm)"] : []),
       ],
       bottom: 0,
@@ -1094,6 +1149,12 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
           },
         ];
       }),
+      ...(showH48 ? [{
+        name: h48Name, type: "line" as const, yAxisIndex: 0, data: h48Daily ?? [], connectNulls: false, z: 4,
+        ...forecastLineStyle(h48Color),
+        symbol: "circle", symbolSize: 7, showSymbol: true,
+        lineStyle: { width: 2, color: h48Color, type: "dashed" as const }, itemStyle: { color: h48Color },
+      }] : []),
       ...weatherSeries,
     ],
   };
@@ -1145,6 +1206,11 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
     };
   })();
 
+  const h48Hours = drillDate && next48
+    ? hourLabels.map((_, h) => next48.hours.find((r) => r.ts.slice(0, 10) === drillDate && Number(r.ts.slice(11, 13)) === h)?.total ?? null)
+    : null;
+  const showH48Hours = Boolean(h48Hours?.some((v) => v != null));
+
   const hourlyOption: EChartsOption | null = anyHourly
     ? {
         grid: { left: 64, right: drawWeather ? 64 : 24, top: 24, bottom: 64 },
@@ -1174,6 +1240,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
           data: [
             ...(hasActualHours ? ["Actual Volume"] : []),
             ...visibleModels.filter((k) => hourlyByModel[k]?.hours.some((h) => h.predicted != null)).map((k) => `${metricsMeta[k].label} Prediction`),
+            ...(showH48Hours ? [h48Name] : []),
             ...(drawWeather ? ["Rainfall (mm)"] : []),
           ],
           bottom: 0,
@@ -1240,6 +1307,12 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               lineStyle: { width: 2, color: modelColor(k) },
               itemStyle: { color: modelColor(k) },
             })),
+          // The 48-hour model forecasts each hour itself; the lines above spread a daily total over a typical day.
+          ...(showH48Hours ? [{
+            name: h48Name, type: "line" as const, yAxisIndex: 0, data: h48Hours ?? [], smooth: true, connectNulls: false,
+            symbol: "circle", symbolSize: 5, z: 4,
+            lineStyle: { width: 2, color: h48Color, type: "dashed" as const }, itemStyle: { color: h48Color },
+          }] : []),
           ...hourlyWeatherSeries,
         ],
       }
@@ -1335,6 +1408,16 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
           </div>
         ) : null}
 
+        {anyHourly?.isFuture && !showH48Hours && h48ByDay && h48ByDay.size > 0 && (() => {
+          const days = [...h48ByDay.keys()].sort();
+          const fmt = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+          return (
+            <p className="nct-dim" style={{ margin: "6px 0 0" }}>
+              <span className="nct-swatch" style={{ background: h48Color }} /> {h48Name} forecasts 48 hours ahead: it covers{" "}
+              {fmt(days[0])}{days.length > 1 ? `–${fmt(days[days.length - 1])}` : ""} only.
+            </p>
+          );
+        })()}
         {anyHourly && (
           <div className="nct-stats nct-stats-auto">
             <div className="nct-stat">
@@ -1360,6 +1443,26 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                 </div>
               );
             })}
+            {showH48Hours && h48Hours && h48Hours.every((v) => v != null) && (() => {
+              // The 48-hour model's own hours for this day, added up (it covers the whole day).
+              const day = h48Hours.reduce<number>((a, v) => a + (v ?? 0), 0);
+              return (
+                <div className="nct-stat">
+                  <span className="nct-stat-label">
+                    <span className="nct-swatch" style={{ background: h48Color }} />
+                    {h48Name} Predicted
+                  </span>
+                  <span className="nct-stat-value">
+                    {fmtVeh(day)}
+                    {anyHourly.dayActual ? (
+                      <span className="nct-stat-aside">
+                        {(((day - anyHourly.dayActual) / anyHourly.dayActual) * 100).toFixed(1)}% vs actual
+                      </span>
+                    ) : null}
+                  </span>
+                </div>
+              );
+            })()}
             <div className="nct-stat">
               <span className="nct-stat-label">Peak Hour</span>
               <span className="nct-stat-value">{extremeLabel(anyHourly.hours, "max")}</span>
@@ -1580,10 +1683,77 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             <span className="nct-trust-k">At {futureDays}d ahead</span>
             typical error {rangeErr}
           </span>
+          {next48?.run.backtest?.seriesWape != null && (
+            <span className="nct-trust-pill">
+              <span className="nct-trust-k">48-hour model</span>
+              {next48.run.modelLabel} · {next48.run.backtest.seriesWape.toFixed(1)}% error per plaza-hour
+            </span>
+          )}
         </>}
       >
         <div className="nct-evidence">
           {metricsTable}
+          {(next48?.run.backtest?.comparison.length ?? 0) > 0 && (() => {
+            const bt = next48!.run.backtest!;
+            type Cand = (typeof bt.comparison)[number];
+            // The same measures as the daily models' table, then (Show secondary metrics) the breakdown.
+            // Lower is better everywhere except R2; the best in each column is bold.
+            const cols: { head: string; title: string; pick: (c: Cand) => number | null | undefined; fmt: (v: number) => string; higher?: boolean; more?: boolean }[] = [
+              { head: "WMAPE", title: "Share of all vehicles the forecast missed by, per plaza, direction and class, hour by hour", pick: (c) => c.wape, fmt: (v) => `${v.toFixed(2)}%` },
+              { head: "MASE", title: "Error relative to repeating the same hour last week, on the same hours (below 1 = better than that)", pick: (c) => c.mase, fmt: (v) => v.toFixed(3) },
+              { head: "MAE (veh/h)", title: "Average miss in vehicles per hour, per plaza, direction and class", pick: (c) => c.mae, fmt: (v) => v.toFixed(1) },
+              { head: "RMSE (veh/h)", title: "Like MAE, with large misses weighted more", pick: (c) => c.rmse, fmt: (v) => v.toFixed(1) },
+              { head: "R²", title: "Share of the variation in hourly counts the forecast explains, pooled over every plaza and class (high partly because plazas differ greatly in size)", pick: (c) => c.r2, fmt: (v) => v.toFixed(4), higher: true },
+              { head: "MAPE", title: "Average percentage miss, on plaza-hours with at least 50 vehicles", pick: (c) => c.mape, fmt: (v) => `${v.toFixed(2)}%`, more: true },
+              { head: "Corridor WMAPE", title: "Error on the whole corridor's hourly total", pick: (c) => c.corridorWape, fmt: (v) => `${v.toFixed(2)}%`, more: true },
+              { head: "+1 h", title: "WMAPE forecasting the next hour", pick: (c) => c.byHorizon["1"], fmt: (v) => `${v.toFixed(1)}%`, more: true },
+              { head: "+24 h", title: "WMAPE forecasting a day ahead", pick: (c) => c.byHorizon["24"], fmt: (v) => `${v.toFixed(1)}%`, more: true },
+              { head: "+48 h", title: "WMAPE forecasting two days ahead", pick: (c) => c.byHorizon["48"], fmt: (v) => `${v.toFixed(1)}%`, more: true },
+              { head: "Holidays", title: "WMAPE on forecast hours that fall on public holidays", pick: (c) => c.byCondition["holiday"], fmt: (v) => `${v.toFixed(1)}%`, more: true },
+              { head: "Heavy rain", title: "WMAPE on forecast hours with heavy rain along the corridor", pick: (c) => c.byCondition["heavy rain"], fmt: (v) => `${v.toFixed(1)}%`, more: true },
+            ];
+            const shown = cols.filter((c) => showAllMetrics || !c.more);
+            const best = (c: (typeof cols)[number]) => {
+              const vals = bt.comparison.map((m) => c.pick(m)).filter((v): v is number => v != null);
+              return vals.length ? (c.higher ? Math.max(...vals) : Math.min(...vals)) : null;
+            };
+            return (
+              <div className="nct-ev-section">
+                <div className="nct-ev-section-head">
+                  <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.2} />} tint="var(--page-accent)" title="48-hour model: tested on 2025">
+                    <InfoTooltip text={`Hourly forecasts of the real ${bt.window ? `${bt.window.first.slice(0, 10)} to ${bt.window.last.slice(0, 10)}` : "2025"} record, which no model trained on (trained on 2022-2024). Scored per plaza, direction and vehicle class, hour by hour; the best in each column is bold. Show secondary metrics adds the corridor total, hours ahead, holidays and heavy rain.`} />
+                  </EvidenceHeading>
+                  <button type="button" className="nct-link-btn" onClick={() => setShowAllMetrics(!showAllMetrics)}>
+                    {showAllMetrics ? "Hide secondary metrics" : "Show secondary metrics"}
+                  </button>
+                </div>
+                <div className="nct-table-wrap">
+                  <table className="nct-table" style={{ minWidth: showAllMetrics ? 1100 : 0 }}>
+                    <thead>
+                      <tr>
+                        <th className="nct-sticky">Model</th>
+                        {shown.map((c) => <th key={c.head} className="num" title={c.title}>{c.head}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bt.comparison.map((m) => (
+                        <tr key={m.model}>
+                          <td className="nct-sticky">
+                            {m.label}
+                            {m.served && <span className="pill purple" style={{ marginLeft: 8, padding: "1px 8px" }}>used</span>}
+                          </td>
+                          {shown.map((c) => {
+                            const v = c.pick(m);
+                            return <td key={c.head} className="num" style={v != null && v === best(c) ? { fontWeight: 700 } : undefined}>{v == null ? "—" : c.fmt(v)}</td>;
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
           {showWeather && (
             <div className="nct-ev-section">
               <WeatherEvidencePanel plotted="total_rain" selectedModels={visibleModels.map((k) => metricsMeta[k].label)} />

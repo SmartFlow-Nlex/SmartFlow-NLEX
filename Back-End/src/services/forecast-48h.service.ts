@@ -113,8 +113,10 @@ export async function getForecast48h(q: Forecast48hQuery) {
       history,
     };
   } catch (err) {
+    // Thrown, not null: null means "no run issued yet" (404), and a database that is briefly unreachable must not
+    // read as that, or the dashboard stops asking (it did, 2026-10-26).
     console.error("getForecast48h", err);
-    return null;
+    throw err;
   }
 }
 
@@ -158,6 +160,15 @@ function shapeRun(run: Record<string, any>) {
       corridorBandCoverage: info.intervals?.coverage_corridor ?? null,
       trainedThrough: info.trained_through ?? null,
       why: info.why ?? null,
+      // Every learned candidate of the same 2025 test, for the forecast card's evidence table (forecast_48h.py).
+      comparison: Array.isArray(info.comparison)
+        ? info.comparison.map((c: Record<string, any>) => ({
+            model: c.model, label: c.label, served: Boolean(c.served),
+            wape: c.wape ?? null, corridorWape: c.corridor_wape ?? null,
+            mase: c.mase ?? null, mae: c.mae ?? null, rmse: c.rmse ?? null, r2: c.r2 ?? null, mape: c.mape ?? null,
+            byHorizon: c.by_horizon ?? {}, byCondition: c.by_condition ?? {},
+          }))
+        : [],
     } : null,
   };
 }

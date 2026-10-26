@@ -77,6 +77,13 @@ NO_QRF = "--no-qrf" in sys.argv
 # --skip-if-batch-running: step aside while the Sunday batch (weekly_retrain.py) is training on this machine,
 # rather than compete with it for memory; the map keeps the previous forecast and the next hour runs as usual.
 SKIP_IF_BATCH = "--skip-if-batch-running" in sys.argv
+# --severe-weight W: how a state is chosen from the probabilities, for EVERY candidate alike, in testing and on the
+# map. 1 = the likeliest state. W > 1 counts the chance of Severe W times: missing a severe hour costs W false alarms.
+# The plain likeliest state named Severe almost never (XGBoost caught ~11% of severe hours; at Meycauayan the
+# map showed 0 severe hours of 24 while 13% of real hours were severe), which the client read as complacent.
+SEVERE_WEIGHT = float(sys.argv[sys.argv.index("--severe-weight") + 1]) if "--severe-weight" in sys.argv else 1.0
+# --no-mstl: leave out the MSTL candidate (the client's method; about 3 minutes a run).
+NO_MSTL = "--no-mstl" in sys.argv
 
 import numpy as np
 import pandas as pd
@@ -164,6 +171,12 @@ HORIZONS = sorted(set(range(1, min(MAX_HORIZON, DENSE_TO) + 1)) |
 # Every hour the card can ask for, whether or not it was a fitting horizon.
 SERVE_HORIZONS = list(range(1, MAX_HORIZON + 1))
 STATES = ["Low", "Med", "High"]
+_DECIDE_W = np.array([1.0, 1.0, SEVERE_WEIGHT])
+
+
+def decide(proba):
+    """The state for each probability row (see --severe-weight); a 1-D row gives one state."""
+    return (np.asarray(proba) * _DECIDE_W).argmax(-1)
 
 # Class cuts, in km/h of the exit-hour's length-weighted jam speed.
 #
@@ -223,12 +236,18 @@ banner("STEP 1: Data")
 conn = psycopg2.connect(PG)
 if SKIP_IF_BATCH:
     with conn.cursor() as _c:
-        _c.execute("SELECT to_regclass('gold.ml_batch_runs') IS NOT NULL")
         _busy = None
-        if _c.fetchone()[0]:
+        # A batch is training only while weekly_retrain.py holds its advisory lock (LOCK_KEY 7421090), which the
+        # server releases the moment that process dies. The 'running' status alone is not enough: a batch killed by
+        # a shutdown (#12, 2026-10-26 08:49) stays 'running' until the next batch tidies it, and every hourly
+        # refresh skipped behind it.
+        _c.execute("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 "
+                   "AND objid = 7421090 AND objsubid = 1 AND granted)")
+        _alive = _c.fetchone()[0]
+        if _alive:                                  # the batch creates gold.ml_batch_runs before it takes work
             _c.execute("SELECT id, started_at FROM gold.ml_batch_runs WHERE status = 'running' "
-                       "AND started_at > now() - interval '12 hours' ORDER BY id DESC LIMIT 1")
-            _busy = _c.fetchone()
+                       "ORDER BY id DESC LIMIT 1")
+            _busy = _c.fetchone() or ("?", "now")
     conn.rollback()
     if _busy:
         print(f"  weekly batch #{_busy[0]} is training (started {_busy[1]}); skipping this hour, the map keeps "
@@ -709,11 +728,80 @@ try:
 except Exception as e:
     print(f"  SKIPPED: {str(e)[:100]}")
 
+# ── 6c. MSTL — the client's method ──────────────────────────────────────────
+banner("STEP 7b: MSTL + exponential smoothing (the client's method)")
+mstl_state = None
+if NO_MSTL:
+    print("  SKIPPED: --no-mstl")
+else:
+    try:
+        from statsmodels.tsa.seasonal import MSTL
+        from statsmodels.tsa.holtwinters import SimpleExpSmoothing
+
+        # Each exit's hourly jam speed on the live weeks (65 km/h where no jam was reported, as the labels assume;
+        # an uncollected stretch is interpolated, since MSTL needs an unbroken series).
+        _sp = (_grid[_grid.ts >= pd.Timestamp(LIVE_FROM)]
+               .pivot_table(index="ts", columns="exit_name", values="speed_filled").sort_index())
+        _sp = _sp.reindex(pd.date_range(_sp.index.min(), _sp.index.max(), freq="h")).interpolate(limit_direction="both")
+        MSTL_REFIT_H = 24                     # decomposition refitted once a day; the level follows every new hour
+
+        def mstl_fit(y):
+            """Split into trend + daily (24 h) + weekly (168 h) pattern + rest; smooth the de-seasoned series."""
+            r = MSTL(y, periods=(24, 168), stl_kwargs={"seasonal_deg": 0}).fit()
+            seas = r.seasonal.to_numpy()
+            ses = SimpleExpSmoothing((r.trend + r.resid).to_numpy(), initialization_method="estimated").fit()
+            return {"s24": seas[-24:, 0], "s168": seas[-168:, 1],
+                    "alpha": float(ses.params["smoothing_level"]), "level": float(ses.forecast(1)[0])}
+
+        def seasonal_at(st, k):
+            """The repeated daily + weekly pattern k hours after the fit's last hour (k >= 1)."""
+            return st["s24"][(k - 1) % 24] + st["s168"][(k - 1) % 168]
+
+        def state_of(v):
+            return 2 if v < SEVERE_KMH else (1 if v < HEAVY_KMH else 0)
+
+        t_index = {t: i for i, t in enumerate(_sp.index)}
+        levels = {}                           # (exit, origin) -> level after each hour since that origin
+        test_ts = pd.to_datetime(te.ts.unique())
+        origins = pd.date_range(cut, test_ts.max(), freq=f"{MSTL_REFIT_H}h")
+        fits = 0
+        for ex in _sp.columns:
+            y = _sp[ex]
+            for o in origins:
+                if o not in t_index:
+                    continue
+                st = mstl_fit(y.iloc[: t_index[o] + 1]); fits += 1
+                lv, lvls = st["level"], [st["level"]]
+                for u in range(1, MSTL_REFIT_H):                     # new hours update the level, as ETS does
+                    t = o + pd.Timedelta(hours=u)
+                    if t not in t_index:
+                        break
+                    lv = st["alpha"] * (y.iloc[t_index[t]] - seasonal_at(st, u)) + (1 - st["alpha"]) * lv
+                    lvls.append(lv)
+                levels[(ex, o)] = (st, lvls)
+        probs = np.full((len(te), 3), 1 / 3)
+        _o_of = cut + ((pd.to_datetime(te.ts.values) - cut) // pd.Timedelta(hours=MSTL_REFIT_H)) * pd.Timedelta(hours=MSTL_REFIT_H)
+        for i, (ex, o, ts_, hz) in enumerate(zip(te.exit_name.values, _o_of, pd.to_datetime(te.ts.values), te.horizon.values)):
+            got = levels.get((ex, o))
+            if got is None:
+                continue
+            st, lvls = got
+            u = int((ts_ - o) / pd.Timedelta(hours=1))
+            if u >= len(lvls):
+                continue
+            k = state_of(lvls[u] + seasonal_at(st, u + int(hz)))
+            probs[i] = 0.05; probs[i, k] = 0.90
+        results["MSTL"] = probs
+        mstl_state = {"fit": mstl_fit, "seasonal_at": seasonal_at, "state_of": state_of, "series": _sp}
+        print(f"  {fits} fits ({len(_sp.columns)} exits x {len(origins)} daily refits), level updated every hour")
+    except Exception as e:
+        print(f"  SKIPPED: {type(e).__name__}: {str(e)[:120]}")
+
 # ── 7. Overall + per-horizon comparison ─────────────────────────────────────
 banner("STEP 8: Results")
 rows = []
 for name, proba in results.items():
-    pred = proba.argmax(1)
+    pred = decide(proba)
     rows.append({
         "model": name,
         "accuracy": accuracy_score(yte, pred),
@@ -797,9 +885,9 @@ _rp = results[_champ_name][_rm]
 _replay_df = pd.DataFrame({
     "ts": te.target_ts.values[_rm],
     "chance": _rp[:, 1] + _rp[:, 2],            # P(heavy or severe)
-    "pred_cong": (_rp.argmax(1) >= 1).astype(int),
+    "pred_cong": (decide(_rp) >= 1).astype(int),
     "act_cong": (te.y_target.values[_rm] >= 1).astype(int),
-    "hit": (_rp.argmax(1) == te.y_target.values[_rm]).astype(int),
+    "hit": (decide(_rp) == te.y_target.values[_rm]).astype(int),
 })
 _g = (_replay_df.groupby("ts")
       .agg(expected=("chance", "sum"), actual=("act_cong", "sum"),
@@ -848,7 +936,7 @@ for hz in HORIZONS:
     m = hz_arr == hz
     row = {"horizon": hz, "n": int(m.sum())}
     for name in res.model:
-        row[name] = accuracy_score(yte[m], results[name].argmax(1)[m])
+        row[name] = accuracy_score(yte[m], decide(results[name])[m])
     row["Persistence"] = accuracy_score(yte[m], baselines["Persistence (now)"][m])
     per_h.append(row)
     print(f"  {hz:>4}" + "".join(f"{row[m_]:>12.4f}" for m_ in res.model) +
@@ -870,14 +958,21 @@ if champ.model in DUALPATH_KINDS and dp_panel is not None:
     for c, ex in enumerate(dp_panel.exits):
         for hz in SERVE_HORIZONS:
             p_ = pr_[c, hz - 1]
-            kk = int(p_.argmax())
+            kk = int(decide(p_))
+            out.append((ex, hz, STATES[kk], float(p_[kk]), float(p_[0]), float(p_[1]), float(p_[2])))
+elif champ.model == "MSTL" and mstl_state is not None:
+    for ex in mstl_state["series"].columns:
+        st = mstl_state["fit"](mstl_state["series"][ex])
+        for hz in SERVE_HORIZONS:
+            kk = mstl_state["state_of"](st["level"] + mstl_state["seasonal_at"](st, hz))
+            p_ = np.full(3, 0.05); p_[kk] = 0.90
             out.append((ex, hz, STATES[kk], float(p_[kk]), float(p_[0]), float(p_[1]), float(p_[2])))
 elif champ.model == "GRU" and gru is not None:
     seq = np.stack([piv.values[-SEQ_LEN:, :], jm.values[-SEQ_LEN:, :]], -1)   # (SEQ, exits, 2), ends at the newest hour
     pr_ = gru.predict(np.transpose(seq, (1, 0, 2)).astype("float32"), verbose=0)  # (exits, H, 3)
     for c in range(pr_.shape[0]):
         for k, hz in enumerate(HORIZONS):
-            kk = int(pr_[c, k].argmax())
+            kk = int(decide(pr_[c, k]))
             out.append((exits[c], hz, STATES[kk], float(pr_[c, k, kk]),
                         float(pr_[c, k, 0]), float(pr_[c, k, 1]), float(pr_[c, k, 2])))
 else:
@@ -891,7 +986,7 @@ else:
         mdl = xgb if champ.model == "XGBoost" else qrf
         pr_ = mdl.predict_proba(q[FEATS])
         for i, r in enumerate(q.itertuples()):
-            kk = int(pr_[i].argmax())
+            kk = int(decide(pr_[i]))
             out.append((r.exit_name, hz, STATES[kk], float(pr_[i][kk]),
                         float(pr_[i][0]), float(pr_[i][1]), float(pr_[i][2])))
 
@@ -1049,6 +1144,11 @@ _eval = {
     "test_to": str(te.target_ts.max()),
     "live_from": str(LIVE_FROM),
     "dualpath": dp_bundle["meta"] if dp_bundle is not None else None,
+    # Every candidate on the same test rows, for the card's "Models tested" table (rank 1 is the one served).
+    "candidates": [{"model": r.model, "rank": int(r.rank), "accepted": bool(r.accepted),
+                    "accuracy": float(r.accuracy), "macro_f1": float(r.macro_f1),
+                    "severe_recall": float(r.severe_recall), "heavy_recall": float(r.heavy_recall)}
+                   for r in res.itertuples()],
 }
 cur.execute("""INSERT INTO gold.ml_congestion_eval (id, payload, updated_at) VALUES (1, %s, now())
                ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()""",

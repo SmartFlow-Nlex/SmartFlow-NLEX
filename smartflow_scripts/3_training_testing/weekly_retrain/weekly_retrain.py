@@ -307,7 +307,7 @@ GROUPS = [
         # Last in the batch: it reads only the live Waze feed, and the hourly refresh steps aside while it runs.
         "congestion", "Congestion forecast (dual-path LSTM family)",
         inputs=["waze_jams"],
-        steps=[Step(CONGESTION, ["train_congestion_horizon.py", "--fast", "--dualpath-train"])],
+        steps=[Step(CONGESTION, ["train_congestion_horizon.py", "--fast", "--dualpath-train", "--severe-weight", "1.5"])],
         tables=[("gold.ml_congestion_forecast", None), ("gold.ml_predictive_congestion", None),
                 ("gold.ml_model_metrics", "target = 'Congestion'"), ("gold.ml_congestion_horizon_accuracy", None),
                 ("gold.ml_congestion_eval", None)],

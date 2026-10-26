@@ -459,15 +459,27 @@ function ReplayChart({ series, exits }: { series: { t: string; e: number; a: num
 }
 
 /** One numbered step of the Validation evidence: a bold question-style title
- *  over its answer, so a reader can skim the five titles and stop at the one
- *  they came for. */
+ *  over its answer, so a reader can skim the titles and stop at the one they
+ *  came for. Each step opens and closes on its number or title (2026-10-26);
+ *  the first starts open, so the window opens short. */
 function EvBlock({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(n === 1);
+  const toggle = () => setOpen((o) => !o);
   return (
     <div className="nct-ev-block">
-      <span className="nct-ev-n">{n}</span>
+      <button type="button" className="nct-ev-n" onClick={toggle} aria-expanded={open}
+        aria-label={`${open ? "Close" : "Open"} step ${n}`} style={{ cursor: "pointer", border: "none", font: "inherit" }}>
+        {n}
+      </button>
       <div style={{ minWidth: 0 }}>
-        <div className="nct-ev-title">{title}</div>
-        <div className="nct-ev-body">{children}</div>
+        <button type="button" className="nct-ev-title" onClick={toggle} aria-expanded={open}
+          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "none",
+                   border: "none", padding: 0, cursor: "pointer", font: "inherit", fontWeight: 600, color: "inherit" }}>
+          <span>{title}</span>
+          <span aria-hidden="true" style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-muted)",
+                transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▶</span>
+        </button>
+        {open && <div className="nct-ev-body">{children}</div>}
       </div>
     </div>
   );
@@ -566,6 +578,9 @@ type CongestionEval = {
   } | null;
   thresholds_kmh: { severe_below: number; heavy_below: number };
   features: string[];
+  /** Every candidate scored on the same test rows (rank 1 is served). Absent on runs before 2026-10-26. */
+  candidates?: { model: string; rank: number; accepted: boolean; accuracy: number; macro_f1: number;
+                 severe_recall: number; heavy_recall: number }[];
 };
 
 export default function PredictiveCongestionChart() {
@@ -1995,6 +2010,46 @@ export default function PredictiveCongestionChart() {
                   </div>
                 ))}
               </div>
+              {/* Every model the run tested, on the same exit-hours: the served one is the best severe-jam catcher
+                  among those within half a point of the most accurate (train_congestion_horizon.py). */}
+              {(evalInfo?.candidates?.length ?? 0) > 1 && (() => {
+                const c = evalInfo!.candidates!;
+                const bestAcc = Math.max(...c.map((m) => m.accuracy));
+                const bestSev = Math.max(...c.map((m) => m.severe_recall));
+                return (
+                  <>
+                    <p style={{ margin: "12px 0 6px" }}>
+                      <b>Every model tested</b> on the same exit-hours (best in each column in bold):
+                    </p>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "var(--fs-body)", fontVariantNumeric: "tabular-nums" }}>
+                        <thead>
+                          <tr style={{ color: "var(--text-secondary)", textAlign: "left" }}>
+                            <th style={{ padding: "4px 6px 6px 0", fontWeight: 600 }}>Model</th>
+                            <th style={{ padding: "4px 6px 6px", fontWeight: 600 }} title="Exit-hours given the right state (Moving, Heavy or Severe)">Accuracy</th>
+                            <th style={{ padding: "4px 6px 6px", fontWeight: 600 }} title="Of the real severe hours (under 10 km/h), the share the model called severe">Severe jams caught</th>
+                            <th style={{ padding: "4px 0 6px 6px", fontWeight: 600 }} title="Of the real heavy hours, the share the model called heavy">Heavy caught</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {c.map((m) => (
+                            <tr key={m.model} style={{ borderTop: "1px solid var(--border-default)" }}>
+                              <td style={{ padding: "6px 6px 6px 0", whiteSpace: "nowrap", color: "var(--text-primary)" }}>
+                                {m.model}
+                                {m.rank === 1 && <span className="pill purple" style={{ marginLeft: 8, padding: "1px 8px" }}>used</span>}
+                                {!m.accepted && <span style={{ marginLeft: 8, color: "var(--color-danger)", fontSize: "var(--fs-label)" }}>below baseline</span>}
+                              </td>
+                              <td style={{ padding: "6px", fontWeight: m.accuracy === bestAcc ? 700 : 400 }}>{(m.accuracy * 100).toFixed(1)}%</td>
+                              <td style={{ padding: "6px", fontWeight: m.severe_recall === bestSev ? 700 : 400 }}>{(m.severe_recall * 100).toFixed(1)}%</td>
+                              <td style={{ padding: "6px 0 6px 6px" }}>{(m.heavy_recall * 100).toFixed(1)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                );
+              })()}
             </EvBlock>
 
             {/* 3. Per state: how much to trust each colour. */}

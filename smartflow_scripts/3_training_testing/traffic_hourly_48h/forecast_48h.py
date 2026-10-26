@@ -65,6 +65,34 @@ CREATE TABLE IF NOT EXISTS gold.ml_forecast_hourly_48h (
 """
 
 
+COMPARED = ["lstm1", "stacked", "dualpath", "hybrid"]          # the learned candidates of the 2025 backtest
+
+
+def comparison(selected):
+    """Every learned candidate's 2025 backtest (metrics.json from evaluate.py), for the dashboard's evidence table:
+    overall, by hours ahead and by condition, at the plaza-hour level and on the corridor total."""
+    f = CACHE / "metrics.json"
+    if not f.exists():
+        return []
+    m = json.loads(f.read_text())["models"]
+    out = []
+    for k in COMPARED:
+        if k not in m:
+            continue
+        r = m[k]
+        out.append({
+            "model": k, "label": r["label"], "served": k == selected,
+            "wape": r["series"]["all"]["WAPE"], "corridor_wape": r["corridor"]["all"]["WAPE"],
+            # the same measures the daily models' table shows, per plaza, direction and class, hour by hour
+            "mase": r["series"]["all"].get("MASE"), "mae": r["series"]["all"]["MAE"], "rmse": r["series"]["all"]["RMSE"],
+            "r2": r["series"]["all"].get("R2"), "mape": r["series"]["all"].get("MAPE"),
+            "by_horizon": {h: r["horizon"][str(h)]["WAPE"] for h in (1, 6, 12, 24, 48) if str(h) in r["horizon"]},
+            "by_condition": {c: r["series"][c]["WAPE"] for c in ("weekday", "weekend", "holiday", "heavy rain", "event day")
+                             if c in r["series"]},
+        })
+    return out
+
+
 def load_model(prod):
     """The production model, or (None, reason)."""
     kind = prod.get("model")
@@ -145,6 +173,7 @@ def build(D, prod):
                      "current_method_backtest": prod.get("current_method_backtest"),
                      "intervals": prod.get("intervals"), "refit": prod.get("refit"),
                      "test_window": prod.get("test_window"), "trained_through": prod.get("trained_through"),
+                     "comparison": comparison(prod.get("model")),
                      "fallback_reasons": reasons})
     return run, rows
 

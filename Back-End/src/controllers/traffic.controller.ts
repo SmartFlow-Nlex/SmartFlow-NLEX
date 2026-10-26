@@ -179,7 +179,12 @@ export const getForecastHourly = async (req: Request, res: Response) => {
 export const getForecast48hHandler = async (req: Request, res: Response) => {
   const query = Forecast48hQuerySchema.parse(req.query);
   // Short TTL: a new run lands only when forecast_48h.py writes, and a stale answer here would hide it.
-  const data = await cached(`forecast48h:${JSON.stringify(query)}`, 2 * 60_000, () => getForecast48h(query));
+  let data;
+  try {
+    data = await cached(`forecast48h:${JSON.stringify(query)}`, 2 * 60_000, () => getForecast48h(query));
+  } catch {
+    return res.status(503).json({ success: false, message: "The 48-hour forecast could not be read; try again shortly" });
+  }
   if (!data) {
     return res.status(404).json({ success: false, message: "No 48-hour forecast has been issued yet" });
   }
