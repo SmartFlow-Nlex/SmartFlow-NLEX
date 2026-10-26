@@ -1,0 +1,44 @@
+# Integration tests (read-only database) — 2026-10-24 20:31:26 +0800
+﹣ TC-IT-11: Total CO2 (Modeled), Q1 2024, equals SUM over gold.fact_emissions_hourly (19308.4652ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-12: Congested/Slow/Clear counts match the live Waze rows of the last 60 minutes (0.6627ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-13: Predictive Congestion State Map cell (Bocaue) equals the stored forecast (0.4682ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-14: displayed forecast accuracy equals the value recomputed from archived forecasts joined to actuals (0.4588ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-14 (volume card): held-out MASE equals a value recomputed from archived forecasts joined to actual volumes (0.5054ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-04: Total Incidents (12 months, Weather All) = accident count + breakdown count (19411.5268ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-05: Weather = Wet equals the wet-hour database count (0.5916ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-06: Injuries and fatalities equal SUM over the accident table (0.395ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-07: Hotspots by Km Segment top 5 and Top Hotspot match FLOOR(km/5)*5 grouping (0.3801ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-08: Avg Response Time equals AVG(first-dispatch response minutes) over breakdowns, to 0.1 min (0.4018ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-09: MTTC equals AVG(clearance) over 0..1440; protocol baseline differs for an explained reason (0.4681ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-10: clearance-protocol (accident, injury) sample size equals the DB count; a narrow filter is insufficient_data with the DB count (0.574ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-15: create / edit / delete a QA TEST schedule and see it in the table (9.0247ms) # Not run: every step writes (INSERT, UPDATE and DELETE on public.nlex_maintenance_schedules plus audit_logs inserts); the rules forbid writing to the database.
+[0mDELETE /api/maintenance/abc [31m503[0m 2.925 ms - 104[0m
+[0mPUT /api/maintenance/abc [31m503[0m 0.610 ms - 104[0m
+[0mPATCH /api/maintenance/abc/status [31m503[0m 0.228 ms - 104[0m
+  without a session: 503 auth_unconfigured | 503 auth_unconfigured | 503 auth_unconfigured
+  as an operator: PUT /:id: 404 Schedule not found | PATCH /:id/status: 404 Schedule not found | DELETE /:id: 404 Schedule not found
+  audit-log routes: GET /list (public), GET /summary (public), POST /activity (public), POST /event (data-analyst), GET /export (data-analyst)
+  authorizeRoles: tcc-operator -> 403 role_denied; data-analyst -> allowed
+✔ TC-IT-16: malformed schedule id 'abc' -> 404 'not found', not 500 (PUT, PATCH status, DELETE) (77.2974ms)
+﹣ TC-IT-16: well-formed id that does not exist (random UUID) -> 404 (0.2496ms) # Not run: a random UUID passes validation and reaches UPDATE/DELETE on public.nlex_maintenance_schedules, and DELETE also inserts an audit row; on the read-only session those statements are refused, so the result would not reflect the real behaviour.
+[0mGET /api/audit-log/export [31m503[0m 0.464 ms - 104[0m
+  GET /api/audit-log/export without a session -> 503 auth_unconfigured
+﹣ TC-IT-17: Audit Log API — TCC operator gets 401/403 and no data; Data analyst gets 200 (19329.1187ms) # role checks above ran; /list needs the database: database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-18: hide ML hotspots in Mobile App Control Centre, Save, read it back (0.349ms) # Not run: Save and Restore are PUT /api/mobile-config (an upsert of public.nlex_mobile_config plus an audit insert); the rules forbid writing. The read half is checked below.
+﹣ TC-IT-18 (read half): GET /api/mobile-config returns the stored row's mlHotspots (0.3405ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-19: Check only (dry run) leaves the target table's row count unchanged (0.127ms) # Not run: POST /api/upload/file?mode=check needs a Data analyst session (aal2 Supabase token), and the dry run itself executes INSERT/CREATE inside a transaction it rolls back and writes an 'upload.checked' audit row — on a read-only connection it cannot run as designed.
+﹣ TC-IT-20: Upload & load, then Undo (0.1529ms) # Not run: loading and undoing write to the target tables, data_uploads, etl_undo.* and audit_logs; the rules forbid writing to the database.
+﹣ TC-IT-21: Audit Log 'Actions' and the Today + Maintenance filter equal counts in public.audit_logs (0.3925ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-22: changing the inactivity time writes an audit entry with user, setting and time (0.3024ms) # Step 1 (changing the setting) not run: it writes to Supabase user_metadata and audit_logs. database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-23: last retrain date and kept/retrained result match the model registry (0.3848ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-01: Total Volume (Q1 2024, all classes) equals SUM(volume) in the database (19328.1505ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-02: Vehicle class filter (Class 1) equals the class-filtered SUM (0.5142ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-IT-03: Busiest Plaza and the top 5 Volume by Plaza bars match the grouped query (0.4483ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+ℹ tests 26
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 25
+ℹ todo 0
+ℹ duration_ms 84201.8624

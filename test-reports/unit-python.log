@@ -1,0 +1,34 @@
+# smartflow_scripts unit tests — 2026-10-24 20:31:23 +0800
+test_dirichlet_forecast_days (test_fleet_mix.TestFleetMixSums.test_dirichlet_forecast_days) ... D:\SmartFlow\SmartFlow-NLEX\smartflow_scripts\tests\unit\test_fleet_mix.py:51: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+  fut = pd.DataFrame({"ds": pd.date_range(tr.ds.max() + pd.Timedelta(days=1), periods=90, freq="D")})
+ok
+test_inv_clr_outputs (test_fleet_mix.TestFleetMixSums.test_inv_clr_outputs) ... ok
+test_baseline_is_repeat_last_week (test_mase.TestMase.test_baseline_is_repeat_last_week) ... ok
+test_baseline_mae (test_mase.TestMase.test_baseline_mae) ... ok
+test_mase_is_0_50 (test_mase.TestMase.test_mase_is_0_50) ... FAIL
+test_model_beats_repeat_last_week (test_mase.TestMase.test_model_beats_repeat_last_week) ... ok
+test_model_mae (test_mase.TestMase.test_model_mae) ... ok
+
+======================================================================
+FAIL: test_mase_is_0_50 (test_mase.TestMase.test_mase_is_0_50)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\SmartFlow\SmartFlow-NLEX\smartflow_scripts\tests\unit\test_mase.py", line 56, in test_mase_is_0_50
+    self.assertAlmostEqual(self.model["mase"], 0.50, places=2,
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                           msg="compute_metrics scales by the in-sample lag-7 MAE, "
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                               "not by the held-out baseline MAE")
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0.7777777777777778 != 0.5 within 2 places (0.2777777777777778 difference) : compute_metrics scales by the in-sample lag-7 MAE, not by the held-out baseline MAE
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.235s
+
+FAILED (failures=1)
+
+  TC-UT-19 Dirichlet 90-day forecast: days=90 first=[78.3, 12.76, 8.94]% max |sum-100%|=2.22e-14 pp, after 5-dp rounding=1.00e-03 pp
+
+  TC-UT-19 inv_clr on 500 random CLR rows: days=500 first=[1.11, 59.32, 39.56]% max |sum-100%|=2.22e-14 pp, after 5-dp rounding=1.00e-03 pp
+
+  TC-UT-07 baseline forecast=[9, 15, 14] model MAE=0.667 baseline MAE=1.333 model MASE=0.778 baseline MASE=1.556 ratio=0.500

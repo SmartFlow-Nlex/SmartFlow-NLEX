@@ -113,6 +113,7 @@ let cache: Promise<ForecastPayload> | null = null;
 /* Retried before giving up (17 Oct 2026, testers TR-12): right after the backend starts, the first
    request can fail or time out while the database wakes up, and the panel used to sit on that error
    until the page was reloaded. Three tries, 3 s then 8 s apart, cover a cold start. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- callers each read their own payload shape off the result
 export async function fetchJsonWithRetry(url: string, label: string, tries = 3): Promise<any> {
   const waits = [3000, 8000];
   let last: unknown = null;

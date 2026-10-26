@@ -1,0 +1,163 @@
+# Front-End-Dashboard unit tests — 2026-10-24 20:31:21 +0800
+✔ TC-UT-01a: role=data-analyst /dashboard/audit-log -> allowed (1.8229ms)
+✔ TC-UT-01b: role=tcc-operator /dashboard/audit-log -> denied (0.2601ms)
+✔ TC-UT-01c: role=tcc-operator /dashboard/scenario-sandbox -> allowed (0.2081ms)
+✔ TC-UT-01d: role=incident-operator /dashboard/scenario-sandbox -> denied (0.154ms)
+✔ TC-UT-01e: role=undefined /dashboard/traffic -> allowed (0.2293ms)
+✔ TC-UT-01f: role=undefined /dashboard/sustainability -> denied (0.1708ms)
+✔ TC-UT-01g: role=Admin123 /dashboard/data-management -> denied (0.1943ms)
+✔ TC-UT-01: missing or malformed role is treated as Incident operator (0.244ms)
+  rows=[{"exit":"Sta. Rita Guiguinto","dir":"SB","jamCount":3,"longestQueueMeters":750}]
+✔ TC-UT-04: overlapping reports 300 m, 750 m, 450 m -> queue 750 m, not 1,500 m (92.6633ms)
+  cumulative=40%,65%,80%,90%,96%,100% flagged=seg1,seg2,seg3
+✔ TC-UT-11: 40, 25, 15, 10, 6, 4 -> cumulative 40%, 65%, 80% -> first 3 segments flagged (3.3626ms)
+  wetRate=3 dryRate=1 multiplier=3 tile="3.00×"
+✔ TC-UT-08: wet 30 incidents over 10 days, dry 100 over 100 days -> 3.0/day, 1.0/day, 3.0x (2.3955ms)
+  api success=false issue=endsAt must be after startsAt; form="The window must end after it starts."
+  api success=false; form="Give the work a short title (at least 3 characters)."
+  step("20", +1) -> "21"
+  conflicts=[]
+  conflicts=[{"kind":"critical","label":"Critical conflict","detail":" Overlap: Km 21–22 · 6h"}]
+  conflicts=[{"kind":"opposing","label":"Opposing carriageway"}]
+✔ TC-UT-20a: start 22:00, end 21:00 the same day is rejected (API and form) (7.1261ms)
+✔ TC-UT-20b: blank title is rejected (API and form) (1.4093ms)
+✔ TC-UT-20c: Start Km 20, press +1 -> 21 (0.5039ms)
+✔ TC-UT-20d: Km 20-22 NB vs existing Km 30-32 NB at the same time -> no conflict (2.0657ms)
+✔ TC-UT-21a: Km 21-23 NB at the same time -> conflict on the same carriageway (1.0983ms)
+✔ TC-UT-21b: Km 20-22 SB at the same time -> "Opposing carriageway" (0.6569ms)
+  k=1 chosen=A covered=30 of 60
+  k=2 chosen=A,C covered=55 of 60
+✔ TC-UT-13a: fleet size 1 -> stage at A, covering 30 of 60 (6.8073ms)
+✔ TC-UT-13b: fleet size 2 -> stage at A and C, covering 55 of 60 (0.8522ms)
+  order=E,C,B,D,A preview=E,C,B seeAll=See all 5
+  preview=[] message="No slow or congested exit-direction in the last 60 minutes. An exit with no report is flowing freely." seeAll=false
+✔ TC-UT-02: congested before slow, then slowest speed, then longest delay; preview of 3, See all 5 (3.6715ms)
+✔ TC-UT-03: empty list -> empty preview, 60-minute message, no See all (0.939ms)
+  {"mean":1,"windows":[[2,6],[7,8]],"elevatedHours1Based":[3,4,5,6,8],"longest":4}
+  {"mean":3,"windows":[[3,5],[11,13],[19,21]],"longest":2}
+✖ TC-UT-12: 8 hourly risks 1,1,2,6,7,3,1,3 -> mean 3.0, hours 4-5 elevated, longest window 2 h (5.9831ms)
+✔ TC-UT-12 (supplementary): the same pattern over a full 24-hour day (1.6948ms)
+  mean=50 sd=1.4142 ci95=±1.7557 method=Student t (t=2.776, df=4) (normal approximation would be ±1.2396)
+✔ TC-UT-24: 50, 52, 48, 50, 50 -> mean 50.0, SD 1.41, 95% CI 50 ± 1.76 (Student t, n = 5) (2.4211ms)
+  route measured 12..88.25 = posts 12..87
+  typed 11.9 (measured 11.900) -> {"ok":false,"reason":"The stretch must lie inside the route, Km 12 to Km 87."}
+  typed 11.9 -> committed 11.900 measured, window starts at 12.000
+  typed 88.3 (measured 89.550) -> {"ok":false,"reason":"The stretch must lie inside the route, Km 12 to Km 87."}
+  typed 88.3 -> committed 89.550 measured, window starts at 88.250
+  typed 25.5 (measured 25.663) -> {"ok":true,"fromKm":25.663,"toKm":26.663}
+  typed 25.5 -> committed 25.663 measured, window starts at 25.663
+✔ TC-UT-23: route is the whole corridor, measured Km 12 to 88.25 (2.4172ms)
+✔ TC-UT-23a (stretch, planStretch): typed Km 11.9 -> rejected (0.9468ms)
+✖ TC-UT-23a (window From km box): typed Km 11.9 -> rejected (4.027ms)
+✔ TC-UT-23b (stretch, planStretch): typed Km 88.3 -> rejected (0.3533ms)
+✖ TC-UT-23b (window From km box): typed Km 88.3 -> rejected (0.6159ms)
+✔ TC-UT-23c (stretch, planStretch): typed Km 25.5 -> accepted (0.339ms)
+✔ TC-UT-23c (window From km box): typed Km 25.5 -> accepted (0.416ms)
+  error="Use at least 8 characters."
+  error=""
+  offered=[5,10,15,30,60] stored 4 -> effective 15
+  offered=[5,10,15,30,60] stored 61 -> effective 15
+  effective=15 default=15
+✔ TC-UT-22a: password "abcdefg" (7) is rejected (2.3176ms)
+✔ TC-UT-22b: password "abcdefgh" (8) is accepted (0.3567ms)
+✔ TC-UT-22c: idle time 4 is rejected (0.4761ms)
+✔ TC-UT-22d: idle time 61 is rejected (0.2333ms)
+✔ TC-UT-22e: idle time not set -> 15 minutes (0.3126ms)
+  closeness={"X":0.777,"Y":0.39,"Z":0.375} rank=X,Y,Z
+✔ TC-UT-18: X(9,7), Y(6,5), Z(3,9), equal weights -> closeness X 0.777, Y 0.390, Z 0.375; rank X, Y, Z (4.9182ms)
+  tile="+10.0% vs previous period"
+  tile="-10.0% vs previous period"
+  tile="+0.0% vs previous period" pct=0
+✔ TC-UT-05a: current 1,100,000 vs previous 1,000,000 -> +10.0% (2.3264ms)
+✔ TC-UT-05b: current 900,000 vs previous 1,000,000 -> -10.0% (0.4345ms)
+✔ TC-UT-05c: previous 0 -> no error (no division by zero) (0.4005ms)
+✖ TC-UT-05c: previous 0 -> no percentage shown (3.1691ms)
+ℹ tests 41
+ℹ suites 0
+ℹ pass 37
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1059.7411
+
+✖ failing tests:
+
+test at tests\unit\patrol-alert.test.ts:2:1979
+✖ TC-UT-12: 8 hourly risks 1,1,2,6,7,3,1,3 -> mean 3.0, hours 4-5 elevated, longest window 2 h (5.9831ms)
+  AssertionError [ERR_ASSERTION]: buildProfile divides by 24, not by the number of hours given
+  
+  1 !== 3
+  
+      at TestContext.<anonymous> (D:\SmartFlow\SmartFlow-NLEX\Front-End-Dashboard\tests\unit\patrol-alert.test.ts:36:10)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.start (node:internal/test_runner/test:1015:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 3,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\unit\sandbox-km-bounds.test.ts:9:1126
+✖ TC-UT-23a (window From km box): typed Km 11.9 -> rejected (4.027ms)
+  AssertionError [ERR_ASSERTION]: typed value committed (11.900); window clamped to 12.000
+  
+  11.9 !== null
+  
+      at TestContext.<anonymous> (D:\SmartFlow\SmartFlow-NLEX\Front-End-Dashboard\tests\unit\sandbox-km-bounds.test.ts:62:17)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 11.9,
+    expected: null,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\unit\sandbox-km-bounds.test.ts:9:1126
+✖ TC-UT-23b (window From km box): typed Km 88.3 -> rejected (0.6159ms)
+  AssertionError [ERR_ASSERTION]: typed value committed (89.550); window clamped to 88.250
+  
+  89.55 !== null
+  
+      at TestContext.<anonymous> (D:\SmartFlow\SmartFlow-NLEX\Front-End-Dashboard\tests\unit\sandbox-km-bounds.test.ts:62:17)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 89.55,
+    expected: null,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\unit\traffic-period-change.test.ts:2:2698
+✖ TC-UT-05c: previous 0 -> no percentage shown (3.1691ms)
+  AssertionError [ERR_ASSERTION]: tile shows "+0.0% vs previous period"
+      at TestContext.<anonymous> (D:\SmartFlow\SmartFlow-NLEX\Front-End-Dashboard\tests\unit\traffic-period-change.test.ts:59:10)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: '+0.0% vs previous period',
+    expected: /%/,
+    operator: 'doesNotMatch',
+    diff: 'simple'
+  }

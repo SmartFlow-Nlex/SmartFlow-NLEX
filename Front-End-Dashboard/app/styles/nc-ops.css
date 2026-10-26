@@ -1741,3 +1741,287 @@ section.nc-ops-maint { gap: 12px; padding-top: 16px; padding-bottom: 36px; }
 .nc-ops-quiet .btn-muted { flex: none; }
 /* The exits either end of a km range, under it in the table: sentence case, quieter than the range. */
 .nc-ops-maint .nc-ops-near { display: block; margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--text-muted); font-variant-numeric: normal; white-space: normal; max-width: 24ch; }
+
+/* --- Filter pills ---------------------------------------------------------
+   Clear filters is a solid pill so it reads as the way out of a filtered view;
+   "Needs attention" is an amber-bordered pill naming the narrowing in force. */
+.nc-ops-maint .nc-ops-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  font: inherit;
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+}
+.nc-ops-maint .nc-ops-pill:active { transform: translateY(1px); }
+.nc-ops-maint .nc-ops-pill:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
+.nc-ops-maint .nc-ops-pill.is-clear { background: var(--action); color: var(--action-ink); }
+.nc-ops-maint .nc-ops-pill.is-clear:hover { background: color-mix(in srgb, var(--action) 86%, var(--text-primary)); }
+.nc-ops-maint .nc-ops-pill-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--action-ink) 22%, transparent);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.nc-ops-maint .nc-ops-pill.is-attention {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-bg);
+  color: var(--text-primary);
+}
+.nc-ops-maint .nc-ops-pill.is-attention > svg:first-child { color: var(--color-warning); }
+.nc-ops-maint .nc-ops-pill.is-attention:hover { border-color: var(--color-warning); }
+
+/* --- View switcher: the active view is a solid fill ------------------------ */
+.nc-ops-maint .nc-ops-view-switch button {
+  border-color: var(--border-default);
+  color: var(--text-muted);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.nc-ops-maint .nc-ops-view-switch button.active,
+.nc-ops-maint .nc-ops-view-switch button.active:hover {
+  background: var(--action);
+  border-color: var(--action);
+  color: var(--action-ink);
+}
+
+/* --- Pagination ------------------------------------------------------------ */
+.nc-ops-maint .nc-ops-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 14px 0 10px;
+  border-top: 1px solid var(--border-default);
+}
+.nc-ops-maint .nc-ops-pager-info { margin: 0; font-size: var(--fs-body); color: var(--text-secondary); }
+.nc-ops-maint .nc-ops-pager-info strong { color: var(--text-primary); font-weight: 600; }
+.nc-ops-maint .nc-ops-pager-ctrls { display: inline-flex; align-items: center; gap: 4px; }
+.nc-ops-maint .nc-ops-pager-btn {
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.nc-ops-maint .nc-ops-pager-btn:hover:not(:disabled):not(.is-current) { border-color: var(--hairline-hover); color: var(--text-primary); }
+.nc-ops-maint .nc-ops-pager-btn.is-current { background: var(--action); border-color: var(--action); color: var(--action-ink); font-weight: 700; }
+.nc-ops-maint .nc-ops-pager-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.nc-ops-maint .nc-ops-pager-btn:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
+.nc-ops-maint .nc-ops-pager-gap { min-width: 20px; text-align: center; color: var(--text-muted); }
+
+/* --- Hover card for timeline / corridor bars --------------------------------
+   Fixed to the viewport so the card is never clipped by the scrolling track,
+   and pointer-events: none so it never steals the hover from the bar. */
+.nc-ops-maint .nc-ops-tip {
+  position: fixed;
+  z-index: 60;
+  width: 300px;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-solid, var(--bg-raised));
+  color: var(--text-primary);
+  box-shadow: 0 12px 32px rgba(10, 16, 32, 0.22), 0 2px 6px rgba(10, 16, 32, 0.12);
+  transform: translate(-50%, calc(-100% - 10px));
+  pointer-events: none;
+  animation: ncOpsTipIn 120ms ease-out;
+}
+.nc-ops-maint .nc-ops-tip.is-below { transform: translate(-50%, 40px); }
+.nc-ops-maint .nc-ops-tip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+  background: inherit;
+  transform: translateX(-50%) rotate(45deg);
+}
+.nc-ops-maint .nc-ops-tip.is-below::after { top: -6px; bottom: auto; transform: translateX(-50%) rotate(225deg); }
+.nc-ops-maint .nc-ops-tip-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.nc-ops-maint .nc-ops-tip-title { margin: 0 0 8px; font-size: var(--fs-body); font-weight: 600; line-height: 1.35; }
+.nc-ops-maint .nc-ops-tip-rows {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+  font-size: var(--fs-caption, 12px);
+}
+.nc-ops-maint .nc-ops-tip-rows dt { color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-size: 10.5px; font-weight: 600; padding-top: 2px; }
+.nc-ops-maint .nc-ops-tip-rows dd { margin: 0; color: var(--text-primary); }
+.nc-ops-maint .nc-ops-tip-hint {
+  margin: 10px -14px -10px;
+  padding: 7px 14px;
+  border-top: 1px solid var(--border-default);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+@keyframes ncOpsTipIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nc-ops-maint .nc-ops-tip { animation: none; }
+}
+
+/* --- Conflicts KPI: which jobs clash -------------------------------------- */
+.nc-ops-maint .nc-ops-kpi-conflicts {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border-default);
+  display: grid;
+  gap: 4px;
+  font-size: var(--fs-caption, 12px);
+}
+.nc-ops-maint .nc-ops-kpi-conflicts li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+}
+.nc-ops-maint .nc-ops-kpi-conflicts .nc-ops-sev { flex: none; margin-right: 0; }
+.nc-ops-maint .nc-ops-kpi-conflicts button {
+  min-width: 0;
+  max-width: 45%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.nc-ops-maint .nc-ops-kpi-conflicts button:hover { text-decoration: underline; text-underline-offset: 2px; }
+.nc-ops-maint .nc-ops-kpi-conflicts button:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; border-radius: 2px; }
+.nc-ops-maint .nc-ops-kpi-more { font-style: normal; }
+
+/* --- Schedules card scrolls inside itself ----------------------------------
+   The card's header, the view toolbars, the timeline axis and the pager stay
+   put; only the rows scroll. The table header sticks to the top of its box. */
+.nc-ops-maint .nc-ops-scroll {
+  max-height: min(560px, 62vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 45%, transparent) transparent;
+}
+.nc-ops-maint .nc-ops-scroll:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
+.nc-ops-maint .nc-ops-scroll::-webkit-scrollbar { width: 8px; }
+.nc-ops-maint .nc-ops-scroll::-webkit-scrollbar-track { background: transparent; }
+.nc-ops-maint .nc-ops-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent) padding-box;
+}
+.nc-ops-maint .nc-ops-scroll::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--text-muted) 70%, transparent); }
+.nc-ops-maint .nc-ops-scroll.is-table .nc-ops-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-surface-solid, var(--bg-raised));
+}
+/* The row actions menu is portalled to <body> (see StatusControl) so the
+   scrolling rows cannot clip it. */
+.nc-ops-maint .nc-ops-status-menu.is-floating { z-index: 80; width: 220px; margin: 0; }
+@media (max-width: 760px) {
+  .nc-ops-maint .nc-ops-scroll { max-height: 70vh; }
+}
+
+/* --- Sortable column headers: make the control obvious ----------------------
+   The shared header (lib/table-sort) dims its arrow to 35% until a column is
+   sorted, which on this table read as plain labels. Here every header gets an
+   always-visible arrow badge and a hover pill, and the sorted column is a
+   filled badge in the action colour. Scoped to the maintenance table; the
+   audit log keeps the quieter shared look. */
+.nc-ops-maint .nc-ops-table .ds-th-arrow {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-secondary);
+  opacity: 1;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.nc-ops-maint .nc-ops-table .ds-th-sort:hover .ds-th-arrow {
+  border-color: var(--action);
+  color: var(--action);
+}
+.nc-ops-maint .nc-ops-table .ds-th-sort.active .ds-th-arrow {
+  border-color: var(--action);
+  background: var(--action);
+  color: var(--action-ink);
+}
+.nc-ops-maint .nc-ops-table .ds-th-sort.active { color: var(--action); }
+@media (min-width: 761px) {
+  .nc-ops-maint .nc-ops-table .ds-th-sort {
+    width: auto;
+    margin-left: -8px;
+    padding: 4px 8px;
+    border-radius: var(--radius-full);
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+  }
+  .nc-ops-maint .nc-ops-table .ds-th-sort:hover { background: color-mix(in srgb, var(--action) 10%, transparent); color: var(--text-primary); }
+  .nc-ops-maint .nc-ops-table .ds-th-sort.active { background: color-mix(in srgb, var(--action) 12%, transparent); }
+}
+
+/* The pager lives inside the table wrapper, which runs edge to edge (-22px), so
+   it needs the card's own side padding back to sit off the border. */
+.nc-ops-maint .nc-ops-table-wrap > .nc-ops-pager { padding: 16px 22px 14px; }
+@media (max-width: 760px) {
+  .nc-ops-maint .nc-ops-table-wrap > .nc-ops-pager { padding: 14px 0 12px; }
+}
+
+/* --- Toggled pills are a solid fill, everywhere on this page ---------------
+   Same treatment as the Table / Timeline / Corridor switcher: the status
+   filter, the timeline range and the corridor time scope. Inactive pills stay
+   see-through, so only the current choice is filled. */
+.nc-ops-maint .nc-ops-range button {
+  border-color: var(--border-default);
+  color: var(--text-muted);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.nc-ops-maint .nc-ops-status-filter button { transition: background-color var(--transition-fast), color var(--transition-fast); }
+.nc-ops-maint .nc-ops-range button.active,
+.nc-ops-maint .nc-ops-range button.active:hover,
+.nc-ops-maint .nc-ops-status-filter button.active,
+.nc-ops-maint .nc-ops-status-filter button.active:hover {
+  background: var(--action);
+  border-color: var(--action);
+  color: var(--action-ink);
+  text-shadow: none;
+}
+.nc-ops-maint .nc-ops-status-filter button.active .nc-ops-tab-n { opacity: 1; }

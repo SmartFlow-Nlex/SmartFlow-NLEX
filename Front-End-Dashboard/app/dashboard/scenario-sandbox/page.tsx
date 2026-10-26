@@ -3013,15 +3013,32 @@ export default function AiSandboxPage() {
                 {liveDateText && <span className="sandbox-live-clock-date">{liveDateText}</span>}
                 <TimeField
                   valueS={liveMin * 60}
+                  // No upper limit: the clock rolls past midnight on its own as the run goes, so a cap at
+                  // 23:59:59 stopped ▲ there and snapped a typed value back a day.
                   minS={0}
-                  maxS={1439 * 60 + 59}
+                  maxS={Number.MAX_SAFE_INTEGER}
                   step={1}
                   scn="sim-time"
-                  onCommit={(totalS) => {
-                    const totalMin = totalS / 60;
+                  onCommit={(targetS, unit) => {
+                    /* The box shows start + the run's elapsed time, not the start, so the edit is applied
+                       as a shift of the start — writing the edited value back as the start counted the
+                       elapsed time twice. A minute or second edit only moves the clock and leaves the run
+                       alone, even when it carries into another hour; an hour edit reseeds demand for that
+                       hour. Which box was edited comes from TimeField, not from comparing hours. */
                     setHourFollowsDay(null);
-                    setHourOfDay(Math.floor(totalMin / 60));
-                    setClockMinuteOffset(totalMin % 60);
+                    const shownS = Math.round(liveMin * 60);
+                    if (unit !== "hour") {
+                      setClockMinuteOffset((o) => o + (targetS - shownS) / 60);
+                      return;
+                    }
+                    // A new hour rebuilds the run (hourOfDay feeds the facility plan the rebuild keys on),
+                    // and a rebuilt run's clock starts WARMUP_S before its zero point; the same hour does
+                    // not, and the run's elapsed time carries on. Either way the box then reads targetS —
+                    // including its day, which the offset carries when an hour step crosses midnight.
+                    const targetHour = Math.floor(targetS / 3600) % 24;
+                    const nowAfterS = targetHour !== hourOfDay ? -WARMUP_S : focused.scenarioNowS;
+                    setHourOfDay(targetHour);
+                    setClockMinuteOffset((targetS - nowAfterS) / 60 - targetHour * 60);
                   }}
                 />
               </div>

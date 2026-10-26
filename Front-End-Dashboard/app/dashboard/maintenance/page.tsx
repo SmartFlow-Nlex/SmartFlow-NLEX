@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Calendar, Check, ChevronDown, ChevronUp, Info, MapPin, MoreVertical, Plus, Search, Trash2, Wrench, X } from "lucide-react";
+import { AlertTriangle, Calendar, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Info, MapPin, MoreVertical, Plus, Search, Trash2, Wrench, X } from "lucide-react";
+import { createPortal } from "react-dom";
 import PageHeader from "../../../components/dashboard/PageHeader";
 import { apiFetch } from "../../../lib/api";
 import { cachedJson } from "../../../lib/cached-json";
 import StateNote from "../../../components/stage/StateNote";
+import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import styles from "../traffic/traffic.module.css";
 import { supabase } from "../../../lib/supabase";
 
@@ -424,18 +426,44 @@ function StatusControl({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  // Where the menu sits, in viewport coordinates. The rows scroll inside the
+  // card, which would clip an absolutely placed menu on the bottom rows, so the
+  // menu is portalled to <body> and opens upward when there is no room below.
+  const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+
+  const toggle = () => {
+    if (open) return setOpen(false);
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) {
+      const MENU_W = 220;
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - MENU_W - 8));
+      setPos(window.innerHeight - r.bottom < 300 ? { left, bottom: window.innerHeight - r.top + 6 } : { left, top: r.bottom + 6 });
+    }
+    setOpen(true);
+  };
 
   useEffect(() => {
     if (!open) return;
     const clickOut = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false);
     };
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    // The menu is pinned to where the button was; when the rows scroll, close it.
+    const away = (e: Event) => {
+      if (!menuRef.current?.contains(e.target as Node)) setOpen(false);
+    };
     document.addEventListener("mousedown", clickOut);
     document.addEventListener("keydown", esc);
+    window.addEventListener("scroll", away, true);
+    window.addEventListener("resize", away);
     return () => {
       document.removeEventListener("mousedown", clickOut);
       document.removeEventListener("keydown", esc);
+      window.removeEventListener("scroll", away, true);
+      window.removeEventListener("resize", away);
     };
   }, [open]);
 
@@ -451,17 +479,24 @@ function StatusControl({
       <span className={`ms-badge ${meta.badge}`}>{meta.label}</span>
       <button
         type="button"
+        ref={btnRef}
         className="nc-ops-kebab"
         disabled={disabled}
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Actions for ${schedule.title}`}
       >
         <MoreVertical size={16} aria-hidden="true" />
       </button>
-      {open && (
-        <div className={`${styles.customSelectMenu} nc-ops-status-menu`} role="menu">
+      {open && pos && createPortal(
+        <div className="nc-ops nc-ops-maint" onClick={(e) => e.stopPropagation()}>
+        <div
+          ref={menuRef}
+          className={`${styles.customSelectMenu} nc-ops-status-menu is-floating`}
+          role="menu"
+          style={{ position: "fixed", left: pos.left, top: pos.top, bottom: pos.bottom, right: "auto" }}
+        >
           <p className="nc-ops-menu-head">Actions</p>
           {NEXT_ACTIONS[schedule.status].map((a) => (
             <button key={a.to} type="button" role="menuitem" className={`${styles.customSelectOption} nc-ops-select-opt`} onClick={choose(() => onAdvance(a.to))}>
@@ -486,6 +521,8 @@ function StatusControl({
             Delete…
           </button>
         </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -804,7 +841,10 @@ export default function MaintenancePage() {
 
   const kpi = useMemo(() => analyse(filteredVisible, now), [filteredVisible, now]);
 
-  const filtersActive = issuesOnly || statusFilter !== "all" || directionFilter !== "all" || closureFilter !== "all" || dateFilter !== "all" || searchQuery.trim() !== "";
+  const activeFilterCount =
+    [statusFilter !== "all", directionFilter !== "all", closureFilter !== "all", dateFilter !== "all", searchQuery.trim() !== "", issuesOnly]
+      .filter(Boolean).length;
+  const filtersActive = activeFilterCount > 0;
   const clearFilters = () => {
     setStatusFilter("all"); setDirectionFilter("all"); setClosureFilter("all");
     setDateFilter("all"); setCustomFrom(""); setCustomTo(""); setSearchQuery(""); setIssuesOnly(false);
@@ -828,6 +868,51 @@ export default function MaintenancePage() {
     // and it is what someone scanning this page is looking for.
     { key: "window", dir: "asc" },
   );
+
+  /* Ten rows a page. The page goes back to 1 whenever what is being listed
+     changes — a filter, the search or the sort — but not on the minute tick,
+     which re-runs the filter without changing what it matches. */
+  const PAGE_SIZE = 10;
+  const [page, setPage] = useState(1);
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, dateFilter, customFrom, customTo, directionFilter, closureFilter, searchQuery, issuesOnly, sort?.key, sort?.dir]);
+  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount); // a delete can shrink the list under us
+  const pageRows = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pageFrom = visible.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const pageTo = Math.min(currentPage * PAGE_SIZE, visible.length);
+  // 1 … 4 5 6 … 12: first, last, and the pages either side of the current one.
+  const pageItems: (number | "gap")[] = [];
+  for (let n = 1; n <= pageCount; n++) {
+    if (n === 1 || n === pageCount || Math.abs(n - currentPage) <= 1) pageItems.push(n);
+    else if (pageItems[pageItems.length - 1] !== "gap") pageItems.push("gap");
+  }
+
+  // ---------- Hover card for timeline and corridor bars ----------
+  const [tip, setTip] = useState<{ s: Schedule; x: number; y: number } | null>(null);
+  const showTip = (s: Schedule, el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    setTip({ s, x: r.left + r.width / 2, y: r.top });
+  };
+  const barTipProps = (s: Schedule) => ({
+    onMouseEnter: (e: React.MouseEvent<HTMLElement>) => showTip(s, e.currentTarget),
+    onMouseLeave: () => setTip(null),
+    onFocus: (e: React.FocusEvent<HTMLElement>) => showTip(s, e.currentTarget),
+    onBlur: () => setTip(null),
+    "aria-label": `${s.title}, ${STATUS_META[s.status].label}, ${s.direction} ${kmRange(s)}, ${fmtWindow(s.starts_at, s.ends_at)}. Open details`,
+  });
+  useEffect(() => {
+    if (!tip) return;
+    const hide = () => setTip(null);
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("resize", hide);
+    return () => {
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("resize", hide);
+    };
+  }, [tip]);
+  useEffect(() => setTip(null), [view]);
 
   // ---------- Mutations ----------
   const changeStatus = async (s: Schedule, to: Status, reason?: string) => {
@@ -1358,12 +1443,14 @@ export default function MaintenancePage() {
         {(issuesOnly || filtersActive) && (
           <div className="nc-ops-factive">
             {issuesOnly && (
-              <button type="button" className="nc-ops-chip" onClick={() => setIssuesOnly(false)} aria-label="Stop showing only schedules that need attention">
-                Needs attention · {visible.length} <X size={13} aria-hidden="true" />
+              <button type="button" className="nc-ops-pill is-attention" onClick={() => setIssuesOnly(false)} aria-label="Stop showing only schedules that need attention">
+                <AlertTriangle size={13} aria-hidden="true" /> Needs attention · {visible.length} <X size={13} aria-hidden="true" />
               </button>
             )}
             {filtersActive && (
-              <button type="button" className="nct-link-btn nc-ops-clear" onClick={clearFilters}>Clear filters</button>
+              <button type="button" className="nc-ops-pill is-clear" onClick={clearFilters} aria-label={`Clear ${activeFilterCount} active ${activeFilterCount === 1 ? "filter" : "filters"}`}>
+                <X size={13} aria-hidden="true" /> Clear filters <span className="nc-ops-pill-count">{activeFilterCount}</span>
+              </button>
             )}
           </div>
         )}
@@ -1373,17 +1460,26 @@ export default function MaintenancePage() {
       {/* Row B — what needs attention right now */}
       <div className={`${styles.kpiRow} ds-rise`}>
         <article className={styles.kpiTile}>
-          <h3>Active Now</h3>
+          <h3>
+            Active Now
+            <InfoTooltip text="Maintenance currently marked In Progress, and the total length of road those jobs cover. Follows the filters above." />
+          </h3>
           <div className={styles.kpiValue}>{loading ? "…" : `${kpi.active.length} ${kpi.active.length === 1 ? "work" : "works"}`}</div>
           <p className={styles.kpiHint}>{kpi.kmAffected > 0 ? `${kpi.kmAffected.toFixed(1)} km affected` : "no active roadwork"}</p>
         </article>
         <article className={styles.kpiTile}>
-          <h3>Starting Soon</h3>
+          <h3>
+            Starting Soon
+            <InfoTooltip text="Scheduled jobs whose start time is within the next 2 hours, so crews and traffic advisories can be readied. Follows the filters above." />
+          </h3>
           <div className={styles.kpiValue}>{loading ? "…" : `${kpi.startingSoon.length} ${kpi.startingSoon.length === 1 ? "work" : "works"}`}</div>
           <p className={styles.kpiHint}>within the next 2 hrs</p>
         </article>
         <article className={styles.kpiTile}>
-          <h3>Conflicts</h3>
+          <h3>
+            Conflicts
+            <InfoTooltip text="Pairs of scheduled or in-progress jobs on the same carriageway whose km range and time window overlap. Critical: they close the same lane, or one is a full closure. Operational: same stretch, different lanes. Click a job name to open it." />
+          </h3>
           <div className={styles.kpiValue} style={!loading && kpi.conflicts.length > 0 ? { color: kpi.conflicts.some((c) => c[2] === "critical") ? "var(--color-danger)" : "var(--color-warning)" } : undefined}>
             {loading ? "…" : kpi.conflicts.length}
           </div>
@@ -1392,9 +1488,31 @@ export default function MaintenancePage() {
               ? `${kpi.conflicts.filter((c) => c[2] === "critical").length} critical · ${kpi.conflicts.filter((c) => c[2] === "operational").length} operational`
               : "no overlapping work zones"}
           </p>
+          {!loading && kpi.conflicts.length > 0 && (
+            <ul className="nc-ops-kpi-conflicts">
+              {/* Critical pairs first: they are the ones that block a save. */}
+              {[...kpi.conflicts]
+                .sort((x, y) => (x[2] === y[2] ? 0 : x[2] === "critical" ? -1 : 1))
+                .slice(0, 2)
+                .map(([a, b, kind]) => (
+                  <li key={`${a.id}-${b.id}`}>
+                    <i className={`nc-ops-sev is-${kind}`} aria-label={CONFLICT_LABEL[kind]} />
+                    <button type="button" onClick={() => { setActionError(null); setDetail(a); }}>{a.title}</button>
+                    <span aria-hidden="true">↔</span>
+                    <button type="button" onClick={() => { setActionError(null); setDetail(b); }}>{b.title}</button>
+                  </li>
+                ))}
+              {kpi.conflicts.length > 2 && (
+                <li className="nc-ops-kpi-more">+{kpi.conflicts.length - 2} more in the alerts below</li>
+              )}
+            </ul>
+          )}
         </article>
         <article className={styles.kpiTile}>
-          <h3>Next Up</h3>
+          <h3>
+            Next Up
+            <InfoTooltip text="The next scheduled job to start, with its direction, km range and nearest exit. Follows the filters above, so picking Tomorrow shows tomorrow's first job." />
+          </h3>
           <div className={styles.kpiValue}>{loading ? "…" : kpi.next ? fmtClock(kpi.next.starts_at) : "—"}</div>
           <p className={styles.kpiHint}>{kpi.next ? `${kpi.next.direction} · ${kmRange(kpi.next)} · ${nearOf(kpi.next)}` : filtersActive ? "nothing upcoming in this view" : "nothing upcoming"}</p>
         </article>
@@ -1475,6 +1593,7 @@ export default function MaintenancePage() {
                 {timeline.ticks.map((t) => <span key={t.label} style={{ left: `${t.pct}%` }}>{t.label}</span>)}
               </div>
             </div>
+            <div className="nc-ops-scroll" tabIndex={0} aria-label="Timeline">
             {timeline.rows.length === 0 ? (
               <p className="nc-ops-tl-empty">No maintenance in this range.</p>
             ) : (
@@ -1491,7 +1610,7 @@ export default function MaintenancePage() {
                       type="button"
                       className={`nc-ops-bar is-${s.status}`}
                       style={{ left: `${left}%`, width: `${width}%` }}
-                      title={`${s.title} · ${fmtWindow(s.starts_at, s.ends_at)}`}
+                      {...barTipProps(s)}
                       onClick={() => { setActionError(null); setDetail(s); }}
                     >
                       {fmtClock(s.starts_at)}
@@ -1500,6 +1619,7 @@ export default function MaintenancePage() {
                 </div>
               ))
             )}
+            </div>
           </div>
         ) : view === "corridor" ? (
           <div className="nc-ops-cor">
@@ -1520,6 +1640,7 @@ export default function MaintenancePage() {
             <div className="nc-ops-cor-axis">
               {corridor.ticks.map((t) => <span key={t.label} style={{ left: `${t.pct}%` }}>{t.label}</span>)}
             </div>
+            <div className="nc-ops-scroll" tabIndex={0} aria-label="Corridor">
             {corridor.lanes.map((l) => (
               <div key={l.dir} className="nc-ops-cor-lane">
                 <div className="nc-ops-cor-name">{l.dir} <span className="nc-ops-sub">{DIRECTION_LABEL[l.dir]}</span></div>
@@ -1531,7 +1652,7 @@ export default function MaintenancePage() {
                       type="button"
                       className={`nc-ops-bar is-${s.status}`}
                       style={{ left: `${left}%`, width: `${width}%`, top: 6 + row * 30 }}
-                      title={`${s.title} · ${kmRange(s)} · ${fmtWindow(s.starts_at, s.ends_at)}`}
+                      {...barTipProps(s)}
                       onClick={() => { setActionError(null); setDetail(s); }}
                     >
                       {s.title}
@@ -1540,10 +1661,12 @@ export default function MaintenancePage() {
                 </div>
               </div>
             ))}
+            </div>
             {corridor.count === 0 && <p className="nc-ops-tl-empty">No maintenance in this scope.</p>}
           </div>
         ) : (
           <div className={`${styles.plazaTableWrap} nc-ops-table-wrap`}>
+            <div className="nc-ops-scroll is-table" tabIndex={0} aria-label="Maintenance schedules">
             <table className={`${styles.plazaTable} nc-ops-table`}>
               <thead>
                 <tr>
@@ -1556,7 +1679,7 @@ export default function MaintenancePage() {
                 </tr>
               </thead>
               <tbody>
-                {visible.map((s) => (
+                {pageRows.map((s) => (
                   <tr key={s.id} className={styles.clickableRow} onClick={() => { setActionError(null); setDetail(s); }}>
                     <td className="nc-ops-td-status">
                       <StatusControl
@@ -1592,12 +1715,64 @@ export default function MaintenancePage() {
                 ))}
               </tbody>
             </table>
+            </div>
+            <nav className="nc-ops-pager" aria-label="Schedule pages">
+              <p className="nc-ops-pager-info nc-ops-num">
+                Showing <strong>{pageFrom}–{pageTo}</strong> of <strong>{visible.length}</strong>
+              </p>
+              {pageCount > 1 && (
+                <div className="nc-ops-pager-ctrls">
+                  <button type="button" className="nc-ops-pager-btn" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)} aria-label="Previous page">
+                    <ChevronLeft size={15} aria-hidden="true" />
+                  </button>
+                  {pageItems.map((n, i) =>
+                    n === "gap" ? (
+                      <span key={`gap-${i}`} className="nc-ops-pager-gap" aria-hidden="true">…</span>
+                    ) : (
+                      <button
+                        key={n}
+                        type="button"
+                        className={`nc-ops-pager-btn${n === currentPage ? " is-current" : ""}`}
+                        onClick={() => setPage(n)}
+                        aria-label={`Page ${n}`}
+                        aria-current={n === currentPage ? "page" : undefined}
+                      >
+                        {n}
+                      </button>
+                    ),
+                  )}
+                  <button type="button" className="nc-ops-pager-btn" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)} aria-label="Next page">
+                    <ChevronRight size={15} aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+            </nav>
           </div>
         )}
         {actionError && !detail && !cancelTarget && !deleteTarget && (
           <p className="nc-ops-error is-card">{actionError}</p>
         )}
       </article>
+
+      {tip && (view === "timeline" || view === "corridor") && (
+        <div
+          className={`nc-ops-tip${tip.y < 220 ? " is-below" : ""}`}
+          role="tooltip"
+          style={{ left: Math.min(Math.max(tip.x, 170), (typeof window !== "undefined" ? window.innerWidth : 1600) - 170), top: tip.y }}
+        >
+          <div className="nc-ops-tip-head">
+            <span className={`ms-badge ${STATUS_META[tip.s.status].badge}`}>{STATUS_META[tip.s.status].label}</span>
+            <span className={`nc-ops-dir is-${tip.s.direction}`}>{tip.s.direction}</span>
+          </div>
+          <p className="nc-ops-tip-title">{tip.s.title}</p>
+          <dl className="nc-ops-tip-rows">
+            <dt>Location</dt><dd className="nc-ops-num">{kmRange(tip.s)} · {nearOf(tip.s)}</dd>
+            <dt>Window</dt><dd className="nc-ops-num">{fmtWindow(tip.s.starts_at, tip.s.ends_at)}</dd>
+            <dt>Closure</dt><dd><span className={`nc-ops-closure is-${closureSeverity(tip.s.lane_closure)}`}>{tip.s.lane_closure}</span></dd>
+          </dl>
+          <p className="nc-ops-tip-hint">Click for details</p>
+        </div>
+      )}
 
       {/* Detail modal */}
       {detail && (

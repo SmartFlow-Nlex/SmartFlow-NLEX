@@ -10154,6 +10154,19 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   background: rgba(255, 255, 255, 0.16);
   color: #fff;
 }
+/* A 16% white tint read as "every option the same" on the dark glass — the
+   chosen carriageway and speed have to be unmistakable at a glance. Scoped
+   under .ds-main .sandbox-page so it outranks the design-system restyle. */
+.ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-view-buttons, .sandbox-speed-seg) button:is(.active, [aria-selected="true"]) {
+  background: var(--page-accent, var(--brand-primary));
+  border-color: var(--page-accent, var(--brand-primary));
+  color: #fff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 2px 10px color-mix(in srgb, var(--page-accent, var(--brand-primary)) 45%, transparent);
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-view-buttons, .sandbox-speed-seg) button:not(.active):not([aria-selected="true"]):hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
 /* The controls keep their own light surface — a panel of sliders and selects
    reads better light — but sit flush against the dark road. */
 .sandbox-page .sandbox-side.is-expanded {

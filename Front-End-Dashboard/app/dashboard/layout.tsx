@@ -436,7 +436,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="ds-user-profile">
             <span className="ds-avatar-circle">{avatarChar}</span>
             <div className="ds-user-details">
-              <span className="ds-user-email">{userEmail}</span>
+              <span className="ds-user-email" title={userEmail}>{userFullName || userEmail}</span>
               <span className="ds-user-role">{displayRoleName}</span>
             </div>
           </div>
@@ -533,7 +533,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <div className="ds-confirm-account">
                     <span className="ds-avatar-circle" aria-hidden="true">{avatarChar}</span>
                     <span className="ds-confirm-account-text">
-                      <span className="ds-confirm-account-email">{userEmail}</span>
+                      <span className="ds-confirm-account-email" title={userEmail}>{userFullName || userEmail}</span>
                       <span className="ds-confirm-account-role">{displayRoleName}</span>
                     </span>
                   </div>

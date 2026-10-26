@@ -205,12 +205,10 @@ function clockLabel(totalMin: number): string {
 }
 
 /**
- * One HH / MM / SS segment of TimeField: a two-digit box that steps by ±1, wrapping within its
- * own 0..max range (23 for hours, 59 for minutes/seconds) — the up/down buttons, or the arrow
- * keys while the box has focus, move only this unit, the way setting an alarm clock does (an
- * hour stepping past 23 wraps to 0 rather than carrying into the next day). Typed digits replace
- * the segment outright on blur or Enter, clamped to its own range, same half-typed-value-never-
- * acted-on rule as NumberField/TimeField.
+ * One HH / MM / SS segment of TimeField: a two-digit box with up/down buttons (or the arrow keys
+ * while it has focus). TimeField decides what a step does to the whole time; this only reports
+ * the direction. Typed digits replace the segment outright on blur or Enter, clamped to its own
+ * 0..max range, same half-typed-value-never-acted-on rule as NumberField.
  */
 function TimeSegment({
   value,
@@ -276,6 +274,8 @@ function TimeSegment({
  * disagree with them — what's rendered here, always HH:MM[:SS] in 24-hour, is exactly what shows,
  * everywhere.
  */
+export type TimeUnit = "hour" | "minute" | "second";
+
 export function TimeField({
   valueS,
   minS,
@@ -288,7 +288,9 @@ export function TimeField({
   minS: number;
   maxS: number;
   step?: number;
-  onCommit: (totalS: number) => void;
+  /** `unit` is the box that was edited — a second's step can carry the hour over, and that is
+   *  still a second's step, not an hour edit. */
+  onCommit: (totalS: number, unit: TimeUnit) => void;
   scn: string;
 }) {
   const rounded = Math.round(valueS);
@@ -296,7 +298,18 @@ export function TimeField({
   const hh = Math.floor(rounded / 3600) % 24;
   const mm = Math.floor(rounded / 60) % 60;
   const ss = rounded % 60;
-  const clampCommit = (totalS: number) => onCommit(Math.min(maxS, Math.max(minS, totalS)));
+  /* Up is always later and down always earlier: a step adds or removes one whole unit and carries
+     into the next, like any clock (17:59:59 + 1 s is 18:00:00). Each box wrapping on its own sent
+     the clock BACK 59 s or 59 min whenever ▲ was pressed at :59 — on a running clock, every
+     minute. At a limit a step stops rather than clamping past the current value, so it can never
+     move the wrong way either. */
+  const step1 = (unitS: number, d: 1 | -1, unit: TimeUnit) => {
+    const next = d > 0 ? Math.max(rounded, Math.min(maxS, rounded + unitS)) : Math.min(rounded, Math.max(minS, rounded - unitS));
+    if (next !== rounded) onCommit(next, unit);
+  };
+  // Typing replaces just that unit, keeping the others (and the day) as they are.
+  const typed = (unitS: number, current: number, digits: number, unit: TimeUnit) =>
+    onCommit(Math.min(maxS, Math.max(minS, rounded + (digits - current) * unitS)), unit);
   return (
     <span className="sandbox-time-field">
       <TimeSegment
@@ -304,8 +317,8 @@ export function TimeField({
         max={23}
         label="Hour"
         scn={`${scn}-h`}
-        onStep={(d) => clampCommit((((hh + d) % 24) + 24) % 24 * 3600 + mm * 60 + ss)}
-        onType={(digits) => clampCommit(digits * 3600 + mm * 60 + ss)}
+        onStep={(d) => step1(3600, d, "hour")}
+        onType={(digits) => typed(3600, hh, digits, "hour")}
       />
       <span className="sandbox-time-sep">:</span>
       <TimeSegment
@@ -313,8 +326,8 @@ export function TimeField({
         max={59}
         label="Minute"
         scn={`${scn}-m`}
-        onStep={(d) => clampCommit(hh * 3600 + ((((mm + d) % 60) + 60) % 60) * 60 + ss)}
-        onType={(digits) => clampCommit(hh * 3600 + digits * 60 + ss)}
+        onStep={(d) => step1(60, d, "minute")}
+        onType={(digits) => typed(60, mm, digits, "minute")}
       />
       {withSeconds && (
         <>
@@ -324,8 +337,8 @@ export function TimeField({
             max={59}
             label="Second"
             scn={`${scn}-s`}
-            onStep={(d) => clampCommit(hh * 3600 + mm * 60 + ((((ss + d) % 60) + 60) % 60))}
-            onType={(digits) => clampCommit(hh * 3600 + mm * 60 + digits)}
+            onStep={(d) => step1(1, d, "second")}
+            onType={(digits) => typed(1, ss, digits, "second")}
           />
         </>
       )}

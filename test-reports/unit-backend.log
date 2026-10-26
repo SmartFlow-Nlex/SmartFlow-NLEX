@@ -1,0 +1,112 @@
+# Back-End unit tests — 2026-10-24 20:30:59 +0800
+  {"demand":2000,"need":5,"max":6,"staffed":5,"unmet":0}
+  {"demand":2000,"need":5,"max":4,"staffed":4,"unmet":400}
+  slider min=150 max=800
+  schema success=true throughput used by service=100
+✔ TC-UT-06a: 2,000 veh/h at 400 veh/h/booth, 6 booths -> 5 booths, no overflow (93.4967ms)
+✔ TC-UT-06b: same demand, 4 booths -> capped at 4, 400 veh/h overflow (2.3097ms)
+✔ TC-UT-06c (UI): throughput slider cannot go below 150 veh/h (0.3503ms)
+✖ TC-UT-06c (API): throughput 100 veh/h is rejected or clamped to 150 (6.183ms)
+✔ TC-UT-14a: maxUnits 7 is rejected (2.8418ms)
+✔ TC-UT-14b: maxUnits 0 is rejected (0.5703ms)
+✔ TC-UT-14c: unitEffect 1.2 is rejected (0.4239ms)
+✔ TC-UT-14d: no severity given defaults to injury (0.2575ms)
+✔ TC-UT-14e: no maxUnits/unitCostPerHour/deltaResponseMin defaults to 4 / 1500 / 15 (0.1978ms)
+  obs=[{"duration":10,"censored":false},{"duration":20,"censored":false},{"duration":30,"censored":false},{"duration":40,"censored":false},{"duration":1440,"censored":true}]
+  curve=[{"minute":0,"survival":1,"atRisk":5},{"minute":10,"survival":0.8,"atRisk":5},{"minute":20,"survival":0.6000000000000001,"atRisk":4},{"minute":30,"survival":0.4000000000000001,"atRisk":3},{"minute":40,"survival":0.20000000000000004,"atRisk":2}]
+  p50=30 p80=40 p95=40 scenarios=[{"label":"fast","probability":0.5999999999999999,"durationMin":20},{"label":"typical","probability":0.20000000000000004,"durationMin":40},{"label":"slow","probability":0,"durationMin":40},{"label":"extreme","probability":0.20000000000000004,"durationMin":60}] sum=1
+  sheet curve (TC-UT-15) maxUnits=4: dispatch=4 maxEscalation=0 rp=37915.65 evpi=1257.1429 vss=0.0000
+    raw evpi=1257.14285713945 raw vss=3.4124241210520267e-9 tolerance=3.8e-8
+  sheet curve (TC-UT-15) maxUnits=1: dispatch=1 maxEscalation=0 rp=107616.67 evpi=150.0000 vss=-0.0000
+    raw evpi=150.0000000033324 raw vss=-3.332388587296009e-9 tolerance=1.1e-7
+  sheet curve (TC-UT-15) maxUnits=2: dispatch=2 maxEscalation=0 rp=69966.67 evpi=420.0000 vss=-0.0000
+    raw evpi=420.00000000331784 raw vss=-3.3178366720676422e-9 tolerance=7.0e-8
+  sheet curve (TC-UT-15) maxUnits=4: dispatch=4 maxEscalation=0 rp=37915.65 evpi=1257.1429 vss=0.0000
+    raw evpi=1257.14285713945 raw vss=3.4124241210520267e-9 tolerance=3.8e-8
+  sheet curve (TC-UT-15) maxUnits=6: dispatch=6 maxEscalation=0 rp=25569.96 evpi=2366.6667 vss=-0.0000
+    raw evpi=2366.6666666700294 raw vss=-3.3651303965598345e-9 tolerance=2.6e-8
+  synthetic n=300 maxUnits=4: dispatch=4 maxEscalation=0 rp=179574.97 evpi=1646.8571 vss=0.0000
+    raw evpi=1646.8571428524156 raw vss=4.743924364447594e-9 tolerance=1.8e-7
+  synthetic n=300 maxUnits=1: dispatch=1 maxEscalation=0 rp=536589.58 evpi=264.2500 vss=0.0000
+    raw evpi=264.2499999962747 raw vss=3.725290298461914e-9 tolerance=5.4e-7
+  synthetic n=300 maxUnits=2: dispatch=2 maxEscalation=0 rp=345245.07 evpi=624.1333 vss=-0.0000
+    raw evpi=624.1333333365037 raw vss=-3.14321368932724e-9 tolerance=3.5e-7
+  synthetic n=300 maxUnits=4: dispatch=4 maxEscalation=0 rp=179574.97 evpi=1646.8571 vss=0.0000
+    raw evpi=1646.8571428524156 raw vss=4.743924364447594e-9 tolerance=1.8e-7
+  synthetic n=300 maxUnits=6: dispatch=6 maxEscalation=0 rp=112463.91 evpi=2992.4444 vss=0.0000
+    raw evpi=2992.4444444437977 raw vss=6.548361852765083e-10 tolerance=1.1e-7
+✔ TC-UT-15: 2000 is censored at 1440 (kept), 5 at risk, S = 80/60/40/20%, flat 20% to 1440, P50 = 30 (3.0523ms)
+✖ TC-UT-16: four scenarios cut at the curve's own P50/P80/P95, probabilities 0.50/0.30/0.15/0.05 (sum 1.00) (4.0376ms)
+✔ TC-UT-17: sheet curve (TC-UT-15), maxUnits=4: units <= maxUnits, EVPI >= 0, VSS >= 0 (5.0378ms)
+✔ TC-UT-17: sheet curve (TC-UT-15), maxUnits=1: units <= maxUnits, EVPI >= 0, VSS >= 0 (0.7374ms)
+✔ TC-UT-17: sheet curve (TC-UT-15), maxUnits=2: units <= maxUnits, EVPI >= 0, VSS >= 0 (0.7035ms)
+✔ TC-UT-17: sheet curve (TC-UT-15), maxUnits=4: units <= maxUnits, EVPI >= 0, VSS >= 0 (0.8477ms)
+✔ TC-UT-17: sheet curve (TC-UT-15), maxUnits=6: units <= maxUnits, EVPI >= 0, VSS >= 0 (1.4207ms)
+✔ TC-UT-17: synthetic n=300, maxUnits=4: units <= maxUnits, EVPI >= 0, VSS >= 0 (1.5779ms)
+✔ TC-UT-17: synthetic n=300, maxUnits=1: units <= maxUnits, EVPI >= 0, VSS >= 0 (1.0392ms)
+✔ TC-UT-17: synthetic n=300, maxUnits=2: units <= maxUnits, EVPI >= 0, VSS >= 0 (2.9137ms)
+✔ TC-UT-17: synthetic n=300, maxUnits=4: units <= maxUnits, EVPI >= 0, VSS >= 0 (1.2414ms)
+✔ TC-UT-17: synthetic n=300, maxUnits=6: units <= maxUnits, EVPI >= 0, VSS >= 0 (1.0074ms)
+﹣ TC-UT-09: accident MTTC keeps 30, 45, 60 and excludes -5 and 1500 -> 45.0 min (19422.0476ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+﹣ TC-UT-09: breakdown MTTC applies the same 0..1440 window -> 45.0 min (0.5917ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+✔ TC-UT-10: the response-time query reads breakdowns only; the accident query has no response field (0.6107ms)
+﹣ TC-UT-10: breakdowns responding in 10 and 14 min -> Avg Response Time 12.0 min (the accident's 20 min never enters) (0.2985ms) # database unreachable: ECONNRESET read ECONNRESET after 19 s
+ℹ tests 25
+ℹ suites 0
+ℹ pass 20
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 3
+ℹ todo 0
+ℹ duration_ms 21440.8741
+
+✖ failing tests:
+
+test at tests\unit\booth-staffing.test.ts:1:1548
+✖ TC-UT-06c (API): throughput 100 veh/h is rejected or clamped to 150 (6.183ms)
+  AssertionError [ERR_ASSERTION]: API accepted throughput=100 and the service plans with 100 veh/h/booth
+      at TestContext.<anonymous> (D:\SmartFlow\SmartFlow-NLEX\Back-End\tests\unit\booth-staffing.test.ts:55:10)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests\unit\clearance-protocol.test.ts:1:1167
+✖ TC-UT-16: four scenarios cut at the curve's own P50/P80/P95, probabilities 0.50/0.30/0.15/0.05 (sum 1.00) (4.0376ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+  +   0.6,
+  +   0.2,
+  +   0,
+  +   0.2
+  -   0.5,
+  -   0.3,
+  -   0.15,
+  -   0.05
+    ]
+  
+      at TestContext.<anonymous> (D:\SmartFlow\SmartFlow-NLEX\Back-End\tests\unit\clearance-protocol.test.ts:52:10)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 0.6, 0.2, 0, 0.2 ],
+    expected: [ 0.5, 0.3, 0.15, 0.05 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

@@ -186,7 +186,7 @@ export function secondStepProblem(error: unknown): string {
   const e = (error ?? {}) as { code?: string; status?: number; message?: string };
   switch (e.code) {
     case "mfa_verification_failed":
-      return "That code is not right. Enter the code your authenticator app is showing now.";
+      return "The code entered is incorrect. Please provide the code currently displayed in your authenticator app.";
     case "mfa_challenge_expired":
       return "That took too long. Enter the code your authenticator app is showing now.";
     case "over_request_rate_limit":
