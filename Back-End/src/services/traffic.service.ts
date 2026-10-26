@@ -114,11 +114,17 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
       hvw AS (
         SELECT hv.* FROM hv JOIN wx w ON w.d = hv.date AND w.h = hv.hour WHERE w.wet = $${W}
       )`;
+    // nb + sb + bothdir = the day, as on the Emissions tab: bothdir is the plazas the record does not split by
+    // direction (NLEX Harbor Link, Balagtas, Angeles, Mexico, Sta. Ines: direction NULL or 'NB/SB'). Without it the
+    // trend summed NB and SB only and ran ~23% under the Total Volume KPI, which counts every row (23 Oct 2026).
+    const NOT_SPLIT = `direction IS NULL OR direction NOT IN ('NB', 'SB')`;
     const NB_SB_HOURLY = `COALESCE(SUM(v) FILTER (WHERE direction = 'NB'), 0)::bigint AS nb,
-                          COALESCE(SUM(v) FILTER (WHERE direction = 'SB'), 0)::bigint AS sb`;
+                          COALESCE(SUM(v) FILTER (WHERE direction = 'SB'), 0)::bigint AS sb,
+                          COALESCE(SUM(v) FILTER (WHERE ${NOT_SPLIT}), 0)::bigint AS bothdir`;
 
     const NB_SB = `COALESCE(SUM(${DAY_TOTAL}) FILTER (WHERE direction = 'NB'), 0)::bigint AS nb,
-                   COALESCE(SUM(${DAY_TOTAL}) FILTER (WHERE direction = 'SB'), 0)::bigint AS sb`;
+                   COALESCE(SUM(${DAY_TOTAL}) FILTER (WHERE direction = 'SB'), 0)::bigint AS sb,
+                   COALESCE(SUM(${DAY_TOTAL}) FILTER (WHERE ${NOT_SPLIT}), 0)::bigint AS bothdir`;
 
     const [daily, hourly, byPlaza, hourDow, speedByHour, eventImpact, holidayImpact, holidayYearly, kpi, plazaList, plazaHour] =
       await Promise.all([
@@ -142,7 +148,8 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
             ? db.query(
                 `SELECT t.date::text AS d, u.hr - 1 AS hour,
                         COALESCE(SUM(u.v) FILTER (WHERE t.direction = 'NB'), 0)::bigint AS nb,
-                        COALESCE(SUM(u.v) FILTER (WHERE t.direction = 'SB'), 0)::bigint AS sb
+                        COALESCE(SUM(u.v) FILTER (WHERE t.direction = 'SB'), 0)::bigint AS sb,
+                        COALESCE(SUM(u.v) FILTER (WHERE t.direction IS NULL OR t.direction NOT IN ('NB', 'SB')), 0)::bigint AS bothdir
                  FROM nlex_traffic_volume t,
                       LATERAL unnest(${HOUR_ARRAY}) WITH ORDINALITY AS u(v, hr)
                  WHERE ${volumeWhere}
@@ -497,9 +504,9 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
         congestionIndex: kpi.rows[0].cur_jam,
         prevCongestionIndex: kpi.rows[0].prev_jam,
       },
-      dailyTrend: daily.rows.map((r) => ({ d: r.d, nb: Number(r.nb), sb: Number(r.sb) })),
+      dailyTrend: daily.rows.map((r) => ({ d: r.d, nb: Number(r.nb), sb: Number(r.sb), bothdir: Number(r.bothdir) })),
       hourlyTrend: hourly
-        ? hourly.rows.map((r) => ({ d: r.d, hour: Number(r.hour), nb: Number(r.nb), sb: Number(r.sb) }))
+        ? hourly.rows.map((r) => ({ d: r.d, hour: Number(r.hour), nb: Number(r.nb), sb: Number(r.sb), bothdir: Number(r.bothdir) }))
         : null,
       /* 19 plazas where trips PAID, plus SCTEX. SCTEX is an interchange, not an exit: its traffic is what goes
          through Mabiga, the toll plaza at Mabalacat that connects NLEX and SCTEX (the project owner's rule,
@@ -822,7 +829,9 @@ export async function getCongestionModel() {
       SELECT model_name, r2::float AS accuracy, accepted, rejected_reason, updated_at
       FROM gold.ml_model_metrics
       WHERE target = 'Congestion' AND rank IS NOT NULL
-      ORDER BY accepted DESC, r2 DESC NULLS LAST
+      -- Rank 1 is the model the map serves (the trainer's champion rule), which since 2026-10-25 need not be
+      -- the most accurate; the other readers of this table already order by rank.
+      ORDER BY accepted DESC, rank NULLS LAST, r2 DESC NULLS LAST
       LIMIT 1`);
     if (!rows[0]) return null;
     const base = await db.query(`
@@ -1271,6 +1280,18 @@ export type MLModelMetric = {
   rejected_reason: string | null;
   updatedAt: string | null;
 };
+
+/* The seasonal naive's own MASE on the scored days: the acceptance bar the trainer applies since 20 Oct 2026
+   (retrain_honest.py), and the one the label and narrative must use. The naive is not stored as a row, but the
+   trainer writes it into every rejection ("MASE 1.568 >= the seasonal naive's 1.555 on the same days"); null when
+   no model was rejected on MASE, and the dashboard then falls back to the plain MASE-below-1 reading. */
+export function naiveMaseFrom(rows: Pick<MLModelMetric, "rejected_reason">[] | null): number | null {
+  for (const r of rows ?? []) {
+    const m = r.rejected_reason?.match(/seasonal naive's (\d+(?:\.\d+)?)/);
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
 
 export async function getMLModelMetrics(split: SplitLabel = DEFAULT_SPLIT): Promise<MLModelMetric[] | null> {
   if (!db) return null;

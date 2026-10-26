@@ -32,6 +32,7 @@ export const ModelNarrativeSchema = z.object({
   windowStart: z.string().max(40).nullable().optional(),
   windowEnd: z.string().max(40).nullable().optional(),
   weatherMode: z.enum(["with", "without"]).nullable().optional(),
+  naiveMase: z.number().positive().nullable().optional(),
 });
 
 /**

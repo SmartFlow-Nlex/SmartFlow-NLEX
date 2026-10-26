@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
-import { TrafficQuerySchema, IncidentQuerySchema, ForecastQuerySchema, HourlyForecastQuerySchema, AnalyticsQuerySchema } from "../validators/traffic.validator.js";
-import { getTrafficVolumesFromDb, getDirectionalFlowFromDb, getVehicleClassDistributionFromDb, getTrafficAnalyticsFromDb, getMLPredictiveVolume, getMLPredictiveVolumeHourly, getMLPredictiveCongestion, getMLEventSurge, getUpcomingEventSurge, getMLModelMetrics, getWeatherEvidenceFromDb, getSplitSummary, getCongestionModel,
+import { TrafficQuerySchema, IncidentQuerySchema, ForecastQuerySchema, HourlyForecastQuerySchema, AnalyticsQuerySchema, Forecast48hQuerySchema } from "../validators/traffic.validator.js";
+import { getTrafficVolumesFromDb, getDirectionalFlowFromDb, getVehicleClassDistributionFromDb, getTrafficAnalyticsFromDb, getMLPredictiveVolume, getMLPredictiveVolumeHourly, getMLPredictiveCongestion, getMLEventSurge, getUpcomingEventSurge, getMLModelMetrics, naiveMaseFrom, getWeatherEvidenceFromDb, getSplitSummary, getCongestionModel,
   getHorizonAccuracy,
   getCongestionHorizonAccuracy,
   getCongestionEval,
@@ -13,6 +13,7 @@ import { getTrafficVolumesFromDb, getDirectionalFlowFromDb, getVehicleClassDistr
 import { z } from "zod";
 import { getTrafficPrescriptive } from "../services/traffic-prescriptive.service.js";
 import { cached } from "../utils/ttl-cache.js";
+import { getForecast48h } from "../services/forecast-48h.service.js";
 
 // GET /api/traffic/analytics — descriptive dashboard aggregates
 export const getTrafficAnalytics = async (req: Request, res: Response) => {
@@ -150,6 +151,8 @@ export const getForecast = async (req: Request, res: Response) => {
       eventSurgeMetrics: eventMetrics ?? [],
       eventSurgeEval: eventSurgeEval ?? null,
       modelMetrics: modelMetrics ?? [],
+      // The seasonal naive's MASE on the same scored days: the bar a model's MASE is judged against.
+      naiveMase: naiveMaseFrom(modelMetrics),
       volumes: volumes || [],
       congestion: congestion || [],
       events: events || [],
@@ -169,6 +172,17 @@ export const getForecastHourly = async (req: Request, res: Response) => {
     return res.status(404).json({ success: false, message: `No forecast found for ${query.date}` });
   }
 
+  res.json({ success: true, data });
+};
+
+// GET /api/traffic/forecast/48h — the latest issued 48-hour hourly forecast (forecast_48h.py), corridor or one plaza
+export const getForecast48hHandler = async (req: Request, res: Response) => {
+  const query = Forecast48hQuerySchema.parse(req.query);
+  // Short TTL: a new run lands only when forecast_48h.py writes, and a stale answer here would hide it.
+  const data = await cached(`forecast48h:${JSON.stringify(query)}`, 2 * 60_000, () => getForecast48h(query));
+  if (!data) {
+    return res.status(404).json({ success: false, message: "No 48-hour forecast has been issued yet" });
+  }
   res.json({ success: true, data });
 };
 

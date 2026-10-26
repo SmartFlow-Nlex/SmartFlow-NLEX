@@ -43,6 +43,9 @@ export type InsightRequest = {
   windowStart?: string | null;
   windowEnd?: string | null;
   weatherMode?: "with" | "without" | null;
+  /** The seasonal naive's own MASE on the scored days. When given, a model beats the benchmark by scoring
+      under it, not under 1 (the traffic trainer's acceptance rule since 20 Oct 2026). */
+  naiveMase?: number | null;
 };
 
 export type Insight = {
@@ -125,6 +128,12 @@ function buildUserMessage(req: InsightRequest): string {
     );
   }
 
+  if (req.naiveMase != null && Number.isFinite(req.naiveMase)) {
+    lines.push(
+      `BENCHMARK: simply repeating last week scored MASE ${req.naiveMase.toFixed(3)} on these same days, so a model beats it by scoring below that, not below 1. A MASE above 1 here means the scored days were harder than the training years, not that the model failed.`,
+    );
+  }
+
   lines.push("", "MODEL METRICS");
   for (const m of req.metrics) {
     const parts: string[] = [];
@@ -141,11 +150,15 @@ function buildUserMessage(req: InsightRequest): string {
     // asked to read MASE itself, glm-4.5-flash inverted the comparison and told
     // the reader a model had failed when it had passed. It is a fixed threshold
     // on a number already in hand, so there is no reason to delegate it.
+    // The bar is the naive's own MASE on these days when the module supplies it: on 2026 traffic the scored
+    // days were rougher than the training years, the naive itself scored 1.555, and "MASE < 1" told readers
+    // that Prophet (1.203, 23% less error than the naive) failed.
+    const bar = req.naiveMase != null && Number.isFinite(req.naiveMase) ? req.naiveMase : 1;
     if (m.mase != null && Number.isFinite(m.mase)) {
       parts.push(
-        m.mase < 0.995
+        m.mase < bar * 0.995
           ? "BEATS-BENCHMARK"
-          : m.mase > 1.005
+          : m.mase > bar * 1.005
             ? "FAILS-BENCHMARK"
             : "LEVEL-WITH-BENCHMARK",
       );

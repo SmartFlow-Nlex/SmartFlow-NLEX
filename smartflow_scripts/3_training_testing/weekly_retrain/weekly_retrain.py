@@ -99,7 +99,9 @@ INPUTS = {
     "motorcycle_crashes": ("public.nlex_motorcycle_crashes", "date", None),
     "stalled": ("public.nlex_stalled_vehicles", "date", None),
     "traffic_wide": ("bronze.nlex_traffic_volume", "date_day", "total_volume"),
+    "waze_jams": ("silver.fact_waze_jams", "date_day", "speed_kmh"),
 }
+CONGESTION = ROOT.parent / "All_Scripts" / "Predictive_Modeling"
 
 VOLUME_PREDS = ("pred_lstm, pred_prophet, pred_xgboost, pred_holtwinters, pred_sarimax, "
                 "pred_holts_linear, pred_prophet_nw, pred_sarimax_nw, pred_lstm_nw")
@@ -157,6 +159,47 @@ GROUPS = [
              "SELECT NOT EXISTS (SELECT 1 FROM gold.ml_predictive_volume v, "
              "(SELECT avg(actual_volume) a FROM gold.ml_predictive_volume WHERE actual_volume IS NOT NULL) m "
              f"WHERE v.is_future AND (GREATEST({VOLUME_PREDS}) > 3 * m.a OR LEAST({VOLUME_PREDS}) < m.a / 3))"),
+        ],
+    ),
+    Group(
+        # The adviser's 48-hour hourly forecast (traffic_hourly_48h/, since 2026-10-24). It writes nothing to
+        # gold.model_evaluation (a shared view other pages rank models from), so Gate 5 reads its own run table:
+        # the run records the 2025 backtest of the model it serves, beside the previous method's on the same hours.
+        "volume_48h", "48-hour hourly traffic forecast",
+        inputs=["traffic_hourly", "weather"],
+        steps=[Step(TT / "traffic_hourly_48h", ["build_dataset.py"]),
+               Step(TT / "traffic_hourly_48h", ["train_backtest.py", "--models", "selected"]),
+               Step(TT / "traffic_hourly_48h", ["evaluate.py"]),
+               Step(TT / "traffic_hourly_48h", ["train_production.py"]),
+               Step(TT / "traffic_hourly_48h", ["forecast_48h.py", "--write-db"])],
+        tables=[("gold.ml_forecast_48h_runs", None), ("gold.ml_forecast_hourly_48h", None)],
+        evaluation="FALSE",
+        needs=["tensorflow", "xgboost"],
+        checks=[
+            ("48 forecast hours for every series and the corridor",
+             "SELECT bool_and(n = 48) FROM (SELECT series_key, count(*) n FROM gold.ml_forecast_hourly_48h "
+             "WHERE run_id = (SELECT max(run_id) FROM gold.ml_forecast_48h_runs) GROUP BY series_key) x"),
+            ("no negative forecast",
+             "SELECT NOT EXISTS (SELECT 1 FROM gold.ml_forecast_hourly_48h WHERE LEAST(class_1, class_2, class_3) < 0)"),
+            ("the forecast starts the hour after the latest upload",
+             "SELECT origin_ts = (SELECT max(date) + 1 FROM gold.fact_traffic_hourly WHERE status = 'nlex')::timestamp "
+             "FROM gold.ml_forecast_48h_runs ORDER BY run_id DESC LIMIT 1"),
+            ("the corridor row is the sum of the plaza series",
+             "SELECT bool_and(abs(c.total - s.total) <= 1 + 1e-4 * c.total) FROM "
+             "(SELECT forecast_ts, total FROM gold.ml_forecast_hourly_48h WHERE series_key = 'corridor' "
+             " AND run_id = (SELECT max(run_id) FROM gold.ml_forecast_48h_runs)) c JOIN "
+             "(SELECT forecast_ts, sum(total) total FROM gold.ml_forecast_hourly_48h WHERE series_key <> 'corridor' "
+             " AND run_id = (SELECT max(run_id) FROM gold.ml_forecast_48h_runs) GROUP BY 1) s USING (forecast_ts)"),
+            ("the served model beats the previous method on the 2025 backtest",
+             "SELECT model = 'profile' OR (info->'backtest'->'series'->'all'->>'WAPE')::float "
+             "< (info->'current_method_backtest'->'series'->>'WAPE')::float "
+             "FROM gold.ml_forecast_48h_runs ORDER BY run_id DESC LIMIT 1"),
+            ("backtest WAPE not more than 25% above the previous run's",
+             "SELECT coalesce(bool_and(a.w <= 1.25 * b.w), true) FROM "
+             "(SELECT (info->'backtest'->'series'->'all'->>'WAPE')::float w FROM gold.ml_forecast_48h_runs "
+             " ORDER BY run_id DESC LIMIT 1) a, "
+             "(SELECT (info->'backtest'->'series'->'all'->>'WAPE')::float w FROM gold.ml_forecast_48h_runs "
+             " ORDER BY run_id DESC OFFSET 1 LIMIT 1) b"),
         ],
     ),
     Group(
@@ -257,6 +300,31 @@ GROUPS = [
                 ("gold.ml_weather_speed_metadata", None)],
         evaluation="source = 'gold.ml_weather_speed_metadata'",
         needs=["sklearn", "statsmodels", "torch", "xgboost"],
+    ),
+    Group(
+        # The congestion map's recurrent models (adviser's dual-path family, since 2026-10-25). The hourly refresh
+        # only LOADS them from dualpath_models/; this refits them on the newest live weeks and publishes once.
+        # Last in the batch: it reads only the live Waze feed, and the hourly refresh steps aside while it runs.
+        "congestion", "Congestion forecast (dual-path LSTM family)",
+        inputs=["waze_jams"],
+        steps=[Step(CONGESTION, ["train_congestion_horizon.py", "--fast", "--dualpath-train"])],
+        tables=[("gold.ml_congestion_forecast", None), ("gold.ml_predictive_congestion", None),
+                ("gold.ml_model_metrics", "target = 'Congestion'"), ("gold.ml_congestion_horizon_accuracy", None),
+                ("gold.ml_congestion_eval", None)],
+        evaluation="FALSE",
+        needs=["tensorflow", "xgboost", "sklearn"],
+        checks=[
+            ("all 168 hours ahead for every exit",
+             "SELECT bool_and(n = 168) FROM (SELECT segment_name, count(DISTINCT hours_ahead) n "
+             "FROM gold.ml_congestion_forecast GROUP BY 1) x"),
+            ("states are Low, Med or High only",
+             "SELECT NOT EXISTS (SELECT 1 FROM gold.ml_congestion_forecast WHERE congestion_state NOT IN ('Low','Med','High'))"),
+            ("the served model is accepted (beats the exit-hour profile)",
+             "SELECT accepted FROM gold.ml_model_metrics WHERE target = 'Congestion' AND rank = 1"),
+            ("the dual-path family was refitted in this run",
+             "SELECT (payload->'dualpath'->>'trained_at')::timestamp > now() - interval '12 hours' "
+             "FROM gold.ml_congestion_eval WHERE id = 1"),
+        ],
     ),
 ]
 BY_KEY = {g.key: g for g in GROUPS}
@@ -827,9 +895,28 @@ def batch(args, log_path: Path) -> int:
             run_id = cur.fetchone()[0]
             fp = {k: fingerprint(cur, k) for k in INPUTS}
             marks = load_watermarks(cur)
+            # Interrupted runs never reach their own summary entry, so the Audit Log page showed nothing for them
+            # (5 of the first 11 batches). Each one is recorded here, once: any interrupted run with no
+            # model.weekly_batch entry yet, including those from before this was added.
+            unlogged = []
+            if exists(cur, "audit_logs"):
+                cur.execute("""SELECT r.id, r.trigger, r.started_at, r.finished_at, r.groups FROM gold.ml_batch_runs r
+                               WHERE r.status = 'interrupted' AND NOT EXISTS (
+                                 SELECT 1 FROM audit_logs a WHERE a.action = 'model.weekly_batch'
+                                   AND a.entity_type = 'batch' AND a.entity_id = r.id::text)
+                               ORDER BY r.id""")
+                unlogged = cur.fetchall()
     finally:
         conn.close()
     say(f"weekly retrain #{run_id} ({trigger})  log: {log_path}")
+    for sid, strig, started, marked, groups in unlogged:
+        done = {g.get("key"): g.get("status") for g in groups or [] if g.get("key")}
+        audit_entry(sid, "model.weekly_batch", "interrupted", "batch", str(sid), to_status="interrupted",
+                    details={"trigger": strig, "started_at": started, "found_interrupted_at": marked,
+                             "recorded_by_run": run_id, "groups": done,
+                             "reason": "stopped before it finished (the PC was shut down or the process was killed); "
+                                       "groups it left half-written were restored from their backups"})
+        say(f"  recorded interrupted batch #{sid} (started {started}) in the audit log")
 
     # A group the dead run left half-written goes back to its backup first. Its
     # backup was taken when that run started on it, so it is the last good version.

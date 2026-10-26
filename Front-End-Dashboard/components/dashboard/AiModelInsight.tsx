@@ -60,6 +60,8 @@ type Props = {
   windowStart?: string | null;
   windowEnd?: string | null;
   weatherMode?: "with" | "without" | null;
+  /** The seasonal naive's own MASE on the scored days, when the module reports it (traffic). */
+  naiveMase?: number | null;
   labelFor?: (modelName: string) => string;
   /** Override the endpoint and payload, for a module whose metrics are not
       errors — the congestion classifier is scored by accuracy against a
@@ -114,6 +116,7 @@ export default function AiModelInsight(props: Props) {
               windowStart: p.windowStart ?? null,
               windowEnd: p.windowEnd ?? null,
               weatherMode: p.weatherMode ?? null,
+              naiveMase: p.naiveMase ?? null,
             },
       ),
     })

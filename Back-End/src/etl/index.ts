@@ -336,19 +336,20 @@ async function runTirPipeline(filePath: string, originalFilename: string, gates:
   const classification: ClassifyResult = {
     type: "toll_hourly",
     confidence: 1,
-    reason: "Detected NLEX's hourly toll export (TrxDate, Trx_Hour, Entry_Plaza, Exit_Plaza, Bound, Class, Trx_Count): one row per entry plaza, exit plaza, hour and class, plaza codes named from the earlier files.",
+    reason: "Detected NLEX's hourly toll export (TrxDate, Trx_Hour, Entry_Plaza, Exit_Plaza, Bound, Class, Trx_Count): one row per entry plaza, exit plaza, hour and class, plaza codes named from the earlier files and the client's plaza reference (23 Oct 2026).",
   };
   gates.push({ gate: "Gate 2 — Field Completeness & Data Type Conformity", passed: true, details: classification.reason });
 
   const rules: string[] = [];
   if (stats.class0) rules.push(`${rows(stats.class0)} of Class 0 (${n(stats.trips.class0)} trips) disregarded, as the client advised`);
-  if (stats.entryZero) rules.push(`${rows(stats.entryZero)} with entry plaza 0 (${n(stats.trips.entryZero)} trips) dropped: "no transactions for that pair, not valid or not possible" (client)`);
-  if (stats.uturns) rules.push(`${rows(stats.uturns)} with the same entry and exit at a plaza that is not an open-system barrier (${n(stats.trips.uturns)} trips) dropped: U-turns and cross-reads (client)`);
+  if (stats.entryZero) rules.push(`${rows(stats.entryZero)} with entry plaza 0 (${n(stats.trips.entryZero)} trips) kept: no entry recorded, usually an RFID read at a barrier (client, 23 Oct 2026)`);
+  if (stats.samePlaza) rules.push(`${rows(stats.samePlaza)} with the same entry and exit plaza (${n(stats.trips.samePlaza)} trips) kept: valid trips, cash or RFID (client, 23 Oct 2026)`);
+  if (stats.otherExpressway) rules.push(`${rows(stats.otherExpressway)} paid at SCTEX, SFEX or NLEX Connector plazas (${n(stats.trips.otherExpressway)} trips) held back: not NLEX exit transactions (client's plaza reference)`);
   if (stats.badClass) rules.push(`${rows(stats.badClass)} with no readable class rejected`);
   if (stats.spill) rules.push(`${rows(stats.spill)} dated in ${stats.spillYears.join(", ")} held back: this file is ${stats.year}, and a few stray rows would replace those days' whole record`);
   if (stats.adjusted) {
     const a = stats.adjusted;
-    rules.push(`LEVEL ADJUSTED, pending the client's confirmation: ${n(a.rows)} rows paid at exits listed in gold.toll_level_adjustment for ${stats.year} were scaled by ${a.minFactor.toFixed(3)}-${a.maxFactor.toFixed(3)} (${n(Math.round(a.before))} trips as delivered, ${n(Math.round(a.after))} loaded). Delete those rows and load the file again to have it exactly as delivered`);
+    rules.push(`LEVEL ADJUSTED (the client cannot re-extract 2022-2024, 23 Oct 2026; the year is set to the level of his own daily files): ${n(a.rows)} rows paid at exits listed in gold.toll_level_adjustment for ${stats.year} were scaled by ${a.minFactor.toFixed(3)}-${a.maxFactor.toFixed(3)} (${n(Math.round(a.before))} trips as delivered, ${n(Math.round(a.after))} loaded). Delete those rows and load the file again to have it exactly as delivered`);
   }
   // NLEX's export holds every trip of every day it covers: it replaces those days whole.
   return finishTollHourly(agg, originalFilename, "csv", "file_upload", classification, gates, start, opts, stats.lines, rules, true);

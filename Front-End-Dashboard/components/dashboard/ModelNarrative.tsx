@@ -130,6 +130,7 @@ export default function ModelNarrative({
   vocab = VOLUME_VOCAB,
   quantityNote,
   quantity = "volume",
+  naiveMase = null,
 }: {
   selected: NarrativeModelKey[];
   metrics: MetricRow[];
@@ -140,6 +141,8 @@ export default function ModelNarrative({
   quantityNote?: string;
   /** Which quantity is being forecast — steers the AI summary's framing. */
   quantity?: "volume" | "incidents" | "emissions";
+  /** The seasonal naive's own MASE on the scored days; the bar a model's MASE is judged against when known. */
+  naiveMase?: number | null;
   scoredDays: number | null;
   windowStart: string | null;
   windowEnd: string | null;
@@ -230,6 +233,7 @@ export default function ModelNarrative({
         windowStart={windowStart}
         windowEnd={windowEnd}
         weatherMode={showWeather === undefined ? null : showWeather ? "with" : "without"}
+        naiveMase={naiveMase}
         labelFor={(name) => {
           const key = Object.keys(DBN).find((k) => DBN[k] === name);
           return key ? LBL[key] ?? name : name;

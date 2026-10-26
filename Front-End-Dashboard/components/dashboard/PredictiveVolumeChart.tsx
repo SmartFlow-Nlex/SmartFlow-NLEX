@@ -213,6 +213,14 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   // Raw metric rows, kept unmodified so the narrative can read fields the
   // metrics TABLE does not display (rejected_reason, aic/bic, the _nw twins).
   const [rawMetrics, setRawMetrics] = useState<MetricRow[]>([]);
+  /* The bar a MASE is judged against: repeating last week scored on the SAME days (the trainer's acceptance
+     rule since 20 Oct 2026). On the 2026 test days the naive itself scored 1.555, so "below 1" called Prophet
+     (1.203, 23% less error than the naive) a failure. 1.0 when the API does not report it. */
+  const [naiveMase, setNaiveMase] = useState<number | null>(null);
+  const maseBar = naiveMase ?? 1;
+  const maseVsNaive = naiveMase != null
+    ? `Repeating last week scored MASE ${naiveMase.toFixed(3)} on these same days; a lower MASE beats it.`
+    : "MASE below 1.0 beats repeating last week.";
   // Error as a function of how far ahead a day is. Served from
   // gold.ml_horizon_accuracy, measured by a rolling-origin run at h=90 — NOT
   // extrapolated from the h=14 headline figure.
@@ -372,6 +380,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
 
         const metricsData = json.data.modelMetrics ?? json.data.metrics;
         if (metricsData) setRawMetrics(metricsData as MetricRow[]);
+        setNaiveMase(typeof json.data.naiveMase === "number" ? json.data.naiveMase : null);
         if (Array.isArray(json.data.horizonAccuracy)) {
           setHorizonAcc(json.data.horizonAccuracy as HorizonBucket[]);
         }
@@ -481,7 +490,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
     <div className="nct-ev-section">
       <div className="nct-ev-section-head">
         <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.2} />} tint="var(--page-accent)" title="Held-out accuracy">
-          <InfoTooltip text="Scored on the Present zone: real daily counts the model never trained on. WMAPE is the headline error; MASE below 1 beats repeating last week's pattern. Show more adds the secondary error measures." />
+          <InfoTooltip text={`Scored on the Present zone: real daily counts the model never trained on. WMAPE is the headline error. ${maseVsNaive} Show more adds the secondary error measures.`} />
         </EvidenceHeading>
         <button type="button" className="nct-link-btn" onClick={() => setShowAllMetrics(!showAllMetrics)}>
           {showAllMetrics ? "Hide secondary metrics" : "Show secondary metrics"}
@@ -493,7 +502,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             <tr>
               <th className="nct-sticky">Model</th>
               <th className="num">WMAPE</th>
-              <th className="num" title="Error relative to repeating last week. Below 1.0 beats it.">MASE</th>
+              <th className="num" title={`Error relative to repeating last week. ${maseVsNaive}`}>MASE</th>
               <th className="num">MAE (veh)</th>
               <th className="num">RMSE (veh)</th>
               <th className="num">R²</th>
@@ -525,7 +534,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                   </span>
                 </td>
                 <td className="num strong">{m.wmape}</td>
-                <td className={`num strong ${m.mase && m.mase !== "—" ? (parseFloat(m.mase) < 1 ? "nct-ok" : "nct-bad") : ""}`}>
+                <td className={`num strong ${m.mase && m.mase !== "—" ? (parseFloat(m.mase) < maseBar ? "nct-ok" : "nct-bad") : ""}`}>
                   {m.mase ?? "—"}
                 </td>
                 <td className="num">{m.mae}</td>
@@ -1558,12 +1567,12 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               {scoredDays.toLocaleString()} unseen days · {testFrom} to {testTo}
             </span>
           )}
-          <span className="nct-trust-pill" title="MASE below 1.0 beats repeating last week.">
+          <span className="nct-trust-pill" title={maseVsNaive}>
             <span className="nct-trust-k">Accuracy</span>
             {primaryMeta.label} · WMAPE {primaryMeta.wmape} · MASE {primaryMeta.mase ?? "—"}
             {maseNum != null && (
-              <span className={maseNum < 1 ? "nct-ok" : "nct-bad"}>
-                {maseNum < 1 ? " · beats repeating last week" : " · no better than repeating last week"}
+              <span className={maseNum < maseBar ? "nct-ok" : "nct-bad"}>
+                {maseNum < maseBar ? " · beats repeating last week" : " · no better than repeating last week"}
               </span>
             )}
           </span>
@@ -1594,6 +1603,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         windowStart={chartData ? chartData.isoDates[chartData.holdoutStart] ?? null : null}
         windowEnd={chartData ? chartData.isoDates[chartData.futureStart - 1] ?? null : null}
         horizonDays={VALIDATED_HORIZON}
+        naiveMase={naiveMase}
       />
     </article>
   );

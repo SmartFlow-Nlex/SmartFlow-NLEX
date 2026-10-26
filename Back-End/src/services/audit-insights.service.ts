@@ -9,7 +9,11 @@
  *                that are late to start or running past their planned end
  *   uploads      loads, failures, undos and checks, how long a load takes, and
  *                the loads still waiting for the weekly retrain
- *   models       the weekly retrain's latest result per model group
+ *   models       the weekly retrain's latest result per model group, and the hourly congestion refresh
+ *                (model.live_refresh): how many of the last 24 hours it ran and how the latest run scored
+ *
+ * Page views and the hourly refresh are routine: they are counted on their own and left out of
+ * "actions", the daily activity and the module totals, which they would otherwise swamp.
  *
  * Entries written before the structured columns were filled have no module;
  * it is read from the action's prefix instead ("maintenance.x" -> maintenance).
@@ -22,6 +26,7 @@ const MODULE = `COALESCE(module, CASE split_part(action, '.', 1)
   WHEN 'upload' THEN 'data_management' WHEN 'mobile_config' THEN 'mobile_app' ELSE split_part(action, '.', 1) END)`;
 const IN_WINDOW = `"timestamp" >= now() - make_interval(days => $1)`;
 const UNIDENTIFIED = `(user_id IN ('dashboard', 'anonymous') OR user_id LIKE 'system:%')`;
+const ROUTINE = `action IN ('page.viewed', 'model.live_refresh')`;
 
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
@@ -35,18 +40,18 @@ export async function getAuditInsights(days: number) {
   const q = (sql: string, params: unknown[] = [days]) => db!.query(sql, params).then((r) => r.rows);
   const [hasBatches, hasMaintenance] = await Promise.all([exists("gold.ml_batch_runs"), exists("nlex_maintenance_schedules")]);
 
-  const [totals, daily, modules, pages, users, uploadsAudit, uploadsTable, dwell, turnaround, openItems, models, lastBatch] = await Promise.all([
-    q(`SELECT count(*) FILTER (WHERE action <> 'page.viewed')::int AS actions,
+  const [totals, daily, modules, pages, users, uploadsAudit, uploadsTable, dwell, turnaround, openItems, models, lastBatch, hourly] = await Promise.all([
+    q(`SELECT count(*) FILTER (WHERE NOT ${ROUTINE})::int AS actions,
               count(*) FILTER (WHERE action = 'page.viewed')::int AS views,
               count(DISTINCT user_id) FILTER (WHERE NOT ${UNIDENTIFIED})::int AS users,
               count(*) FILTER (WHERE action <> 'page.viewed' AND user_id IN ('dashboard', 'anonymous'))::int AS unidentified
          FROM audit_logs WHERE ${IN_WINDOW}`),
     q(`SELECT ("timestamp" AT TIME ZONE 'Asia/Manila')::date::text AS day,
-              count(*) FILTER (WHERE action <> 'page.viewed')::int AS actions,
+              count(*) FILTER (WHERE NOT ${ROUTINE})::int AS actions,
               count(*) FILTER (WHERE action = 'page.viewed')::int AS views
          FROM audit_logs WHERE ${IN_WINDOW} GROUP BY 1 ORDER BY 1`),
     q(`SELECT ${MODULE} AS module, count(*)::int AS actions
-         FROM audit_logs WHERE ${IN_WINDOW} AND action <> 'page.viewed' GROUP BY 1 ORDER BY 2 DESC`),
+         FROM audit_logs WHERE ${IN_WINDOW} AND NOT ${ROUTINE} GROUP BY 1 ORDER BY 2 DESC`),
     q(`SELECT COALESCE(entity_id, target_resource) AS path, count(*)::int AS views, count(DISTINCT user_id)::int AS users
          FROM audit_logs WHERE ${IN_WINDOW} AND action = 'page.viewed' GROUP BY 1 ORDER BY 2 DESC LIMIT 8`),
     q(`SELECT user_id AS "user", max(actor_role) AS role, count(*)::int AS actions, max("timestamp") AS last
@@ -91,6 +96,15 @@ export async function getAuditInsights(days: number) {
     hasBatches
       ? q(`SELECT id, started_at, finished_at, trigger, status, summary FROM gold.ml_batch_runs ORDER BY id DESC LIMIT 1`, [])
       : Promise.resolve([]),
+    // The hourly congestion refresh over the last 24 hours: distinct clock hours with a published run, failures,
+    // and the newest entry. A run that never started leaves no entry, so a missing hour shows as a gap here.
+    q(`WITH h AS (SELECT * FROM audit_logs WHERE action = 'model.live_refresh' AND "timestamp" >= now() - interval '24 hours')
+       SELECT count(DISTINCT date_trunc('hour', "timestamp")) FILTER (WHERE outcome = 'published')::int AS hours_published,
+              count(*) FILTER (WHERE outcome = 'failed')::int AS failed,
+              (SELECT row_to_json(x) FROM (SELECT "timestamp" AS at, outcome, to_status AS model,
+                      details->>'accuracy' AS accuracy, details->>'reason' AS reason, details->>'host' AS host
+                 FROM audit_logs WHERE action = 'model.live_refresh' ORDER BY "timestamp" DESC LIMIT 1) x) AS last
+         FROM h`, []),
   ]);
 
   // Loads the models have not seen yet: since the last batch that finished, or, before the first
@@ -129,6 +143,14 @@ export async function getAuditInsights(days: number) {
       lateToStart: open.filter((o) => o.flag === "late to start").length,
       items: openItems.slice(0, 6),
     },
-    models: { groups: models, lastBatch: lastBatch[0] ?? null },
+    models: {
+      groups: models,
+      lastBatch: lastBatch[0] ?? null,
+      hourly: {
+        hoursPublished: hourly[0]?.hours_published ?? 0,
+        failed: hourly[0]?.failed ?? 0,
+        last: hourly[0]?.last ?? null,
+      },
+    },
   };
 }

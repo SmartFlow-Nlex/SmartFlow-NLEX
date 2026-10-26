@@ -61,6 +61,12 @@ type Insights = {
   models: {
     groups: { group: string; title: string | null; outcome: string; at: string }[];
     lastBatch: { id: number; started_at: string; status: string; summary: string | null } | null;
+    /** The hourly congestion refresh's own audit entries (model.live_refresh), last 24 hours. */
+    hourly?: {
+      hoursPublished: number;
+      failed: number;
+      last: { at: string; outcome: string; model: string | null; accuracy: string | null; reason: string | null; host: string | null } | null;
+    };
   };
 };
 
@@ -251,12 +257,23 @@ function InsightsSection({ data, hourly }: { data: Insights; hourly: HourlyModel
         ) : (
           <p className="audit-line audit-muted">No weekly batch has run yet.</p>
         )}
-        {hourly?.trainedAt && (
+        {data.models.hourly?.last ? (
+          /* From the refresh's own audit entries: how many of the last 24 clock hours have a published
+             run, and the newest entry. A refresh that never started leaves no entry, so it shows as a gap. */
+          <p className={`audit-line${data.models.hourly.hoursPublished < 20 || data.models.hourly.failed > 0 ? " audit-warn" : ""}`}>
+            Hourly congestion refresh: <b>{data.models.hourly.hoursPublished} of the last 24 hours</b> trained, tested and published
+            {data.models.hourly.failed > 0 && <> · {data.models.hourly.failed} failed</>}
+            {" "}· last {when(data.models.hourly.last.at)}: {data.models.hourly.last.outcome}
+            {data.models.hourly.last.model && <>, {data.models.hourly.last.model}</>}
+            {data.models.hourly.last.accuracy && <> {(Number(data.models.hourly.last.accuracy) * 100).toFixed(1)}%</>}
+          </p>
+        ) : hourly?.trainedAt ? (
           <p className="audit-line">
             Hourly traffic model: <b>{hourly.name ?? "model"}</b> trained {when(hourly.trainedAt)}
             {hourly.maxHorizon != null && <>, forecasting {hourly.maxHorizon} h ahead</>}
+            <span className="audit-muted"> (its runs are not in the audit log yet)</span>
           </p>
-        )}
+        ) : null}
         {data.models.groups.slice(0, 4).map((g) => (
           <p key={g.group} className="audit-line audit-muted">{g.title ?? g.group}: {g.outcome}, {when(g.at)}</p>
         ))}
@@ -284,6 +301,8 @@ export default function AuditLogPage() {
   const [selectedDateRange, setSelectedDateRange] = useState("All Time");
 
   const [auditLogs, setAuditLogs] = useState<LogRow[]>([]);
+  // The hourly congestion refresh writes 24 entries a day; like page views they stay out of the list unless asked for.
+  const [showHourly, setShowHourly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -292,14 +311,15 @@ export default function AuditLogPage() {
   const [insightsError, setInsightsError] = useState<string | null>(null);
 
   useEffect(() => {
-    cachedJson<{ success: boolean; message?: string; data: RawLog[] }>(`${BACKEND}/api/audit-log/list?limit=500`, 15_000)
+    cachedJson<{ success: boolean; message?: string; data: RawLog[] }>(
+      `${BACKEND}/api/audit-log/list?limit=500${showHourly ? "&include_hourly=1" : ""}`, 15_000)
       .then((json) => {
         if (!json.success) throw new Error(json.message ?? "Request failed");
         setAuditLogs(json.data.map(mapLog));
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"))
       .finally(() => setLoading(false));
-  }, []);
+  }, [showHourly]);
 
   useEffect(() => {
     setInsightsError(null);
@@ -311,8 +331,8 @@ export default function AuditLogPage() {
       .catch((e) => setInsightsError(e instanceof Error ? e.message : "Failed to load"));
   }, [days]);
 
-  // The hourly traffic (congestion) training is not in the audit tables; its latest run rides on the
-  // forecast the Live Map reads. Shown in the retraining card; left out quietly if it cannot be read.
+  // Fallback for the retraining card until the hourly refresh writes its own audit entries (a trainer older
+  // than 2026-10-25 does not): its latest run, as it rides on the forecast the Live Map reads.
   const [hourly, setHourly] = useState<HourlyModel | null>(null);
   useEffect(() => {
     cachedJson<{ model?: HourlyModel | null }>(`${BACKEND}/api/map-comparison/forecast?hours=1`, 60_000)
@@ -465,6 +485,10 @@ export default function AuditLogPage() {
             <option value="Last 30 Days">Last 30 Days</option>
           </select>
 
+          <label className="audit-toggle" style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+            <input type="checkbox" checked={showHourly} onChange={(e) => setShowHourly(e.target.checked)} />
+            Show hourly model refreshes
+          </label>
           <button className="nc-pill audit-export" onClick={exportJSON}>Export JSON</button>
           <button
             className="btn-danger"
@@ -473,6 +497,7 @@ export default function AuditLogPage() {
               setSelectedCategory("All");
               setSelectedSeverity("All");
               setSelectedDateRange("All Time");
+              setShowHourly(false);
             }}
           >
             Clear

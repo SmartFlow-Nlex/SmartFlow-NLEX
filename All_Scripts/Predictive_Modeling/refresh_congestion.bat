@@ -32,7 +32,10 @@ REM Prefer the versioned alias the user's shell actually runs; fall back to
 REM whatever "python" resolves to if that ever moves.
 set "PY=%LOCALAPPDATA%\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\python.exe"
 if not exist "%PY%" set "PY=python"
-"%PY%" -u train_congestion_horizon.py --fast >> "%LOG%" 2>&1
+REM --no-qrf: the random forest is ~8 of the 14 minutes and is rejected on every run (full runs keep it).
+REM --skip-if-batch-running: step aside while the Sunday batch trains here (memory); logged as "skipped".
+REM The dual-path LSTM family is LOADED from dualpath_models\ (fitted weekly by the Sunday batch), not trained here.
+"%PY%" -u train_congestion_horizon.py --fast --no-qrf --skip-if-batch-running >> "%LOG%" 2>&1
 set "RC=%ERRORLEVEL%"
 
 echo Run finished %DATE% %TIME% with exit code %RC% >> "%LOG%"

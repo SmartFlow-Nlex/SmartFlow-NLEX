@@ -66,6 +66,17 @@ FAST = "--fast" in sys.argv
 # every horizon (four years x every horizon is tens of millions of rows); the
 # live weeks keep every horizon, and every horizon is still predicted.
 WITH_HISTORY = "--with-history" in sys.argv
+# --dualpath-train: also fit the adviser's dual-path LSTM family (congestion_dualpath.py) and save it to
+# dualpath_models/. Slow (an hour or more on a laptop CPU), so it belongs to the weekly batch; every other run only
+# LOADS the saved models and scores them on this run's test rows beside XGBoost, so the hourly refresh stays fast.
+DUALPATH_TRAIN = "--dualpath-train" in sys.argv
+DUALPATH_KINDS = ("LSTM (1 layer)", "Stacked LSTM", "Dual-Path LSTM", "Dual-Path LSTM + XGBoost")
+# --no-qrf: leave the random forest out. It is about 8 of the run's 14 minutes and has been rejected on every
+# run (53% against the 58% exit-hour profile), so the hourly refresh skips it; full runs keep it.
+NO_QRF = "--no-qrf" in sys.argv
+# --skip-if-batch-running: step aside while the Sunday batch (weekly_retrain.py) is training on this machine,
+# rather than compete with it for memory; the map keeps the previous forecast and the next hour runs as usual.
+SKIP_IF_BATCH = "--skip-if-batch-running" in sys.argv
 
 import numpy as np
 import pandas as pd
@@ -89,6 +100,46 @@ for _line in (Path(__file__).resolve().parents[2] / "Back-End" / ".env").read_te
         _env[_k.strip()] = _v.strip().strip('"')
 PG = (f"host={_env['PG_HOST']} port={_env.get('PG_PORT', 5432)} dbname={_env['PG_DATABASE']} "
       f"user={_env['PG_USER']} password={_env['PG_PASSWORD']} sslmode=require")
+def _audit_refresh(outcome, to_status=None, details=None, from_status=None):
+    """One audit_logs entry per published (or failed) run, so the Audit Log shows that the hourly
+    train-and-test happened and how it scored; before 2026-10-25 nothing recorded it and each run
+    overwrote the last. Own connection, never stops the run, and nothing for a --dry-run (it writes
+    nothing, so there is nothing to audit)."""
+    if DRY_RUN:
+        return
+    c_ = None
+    try:
+        c_ = psycopg2.connect(PG)
+        with c_, c_.cursor() as k_:
+            k_.execute("SELECT to_regclass('public.audit_logs') IS NOT NULL")
+            if not k_.fetchone()[0]:
+                return
+            k_.execute(
+                "INSERT INTO audit_logs (user_id, action, target_resource, details, module, entity_type, entity_id, "
+                "from_status, to_status, outcome, duration_ms, actor_role, request_id) "
+                "VALUES ('system:congestion-refresh', 'model.live_refresh', 'live_refresh:congestion', %s::jsonb, "
+                "'model_training', 'live_refresh', 'congestion', %s, %s, %s, %s, 'system', %s)",
+                (json.dumps(details or {}, default=str), from_status, to_status, outcome,
+                 int((_time_mod.monotonic() - _RUN_T0) * 1000),
+                 f"congestion-refresh-{pd.Timestamp.now():%Y%m%d%H%M}"))
+    except Exception as e_:                       # the audit log records the run; it is not part of it
+        print(f"  (audit log entry not written: {str(e_).splitlines()[0][:120]})")
+    finally:
+        if c_ is not None:
+            c_.close()
+
+
+def _audit_failure_hook(exc_type, exc, tb):
+    _audit_refresh("failed", details={
+        "title": "Congestion forecast (hourly, live feed)",
+        "reason": f"{exc_type.__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''} (during {_STEP_T0[0] or 'start-up'})",
+        "host": __import__("socket").gethostname()})
+    sys.__excepthook__(exc_type, exc, tb)
+
+
+sys.excepthook = _audit_failure_hook
+
+
 def _argval(flag, default):
     """--flag N, for experiments that must not require editing the file."""
     return int(sys.argv[sys.argv.index(flag) + 1]) if flag in sys.argv else default
@@ -170,6 +221,24 @@ def banner_done():
 # ── 1. Data ─────────────────────────────────────────────────────────────────
 banner("STEP 1: Data")
 conn = psycopg2.connect(PG)
+if SKIP_IF_BATCH:
+    with conn.cursor() as _c:
+        _c.execute("SELECT to_regclass('gold.ml_batch_runs') IS NOT NULL")
+        _busy = None
+        if _c.fetchone()[0]:
+            _c.execute("SELECT id, started_at FROM gold.ml_batch_runs WHERE status = 'running' "
+                       "AND started_at > now() - interval '12 hours' ORDER BY id DESC LIMIT 1")
+            _busy = _c.fetchone()
+    conn.rollback()
+    if _busy:
+        print(f"  weekly batch #{_busy[0]} is training (started {_busy[1]}); skipping this hour, the map keeps "
+              "the previous forecast")
+        _audit_refresh("skipped", details={
+            "title": "Congestion forecast (hourly, live feed)",
+            "reason": f"weekly batch #{_busy[0]} was training on this machine; the map kept the previous forecast",
+            "host": __import__("socket").gethostname()})
+        conn.close()
+        sys.exit(0)
 jams = pd.read_sql_query("""
     SELECT j.date_day::date AS d, j.hour_of_day::int AS h,
            COALESCE(e.exit_name,'id_'||j.nlex_exit_id::text) AS exit_name,
@@ -327,6 +396,8 @@ for _name, _src, _map in (("nb_prev_lag1", _lag1_p, _prev), ("nb_next_lag1", _la
 # still be the ANSWER for an earlier row.
 _yref = df.loc[df.y.notna(), ["exit_name", "ts", "y"]].rename(columns={"ts": "target_ts", "y": "y_target"})
 
+# The whole grid, uncollected hours included, for the dual-path family's own windows (step 6b).
+_grid = df[["ts", "exit_name", "y", "n_jams", "speed_filled"]].copy()
 df = df.dropna(subset=["y", "lag24", "lag48", "lag6"]).reset_index(drop=True)
 df["y"] = df.y.astype(int)
 df["exit_code"] = pd.Categorical(df.exit_name, categories=exits).codes
@@ -475,11 +546,15 @@ results_raw_xgb = xgb_raw.predict_proba(Xte)          # kept to show what calibr
 print("  done.")
 
 banner("STEP 5: Quantile Random Forest")
-qrf = RandomForestClassifier(n_estimators=300, max_depth=14, min_samples_leaf=5,
-                             class_weight="balanced",   # same reason as XGBoost above
-                             random_state=42, n_jobs=4).fit(Xtr, ytr)
-results["QRF"] = qrf.predict_proba(Xte)
-print("  done.")
+qrf = None
+if NO_QRF:
+    print("  SKIPPED: --no-qrf (rejected on every run; about 8 minutes of the hourly refresh)")
+else:
+    qrf = RandomForestClassifier(n_estimators=300, max_depth=14, min_samples_leaf=5,
+                                 class_weight="balanced",   # same reason as XGBoost above
+                                 random_state=42, n_jobs=4).fit(Xtr, ytr)
+    results["QRF"] = qrf.predict_proba(Xte)
+    print("  done.")
 
 # ── 5. GRU — one pass, twelve outputs ───────────────────────────────────────
 banner("STEP 6: GRU (multi-horizon head)")
@@ -498,24 +573,39 @@ try:
     arr, jarr = piv.values, jm.values
     H = len(HORIZONS)
 
-    def seqs(keep):
-        """X ends at index i-1; Y is the next H states, so the head predicts
-        every horizon from one pass instead of the old loop that reused the
-        same window twelve times."""
+    HZ = np.asarray(HORIZONS)
+
+    def seqs(keep, need_y):
+        """X is the SEQ_LEN hours ending at t (the state at t is known, as for
+        every candidate); Y is the state at t + each fitted horizon, so output k
+        is horizon HORIZONS[k]. (It was the next 48 consecutive hours, scored as
+        if they were the fitted horizons, from the window ending an hour before
+        the origin -- so +30h was really +25h, every answer was an hour early,
+        and past +48h the lookup fell off the end and skipped the GRU.) Windows
+        and targets touching an uncollected hour are left out."""
         X, Y, meta = [], [], []
-        for i in range(SEQ_LEN, len(piv) - H):
-            t = piv.index[i - 1]
+        for i in range(SEQ_LEN - 1, len(piv)):
+            t = piv.index[i]
             if not keep(t):
                 continue
+            tgt = i + HZ
+            if need_y and tgt[-1] >= len(piv):
+                continue
             for c in range(arr.shape[1]):
-                X.append(np.stack([arr[i - SEQ_LEN:i, c], jarr[i - SEQ_LEN:i, c]], -1))
-                Y.append(arr[i:i + H, c])
+                w = arr[i - SEQ_LEN + 1:i + 1, c]
+                if np.isnan(w).any():
+                    continue
+                yv = arr[tgt, c] if need_y else np.zeros(len(HZ))
+                if np.isnan(yv).any():
+                    continue
+                X.append(np.stack([w, jarr[i - SEQ_LEN + 1:i + 1, c]], -1))
+                Y.append(yv)
                 meta.append((t, c))
         return np.array(X, "float32"), np.array(Y, "int32"), meta
 
-    # Train only where the whole 12-step target block precedes the cut.
-    Xs_tr, ys_tr, _ = seqs(lambda t: t + pd.Timedelta(hours=H) < cut)
-    Xs_te, ys_te, meta_te = seqs(lambda t: t >= cut - pd.Timedelta(hours=1))
+    # Train only where the whole target block precedes the cut.
+    Xs_tr, ys_tr, _ = seqs(lambda t: t + pd.Timedelta(hours=int(HZ[-1])) < cut, True)
+    Xs_te, _, meta_te = seqs(lambda t: t >= cut, False)
     print(f"  sequences: train {len(Xs_tr):,} | test {len(Xs_te):,} (len {SEQ_LEN}, {H} outputs)")
 
     gru = Sequential([
@@ -529,14 +619,45 @@ try:
 
     lut = {(t, c): pg_[i] for i, (t, c) in enumerate(meta_te)}
     dflt = np.full((H, 3), 1 / 3)
-    # te rows are (ts, exit, horizon); the GRU keyed on the window END, which is
-    # ts - 1h, and horizon hz maps to output index hz-1.
+    # te rows are (ts, exit, horizon); the GRU is keyed on the window END, ts.
+    _hpos = {hz: k for k, hz in enumerate(HORIZONS)}
     results["GRU"] = np.array([
-        lut.get((r.ts - pd.Timedelta(hours=1), r.exit_code), dflt)[int(r.horizon) - 1]
+        lut.get((r.ts, r.exit_code), dflt)[_hpos[int(r.horizon)]]
         for r in te.itertuples()])
     print("  done.")
 except Exception as e:
     print(f"  SKIPPED: {str(e)[:100]}")
+
+# ── 5b. Dual-path LSTM family (adviser's brief, 2026-10-24) ─────────────────
+banner("STEP 6b: Dual-path LSTM family (1-layer, stacked, dual-path, dual-path + XGBoost)")
+dp = dp_bundle = dp_panel = None
+try:
+    import congestion_dualpath as dp
+    if DUALPATH_TRAIN:
+        _cal_tr = tr[cal_mask]
+        dp.train_all(_grid, exits, _prev, _next, cut, cal_cut, _cal_tr[["ts", "exit_name", "horizon"]],
+                     _cal_tr[FEATS].to_numpy(float), ytr[cal_mask], PG, WITH_HISTORY)
+    dp_bundle = dp.load()
+    if dp_bundle is None:
+        pass
+    elif dp_bundle["exits"] != list(exits):
+        print("  SKIPPED: the saved models were trained on a different set of exits; retrain with --dualpath-train")
+        dp_bundle = None
+    elif pd.Timestamp(dp_bundle["meta"]["cut"]) > cut:
+        # A bundle fitted on hours this run tests on would be scored on its own training data.
+        print(f"  SKIPPED: the saved models were fitted up to {dp_bundle['meta']['cut']}, after this test window starts")
+        dp_bundle = None
+    else:
+        dp_panel = dp.panel_for(dp_bundle, _grid, exits, _prev, _next, PG)
+        _dp_p, _dp_ok = dp.proba(dp_bundle, dp_panel, te[["ts", "exit_name", "horizon"]], Xte.to_numpy(float))
+        results.update(_dp_p)
+        print(f"  loaded models trained {dp_bundle['meta']['trained_at']} (fitted to {dp_bundle['meta']['val_start']}, "
+              f"history={dp_bundle['meta']['with_history']}); complete inputs for {_dp_ok.mean() * 100:.1f}% of test rows")
+except Exception as e:
+    print(f"  SKIPPED: {type(e).__name__}: {str(e)[:160]}")
+    dp_bundle = dp_panel = None
+    for _k in DUALPATH_KINDS:
+        results.pop(_k, None)
 
 # ── 6. SARIMAX — refit at rolling origins ───────────────────────────────────
 banner("STEP 7: SARIMAX (rolling origins, horizon-matched)")
@@ -619,6 +740,19 @@ for name, proba in results.items():
         "brier": float(np.mean(np.sum((proba - np.eye(3)[yte]) ** 2, axis=1))),
     })
 res = pd.DataFrame(rows).sort_values("accuracy", ascending=False).reset_index(drop=True)
+
+# The champion (served on the map, rank 1). Among the candidates within CHAMP_TIE accuracy of the most accurate,
+# the one that catches the most SEVERE hours: those differences are within noise on a 12-day test, while severe
+# is the state anyone acts on and the one a model that never says "severe" fails silently (XGBoost caught 10%).
+# Decided on 2026-10-25 before it was applied; with no candidate inside the tie it is simply the most accurate.
+CHAMP_TIE = 0.005
+_tied = res[res.accuracy >= res.accuracy.iloc[0] - CHAMP_TIE]
+_champ_i = _tied.severe_recall.idxmax()
+if _champ_i != 0:
+    print(f"  champion rule: {res.loc[_champ_i, 'model']} (acc {res.loc[_champ_i, 'accuracy']:.4f}, severe recall "
+          f"{res.loc[_champ_i, 'severe_recall']:.3f}) over {res.loc[0, 'model']} (acc {res.loc[0, 'accuracy']:.4f}, "
+          f"severe recall {res.loc[0, 'severe_recall']:.3f}): within {CHAMP_TIE * 100:.1f} points, catches more severe hours")
+    res = pd.concat([res.loc[[_champ_i]], res.drop(index=_champ_i)]).reset_index(drop=True)
 
 # Calibration of the champion's "chance of congestion" (heavy or severe): in
 # hours where it said 60-70%, how often was the exit actually congested? A
@@ -720,6 +854,52 @@ for hz in HORIZONS:
     print(f"  {hz:>4}" + "".join(f"{row[m_]:>12.4f}" for m_ in res.model) +
           f"{row['Persistence']:>12.4f}{row['n']:>9,}")
 
+# Serve the champion's genuine per-horizon forecast from the newest window. Built before the
+# write step so a --dry-run exercises it too (it used to run only when publishing).
+champ = res.iloc[0]
+print(f"  champion: {champ.model} (acc {champ.accuracy:.4f})")
+out = []
+if champ.model in DUALPATH_KINDS and dp_panel is not None:
+    _latest = df[df.ts == df.ts.max()].set_index("exit_name").reindex(dp_panel.exits)
+
+    def _feats_at(hz):
+        q = _latest.copy()
+        q["horizon"] = hz
+        return q[FEATS].to_numpy(float)
+    pr_ = dp.serve(dp_bundle, dp_panel, champ.model, _feats_at)              # (exits, 168, 3)
+    for c, ex in enumerate(dp_panel.exits):
+        for hz in SERVE_HORIZONS:
+            p_ = pr_[c, hz - 1]
+            kk = int(p_.argmax())
+            out.append((ex, hz, STATES[kk], float(p_[kk]), float(p_[0]), float(p_[1]), float(p_[2])))
+elif champ.model == "GRU" and gru is not None:
+    seq = np.stack([piv.values[-SEQ_LEN:, :], jm.values[-SEQ_LEN:, :]], -1)   # (SEQ, exits, 2), ends at the newest hour
+    pr_ = gru.predict(np.transpose(seq, (1, 0, 2)).astype("float32"), verbose=0)  # (exits, H, 3)
+    for c in range(pr_.shape[0]):
+        for k, hz in enumerate(HORIZONS):
+            kk = int(pr_[c, k].argmax())
+            out.append((exits[c], hz, STATES[kk], float(pr_[c, k, kk]),
+                        float(pr_[c, k, 0]), float(pr_[c, k, 1]), float(pr_[c, k, 2])))
+else:
+    last = df.ts.max()
+    latest = df[df.ts == last].copy()
+    # Every hour the card can ask for, including the ones thinned out of the
+    # fitting frame: `horizon` is an input, so the model answers for any value.
+    for hz in SERVE_HORIZONS:
+        q = latest.copy()
+        q["horizon"] = hz
+        mdl = xgb if champ.model == "XGBoost" else qrf
+        pr_ = mdl.predict_proba(q[FEATS])
+        for i, r in enumerate(q.itertuples()):
+            kk = int(pr_[i].argmax())
+            out.append((r.exit_name, hz, STATES[kk], float(pr_[i][kk]),
+                        float(pr_[i][0]), float(pr_[i][1]), float(pr_[i][2])))
+
+_out_hz = sorted({o[1] for o in out})
+print(f"  served forecast built: {len(out)} cells, {len({o[0] for o in out})} exits, horizons "
+      f"{_out_hz[0]}-{_out_hz[-1]} ({len(_out_hz)} distinct), states "
+      f"{dict(pd.Series([o[2] for o in out]).value_counts())}")
+
 # ── 8. Write ────────────────────────────────────────────────────────────────
 banner("STEP 10: Writing to AWS")
 if DRY_RUN:
@@ -762,33 +942,6 @@ for row in per_h:
         cur.execute("""INSERT INTO gold.ml_congestion_horizon_accuracy
             (model_name, horizon, accuracy, n, persistence_accuracy) VALUES (%s,%s,%s,%s,%s)""",
             (name, row["horizon"], float(row[name]), row["n"], float(row["Persistence"])))
-
-# Serve the champion's genuine per-horizon forecast from the newest window.
-champ = res.iloc[0]
-print(f"  champion: {champ.model} (acc {champ.accuracy:.4f})")
-out = []
-if champ.model == "GRU" and gru is not None:
-    seq = np.stack([piv.values[-SEQ_LEN:, :], jm.values[-SEQ_LEN:, :]], -1)   # (SEQ, exits, 2)
-    pr_ = gru.predict(np.transpose(seq, (1, 0, 2)).astype("float32"), verbose=0)  # (exits, H, 3)
-    for c in range(pr_.shape[0]):
-        for k, hz in enumerate(HORIZONS):
-            kk = int(pr_[c, k].argmax())
-            out.append((exits[c], hz, STATES[kk], float(pr_[c, k, kk]),
-                        float(pr_[c, k, 0]), float(pr_[c, k, 1]), float(pr_[c, k, 2])))
-else:
-    last = df.ts.max()
-    latest = df[df.ts == last].copy()
-    # Every hour the card can ask for, including the ones thinned out of the
-    # fitting frame: `horizon` is an input, so the model answers for any value.
-    for hz in SERVE_HORIZONS:
-        q = latest.copy()
-        q["horizon"] = hz
-        mdl = xgb if champ.model == "XGBoost" else qrf
-        pr_ = mdl.predict_proba(q[FEATS])
-        for i, r in enumerate(q.itertuples()):
-            kk = int(pr_[i].argmax())
-            out.append((r.exit_name, hz, STATES[kk], float(pr_[i][kk]),
-                        float(pr_[i][0]), float(pr_[i][1]), float(pr_[i][2])))
 
 # WHEN the forecast is counted from. Without this "+1h" is a label with no
 # referent - a reader cannot tell whether it means one hour from now, from the
@@ -864,6 +1017,13 @@ for _table in ("gold.ml_predictive_congestion", "gold.ml_congestion_forecast"):
 
 # One row of evaluation detail the card reads to explain itself: class
 # balance, per-class precision/recall, Brier, and the calibration table.
+# The champion before this run, for the audit entry. Checked with to_regclass rather than caught:
+# a failed SELECT would abort this transaction, which already holds the new forecast rows.
+cur.execute("SELECT to_regclass('gold.ml_congestion_eval') IS NOT NULL")
+_prev_champ = None
+if cur.fetchone()[0]:
+    cur.execute("SELECT payload->>'model' FROM gold.ml_congestion_eval WHERE id = 1")
+    _prev_champ = (cur.fetchone() or [None])[0]
 cur.execute("""CREATE TABLE IF NOT EXISTS gold.ml_congestion_eval (
     id int PRIMARY KEY DEFAULT 1, payload jsonb NOT NULL, updated_at timestamptz DEFAULT now())""")
 _champ_row = res.iloc[0]
@@ -888,6 +1048,7 @@ _eval = {
     "test_from": str(te.ts.min()),
     "test_to": str(te.target_ts.max()),
     "live_from": str(LIVE_FROM),
+    "dualpath": dp_bundle["meta"] if dp_bundle is not None else None,
 }
 cur.execute("""INSERT INTO gold.ml_congestion_eval (id, payload, updated_at) VALUES (1, %s, now())
                ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()""",
@@ -918,5 +1079,22 @@ json.dump({
 }, open(Path(__file__).with_name("congestion_results_horizon.json"), "w"), indent=2)
 print("  congestion_results_horizon.json written")
 conn.close()
+_hz_acc = {r["horizon"]: r[_champ_row.model] for r in per_h}
+_audit_refresh(
+    "published", to_status=str(_champ_row.model), from_status=_prev_champ,
+    details={
+        "title": "Congestion forecast (hourly, live feed)",
+        "reason": (f"{_champ_row.model} {_champ_row.accuracy * 100:.1f}% on the {TEST_DAYS}-day test "
+                   f"(best baseline {best_base * 100:.1f}%); forecast from {BASE_TS:%Y-%m-%d %H:00}"),
+        "accuracy": round(float(_champ_row.accuracy), 4), "macro_f1": round(float(_champ_row.macro_f1), 4),
+        "severe_recall": round(float(_champ_row.severe_recall), 4),
+        "accuracy_by_horizon": {h: round(float(_hz_acc[h]), 4) for h in (1, 24, 72, 168) if h in _hz_acc},
+        "baseline": {"name": best_base_name, "accuracy": round(float(best_base), 4)},
+        "candidates": {r.model: round(float(r.accuracy), 4) for r in res.itertuples()},
+        "test_from": str(te.ts.min()), "test_to": str(te.target_ts.max()), "train_rows": int(len(tr)),
+        "base_ts": str(BASE_TS), "rows_written": int(n), "with_history": bool(WITH_HISTORY),
+        "dualpath_models": dp_bundle["meta"]["trained_at"] if dp_bundle is not None else None,
+        "host": __import__("socket").gethostname(),
+    })
 banner("DONE")
 banner_done()

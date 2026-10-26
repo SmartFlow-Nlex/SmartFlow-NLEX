@@ -9,14 +9,11 @@
  * (toll-hourly.ts): nothing ever holds the whole file in memory, and from there on the load is exactly the
  * one every toll file gets — the same keys, the same four gold tables, the same undo journal.
  *
- * The client's rules (2026-08-20 and 2026-10-19), applied row by row:
- *   - Class 0 is disregarded.
- *   - Entry plaza 0 is "no transactions for that pair, either not valid or not possible": dropped.
- *   - Same entry and exit plaza is a U-turn or a cross-read (service and patrol vehicles): dropped — EXCEPT at
- *     an open-system barrier (Balintawak, Valenzuela, Meycauayan, Marilao, Bocaue Barrier SB, Harbor Link, CDV
- *     SB), where a vehicle pays as it enters, so every ordinary paid trip is recorded with the barrier as both
- *     entry and exit. Those rows are the barrier's traffic; they match NLEX's own daily report (Jan 2025).
- *   - "No Ticket" (plaza 197) is a real trip with no entry recorded, kept.
+ * The client's rule (confirmed 2026-10-23, replacing the 2026-08-20 and 2026-10-19 answers): only Class 0 is
+ * disregarded. Everything else is a real paid trip and is kept:
+ *   - Entry plaza 0 (no entry recorded; at a barrier such as Balintawak 104, usually an RFID read), and
+ *   - the same entry and exit plaza, at a barrier (the ordinary paid trip there) or anywhere else.
+ * Both are counted, for the gate log, but no longer dropped. "No Ticket" (plaza 197) is kept, as before.
  *
  * And two of the record's own:
  *   - A file is one year. A handful of rows dated in the next year (12 to 52 per file, the last hour's
@@ -28,19 +25,21 @@
  * Level adjustment (gold.toll_level_adjustment). The 2022-2024 files hold about three times the closed-system
  * traffic of 2025, uniformly at every exit, class, month and hour, and about three times the client's own
  * earlier daily figures for the same plaza pairs; 2025 matches both those and NLEX's published January 2025
- * counts. Until the client confirms how those years were extracted, a row in the table scales the counts paid at
- * that exit in that year and class, and the gate log says so. Delete the rows and load the file again to have
+ * counts. The client cannot re-extract those years (23 Oct 2026), so a row in the table scales the counts paid at
+ * that plaza in that year and class to his own daily files' level (factors v2, 23 Oct 2026: every NLEX plaza where
+ * trips are paid, barriers included now that entry-0 rows are kept), and the gate log says so. Delete the rows and load the file again to have
  * it exactly as delivered.
  */
 import fs from "fs";
 import { db } from "../config/db.js";
-import { resolvePlaza } from "./canonical-exit.js";
 import type { RawRow } from "./parser.js";
 import { aggregateTollHourly, loadCutoff, type Cutoff, type TollHourlyAggregate } from "./toll-hourly.js";
 
 export const TIR_COLUMNS = ["TrxDate", "Trx_Hour", "Entry_Plaza", "Exit_Plaza", "Bound", "Class", "Trx_Count"] as const;
 
-/** Plaza code -> the name the earlier files gave it (nlex_traffic_hourly_2026.csv and nlex_traffic_data_2022-2025.csv). */
+/** Plaza code -> name: the earlier files' names (nlex_traffic_hourly_2026.csv, nlex_traffic_data_2022-2025.csv), plus the
+    codes they never named, from the client's plaza reference (plaza_code_ref.csv, 23 Oct 2026). Those are SCTEX, SFEX
+    and NLEX Connector plazas, not NLEX exits, so trips paid there stay held back; and Dau 168/173/174. */
 export const PLAZA_CODES: Readonly<Record<number, string>> = {
   104: "Balintawak Barr NB (Entry OS)",
   108: "Valenzuela NB (Entry OS)",
@@ -81,8 +80,11 @@ export const PLAZA_CODES: Readonly<Record<number, string>> = {
   163: "ANGELES ENTRY",
   164: "Angeles NB/SB (Exit CS)",
   167: "CDV SB (Entry OS)",
+  168: "Dau Barrier (Exit CS)",  // client reference, 23 Oct 2026
   169: "DAU SB ENTRY",
   172: "Tambobong NB Exit",
+  173: "Dau Inter NB",  // client reference, 23 Oct 2026
+  174: "Dau Inter SB (Entry OS)",  // client reference, 23 Oct 2026
   175: "Lingunan SB (Entry OS)",
   176: "Dau NB (Exit OS)",
   177: "DAU NB ENTRY",
@@ -95,21 +97,53 @@ export const PLAZA_CODES: Readonly<Record<number, string>> = {
   187: "Balagtas (Exit CS)",
   189: "Sta Ines (Exit CS)",
   190: "STA INES ENTRY",
+  192: "SFEX (Inbound)",  // client reference, 23 Oct 2026
+  193: "SFEX (Outbound)",  // client reference, 23 Oct 2026
   195: "SFEX (OUTBOUND TIPO)",
   197: "No Ticket",
   199: "TAMBUBONG SB ENTRY",
+  202: "Tipo Exit",  // client reference, 23 Oct 2026
   203: "TIPO ENTRY",
+  213: "Dinalupihan Exit",  // client reference, 23 Oct 2026
   214: "DINALUPIHAN ENTRY",
+  231: "Floridablanca Exit",  // client reference, 23 Oct 2026
   232: "FLORIDABLANCA ENTRY",
+  245: "Porac Exit",  // client reference, 23 Oct 2026
   246: "PORAC ENTRY",
   247: "MABIGA SB ENTRY",
+  248: "Mabiga SB Exit",  // client reference, 23 Oct 2026
+  250: "Clark South A Exit",  // client reference, 23 Oct 2026
+  251: "Clark South A Entry",  // client reference, 23 Oct 2026
+  253: "Clark South B Exit",  // client reference, 23 Oct 2026
   254: "CLARK SOUTH B ENTRY",
+  256: "Mabiga NB Exit",  // client reference, 23 Oct 2026
+  257: "Mabiga NB Entry",  // client reference, 23 Oct 2026
+  259: "Clark North Exit",  // client reference, 23 Oct 2026
   260: "CLARK NORTH B/ DMIA ENTRY",
+  262: "Dolores Exit",  // client reference, 23 Oct 2026
+  263: "Dolores Entry",  // client reference, 23 Oct 2026
+  270: "Bamban Exit",  // client reference, 23 Oct 2026
   271: "NEW CLARK CITY INTERCHANGE ENTRY",
+  273: "Concepcion Exit",  // client reference, 23 Oct 2026
   274: "CONCEPCION ENTRY",
+  286: "San Miguel Exit",  // client reference, 23 Oct 2026
   287: "SAN MIGUEL ENTRY",
+  289: "Luisita Exit",  // client reference, 23 Oct 2026
+  290: "Luisita Entry",  // client reference, 23 Oct 2026
+  292: "Tarlac Exit",  // client reference, 23 Oct 2026
   293: "TARLAC ENTRY",
+  302: "R10 Interchange",  // client reference, 23 Oct 2026
+  306: "España Main NB",  // client reference, 23 Oct 2026
+  308: "España Main SB",  // client reference, 23 Oct 2026
 };
+
+/** Plazas on SCTEX, SFEX and the NLEX Connector (the client's reference, plaza_code_ref.csv "exprway", 23 Oct 2026).
+    A trip PAID at one of them is not an NLEX exit transaction and is held back, as it was while these codes had no
+    name: naming them must not move trips into the warehouse (Mabiga 248/256 would otherwise resolve to the NLEX
+    SCTEX exit, and Tipo/Concepcion/Tarlac to connecting roads). As an ENTRY they still name the trip's origin. */
+export const OTHER_EXPRESSWAY_PLAZAS: ReadonlySet<number> = new Set([
+  192, 193, 195, 202, 203, 213, 214, 231, 232, 245, 246, 247, 248, 250, 251, 253, 254, 256, 257, 259, 260, 262, 263, 270, 271, 273, 274, 286, 287, 289, 290, 292, 293, 302, 306, 308,
+]);
 
 /** Is this file the client's hourly export? Read from its first line only. */
 export function isTirFile(filePath: string): boolean {
@@ -173,11 +207,14 @@ export interface TirStats {
   class0: number;
   badClass: number;
   entryZero: number;
-  uturns: number;
+  samePlaza: number;
   spill: number;
   spillYears: string[];
-  /** Trips (not rows) dropped by each rule, for the gate log. */
-  trips: { class0: number; entryZero: number; uturns: number };
+  /** Rows paid at an SCTEX/SFEX/Connector plaza, held back (see OTHER_EXPRESSWAY_PLAZAS). */
+  otherExpressway: number;
+  /** Trips (not rows) per rule, for the gate log: class0 and otherExpressway are not loaded; entryZero and samePlaza
+      are kept and counted. */
+  trips: { class0: number; entryZero: number; samePlaza: number; otherExpressway: number };
   /** The year the file covers. */
   year: string | null;
   /** Rows whose counts were scaled, the scaled trips before and after, and the range of factors used. */
@@ -190,21 +227,10 @@ export interface TirStats {
  */
 export function aggregateTir(filePath: string, adjust: LevelAdjustment, cutoff: Cutoff = loadCutoff()): { agg: TollHourlyAggregate; stats: TirStats } {
   const stats: TirStats = {
-    lines: 0, class0: 0, badClass: 0, entryZero: 0, uturns: 0, spill: 0, spillYears: [], year: null,
-    trips: { class0: 0, entryZero: 0, uturns: 0 }, adjusted: null,
+    lines: 0, class0: 0, badClass: 0, entryZero: 0, samePlaza: 0, otherExpressway: 0, spill: 0, spillYears: [], year: null,
+    trips: { class0: 0, entryZero: 0, samePlaza: 0, otherExpressway: 0 }, adjusted: null,
   };
   const nameOf = (code: string): string => PLAZA_CODES[Number(code)] ?? "";
-  // An open-system barrier collects as the vehicle enters: there, entry = exit is the ordinary paid trip.
-  const barrier = new Map<string, boolean>();
-  const isBarrier = (code: string): boolean => {
-    let v = barrier.get(code);
-    if (v === undefined) {
-      const r = resolvePlaza(nameOf(code));
-      v = r.role === "Entry" && r.system === "OS";
-      barrier.set(code, v);
-    }
-    return v;
-  };
 
   // Which year the file is: counted on a first pass over the dates alone (cheap next to the aggregation).
   const perYear = new Map<string, number>();
@@ -238,8 +264,9 @@ export function aggregateTir(filePath: string, adjust: LevelAdjustment, cutoff: 
       if (cls !== "1" && cls !== "2" && cls !== "3") { stats.badClass++; continue; }
       const entry = (f[iEntry] ?? "").trim();
       const exit = (f[iExit] ?? "").trim();
-      if (entry === "0") { stats.entryZero++; stats.trips.entryZero += count || 0; continue; }
-      if (entry === exit && !isBarrier(exit)) { stats.uturns++; stats.trips.uturns += count || 0; continue; }
+      if (OTHER_EXPRESSWAY_PLAZAS.has(Number(exit))) { stats.otherExpressway++; stats.trips.otherExpressway += count || 0; continue; }
+      if (entry === "0") { stats.entryZero++; stats.trips.entryZero += count || 0; }
+      else if (entry === exit) { stats.samePlaza++; stats.trips.samePlaza += count || 0; }
       const factor = yearAdjust?.get(`${exit}|${cls}`);
       if (factor !== undefined && Number.isFinite(count)) {
         adj.rows++; adj.before += count; count = count * factor; adj.after += count;

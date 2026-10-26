@@ -1,0 +1,35 @@
+{
+ "trained_at": "2026-10-24T23:57:53",
+ "cut": "2026-10-13 00:00:00",
+ "cal_cut": "2026-10-11 00:00:00",
+ "val_start": "2026-10-07 00:00:00",
+ "with_history": false,
+ "train_from": "2026-08-04 00:00:00",
+ "fit_samples": 16300,
+ "class_weights": [
+  0.6890542507171631,
+  0.8824359178543091,
+  2.4066882133483887
+ ],
+ "models": {
+  "LSTM (1 layer)": {
+   "params": 28091,
+   "epochs": 14,
+   "best_val_loss": 0.30245956778526306,
+   "train_sec": 1523
+  },
+  "Stacked LSTM": {
+   "params": 37435,
+   "epochs": 9,
+   "best_val_loss": 0.30210137367248535,
+   "train_sec": 955
+  },
+  "Dual-Path LSTM": {
+   "params": 170651,
+   "epochs": 8,
+   "best_val_loss": 0.30300864577293396,
+   "train_sec": 1032
+  }
+ },
+ "minutes": 59.1
+}

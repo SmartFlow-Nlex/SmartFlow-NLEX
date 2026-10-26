@@ -1336,6 +1336,17 @@ function pickPrediction(
 
 const LOCATION_KM_RE = /Km\s*(\d+(?:\.\d+)?)/i;
 
+/* One incident for the per-exit shares. `km` (measured scale, Balintawak = 12) is set for the accident and
+   breakdown event tables, which carry corridor_km; `location` is the legacy tables' free text. Since 23 Oct 2026
+   the shares come from the event tables, the same record the Hotspots chart and the forecast model read: the
+   legacy tables resolved only ~1,200 incidents a year to an exit and put Balintawak at 1% of the forecast while
+   Hotspots ranked it among the busiest stretches. */
+type LocationRow = { location: string | null; src?: string | null; km?: number | null };
+
+function nearestExit<T extends { km: number }>(km: number, exits: T[]): T {
+  return exits.reduce((best, x) => (Math.abs(x.km - km) < Math.abs(best.km - km) ? x : best));
+}
+
 // A literal "Km N" figure in a legacy table's free-text `location`, and what
 // to SUBTRACT from it to put it on the exit list's scale. The exits are on the
 // measured scale now (Balintawak = Km 12; lib/km-post.ts).
@@ -1382,9 +1393,7 @@ function resolveExitForLocation(
   const kmMatch = location.match(LOCATION_KM_RE);
   if (kmMatch) {
     const km = Number(kmMatch[1]) - kmOffset;
-    if (Number.isFinite(km) && exits.length > 0) {
-      return exits.reduce((best, x) => (Math.abs(x.km - km) < Math.abs(best.km - km) ? x : best));
-    }
+    if (Number.isFinite(km) && exits.length > 0) return nearestExit(km, exits);
   }
   const norm = normalizeLocationText(location);
   if (!norm) return null;
@@ -1407,7 +1416,7 @@ export type CorridorForecastPoint = {
 };
 
 function buildCorridorForecast(
-  locationRows: { location: string | null; src?: string | null }[],
+  locationRows: LocationRow[],
   exitRows: { exit_id: number; exit_name: string; km: number }[],
   totalPredicted: number
 ): { corridorForecast: CorridorForecastPoint[] | null; unclassifiedLocationShare: number | null } {
@@ -1418,8 +1427,9 @@ function buildCorridorForecast(
   const counts = new Map<number, number>();
   let unclassified = 0;
   for (const row of locationRows) {
-    if (!row.location) continue;
-    const exit = resolveExitForLocation(row.location, exitRows, kmOffsetForSource(row.src));
+    const hasKm = row.km != null && Number.isFinite(row.km);
+    if (!hasKm && !row.location) continue;
+    const exit = hasKm ? nearestExit(row.km as number, exitRows) : resolveExitForLocation(row.location!, exitRows, kmOffsetForSource(row.src));
     if (exit) counts.set(exit.exit_id, (counts.get(exit.exit_id) ?? 0) + 1);
     else unclassified++;
   }
@@ -1478,7 +1488,7 @@ function resolveKmForLocation(
 }
 
 function buildKmSegmentForecast(
-  locationRows: { location: string | null; src?: string | null }[],
+  locationRows: LocationRow[],
   exitRows: { exit_id: number; exit_name: string; km: number }[],
   totalPredicted: number
 ): { kmSegmentForecast: KmSegmentForecastPoint[] | null; unclassifiedLocationShare: number | null } {
@@ -1490,8 +1500,9 @@ function buildKmSegmentForecast(
   const counts = new Map<number, number>();
   let unclassified = 0;
   for (const row of locationRows) {
-    if (!row.location) continue;
-    const km = resolveKmForLocation(row.location, exitRows, kmOffsetForSource(row.src));
+    const hasKm = row.km != null && Number.isFinite(row.km);
+    if (!hasKm && !row.location) continue;
+    const km = hasKm ? (row.km as number) : resolveKmForLocation(row.location!, exitRows, kmOffsetForSource(row.src));
     if (km == null || km < 0) {
       unclassified++;
       continue;
@@ -1578,7 +1589,7 @@ export function buildIncidentPredictiveResponse(
   // VmsAdvisoryPanel/PrescriptiveDeploymentPanel on the Prescriptive tab.
   // Optional for the same reason volumeByDate is: an absent array just means
   // those two fields come back null.
-  locationRows: { location: string | null; src?: string | null }[] = [],
+  locationRows: LocationRow[] = [],
   // The corridor's authoritative exit list (see searchExitsInDb). Optional
   // for the same reason.
   exitRows: { exit_id: number; exit_name: string; km: number }[] = [],
@@ -2150,12 +2161,13 @@ export async function getIncidentPredictiveFromDb(
          WHERE prediction_type = 'validation'
          ORDER BY forecast_date ASC`
       ),
-      // Raw location text for every incident in the share window above — feeds the
-      // legacy-source corridorForecast still read by the Prescriptive tab's
-      // PrescriptiveDeploymentPanel. Answers to the same Range control, over logged days.
-      db.query<{ location: string | null; src: string | null }>(
-        `WITH ${INCIDENTS_CTE}
-         SELECT location, src FROM incidents WHERE d >= $1::date AND ($2::date IS NULL OR d <= $2::date) AND location IS NOT NULL`,
+      // Every located accident and breakdown in the share window above (see LocationRow) — feeds the
+      // corridorForecast/kmSegmentForecast read by the Prescriptive tab's PrescriptiveDeploymentPanel and
+      // VmsAdvisoryPanel. Answers to the same Range control, over logged days. corridor_km + 12 = measured km.
+      db.query<LocationRow>(
+        `WITH ${EVENTS_CTE}
+         SELECT NULL::text AS location, src, (corridor_km + 12)::float8 AS km
+         FROM events WHERE d >= $1::date AND ($2::date IS NULL OR d <= $2::date) AND corridor_km IS NOT NULL`,
         [shareFrom, shareTo]
       ),
       // The corridor's one authoritative exit list (see the import above) —

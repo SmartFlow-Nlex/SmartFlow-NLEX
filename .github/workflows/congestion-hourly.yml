@@ -1,0 +1,51 @@
+# The hourly congestion refresh for the Live Map and the congestion graph, on GitHub's runners so the map stays fresh
+# whether or not any laptop is on. Same trainer and flags as the laptop task "SmartFlow congestion refresh":
+# trains and tests XGBoost and the GRU on the live Waze feed, scores the dual-path LSTM family (restored from the
+# cache the weekly batch saves), publishes the champion, and writes one audit entry. It steps aside while the weekly
+# batch is training (--skip-if-batch-running), and an overlapping run is queued, never run twice at once.
+#
+# GitHub may start a scheduled run some minutes late under load; the map's base time records the hour actually used.
+name: Congestion refresh (hourly)
+
+on:
+  schedule:
+    - cron: "2 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: congestion-refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  TF_CPP_MIN_LOG_LEVEL: "3"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: smartflow_scripts/requirements-ml.txt
+      - name: Install packages
+        run: pip install numpy==2.4.3 pandas==2.3.3 scikit-learn==1.8.0 xgboost==3.4.1 tensorflow==2.21.0 keras==3.15.1 psycopg2-binary==2.9.12
+      - name: Settings from secrets
+        env: { DB_HOST: "${{ secrets.DB_HOST }}", DB_PORT: "${{ secrets.DB_PORT }}", DB_NAME: "${{ secrets.DB_NAME }}", DB_USER: "${{ secrets.DB_USER }}", DB_PASSWORD: "${{ secrets.DB_PASSWORD }}" }
+        run: bash .github/scripts/write_env.sh
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            smartflow_scripts/_work/cache
+            All_Scripts/Predictive_Modeling/dualpath_models
+          key: ml-state-none
+          restore-keys: ml-state-
+      - name: Train, test and publish
+        working-directory: All_Scripts/Predictive_Modeling
+        run: python -u train_congestion_horizon.py --fast --no-qrf --skip-if-batch-running

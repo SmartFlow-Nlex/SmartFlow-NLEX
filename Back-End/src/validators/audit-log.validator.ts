@@ -42,6 +42,8 @@ export const AuditQuerySchema = z.object({
   module: z.string().optional(),
   /** Page views are left out of the list unless asked for: they would bury every other entry. */
   include_views: z.enum(["0", "1"]).optional(),
+  /** The hourly congestion refresh (model.live_refresh, 24 a day) likewise, unless asked for. */
+  include_hourly: z.enum(["0", "1"]).optional(),
   limit: z.coerce.number().int().min(1).max(2000).optional(),
   start_date: z.string().datetime().optional(),
   end_date: z.string().datetime().optional(),

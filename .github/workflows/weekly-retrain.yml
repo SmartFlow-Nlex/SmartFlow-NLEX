@@ -1,0 +1,129 @@
+# The weekly batch retrain and test (adviser's rule: every Sunday 22:00, never per upload), on GitHub's runners so it
+# happens whether or not any laptop is on. It runs smartflow_scripts/3_training_testing/weekly_retrain/weekly_retrain.py
+# unchanged: same change detection, backups, Gate 5 tests, restore on failure, audit entries and gold.ml_batch_runs rows.
+#
+# A job may run at most 6 hours and the full batch took about 9 on a laptop, so it runs as three batches in a row,
+# split where the groups are independent. The trained files the next runs need (the 48-hour model and its scaler,
+# the congestion dual-path family) live in the Actions cache, restored at the start of each job and saved at its end;
+# the hourly congestion refresh restores the same cache.
+#
+# Needs the repository secrets DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD (Settings > Secrets and variables >
+# Actions), and the RDS security group must accept connections from GitHub's runners.
+name: Weekly retrain (Sunday 22:00 Manila)
+
+on:
+  schedule:
+    - cron: "0 14 * * 0"          # 14:00 UTC Sunday = 22:00 Asia/Manila
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Retrain every group even where no data changed"
+        type: boolean
+        default: false
+
+concurrency:
+  group: weekly-retrain
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  TF_CPP_MIN_LOG_LEVEL: "3"
+  ML_STATE_PATHS: |
+    smartflow_scripts/_work/cache
+    All_Scripts/Predictive_Modeling/dualpath_models
+
+jobs:
+  daily-models:
+    name: Daily traffic, CO2, fleet mix, event surge
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: smartflow_scripts/requirements-ml.txt
+      - name: Install packages
+        run: |
+          pip install -r smartflow_scripts/requirements-ml.txt
+          pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Settings from secrets
+        env: { DB_HOST: "${{ secrets.DB_HOST }}", DB_PORT: "${{ secrets.DB_PORT }}", DB_NAME: "${{ secrets.DB_NAME }}", DB_USER: "${{ secrets.DB_USER }}", DB_PASSWORD: "${{ secrets.DB_PASSWORD }}" }
+        run: bash .github/scripts/write_env.sh
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ env.ML_STATE_PATHS }}", key: "ml-state-${{ github.run_id }}-0", restore-keys: "ml-state-" }
+      - name: Weekly batch (part 1 of 3)
+        working-directory: smartflow_scripts/3_training_testing/weekly_retrain
+        run: python weekly_retrain.py --scheduled --only volume,emissions,fleet_mix,event_surge ${{ inputs.force && '--force' || '' }}
+      - uses: actions/cache/save@v4
+        if: always()
+        with: { path: "${{ env.ML_STATE_PATHS }}", key: "ml-state-${{ github.run_id }}-1" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: weekly-logs-part1, path: smartflow_scripts/_work/logs/weekly_retrain, retention-days: 30 }
+
+  incident-models:
+    name: Incidents, severity, hotspots, weather impact
+    needs: daily-models
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: smartflow_scripts/requirements-ml.txt
+      - name: Install packages
+        run: |
+          pip install -r smartflow_scripts/requirements-ml.txt
+          pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Settings from secrets
+        env: { DB_HOST: "${{ secrets.DB_HOST }}", DB_PORT: "${{ secrets.DB_PORT }}", DB_NAME: "${{ secrets.DB_NAME }}", DB_USER: "${{ secrets.DB_USER }}", DB_PASSWORD: "${{ secrets.DB_PASSWORD }}" }
+        run: bash .github/scripts/write_env.sh
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ env.ML_STATE_PATHS }}", key: "ml-state-${{ github.run_id }}-1", restore-keys: "ml-state-" }
+      - name: Weekly batch (part 2 of 3)
+        working-directory: smartflow_scripts/3_training_testing/weekly_retrain
+        run: python weekly_retrain.py --scheduled --only incident_counts,incident_severity,incident_spatial,weather_speed ${{ inputs.force && '--force' || '' }}
+      - uses: actions/cache/save@v4
+        if: always()
+        with: { path: "${{ env.ML_STATE_PATHS }}", key: "ml-state-${{ github.run_id }}-2" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: weekly-logs-part2, path: smartflow_scripts/_work/logs/weekly_retrain, retention-days: 30 }
+
+  hourly-models:
+    name: 48-hour volume forecast, congestion dual-path family
+    needs: incident-models
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: smartflow_scripts/requirements-ml.txt
+      - name: Install packages
+        run: pip install -r smartflow_scripts/requirements-ml.txt
+      - name: Settings from secrets
+        env: { DB_HOST: "${{ secrets.DB_HOST }}", DB_PORT: "${{ secrets.DB_PORT }}", DB_NAME: "${{ secrets.DB_NAME }}", DB_USER: "${{ secrets.DB_USER }}", DB_PASSWORD: "${{ secrets.DB_PASSWORD }}" }
+        run: bash .github/scripts/write_env.sh
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ env.ML_STATE_PATHS }}", key: "ml-state-${{ github.run_id }}-2", restore-keys: "ml-state-" }
+      - name: Weekly batch (part 3 of 3)
+        working-directory: smartflow_scripts/3_training_testing/weekly_retrain
+        run: python weekly_retrain.py --scheduled --only volume_48h,congestion ${{ inputs.force && '--force' || '' }}
+      - uses: actions/cache/save@v4
+        if: always()
+        with: { path: "${{ env.ML_STATE_PATHS }}", key: "ml-state-${{ github.run_id }}-3" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: weekly-logs-part3, path: smartflow_scripts/_work/logs/weekly_retrain, retention-days: 30 }

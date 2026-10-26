@@ -31,6 +31,12 @@ export const HourlyForecastQuerySchema = z.object({
   split: z.enum(["80_20", "90_10"]).optional().default("80_20"),
 });
 
+// 48-hour hourly forecast: no filter = the corridor; exit and/or direction narrow it to the matching plaza series.
+export const Forecast48hQuerySchema = z.object({
+  exit: z.string().max(80).optional(),
+  direction: z.enum(["NB", "SB"]).optional(),
+});
+
 export const AnalyticsQuerySchema = z.object({
   months: z.enum(["3", "12", "all"]).optional().default("12"),
   from: isoDate.optional(), // custom range start — with `to`, overrides months

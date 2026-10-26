@@ -18,6 +18,7 @@ import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import PredictiveVolumeChart from "../../../components/dashboard/PredictiveVolumeChart";
 import PredictiveCongestionChart from "../../../components/dashboard/PredictiveCongestionChart";
 import PredictiveEventChart from "../../../components/dashboard/PredictiveEventChart";
+import Forecast48hPanel from "../../../components/dashboard/Forecast48hPanel";
 import styles from "./traffic.module.css";
 import DateRangePicker from "./components/DateRangePicker";
 import { rangeDays, grainBlockedReason, bestGrainFor, bucketLabelFor, timeAxisLabels } from "../../../lib/granularity";
@@ -43,8 +44,9 @@ type Analytics = {
     congestionIndex: number | null;
     prevCongestionIndex: number | null;
   };
-  dailyTrend: { d: string; nb: number; sb: number }[];
-  hourlyTrend: { d: string; hour: number; nb: number; sb: number }[] | null;
+  /** nb + sb + bothdir = the day: bothdir is the plazas the record does not split by direction (as on Emissions). */
+  dailyTrend: { d: string; nb: number; sb: number; bothdir: number }[];
+  hourlyTrend: { d: string; hour: number; nb: number; sb: number; bothdir: number }[] | null;
   byPlaza: { plaza: string; v: number }[];
   hourDow: { dow: number; hour: number; v: number }[];
   plazaHourProfile?: { plaza: string; hour: number; v: number }[];
@@ -93,7 +95,7 @@ function weekStart(dateStr: string): string {
   return dt.toISOString().slice(0, 10);
 }
 
-type TrendRow = { label: string; nb: number; sb: number; total: number };
+type TrendRow = { label: string; nb: number; sb: number; bothdir: number; total: number };
 
 function buildTrend(data: Analytics, grain: Granularity): TrendRow[] {
   if (grain === "hourly") {
@@ -101,22 +103,23 @@ function buildTrend(data: Analytics, grain: Granularity): TrendRow[] {
       label: `${r.d} ${String(r.hour).padStart(2, "0")}:00`,
       nb: r.nb,
       sb: r.sb,
-      total: r.nb + r.sb,
+      bothdir: r.bothdir ?? 0,
+      total: r.nb + r.sb + (r.bothdir ?? 0),
     }));
   }
   if (grain === "daily") {
-    return data.dailyTrend.map((r) => ({ label: r.d, nb: r.nb, sb: r.sb, total: r.nb + r.sb }));
+    return data.dailyTrend.map((r) => ({ label: r.d, nb: r.nb, sb: r.sb, bothdir: r.bothdir ?? 0, total: r.nb + r.sb + (r.bothdir ?? 0) }));
   }
   const keyOf = grain === "weekly" ? (d: string) => weekStart(d) : (d: string) => d.slice(0, 7);
-  const acc = new Map<string, { nb: number; sb: number }>();
+  const acc = new Map<string, { nb: number; sb: number; bothdir: number }>();
   for (const r of data.dailyTrend) {
     const k = keyOf(r.d);
-    const cur = acc.get(k) ?? { nb: 0, sb: 0 };
-    acc.set(k, { nb: cur.nb + r.nb, sb: cur.sb + r.sb });
+    const cur = acc.get(k) ?? { nb: 0, sb: 0, bothdir: 0 };
+    acc.set(k, { nb: cur.nb + r.nb, sb: cur.sb + r.sb, bothdir: cur.bothdir + (r.bothdir ?? 0) });
   }
   return [...acc.entries()]
     .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([label, v]) => ({ label, nb: v.nb, sb: v.sb, total: v.nb + v.sb }));
+    .map(([label, v]) => ({ label, nb: v.nb, sb: v.sb, bothdir: v.bothdir, total: v.nb + v.sb + v.bothdir }));
 }
 
 const ROLLING_WINDOW: Record<Granularity, number> = { hourly: 24, daily: 7, weekly: 0, monthly: 0 };
@@ -262,7 +265,7 @@ export default function TrafficPage() {
         ? kpis.congestionIndex - kpis.prevCongestionIndex
         : null;
 
-    const sparkline = dailyTrend.slice(-30).map((r) => r.nb + r.sb);
+    const sparkline = dailyTrend.slice(-30).map((r) => r.nb + r.sb + (r.bothdir ?? 0));
 
     return { curAdt, volumeDeltaPct, peakHour, peakHourVolume, busiest, plazaTotal, congestionDelta, sparkline };
   }, [data]);
@@ -601,6 +604,7 @@ export default function TrafficPage() {
       ["Total volume", `${fmtInt(r.total)} vehicles`],
       ["Northbound", `${fmtInt(r.nb)} (${r.total > 0 ? ((r.nb / r.total) * 100).toFixed(1) : "0"}%)`],
       ["Southbound", `${fmtInt(r.sb)} (${r.total > 0 ? ((r.sb / r.total) * 100).toFixed(1) : "0"}%)`],
+      ...(r.bothdir ? [["Plazas not split by direction", `${fmtInt(r.bothdir)} (${((r.bothdir / r.total) * 100).toFixed(1)}%)`] as [string, string]] : []),
       ["vs range average", avg > 0 ? fmtPct(((r.total - avg) / avg) * 100) : "—"],
       [`vs previous ${periodWord}`, prev && prev.total > 0 ? fmtPct(((r.total - prev.total) / prev.total) * 100) : "—"],
       ["Rank in range", `#${rank} of ${totals.length} ${periodWord}s by volume`],
@@ -1183,6 +1187,8 @@ export default function TrafficPage() {
                 weather={weather}
               />
             </div>
+            {/* The hour-by-hour 48 hours after the latest upload, per plaza and class (adviser's brief, 24 Oct 2026). */}
+            <div className={styles.spanFull}><Forecast48hPanel /></div>
             {/* Each on its own full row (8 Oct 2026, user request): side by side, the congestion card was
                 twice the height of the event card and one of them always ended in blank space. Each card
                 splits itself into two columns inside instead (.nct-split). */}
