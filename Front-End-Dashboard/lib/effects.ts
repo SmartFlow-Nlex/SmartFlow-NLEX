@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 
 /**
- * The "background effects" preference: the stage's carbon ground, race circuit
- * and speed streaks, the editorial grid lines and the sign-in page's custom cursor. On by
- * default; switched off it leaves a plain background (the 3D car stays, since
- * it is content, not background).
+ * The "background effects" preference: the drifting clouds and sun glow behind the dashboard, the editorial
+ * grid lines, the sign-in page's moving light and glints, and the floating assistant bubble. On by default;
+ * switched off it leaves a plain, still background (2026-10-27: it used to only freeze the clouds in place, so
+ * switching it off changed almost nothing). Charts, live indicators and loading states are content, not effects.
  *
  * Kept in localStorage and mirrored on <html data-effects="off"> so CSS can
  * hide the decorative layers before first paint (the head script in

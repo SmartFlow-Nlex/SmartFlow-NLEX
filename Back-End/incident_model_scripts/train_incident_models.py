@@ -436,11 +436,12 @@ def fetch_future_volume(conn, future_dates: list, volume_by_date: dict) -> dict:
 
 
 def load_holidays(conn) -> set:
-    """Philippine holiday calendar. Any date not listed is treated as a normal
-    day — dim_holiday currently runs to 2026-07-25, so the 7 forecast days fall
-    just past its edge and default to non-holiday (correct for late Jul/early
-    Aug: the next regular holiday is Ninoy Aquino Day on 21 Aug)."""
-    df = pd.read_sql("SELECT date_day FROM dim_holiday WHERE is_holiday", conn)
+    """Philippine holiday calendar (public.ph_holidays, through 2026-12-31). Any
+    date not listed is treated as a normal day. It used to read dim_holiday,
+    which is inferred from the old synthetic wide table and stops at 2026-07-25,
+    so forecast days past that edge lost Ninoy Aquino Day and National Heroes
+    Day (28 Oct 2026)."""
+    df = pd.read_sql("SELECT date_day FROM public.ph_holidays", conn)  # validated calendar; dim_holiday stops 2026-07-25
     return set(pd.to_datetime(df["date_day"]).dt.date)
 
 
@@ -1579,7 +1580,7 @@ def main() -> None:
             print("  volume features DISABLED (--no-volume)")
 
         HOLIDAY_DATES = load_holidays(conn)
-        print(f"  {len(HOLIDAY_DATES)} holiday dates loaded from dim_holiday")
+        print(f"  {len(HOLIDAY_DATES)} holiday dates loaded from ph_holidays")
 
         # The YoY features need a full year of warm-up before the first usable row.
         feat = build_features(daily).dropna(subset=FEATURE_COLS).reset_index(drop=True)

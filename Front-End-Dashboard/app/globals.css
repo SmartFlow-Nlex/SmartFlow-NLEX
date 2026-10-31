@@ -13990,3 +13990,278 @@ h1, h2, h3, h4, h5 { letter-spacing: -0.01em; }
 }
 .ev-trust .nct-trust-k { display: block; margin-bottom: 4px; }
 .ev-trust .ev-facts > .nct-dim { align-self: center; }
+
+
+/* --- full screen follows the theme (generated 2026-10-27, gen_fs_light.py) ----------------
+   Full screen used to be a dark HUD in both themes while the controls rail beside it followed the theme, so in
+   light mode a white rail sat beside dark bars. In light mode the floating bars, readouts, notes and buttons are now
+   light glass with dark ink, the same rules with each colour translated; dark mode is unchanged. Selected options
+   keep white text on the accent, and the recommendation tones keep their colour. */
+:root[data-theme="light"] .sandbox-page .sandbox-main.is-expanded {
+  background: #e9eef6;
+  color: #0b1220;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-head,
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-view-seg,
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-metric-row,
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-footbar,
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-fs-keys,
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-fs-notes-toggle {
+  background: rgba(11, 18, 32, 0.88);
+  border: 1px solid rgba(11, 18, 32, 0.10);
+  color: #0b1220;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-head h2 {
+  color: #0b1220;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-view-seg .k {
+  color: #5a6478;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-fs-keys {
+  color: #5a6478;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-fs-keys b {
+  color: #0b1220;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-metric-row > * + * {
+  border-left: 1px solid rgba(11, 18, 32, 0.09);
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-metric h3 {
+  color: #5a6478;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-metric-val {
+  color: #0b1220;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-fs-notes-toggle {
+  color: #3a4458;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-fs-notes-toggle:hover {
+  color: #0b1220;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-head .btn-muted,
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-speed-seg,
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-view-buttons {
+  background: rgba(11, 18, 32, 0.07);
+  border-color: rgba(11, 18, 32, 0.14);
+  color: #0b1220;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-head .btn-muted:hover {
+  background: rgba(11, 18, 32, 0.14);
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-speed-seg button,
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-view-buttons button {
+  color: #3a4458;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-speed-seg button.active,
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-view-buttons button.active {
+  background: rgba(11, 18, 32, 0.16);
+  color: #0b1220;
+}
+:root[data-theme="light"] .ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-view-buttons, .sandbox-speed-seg) button:not(.active):not([aria-selected="true"]):hover {
+  background: rgba(11, 18, 32, 0.1);
+  color: #0b1220;
+}
+:root[data-theme="light"] .sandbox-page .sandbox-side.is-expanded {
+  border-left: 1px solid rgba(11, 18, 32, 0.12);
+  box-shadow: -18px 0 40px rgba(11, 18, 32, 0.18);
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-dir-card {
+  border: 1px solid rgba(11, 18, 32, 0.10);
+  background: rgba(11, 18, 32, 0.03);
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-reco p {
+  color: #0b1220;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-dir-card > .sandbox-compare-none {
+  color: #5a6478;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-compare {
+  background: rgba(11, 18, 32, 0.04);
+  border-color: rgba(11, 18, 32, 0.12);
+  color: #0b1220;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-footbar > .sandbox-legend {
+  border-top: 1px solid rgba(11, 18, 32, 0.10);
+  color: #5a6478;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-live-note {
+  background: rgba(11, 18, 32, 0.05);
+  border-color: rgba(11, 18, 32, 0.12);
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-live-note.warn {
+  color: #7a4a00;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-time-seg-input,
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-time-seg-arrows {
+  background: rgba(11, 18, 32, 0.07);
+  border-color: rgba(11, 18, 32, 0.14);
+  color: #0b1220;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-time-seg-arrows button {
+  color: #5a6478;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-time-seg-arrows button:hover {
+  color: #0b1220;
+  background: rgba(11, 18, 32, 0.12);
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-time-seg-arrows button:first-child {
+  border-bottom: 1px solid rgba(11, 18, 32, 0.14);
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-time-sep {
+  color: #5a6478;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-compare-verdict {
+  color: #0b1220;
+  background: rgba(11, 18, 32, 0.06);
+}
+:root[data-theme="light"] .sandbox-main.is-expanded :is(.sandbox-compare-foot, .sandbox-compare-empty span) {
+  color: #5a6478;
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-trends-seg {
+  background: rgba(11, 18, 32, 0.06);
+  border-color: rgba(11, 18, 32, 0.16);
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-trends-table-toggle {
+  border-color: rgba(11, 18, 32, 0.16);
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-trends-tablewrap {
+  border-color: rgba(11, 18, 32, 0.14);
+}
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-zoom-seg span {
+  color: #3a4458;
+}
+@media (prefers-color-scheme: light) {
+:root:not([data-theme="dark"]) .sandbox-page .sandbox-main.is-expanded {
+  background: #e9eef6;
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-head,
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-view-seg,
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-metric-row,
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-footbar,
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-fs-keys,
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-fs-notes-toggle {
+  background: rgba(11, 18, 32, 0.88);
+  border: 1px solid rgba(11, 18, 32, 0.10);
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-head h2 {
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-view-seg .k {
+  color: #5a6478;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-fs-keys {
+  color: #5a6478;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-fs-keys b {
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-metric-row > * + * {
+  border-left: 1px solid rgba(11, 18, 32, 0.09);
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-metric h3 {
+  color: #5a6478;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-metric-val {
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-fs-notes-toggle {
+  color: #3a4458;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-fs-notes-toggle:hover {
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-head .btn-muted,
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-speed-seg,
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-view-buttons {
+  background: rgba(11, 18, 32, 0.07);
+  border-color: rgba(11, 18, 32, 0.14);
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-head .btn-muted:hover {
+  background: rgba(11, 18, 32, 0.14);
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-speed-seg button,
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-view-buttons button {
+  color: #3a4458;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-speed-seg button.active,
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-view-buttons button.active {
+  background: rgba(11, 18, 32, 0.16);
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-view-buttons, .sandbox-speed-seg) button:not(.active):not([aria-selected="true"]):hover {
+  background: rgba(11, 18, 32, 0.1);
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .sandbox-page .sandbox-side.is-expanded {
+  border-left: 1px solid rgba(11, 18, 32, 0.12);
+  box-shadow: -18px 0 40px rgba(11, 18, 32, 0.18);
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-dir-card {
+  border: 1px solid rgba(11, 18, 32, 0.10);
+  background: rgba(11, 18, 32, 0.03);
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-reco p {
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-dir-card > .sandbox-compare-none {
+  color: #5a6478;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-compare {
+  background: rgba(11, 18, 32, 0.04);
+  border-color: rgba(11, 18, 32, 0.12);
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-footbar > .sandbox-legend {
+  border-top: 1px solid rgba(11, 18, 32, 0.10);
+  color: #5a6478;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-live-note {
+  background: rgba(11, 18, 32, 0.05);
+  border-color: rgba(11, 18, 32, 0.12);
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-live-note.warn {
+  color: #7a4a00;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-time-seg-input,
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-time-seg-arrows {
+  background: rgba(11, 18, 32, 0.07);
+  border-color: rgba(11, 18, 32, 0.14);
+  color: #0b1220;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-time-seg-arrows button {
+  color: #5a6478;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-time-seg-arrows button:hover {
+  color: #0b1220;
+  background: rgba(11, 18, 32, 0.12);
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-time-seg-arrows button:first-child {
+  border-bottom: 1px solid rgba(11, 18, 32, 0.14);
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-time-sep {
+  color: #5a6478;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-compare-verdict {
+  color: #0b1220;
+  background: rgba(11, 18, 32, 0.06);
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded :is(.sandbox-compare-foot, .sandbox-compare-empty span) {
+  color: #5a6478;
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-trends-seg {
+  background: rgba(11, 18, 32, 0.06);
+  border-color: rgba(11, 18, 32, 0.16);
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-trends-table-toggle {
+  border-color: rgba(11, 18, 32, 0.16);
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-trends-tablewrap {
+  border-color: rgba(11, 18, 32, 0.14);
+}
+:root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-zoom-seg span {
+  color: #3a4458;
+}
+}

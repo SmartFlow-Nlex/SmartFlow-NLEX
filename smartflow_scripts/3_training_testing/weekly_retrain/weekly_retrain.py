@@ -13,7 +13,9 @@ For each model group, the batch:
      the same days) all count as a change. A group whose data did not change is
      left alone, and the run records that.
   2. backs up the group's current outputs to the ml_backup schema: its forecast
-     tables, and its own rows in the shared metric tables.
+     tables, and its own rows in the shared metric tables. Where later runs load
+     a saved model (the hourly congestion refresh, the 48-hour forecast), the
+     model files are copied aside as well.
   2b. checks the forecasts already published against the real data that has
      arrived since they were made (the "feedback" of the MLOps feedback loop in
      the architecture diagram). A forecast for July is a guess until July's
@@ -56,6 +58,7 @@ import argparse
 import json
 import os
 import socket
+import shutil
 import subprocess
 import sys
 import time
@@ -75,6 +78,7 @@ from db import PG, WORK  # noqa: E402
 
 LOG_DIR = WORK / "logs" / "weekly_retrain"
 BACKUP = "ml_backup"
+MODEL_BACKUP = WORK / "cache" / "model_backup"      # inside the cache, so the cloud jobs keep it between runs
 LOCK_KEY = 7421090                  # pg advisory lock: one batch at a time
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -98,10 +102,10 @@ INPUTS = {
     "road_crashes": ("public.nlex_road_crashes", "date", None),
     "motorcycle_crashes": ("public.nlex_motorcycle_crashes", "date", None),
     "stalled": ("public.nlex_stalled_vehicles", "date", None),
-    "traffic_wide": ("bronze.nlex_traffic_volume", "date_day", "total_volume"),
     "waze_jams": ("silver.fact_waze_jams", "date_day", "speed_kmh"),
 }
 CONGESTION = ROOT.parent / "All_Scripts" / "Predictive_Modeling"
+HOURLY_48H = WORK / "cache" / "traffic_hourly_48h"
 
 VOLUME_PREDS = ("pred_lstm, pred_prophet, pred_xgboost, pred_holtwinters, pred_sarimax, "
                 "pred_holts_linear, pred_prophet_nw, pred_sarimax_nw, pred_lstm_nw")
@@ -131,6 +135,7 @@ class Group:
     needs: list[str]                            # Python packages the trainers import
     caches: list[Path] = field(default_factory=list)
     checks: list[tuple[str, str]] = field(default_factory=list)   # (what, SQL returning one boolean)
+    files: list[Path] = field(default_factory=list)   # saved models that later runs load; restored with the tables
 
 
 # In run order: the incident models read the traffic volume series, so they come after it.
@@ -175,6 +180,7 @@ GROUPS = [
         tables=[("gold.ml_forecast_48h_runs", None), ("gold.ml_forecast_hourly_48h", None)],
         evaluation="FALSE",
         needs=["tensorflow", "xgboost"],
+        files=[HOURLY_48H / "models", HOURLY_48H / "scaler_prod.npz"],
         checks=[
             ("48 forecast hours for every series and the corridor",
              "SELECT bool_and(n = 48) FROM (SELECT series_key, count(*) n FROM gold.ml_forecast_hourly_48h "
@@ -284,8 +290,21 @@ GROUPS = [
         needs=["lifelines", "sklearn", "statsmodels", "xgboost"],
     ),
     Group(
+        # Trained by hand until 31 Oct 2026, so its response-time card never saw a new upload or a test. After the
+        # volume group, because it reads the volume series.
+        "breakdown_response", "Breakdown dispatch response time",
+        inputs=["breakdowns", "traffic_daily"],
+        steps=[Step(INCIDENTS, ["train_breakdown_response_models.py", "--write-db"])],
+        tables=[("gold.ml_breakdown_response_predictions", None), ("gold.ml_breakdown_response_curve", None),
+                ("gold.ml_breakdown_response_group_stats", None), ("gold.ml_breakdown_response_metadata", None)],
+        evaluation="source = 'gold.ml_breakdown_response_metadata'",
+        needs=["lifelines", "sklearn", "xgboost"],
+    ),
+    Group(
         "incident_spatial", "Incident hotspots per exit",
-        inputs=["accidents", "breakdowns", "traffic_wide"],
+        # What the trainer reads (28 Oct 2026): its exposure is gold traffic now, not the old wide table, and it
+        # takes daily rain from hourly_weather.
+        inputs=["accidents", "breakdowns", "traffic_hourly", "weather"],
         steps=[Step(INCIDENTS, ["train_incident_spatial_models.py", "--write-db"])],
         tables=[("gold.ml_incident_segment_risk", None), ("gold.ml_incident_spatial_coefficients", None),
                 ("gold.ml_incident_spatial_metadata", None)],
@@ -294,7 +313,9 @@ GROUPS = [
     ),
     Group(
         "weather_speed", "Weather impact on speed and incidents",
-        inputs=["traffic_wide", "weather", "road_crashes", "motorcycle_crashes", "stalled"],
+        # The trainer has read the accident and breakdown logs, gold traffic and Waze jams since 21 Oct 2026; the
+        # wide table and the legacy crash tables it used to read never change, so a new upload never retrained it.
+        inputs=["accidents", "breakdowns", "traffic_daily", "traffic_hourly", "weather"],
         steps=[Step(INCIDENTS, ["train_incident_weather_speed_models.py", "--write-db"])],
         tables=[("gold.ml_weather_speed_contour", None), ("gold.ml_weather_speed_forecast", None),
                 ("gold.ml_weather_speed_metadata", None)],
@@ -313,6 +334,9 @@ GROUPS = [
                 ("gold.ml_congestion_eval", None)],
         evaluation="FALSE",
         needs=["tensorflow", "xgboost", "sklearn"],
+        # The hourly refresh loads these. Restoring only the tables left a rejected model on disk, and the next
+        # refresh republished it over the restored forecast (found 31 Oct 2026).
+        files=[CONGESTION / "dualpath_models"],
         checks=[
             ("all 168 hours ahead for every exit",
              "SELECT bool_and(n = 168) FROM (SELECT segment_name, count(DISTINCT hours_ahead) n "
@@ -509,6 +533,52 @@ def backup_name(g: Group, table: str) -> str:
     return f"{BACKUP}.{g.key}__{schema}__{name}"
 
 
+def _remove(path: Path) -> None:
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _copy(src: Path, dst: Path) -> None:
+    if src.is_dir():
+        shutil.copytree(src, dst)
+    else:
+        shutil.copy2(src, dst)
+
+
+def _swap_in(src: Path, dst: Path) -> None:
+    """Replaces dst with a copy of src. The copy is finished before dst is touched, so a copy that fails partway
+    leaves the old version whole."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + ".incoming")
+    _remove(tmp)
+    _copy(src, tmp)
+    _remove(dst)
+    tmp.rename(dst)
+
+
+def backup_files(g: Group) -> list[str]:
+    """Copies the group's saved models aside, beside what take_backup does for its tables."""
+    saved = []
+    for live in g.files:
+        if live.exists():
+            _swap_in(live, MODEL_BACKUP / g.key / live.name)
+            saved.append(live.name)
+    return saved
+
+
+def restore_files(g: Group) -> list[str]:
+    """Puts the group's saved models back. Without this a rejected model stays on disk for the next run to load."""
+    done = []
+    for live in g.files:
+        kept = MODEL_BACKUP / g.key / live.name
+        if kept.exists():
+            _swap_in(kept, live)
+            done.append(live.name)
+    return done
+
+
 def take_backup(g: Group) -> list[str]:
     """Copies the group's outputs aside, in one transaction, so a half-made backup
     can never replace a good one. Plain CREATE TABLE AS: no defaults or sequences
@@ -524,9 +594,12 @@ def take_backup(g: Group) -> list[str]:
                 if exists(cur, table):
                     cur.execute(f"CREATE TABLE {b} AS SELECT * FROM {table} WHERE {where or 'TRUE'}")
                     saved.append(table)
-            return saved
     finally:
         conn.close()
+    files = backup_files(g)
+    if files:
+        say(f"  backed up model files: {', '.join(files)}")
+    return saved
 
 
 def insertable_columns(cur, table: str, backup: str):
@@ -562,9 +635,12 @@ def restore(g: Group) -> list[str]:
                 cur.execute(f"INSERT INTO {table} ({cols}) {'OVERRIDING SYSTEM VALUE ' if override else ''}"
                             f"SELECT {cols} FROM {b}")
                 done.append(table)
-            return done
     finally:
         conn.close()
+    files = restore_files(g)
+    if files:
+        say(f"  restored model files: {', '.join(files)}")
+    return done
 
 
 def checksum(cur, table: str, where: str | None):

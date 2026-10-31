@@ -773,6 +773,12 @@ export default function AiSandboxPage() {
    * The count stays visible so nothing is lost by keeping them folded. */
   const [segFromKm, setSegFromKm] = useState<number | null>(null);
   const [segToKm, setSegToKm] = useState<number | null>(null);
+  /* How the stretch is chosen (2026-10-27, user request): by two exits (the route, with the default window inside
+     it), or by a km range anywhere on the corridor, which picks the enclosing exits itself. One at a time, so the
+     panel asks one question instead of showing both sets of fields. */
+  const [entryMode, setEntryMode] = useState<"exits" | "km">("exits");
+  /** A km window chosen together with a new route: the route change must keep it rather than reset it. */
+  const pendingSegRef = useRef<{ from: number; to: number } | null>(null);
 
   // Default to the whole route, capped at what can still be drawn legibly.
   const routeLenM = Math.max(0, (routeToKm - routeFromKm) * 1000);
@@ -822,6 +828,30 @@ export default function AiSandboxPage() {
     showWindow({ fromKm: a, toKm: b });
   };
 
+  /** Choose by km range: the window is what was typed, and the route becomes the nearest exits around it
+   *  (keeping the current orientation, origin before or after destination). */
+  const corridorMinKm = EXITS[0]?.km ?? 0;
+  const corridorMaxKm = EXITS[EXITS.length - 1]?.km ?? 0;
+  const frameKmRange = (from: number, to: number) => {
+    const lo = Math.max(corridorMinKm, Math.min(from, to));
+    const hi = Math.min(corridorMaxKm, Math.max(Math.max(from, to), lo + MIN_SEG_M / 1000));
+    let a = 0;
+    EXITS.forEach((ex, i) => { if (ex.km <= lo) a = i; });
+    let b = EXITS.length - 1;
+    for (let i = EXITS.length - 1; i >= 0; i--) if (EXITS[i].km >= hi) b = i;
+    if (a === b) { if (b < EXITS.length - 1) b += 1; else a = Math.max(0, a - 1); }
+    const [o, d] = origin > destination ? [b, a] : [a, b];
+    const win = { from: Number(lo.toFixed(3)), to: Number(hi.toFixed(3)) };
+    if (o === origin && d === destination) {
+      setSegFromKm(win.from);
+      setSegToKm(win.to);
+    } else {
+      pendingSegRef.current = win;
+      setOrigin(o);
+      setDestination(d);
+    }
+  };
+
   /** Fit the whole origin -> destination route, as far as it can be drawn. */
   const fitRoute = () => {
     setSegFromKm(routeFromKm);
@@ -841,9 +871,12 @@ export default function AiSandboxPage() {
   const maxLegibleM = Math.round((canvasW * CAR_M) / MIN_CAR_PX);
 
   useEffect(() => {
-    // A km range from the previous route may not exist on the new one.
-    setSegFromKm(null);
-    setSegToKm(null);
+    // A km range from the previous route may not exist on the new one -- unless the range is what moved the
+    // route (Choose by: km range), in which case it is kept.
+    const keep = pendingSegRef.current;
+    pendingSegRef.current = null;
+    setSegFromKm(keep ? keep.from : null);
+    setSegToKm(keep ? keep.to : null);
   }, [origin, destination]);
 
   /** The exit nearest the middle of the span, so the canvas can name the place. */
@@ -1974,6 +2007,15 @@ export default function AiSandboxPage() {
       if (!SITE_FAMILIES.has(family)) return { ok: false, line: `${name} happens on a lane, not at ${at.site.facilityName}` };
       const where = at.site.kind === "approach" ? "on the ramp" : `${at.site.kind} ${at.site.stations.map((i) => i + 1).join(", ")}`;
       return { ok: true, line: `${name} → ${at.site.facilityName} · ${where}` };
+    }
+    // A shoulder breakdown pulls off from the lane next to the shoulder (the outermost, the highest-numbered); it
+    // cannot be dropped on a middle or inner lane, so the marker says so over those and the drop is refused
+    // (2026-10-27: it showed "Breakdown on the shoulder → Lane 3" over a centre lane and placed it there).
+    if (family === "breakdown_shoulder" && at.lane != null) {
+      const outer = byDirection[at.direction].laneCount;
+      if (at.lane !== outer) {
+        return { ok: false, line: `${name} can't be dropped on Lane ${at.lane}: use Lane ${outer}, next to the shoulder` };
+      }
     }
     return { ok: true, line: `${name} → ${DIRECTION_NAME[at.direction]}${at.lane != null ? ` · Lane ${at.lane}` : ""} · Km ${fmtKm(at.km, 2)}` };
   };
@@ -3482,8 +3524,22 @@ export default function AiSandboxPage() {
             onToggle={() => toggleSection("corridor")}
             summary={`${originExit ? displayExitName(originExit.exit_name) : "?"} → ${destExit ? displayExitName(destExit.exit_name) : "?"} · ${view} · ${focused.laneCount} lanes · ${fmt(focused.inflow)} veh/hr`}
           >
-          {/* Side by side: two full-width selects stacked cost a whole row of
-              rail height for no gain, and a route reads better as one line. */}
+          <div className="sandbox-slider-header" style={{ marginBottom: 6 }}>
+            <span className="sandbox-slider-hint">Choose by</span>
+            <div className="sandbox-mode-seg" role="tablist" aria-label="Choose the stretch by">
+              <button role="tab" aria-selected={entryMode === "exits"} className={entryMode === "exits" ? "active" : ""}
+                onClick={() => setEntryMode("exits")} title="Pick an origin and a destination exit">
+                Exits
+              </button>
+              <button role="tab" aria-selected={entryMode === "km"} className={entryMode === "km" ? "active" : ""}
+                onClick={() => setEntryMode("km")} title="Type a km range anywhere on the corridor; the exits around it are picked for you">
+                Km range
+              </button>
+            </div>
+          </div>
+          {entryMode === "exits" && (
+          /* Side by side: two full-width selects stacked cost a whole row of
+             rail height for no gain, and a route reads better as one line. */
           <div style={{ display: "flex", gap: 8 }}>
             <label style={{ flex: 1, minWidth: 0 }}>
               Origin
@@ -3506,6 +3562,7 @@ export default function AiSandboxPage() {
               </select>
             </label>
           </div>
+          )}
           {/* The stretch under study, as official km posts. An operator asks about
               "km 20.5 to km 23"; the simulation is parameterised on length, so it
               models exactly that rather than a fixed sample. The fields show and
@@ -3521,14 +3578,15 @@ export default function AiSandboxPage() {
                 {(segLengthM / 1000).toFixed(2)} km
               </span>
             </div>
+            {entryMode === "km" ? (
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <label style={{ flex: 1, minWidth: 0 }}>
                 <span className="sandbox-slider-hint" style={{ display: "block", marginBottom: 3 }}>From km</span>
                 <KmInput
                   value={fromKm}
-                  min={routeFromKm}
-                  max={routeToKm}
-                  onCommit={setSegFromKm}
+                  min={corridorMinKm}
+                  max={corridorMaxKm}
+                  onCommit={(v) => frameKmRange(v, toKm)}
                   testId="window-from"
                 />
               </label>
@@ -3536,13 +3594,22 @@ export default function AiSandboxPage() {
                 <span className="sandbox-slider-hint" style={{ display: "block", marginBottom: 3 }}>To km</span>
                 <KmInput
                   value={toKm}
-                  min={routeFromKm}
-                  max={routeToKm}
-                  onCommit={setSegToKm}
+                  min={corridorMinKm}
+                  max={corridorMaxKm}
+                  onCommit={(v) => frameKmRange(fromKm, v)}
                   testId="window-to"
                 />
               </label>
             </div>
+            ) : (
+              <span className="sandbox-slider-hint">
+                {fmtKmRange(fromKm, toKm, 2)} of the route.{" "}
+                <button type="button" className="sandbox-link-btn" onClick={() => setEntryMode("km")}
+                  style={{ background: "none", border: "none", padding: 0, color: "var(--page-accent)", cursor: "pointer", font: "inherit" }}>
+                  Set a km range
+                </button>
+              </span>
+            )}
             {/* Only what is true of THIS view right now stays under the field — where the window opened,
                 and why the road has switched to a density view or been capped. The static explanation
                 (route, nearest exit, that a change resets the run) is behind the "i". */}

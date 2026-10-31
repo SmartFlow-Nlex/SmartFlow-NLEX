@@ -125,7 +125,7 @@ def load_daily_counts(conn) -> pd.DataFrame:
 
 
 def load_holidays(conn) -> set:
-    df = pd.read_sql("SELECT date_day FROM dim_holiday WHERE is_holiday", conn)
+    df = pd.read_sql("SELECT date_day FROM public.ph_holidays", conn)  # validated calendar; dim_holiday stops 2026-07-25
     return set(pd.to_datetime(df["date_day"]).dt.date)
 
 
@@ -187,7 +187,7 @@ def main() -> None:
         # Must happen before build_features — an unpopulated HOLIDAY_DATES would
         # silently mark every day a non-holiday rather than failing.
         HOLIDAY_DATES = load_holidays(conn)
-        print(f"  {len(HOLIDAY_DATES)} holiday dates loaded from dim_holiday")
+        print(f"  {len(HOLIDAY_DATES)} holiday dates loaded from ph_holidays")
 
         feat = build_features(daily).dropna(subset=FEATURE_COLS).reset_index(drop=True)
         if len(feat) < VALIDATION_DAYS + 30:

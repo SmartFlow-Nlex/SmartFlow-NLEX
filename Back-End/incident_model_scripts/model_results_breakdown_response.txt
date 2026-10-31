@@ -4,22 +4,22 @@
 
   Cox PH — response-time survival
     concordance index = 0.563
-    MAE (minutes)     = 18.79
+    MAE (minutes)     = 16.71
     n (holdout)       = 10724
-    trained+scored on = 44709 deployments with known daily volume (86.8%)
+    trained+scored on = 51528 deployments with known daily volume (100.0%)
     [SELECTED]
 
   XGBoost regression — response-time
-    MAE (minutes) = 21.09
-    R^2           = -0.039
+    MAE (minutes) = 17.99
+    R^2           = 0.048
     n (holdout)   = 10724
     
 
   Actual vs Predicted median response (min), by cause
     Engine                       actual=19.0  predicted=21.0  n=5076
     Mechanical                   actual=22.0  predicted=23.0  n=2256
-    Tire                         actual=13.0  predicted=19.0  n=2028
-    Others                       actual=17.0  predicted=21.0  n=820
+    Tire                         actual=13.0  predicted=18.0  n=2028
+    Others                       actual=17.0  predicted=20.0  n=820
     Fuel                         actual=19.0  predicted=21.0  n=544
 
   Actual vs Predicted median response (min), by service
@@ -27,8 +27,8 @@
     Patrol Vehicle               actual=9.0  predicted=11.0  n=1598
     RAMFA                        actual=10.0  predicted=17.0  n=389
     Others                       actual=9.0  predicted=19.0  n=61
-    EMS                          actual=9.0  predicted=13.0  n=33
-    RSIG                         actual=16.0  predicted=19.5  n=9
-    Investigator                 actual=0.5  predicted=7.0  n=5
-    Mobile                       actual=3.75  predicted=14.0  n=2
+    EMS                          actual=9.0  predicted=12.0  n=33
+    RSIG                         actual=16.0  predicted=19.0  n=9
+    Investigator                 actual=0.5  predicted=6.0  n=5
+    Mobile                       actual=3.75  predicted=13.5  n=2
 ================================================================================

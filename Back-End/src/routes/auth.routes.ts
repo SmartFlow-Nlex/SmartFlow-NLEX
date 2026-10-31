@@ -11,6 +11,13 @@ import { env } from "../config/env.js";
    multiple times"). See lib/device-trust.ts for what a pass is and is not. */
 const router = Router();
 
+// GET /api/auth/trusted-device/status -- whether this server can remember devices at all. Public and harmless
+// (a yes/no), so the sign-in page offers the checkbox only when ticking it will work: with no secret configured
+// the box was offered and silently did nothing, and the code was asked every time (2026-10-27).
+router.get("/trusted-device/status", (_req, res) => {
+  res.json({ success: true, data: { enabled: deviceTrustEnabled(), days: DEVICE_TRUST_DAYS } });
+});
+
 // POST /api/auth/trusted-device -- issue a pass. Only a session that has just passed the authenticator code
 // may ask: a pass cannot be renewed with another pass, so trust never extends itself past seven days.
 router.post(

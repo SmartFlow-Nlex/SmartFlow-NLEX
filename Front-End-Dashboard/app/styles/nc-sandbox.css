@@ -13,8 +13,8 @@
      sandbox layers in globals.css, including their `:root[data-theme="dark"]`
      overrides, without !important.
    - Anything inside the simulation card is scoped to `.sandbox-main:not(.is-expanded)`.
-     Full screen is a fixed dark HUD over the road (globals.css, "full screen is
-     a SCREEN"); it keeps its own glass look in both themes.
+     Full screen is a HUD of glass bars over the road (globals.css, "full screen is
+     a SCREEN"); since 2026-10-27 the glass follows the theme like the controls rail beside it.
    =========================================================================== */
 
 /* --- Cards: one surface, one hairline, no shadow ------------------------- */
@@ -80,18 +80,8 @@
   height: 8px;
   margin-top: -4px;
 }
-/* Full screen draws the head as dark glass in either theme, so the pill stays
-   white there (the light theme's ink pill would vanish against the glass). */
-:root[data-theme="light"] .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-head .nc-pill {
-  background: var(--pill-ink);
-  color: var(--pill-bg);
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-head .nc-pill {
-    background: var(--pill-ink);
-    color: var(--pill-bg);
-  }
-}
+/* Full screen follows the theme (globals.css, "full screen follows the theme", 2026-10-27): its head is light
+   glass in light mode, so the pill keeps the theme's own colours there (it was forced white for dark glass). */
 
 /* The simulation clock: a hairline capsule, tabular figures. */
 .ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock {

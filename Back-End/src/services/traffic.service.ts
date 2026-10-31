@@ -1,6 +1,7 @@
 import { db } from "../config/db.js";
 import { exitKmValuesSql, kmKeySql } from "../lib/km-post.js";
 import { forecastTable } from "./forecast-source.js";
+import { FACT_HOURLY_JAMS_LOCAL } from "../utils/waze-jams-local.js";
 import { jamProfileAvailable, jamProfileSql, volumeProfileSql } from "./jam-profile.js";
 
 // Hourly columns of nlex_traffic_volume (h00..h23)
@@ -34,7 +35,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
   try {
     const bounds = await db.query(
       `SELECT min(date)::text AS lo, max(date)::text AS hi,
-              (SELECT max(date_day)::text FROM fact_hourly_jams) AS jam_hi
+              (SELECT max(date_day)::text FROM ${FACT_HOURLY_JAMS_LOCAL} fhj) AS jam_hi
          FROM nlex_traffic_volume`
     );
     const minDate: string = bounds.rows[0].lo;
@@ -205,7 +206,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
               `SELECT hour_of_day AS hour,
                       ROUND(AVG(avg_speed_kmh)::numeric, 1)::float AS speed,
                       ROUND(AVG(avg_jam_level)::numeric, 2)::float AS jam_level
-               FROM fact_hourly_jams
+               FROM ${FACT_HOURLY_JAMS_LOCAL} fhj
                WHERE date_day BETWEEN $1 AND $2
                GROUP BY 1 ORDER BY 1`,
               [lo, hi]
@@ -215,7 +216,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
                SELECT j.hour_of_day AS hour,
                       ROUND(AVG(j.avg_speed_kmh)::numeric, 1)::float AS speed,
                       ROUND(AVG(j.avg_jam_level)::numeric, 2)::float AS jam_level
-               FROM fact_hourly_jams j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
+               FROM ${FACT_HOURLY_JAMS_LOCAL} j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
                WHERE j.date_day BETWEEN $1 AND $2 AND w.wet = $3
                GROUP BY 1 ORDER BY 1`,
               [lo, hi, wet]
@@ -393,10 +394,10 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
                  WHERE ${volumeWhereNoDate}
                    AND date >= $1::date - ($2::date - $1::date + 1) AND date < $1::date
                ), jam_cur AS (
-                 SELECT ROUND(AVG(avg_jam_level)::numeric, 2)::float AS jam FROM fact_hourly_jams
+                 SELECT ROUND(AVG(avg_jam_level)::numeric, 2)::float AS jam FROM ${FACT_HOURLY_JAMS_LOCAL} fhj
                  WHERE date_day BETWEEN $1 AND $2
                ), jam_prev AS (
-                 SELECT ROUND(AVG(avg_jam_level)::numeric, 2)::float AS jam FROM fact_hourly_jams
+                 SELECT ROUND(AVG(avg_jam_level)::numeric, 2)::float AS jam FROM ${FACT_HOURLY_JAMS_LOCAL} fhj
                  WHERE date_day >= $1::date - ($2::date - $1::date + 1) AND date_day < $1::date
                )
                SELECT cur.total AS cur_total, cur.days AS cur_days,
@@ -421,11 +422,11 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
                prev AS (SELECT COALESCE(SUM(v), 0)::bigint AS total, COUNT(DISTINCT date)::int AS days FROM hvprevw),
                jam_cur AS (
                  SELECT ROUND(AVG(j.avg_jam_level)::numeric, 2)::float AS jam
-                 FROM fact_hourly_jams j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
+                 FROM ${FACT_HOURLY_JAMS_LOCAL} j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
                  WHERE j.date_day BETWEEN $1 AND $2 AND w.wet = $${W}
                ), jam_prev AS (
                  SELECT ROUND(AVG(j.avg_jam_level)::numeric, 2)::float AS jam
-                 FROM fact_hourly_jams j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
+                 FROM ${FACT_HOURLY_JAMS_LOCAL} j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
                  WHERE j.date_day >= $1::date - ($2::date - $1::date + 1) AND j.date_day < $1::date AND w.wet = $${W}
                )
                SELECT cur.total AS cur_total, cur.days AS cur_days,

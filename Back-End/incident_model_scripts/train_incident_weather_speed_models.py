@@ -264,7 +264,7 @@ def read_by_year(conn, sql: str) -> pd.DataFrame:
 
 
 def load_holidays(conn) -> set:
-    df = pd.read_sql("SELECT date_day FROM dim_holiday WHERE is_holiday", conn)
+    df = pd.read_sql("SELECT date_day FROM public.ph_holidays", conn)  # validated calendar; dim_holiday stops 2026-07-25
     return set(pd.to_datetime(df["date_day"]).dt.date)
 
 

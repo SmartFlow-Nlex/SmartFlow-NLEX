@@ -112,6 +112,16 @@ export default function Home() {
 
   // "Remember this device for 7 days", offered at the code step.
   const [trustDevice, setTrustDevice] = useState(false);
+  // Whether the server can remember devices (GET /api/auth/trusted-device/status); null until it answers.
+  const [trustAvailable, setTrustAvailable] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${BACKEND}/api/auth/trusted-device/status`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (!cancelled) setTrustAvailable(Boolean(j?.data?.enabled)); })
+      .catch(() => { if (!cancelled) setTrustAvailable(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   // Resetting a forgotten password.
   const [resetEmail, setResetEmail] = useState("");
@@ -439,6 +449,8 @@ export default function Home() {
           const { data: s } = await supabase.auth.getSession();
           if (r.ok && j?.data?.token && s.session?.user) {
             saveDeviceTrust({ userId: s.session.user.id, email: s.session.user.email ?? "", token: j.data.token, expiresAt: j.data.expiresAt });
+          } else {
+            console.warn("Remember this device: not remembered", r.status, j?.code ?? "");
           }
         } catch {
           /* not remembered this time; the sign-in itself still goes ahead */
@@ -887,8 +899,11 @@ export default function Home() {
 
             <div className="mfa-remember">
               <label className="remember-row">
-                <input type="checkbox" checked={trustDevice} onChange={(e) => setTrustDevice(e.target.checked)} disabled={isLoading} />
-                <span>Remember this device for 7 days</span>
+                <input type="checkbox" checked={trustDevice && trustAvailable !== false} onChange={(e) => setTrustDevice(e.target.checked)}
+                  disabled={isLoading || trustAvailable === false} />
+                <span title={trustAvailable === false ? "This server is not set up to remember devices (DEVICE_TRUST_SECRET); the code is asked at every sign-in." : undefined}>
+                  Remember this device for 7 days{trustAvailable === false ? " (not available on this server)" : ""}
+                </span>
               </label>
             </div>
 

@@ -198,16 +198,19 @@ DAILY_RAIN_SQL = """
     ORDER BY 1
 """
 
-# bronze.nlex_traffic_volume already carries its own exit_id FK (verified
-# against silver.nlex_exits_clean's 20 rows: 17 of 20 exits have volume
-# rows here, the rest fall back to the corridor-wide mean in
-# build_exit_volume below) — no name-matching needed, unlike the incident
-# location resolver.
+# Each exit's daily volume from the toll record every other model reads
+# (gold.fact_traffic_hourly, trips at the plaza where they paid), matched to
+# nlex_exits by name as train_incident_weather_speed_models.py does. It used to
+# be bronze.nlex_traffic_volume, the old synthetic wide table: 2.4-11x the real
+# levels, per-exit shares unlike the record (Bocaue Interchange 8.7% of volume
+# against a real 3.2%) and no Bocaue Barrier or Tambubong rows at all (28 Oct
+# 2026). 19 of 20 exits match; SCTEX has no paid-at rows by construction and
+# takes the typical exit's volume in main().
 EXIT_VOLUME_SQL = """
-    SELECT exit_id, date_day AS d, SUM(total_volume)::float AS volume
-    FROM bronze.nlex_traffic_volume
-    WHERE exit_id IS NOT NULL
-    GROUP BY exit_id, date_day
+    SELECT x.exit_id, f.date AS d, SUM(f.total)::float AS volume
+    FROM gold.fact_traffic_hourly f
+    JOIN nlex_exits x ON x.exit_name = f.exit_canonical
+    GROUP BY x.exit_id, f.date
 """
 
 
@@ -236,7 +239,9 @@ def load_exit_volume(conn) -> pd.DataFrame:
 
 
 def load_holidays(conn) -> set:
-    df = pd.read_sql("SELECT date_day FROM dim_holiday WHERE is_holiday", conn)
+    # ph_holidays, the validated calendar every other model reads; dim_holiday is the old view inferred from the
+    # synthetic wide table's is_holiday flag.
+    df = pd.read_sql("SELECT date_day FROM public.ph_holidays", conn)
     return set(pd.to_datetime(df["date_day"]).dt.date)
 
 
@@ -300,14 +305,17 @@ def build_panel(conn, exits_df: pd.DataFrame) -> pd.DataFrame:
     panel = panel.merge(rain, on="d", how="left")
     panel["rain_mm"] = panel["rain_mm"].fillna(0.0)
 
-    print("Loading per-exit daily volume (bronze.nlex_traffic_volume.exit_id)...")
+    print("Loading per-exit daily volume (gold.fact_traffic_hourly by exit)...")
     vol = load_exit_volume(conn)
     panel = panel.merge(vol, on=["d", "exit_id"], how="left")
-    corridor_mean_volume = vol.groupby("d")["volume"].sum().mean()
+    # One exit's typical day, not the corridor's: the fallback is for a single
+    # exit, and the corridor total (what .sum() gave) credited an exit without
+    # its own series with every exit's traffic at once.
+    typical_exit_volume = vol.groupby("d")["volume"].mean().mean()
     covered = panel["volume"].notna().mean()
     print(f"  {covered * 100:.0f}% of exit-days have their own volume reading; "
-          f"the rest fall back to the corridor-wide daily mean ({corridor_mean_volume:,.0f})")
-    panel["volume"] = panel["volume"].fillna(corridor_mean_volume)
+          f"the rest fall back to the typical exit's daily volume ({typical_exit_volume:,.0f})")
+    panel["volume"] = panel["volume"].fillna(typical_exit_volume)
     panel["log_volume"] = np.log(panel["volume"].clip(lower=1.0))
 
     holidays = load_holidays(conn)

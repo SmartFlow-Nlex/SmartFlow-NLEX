@@ -7,6 +7,7 @@ import { RECORD_END } from "../etl/toll-hourly.js";
 import { searchExitsInDb } from "./map-comparison.service.js";
 import { buildExitToExitSegments, segmentIndexForKm } from "../lib/exit-segments.js";
 import { KM_POST_START, kmPostSql } from "../lib/km-post.js";
+import { FACT_HOURLY_JAMS_LOCAL } from "../utils/waze-jams-local.js";
 
 // ---------------------------------------------------------------------------
 // Incident analytics for the descriptive dashboard.
@@ -375,7 +376,7 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
          SELECT (w.rain > 0.3) AS wet,
                 ROUND(AVG(j.avg_speed_kmh)::numeric, 1)::float AS speed,
                 ROUND(AVG(j.avg_jam_level)::numeric, 2)::float AS jam_level
-         FROM fact_hourly_jams j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
+         FROM ${FACT_HOURLY_JAMS_LOCAL} j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
          WHERE j.date_day BETWEEN $1 AND $2
          GROUP BY 1`,
         [lo, hi]

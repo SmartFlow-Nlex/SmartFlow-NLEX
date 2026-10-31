@@ -67,7 +67,7 @@ jobs:
         with: { name: weekly-logs-part1, path: smartflow_scripts/_work/logs/weekly_retrain, retention-days: 30 }
 
   incident-models:
-    name: Incidents, severity, hotspots, weather impact
+    name: Incidents, severity, breakdown response, hotspots, weather impact
     needs: daily-models
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -90,7 +90,7 @@ jobs:
         with: { path: "${{ env.ML_STATE_PATHS }}", key: "ml-state-${{ github.run_id }}-1", restore-keys: "ml-state-" }
       - name: Weekly batch (part 2 of 3)
         working-directory: smartflow_scripts/3_training_testing/weekly_retrain
-        run: python weekly_retrain.py --scheduled --only incident_counts,incident_severity,incident_spatial,weather_speed ${{ inputs.force && '--force' || '' }}
+        run: python weekly_retrain.py --scheduled --only incident_counts,incident_severity,breakdown_response,incident_spatial,weather_speed ${{ inputs.force && '--force' || '' }}
       - uses: actions/cache/save@v4
         if: always()
         with: { path: "${{ env.ML_STATE_PATHS }}", key: "ml-state-${{ github.run_id }}-2" }

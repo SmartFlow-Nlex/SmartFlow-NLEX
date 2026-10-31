@@ -254,13 +254,20 @@
 .lm-page .lm-exit-km { margin-left: auto; font-size: var(--fs-label); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lm-page .lm-exit-empty { padding: 10px 12px; font-size: var(--fs-body); color: var(--text-secondary); }
 
+/* Easy to find and unmistakable when on (2026-10-27: a transparent outline with a faint tint when on, so
+   neither state read as a button). Off: a solid pill like the exit search beside it, with a cube icon.
+   On: filled with the page accent, white text, "3D on". */
 .lm-page .lm-3d {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 40px;
   min-width: 52px;
   padding: 0 16px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-full);
-  background: transparent;
+  background: var(--bg-surface-solid, var(--bg-surface));
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--text-primary) 14%, transparent);
   color: var(--text-primary);
   font-size: var(--fs-label);
   font-weight: 600;
@@ -270,8 +277,10 @@
 }
 .lm-page .lm-3d:hover { border-color: var(--hairline-hover); transform: translateY(-2px); }
 .lm-page .lm-3d.is-on {
-  border-color: color-mix(in srgb, var(--page-accent) 70%, transparent);
-  background: color-mix(in srgb, var(--page-accent) 16%, transparent);
+  border-color: var(--page-accent);
+  background: var(--page-accent);
+  color: #ffffff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--page-accent) 28%, transparent);
 }
 
 /* --- Overlays on the maps --------------------------------------------------

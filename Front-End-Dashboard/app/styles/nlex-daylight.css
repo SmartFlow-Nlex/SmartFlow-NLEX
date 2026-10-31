@@ -963,6 +963,7 @@ html[data-stage-drag="1"] * { cursor: grabbing !important; user-select: none; -w
   animation: ov-navie-float 4.5s ease-in-out 0.5s infinite;
 }
 @keyframes ov-navie-float { 50% { transform: translateY(-4px); } }
+html[data-effects="off"] .ov-navie-bubble.is-open { animation: none; }
 /* The tail: a rounded wedge from the bubble's lower left corner, down toward Navie's cap. */
 .ov-navie-bubble::after {
   content: "";

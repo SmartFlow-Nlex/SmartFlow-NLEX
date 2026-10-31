@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import { ChevronDown, Clock, Map, Maximize2, Milestone } from "lucide-react";
+import { ChevronDown, Clock, Map, Maximize2, Milestone, Box } from "lucide-react";
 import type { Feature } from "geojson";
 import TrafficMapPanel, { MAJOR_EXITS } from "../../../components/maps/TrafficMapPanel";
 import ForecastExpandModal from "../../../components/maps/ForecastExpandModal";
@@ -284,10 +284,11 @@ export default function MapComparisonPage() {
             type="button"
             className={`lm-3d${pitched ? " is-on" : ""}`}
             aria-pressed={pitched}
-            title="Tilt the maps (3D)"
+            title={pitched ? "3D on: click for the flat, north-up view" : "Tilt the maps (3D)"}
             onClick={() => setPitched((v) => !v)}
           >
-            3D
+            <Box size={15} strokeWidth={2.2} aria-hidden="true" />
+            <span>{pitched ? "3D on" : "3D"}</span>
           </button>
           </>
         }

@@ -289,9 +289,11 @@
 @keyframes ss-lamp { from { opacity: 0.75; } to { opacity: 0.9; } }
 @keyframes ss-carlight { from { opacity: 0.9; } to { opacity: 1; } }
 
-/* Effects off (the reader's switch): the light holds still and the glints step aside. */
+/* Effects off (the reader's switch): the moving light, haze and glints go; the road picture stays, still.
+   (It used to pause them only, so the page looked the same either way.) */
 .nlex-env[data-motion="off"] .ss-fx > i { animation-play-state: paused; }
 .nlex-env[data-motion="off"] .ss-fx > .ss-glint { display: none; }
+html[data-effects="off"] .ss-fx { display: none; }
 /* Reduced motion: nothing drifts, breathes, travels or scales; the theme change is a short fade. */
 @media (prefers-reduced-motion: reduce) {
   .ss-fx > i { animation: none !important; }
