@@ -1,7 +1,7 @@
 import React from 'react';
-import { Platform, StyleSheet, View, type ImageSourcePropType } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { useAssets } from 'expo-asset';
-import { Image } from 'expo-image';
+import { Image, type ImageProps } from 'expo-image';
 import Animated, { useAnimatedStyle, useDerivedValue } from 'react-native-reanimated';
 import {
   Canvas,
@@ -15,6 +15,9 @@ import {
   Skia,
   useVideo,
 } from '@shopify/react-native-skia';
+
+/** What expo-image accepts (React Native 0.88's ImageSourcePropType now allows readonly arrays it does not). */
+type PictureSource = ImageProps['source'];
 
 /**
  * A looping video with a transparent background - used for the car mascot.
@@ -64,7 +67,7 @@ export interface AlphaVideoProps {
   /** The packed colour-and-alpha MP4, from `require`. */
   source: number;
   /** Shown on the web, where Skia video is unavailable. */
-  fallback: ImageSourcePropType;
+  fallback: PictureSource;
   /** One half of the packed video, in pixels - the cut-out's own size. */
   frameWidth: number;
   frameHeight: number;
@@ -82,7 +85,7 @@ export interface AlphaVideoProps {
    * start - unnoticed in a greeting, but a loading indicator would often be
    * gone again before anything had appeared.
    */
-  poster?: ImageSourcePropType;
+  poster?: PictureSource;
 }
 
 const Player: React.FC<{
@@ -93,7 +96,7 @@ const Player: React.FC<{
   frameHeight: number;
   label?: string;
   edgeColor?: string;
-  poster?: ImageSourcePropType;
+  poster?: PictureSource;
 }> = ({ uri, width, height, frameWidth, frameHeight, label, edgeColor, poster }) => {
   const { currentFrame } = useVideo(uri, { looping: true, volume: 0 });
   // Gone the instant a frame arrives: left in place, the still car would show

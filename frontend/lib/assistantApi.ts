@@ -6,6 +6,7 @@ import {
   GREETING_TIMEOUT_MS,
 } from '../config/api';
 import { wakeTrafficSource } from './corridorApi';
+import { getSupabase, isSupabaseConfigured } from '../auth/supabaseClient';
 
 /**
  * Talks to SmartFlow's own backend, never to the model provider directly.
@@ -63,6 +64,12 @@ const labels: Record<AssistantToolName, string> = {
   get_corridor_status: 'Live exit reading',
   get_corridor_overview: 'Live corridor snapshot',
   list_exits: 'Exit directory',
+  get_road_reports: 'Live Waze alerts',
+  get_maintenance: 'Maintenance notices',
+  get_community_posts: 'Community posts',
+  get_event_forecasts: 'Event forecasts',
+  get_incident_hotspots: 'ML hotspots',
+  get_traffic_forecast: 'SmartFlow forecast',
 };
 
 /**
@@ -272,6 +279,25 @@ export async function saveLanguageChoice(choice: LanguageChoice): Promise<void> 
   }
 }
 
+/**
+ * The user's own sign-in, for the one thing Navie reads on their behalf:
+ * Community posts, which Supabase shows to signed-in users only. The backend
+ * reads them with this and keeps nothing; without it Navie says it cannot see
+ * them, and everything else still works.
+ */
+async function signInHeader(): Promise<Record<string, string>> {
+  if (!isSupabaseConfigured) {
+    return {};
+  }
+  try {
+    const { data } = await getSupabase().auth.getSession();
+    const token = data.session?.access_token;
+    return token === undefined ? {} : { Authorization: `Bearer ${token}` };
+  } catch {
+    return {};
+  }
+}
+
 async function postOnce(
   url: string,
   message: string,
@@ -285,7 +311,7 @@ async function postOnce(
   try {
     return await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await signInHeader()) },
       body: JSON.stringify({ message, history: toWireHistory(history), language }),
       signal: controller.signal,
     });

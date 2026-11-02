@@ -69,6 +69,20 @@ const AppHeader: React.FC<AppHeaderProps> = ({ children }) => {
 
       <View style={styles.actions}>
         {children}
+        {/*
+          Navie's Arcade: NLEX mini games, reached from every tab without being
+          a tab of its own (Ysa, 23 Oct). Same round button as settings, which
+          stays the rightmost.
+        */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Navie's Arcade, mini games"
+          hitSlop={6}
+          onPress={() => router.push('/arcade')}
+          style={({ pressed }) => [styles.settings, pressed && styles.settingsPressed]}
+        >
+          <Ionicons name="game-controller" size={21} color={colors.navy} />
+        </Pressable>
         {/* Profile is where the settings live - theme, account, sign out. */}
         <Pressable
           accessibilityRole="button"

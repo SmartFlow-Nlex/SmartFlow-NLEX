@@ -7,7 +7,6 @@ import {
   fetchCorridorStatus,
   wakeTrafficSource,
 } from '../lib/corridorApi';
-import { readTrafficByStretch } from '../lib/corridorGeometry';
 
 /** "Poll every 60s — the Waze ingester writes every few minutes." */
 const POLL_INTERVAL_MS = 60000;
@@ -88,10 +87,10 @@ const fetchWithWake = async () => {
 const load = (): Promise<void> => {
   if (inFlight === null) {
     inFlight = fetchWithWake()
-      // Graded by the traffic on each stretch, once, here - see readTrafficByStretch.
+      // Shown as read: the same statuses and counts the dashboard derives from this feed.
       .then((data) =>
         publish({
-          data: readTrafficByStretch(data),
+          data,
           isLoading: false,
           error: null,
           fetchedAt: Date.now(),

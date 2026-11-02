@@ -536,7 +536,7 @@ const makeStyles = (c: ThemePalette) =>
     // The wordmark, set as the tab header sets it: Nunito Black. No weight -
     // the family is the weight, and Android would embolden it again.
     brandTitle: {
-      color: c.text,
+      color: c.authBrandText,
       fontFamily: Fonts.brand,
       letterSpacing: 0.3,
       textAlign: 'center',

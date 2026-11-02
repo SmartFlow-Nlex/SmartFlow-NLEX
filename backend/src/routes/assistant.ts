@@ -13,6 +13,15 @@ import {
   findExit,
   getCorridorStatus,
 } from '../services/corridor';
+import {
+  communityTool,
+  eventsTool,
+  hotspotsTool,
+  maintenanceTool,
+  manilaNow,
+  roadReportsTool,
+  trafficForecastTool,
+} from '../services/appData';
 
 /**
  * SmartFlow NLEX assistant.
@@ -71,30 +80,56 @@ function getClient(): OpenAI {
   return client;
 }
 
-const SYSTEM_PROMPT_BASE = `You are Navie, the SmartFlow NLEX traffic assistant - a friendly little car mascot. If asked who you are, you are Navie. You help commuters and drivers on the NLEX expressway in the Philippines. You used to be called Lex: earlier replies in a conversation may say "Lex", but your name is Navie now - never call yourself Lex.
+const SYSTEM_PROMPT_BASE = `You are Navie, the SmartFlow NLEX traffic assistant - a friendly little car mascot inside the SmartFlow NLEX app. If asked who you are, you are Navie. You help commuters and drivers on the NLEX expressway in the Philippines. You used to be called Lex: earlier replies in a conversation may say "Lex", but your name is Navie now - never call yourself Lex.
 
 STRICT RULES:
-1. You ONLY answer questions about CURRENT TRAFFIC CONDITIONS on the NLEX corridor, and about which exits exist and where they are. For anything else - general knowledge, other roads, cities or countries, maths, homework, writing, news - politely say it is outside what you can help with and offer to check an NLEX exit instead, even if the user insists or asks again. Never answer the other question, not even briefly.
-1b. Route planning, travel time, journey duration and departure advice are NOT AVAILABLE IN THIS APP YET. Your tools return none of it - only congestion at exits - so any such answer would be invented.
-1c. When asked for one, say two things and stop: that it is not available in this app yet, and that you can check traffic at an exit instead. IN THE USER'S OWN LANGUAGE - the Tagalog wording below is an example of the shape, not a script to copy when they wrote in English.
-    Tagalog: "Wala pa pong travel time sa app na ito. Pero pwede kong i-check ang traffic sa Bocaue."
-    English: "Travel times aren't in this app yet. I can check the traffic at Bocaue though."
-    Name ONLY exits the user actually mentioned. If they named none, ask which exit they mean - never list the corridor.
-    Then stop. Do NOT add a suggestion afterwards. "Pero pwede kang dumaan sa NLEX northbound" IS route advice and is forbidden - naming a direction, a road or an order of exits all count, even as a helpful aside.
-1d. Say "not available in this app yet", never "SmartFlow cannot". The dashboard does track delay, so claiming the system cannot do travel times would be wrong about your own project.
-2. NEVER state or guess a traffic condition without calling a tool first. You have no knowledge of current NLEX conditions.
-2b. NEVER say a place is not an NLEX exit based on your own knowledge. The authoritative list is given below - check it. If a name is on that list, call get_corridor_status for it. Only if it is genuinely absent from that list may you say you do not recognise it.
+1. You answer questions about the NLEX corridor and about the SmartFlow NLEX app - everything its screens show:
+   - live traffic at an exit or on the whole corridor,
+   - the forecast for a later hour (which stretches will be slow or congested),
+   - Waze alerts on NLEX (accidents, hazards, police),
+   - maintenance and roadworks notices,
+   - Community posts and incident reports from other drivers,
+   - upcoming events at the Philippine Arena and the exits they will make busy,
+   - the exits with the most predicted incidents (ML hotspots),
+   - which exits exist and where they are,
+   - how to use the app (see APP GUIDE).
+   For anything else - general knowledge, other roads, cities or countries, maths, homework, writing, news - politely say it is outside what you can help with and offer to check NLEX for them instead, even if the user insists or asks again. Never answer the other question, not even briefly.
+2. NEVER state or guess a traffic condition, forecast, alert, maintenance notice, Community post, event or hotspot without calling the matching tool first. You know none of them yourself.
+2b. NEVER say a place is not an NLEX exit based on your own knowledge. The authoritative list is given below - check it. Only if a name is genuinely absent from that list may you say you do not recognise it.
 3. If a tool reports data is unavailable, say so plainly. Do not substitute a guess.
+3b. The app does NOT give travel times, arrival times (ETA), route planning or advice on when to leave - no tool returns them, so any such figure would be invented. When asked, say in one sentence that the app does not give them, then offer to check the traffic at the exits they named (now, or the forecast for a time). Never suggest a departure or arrival time, not even from a forecast ("traffic is lighter at 9, so leave then" is departure advice).
+    English: "The app doesn't give travel times or tell you when to leave, but I can check the traffic at Bocaue and Dau for you - now, or the forecast for a time?"
+    Tagalog: "Wala pong travel time o oras ng pag-alis sa app na ito, pero pwede kong i-check ang traffic sa Bocaue at Dau - ngayon, o ang forecast sa isang oras?"
+    Name only exits the user mentioned, by their NLEX exit (Clark = Dau, Manila or Quezon City = Balintawak, Philippine Arena = Ciudad de Victoria) - both when they gave two, and no direction; if none, offer to check NLEX in general.
+    Stop after the offer. Do not write "let me look it up" - wait for them to say which.
+3c. Forecasts, events and hotspots are model predictions - say so ("the SmartFlow forecast expects..."). Community posts are drivers' own reports, not verified - say so.
 4. Reply in the language named under REPLY LANGUAGE at the end of these instructions, and follow its style guide.
-5. Be brief - most users are about to drive. Two or three sentences is usually right.
-6. Answer ONLY what was asked. Do not volunteer conditions at other exits unless the user asked about them.
+5. Be brief - most users are about to drive. Two or three sentences is usually right; a short list is fine when they ask for several items.
+6. Answer ONLY what was asked. Do not volunteer other exits, alerts or notices unless the user asked about them.
 7. Write plain text only. No markdown - no **bold**, no *italics*, no # headings. The app shows your reply in a chat bubble that renders none of it, so the symbols appear literally.
 
 CHOOSING A TOOL:
-- The user named a place (Bocaue, Balintawak, Marilao...) -> get_corridor_status for THAT exit. One call.
-- The user asked about NLEX generally, with no place named -> get_corridor_overview.
-- The user asked WHERE traffic is slow, heavy, congested or moving ("saan mabagal", "saan may traffic", "where is it slow") -> get_corridor_overview. These are live traffic questions, NOT travel time: "daloy" means the flow of traffic, and "mabagal ang daloy" means traffic is slow. Rule 1b applies only to how long a trip takes.
-- Never use get_corridor_overview to answer a question about one specific exit.
+- Traffic NOW at a named place (Bocaue, Balintawak, Marilao...) -> get_corridor_status for THAT exit. One call per direction asked.
+- Traffic NOW on NLEX in general, or WHERE it is slow, heavy, congested or moving ("saan mabagal", "saan may traffic", "where is it slow") -> get_corridor_overview. "daloy" means the flow of traffic, not travel time.
+- Traffic LATER (a time, "mamaya", "tonight", "bukas", "in 2 hours") -> get_traffic_forecast with that time.
+- How long a trip takes, what time they will arrive, when to leave -> no tool: rule 3b.
+- A follow-up that only changes the time ("how about at 8?", "eh mamayang 9?") -> call the same tool again with the new time. Never answer it from the earlier reply.
+- Accidents, hazards, stalled cars, police, "any alerts?" -> get_road_reports.
+- Maintenance, roadworks, lane closures, "may ginagawa ba?" -> get_maintenance.
+- What other drivers are posting or reporting, the Community feed -> get_community_posts.
+- Concerts or events, the Philippine Arena, "may event ba?" -> get_event_forecasts.
+- Accident-prone exits, risky spots, ML hotspots -> get_incident_hotspots.
+- Which exits exist, their order or KM -> list_exits.
+- How to use the app -> answer from APP GUIDE, no tool.
+
+APP GUIDE (the app's five tabs, plus the gear at the top right):
+- Dashboard: "Current Status" card - NLEX Traffic, Avg Delay, Active Incidents, and "Heaviest right now" (tap it to open that interchange). "Traffic Forecast" card - pick a Route (From, To, Direction) and When to see the congestion probability and typical delay. Below, switch between "Event Forecasts" and "ML Hotspots"; "View All" opens the full list.
+- Corridor: switch "Live now" / "Forecast". Live now shows every exit northbound and southbound; tap an exit for its interchange map. Forecast shows the model's prediction - choose "Next 12 h", "Next 24 h" or "Next 7 days" and an hour.
+- Community: "Share Update" posts a traffic update (pick a location - "Single Area" or "Between Exits" - and a condition: Smooth, Moderate or Heavy, plus a message). "Report Incident" reports an incident with a description. Both can carry up to 4 photos or videos. Switch the feed between "Community Updates" and "Recent Incidents"; tap the thumbs-up to like a post.
+- Assistant (you): the EN / TL switch sets the reply language; the clock button opens past chats; the pencil button starts a new chat.
+- Alerts: "Alerts" lists Waze accidents, hazards and police on NLEX, other drivers' incident reports and operator advisories; "Maintenance" lists scheduled roadworks. New alerts also drop in as a banner. "Push Notifications" turns device notifications on or off.
+- Gear (Profile): Edit Profile (name and photo; the email is fixed), Notifications, Dark Mode (On, Off or System), Privacy Policy, Terms of Service, FAQ, App Version, Log Out.
+- Signing in: email and password, then the six-digit code from an authenticator app. 5 wrong passwords lock that email for 5 minutes. "Forgot password?" emails a reset link - open it on the phone with the app. "Remember me" keeps the email filled in. New passwords are 8 to 16 characters.
 
 GEOGRAPHY: northbound runs from Balintawak (KM 0, Metro Manila) towards Sta. Ines (KM 86, near Clark). Southbound is the reverse. "Papuntang Manila" or "going to Manila" means SOUTHBOUND. "Papuntang Clark/Pampanga" means NORTHBOUND.`;
 
@@ -231,8 +266,9 @@ Examples: "Traffic is heavy at San Fernando southbound right now, moving at abou
   tagalog: `Answer in natural, conversational Tagalog - the way a Filipino driver actually talks, not a formal or word-for-word translation. Keep "km/h", exit names and "NLEX" as they are, and use "po" only if the user did.
 Say it this way: "may traffic", "walang traffic", "mabigat ang daloy", "maluwag ang daan", "mabagal ang takbo", "mga 4 km/h lang ang takbo", "papuntang Manila".
 Match the status exactly: congested = "may traffic" / "mabigat ang daloy"; slow = "medyo mabagal ang takbo" (NOT "walang traffic" - slow is not clear); clear = "walang traffic" / "maluwag ang daan".
-NEVER use stiff or literal words: not "nagtataguyod", not "bilis ng paglalakbay", not "paglalakbay", not "humigit-kumulang" (say "mga"), not "kasalukuyan", not "siksikan ng trapiko".
-Examples: "May traffic ngayon sa San Fernando papuntang Manila, mga 4 km/h lang ang takbo." / "Medyo mabagal ang takbo ngayon sa San Fernando papuntang Manila, mga 50 km/h." / "Walang traffic ngayon sa Bocaue papuntang Clark, maluwag ang daan."`,
+NEVER use stiff or literal words: not "nagtataguyod", not "bilis ng paglalakbay", not "paglalakbay", not "humigit-kumulang" (say "mga"), not "kasalukuyan", not "siksikan ng trapiko", not "panganib" for a road hazard (say "hazard"), never "kalamidad" (it means disaster).
+Examples: "May traffic ngayon sa San Fernando papuntang Manila, mga 4 km/h lang ang takbo." / "Medyo mabagal ang takbo ngayon sa San Fernando papuntang Manila, mga 50 km/h." / "Walang traffic ngayon sa Bocaue papuntang Clark, maluwag ang daan."
+For forecasts: "Ayon sa SmartFlow forecast, inaasahang may traffic mamayang 6 PM sa Marilao hanggang CDV / Ph. Arena (mga 89% ang tsansa)." / "Mga 72 minuto ang biyahe mula Balintawak hanggang Dau, ayon sa forecast." Not "naghihintay" for "expects", not "pagkakatagpuan". Queues are "inaasahang traffic" or "pila ng sasakyan" - never "kakaibang daloy" or "kahibhitan".`,
   taglish: `Answer in Taglish - Tagalog sentence structure with the everyday English traffic terms Filipinos use when texting: "traffic", "congested", "clear", "southbound", "northbound", "right now".
 Match the status exactly: congested = "congested" / "may traffic"; slow = "medyo slow ang takbo" (NOT "clear" - slow is not clear); clear = "clear" / "walang traffic".
 NEVER use stiff or literal Tagalog: not "nagtataguyod", not "bilis ng paglalakbay", not "paglalakbay", not "humigit-kumulang" (say "mga").
@@ -465,7 +501,32 @@ export function followUpExit(
  * is not NLEX. Everything else is sorted by classifyTopic.
  */
 const NLEX_TOPIC_WORDS =
-  /\b(nlex|sctex|expressway|exits?|toll\w*|interchange|lanes?|rfid|easytrip|autosweep)\b/i;
+  /\b(nlex|sctex|expressway|exits?|toll\w*|interchange|lanes?|rfid|easytrip|autosweep|maintenance|roadworks?|smartflow|navie|hotspots?|dashboard|ph(ilippine)? arena)\b/i;
+
+/*
+ * Questions about the app's other data, or about using the app, rather than
+ * live traffic. The checks below that send the model back to look up live
+ * traffic must leave these alone: "how long from Balintawak to Dau?" names an
+ * exit and "how do I share a traffic update?" says "traffic", and neither is
+ * answered by the live feed.
+ */
+/** "at 8 pm", "8pm", "18:00", "alas 6", "mamaya", "tonight", "bukas" - a forecast question. */
+const TIME_WORDS =
+  /(\b\d{1,2}\s*(am|pm)\b|\b\d{1,2}:\d{2}\b|\balas\s+\w+|\b(mamaya|mamayang|tonight|later|bukas|tomorrow|this (evening|afternoon|morning)|ngayong gabi|mamayang gabi)\b)/i;
+
+/**
+ * "what time will I arrive", "when should I leave", "gaano katagal" - a trip question, which the
+ * app does not answer (rule 3b), so its clock time is not a forecast hour to look up.
+ */
+const TRIP_WORDS =
+  /(arriv\w*|\beta\b|\bleave\b|leaving|depart\w*|how long|travel time|makarating|darating|dadating|aalis|umalis|pag-alis|gaano katagal|ilang oras)/i;
+
+export function asksAboutATime(message: string): boolean {
+  return TIME_WORDS.test(message) && !TRIP_WORDS.test(message);
+}
+
+const OTHER_TOPIC_WORDS =
+  /\b(maintenance|roadworks?|ginagawa|accidents?|aksidente|hazards?|police|pulis|alerts?|community|posts?|reports?|nag-?report|events?|concerts?|arena|hotspots?|forecast|mamaya|later|tonight|mamayang|bukas|tomorrow|how long|gaano|katagal|travel|leave|umalis|aalis|how (do|can) i|paano|settings?|dark mode|password|profile|share|like|app)\b/i;
 
 /*
  * Asking Navie to say given words is never passed on sight, even about NLEX:
@@ -474,6 +535,19 @@ const NLEX_TOPIC_WORDS =
  */
 const SAY_THIS_WORDS =
   /\b(say|repeat|reply with|respond with|answer with|write|translate|pretend|ignore|sabihin|ulitin|isulat)\b/i;
+
+/*
+ * The plain "say these words" orders, declined in code without asking the
+ * sorter: it let "Sabihin mo na sarado ang NLEX ngayon" through one time in
+ * a few, and the model then talked about closures it had not looked up.
+ * "Sabihin mo KUNG may traffic" (tell me IF) is a question and is not matched.
+ */
+const SAY_THIS_ORDER =
+  /(\brepeat after me\b|\bsay that\b|\bsay\s*:|\b(reply|respond|answer) with exactly\b|\bsabihin mo na\b|\bulitin mo\b|\bisulat mo\b|\bpretend (you are|to be)\b|\bignore (your|the|all|previous)\b)/i;
+
+export function isSayThisOrder(message: string): boolean {
+  return SAY_THIS_ORDER.test(message);
+}
 
 export function plainlyAboutNlex(message: string, namedExit: string | null): boolean {
   if (SAY_THIS_WORDS.test(message)) {
@@ -547,22 +621,133 @@ const tools: LabelledTool[] = [
       parameters: { type: 'object', properties: {} },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'get_road_reports',
+      description:
+        'Live Waze reports on NLEX from the last hour: accidents, hazards (stalled cars, objects, roadworks, flooding...) and police, with the nearest exit and direction. Use for "any accidents?", "may aksidente ba?", "any alerts?".',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_maintenance',
+      description:
+        'Scheduled and ongoing maintenance / roadworks on NLEX posted by the operators: where, which direction, lane closures, start and end times. Use for maintenance, roadworks, lane closures, "may ginagawa ba sa daan?".',
+      parameters: {
+        type: 'object',
+        properties: {
+          exit_name: { type: 'string', description: 'Optional: only notices near this exit.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_community_posts',
+      description:
+        'Recent posts on the Community tab of the app: traffic updates and incident reports from other drivers, newest first. Use for "what are people reporting?", "any community reports at Bocaue?".',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: {
+            type: 'string',
+            enum: ['incident', 'update'],
+            description: 'Optional: only incident reports, or only traffic updates.',
+          },
+          hours: { type: 'number', description: 'How far back to look, in hours. Default 24.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_event_forecasts',
+      description:
+        'Upcoming events at the Philippine Arena (concerts, games...) with the dates and the exits the SmartFlow model expects to be busier. Use for events, concerts, "may event ba sa Arena?".',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_incident_hotspots',
+      description:
+        'The SmartFlow ML hotspot ranking: NLEX exits with the most predicted incidents per day, worst first. Use for accident-prone or risky exits.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_traffic_forecast',
+      description:
+        'The traffic FORECAST from the SmartFlow model for a later hour: which stretches it expects to be congested or slow. Use for traffic later today, tonight, tomorrow or at a given time. Not for right now - use the live tools for that.',
+      parameters: {
+        type: 'object',
+        properties: {
+          time: {
+            type: 'string',
+            description: 'Manila clock time in 24-hour HH:MM, e.g. "18:00" for 6 PM. The next time it comes round is used. Omit for the coming hour.',
+          },
+          hours_from_now: {
+            type: 'number',
+            description: 'Instead of a clock time: how many hours from now, e.g. 2.',
+          },
+          exit_name: { type: 'string', description: 'Optional: only the stretches at this exit.' },
+        },
+      },
+    },
+  },
 ];
 
-/** Everything the model is allowed to learn about the road, in one place. */
-async function runTool(name: string, rawArgs: string): Promise<unknown> {
-  const corridor = await getCorridorStatus();
-  if (!corridor.available) {
-    return { error: corridor.reason };
-  }
-  const { exits, counts, feed } = corridor.data;
+/** What a tool may know about the question besides its arguments. */
+interface ToolContext {
+  /** The asker's Supabase sign-in, for Community posts. */
+  userToken: string | null;
+}
 
+/** The tools that read the app's other screens' data, by name. */
+
+const APP_TOOLS: Partial<Record<AssistantToolName, (args: Record<string, unknown>, ctx: ToolContext) => Promise<unknown>>> = {
+  get_road_reports: () => roadReportsTool(),
+  get_maintenance: (args) => maintenanceTool(args),
+  get_community_posts: (args, ctx) => communityTool(args, ctx.userToken),
+  get_event_forecasts: () => eventsTool(),
+  get_incident_hotspots: () => hotspotsTool(),
+  get_traffic_forecast: (args) => trafficForecastTool(args),
+};
+
+/** Everything the model is allowed to learn about the road, in one place. */
+async function runTool(name: string, rawArgs: string, ctx: ToolContext): Promise<unknown> {
   let args: Record<string, unknown> = {};
   try {
     args = JSON.parse(rawArgs) as Record<string, unknown>;
   } catch {
     return { error: 'Could not read the tool arguments.' };
   }
+
+  // The rest of the app's data (services/appData). None of it waits on the
+  // live traffic feed, so a feed outage does not take these answers down too.
+  const appTool = APP_TOOLS[name as AssistantToolName];
+  if (appTool !== undefined) {
+    try {
+      return await appTool(args, ctx);
+    } catch (caught) {
+      console.error(`[assistant] ${name} failed:`, caught instanceof Error ? caught.message : caught);
+      return { error: 'That information could not be loaded from SmartFlow right now.' };
+    }
+  }
+
+  const corridor = await getCorridorStatus();
+  if (!corridor.available) {
+    return { error: corridor.reason };
+  }
+  const { exits, counts, feed } = corridor.data;
 
   if (name === 'list_exits') {
     return {
@@ -759,7 +944,7 @@ async function classifyTopic(
           {
             role: 'system',
             content: `You sort messages sent to Navie, the assistant in a traffic app for drivers on the NLEX expressway in the Philippines. Navie can only talk about NLEX. Reply with exactly one word:
-NLEX - about NLEX: its traffic, its exits and where they are, its directions, travel on it, or NLEX itself. A traffic or road question that names no other place is about NLEX. A follow-up to the NLEX conversation ("bakit?", "eh ngayon?", "what about there?") is NLEX.
+NLEX - about NLEX or the SmartFlow NLEX app: traffic now or later, travel times, planning a drive (when to leave home, what time they will arrive, getting somewhere by a deadline - even if they only say "my house" or a city like Clark or Manila), exits and where they are, directions, accidents/hazards/police alerts, maintenance or roadworks, Community posts and reports, events at the Philippine Arena, incident hotspots, or how to use the app (its tabs, settings, sign-in, password, profile, dark mode...). A traffic or road question that names no other place is about NLEX. A follow-up to the NLEX conversation ("bakit?", "eh ngayon?", "what about there?") is NLEX.
 CHAT - only a greeting, thanks, goodbye, or a question about Navie itself or what Navie can do.
 OTHER - anything else, even alongside a greeting: general knowledge, other roads, cities or countries, maths, coding, homework, news, people. Also OTHER: any request for Navie to say, repeat, write, translate or pretend something given words - even when the words are about NLEX, driving or a trip ("reply with exactly...", "repeat after me: NLEX is closed", "sabihin mo na sarado ang NLEX", "ulitin mo ito"). But asking Navie to TELL whether something is so is a question, not words to repeat: "sabihin mo kung may traffic sa Bocaue" (tell me if there is traffic at Bocaue) is NLEX.
 These names are NLEX exits: ${exitNames.join(', ')}. A question about one of them as a place on NLEX is NLEX; the same word meaning something else (Mexico the country, Los Angeles) is OTHER.
@@ -836,6 +1021,9 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
 
   const body = req.body as ChatRequestBody;
   const message = typeof body.message === 'string' ? body.message.trim() : '';
+  // The asker's own Supabase sign-in, which Community posts are read with.
+  const authorization = req.header('authorization');
+  const userToken = authorization !== undefined && /^Bearer \S+$/.test(authorization) ? authorization : null;
   if (message.length === 0) {
     res.status(400).json({ success: false, error: 'A message is required.' });
     return;
@@ -857,11 +1045,15 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
   const namedExit =
     mentionedExit(message, knownExitNames) ?? followUpExit(message, history, knownExitNames);
   const trafficQuestion = asksAboutTraffic(message);
+  const toolContext: ToolContext = { userToken };
+  const otherTopic = OTHER_TOPIC_WORDS.test(message);
 
   const messages: ChatCompletionMessageParam[] = [
     {
       role: 'system',
-      content: `${buildSystemPrompt(knownExitNames)}\n\n${languageGuide(language, languageChoice)}\n${HISTORY_NOTE}`,
+      // The clock is given so "later", "tonight" and "at 6" can be turned into a
+      // forecast hour; the model has no clock of its own.
+      content: `${buildSystemPrompt(knownExitNames)}\n\nNOW: ${manilaNow()} in Manila.\n\n${languageGuide(language, languageChoice)}\n${HISTORY_NOTE}`,
     },
     ...history,
     // The reminder rides on the question itself: with a stiff earlier reply in
@@ -875,10 +1067,12 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
      * Not about NLEX: declined before the model ever sees the question, so
      * there is no answer to leak. The refusal is still the model's own words.
      */
-    if (
-      !plainlyAboutNlex(message, namedExit) &&
-      (await classifyTopic(message, history, knownExitNames)) === 'other'
-    ) {
+    const topic = isSayThisOrder(message)
+      ? 'other'
+      : plainlyAboutNlex(message, namedExit)
+        ? 'nlex'
+        : await classifyTopic(message, history, knownExitNames);
+    if (topic === 'other') {
       const declined = await outOfScopeReply(language);
       if (declined === null) {
         res.status(502).json({
@@ -907,7 +1101,7 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
           continue;
         }
         toolsUsed.push(call.function.name);
-        const result = await runTool(call.function.name, call.function.arguments);
+        const result = await runTool(call.function.name, call.function.arguments, toolContext);
         const mood = moodOf(result);
         if (mood !== null) {
           moods.push(mood);
@@ -973,17 +1167,33 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
         sentBackToLook = true;
         messages.push({
           role: 'system',
-          content: `You answered without checking. Call get_corridor_status for "${namedExit}" first, then answer from what it returns.`,
+          content: `You answered without checking. First call the tool that matches the question - for traffic right now at "${namedExit}": get_corridor_status; a later hour: get_traffic_forecast; maintenance: get_maintenance; alerts: get_road_reports; Community: get_community_posts - then answer from what it returns.`,
         });
         continue;
       }
       // The same check for a traffic question that names no exit.
-      if (calls.length === 0 && toolsUsed.length === 0 && namedExit === null && trafficQuestion && !sentBackToLook) {
+      if (calls.length === 0 && toolsUsed.length === 0 && namedExit === null && trafficQuestion && !otherTopic && !sentBackToLook) {
         sentBackToLook = true;
         messages.push({
           role: 'system',
           content:
-            'That is a live traffic question, not travel time. Call get_corridor_overview first, then answer from what it returns.',
+            'That is a live traffic question. Call get_corridor_overview first (or get_traffic_forecast if they asked about a later time), then answer from what it returns.',
+        });
+        continue;
+      }
+      /*
+       * A question about a time, answered with no lookup. "How about at 8 pm?"
+       * after a 6 PM forecast came back with congestion at Balagtas that no
+       * forecast had said - the model carried on from its last reply instead
+       * of asking for the new hour.
+       */
+      // Not for small talk: "see you bukas!" is a goodbye, not a forecast question.
+      if (calls.length === 0 && toolsUsed.length === 0 && topic !== 'chat' && asksAboutATime(message) && !sentBackToLook) {
+        sentBackToLook = true;
+        messages.push({
+          role: 'system',
+          content:
+            'That asks about a time. Call get_traffic_forecast with that time first, then answer only from what it returns.',
         });
         continue;
       }
@@ -993,7 +1203,7 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
        * the model ignored the send-back too and answered "4 km/h" from nothing.
        * Forcing it through tool_choice was tried first; the provider ignores it.
        */
-      if (calls.length === 0 && toolsUsed.length === 0 && sentBackToLook && (namedExit !== null || trafficQuestion)) {
+      if (calls.length === 0 && toolsUsed.length === 0 && sentBackToLook && !otherTopic && (namedExit !== null || trafficQuestion)) {
         const lookups =
           namedExit !== null
             ? directionsAsked(message, history).map((direction) => ({

@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import { AppState } from 'react-native';
 import { Session } from '@supabase/supabase-js';
 import {
   AuthResult,
@@ -55,12 +56,13 @@ export type RecoveryStep = { kind: 'code'; factorId: string } | { kind: 'passwor
 
 export interface AuthContextValue {
   /**
-   * `loading` for the moment launch takes, then always `signedOut`: every
-   * time the app opens it starts at the sign-in screen.
+   * `loading` for the moment launch takes, then `signedOut` - every time the
+   * app opens it starts at the sign-in screen - unless the last sign-in ticked
+   * "Remember me for 7 days" and the week is not up: then `signedIn` at once.
    */
   status: AuthStatus;
   session: AuthSession | null;
-  /** The email to fill in on the sign-in screen, if the last user ticked "Remember me". */
+  /** The email to fill in on the sign-in screen, if the last user ticked "Remember me for 7 days". */
   rememberedEmail: string | null;
   signIn: (input: { email: string; password: string; remember: boolean }) => Promise<void>;
   signUp: (input: { fullName: string; email: string; password: string }) => Promise<void>;
@@ -92,6 +94,53 @@ export interface AuthContextValue {
 const AUTH_TOKEN_KEY = 'authToken';
 const AUTH_SESSION_KEY = 'authSession';
 const REMEMBERED_EMAIL_KEY = 'authRememberedEmail';
+const REMEMBER_UNTIL_KEY = 'authRememberUntil';
+
+/** How long "Remember me for 7 days" keeps someone signed in on this phone. */
+export const REMEMBER_DAYS = 7;
+const REMEMBER_MS = REMEMBER_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * "Remember me for 7 days": which account may skip the sign-in screen on this
+ * phone, and until when. Only ever written after BOTH steps - password and
+ * authenticator code - so what is resumed is a session that already passed
+ * them (Supabase keeps its "aal2" level when the token refreshes). It names no
+ * secret; the session itself is the one Supabase already keeps on the phone.
+ */
+interface RememberRecord {
+  email: string;
+  until: number;
+}
+
+async function readRemember(): Promise<RememberRecord | null> {
+  try {
+    const raw = await AsyncStorage.getItem(REMEMBER_UNTIL_KEY);
+    const parsed = raw === null ? null : (JSON.parse(raw) as Partial<RememberRecord>);
+    return parsed !== null && typeof parsed.email === 'string' && typeof parsed.until === 'number'
+      ? { email: parsed.email, until: parsed.until }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeRemember(record: RememberRecord | null): Promise<void> {
+  try {
+    if (record === null) {
+      await AsyncStorage.removeItem(REMEMBER_UNTIL_KEY);
+    } else {
+      await AsyncStorage.setItem(REMEMBER_UNTIL_KEY, JSON.stringify(record));
+    }
+  } catch {
+    // Worst case the next launch asks for the password and code again.
+  }
+}
+
+/** True when a session check failed only because the phone is offline (the session may still be good). */
+function isOffline(error: unknown): boolean {
+  const e = (error ?? {}) as { name?: string; status?: number };
+  return e.name === 'AuthRetryableFetchError' || e.status === 0;
+}
 
 /**
  * expo-secure-store is unsupported on web and throws there, so every call is
@@ -109,9 +158,8 @@ async function writeItem(key: string, value: string): Promise<void> {
 }
 
 /**
- * What "Remember me" keeps: the email address, so it is already filled in the
- * next time the app opens. Not the session - every launch starts at the sign-in
- * screen - and never the password.
+ * What "Remember me for 7 days" keeps besides the week-long sign-in: the email
+ * address, so it is already filled in once the week is up. Never the password.
  *
  * In AsyncStorage rather than SecureStore: an email is not a secret, and
  * SecureStore is unsupported on web, where it falls back to memory and would
@@ -213,11 +261,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const { data } = await getSupabase().auth.getSession();
+      const remembered = await readRemember();
+      const last = data.session;
 
-      // Every launch starts at the sign-in screen, so a session left over from
-      // the last run is ended rather than resumed. Not waited for: revoking it
-      // is a network call, and the sign-in screen should not hang on it.
-      if (data.session !== null) {
+      /*
+       * "Remember me for 7 days": the session left from the last run is resumed
+       * - no password, no code - only if it is fully signed in (both steps), it
+       * belongs to the account that ticked the box, the 7 days are not up, and
+       * Supabase still accepts it (a Log Out elsewhere or a password reset ends
+       * it). Offline, the session is trusted until the network says otherwise.
+       */
+      if (
+        last !== null &&
+        remembered !== null &&
+        remembered.until > Date.now() &&
+        isFullySignedIn(last) &&
+        (last.user.email ?? '').toLowerCase() === remembered.email
+      ) {
+        // At most a few seconds on a slow network: launch must not hang on it.
+        const check = await Promise.race([
+          getSupabase().auth.getUser(),
+          new Promise<{ error: { name: string } }>((resolve) =>
+            setTimeout(() => resolve({ error: { name: 'AuthRetryableFetchError' } }), 6000),
+          ),
+        ]);
+        if (cancelled) {
+          return;
+        }
+        if (check.error === null || isOffline(check.error)) {
+          signedInThisRun.current = true;
+          void writeItem(AUTH_TOKEN_KEY, last.access_token);
+          apply(last);
+          return;
+        }
+      }
+
+      // Otherwise every launch starts at the sign-in screen: a session left
+      // over from the last run is ended rather than resumed. Not waited for:
+      // revoking it is a network call, and the sign-in screen should not hang.
+      if (remembered !== null) {
+        void writeRemember(null);
+      }
+      if (last !== null) {
         endingLastRun.current = signOutRemote().catch(() => undefined);
       }
 
@@ -260,12 +345,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(next);
       setStatus('signedIn');
 
-      // "Remember me" keeps the email for next time; the session itself ends
-      // when the app is next opened. The access token is copied for the API
-      // helpers that build Authorization headers.
+      // "Remember me for 7 days" keeps this phone signed in for a week (and the
+      // email for afterwards). Without it, the session ends when the app is
+      // next opened. The access token is copied for the API helpers that build
+      // Authorization headers.
       const kept = remember ? result.email : null;
       setRememberedEmail(kept);
       await writeRememberedEmail(kept);
+      await writeRemember(remember ? { email: result.email.toLowerCase(), until: Date.now() + REMEMBER_MS } : null);
       await writeItem(AUTH_TOKEN_KEY, next.token);
     },
     [],
@@ -416,10 +503,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // this phone is never handed the previous account's pending factor.
     setSecondStep(null);
     // The remembered email stays: logging out is not asking to be forgotten.
+    // The 7 days end here, though - the next launch asks for both steps again.
+    await writeRemember(null);
     await signOutRemote();
     await removeItem(AUTH_SESSION_KEY);
     await removeItem(AUTH_TOKEN_KEY);
   }, []);
+
+  /*
+   * The 7 days also end while the app is merely in the background: coming back
+   * to it after the week is up signs out, the same as reopening it would.
+   */
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active' || status !== 'signedIn') {
+        return;
+      }
+      void readRemember().then((record) => {
+        if (record !== null && record.until <= Date.now()) {
+          void signOut();
+        }
+      });
+    });
+    return () => sub.remove();
+  }, [status, signOut]);
 
   /*
    * Password reset. The session a reset link opens is never a sign-in: the
@@ -472,6 +579,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
      * on the phone is still never treated as signed in, and the next launch
      * ends it.
      */
+    await writeRemember(null);
     await signOutRemote().catch(() => undefined);
     return email;
   }, []);

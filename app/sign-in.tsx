@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { SignInLockedError, useAuth } from '../frontend/auth';
+import { REMEMBER_DAYS, SignInLockedError, useAuth } from '../frontend/auth';
 import AuthField from '../frontend/components/auth/AuthField';
 import SecondStepForm from '../frontend/components/auth/SecondStepForm';
 import AuthScreen, {
@@ -31,7 +31,7 @@ export default function SignInScreen(): React.ReactElement {
   /** Set by the reset screen once a new password is saved. */
   const params = useLocalSearchParams<{ email?: string; passwordChanged?: string }>();
 
-  // The account just reset, else the one "Remember me" kept.
+  // The account just reset, else the one "Remember me for 7 days" kept.
   const [email, setEmail] = useState<string>(params.email ?? rememberedEmail ?? '');
   const [password, setPassword] = useState<string>('');
   const [remember, setRemember] = useState<boolean>(true);
@@ -150,6 +150,8 @@ export default function SignInScreen(): React.ReactElement {
         <Pressable
           accessibilityRole="checkbox"
           accessibilityState={{ checked: remember }}
+          accessibilityLabel={`Remember me for ${REMEMBER_DAYS} days`}
+          accessibilityHint="Stay signed in on this phone without your password or authenticator code"
           hitSlop={8}
           onPress={() => setRemember((current) => !current)}
           style={styles.rememberGroup}
@@ -163,7 +165,7 @@ export default function SignInScreen(): React.ReactElement {
           >
             {remember ? <Ionicons name="checkmark" size={checkbox - 6} color={colors.textInverse} /> : null}
           </View>
-          <Text style={[styles.rememberText, { fontSize: m.smallSize }]}>Remember me</Text>
+          <Text style={[styles.rememberText, { fontSize: m.smallSize }]}>Remember me for {REMEMBER_DAYS} days</Text>
         </Pressable>
 
         <Pressable accessibilityRole="link" hitSlop={8} onPress={handleForgotPassword}>

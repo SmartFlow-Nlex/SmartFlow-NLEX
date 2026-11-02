@@ -50,3 +50,11 @@ services:
       # does not depend on anyone's laptop or network.
       - key: CORRIDOR_API_URL
         value: https://smartflow-nlex.onrender.com
+      # The app's Supabase project, for Navie to read Community posts. The same
+      # two values as the app's EXPO_PUBLIC_SUPABASE_URL / _ANON_KEY. The anon
+      # key opens nothing by itself: posts are readable by signed-in users only,
+      # so each question is read with the asker's own sign-in, sent by the app.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false

@@ -11,7 +11,7 @@ import {
   type NativeSyntheticEvent,
   type NativeScrollEvent,
   type RefreshControlProps,
-  type ScrollView,
+  type ScrollViewInstance,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GUTTER, useThemedStyles } from '../../theme';
@@ -47,7 +47,7 @@ export interface ScreenShellProps {
   /** Drawn over everything: the assistant shortcut, sheets and modals. */
   overlay?: React.ReactNode;
   refreshControl?: React.ReactElement<RefreshControlProps>;
-  scrollRef?: React.RefObject<ScrollView | null>;
+  scrollRef?: React.RefObject<ScrollViewInstance | null>;
   onContentSizeChange?: (width: number, height: number) => void;
   keyboardAvoiding?: boolean;
   /** Space under the last card; clears the floating assistant button by default. */
@@ -116,7 +116,7 @@ const ScreenShell: React.FC<ScreenShellProps> = ({
   const body = (
     <View style={styles.flex}>
       <Animated.ScrollView
-        ref={scrollRef as React.RefObject<ScrollView>}
+        ref={scrollRef as React.RefObject<ScrollViewInstance>}
         style={styles.flex}
         contentContainerStyle={[styles.content, { paddingBottom: bottomPadding }]}
         onScroll={onScroll}

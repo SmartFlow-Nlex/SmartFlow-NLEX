@@ -19,6 +19,10 @@
  * 5/35. Earlier they had agreed only because no jam was being rejected at that
  * moment, which is a coincidence and not a check.
  *
+ * The queue and delay figures follow it too (re-checked 2 Nov 2026 against the
+ * deployed feed, exit by exit): the longest single report and the worst single
+ * delay, never totals. The merged index ranges are extra, for drawing only.
+ *
  * Known flaw, inherited deliberately: it requires every vertex of a jam to lie
  * within 200m of the centreline, and Balintawak's toll plaza is wider than
  * that, so a real level-4 jam there measured 353m off and was discarded. The
@@ -54,7 +58,7 @@ export interface JamOnCorridor {
   speedKmh: number | null;
   /** Waze's own estimate of the time this jam adds, in seconds. */
   delaySeconds: number | null;
-  /** Length of the jammed stretch along the centreline. */
+  /** Waze's length for the longest report behind this queue; the centreline span if it gave none. */
   lengthMetres: number;
 }
 
@@ -67,6 +71,14 @@ export interface ExitStatus {
   speedKmh: number | null;
   jamCount: number;
   observedAt: string | null;
+  /**
+   * The longest single queue at this exit, in metres. The longest and not the
+   * total, as on the dashboard: Waze's reports overlap, so adding them up would
+   * invent road that is not queued.
+   */
+  longestQueueMetres: number | null;
+  /** The worst single queue's delay, in seconds. Not a sum, for the same reason. */
+  delaySeconds: number | null;
   /** Every jam behind this reading, so the map can colour only the queue. */
   jams: JamOnCorridor[];
 }
@@ -144,20 +156,16 @@ function guardFor(exits: NlexExit[]): CorridorGuard {
  *
  * Waze reports a stretch as several overlapping jams - at Paso de Blas three
  * separate features snapped to the identical range of centreline. Left alone
- * they are counted three times over, which turned 3.2 km of queue into 9.7 km
- * and inflated the delay to match. Nobody sitting in it is queueing three
- * times.
+ * the same queue would be drawn and listed three times over. Nobody sitting in
+ * it is queueing three times.
  *
+ * The range grows to cover them all, so the map colours the whole stretch.
  * Within a merged queue the worst level and slowest speed win, as they do
- * everywhere else here, and the delay is the largest of the overlapping
- * reports rather than their sum - they are describing the same traffic, so
- * adding them up would invent time no driver spends. Delays across queues that
- * do NOT overlap are still added, because those are consecutive.
+ * everywhere else here, and the length and delay are the largest of the
+ * overlapping reports rather than their sum: they are describing the same
+ * traffic, and this is the figure the dashboard quotes.
  */
-function mergeJams(
-  jams: JamOnCorridor[],
-  spanMetres: (from: number, to: number) => number,
-): JamOnCorridor[] {
+function mergeJams(jams: JamOnCorridor[]): JamOnCorridor[] {
   if (jams.length <= 1) {
     return jams;
   }
@@ -185,7 +193,7 @@ function mergeJams(
           : jam.delaySeconds === null
             ? last.delaySeconds
             : Math.max(last.delaySeconds, jam.delaySeconds);
-      last.lengthMetres = Math.round(spanMetres(last.startIndex, last.endIndex));
+      last.lengthMetres = Math.max(last.lengthMetres, jam.lengthMetres);
     } else {
       out.push({ ...jam });
     }
@@ -226,6 +234,8 @@ export function corridorStatusFromFeed(
     speed: number | null;
     count: number;
     observedAt: string | null;
+    meters: number | null;
+    delay: number | null;
     jams: JamOnCorridor[];
   }
   const byKey = new Map<string, Acc>();
@@ -278,6 +288,7 @@ export function corridorStatusFromFeed(
     const level = Number.isFinite(Number(props.level)) ? Number(props.level) : null;
     const speed = Number.isFinite(Number(props.speed)) ? Number(props.speed) : null;
     const at = typeof props.observed_at === 'string' ? props.observed_at : null;
+    const meters = Number.isFinite(Number(props.length_m)) ? Number(props.length_m) : null;
     const delay = Number.isFinite(Number(props.delay_seconds))
       ? Number(props.delay_seconds)
       : null;
@@ -288,12 +299,15 @@ export function corridorStatusFromFeed(
       level,
       speedKmh: speed,
       delaySeconds: delay,
-      lengthMetres: Math.round(spanMetres(snapped.startIndex, snapped.endIndex)),
+      lengthMetres:
+        meters !== null && meters > 0
+          ? meters
+          : Math.round(spanMetres(snapped.startIndex, snapped.endIndex)),
     };
 
     const acc = byKey.get(key);
     if (acc === undefined) {
-      byKey.set(key, { level, speed, count: 1, observedAt: at, jams: [jam] });
+      byKey.set(key, { level, speed, count: 1, observedAt: at, meters, delay, jams: [jam] });
     } else {
       acc.jams.push(jam);
       // Worst level and slowest speed seen, matching the SQL this replaces.
@@ -302,6 +316,11 @@ export function corridorStatusFromFeed(
       acc.speed =
         acc.speed === null ? speed : speed === null ? acc.speed : Math.min(acc.speed, speed);
       acc.count += 1;
+      // Worst of each, never a total - see the field comments on ExitStatus.
+      acc.meters =
+        acc.meters === null ? meters : meters === null ? acc.meters : Math.max(acc.meters, meters);
+      acc.delay =
+        acc.delay === null ? delay : delay === null ? acc.delay : Math.max(acc.delay, delay);
       if (at !== null && (acc.observedAt === null || at > acc.observedAt)) {
         acc.observedAt = at;
       }
@@ -318,7 +337,9 @@ export function corridorStatusFromFeed(
       speedKmh: acc.speed,
       jamCount: acc.count,
       observedAt: acc.observedAt,
-      jams: mergeJams(acc.jams, spanMetres),
+      longestQueueMetres: acc.meters,
+      delaySeconds: acc.delay,
+      jams: mergeJams(acc.jams),
     };
   });
 }

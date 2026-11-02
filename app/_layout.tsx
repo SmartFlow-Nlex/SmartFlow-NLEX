@@ -102,7 +102,9 @@ function ThemedStack(): React.ReactElement | null {
        * crashed a themed header button even though the provider is a real
        * ancestor in the JS tree).
        */}
+      {/* id={undefined}: the default, spelled out for the non-strict tsconfig (see (tabs)/_layout.tsx). */}
       <Stack
+        id={undefined}
         screenOptions={{
           headerShown: false,
           contentStyle: {
@@ -118,6 +120,20 @@ function ThemedStack(): React.ReactElement | null {
         <Stack.Screen name="reset-password" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="profile/index" />
+        {/* Navie's Arcade, opened from the game controller in every tab's header. */}
+        {/*
+          No swipe-back on the Arcade's screens: only their back button leaves
+          them (Ysa, 23 Oct). On the puzzle a drag that starts near the left
+          edge would otherwise pull the screen away instead of moving a car.
+        */}
+        <Stack.Screen name="arcade/index" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="arcade/rush-hour/index" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="arcade/rush-hour/[level]" options={{ gestureEnabled: false }} />
+        {/* The road-trip adventure: steering is a sideways drag, which swipe-back would steal. */}
+        <Stack.Screen name="arcade/road-trip" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="arcade/tollbound-heroes" options={{ gestureEnabled: false }} />
+        {/* The racing game: steering is a sideways drag too. */}
+        <Stack.Screen name="arcade/grand-prix" options={{ gestureEnabled: false }} />
         <Stack.Screen name="notifications" />
         {/* One interchange on the map, opened from the corridor list. */}
         <Stack.Screen name="corridor/[exitId]" />

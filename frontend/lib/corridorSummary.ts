@@ -45,20 +45,12 @@ const KEYS: CarriagewayKey[] = ['NB', 'SB'];
 const SEVERITY: Record<CorridorStatusValue, number> = { clear: 0, slow: 1, congested: 2 };
 
 /**
- * Seconds of delay on one carriageway of one stretch, or null if not told.
- *
- * Added up queue by queue rather than read from the stretch's own total: Waze
- * marks a delay it could not measure as -1, and one of those in a total takes
- * a second off instead of adding nothing.
+ * Seconds of delay on one carriageway of one stretch, or null if not told: the
+ * figure the dashboard shows. Waze marks a delay it could not measure as -1,
+ * which counts as nothing here.
  */
 function delayOn(exit: CorridorExit, key: CarriagewayKey): number | null {
   const side = exit.directions[key];
-  if (side.jams !== undefined) {
-    return side.jams.reduce(
-      (total, jam) => total + (jam.delaySeconds !== null && jam.delaySeconds > 0 ? jam.delaySeconds : 0),
-      0,
-    );
-  }
   if (side.delaySeconds === undefined || side.delaySeconds === null) {
     return null;
   }
@@ -66,15 +58,15 @@ function delayOn(exit: CorridorExit, key: CarriagewayKey): number | null {
 }
 
 /**
- * Positive when `a` is the heavier of two spots: the worse state first, then
- * wherever costs the most time, then the longer queue, then the slower traffic.
+ * Positive when `a` is the heavier of two spots, in the order of the dashboard's
+ * hotspot list: the worse state first, then the slower traffic, then wherever
+ * costs the most time.
  */
 function heavierBy(a: HeaviestSpot, b: HeaviestSpot): number {
   return (
     SEVERITY[a.status] - SEVERITY[b.status] ||
-    a.delaySeconds - b.delaySeconds ||
-    a.queueMetres - b.queueMetres ||
-    (b.speedKmh ?? Infinity) - (a.speedKmh ?? Infinity)
+    (b.speedKmh ?? Infinity) - (a.speedKmh ?? Infinity) ||
+    a.delaySeconds - b.delaySeconds
   );
 }
 

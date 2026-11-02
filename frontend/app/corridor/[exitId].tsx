@@ -67,7 +67,7 @@ function formatSpeed(speedKmh: number | null): string | null {
 
 /** Queue length, in the unit that suits its size. */
 function formatDistance(metres: number): string {
-  return metres < 950 ? `${Math.round(metres / 10) * 10} m` : `${(metres / 1000).toFixed(1)} km`;
+  return metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` : `${Math.round(metres)} m`;
 }
 
 /**
@@ -76,16 +76,17 @@ function formatDistance(metres: number): string {
  * Waze reports these to the second - 82, 314 - and printing that would claim a
  * precision the estimate does not have. Under a minute is worth saying as
  * "under a min" rather than rounding to zero, which reads as no delay at all.
+ * Rounded as the dashboard rounds it. Waze sends -1 for "not measurable".
  */
 function formatDelay(seconds: number | null | undefined): string | null {
-  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) {
     return null;
   }
-  if (seconds < 60) {
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 1) {
     return 'under a min';
   }
-  const minutes = Math.round(seconds / 60);
-  return `${minutes} min`;
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }
 
 /**
@@ -182,10 +183,10 @@ const CarriagewayCard: React.FC<CarriagewayCardProps> = ({
       ) : null}
 
       {/*
-        How much road is queueing, and what it costs - the two numbers a driver
-        deciding whether to take this stretch actually needs. Shown together on
-        one line because neither means much alone: 200 m of queue is nothing,
-        200 m that takes four minutes is a standstill.
+        The longest queue and the worst delay, the dashboard's own two figures -
+        what a driver deciding whether to take this stretch actually needs.
+        Shown together on one line because neither means much alone: 200 m of
+        queue is nothing, 200 m that takes four minutes is a standstill.
       */}
       {hasJamDetail && queues.length > 0 ? (
         <View style={[styles.queueBar, { backgroundColor: tone.background }]}>
@@ -227,7 +228,7 @@ const CarriagewayCard: React.FC<CarriagewayCardProps> = ({
 
       {/*
         Each queue separately, behind a tap. A stretch can hold more than one,
-        and they are not always alike - the summary above adds them up, so this
+        and they are not always alike - the summary above gives the worst, so this
         is where you find out whether it is one long crawl or two short ones.
       */}
       {hasJamDetail && queues.length > 0 ? (

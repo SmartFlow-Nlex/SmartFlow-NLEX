@@ -153,7 +153,13 @@ export default function TabLayout(): React.ReactElement {
 			 */}
 			<StatusBar style={isDark ? 'light' : 'dark'} />
 
+			{/*
+			 * id={undefined} is the navigator's default; it is spelled out because the
+			 * root tsconfig is non-strict, which turns expo-router 58's optional
+			 * `id?: string | undefined` into a required `string` (SDK 58 upgrade, 24 Oct).
+			 */}
 			<Tabs
+				id={undefined}
 				screenOptions={{
 					headerShown: false,
 					// The page colour behind the bar's rounded corners.

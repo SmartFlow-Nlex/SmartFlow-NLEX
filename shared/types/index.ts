@@ -215,6 +215,12 @@ export const ASSISTANT_TOOLS = [
   'get_corridor_status',
   'get_corridor_overview',
   'list_exits',
+  'get_road_reports',
+  'get_maintenance',
+  'get_community_posts',
+  'get_event_forecasts',
+  'get_incident_hotspots',
+  'get_traffic_forecast',
 ] as const;
 
 export type AssistantToolName = (typeof ASSISTANT_TOOLS)[number];

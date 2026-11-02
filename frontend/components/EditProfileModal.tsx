@@ -113,20 +113,11 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
             </View>
 
             {/*
-              Username and email are fixed at sign-up: they identify the
-              account, so they are shown for reference rather than edited here.
-              Only the profile name and photo are the user's to change.
+              The email is fixed at sign-up: it is what the account signs in
+              with, so it is shown for reference rather than edited here. There
+              is no username - accounts are email only (Ysa, 22 Oct). Only the
+              profile name and photo are the user's to change.
             */}
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Username</Text>
-              <View style={styles.readOnlyField}>
-                <Text numberOfLines={1} style={styles.readOnlyValue}>
-                  {draft.username}
-                </Text>
-                <Ionicons name="lock-closed" size={15} color={colors.textTertiary} />
-              </View>
-            </View>
-
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Email</Text>
               <View style={styles.readOnlyField}>
@@ -136,7 +127,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
                 <Ionicons name="lock-closed" size={15} color={colors.textTertiary} />
               </View>
               <Text style={styles.readOnlyHint}>
-                Your username and email come from the account you signed in with.
+                Your email comes from the account you signed in with.
               </Text>
             </View>
 

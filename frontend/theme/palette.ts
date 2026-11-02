@@ -107,6 +107,31 @@ export interface ThemePalette {
   authFocusRing: string;
   authButtonFrom: string;
   authButtonTo: string;
+  /**
+   * "SmartFlow NLEX" above the sign-in card: a shade darker than `text` by
+   * day, so it stands out against the bright sky art (Ysa, 22 Oct). At night
+   * it stays the light text colour - darker would sink into the night sky.
+   */
+  authBrandText: string;
+  // Rush Hour (app/arcade/rush-hour): a deep navy board of rounded cells with a
+  // glowing gold exit. The vehicles are pictures (frontend/assets/rush-hour);
+  // the six paints below are the ones those pictures were drawn in.
+  gameBoard: string;
+  gameBoardEdge: string;
+  /** The cells: slightly sunken navy tiles. */
+  gameGrid: string;
+  gameExit: string;
+  gameNavie: string;
+  gameVehicle1: string;
+  gameVehicle2: string;
+  gameVehicle3: string;
+  gameVehicle4: string;
+  gameVehicle5: string;
+  gameVehicle6: string;
+  /** Windows and highlights on a vehicle's paint. */
+  gameGlass: string;
+  /** Behind Navie's Road Trip while its page loads: the game paints its own world, dark in both themes. */
+  gameStage: string;
   /** The chosen option in a segmented switch: the mockups' deep NLEX blue. */
   segmentActive: string;
   /** A segmented switch's frosted, sky-tinted track. */
@@ -270,6 +295,20 @@ export const lightPalette: ThemePalette = {
   authFocusRing: 'rgba(74,168,255,0.14)',
   authButtonFrom: '#1473F3',
   authButtonTo: '#0763E6',
+  authBrandText: '#0A1629',
+  gameBoard: '#121B2E',
+  gameBoardEdge: '#24324F',
+  gameGrid: '#1C2842',
+  gameExit: '#FFC32D',
+  gameNavie: '#1464E8',
+  gameVehicle1: '#E5534B',
+  gameVehicle2: '#F2994A',
+  gameVehicle3: '#27AE60',
+  gameVehicle4: '#9B51E0',
+  gameVehicle5: '#18A0B8',
+  gameVehicle6: '#C08457',
+  gameGlass: 'rgba(255,255,255,0.38)',
+  gameStage: '#0A1629',
   segmentActive: '#1B57B9',
   segmentTrack: 'rgba(222,236,252,0.92)',
 
@@ -382,6 +421,20 @@ export const darkPalette: ThemePalette = {
   authFocusRing: 'rgba(74,168,255,0.24)',
   authButtonFrom: '#1473F3',
   authButtonTo: '#0763E6',
+  authBrandText: '#E9EFF7',
+  gameBoard: '#0D1424',
+  gameBoardEdge: '#1B2742',
+  gameGrid: '#17223A',
+  gameExit: '#FFC32D',
+  gameNavie: '#3B82F6',
+  gameVehicle1: '#D9534F',
+  gameVehicle2: '#E08A3C',
+  gameVehicle3: '#2E9E5B',
+  gameVehicle4: '#8B5CF6',
+  gameVehicle5: '#1597AE',
+  gameVehicle6: '#A9744C',
+  gameGlass: 'rgba(255,255,255,0.30)',
+  gameStage: '#0A1629',
   segmentActive: '#2A63C4',
   segmentTrack: 'rgba(18,32,56,0.9)',
 

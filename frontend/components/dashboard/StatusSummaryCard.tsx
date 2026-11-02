@@ -66,10 +66,10 @@ function spotDetail(spot: HeaviestSpot): string {
   if (spot.queueMetres >= 1000) {
     parts.push(`${(spot.queueMetres / 1000).toFixed(1)} km queue`);
   } else if (spot.queueMetres > 0) {
-    parts.push(`${Math.max(10, Math.round(spot.queueMetres / 10) * 10)} m queue`);
+    parts.push(`${Math.round(spot.queueMetres)} m queue`);
   }
-  if (spot.delaySeconds >= 60) {
-    parts.push(`+${Math.round(spot.delaySeconds / 60)} min`);
+  if (spot.delaySeconds > 0) {
+    parts.push(`+${Math.max(1, Math.round(spot.delaySeconds / 60))} min`);
   }
   return parts.join(' · ');
 }

@@ -1,4 +1,4 @@
-export { AuthProvider, useAuth, authTokenKey, authSessionKey } from './AuthProvider';
+export { AuthProvider, useAuth, authTokenKey, authSessionKey, REMEMBER_DAYS } from './AuthProvider';
 export type { AuthStatus, AuthSession, AuthContextValue, RecoveryStep } from './AuthProvider';
 export {
   authenticate,

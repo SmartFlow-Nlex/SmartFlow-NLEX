@@ -5,6 +5,7 @@ import {
   Image,
   Pressable,
   ScrollView,
+  type ScrollViewInstance,
   StyleSheet,
   Text,
   TextInput,
@@ -53,8 +54,8 @@ const quickQuestions = [
 
 /** What the assistant can actually answer, so the empty screen is not a blank prompt. */
 const capabilities = [
-  { icon: 'speedometer-outline', text: 'Live conditions at any of the 20 exits' },
-  { icon: 'swap-vertical-outline', text: 'Northbound or southbound, by name' },
+  { icon: 'speedometer-outline', text: 'Live traffic and forecasts for all 20 exits' },
+  { icon: 'notifications-outline', text: 'Alerts, maintenance, Community reports and Arena events' },
   { icon: 'language-outline', text: 'Replies in English or Tagalog - pick EN or TL above' },
 ] as const;
 
@@ -97,7 +98,7 @@ export default function AssistantScreen(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   /** The question behind the current error, so it can be resent in one tap. */
   const [failedQuestion, setFailedQuestion] = useState<string | null>(null);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
 
   const { session } = useAuth();
   const firstName = firstNameOf(session?.fullName);

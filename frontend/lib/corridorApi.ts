@@ -22,6 +22,7 @@ export interface CorridorJam {
   speedKmh: number | null;
   /** Waze's estimate of the time this queue adds, in seconds. */
   delaySeconds: number | null;
+  /** Waze's length for the longest report behind this queue, in metres. */
   lengthMetres: number;
 }
 
@@ -40,7 +41,9 @@ export interface CorridorDirectionStatus {
    * mean very different things: undefined is "not told", [] is "none".
    */
   jams?: CorridorJam[];
+  /** The longest single queue here, in metres: the dashboard's figure, never a total. */
   queueMetres?: number;
+  /** The worst single queue's delay, in seconds. -1 means Waze could not measure it. */
   delaySeconds?: number | null;
 }
 

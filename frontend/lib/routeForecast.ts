@@ -1,5 +1,5 @@
 import { NlexDirectionId, distanceKm, exitsInTravelOrder } from '../constants/nlexSegments';
-import type { ForecastState, StretchForecast } from './forecastApi';
+import type { ForecastState, StretchForecast } from './feeds/forecast';
 
 /**
  * The SmartFlow model's forecast, summed along one trip.

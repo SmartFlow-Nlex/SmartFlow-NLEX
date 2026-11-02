@@ -78,11 +78,12 @@ export interface CorridorDirectionStatus {
   hasRamp: boolean;
   /** Where the queues actually are, so the map can colour only those. */
   jams: JamOnCorridor[];
-  /** Total length of queue on this stretch, in metres. */
+  /** The longest single queue at this exit, in metres: the dashboard's figure. */
   queueMetres: number;
   /**
-   * Time the queues here add, in seconds - Waze's own per-jam estimate, summed.
-   * Null when no jam carried one, which is not the same as no delay.
+   * The worst single queue's delay, in seconds: the dashboard's figure. Null when
+   * no jam carried one, which is not the same as no delay. Waze sends -1 for "not
+   * measurable", so anything at or below zero is not a delay to show.
    */
   delaySeconds: number | null;
 }
@@ -229,19 +230,33 @@ const clearStatus = (hasRamp: boolean, access: string | null): CorridorDirection
  * screen both read it, and neither should have to care that the derivation
  * moved. Only the numbers change - to the dashboard's.
  */
+/** The dashboard's own line for calling its feed stale. */
+const FEED_STALE_AFTER_MINUTES = 30;
+
 /**
- * Added time across a stretch's jams.
+ * How old the feed is right now, worked out from its newest report.
  *
- * Null only when not one jam reported a delay - summing the ones that did and
- * calling that the total would understate it silently, but reporting nothing
- * when some are known would throw away a real figure.
+ * The dashboard's own age figure is frozen into its cached answer. On 2 Nov 2026
+ * its server kept serving a reading 17 minutes old and still labelled "1.1
+ * minutes, not stale", because a failed background refresh leaves the old copy
+ * in place. Only the timestamp can be trusted to stay true.
  */
-function sumDelay(jams: JamOnCorridor[]): number | null {
-  const known = jams.filter((jam) => jam.delaySeconds !== null);
-  if (known.length === 0) {
-    return null;
+function feedFreshness(feed: RealtimeFeed): CorridorStatusData['feed'] {
+  const newestAt = feed.feed?.newestAt ?? null;
+  const ageMinutes = newestAt === null ? NaN : (Date.now() - Date.parse(newestAt)) / 60000;
+  if (!Number.isFinite(ageMinutes)) {
+    return {
+      newestAt,
+      ageMinutes: feed.feed?.ageMinutes ?? null,
+      // No freshness block means we cannot vouch for the data's age.
+      stale: feed.feed?.stale ?? true,
+    };
   }
-  return known.reduce((total, jam) => total + (jam.delaySeconds ?? 0), 0);
+  return {
+    newestAt,
+    ageMinutes: Math.round(Math.max(0, ageMinutes) * 10) / 10,
+    stale: ageMinutes > FEED_STALE_AFTER_MINUTES,
+  };
 }
 
 function buildCorridorStatus(feed: RealtimeFeed, exits: NlexExit[]): CorridorStatusData {
@@ -270,8 +285,8 @@ function buildCorridorStatus(feed: RealtimeFeed, exits: NlexExit[]): CorridorSta
           access,
           hasRamp,
           jams: row.jams,
-          queueMetres: row.jams.reduce((total, jam) => total + jam.lengthMetres, 0),
-          delaySeconds: sumDelay(row.jams),
+          queueMetres: row.longestQueueMetres ?? 0,
+          delaySeconds: row.delaySeconds,
         };
 
   const ordered = [...exits].sort((a, b) => a.km - b.km);
@@ -298,18 +313,16 @@ function buildCorridorStatus(feed: RealtimeFeed, exits: NlexExit[]): CorridorSta
   const counts: CorridorCounts = { congested: 0, slow: 0, clear: 0 };
   for (const row of rows) {
     for (const key of ['NB', 'SB'] as const) {
-      counts[row.directions[key].status] += 1;
+      // A side with no access is not counted at all, as on the dashboard's tally.
+      if (row.directions[key].access !== 'No Access') {
+        counts[row.directions[key].status] += 1;
+      }
     }
   }
 
   return {
     generatedAt: new Date().toISOString(),
-    feed: {
-      newestAt: feed.feed?.newestAt ?? null,
-      ageMinutes: feed.feed?.ageMinutes ?? null,
-      // No freshness block means we cannot vouch for the data's age.
-      stale: feed.feed?.stale ?? true,
-    },
+    feed: feedFreshness(feed),
     counts,
     exits: rows,
     geometry: { centrelineVertices: centrelineVertexCount(exits) },

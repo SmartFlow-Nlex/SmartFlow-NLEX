@@ -205,12 +205,11 @@ const LiveCorridorStatus: React.FC = () => {
   /*
    * Where the queues sit within each row, per carriageway.
    *
-   * Each exit's queues are already the traffic standing on its own stretch,
-   * whichever exit the backend booked them to (readTrafficByStretch, applied
-   * where the data arrives), so a row's bands come from its own list - the
-   * same list its chip was graded on, so the two cannot disagree. Collecting
-   * every queue on the corridor and looking each band up again was how the
-   * lanes once took their colour from the wrong queue.
+   * Every queue on the carriageway, whichever exit it is booked to: a queue
+   * runs where it runs, so a row draws what is standing on its road even when
+   * its chip, which is the dashboard's reading of that exit, says otherwise.
+   * Each band keeps its index into the one list, so it cannot take its colour
+   * from the wrong queue.
    *
    * Only trusted when the backend's indices point into the same centreline this
    * app ships; otherwise there are no bands and the lanes take their stretch's
@@ -222,13 +221,17 @@ const LiveCorridorStatus: React.FC = () => {
       return out;
     }
 
+    const keys: DirectionKey[] = ['NB', 'SB'];
+    if (data.exits.some((exit) => keys.some((key) => exit.directions[key].jams === undefined))) {
+      return out;   // a backend that predates queues: no bands at all
+    }
+    const everyQueue = (key: DirectionKey) => data.exits.flatMap((exit) => exit.directions[key].jams ?? []);
+    const queues = { NB: everyQueue('NB'), SB: everyQueue('SB') };
+
     for (const exit of data.exits) {
       const forExit = { NB: undefined, SB: undefined } as Bands;
-      for (const key of ['NB', 'SB'] as DirectionKey[]) {
-        const jams = exit.directions[key].jams;
-        if (jams === undefined) {
-          return new Map();   // a backend that predates queues: no bands at all
-        }
+      for (const key of keys) {
+        const jams = queues[key];
         const indexed = jams.map((jam, index) => ({ ...jam, index }));
         // Worst last, so where queues overlap the crawl is drawn over the
         // slowdown rather than hidden under it.
