@@ -12,10 +12,11 @@ import { CongestionLevel } from '../../lib/trafficModel';
 import {
   CorridorDirectionStatus,
   CorridorExit,
-  CorridorJam,
+  CorridorReport,
+  CorridorStatusData,
   CorridorStatusValue,
 } from '../../lib/corridorApi';
-import { centrelineMatches, queueBandsForRow } from '../../lib/corridorGeometry';
+import { centrelineMatches, passingQueue, queueBandsForRow, type PassingQueue } from '../../lib/corridorGeometry';
 import { useCorridorStatus } from '../../hooks/useCorridorStatus';
 import { toneFor } from '../dashboard/severity';
 import CorridorRoad, {
@@ -99,7 +100,7 @@ function formatSpeed(speedKmh: number | null): string | null {
  * A carriageway can hold a crawl and a mere slowdown at once, and drawing both
  * in the stretch's overall colour would say something the feed did not.
  */
-function jamTone(jam: CorridorJam): CongestionLevel {
+function jamTone(jam: CorridorReport): CongestionLevel {
   if ((jam.level !== null && jam.level >= 3) || (jam.speedKmh !== null && jam.speedKmh < 10)) {
     return 'severe';
   }
@@ -109,6 +110,7 @@ function jamTone(jam: CorridorJam): CongestionLevel {
 function readingFor(
   status: CorridorDirectionStatus,
   bands: RoadDirectionReading['bands'],
+  passing: PassingQueue | null,
 ): RoadDirectionReading {
   if (!status.hasRamp) {
     return { level: null, value: 'no ramp' };
@@ -119,14 +121,18 @@ function readingFor(
     value: speed ?? statusLabel[status.status],
     // The raw figure as well as the formatted one: the road diagram paces the
     // traffic it draws from this, so it needs the number rather than "2 km/h".
-    speedKph: status.speedKmh,
+    speedKph: passing?.report.speedKmh ?? status.speedKmh,
     bands,
+    note: passing === null ? undefined : { text: `${passing.from} queue`, level: jamTone(passing.report) },
   };
 }
 
-function detailLineFor(status: CorridorDirectionStatus): string {
+function detailLineFor(status: CorridorDirectionStatus, passing: PassingQueue | null): string {
   if (!status.hasRamp) {
     return 'No ramp at this exit';
+  }
+  if (passing !== null) {
+    return [`Part of the ${passing.from} queue`, formatSpeed(passing.report.speedKmh), status.access].filter(Boolean).join(' · ');
   }
   const parts = [
     statusLabel[status.status],
@@ -141,16 +147,18 @@ type Bands = Record<DirectionKey, RoadDirectionReading['bands']>;
 
 const SEVERITY_ORDER: Record<CongestionLevel, number> = { low: 0, moderate: 1, high: 2, severe: 3 };
 
-function rowFor(exit: CorridorExit, bands: Bands): RoadRow {
+function rowFor(data: CorridorStatusData, exit: CorridorExit, bands: Bands): RoadRow {
+  const nb = passingQueue(data, exit.exit_id, 'NB');
+  const sb = passingQueue(data, exit.exit_id, 'SB');
   return {
     id: String(exit.exit_id),
     name: exit.display_name,
     km: exit.km,
-    NB: readingFor(exit.directions.NB, bands.NB),
-    SB: readingFor(exit.directions.SB, bands.SB),
+    NB: readingFor(exit.directions.NB, bands.NB, nb),
+    SB: readingFor(exit.directions.SB, bands.SB, sb),
     detail: [
-      { label: 'Northbound', value: detailLineFor(exit.directions.NB) },
-      { label: 'Southbound', value: detailLineFor(exit.directions.SB) },
+      { label: 'Northbound', value: detailLineFor(exit.directions.NB, nb) },
+      { label: 'Southbound', value: detailLineFor(exit.directions.SB, sb) },
     ],
     detailFooter: `${exit.node_type} · ${exit.latitude.toFixed(4)}, ${exit.longitude.toFixed(4)}`,
   };
@@ -205,11 +213,13 @@ const LiveCorridorStatus: React.FC = () => {
   /*
    * Where the queues sit within each row, per carriageway.
    *
-   * Every queue on the carriageway, whichever exit it is booked to: a queue
+   * Every report on the carriageway, whichever exit it is booked to: a queue
    * runs where it runs, so a row draws what is standing on its road even when
    * its chip, which is the dashboard's reading of that exit, says otherwise.
+   * Each report keeps its own colour, worst drawn last, as on the dashboard's
+   * map; a merged queue would paint all of itself in its worst report's colour.
    * Each band keeps its index into the one list, so it cannot take its colour
-   * from the wrong queue.
+   * from the wrong report.
    *
    * Only trusted when the backend's indices point into the same centreline this
    * app ships; otherwise there are no bands and the lanes take their stretch's
@@ -225,7 +235,7 @@ const LiveCorridorStatus: React.FC = () => {
     if (data.exits.some((exit) => keys.some((key) => exit.directions[key].jams === undefined))) {
       return out;   // a backend that predates queues: no bands at all
     }
-    const everyQueue = (key: DirectionKey) => data.exits.flatMap((exit) => exit.directions[key].jams ?? []);
+    const everyQueue = (key: DirectionKey) => data.exits.flatMap((exit) => exit.directions[key].reports ?? exit.directions[key].jams ?? []);
     const queues = { NB: everyQueue('NB'), SB: everyQueue('SB') };
 
     for (const exit of data.exits) {
@@ -258,12 +268,12 @@ const LiveCorridorStatus: React.FC = () => {
       exits = exits.filter((exit) =>
         keys.some((key) => {
           const dir = exit.directions[key];
-          return dir.hasRamp && dir.status !== 'clear';
+          return dir.hasRamp && (dir.status !== 'clear' || passingQueue(data, exit.exit_id, key) !== null);
         }),
       );
     }
     return exits.map((exit) =>
-      rowFor(exit, bandsByExit.get(exit.exit_id) ?? { NB: undefined, SB: undefined }),
+      rowFor(data, exit, bandsByExit.get(exit.exit_id) ?? { NB: undefined, SB: undefined }),
     );
   }, [data, problemsOnly, bandsByExit]);
 

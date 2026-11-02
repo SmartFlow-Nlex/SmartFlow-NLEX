@@ -33,6 +33,7 @@ import {
   secondStepProblem,
   submitCode,
 } from './mfa';
+import { sendWelcomeEmail } from './welcomeEmail';
 
 /**
  * `secondStep` is a password accepted but the authenticator code still owed.
@@ -467,7 +468,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       password: string;
     }): Promise<void> => {
       await endingLastRun.current;
-      await register({ fullName, email, password });
+      const created = await register({ fullName, email, password });
+      // The account exists from here, whether or not the authenticator step is finished.
+      sendWelcomeEmail(created.token);
 
       /*
        * A new account goes through the same second step, and this is the hole
@@ -480,8 +483,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
        * session comes back, so by here there is always an aal1 session to
        * raise - the same state a password sign-in leaves behind.
        */
-      // A brand new account's email is kept for the next sign-in.
-      pendingRemember.current = true;
+      // Staying signed in is opt-in, and sign-up has no box to opt in with.
+      pendingRemember.current = false;
       let step: SecondStep;
       try {
         step = await beginSecondStep();

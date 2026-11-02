@@ -260,8 +260,9 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - Headless Chrome has no notch, so layouts must also be judged with `--safe-top` and `--safe-bottom` set. That is how the Team line-up and the crushed results screens got through.
 
 ### 2 Nov — Live corridor now shows the dashboard's numbers
-- Ysa asked for the live corridor to be the same as the dashboard. The phone was re-grading every exit (`readTrafficByStretch`), so it showed 5/21/14 where the dashboard showed 3/12/25. That step is gone: statuses and counts are read as sent. Rows and maps still draw every queue where it physically sits, so a row can read Clear with a neighbour's queue on it, exactly as the dashboard does.
+- Ysa asked for the live corridor to be the same as the dashboard. The phone was re-grading every exit (`readTrafficByStretch`), so it showed 5/21/14 where the dashboard showed 3/12/25. That step is gone: statuses and counts are read as sent. Rows and maps still draw every queue where it physically sits.
 - Backend: `queueMetres` is the longest single Waze report and `delaySeconds` the worst single delay (the dashboard's `longestQueueMeters` and `delaySeconds`), and the feed age is worked out from `newestAt`, because the dashboard's own age figure freezes inside its cached reply. Pushed in Ysa-Commit-11.
+- The road is coloured from each Waze report as it came (`reports`), worst last, like the dashboard's map. A merged queue (`jams`) took its worst report's colour, so 9.6 km went red where only 6.5 km was level 3; `jams` now only feeds the queue list. A long red band beside one "congested" exit is correct: a queue counts at its nearest exit, the road shows where it stands, and the dashboard's map does the same. An exit a queue merely passes through says so (`passingQueue`: "Tambubong queue", "In queue") instead of "Clear". The tally still counts it clear, so the counts stay the dashboard's; the dashboard itself still says Clear there. Navie still reads those exits as clear.
 - Checked by running the dashboard's code from `origin/Main-Dashboard` on the live feed against a local copy of this backend: 0 of 40 differences. Do not re-derive these numbers in the app.
 
 ### 2 Nov — Tollbound Heroes: the whole road, no chapters, 12 sidekicks
@@ -269,6 +270,12 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - One journey, Balintawak to Sta. Ines: 16 missions (`JOURNEY`), all 20 exits on a scrolling map (`JOURNEY_EXITS`, tested against `nlexSegments.ts`). Harbor Link, Paso de Blas and Marilao are driven past on missions 1 and 2 rather than being their own levels.
 - New bosses Prinsipe Barrikada (San Fernando) and Reyna Barrikada (Sta. Ines): the same fight in new colours. New sidekicks Walis, Barya, Sibat, Tala, Ilaw, Maso. Old saves keep their progress.
 - Details in `frontend/games/roadTrip/DESIGN.md` section 12 and `AUDIT.md` section K. Autopilot and headless Chrome only so far: not played by a person or on a phone. Pushed in Ysa-Commit-11.
+
+### 3 Nov — Panel review comments
+- **Sign-in brand:** no white tile. The logo sits on a soft glow (`auth-logo-glow.png`), the wordmark is white over a deeper sky (`auth-sky-tint.png`, day only), and the copyright is full-strength text. The mirrored sky is stretched so only sky shows (`SKY_ART_PX`), with 1 pt of overlap to hide the line where it met the picture. Regenerating the two PNGs is not needed; they are plain soft gradients.
+- **Remember me** starts unticked. Sign-up no longer remembers the account silently either, since it has no box to opt in with.
+- **Wording:** the wrong-code message (`mfa.ts`) and the reset-link message (`forgot-password.tsx`) use the panel's exact text. "TRAFFIC INTELLIGENCE" is gone from the tab header.
+- **Welcome email:** `sendWelcomeEmail` (`frontend/auth/welcomeEmail.ts`) runs once `register` succeeds, and calls a Google Apps Script running as navie.smartflow@gmail.com (`supabase/welcome-email.gs`, which has the setup steps). The backend cannot send it: Render's free tier blocks outgoing SMTP. The script takes the session token, asks Supabase whose it is, and writes only to that address, once, within 15 minutes of the account's creation. Without `EXPO_PUBLIC_WELCOME_EMAIL_URL` in `.env`, nothing is sent and sign-up still works.
 
 ### 25–26 Oct — Road Trip becomes TOLLBOUND HEROES (professor's third brief)
 - Player-facing name everywhere (Arcade card, title logo, garage/map/settings headers, help, page title). Code folder, save key `smartflow.roadTrip.<email>` and the `/arcade/road-trip` route are kept; the new `/arcade/tollbound-heroes` route re-exports it.
@@ -292,6 +299,7 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 | Maintenance rows saved before 3 Oct use the old km scale. Only affects expired rows. | Nothing needed unless reused. |
 | `frontend/lib/nlexReportCorridor.json` is the dashboard's corridor line (from `Main-Dashboard @3d148af`), used to match its Current-alerts list. | Regenerate if the dashboard's road geometry or exit list changes. |
 | Waze sends `delay_seconds: -1` for "not measurable"; the backend counts it as a real number. | Backend fix. |
+| **Welcome emails are not going out until the Apps Script is deployed**, and it has only been tested against stand-ins for Google and Supabase. | Deploy `supabase/welcome-email.gs` as navie.smartflow@gmail.com, put its URL in `.env`, restart Expo, then sign up with a real address. |
 | Read/unread on the Alerts tab resets when the app restarts. | Small change if wanted (store read ids). |
 | Unused after the redesign, kept for now: `PageHeading.tsx`, `AvatarButton.tsx`, `TabPeekMascot.tsx`. | Delete when sure nothing needs them. |
 | Expo has a patch update (57.0.19 → 57.0.27) not yet applied. | `npx expo install --check` when convenient. |

@@ -61,9 +61,6 @@ const AppHeader: React.FC<AppHeaderProps> = ({ children }) => {
           <Text style={styles.title} numberOfLines={1}>
             SmartFlow NLEX
           </Text>
-          <Text style={styles.tagline} numberOfLines={1}>
-            TRAFFIC INTELLIGENCE
-          </Text>
         </View>
       </View>
 
@@ -147,18 +144,6 @@ const makeStyles = (c: ThemePalette) =>
       textShadowColor: c.onSceneShadow,
       textShadowOffset: { width: 0, height: 1 },
       textShadowRadius: 6,
-    },
-    tagline: {
-      color: c.onSceneSoft,
-      textShadowColor: c.onSceneShadow,
-      textShadowOffset: { width: 0, height: 1 },
-      textShadowRadius: 4,
-      fontSize: 7.5,
-      fontWeight: '700',
-      // Wide tracking, so a small line under a bold title reads as a lockup
-      // rather than a wrapped second line.
-      letterSpacing: 1.6,
-      marginTop: 3,
     },
     actions: {
       flexDirection: 'row',

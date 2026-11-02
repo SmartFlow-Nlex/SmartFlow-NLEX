@@ -91,7 +91,7 @@ export default function ForgotPasswordScreen(): React.ReactElement {
 
       {sentTo !== null ? (
         <AuthNotice
-          message={`If an account uses ${sentTo}, a reset link is on its way. Open it on this phone.`}
+          message={`A password reset link has been sent to ${sentTo} if a matching account exists. Please access the link using this device.`}
         />
       ) : null}
 

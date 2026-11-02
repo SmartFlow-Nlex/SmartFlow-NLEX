@@ -1,5 +1,5 @@
 import centreline from './nlexCentreline.json';
-import type { CorridorExit } from './corridorApi';
+import type { CorridorExit, CorridorReport, CorridorStatusData } from './corridorApi';
 
 /**
  * The NLEX centreline, cut into the stretch that belongs to one exit.
@@ -526,6 +526,66 @@ export function corridorOverview(exits: CorridorExit[], jams: ColouredJam[]): Co
       position: { latitude: exit.latitude, longitude: exit.longitude },
     })),
   };
+}
+
+/**
+ * A neighbour's queue must cover at least this much of a stretch to count as
+ * being on it. Measured inside the vertex two stretches share, so a queue that
+ * only touches the boundary does not.
+ */
+const MIN_PASSING_QUEUE_M = 100;
+
+/** A queue standing on an exit's road, though it is booked to another exit. */
+export interface PassingQueue {
+  /** The exit it is booked to. */
+  from: string;
+  report: CorridorReport;
+}
+
+/**
+ * The worst queue passing through an exit that has no reading of its own.
+ *
+ * A queue counts at the one exit nearest its midpoint, as it does on the
+ * dashboard, so a long one crosses other exits' road and counts at none of them.
+ * Those exits stay "clear" in the tally, which keeps it the dashboard's, but
+ * they must not say so on screen with a red line drawn through them. Null when
+ * the exit has its own reading, or when the queues cannot be placed.
+ */
+export function passingQueue(
+  data: CorridorStatusData,
+  exitId: number,
+  key: DirectionKey,
+): PassingQueue | null {
+  if (!centrelineMatches(data.geometry?.centrelineVertices)) {
+    return null;
+  }
+  const exit = data.exits.find((candidate) => candidate.exit_id === exitId);
+  const stretch = stretchRangeForExit(data.exits, exitId);
+  if (exit === undefined || stretch === null || !exit.directions[key].hasRamp || exit.directions[key].status !== 'clear') {
+    return null;
+  }
+
+  let worst: PassingQueue | null = null;
+  for (const other of data.exits) {
+    if (other.exit_id === exitId) {
+      continue;
+    }
+    for (const report of other.directions[key].reports ?? other.directions[key].jams ?? []) {
+      const lo = Math.max(stretch.from + 1, Math.min(report.startIndex, report.endIndex), 0);
+      const hi = Math.min(stretch.to - 1, Math.max(report.startIndex, report.endIndex), points.length - 1);
+      if (hi <= lo || cumulative[hi] - cumulative[lo] < MIN_PASSING_QUEUE_M) {
+        continue;
+      }
+      if (
+        worst === null ||
+        (report.level ?? 0) > (worst.report.level ?? 0) ||
+        ((report.level ?? 0) === (worst.report.level ?? 0) && (report.speedKmh ?? Infinity) < (worst.report.speedKmh ?? Infinity))
+      ) {
+        worst = { from: other.display_name, report };
+      }
+    }
+  }
+  return worst;
 }
 
 /** True when the app's centreline is the one the backend's indices refer to. */

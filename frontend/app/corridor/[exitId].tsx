@@ -13,15 +13,16 @@ import SegmentMap from '../../components/map/SegmentMap';
 import {
   centrelineMatches,
   corridorOverview,
+  passingQueue,
   segmentForExit,
   stretchJamLines,
 } from '../../lib/corridorGeometry';
-import type { DirectionKey } from '../../lib/corridorGeometry';
+import type { DirectionKey, PassingQueue } from '../../lib/corridorGeometry';
 import { useCorridorStatus } from '../../hooks/useCorridorStatus';
 import type {
   CorridorDirectionStatus,
   CorridorExit,
-  CorridorJam,
+  CorridorReport,
   CorridorStatusValue,
 } from '../../lib/corridorApi';
 import type { CongestionLevel } from '../../lib/trafficModel';
@@ -95,7 +96,7 @@ function formatDelay(seconds: number | null | undefined): string | null {
  * A carriageway can hold a crawl and a mere slowdown at once; colouring both
  * with the stretch's overall status would say something the feed did not.
  */
-function jamTone(jam: CorridorJam): CongestionLevel {
+function jamTone(jam: CorridorReport): CongestionLevel {
   if ((jam.level !== null && jam.level >= 3) || (jam.speedKmh !== null && jam.speedKmh < 10)) {
     return 'severe';
   }
@@ -131,6 +132,8 @@ interface CarriagewayCardProps {
   status: CorridorDirectionStatus;
   /** False when the backend cannot tell us where the queues are. */
   hasJamDetail: boolean;
+  /** Another exit's queue on this road: this exit counts as clear, but must not say so. */
+  passing: PassingQueue | null;
 }
 
 const CarriagewayCard: React.FC<CarriagewayCardProps> = ({
@@ -138,6 +141,7 @@ const CarriagewayCard: React.FC<CarriagewayCardProps> = ({
   arrow,
   status,
   hasJamDetail,
+  passing,
 }) => {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -160,8 +164,8 @@ const CarriagewayCard: React.FC<CarriagewayCardProps> = ({
     );
   }
 
-  const tone = toneFor(statusTone[status.status], colors);
-  const speed = formatSpeed(status.speedKmh);
+  const tone = toneFor(passing !== null ? jamTone(passing.report) : statusTone[status.status], colors);
+  const speed = formatSpeed(passing !== null ? passing.report.speedKmh : status.speedKmh);
   const observed = formatObserved(status.observedAt);
   const queues = status.jams ?? [];
   const delay = formatDelay(status.delaySeconds);
@@ -173,7 +177,7 @@ const CarriagewayCard: React.FC<CarriagewayCardProps> = ({
         <Text style={styles.dirTitle}>{title}</Text>
         <View style={[styles.dirPill, { backgroundColor: tone.background }]}>
           <Text style={[styles.dirPillText, { color: tone.text }]}>
-            {statusLabel[status.status]}
+            {passing !== null ? 'In queue' : statusLabel[status.status]}
           </Text>
         </View>
       </View>
@@ -207,7 +211,9 @@ const CarriagewayCard: React.FC<CarriagewayCardProps> = ({
       ) : null}
 
       <View style={styles.dirMetaRow}>
-        {hasJamDetail ? (
+        {passing !== null ? (
+          <Text style={styles.dirMeta}>Part of the {passing.from} queue</Text>
+        ) : hasJamDetail ? (
           queues.length > 0 ? (
             <Text style={styles.dirMeta}>
               {queues.length} queue{queues.length === 1 ? '' : 's'} on this stretch
@@ -349,7 +355,8 @@ export default function CorridorExitScreen(): React.ReactElement {
     const jams = data.exits
       .flatMap((candidate) =>
         (['NB', 'SB'] as DirectionKey[]).flatMap((direction) =>
-          (candidate.directions[direction].jams ?? []).map((jam) => ({
+          // Each report in its own colour; a merged queue would be all its worst report's.
+          (candidate.directions[direction].reports ?? candidate.directions[direction].jams ?? []).map((jam) => ({
             direction,
             startIndex: jam.startIndex,
             endIndex: jam.endIndex,
@@ -428,6 +435,8 @@ export default function CorridorExitScreen(): React.ReactElement {
 
   const nb = exit.directions.NB;
   const sb = exit.directions.SB;
+  const nbPassing = data === null ? null : passingQueue(data, exit.exit_id, 'NB');
+  const sbPassing = data === null ? null : passingQueue(data, exit.exit_id, 'SB');
 
   /*
    * The carriageway under the queues reads CLEAR, not neutral.
@@ -470,14 +479,14 @@ export default function CorridorExitScreen(): React.ReactElement {
         ? 'slow'
         : 'clear';
 
-  const pill = (title: string, status: CorridorDirectionStatus): React.ReactElement => {
-    const tone = toneFor(status.hasRamp ? statusTone[status.status] : 'low', colors);
-    const speed = formatSpeed(status.speedKmh);
+  const pill = (title: string, status: CorridorDirectionStatus, passing: PassingQueue | null): React.ReactElement => {
+    const tone = toneFor(passing !== null ? jamTone(passing.report) : status.hasRamp ? statusTone[status.status] : 'low', colors);
+    const speed = formatSpeed(passing !== null ? passing.report.speedKmh : status.speedKmh);
     return (
       <View style={[styles.peekPill, { backgroundColor: tone.background }]}>
         <Text style={[styles.peekPillLabel, { color: tone.text }]}>{title}</Text>
         <Text style={[styles.peekPillValue, { color: tone.text }]}>
-          {status.hasRamp ? (speed ?? statusLabel[status.status]) : 'no ramp'}
+          {status.hasRamp ? (speed ?? (passing !== null ? 'In queue' : statusLabel[status.status])) : 'no ramp'}
         </Text>
       </View>
     );
@@ -542,8 +551,8 @@ export default function CorridorExitScreen(): React.ReactElement {
             <View style={styles.peekPills}>
               {/* Southbound left, northbound right - the same sides as the
                   corridor diagram on the list screen. */}
-              {pill('SB', sb)}
-              {pill('NB', nb)}
+              {pill('SB', sb, sbPassing)}
+              {pill('NB', nb, nbPassing)}
             </View>
           </View>
         }
@@ -575,12 +584,14 @@ export default function CorridorExitScreen(): React.ReactElement {
             arrow="arrow-up"
             status={nb}
             hasJamDetail={hasJamDetail}
+            passing={nbPassing}
           />
           <CarriagewayCard
             title="Southbound"
             arrow="arrow-down"
             status={sb}
             hasJamDetail={hasJamDetail}
+            passing={sbPassing}
           />
 
           <View style={styles.footer}>

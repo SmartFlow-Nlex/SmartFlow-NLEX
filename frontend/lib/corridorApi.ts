@@ -26,6 +26,9 @@ export interface CorridorJam {
   lengthMetres: number;
 }
 
+/** One Waze report as it came. Draw these, not the merged queues: each keeps its own colour. */
+export type CorridorReport = Pick<CorridorJam, 'startIndex' | 'endIndex' | 'level' | 'speedKmh'>;
+
 export interface CorridorDirectionStatus {
   status: CorridorStatusValue;
   level: number | null;
@@ -41,6 +44,8 @@ export interface CorridorDirectionStatus {
    * mean very different things: undefined is "not told", [] is "none".
    */
   jams?: CorridorJam[];
+  /** Absent from a backend that predates it: draw `jams` then. */
+  reports?: CorridorReport[];
   /** The longest single queue here, in metres: the dashboard's figure, never a total. */
   queueMetres?: number;
   /** The worst single queue's delay, in seconds. -1 means Waze could not measure it. */

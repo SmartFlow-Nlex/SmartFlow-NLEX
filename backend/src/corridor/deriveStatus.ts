@@ -62,6 +62,19 @@ export interface JamOnCorridor {
   lengthMetres: number;
 }
 
+/**
+ * One Waze report as it came, for drawing. A merged queue takes its worst report's
+ * level, so painting it whole turned a 9.6 km queue red when only 6.5 km of it
+ * was level 3. Drawn one by one, worst last, each stretch shows the worst report
+ * actually on it - which is how the dashboard's map colours the road.
+ */
+export interface JamReport {
+  startIndex: number;
+  endIndex: number;
+  level: number | null;
+  speedKmh: number | null;
+}
+
 /** One exit the feed said something about, in one direction. */
 export interface ExitStatus {
   exit: string;
@@ -79,8 +92,10 @@ export interface ExitStatus {
   longestQueueMetres: number | null;
   /** The worst single queue's delay, in seconds. Not a sum, for the same reason. */
   delaySeconds: number | null;
-  /** Every jam behind this reading, so the map can colour only the queue. */
+  /** Every jam behind this reading, merged: the list of queues on this stretch. */
   jams: JamOnCorridor[];
+  /** The same reports unmerged, so the road can be coloured from each one's own level. */
+  reports: JamReport[];
 }
 
 /** The exit rows the dashboard serves from nlex_exits. */
@@ -340,6 +355,12 @@ export function corridorStatusFromFeed(
       longestQueueMetres: acc.meters,
       delaySeconds: acc.delay,
       jams: mergeJams(acc.jams),
+      reports: acc.jams.map(({ startIndex, endIndex, level, speedKmh }) => ({
+        startIndex,
+        endIndex,
+        level,
+        speedKmh,
+      })),
     };
   });
 }

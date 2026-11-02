@@ -34,7 +34,7 @@ export default function SignInScreen(): React.ReactElement {
   // The account just reset, else the one "Remember me for 7 days" kept.
   const [email, setEmail] = useState<string>(params.email ?? rememberedEmail ?? '');
   const [password, setPassword] = useState<string>('');
-  const [remember, setRemember] = useState<boolean>(true);
+  const [remember, setRemember] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(
     params.passwordChanged === '1' ? 'Your password has been changed. Sign in with your new password.' : null,

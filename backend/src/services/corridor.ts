@@ -4,6 +4,7 @@ import {
   type ExitStatus,
   type FeatureCollection,
   type JamOnCorridor,
+  type JamReport,
   type NlexExit,
 } from '../corridor/deriveStatus';
 
@@ -76,8 +77,10 @@ export interface CorridorDirectionStatus {
   /** "Entry & Exit", "Entry Only", "Exit Only", "No Access", or null at a barrier. */
   access: string | null;
   hasRamp: boolean;
-  /** Where the queues actually are, so the map can colour only those. */
+  /** The queues on this stretch, overlapping reports merged. */
   jams: JamOnCorridor[];
+  /** Each report unmerged, for colouring the road by its own level. */
+  reports: JamReport[];
   /** The longest single queue at this exit, in metres: the dashboard's figure. */
   queueMetres: number;
   /**
@@ -219,6 +222,7 @@ const clearStatus = (hasRamp: boolean, access: string | null): CorridorDirection
   access,
   hasRamp,
   jams: [],
+  reports: [],
   queueMetres: 0,
   delaySeconds: null,
 });
@@ -285,6 +289,7 @@ function buildCorridorStatus(feed: RealtimeFeed, exits: NlexExit[]): CorridorSta
           access,
           hasRamp,
           jams: row.jams,
+          reports: row.reports,
           queueMetres: row.longestQueueMetres ?? 0,
           delaySeconds: row.delaySeconds,
         };

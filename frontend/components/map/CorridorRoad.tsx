@@ -160,6 +160,11 @@ export interface RoadDirectionReading {
    * that can be said when the feed has not told us where the traffic is.
    */
   bands?: { start: number; end: number; level: CongestionLevel }[];
+  /**
+   * Another exit's queue on this road: says so in a chip of its colour, without
+   * marking this exit congested. `level` stays this exit's own reading.
+   */
+  note?: { text: string; level: CongestionLevel };
 }
 
 export interface RoadRow {
@@ -652,7 +657,7 @@ interface ReadingProps {
  * only place the feed has a speed worth printing.
  */
 function isWorthShowing(reading: RoadDirectionReading): boolean {
-  return reading.level !== null && reading.level !== 'low';
+  return reading.level !== null && (reading.level !== 'low' || reading.note !== undefined);
 }
 
 const Reading: React.FC<ReadingProps> = ({ direction, reading }) => {
@@ -663,7 +668,7 @@ const Reading: React.FC<ReadingProps> = ({ direction, reading }) => {
     return null;
   }
 
-  const tone = toneFor(reading.level, colors);
+  const tone = toneFor(reading.note?.level ?? reading.level, colors);
 
   return (
     <View
@@ -674,7 +679,7 @@ const Reading: React.FC<ReadingProps> = ({ direction, reading }) => {
         {directionLabel[direction]}
       </Text>
       <Text style={[styles.readingValue, { color: tone.text }]} numberOfLines={1}>
-        {reading.value}
+        {reading.note?.text ?? reading.value}
       </Text>
     </View>
   );

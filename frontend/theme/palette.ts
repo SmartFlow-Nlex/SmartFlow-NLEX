@@ -113,6 +113,8 @@ export interface ThemePalette {
    * it stays the light text colour - darker would sink into the night sky.
    */
   authBrandText: string;
+  /** The light behind the sign-in logo. */
+  authLogoGlow: string;
   // Rush Hour (app/arcade/rush-hour): a deep navy board of rounded cells with a
   // glowing gold exit. The vehicles are pictures (frontend/assets/rush-hour);
   // the six paints below are the ones those pictures were drawn in.
@@ -296,6 +298,7 @@ export const lightPalette: ThemePalette = {
   authButtonFrom: '#1473F3',
   authButtonTo: '#0763E6',
   authBrandText: '#0A1629',
+  authLogoGlow: '#FFFFFF',
   gameBoard: '#121B2E',
   gameBoardEdge: '#24324F',
   gameGrid: '#1C2842',
@@ -422,6 +425,7 @@ export const darkPalette: ThemePalette = {
   authButtonFrom: '#1473F3',
   authButtonTo: '#0763E6',
   authBrandText: '#E9EFF7',
+  authLogoGlow: '#BDD3F7',
   gameBoard: '#0D1424',
   gameBoardEdge: '#1B2742',
   gameGrid: '#17223A',

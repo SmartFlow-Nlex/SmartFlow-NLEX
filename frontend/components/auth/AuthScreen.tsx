@@ -43,6 +43,8 @@ import LoadingMascot from '../ui/LoadingMascot';
 /** The background artwork's size. */
 const ART_W = 941;
 const ART_H = 1672;
+/** How far down the art is nothing but sky. */
+const SKY_ART_PX = 440;
 /** Navie in the art: where his cap begins, and the line down his middle. */
 const LEX_TOP = 962;
 const LEX_CENTRE_X = 453;
@@ -58,6 +60,18 @@ const ZOOM_OUT = 0.88;
 /** Ysa's artwork by day; the night copy is the same picture graded for dark mode. */
 const ART_DAY = require('../../assets/scenes/auth-day.jpg');
 const ART_NIGHT = require('../../assets/scenes/auth-night.jpg');
+/**
+ * The logo and wordmark sit in the sky, not on a tile (panel review, 3 Nov).
+ * These are soft images rather than Skia so they read the same everywhere: the
+ * tabs' deep blue fading out down the sky, behind the white wordmark, and a glow
+ * the logo's navy strokes stay legible on, with no edge to look pasted on.
+ */
+const SKY_TINT = require('../../assets/scenes/auth-sky-tint.png');
+const LOGO_GLOW = require('../../assets/scenes/auth-logo-glow.png');
+/** The glow's width, against the logo's. */
+const GLOW_SCALE = 2.3;
+/** How far down the screen the sky tint reaches. */
+const SKY_TINT_SHARE = 0.44;
 
 /** The glass card's corners. */
 const CARD_RADIUS = 28;
@@ -130,7 +144,7 @@ export interface AuthScreenProps {
  * keyboard.
  */
 const AuthScreen: React.FC<AuthScreenProps> = ({ children }) => {
-  const { isDark } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
@@ -161,8 +175,14 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ children }) => {
   const artLeft = Math.min(0, Math.max(width - artWidth, width / 2 - LEX_CENTRE_X * artScale));
 
   const artStyle = { width: artWidth, height: artHeight, left: artLeft, top: artTop };
-  // The same picture upside down, its top edge meeting the real one's.
-  const skyStyle = { ...artStyle, top: artTop - artHeight, transform: [{ scaleY: -1 }] };
+  // The same picture upside down, its top edge meeting the real one's, and
+  // stretched so only its sky shows: further down it has street lamps and towers,
+  // which a tall form's long slide would hang over the logo. One point of overlap,
+  // or the picture's soft edge shows as a line across the screen.
+  const skyStretch = Math.max(1, artTop / (SKY_ART_PX * artScale));
+  const skyHeight = artHeight * skyStretch;
+  const skyStyle = { ...artStyle, height: skyHeight, top: artTop - skyHeight + 1, transform: [{ scaleY: -1 }] };
+  const glow = m.logo * GLOW_SCALE;
 
   return (
     <View style={styles.screen}>
@@ -199,6 +219,16 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ children }) => {
         fadeDuration={0}
         accessible={false}
       />
+      {/* The night sky is already deep enough for the wordmark. */}
+      {isDark ? null : (
+        <Image
+          source={SKY_TINT}
+          style={[styles.skyTint, { height: Math.round(height * SKY_TINT_SHARE) }]}
+          resizeMode="stretch"
+          fadeDuration={0}
+          accessible={false}
+        />
+      )}
 
       <ScrollView
         style={styles.flex}
@@ -223,15 +253,24 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ children }) => {
           style={[styles.column, contentHeight === 0 && styles.measuring]}
         >
           <View style={styles.brand}>
-            <View
-              style={[
-                styles.logoTile,
-                { width: m.logo, height: m.logo, borderRadius: Math.round(m.logo * 0.22) },
-              ]}
-            >
+            <View style={[styles.logoBox, { width: m.logo, height: m.logo }]}>
+              <Image
+                source={LOGO_GLOW}
+                style={{
+                  position: 'absolute',
+                  width: glow,
+                  height: glow,
+                  left: (m.logo - glow) / 2,
+                  top: (m.logo - glow) / 2,
+                  tintColor: colors.authLogoGlow,
+                }}
+                resizeMode="stretch"
+                fadeDuration={0}
+                accessible={false}
+              />
               <Image
                 source={require('../../assets/smartflow-logo.png')}
-                style={{ width: m.logo * 0.72, height: m.logo * 0.72 }}
+                style={{ width: m.logo, height: m.logo }}
                 resizeMode="contain"
               />
             </View>
@@ -508,6 +547,12 @@ const makeStyles = (c: ThemePalette) =>
     art: {
       position: 'absolute',
     },
+    skyTint: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      width: '100%',
+    },
     column: {
       width: '100%',
       maxWidth: 430,
@@ -519,27 +564,20 @@ const makeStyles = (c: ThemePalette) =>
     brand: {
       alignItems: 'center',
     },
-    /*
-     * White in both themes, deliberately: the logo's navy strokes disappear on
-     * anything dark.
-     */
-    logoTile: {
+    logoBox: {
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: '#FFFFFF',
-      shadowColor: c.cardShadow,
-      shadowOpacity: 0.16,
-      shadowRadius: 14,
-      shadowOffset: { width: 0, height: 8 },
-      elevation: 6,
     },
-    // The wordmark, set as the tab header sets it: Nunito Black. No weight -
-    // the family is the weight, and Android would embolden it again.
+    // The wordmark, set as the tab header sets it: Nunito Black, white over deep
+    // sky. No weight - the family is the weight, and Android would embolden it again.
     brandTitle: {
-      color: c.authBrandText,
+      color: c.onScene,
       fontFamily: Fonts.brand,
       letterSpacing: 0.3,
       textAlign: 'center',
+      textShadowColor: c.onSceneShadow,
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 8,
     },
     glass: {
       borderRadius: CARD_RADIUS,
@@ -634,9 +672,13 @@ const makeStyles = (c: ThemePalette) =>
       color: c.accent,
       fontWeight: '700',
     },
+    // Over the skyline: full-strength text, with a soft edge of the sky's light.
     copyright: {
-      color: c.textSecondary,
-      fontWeight: '400',
+      color: c.authBrandText,
+      fontWeight: '500',
       textAlign: 'center',
+      textShadowColor: c.authGlassShine,
+      textShadowOffset: { width: 0, height: 0 },
+      textShadowRadius: 6,
     },
   });
