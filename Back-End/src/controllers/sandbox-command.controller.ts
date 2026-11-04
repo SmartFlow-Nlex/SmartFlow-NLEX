@@ -5,6 +5,7 @@ import { isGlmConfigured, providerInfo } from "../lib/glm.client.js";
 import { getScenarioContext } from "../services/sandbox-scenario.service.js";
 import { getDemandExits, getDemandProfile, getPlazaFlows } from "../services/sandbox-demand.service.js";
 import { getHotspots, type HotspotFamily } from "../services/sandbox-hotspots.service.js";
+import { getEventDayProfile } from "../services/sandbox-event.service.js";
 
 /**
  * GET /api/ai-sandbox/command/status
@@ -134,6 +135,21 @@ export const plazaFlows = async (req: Request, res: Response) => {
       success: false,
       message: "The warehouse is unreachable, so plaza flows are unavailable.",
     });
+  }
+  return res.json({ success: true, data });
+};
+
+/**
+ * GET /api/ai-sandbox/event-day
+ *
+ * The upcoming Philippine Arena event days, and what one does to each affected exit hour by hour: the Event
+ * Prediction's daily uplift spread over the day the way past calendar event days spread it
+ * (services/sandbox-event.service.ts). What the sandbox's Event day choice runs.
+ */
+export const eventDay = async (_req: Request, res: Response) => {
+  const data = await getEventDayProfile();
+  if (!data) {
+    return res.status(503).json({ success: false, message: "The warehouse is unreachable, so the event-day profile is unavailable." });
   }
   return res.json({ success: true, data });
 };

@@ -66,6 +66,18 @@ FAST = "--fast" in sys.argv
 # every horizon (four years x every horizon is tens of millions of rows); the
 # live weeks keep every horizon, and every horizon is still predicted.
 WITH_HISTORY = "--with-history" in sys.argv
+# --active-hours (4 Nov 2026): count each live jam in EVERY hour it was on the road, first seen to cleared, instead of
+# only the hour it was first seen. silver.fact_waze_jams keeps one row per jam filed under its first hour (checked:
+# 100% of rows), while the four-year history counts a jam in each hour it lasted ("a jam lasting three hours counts
+# three times"). So a 3-hour jam was one congested hour live and three in history: live read 70% of exit-hours jammed,
+# history 87-89%, and the two eras could not be trained together honestly. Counted by hours on the road, live reads
+# 81.5%, and its 7,780 jams that lasted over an hour (of 188,947) are congested in every hour they were there.
+# experiment_congestion_history.py has the before/after.
+ACTIVE_HOURS = "--active-hours" in sys.argv
+# --dualpath-dir NAME: save and load the dual-path family in NAME/ instead of dualpath_models/, so a trial
+# (--dualpath-train with history) cannot replace the models the hourly refresh serves.
+if "--dualpath-dir" in sys.argv:
+    __import__("os").environ["SMARTFLOW_DUALPATH_DIR"] = sys.argv[sys.argv.index("--dualpath-dir") + 1]
 # --dualpath-train: also fit the adviser's dual-path LSTM family (congestion_dualpath.py) and save it to
 # dualpath_models/. Slow (an hour or more on a laptop CPU), so it belongs to the weekly batch; every other run only
 # LOADS the saved models and scores them on this run's test rows beside XGBoost, so the hourly refresh stays fast.
@@ -268,7 +280,25 @@ jams = pd.read_sql_query("""
 """, conn)
 jams["wlen"] = jams["len"].clip(lower=1.0)
 jams["sp_w"] = jams["speed"] * jams["wlen"]
-cell = (jams.groupby(["d", "h", "exit_name"])
+if ACTIVE_HOURS:
+    _jl = pd.read_sql_query("""
+        SELECT (t)::date AS d, EXTRACT(HOUR FROM t)::int AS h,
+               COALESCE(e.exit_name,'id_'||j.nlex_exit_id::text) AS exit_name,
+               j.speed_kmh::float AS speed, j.length_meters::float AS len
+        FROM silver.fact_waze_jams j
+        LEFT JOIN bronze.nlex_exits e ON e.id = j.nlex_exit_id
+        CROSS JOIN LATERAL generate_series(date_trunc('hour', j.first_seen_at AT TIME ZONE 'Asia/Manila'),
+                                           date_trunc('hour', COALESCE(j.cleared_at, j.last_seen_at, j.first_seen_at) AT TIME ZONE 'Asia/Manila'),
+                                           interval '1 hour') AS t
+        WHERE j.speed_kmh IS NOT NULL
+    """, conn)
+    _jl["wlen"] = _jl["len"].clip(lower=1.0)
+    _jl["sp_w"] = _jl["speed"] * _jl["wlen"]
+    print(f"  --active-hours: {len(jams):,} live jams counted in {len(_jl):,} jam-hours (each hour it was on the road)")
+else:
+    _jl = jams
+# jams (one row per jam, at its first hour) still decides where collection stopped, below; _jl is what is labelled.
+cell = (_jl.groupby(["d", "h", "exit_name"])
         .agg(sp_w=("sp_w", "sum"), wlen=("wlen", "sum"), n_jams=("speed", "size")).reset_index())
 cell["speed"] = cell.sp_w / cell.wlen
 cell = cell[["d", "h", "exit_name", "speed", "n_jams"]]

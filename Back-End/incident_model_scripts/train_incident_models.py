@@ -808,6 +808,86 @@ def _cv_rnn(kind: str, full_df, train_end: int, test_end: int):
     return train_true, train_pred, val_pred, model, scaler
 
 
+# -- Extra candidates (--extra-candidates, 5 Nov 2026) -------------------------------------------------------------
+# The client asked for multiple-seasonality models and the adviser for a deeper LSTM (23 Oct 2026); the congestion
+# module has both, and the user asked for them here too. They are scored exactly as the other candidates are: one day
+# ahead over the same holdout, from data before each day only, against the same naive, and only become champion by
+# the same rule. Evaluation only for now: a run with this flag writes its own report and stops before any forecast or
+# database write, so the served model cannot change until the result has been reviewed.
+EXTRA_NAMES = ["MSTL_ARIMA", "Stacked_LSTM"]
+STACK_SEQ = 56   # eight weeks of history per prediction (23 Oct pilot: a longer window helped, depth alone did not)
+
+
+def _cv_mstl(full_df, train_end: int, test_end: int):
+    """MSTL (weekly + yearly seasonality) with ARIMA(1,1,1) on what is left.
+
+    The two seasonal shapes are estimated on the training days only and carried forward (each day takes the weekly
+    value 7 days earlier and the yearly value 365 days earlier); the ARIMA is fitted on the training days and then run
+    over the holdout with its parameters FIXED, so each day's prediction uses the actual counts up to the day before
+    and nothing from the day itself, the same footing as the lag-1 features of the tabular models."""
+    from statsmodels.tsa.arima.model import ARIMA
+    from statsmodels.tsa.seasonal import MSTL
+    y = full_df["total"].values.astype(float)[:test_end]
+    fit = MSTL(y[:train_end], periods=(7, 365)).fit()
+    seas = np.asarray(fit.seasonal)
+    weekly, yearly = np.empty(test_end), np.empty(test_end)
+    weekly[:train_end], yearly[:train_end] = seas[:, 0], seas[:, 1]
+    for i in range(train_end, test_end):
+        weekly[i] = weekly[i - 7]
+        yearly[i] = yearly[i - 365]
+    rest = y - weekly - yearly
+    arima = ARIMA(rest[:train_end], order=(1, 1, 1)).fit()
+    onestep = np.asarray(arima.apply(rest).predict(start=train_end, end=test_end - 1))
+    val_pred = np.clip(onestep + weekly[train_end:] + yearly[train_end:], 0, None)
+    train_pred = np.clip(np.asarray(arima.fittedvalues) + weekly[:train_end] + yearly[:train_end], 0, None)
+    return train_pred, val_pred
+
+
+def _cv_stacked_lstm(full_df, train_end: int, test_end: int):
+    """Two stacked LSTM layers (64 -> 32) over the last STACK_SEQ days, plus what is known about the day being
+    forecast: weekday, weekend, holiday, the season, the same weekday a year ago, rain and volume where this run uses
+    them. The pilot of 23 Oct found inputs, not extra layers, made the LSTM competitive, so this is the rebuilt design,
+    not the 1x16 univariate LSTM with another layer. One day ahead, from actual counts, as the other candidates are
+    scored. Returns (train_true, train_pred, val_pred, first_scored_index)."""
+    from tensorflow.keras import Model, layers
+    set_all_seeds()
+    f = full_df.iloc[:test_end].reset_index(drop=True)
+    y = f["total"].values.astype("float32")
+    lo, hi = float(y[:train_end].min()), float(y[:train_end].max())
+    span = max(hi - lo, 1e-6)
+    z = (y - lo) / span
+    dow = f["d"].dt.dayofweek.values
+    seq_cols = np.column_stack([z, f["is_holiday"].values, np.sin(2 * np.pi * dow / 7),
+                                np.cos(2 * np.pi * dow / 7)]).astype("float32")
+    stat_src = ["is_weekend", "is_holiday", "doy_sin", "doy_cos", "lag_364", "yoy_mean_5"] +         [c for c in ("rain_mm", "log_volume", "volume_ratio_7") if c in FEATURE_COLS]
+    stat = f[stat_src].astype("float32").values.copy()
+    for j, c in enumerate(stat_src):                       # scaled with the training days only
+        if c in ("lag_364", "yoy_mean_5"):
+            stat[:, j] = (stat[:, j] - lo) / span
+        elif c in ("rain_mm", "log_volume", "volume_ratio_7"):
+            mu, sd = stat[:train_end, j].mean(), stat[:train_end, j].std() or 1.0
+            stat[:, j] = (stat[:, j] - mu) / sd
+    stat = np.column_stack([stat, np.sin(2 * np.pi * dow / 7), np.cos(2 * np.pi * dow / 7)]).astype("float32")
+    idx = np.arange(STACK_SEQ, test_end)
+    X_seq = np.stack([seq_cols[i - STACK_SEQ:i] for i in idx])
+    X_stat = stat[idx]
+    tr = idx < train_end
+    a = layers.Input((STACK_SEQ, seq_cols.shape[1]))
+    b = layers.Input((stat.shape[1],))
+    h = layers.LSTM(64, return_sequences=True)(a)
+    h = layers.Dropout(0.2)(h)
+    h = layers.LSTM(32)(h)
+    h = layers.Concatenate()([h, b])
+    h = layers.Dense(32, activation="relu")(h)
+    out = layers.Dense(1)(h)
+    m = Model([a, b], out)
+    m.compile(optimizer="adam", loss="mse")
+    m.fit([X_seq[tr], X_stat[tr]], z[idx[tr]], epochs=60, batch_size=32, verbose=0, validation_split=0.1,
+          callbacks=[EarlyStopping(patience=6, restore_best_weights=True)])
+    p = np.clip(m.predict([X_seq, X_stat], verbose=0).flatten() * span + lo, 0, None)
+    return y[idx[tr]], p[tr], p[~tr], int(idx[0])
+
+
 CV_FITTERS = {
     "XGBoost": cv_xgboost,
     "RandomForest": cv_random_forest,
@@ -817,7 +897,7 @@ CV_FITTERS = {
 }
 
 
-def run_evaluation(feat: pd.DataFrame, protocol: str) -> dict[str, list[dict]]:
+def run_evaluation(feat: pd.DataFrame, protocol: str, extra: bool = False) -> dict[str, list[dict]]:
     folds = evaluation_folds(len(feat), protocol)
     label = (
         "single recent holdout (traffic-module protocol)"
@@ -829,7 +909,7 @@ def run_evaluation(feat: pd.DataFrame, protocol: str) -> dict[str, list[dict]]:
     )
     print(f"Evaluation protocol: {label}")
     print(f"  test window(s): {windows}")
-    per_model_fold_metrics: dict[str, list[dict]] = {name: [] for name in MODEL_NAMES}
+    per_model_fold_metrics: dict[str, list[dict]] = {name: [] for name in MODEL_NAMES + (EXTRA_NAMES if extra else [])}
 
     for fold_i, (train_end, test_end) in enumerate(folds, start=1):
         set_all_seeds()
@@ -867,6 +947,35 @@ def run_evaluation(feat: pd.DataFrame, protocol: str) -> dict[str, list[dict]]:
             except Exception as e:
                 print(f"FAILED ({e})")
                 per_model_fold_metrics[kind].append({"error": str(e)})
+
+        if extra:
+            vt_all = feat["total"].values[train_end:test_end]
+            vn_all = feat["lag_7"].values[train_end:test_end]
+            kp_all = scoring_mask(feat["d"].values[train_end:test_end])
+            try:
+                print("  MSTL_ARIMA...", end=" ", flush=True)
+                train_pred, val_pred = _cv_mstl(feat, train_end, test_end)
+                # A series model with a handful of parameters: penalised as one for the adjusted R2.
+                m = full_metrics(vt_all[kp_all], np.asarray(val_pred)[kp_all], vn_all[kp_all],
+                                 feat["total"].values[:train_end], train_pred, 6)
+                per_model_fold_metrics["MSTL_ARIMA"].append(m)
+                print(f"MAE={m['MAE']:.3f} Val_R2={m['R2']:.3f} {m['Diagnosis']}")
+            except Exception as e:
+                print(f"FAILED ({e})")
+                per_model_fold_metrics["MSTL_ARIMA"].append({"error": str(e)})
+            try:
+                print("  Stacked_LSTM...", end=" ", flush=True)
+                train_true, train_pred, val_pred, first = _cv_stacked_lstm(feat, train_end, test_end)
+                lo_i = max(train_end, first)
+                vt = feat["total"].values[lo_i:test_end]
+                vn = feat["lag_7"].values[lo_i:test_end]
+                kp = scoring_mask(feat["d"].values[lo_i:test_end])
+                m = full_metrics(vt[kp], np.asarray(val_pred)[kp], vn[kp], train_true, train_pred, STACK_SEQ)
+                per_model_fold_metrics["Stacked_LSTM"].append(m)
+                print(f"MAE={m['MAE']:.3f} Val_R2={m['R2']:.3f} {m['Diagnosis']}")
+            except Exception as e:
+                print(f"FAILED ({e})")
+                per_model_fold_metrics["Stacked_LSTM"].append({"error": str(e)})
 
     return per_model_fold_metrics
 
@@ -926,6 +1035,7 @@ def select_champion(comparison: list[dict], criterion: str = "r2") -> tuple[str,
 DISPLAY_NAME = {
     "XGBoost": "XGBoost", "RandomForest": "Random Forest", "LSTM": "LSTM", "GRU": "GRU",
     "Poisson_GLM": "Poisson GLM", "NegBinomial_GLM": "Negative Binomial GLM", "SARIMAX": "SARIMAX",
+    "MSTL_ARIMA": "MSTL + ARIMA", "Stacked_LSTM": "Stacked LSTM",
 }
 
 
@@ -1499,6 +1609,11 @@ def main() -> None:
              "even though the model generalises fine within any single era.",
     )
     parser.add_argument(
+        "--extra-candidates", action="store_true",
+        help="Also score MSTL + ARIMA and the stacked LSTM (see EXTRA_NAMES). Evaluation only: writes "
+             "model_results_extra_candidates[_accident].txt and stops before any forecast or database write.",
+    )
+    parser.add_argument(
         "--no-weather", action="store_true",
         help="Drop rain_mm. Pairs with --no-volume so the two signals can be "
              "ablated independently — weather has been in this model since "
@@ -1608,7 +1723,9 @@ def main() -> None:
                 print(f"  trimmed to the most recent {args.train_years:g} year(s) of training history: "
                       f"{len(feat)} rows ({feat['d'].min().date()} .. {feat['d'].max().date()})")
 
-        per_model_folds = run_evaluation(feat, args.protocol)
+        if args.extra_candidates:
+            MODEL_NAMES.extend(n for n in EXTRA_NAMES if n not in MODEL_NAMES)
+        per_model_folds = run_evaluation(feat, args.protocol, args.extra_candidates)
         comparison = summarize_folds(per_model_folds)
         champion, degraded = select_champion(comparison, args.select_by)
         if args.champion and args.champion != champion:
@@ -1638,8 +1755,13 @@ def main() -> None:
 
         report = format_report(comparison, champion, degraded, evaluation)
         report_path = Path(__file__).resolve().parent / ("model_results_accident.txt" if SERIES_LABEL == "accident" else "model_results.txt")
+        if args.extra_candidates:
+            report_path = report_path.with_name(report_path.stem.replace("model_results", "model_results_extra_candidates") + ".txt")
         report_path.write_text(report, encoding="utf-8")
         print(f"Full per-model report written to {report_path}\n")
+        if args.extra_candidates:
+            print("--extra-candidates: evaluation only. Nothing forecast or written; the served model is unchanged.")
+            return
 
         if not args.write_db and not args.dry_write:
             print("Training complete. Re-run with --write-db once you've reviewed the comparison above.")

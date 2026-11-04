@@ -749,8 +749,13 @@ export function EventInterventionPanel() {
     <label className="nct-pick">
       <span className="nct-kv-k">Plan for</span>
       <select className="nct-select" value={chosenDate} onChange={(e) => setPick(e.target.value)} aria-label="Event to plan for">
-        {upcoming.map((e) => (
-          <option key={e.date} value={e.date}>{shortDay(e.date)} · {e.title.split(" - ")[0]}{e.isDerived ? " (inferred)" : ""}</option>
+        {/* Grouped by year, as on the Predictive tab (mock defense, 3 Nov 2026). */}
+        {[...new Set(upcoming.map((e) => e.date.slice(0, 4)))].map((year) => (
+          <optgroup key={year} label={`${year} events`}>
+            {upcoming.filter((e) => e.date.startsWith(year)).map((e) => (
+              <option key={e.date} value={e.date}>{shortDay(e.date)} · {e.title.split(" - ")[0]}{e.isDerived ? " (inferred)" : ""}</option>
+            ))}
+          </optgroup>
         ))}
         <option value="">A typical event day</option>
       </select>

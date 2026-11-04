@@ -188,6 +188,8 @@ export default function PredictiveEventChart() {
   // shows the forecast for that specific day.
   const [upcoming, setUpcoming] = useState<UpcomingEvent[]>([]);
   const [selUpcoming, setSelUpcoming] = useState<number | null>(null);
+  // Which year's events the list offers (mock defense, 3 Nov 2026: by year, so the years do not run together).
+  const [eventYear, setEventYear] = useState<string>("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -209,6 +211,7 @@ export default function PredictiveEventChart() {
   }, []);
 
   const chosen = selUpcoming != null ? upcoming[selUpcoming] ?? null : null;
+  const upcomingYears = useMemo(() => [...new Set(upcoming.map((u) => u.date.slice(0, 4)))].sort(), [upcoming]);
 
   /* When an upcoming day is chosen, its dated rows take the place of the
      observed ones and everything below -- bars, share, KPIs, banner -- follows
@@ -418,6 +421,27 @@ export default function PredictiveEventChart() {
       {/* Row 2: what is shown. A select, not seven pills -- the pills wrapped to
           three lines and pushed the finding below the fold. */}
       <div className="nct-toolbar">
+        {upcomingYears.length > 1 && (
+          <label className="nct-group">
+            <span className="nct-group-label">Year</span>
+            <select
+              value={eventYear}
+              onChange={(e) => {
+                const y = e.target.value;
+                setEventYear(y);
+                // A day from another year is no longer in the list: back to the past-events view.
+                if (y !== "all" && selUpcoming != null && !upcoming[selUpcoming]?.date.startsWith(y)) setSelUpcoming(null);
+              }}
+              className="nct-select"
+              aria-label="Filter upcoming events by year"
+            >
+              <option value="all">All years</option>
+              {upcomingYears.map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="nct-group">
           <span className="nct-group-label">Showing</span>
           <select
@@ -427,7 +451,11 @@ export default function PredictiveEventChart() {
             style={{ maxWidth: 360 }}
           >
             <option value="">Past events — what {eventName === "the upcoming event" ? "event" : eventName} days did</option>
+            {/* One group per year, each headed by its year, so 2026's nights and 2027's are not one long run. */}
+            {upcomingYears.filter((y) => eventYear === "all" || y === eventYear).map((year) => (
+            <optgroup key={year} label={`${year} events`}>
             {upcoming.map((u, i) => {
+              if (!u.date.startsWith(year)) return null;
               // Group nights by the act, not the full title: the source spells
               // BTS's three nights two different ways ("BTS - Arirang World
               // Tour", "BTS - BTS WORLD TOUR 'ARIRANG'"), which by full title
@@ -438,10 +466,12 @@ export default function PredictiveEventChart() {
               const d = new Date(`${u.date}T00:00:00`);
               return (
                 <option key={u.date} value={String(i)}>
-                  {d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })} — {shortTitle(u.title)}{multi ? ` (day ${nth})` : ""}{isArena(u.venue) ? "" : ` · ${u.venue}`}
+                  {d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} — {shortTitle(u.title)}{multi ? ` (day ${nth})` : ""}{isArena(u.venue) ? "" : ` · ${u.venue}`}
                 </option>
               );
             })}
+            </optgroup>
+            ))}
           </select>
         </label>
         <InfoTooltip

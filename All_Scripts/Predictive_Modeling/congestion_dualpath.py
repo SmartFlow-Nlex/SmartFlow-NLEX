@@ -39,7 +39,9 @@ import numpy as np
 import pandas as pd
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE / "dualpath_models"
+# Where the family is saved and loaded. SMARTFLOW_DUALPATH_DIR (the trainer's --dualpath-dir) points a trial run at
+# a folder of its own, so models trained for comparison never replace the ones the hourly refresh serves.
+OUT = HERE / os.environ.get("SMARTFLOW_DUALPATH_DIR", "dualpath_models")
 H, SHORT, LONG_D = 168, 72, 28
 KINDS = ["LSTM (1 layer)", "Stacked LSTM", "Dual-Path LSTM"]
 FILE = {"LSTM (1 layer)": "lstm1.keras", "Stacked LSTM": "lstm2.keras", "Dual-Path LSTM": "dualpath.keras"}

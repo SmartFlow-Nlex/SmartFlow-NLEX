@@ -9385,6 +9385,32 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   margin-top: 10px;
 }
 .sandbox-toprow > * { flex: 0 1 auto; }
+/* Event day (3 Nov 2026): the select is as wide as an event's name needs, and the note under the strip says what the
+   Event Prediction puts on the road. */
+.sandbox-event-select { max-width: 340px; }
+.sandbox-event-note {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border-default);
+  border-left: 3px solid var(--color-purple);
+  border-radius: 8px;
+  background: var(--color-purple-bg);
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+}
+.sandbox-event-note b { color: var(--text-primary); font-weight: 600; }
+.sandbox-event-clear {
+  margin-left: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.sandbox-event-clear:hover { border-color: var(--text-muted); }
 
 /* --- the controls stay with you ----------------------------------------
    The left column runs to roughly twice the viewport in Both mode, so without

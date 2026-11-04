@@ -194,9 +194,93 @@ def fit_lstm(tr, fut):
 
 MODELS = {"GBR": fit_gbr, "Polynomial": fit_poly, "LSTM": fit_lstm}
 
+
+# -- Extra candidates (--extra-candidates, 5 Nov 2026) ---------------------------------------------------------------
+# The client asked for multiple-seasonality models and the adviser for a deeper LSTM (23 Oct 2026); the congestion
+# module has both, and the user asked for them here. Scored by the same served procedure as every candidate (each
+# 7-day window forecast from its origin with nothing after it), on the same origins, against the same two baselines.
+# With --dry-run the run stops after the results, so nothing is written and the served forecast cannot change.
+EXTRA = "--extra-candidates" in _sys.argv
+DRY_RUN = "--dry-run" in _sys.argv
+if EXTRA and not DRY_RUN:
+    raise SystemExit("--extra-candidates is evaluation only: add --dry-run (the served table has no columns for them yet).")
+STACK_SEQ = 56   # eight weeks per window (23 Oct pilot: a longer window and calendar inputs helped, depth alone did not)
+STACK_OUT = 7    # forecast a week at a time, directly, rather than feeding one day's guess into the next
+
+
+def fit_mstl(tr, fut):
+    """MSTL: weekly and yearly seasonality separated out (Bandara, Hyndman & Bergmeir's multiple-seasonal STL), the
+    remainder plus trend forecast with ARIMA(1,1,1), and the two seasonal shapes carried forward: each future day takes
+    the weekly value 7k days and the yearly value 365 days before it."""
+    from statsmodels.tsa.arima.model import ARIMA
+    from statsmodels.tsa.seasonal import MSTL
+    y = tr.y.values.astype(float)
+    n, h = len(y), len(fut)
+    seas = np.asarray(MSTL(y, periods=(7, 365)).fit().seasonal)
+    weekly = [seas[n + i - 7 * ((i // 7) + 1), 0] for i in range(h)]
+    yearly = [seas[n + i - 365, 1] if n + i - 365 < n else seas[n + i - 730, 1] for i in range(h)]
+    rest = y - seas.sum(axis=1)
+    fc = np.asarray(ARIMA(rest, order=(1, 1, 1)).fit().forecast(h))
+    return fc + np.asarray(weekly) + np.asarray(yearly)
+
+
+def fit_stacked_lstm(tr, fut):
+    """Two stacked LSTM layers (64 -> 32) over the last eight weeks of CO2 with each day's holiday and weekday, plus
+    what is known about the week being forecast (its holidays, weekdays and the same days a year earlier), predicting
+    the whole week at once. Longer windows are covered a week at a time, each week's forecast extending the history."""
+    import tensorflow as tf
+    from tensorflow.keras import Model, layers
+    from tensorflow.keras.callbacks import EarlyStopping
+    tf.random.set_seed(42)
+    y = tr.y.values.astype("float32")
+    # The calendar runs a week past the window, so the last (partial) week's inputs are as wide as every other's.
+    _end = pd.to_datetime(fut.ds).max()
+    ds_all = list(tr.ds) + list(pd.to_datetime(fut.ds)) + [_end + pd.Timedelta(days=k) for k in range(1, STACK_OUT + 1)]
+    lo, hi = float(y.min()), float(y.max())
+    span = max(hi - lo, 1e-6)
+
+    def day_feats(x):
+        x = pd.Timestamp(x)
+        return [_is_hol(x), np.sin(2 * np.pi * x.dayofweek / 7), np.cos(2 * np.pi * x.dayofweek / 7)]
+
+    cal = np.array([day_feats(x) for x in ds_all], dtype="float32")
+    z = np.concatenate([(y - lo) / span, np.zeros(len(fut) + STACK_OUT, dtype="float32")])
+    n = len(y)
+
+    def sample(t):                 # window ends at t-1, forecasts t .. t+STACK_OUT-1
+        seq = np.column_stack([z[t - STACK_SEQ:t], cal[t - STACK_SEQ:t]])
+        nxt = np.concatenate([cal[t:t + STACK_OUT].ravel(), z[t - 364:t - 364 + STACK_OUT]])
+        return seq, nxt
+
+    ts = [t for t in range(max(STACK_SEQ, 364), n - STACK_OUT + 1)]
+    Xs, Xn, Y = zip(*[(*sample(t), z[t:t + STACK_OUT]) for t in ts])
+    Xs, Xn, Y = np.stack(Xs), np.stack(Xn), np.stack(Y)
+    a = layers.Input(Xs.shape[1:])
+    b = layers.Input(Xn.shape[1:])
+    h = layers.LSTM(64, return_sequences=True)(a)
+    h = layers.Dropout(0.2)(h)
+    h = layers.LSTM(32)(h)
+    h = layers.Concatenate()([h, b])
+    h = layers.Dense(32, activation="relu")(h)
+    m = Model([a, b], layers.Dense(STACK_OUT)(h))
+    m.compile("adam", "mse")
+    m.fit([Xs, Xn], Y, epochs=60, batch_size=32, verbose=0, validation_split=0.1,
+          callbacks=[EarlyStopping(patience=6, restore_best_weights=True)])
+    t = n
+    while t < n + len(fut):
+        seq, nxt = sample(t)
+        p = m.predict([seq[None], nxt[None]], verbose=0)[0]
+        k = min(STACK_OUT, n + len(fut) - t)
+        z[t:t + k] = p[:k]
+        t += k
+    return z[n:n + len(fut)] * span + lo
+
+
+EXTRA_MODELS = {"MSTL": fit_mstl, "Stacked_LSTM": fit_stacked_lstm} if EXTRA else {}
+
 # Models that read weather. LSTM is univariate (it sees only y), so the previous
 # blanket uses_weather=true was simply wrong for it.
-USES_WEATHER = {"GBR": True, "Polynomial": True, "LSTM": False, "Derived": True}
+USES_WEATHER = {"GBR": True, "Polynomial": True, "LSTM": False, "Derived": True, "MSTL": False, "Stacked_LSTM": False}
 
 # ── the derived candidate ────────────────────────────────────────────────────
 # The volume series and its Prophet exactly as the volume trainer builds them
@@ -235,6 +319,8 @@ def derived(hist, window):
 
 
 CANDIDATES = list(MODELS) + ["Derived"]
+BASE_CANDIDATES = list(CANDIDATES)          # what the prediction cache is keyed on
+CANDIDATES += list(EXTRA_MODELS)
 
 # WMAPE gap below which two models are NOT meaningfully separated. GBR is not
 # bit-reproducible across processes (floating-point summation order in the split
@@ -262,7 +348,7 @@ def project(mname, mfn, hist0=None, horizon_ds=None, clim_tbl=None):
     window = fut_ds if horizon_ds is None else horizon_ds
     ctab = clim if clim_tbl is None else clim_tbl
 
-    if mname == "LSTM":
+    if mname in ("LSTM", "MSTL", "Stacked_LSTM"):        # whole-window models: they roll forward internally
         return [float(v) for v in mfn(base, pd.DataFrame({"ds": list(window)}))]
 
     # The heavy-vehicle share each future day is given. It used to be the share of
@@ -306,7 +392,7 @@ def project(mname, mfn, hist0=None, horizon_ds=None, clim_tbl=None):
 banner(f"STEP 3: Rolling-origin evaluation ({N_ORIGINS} origins, h={HORIZON}d)")
 import os, pickle
 CACHE = str(WORK / "cache" / "emissions_preds.pkl")
-CACHE_KEY = ("served-procedure-derived-v4-holidays", len(d), str(d.ds.max().date()), N_ORIGINS, HORIZON, tuple(CANDIDATES))
+CACHE_KEY = ("served-procedure-derived-v4-holidays", len(d), str(d.ds.max().date()), N_ORIGINS, HORIZON, tuple(BASE_CANDIDATES))
 _cached = None
 if os.path.exists(CACHE):
     with open(CACHE, "rb") as fh:
@@ -315,10 +401,10 @@ if os.path.exists(CACHE):
         _cached = v
         print(f"  reusing cached predictions ({CACHE}) - series and protocol unchanged")
 
-preds = {k: {} for k in CANDIDATES}
+preds = {k: {} for k in BASE_CANDIDATES}
 preds["SeasonalNaive"] = {}
 preds["Climatology"] = {}
-fails = {k: 0 for k in CANDIDATES}
+fails = {k: 0 for k in BASE_CANDIDATES}
 
 if _cached is not None:
     preds, fails = _cached
@@ -348,6 +434,25 @@ for oi, cut in enumerate([] if _cached is not None else origins, 1):
 if _cached is None:
     with open(CACHE, "wb") as fh:
         pickle.dump((CACHE_KEY, (preds, fails)), fh)
+
+# The extra candidates, on the same origins and by the same procedure. Not cached with the others, so the cache the
+# served run reads is never keyed on them.
+for name in EXTRA_MODELS:
+    preds[name], fails[name] = {}, 0
+for oi, cut in enumerate(origins if EXTRA_MODELS else [], 1):
+    tr, fut = d.iloc[:cut], d.iloc[cut:cut + HORIZON]
+    if len(fut) < HORIZON:
+        break
+    for name, fn in EXTRA_MODELS.items():
+        try:
+            for ds, v in zip(fut.ds, project(name, fn, hist0=tr, horizon_ds=list(fut.ds))):
+                preds[name][ds] = float(v)
+        except Exception as e:
+            fails[name] += 1
+            if fails[name] == 1:
+                print(f"  {name} failed at origin {oi}: {type(e).__name__}: {str(e)[:160]}")
+    if oi % 10 == 0 or oi == 1:
+        print(f"  extra candidates: origin {oi}/{N_ORIGINS}")
 
 # Baselines the models must beat: cheap, so computed fresh every run rather
 # than read back from the cache. Seasonal naive is the same weekday last week,
@@ -430,6 +535,11 @@ for r in res[res.is_candidate].itertuples():
     print(f"    {r.model:<12} MAPE {r.mape:6.2f}%  WMAPE {r.wmape:6.2f}%  MASE {r.mase:5.3f}  "
           + ("accepted" if r.accepted else "rejected - " + "; ".join(why)))
 if fails: print(f"\n  failed origins: {fails}")
+
+if DRY_RUN:
+    banner("DRY RUN: stopping before any write")
+    print("  Nothing written: gold.ml_model_metrics and gold.ml_predictive_emissions are unchanged.")
+    raise SystemExit(0)
 
 banner("STEP 5: Writing to AWS")
 # The metric rows are prepared here but written with the forecast in STEP 6, in one transaction on a connection

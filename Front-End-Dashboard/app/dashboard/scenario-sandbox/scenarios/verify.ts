@@ -2352,7 +2352,8 @@ check(
   check(
     "Both mode layout: Southbound (right to left) is the TOP carriageway and Northbound (left to right) the bottom one, with the median and shared km axis between them, and the tab opens on Both",
     // Each carriageway keeps its own gutter (its plazas and service areas hang off its outer edge): SB's above it, NB's below.
-    /const sbRoadTop = CANVAS_PAD \+ gutterSB \+ Math\.max\(0, \(cssH - CANVAS_PAD \* 2 - usedH\) \/ 2\);\s*const medianTop = sbRoadTop \+ sbRoadH;\s*const nbRoadTop = medianTop \+ MEDIAN_GUTTER_PX;/.test(pageSource) &&
+    // (`- strip`: the event venues' strip below NB, 4 Nov 2026; zero except on an event day at CDV.)
+    /const sbRoadTop = CANVAS_PAD \+ gutterSB \+ Math\.max\(0, \(cssH - (?:strip - )?CANVAS_PAD \* 2 - usedH\) \/ 2\);\s*const medianTop = sbRoadTop \+ sbRoadH;\s*const nbRoadTop = medianTop \+ MEDIAN_GUTTER_PX;/.test(pageSource) &&
       /useState<Direction \| "Both">\("Both"\)/.test(pageSource) && !/useState<Direction \| "Both">\("NB"\)/.test(pageSource),
   );
   check(
@@ -2557,6 +2558,21 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
     const below = (rc: Recorder): number => rc.calls.filter((c) => c.startsWith("lineTo ")).filter((c) => Number(c.split(" ")[2]) > 175).length;
     check("rain art: a plaza's footprint beside the road is rained on as well (clip = the road plus that footprint, drops fall into it); without one nothing changes",
       rects.length === 2 && rects[0] === "rect 0.00 20.00 800.00 120.00" && rects[1] === "rect 300.00 140.00 120.00 60.00" && below(r) > 0 && below(heavy) === 0, rects.join(" / "));
+  }
+  {
+    // Mock defense, 3 Nov 2026: "the rain only on the ROAD? make it where it includes everything". With a sky band
+    // (what the page passes) the clip is the whole band, and drops fall on the verge above and below the road too.
+    const r = new Recorder();
+    drawWeather({ ...geom(r, 1), skyBand: { top: 0, bottom: 300, x0: 0, x1: 800 } }, [base]);
+    const rects = r.calls.filter((c) => c.startsWith("rect "));
+    const foot = r.calls.filter((c) => c.startsWith("lineTo ")).map((c) => Number(c.split(" ")[2]));
+    const offRoad = foot.filter((y) => y < 20 || y > 160).length;
+    check("rain art: with a sky band the rain falls on everything in it — the clip is the band, not the road — and drops land off the road (verge, median), more than on the road alone",
+      rects[0] === "rect 0.00 0.00 800.00 300.00" && offRoad > 0 && drops(r) > drops(heavy), `${rects[0]} · ${offRoad} off-road · ${drops(r)} vs ${drops(heavy)}`);
+    const half = new Recorder();
+    drawWeather({ ...geom(half, 1), skyBand: { top: 0, bottom: 300, x0: 200, x1: 600 } }, [base]);
+    const xs = half.calls.filter((c) => c.startsWith("moveTo ")).map((c) => Number(c.split(" ")[1]));
+    check("rain art: only the part of the band on screen gets drops (x0..x1), so a zoomed road does not draw rain nobody sees", xs.length > 0 && Math.min(...xs) >= 195 && Math.max(...xs) <= 605); // splashes reach a few px either side
   }
   check("rain art: a speed-limit sign shows the intensity's cap (96 heavy, 100 light as fixtures), and no sign is drawn for a mark with no cap", paintWeather([{ ...base, intensity: "heavy", capKmh: 96 }], 1).texts.join() === "96" && paintWeather([{ ...base, intensity: "light", capKmh: 100 }], 1).texts.join() === "100" && paintWeather([{ ...base, capKmh: null }], 1).texts.length === 0);
   check("rain art: it is deterministic — the same clock paints the same picture, exactly (which is what makes a paused run freeze)", paintWeather([base], 2.5).calls.join("|") === paintWeather([base], 2.5).calls.join("|"));
