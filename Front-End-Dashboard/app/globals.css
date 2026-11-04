@@ -9996,10 +9996,60 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   display: block;
   padding: 0;
   gap: 0;
-  background: #05080f;
-  color: #e8eefc;
   /* Height of the readout strip along the bottom; Both mode's tiles are taller. */
   --fs-strip: 96px;
+
+  /* THE HUD FOLLOWS THE THEME.
+
+     It was dark glass with near-white ink in every case, written when the road
+     was always dark tarmac. The scene is painted by time of day now
+     (ASPHALT_DAY, GRASS_DAY), so a 17:00 run is bright daylight under a dark
+     bar. Worse, in light mode the notes panel put the page's OWN cards -- the
+     prescriptive recommendation, the warm-up and demand notes, the legend,
+     each bringing dark ink of its own -- onto that dark glass: the
+     recommendation read as dark grey on dark navy, effectively invisible.
+
+     One set of tokens, stated once per theme, rather than literals sprinkled
+     through thirty rules. */
+  --hud-bg: rgba(255, 255, 255, 0.90);
+  --hud-border: rgba(15, 23, 42, 0.12);
+  --hud-ink: var(--text-primary);
+  --hud-ink-dim: var(--text-secondary);
+  --hud-ink-strong: var(--text-primary);
+  --hud-chip: rgba(15, 23, 42, 0.05);
+  --hud-chip-hover: rgba(15, 23, 42, 0.10);
+  --hud-divider: rgba(15, 23, 42, 0.10);
+  --hud-shadow: 0 8px 26px rgba(15, 23, 42, 0.16);
+  --fs-shell: #e8edf4;
+
+  background: var(--fs-shell);
+  color: var(--hud-ink);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sandbox-main.is-expanded {
+  --hud-bg: rgba(8, 13, 25, 0.72);
+  --hud-border: rgba(255, 255, 255, 0.10);
+  --hud-ink: #e8eefc;
+  --hud-ink-dim: #93a4c4;
+  --hud-ink-strong: #f3f7ff;
+  --hud-chip: rgba(255, 255, 255, 0.07);
+  --hud-chip-hover: rgba(255, 255, 255, 0.14);
+  --hud-divider: rgba(255, 255, 255, 0.09);
+  --hud-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --fs-shell: #05080f;
+  }
+}
+:root[data-theme="dark"] .sandbox-main.is-expanded {
+  --hud-bg: rgba(8, 13, 25, 0.72);
+  --hud-border: rgba(255, 255, 255, 0.10);
+  --hud-ink: #e8eefc;
+  --hud-ink-dim: #93a4c4;
+  --hud-ink-strong: #f3f7ff;
+  --hud-chip: rgba(255, 255, 255, 0.07);
+  --hud-chip-hover: rgba(255, 255, 255, 0.14);
+  --hud-divider: rgba(255, 255, 255, 0.09);
+  --hud-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --fs-shell: #05080f;
 }
 .sandbox-page .sandbox-main.is-expanded.is-both {
   --fs-strip: 148px;
@@ -10032,12 +10082,13 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 .sandbox-main.is-expanded .sandbox-fs-keys,
 .sandbox-main.is-expanded .sandbox-fs-notes-toggle {
   z-index: 3;
-  background: rgba(8, 13, 25, 0.72);
+  background: var(--hud-bg);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  border: 1px solid var(--hud-border);
   border-radius: 12px;
-  color: #e8eefc;
+  color: var(--hud-ink);
+  box-shadow: var(--hud-shadow);
 }
 /* The head wraps onto a second line at a narrow width (the simulation-time
    field and the speed/play controls run out of room) — that's what let the
@@ -10061,7 +10112,7 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   padding: 8px 12px;
 }
 .sandbox-main.is-expanded .sandbox-head h2 {
-  color: #f3f7ff;
+  color: var(--hud-ink-strong);
   font-size: 1rem;
   letter-spacing: 0.01em;
 }
@@ -10080,7 +10131,7 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   gap: 8px;
   margin-top: 0;
 }
-.sandbox-main.is-expanded .sandbox-view-seg .k { color: #93a4c4; }
+.sandbox-main.is-expanded .sandbox-view-seg .k { color: var(--hud-ink-dim); }
 .sandbox-main.is-expanded .sandbox-fs-keys {
   /* Pushed to the end of the row, the notes toggle right after it, rather
      than centred independently of them — centring against the full width
@@ -10088,10 +10139,10 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
      widths this is fixing. */
   margin-left: auto;
   padding: 7px 12px;
-  color: #93a4c4;
+  color: var(--hud-ink-dim);
   white-space: nowrap;
 }
-.sandbox-main.is-expanded .sandbox-fs-keys b { color: #dce6fb; }
+.sandbox-main.is-expanded .sandbox-fs-keys b { color: var(--hud-ink-strong); }
 /* The readout sits along the bottom, out of the traffic's way. */
 .sandbox-main.is-expanded .sandbox-metric-row {
   position: absolute;
@@ -10112,18 +10163,18 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   padding: 2px 8px;
 }
 .sandbox-main.is-expanded .sandbox-metric-row > * + * {
-  border-left: 1px solid rgba(255, 255, 255, 0.09);
+  border-left: 1px solid var(--hud-divider);
 }
 .sandbox-main.is-expanded .sandbox-metric::before { display: none; }
-.sandbox-main.is-expanded .sandbox-metric h3 { color: #8fa1c2; }
-.sandbox-main.is-expanded .sandbox-metric-val { color: #f3f7ff; font-size: 1.15rem; }
+.sandbox-main.is-expanded .sandbox-metric h3 { color: var(--hud-ink-dim); }
+.sandbox-main.is-expanded .sandbox-metric-val { color: var(--hud-ink-strong); font-size: 1.15rem; }
 .sandbox-main.is-expanded .sandbox-metric-row * { color: inherit; }
 .sandbox-main.is-expanded .sandbox-fs-notes-toggle {
   padding: 7px 12px;
   text-decoration: none;
-  color: #cddaf5;
+  color: var(--hud-ink);
 }
-.sandbox-main.is-expanded .sandbox-fs-notes-toggle:hover { color: #fff; }
+.sandbox-main.is-expanded .sandbox-fs-notes-toggle:hover { color: var(--hud-ink-strong); }
 /* Opened, the notes are a panel over the road rather than a slab under it. */
 .sandbox-main.is-expanded .sandbox-footbar {
   position: absolute;
@@ -10138,21 +10189,21 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 .sandbox-main.is-expanded .sandbox-head .btn-muted,
 .sandbox-main.is-expanded .sandbox-speed-seg,
 .sandbox-main.is-expanded .sandbox-view-buttons {
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.14);
-  color: #e8eefc;
+  background: var(--hud-chip);
+  border-color: var(--hud-border);
+  color: var(--hud-ink);
 }
 .sandbox-main.is-expanded .sandbox-head .btn-muted:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--hud-chip-hover);
 }
 .sandbox-main.is-expanded .sandbox-speed-seg button,
 .sandbox-main.is-expanded .sandbox-view-buttons button {
-  color: #b9c8e6;
+  color: var(--hud-ink-dim);
 }
 .sandbox-main.is-expanded .sandbox-speed-seg button.active,
 .sandbox-main.is-expanded .sandbox-view-buttons button.active {
-  background: rgba(255, 255, 255, 0.16);
-  color: #fff;
+  background: var(--hud-chip-hover);
+  color: var(--hud-ink-strong);
 }
 /* A 16% white tint read as "every option the same" on the dark glass — the
    chosen carriageway and speed have to be unmistakable at a glance. Scoped
@@ -10164,8 +10215,8 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 2px 10px color-mix(in srgb, var(--page-accent, var(--brand-primary)) 45%, transparent);
 }
 .ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-view-buttons, .sandbox-speed-seg) button:not(.active):not([aria-selected="true"]):hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+  background: var(--hud-chip-hover);
+  color: var(--hud-ink-strong);
 }
 /* The controls keep their own light surface — a panel of sliders and selects
    reads better light — but sit flush against the dark road. */
@@ -10765,9 +10816,9 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
    mismatched white chip on a dark bar — match the translucent glass instead. */
 .sandbox-main.is-expanded .sandbox-time-seg-input,
 .sandbox-main.is-expanded .sandbox-time-seg-arrows {
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.14);
-  color: #e8eefc;
+  background: var(--hud-chip);
+  border-color: var(--hud-border);
+  color: var(--hud-ink);
 }
 .sandbox-main.is-expanded .sandbox-time-seg-arrows button {
   color: #93a4c4;
@@ -14007,7 +14058,15 @@ h1, h2, h3, h4, h5 { letter-spacing: -0.01em; }
 :root[data-theme="light"] .sandbox-main.is-expanded .sandbox-footbar,
 :root[data-theme="light"] .sandbox-main.is-expanded .sandbox-fs-keys,
 :root[data-theme="light"] .sandbox-main.is-expanded .sandbox-fs-notes-toggle {
-  background: rgba(11, 18, 32, 0.88);
+  /* The surface is LIGHT here; only the ink is dark. The generator translated
+     this one declaration the wrong way and made the glass itself the ink
+     colour: a near-black panel carrying near-black text, measured at contrast
+     1.0, which is why the prescriptive recommendation and the warm-up notes
+     were invisible in light mode. Every other value in this block -- the chip
+     tints at 0.07/0.14, the 0.09 divider, the inks -- is right for a light
+     sheet. Both copies are fixed: one for the explicit Light choice, one for
+     the prefers-color-scheme branch that System falls through to. */
+  background: rgba(255, 255, 255, 0.90);
   border: 1px solid rgba(11, 18, 32, 0.10);
   color: #0b1220;
 }
@@ -14141,7 +14200,15 @@ h1, h2, h3, h4, h5 { letter-spacing: -0.01em; }
 :root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-footbar,
 :root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-fs-keys,
 :root:not([data-theme="dark"]) .sandbox-main.is-expanded .sandbox-fs-notes-toggle {
-  background: rgba(11, 18, 32, 0.88);
+  /* The surface is LIGHT here; only the ink is dark. The generator translated
+     this one declaration the wrong way and made the glass itself the ink
+     colour: a near-black panel carrying near-black text, measured at contrast
+     1.0, which is why the prescriptive recommendation and the warm-up notes
+     were invisible in light mode. Every other value in this block -- the chip
+     tints at 0.07/0.14, the 0.09 divider, the inks -- is right for a light
+     sheet. Both copies are fixed: one for the explicit Light choice, one for
+     the prefers-color-scheme branch that System falls through to. */
+  background: rgba(255, 255, 255, 0.90);
   border: 1px solid rgba(11, 18, 32, 0.10);
   color: #0b1220;
 }

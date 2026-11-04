@@ -75,6 +75,18 @@ export type AggInput<K extends string> = {
   rainfall: (number | null)[];
   holdoutStart: number;
   futureStart: number;
+  /** Never trim away the LAST future bucket, even when it is a part period.
+   *
+   *  Off by default: the trim is what lets a caller tell the reader it is
+   *  showing whole periods only. Turn it on where the forecast is shorter than
+   *  a bucket by construction, so trimming leaves the card with no forecast at
+   *  all — then read `tailIsPartial` and mark that point, because a short
+   *  bucket plotted as a peer of full ones reads as a collapse.
+   *
+   *  It is deliberately the LAST one rather than every partial future bucket:
+   *  Weekly already keeps a complete future bucket and gains nothing from a
+   *  two-day one trailing it. This only prevents the zone vanishing. */
+  keepLastFutureBucket?: boolean;
 };
 
 export type AggOutput<K extends string> = {
@@ -92,6 +104,10 @@ export type AggOutput<K extends string> = {
   /** Partial buckets dropped from each end; see the trimming note below. */
   trimmedHead: number;
   trimmedTail: number;
+  /** The last bucket drawn covers less than half its period — only possible
+   *  with `keepPartialFutureTail`. Its mean is over fewer days than its
+   *  neighbours', so the caller must mark it rather than draw it as a peer. */
+  tailIsPartial: boolean;
 };
 
 /** Days a complete bucket of this granularity covers, for the month it starts in. */
@@ -111,6 +127,7 @@ function bucketLength(key: string, g: Granularity): number {
 /** Returns null when no aggregation applies, so callers keep the daily arrays. */
 export function aggregateSeries<K extends string>(input: AggInput<K>): AggOutput<K> | null {
   const { granularity, isoDates, baseActual, models, rainfall, holdoutStart, futureStart } = input;
+  const keepLastFuture = input.keepLastFutureBucket === true;
   if (granularity === "Daily" || granularity === "Hourly") return null;
   if (isoDates.length === 0) return null;
 
@@ -179,7 +196,17 @@ export function aggregateSeries<K extends string>(input: AggInput<K>): AggOutput
   let to = order.length;
   const partial = (i: number) => bucketDays[i] < bucketLength(order[i], granularity) / 2;
   while (from < to && partial(from)) from++;
-  while (to > from + 1 && partial(to - 1)) to--;
+  while (to > from + 1 && partial(to - 1)) {
+    /* ...but never trim the last future bucket away when the caller asked for
+     * it to survive. That trim is how Monthly came to have no forecast at all
+     * on the emissions card: a 7-day forecast is one July bucket of 7 days
+     * against July's 31, so the single future point was dropped and the card
+     * drew a Future band, a Future legend and a forecast headline over an axis
+     * that ended at the last actual month. */
+    const lastFutureLeft = zones[to - 1] === 2 && zones.lastIndexOf(2, to - 2) < from;
+    if (keepLastFuture && lastFutureLeft) break;
+    to--;
+  }
   // Never trim everything away: a window shorter than one period still has to
   // draw something, and a single partial bucket is better than a blank chart.
   if (to <= from) { from = 0; to = order.length; }
@@ -206,5 +233,6 @@ export function aggregateSeries<K extends string>(input: AggInput<K>): AggOutput
     bucketDays: slice(bucketDays),
     trimmedHead,
     trimmedTail,
+    tailIsPartial: to > from && partial(to - 1),
   };
 }

@@ -201,7 +201,7 @@ export default function FleetMixForecastChart() {
   const head = (
     <h3 className="nct-title">
       Forecasted Fleet Composition
-      <InfoTooltip text="Share of corridor traffic by toll class, stacked to 100%. Solid is observed; the paler band past the dashed line is projected. Shares are a composition — a point gained by one class is lost by another — so they are modelled jointly rather than as three separate forecasts. Zoomed (the default) stops the axis just above the highest heavy-vehicle share so its movement shows; Heavy share draws the Class 2 + 3 share alone on an axis fitted to it; the slider under the chart narrows the dates. The markers flag the highest and lowest Class 2 + 3 share, observed and projected." />
+      <InfoTooltip text="Share of corridor traffic by toll class, stacked to 100%. Solid is observed; the paler band past the dashed line is projected. Shares are a composition — a point gained by one class is lost by another — so they are modelled jointly rather than as three separate forecasts. Zoomed (the default) stops the axis just above the highest heavy-vehicle share so its movement shows; Heavy share draws the Class 2 + 3 share alone on an axis fitted to it; the slider under the chart narrows the dates. The markers flag the highest and lowest Class 2 + 3 share, observed and projected. The model was tested at a 7-day horizon (rolling origin, 42 runs); the dotted line marks where that tested stretch ends, and the projection past it carries the same weekly pattern forward as an outlook rather than a measured forecast." />
     </h3>
   );
 
@@ -298,6 +298,16 @@ export default function FleetMixForecastChart() {
 
   /* The boundary between measured and projected, drawn once (on the first series) so it is not stamped
      three times. Shared by the stacked views and the Heavy share line. */
+  /* Where the tested horizon ends inside the projection. The model was scored
+     at VALIDATED_HORIZON days (rolling-origin); everything drawn past this is
+     the same weekly pattern carried further, which is an outlook, not a
+     measured claim. -1 when the projection is no longer than the tested
+     stretch, in which case only the forecast boundary is drawn. */
+  const outlookStart =
+    firstFuture >= 0 && firstFuture + VALIDATED_HORIZON < dates.length
+      ? firstFuture + VALIDATED_HORIZON
+      : -1;
+
   const boundary =
     firstFuture >= 0
       ? {
@@ -319,7 +329,21 @@ export default function FleetMixForecastChart() {
               position: "insideEndTop" as const, backgroundColor: T.tooltipBg, padding: [3, 6], borderRadius: 4,
             },
             lineStyle: { color: heavyView ? T.text : T.tooltipBg, type: "dashed" as const, width: heavyView ? 1 : 2, opacity: 1 },
-            data: [{ xAxis: firstFuture }],
+            data: [
+              { xAxis: firstFuture },
+              ...(outlookStart >= 0
+                ? [{
+                    xAxis: outlookStart,
+                    label: {
+                      formatter: `tested to here (${VALIDATED_HORIZON}d) →`,
+                      fontSize: 11, fontWeight: 600, color: T.ink, fontFamily: T.fontFamily,
+                      position: "insideEndBottom" as const,
+                      backgroundColor: T.tooltipBg, padding: [3, 6], borderRadius: 4, opacity: 0.95,
+                    },
+                    lineStyle: { type: "dotted" as const, width: 1, opacity: 0.75 },
+                  }]
+                : []),
+            ],
           },
         }
       : {};
@@ -553,7 +577,15 @@ export default function FleetMixForecastChart() {
           </span>
           <span className="fc-answer-context">
             {champ ? <>model <b>{champ.model_name}</b></> : "no model accepted"}
-            {data.split?.future_days ? <> · {data.split.future_days}-day projection</> : null}
+            {data.split?.future_days ? (
+              <>
+                {" · "}
+                <b>{Math.min(VALIDATED_HORIZON, data.split.future_days)} days validated</b>
+                {data.split.future_days > VALIDATED_HORIZON ? (
+                  <>, {data.split.future_days - VALIDATED_HORIZON} more as outlook</>
+                ) : null}
+              </>
+            ) : null}
             {lastObservedDate ? <> · data to <b>{lastObservedDate}</b></> : null}
           </span>
         </div>

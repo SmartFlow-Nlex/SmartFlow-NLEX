@@ -35,6 +35,7 @@ import {
   type NewEventSpec,
   type KmStretch,
   MIN_EVENT_STRETCH_M,
+  phaseAt,
 } from "./scenarios/adapter";
 import ScenarioPanel, { TimeField, type DirectionScenarioData, type SkipPlan } from "./components/ScenarioPanel";
 import TrendCharts from "./components/TrendCharts";
@@ -75,6 +76,7 @@ import {
   type SpriteFn,
 } from "./facilityArt";
 import { DRAW_W_FRAC, FAC_LANE, specDepth } from "./facilities";
+import { buildRunCsv, downloadCsv, runFilename, type ExportDirection, type ExportEvent } from "./exportRun";
 import type { CorridorPlace } from "./facilityLayout";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
@@ -1371,6 +1373,7 @@ export default function AiSandboxPage() {
    * running one road and letting the operator think it covered both. */
   const [repRuns, setRepRuns] = useState(10);
   const [repResult, setRepResult] = useState<ReplicationResult | null>(null);
+
   const [repProgress, setRepProgress] = useState<number | null>(null);
   const repCancel = useRef(false);
   /* Which carriageway and set-up a result was run on, and whether a run was cut short by an event (17 Oct 2026,
@@ -2870,6 +2873,71 @@ export default function AiSandboxPage() {
   clockStartMinRef.current = clockStartMin;
   const liveDateText = live && forecast.date ? liveDateLabel(forecast.date, liveDayOffset(liveMin)) : null;
 
+  /* hh:mm:ss of the simulated clock, the same reading the Simulation time
+   * field shows. Declared here because it needs liveMin, which is not known
+   * until the clock above has been worked out. */
+  const clockText = (min: number) => {
+    const t = Math.max(0, Math.round(min * 60));
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${p(Math.floor(t / 3600) % 24)}:${p(Math.floor(t / 60) % 60)}:${p(t % 60)}`;
+  };
+  /* The run as a CSV. Every number the sandbox produces lived only on screen,
+   * so putting one in the report meant reading it off and retyping it. Reads
+   * the same state the panels render — nothing is recomputed here, so the file
+   * cannot disagree with the screen. */
+  const exportRun = useCallback(() => {
+    const directions: ExportDirection[] = activeDirections.map((dir) => {
+      const d = byDirection[dir];
+      const nowS = d.scenarioNowS;
+      const events: ExportEvent[] = d.scenarioEvents.map((e) => {
+        const ph = phaseAt(e, nowS);
+        return {
+          direction: dir,
+          name: e.name,
+          family: e.variant.family,
+          phase: ph ? ph.id : null,
+          positionKm: e.positionKm,
+          stretchKm: e.stretchKm ?? null,
+          lane: e.lane,
+          extraLanes: e.extraLanes,
+          startS: e.startS,
+          durationS: e.phases.reduce((t, q) => Math.max(t, q.offsetS + q.durationS), 0),
+        };
+      });
+      return {
+        direction: dir,
+        laneCount: d.laneCount,
+        inflowVehPerHour: d.inflow,
+        inflowFrom: d.inflowFrom,
+        dataAnchor: d.dataAnchor ?? null,
+        metrics: d.metrics,
+        peakUnmetVehPerHour: d.peakUnmetVehPerHour,
+        closedLanes: d.closedLanes,
+        speedLimitKmh: d.speedLimit,
+        incidentCount: d.incidentCount,
+        baselineAvgSpeedKmh: d.baseline ? d.baseline.avgSpeedKmh : null,
+        events,
+      };
+    });
+    const at = new Date();
+    const csv = buildRunCsv({
+      exportedAt: at,
+      simDate: liveDateText || null,
+      simTime: live ? clockText(liveMin) : null,
+      forecastDay,
+      origin: originExit ? displayExitName(originExit.exit_name) : "?",
+      destination: destExit ? displayExitName(destExit.exit_name) : "?",
+      fromKm,
+      toKm,
+      view,
+      simSpeed,
+      directions,
+      replication: repResult ? { direction: focusDirection, result: repResult } : null,
+    });
+    downloadCsv(runFilename(at), csv);
+  }, [activeDirections, byDirection, liveDateText, live, liveMin, forecastDay, originExit, destExit,
+      fromKm, toKm, view, simSpeed, repResult, focusDirection]);
+
   // The metric tiles, once, so full screen can put the same ones inside the card (the row above the grid is
   // covered by it) and the page draws them in their usual place otherwise.
   const metricTiles = (
@@ -3168,6 +3236,14 @@ export default function AiSandboxPage() {
                   {replayHasEvent ? "⟲ Replay incident" : "⟲ Replay"}
                 </button>
               )}
+              <button
+                className="btn-muted"
+                onClick={exportRun}
+                title="Download this run as a CSV: the stretch and demand, each carriageway's readings, the interventions and events in force, and the confidence run if one was done"
+                data-short="CSV"
+              >
+                Export
+              </button>
               <button className="btn-muted" onClick={resetEverything} title="Back to a clean start: scenarios, closures, speed limits, incidents, baselines and any lane reallocation are all cleared">
                 Reset
               </button>
