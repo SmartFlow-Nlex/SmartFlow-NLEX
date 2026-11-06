@@ -1,11 +1,12 @@
 import type { SceneBackdrop, SceneLine, StoryScene as StoryDef } from '../core/dialogue';
 import { isMachine, type CharacterId, type Expression, type SaveData } from '../core/types';
-import { blinkAt, drawCharacter } from './art/cast';
-import { drawSidekick } from './art/sidekicks';
-import { groundShadow, makeCanvas, rgba, roundRect, shade, vgrad } from './art/kit';
-import { C, TIMES } from './art/palette';
-import { drawRoadside, drawTreeLine, drawWarmLight, ROADSIDE_BOX, type RoadsideKind } from './art/roadside';
-import { drawGantry, drawGround, drawParolStar, drawProp, drawSkyLayer, drawTollPlaza, type Landmark } from './art/scenery';
+import { art, blinkAt, characterSprite, drawCharacter, drawSidekick, preload, softShadow, tinted } from './art/clay';
+import { makeCanvas, rgba, roundRect, shade } from './art/kit';
+import { C } from './art/palette';
+import { drawGantry, drawParolStar } from './art/scenery';
+import { MOODS, Roadscape, type Landmark } from './render/roadscape';
+import type { Camera } from './render/camera';
+import type { Mood } from '../core/moods';
 import type { Scene } from './appApi';
 import { GarageScene } from './scenes';
 
@@ -33,6 +34,8 @@ export class StoryScene implements Scene {
   private dpr = 1;
   private t = 0;
   private background: HTMLCanvasElement | null = null;
+  private readonly scape = new Roadscape();
+  private artReady = false;
   private garage: GarageScene | null = null;
   private readonly staged: Staged[];
   private line: SceneLine | null = null;
@@ -51,6 +54,11 @@ export class StoryScene implements Scene {
     stage: StoryDef['stage'] = undefined,
     private readonly extra: Pick<StoryDef, 'sign' | 'time' | 'landmark' | 'guest'> = {},
   ) {
+    void preload([...cast.map((id) => characterSprite(id)), ...(extra.guest !== undefined ? [`s.${extra.guest}.front`] : []), ...this.scenery().map(([n]) => `w.${n}`), 'b.hillsFar', 'b.hillsNear', 'b.arayat', 'b.pinatubo', 'b.skyline', 'c.cloud0', 'c.cloud1', 'c.cloud2']).then(() => {
+      this.artReady = true;
+      this.background = null;
+    });
+    this.scape.setMood(this.moodOf(), this.landmarkOf());
     if (backdrop === 'garage') {
       this.garage = new GarageScene(getSave);
       // The story stages its own cast; the garage only provides the room (else Navie stands there twice).
@@ -75,7 +83,56 @@ export class StoryScene implements Scene {
     this.height = height;
     this.dpr = dpr;
     this.background = null;
+    this.scape.resize(dpr);
     this.garage?.resize(width, height, dpr);
+  }
+
+  private moodOf(): Mood {
+    switch (this.backdrop) {
+      case 'plaza':
+      case 'fiesta':
+        return 'lantern';
+      case 'meycauayan':
+        return 'morning';
+      case 'marilao':
+      case 'arena':
+        return 'town';
+      case 'exit':
+        return this.extra.time === 'sunset' ? 'lantern' : this.extra.time === 'morning' ? 'morning' : 'town';
+      default:
+        return 'morning';
+    }
+  }
+
+  private landmarkOf(): Landmark {
+    if (this.backdrop === 'exit') {
+      return this.extra.landmark ?? 'none';
+    }
+    return this.backdrop === 'arena' || this.backdrop === 'plaza' || this.backdrop === 'fiesta' ? 'plaza' : 'none';
+  }
+
+  /** What stands behind the cast, by place: [sprite, x across the width, how far back (0 near - 1 far), size]. */
+  private scenery(): [string, number, number, number][] {
+    switch (this.backdrop) {
+      case 'layby':
+        return [['narra', 0.14, 0.72, 1.2], ['sos', 0.86, 0.3, 1.1], ['hedge', 0.32, 0.5, 1.0], ['banana', 0.72, 0.68, 0.95]];
+      case 'meycauayan':
+        return [['nipa', 0.16, 0.7, 1.05], ['mango', 0.84, 0.72, 1.2], ['haystack', 0.32, 0.62, 0.7], ['carabao', 0.66, 0.5, 0.7]];
+      case 'marilao':
+        return [['shop', 0.13, 0.7, 1.05], ['sari', 0.84, 0.62, 1.05], ['pole', 0.36, 0.72, 1.0], ['lamp', 0.64, 0.6, 1.0]];
+      case 'arena':
+        return [['billboard', 0.18, 0.7, 1.15], ['stall', 0.82, 0.58, 1.0], ['lamp', 0.5, 0.72, 1.1], ['flowers', 0.34, 0.42, 0.9]];
+      case 'plaza':
+        return [['parolPost', 0.14, 0.66, 1.1], ['parolPost', 0.86, 0.66, 1.1], ['stall', 0.3, 0.72, 0.8]];
+      case 'fiesta':
+        return [['stall', 0.16, 0.6, 1.1], ['parolPost', 0.84, 0.6, 1.15], ['stall', 0.72, 0.74, 0.8], ['parolPost', 0.3, 0.76, 0.9]];
+      case 'exit':
+        return this.extra.landmark === 'lanterns'
+          ? [['parolPost', 0.15, 0.62, 1.15], ['parolPost', 0.85, 0.62, 1.15], ['shop', 0.3, 0.75, 0.85]]
+          : [['mango', 0.13, 0.7, 1.15], ['signExit', 0.86, 0.5, 1.15], ['bamboo', 0.34, 0.74, 0.95], ['hedge', 0.66, 0.5, 0.9]];
+      default:
+        return [];
+    }
   }
 
   /** A new line: its speaker, expression, reactions and action. */
@@ -132,6 +189,7 @@ export class StoryScene implements Scene {
 
   // -- backdrop ----------------------------------------------------------------
 
+  /** One still picture of the place, in the same light as the road. */
   private ensureBackground(): HTMLCanvasElement {
     if (this.background !== null) {
       return this.background;
@@ -140,226 +198,34 @@ export class StoryScene implements Scene {
     const h = this.height;
     const horizon = this.horizon;
     const front = this.front;
-    const { canvas, ctx } = makeCanvas(w, h, this.dpr);
-    const prop = (kind: RoadsideKind, x: number, y: number, size: number, variant = 1): void => {
-      const box = ROADSIDE_BOX[kind];
-      ctx.save();
-      ctx.translate(x, y);
-      const s = size / 200;
-      ctx.scale(s, s);
-      void box;
-      drawRoadside(ctx, kind, variant);
-      ctx.restore();
-    };
-    const sky = (time: keyof typeof TIMES, landmark: Landmark): void => {
-      drawSkyLayer(ctx, w, horizon, time, landmark);
-      drawTreeLine(ctx, w, horizon, time);
-      drawGround(ctx, w, h, horizon, time);
-    };
-    /** The expressway crossing behind the cast: carriageway, median wall, guardrail. */
-    const expressway = (y0: number, y1: number): void => {
-      ctx.fillStyle = C.asphalt;
-      ctx.fillRect(0, y0, w, y1 - y0);
-      ctx.fillStyle = '#F4F7FB';
-      for (let x = 0; x < w; x += 46) {
-        ctx.fillRect(x, (y0 + y1) / 2 - 1.5, 24, 3);
+    const { canvas, ctx } = makeCanvas(w, h, Math.min(2, this.dpr));
+    const look = MOODS[this.moodOf()];
+    const cam: Camera = { width: w, height: h, horizonY: horizon, playerY: front, centreX: w / 2, lane0: w * 0.26, depth: 7, camX: 0, curve: 0, landscape: false };
+    this.scape.drawSky(ctx, cam, 0);
+    // The same ground as the road, with the cast standing on it.
+    this.scape.drawGround(ctx, cam, 3, -3);
+    const yRoad = horizon + (front - horizon) * 0.32;
+    const items = [...this.scenery()].sort((a, b) => b[2] - a[2]);
+    for (const [name, x, depth, size] of items) {
+      const s = art(`w.${name}`);
+      if (s === null) {
+        continue;
       }
-      ctx.fillStyle = '#C3CAD3';
-      ctx.fillRect(0, y0 - (y1 - y0) * 0.16, w, (y1 - y0) * 0.16);
-      ctx.fillStyle = '#EEF2F6';
-      ctx.fillRect(0, y0 - (y1 - y0) * 0.16, w, 2);
-    };
-    const guardrail = (y: number, post: number): void => {
-      ctx.fillStyle = '#6F7B8A';
-      for (let x = 6; x < w; x += post * 3.2) {
-        ctx.fillRect(x, y - post, post * 0.18, post);
-      }
-      ctx.fillStyle = '#AEB8C4';
-      ctx.fillRect(0, y - post * 0.95, w, post * 0.4);
-      ctx.fillStyle = '#F4F7FA';
-      ctx.fillRect(0, y - post * 0.95, w, 2);
-    };
-    const pavement = (y: number): void => {
-      ctx.fillStyle = vgrad(ctx, y, h, [
-        [0, '#B9C1CB'],
-        [1, '#9AA4B1'],
-      ]);
-      ctx.fillRect(0, y, w, h - y);
-    };
-
-    switch (this.backdrop) {
-      case 'garage':
-        break;
-      case 'layby': {
-        // A roadside assistance lay-by beside NLEX at noon: trees and a kiosk behind,
-        // the expressway beyond the guardrail, the bay with its markings in front.
-        sky('noon', 'arena');
-        const roadTop = horizon + (front - horizon) * 0.18;
-        const roadBottom = horizon + (front - horizon) * 0.42;
-        prop('pylon', w * 0.82, horizon + 6, h * 0.16, 0);
-        prop('acaciaBig', w * 0.1, roadTop, w * 0.42, 1);
-        prop('bamboo', w * 0.95, roadTop, w * 0.34, 2);
-        expressway(roadTop, roadBottom);
-        guardrail(roadBottom + (front - horizon) * 0.06, w * 0.03);
-        pavement(roadBottom + (front - horizon) * 0.06);
-        // The assistance kiosk.
-        const kx = w * 0.62;
-        const ky = roadBottom + (front - horizon) * 0.12;
-        const kw = w * 0.34;
-        const kh = h * 0.07;
-        groundShadow(ctx, kx + kw / 2, ky + 2, kw * 0.6, kh * 0.12, 0.28);
-        ctx.fillStyle = '#EEF2F6';
-        ctx.fillRect(kx, ky - kh, kw, kh);
-        ctx.fillStyle = C.nlexBlue;
-        ctx.beginPath();
-        ctx.moveTo(kx - kw * 0.06, ky - kh);
-        ctx.lineTo(kx + kw * 0.5, ky - kh * 1.45);
-        ctx.lineTo(kx + kw * 1.06, ky - kh);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = '#5C86C2';
-        ctx.fillRect(kx + kw * 0.08, ky - kh * 0.72, kw * 0.32, kh * 0.4);
-        ctx.fillStyle = '#7A5A38';
-        ctx.fillRect(kx + kw * 0.62, ky - kh * 0.78, kw * 0.22, kh * 0.78);
-        roundRect(ctx, kx + kw * 0.06, ky - kh * 1.08 - h * 0.028, kw * 0.88, h * 0.03, 5);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fill();
-        // Sized to fit its board.
-        let fontPx = Math.max(8, w * 0.028);
-        ctx.font = `900 ${fontPx}px "Nunito Black", system-ui`;
-        const maxText = kw * 0.8;
-        const measured = ctx.measureText('ROADSIDE ASSISTANCE').width;
-        if (measured > maxText) {
-          fontPx *= maxText / measured;
-          ctx.font = `900 ${fontPx}px "Nunito Black", system-ui`;
-        }
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = C.navy;
-        ctx.fillText('ROADSIDE ASSISTANCE', kx + kw / 2, ky - kh * 1.08 - h * 0.013);
-        // Bay markings and the SOS box at the bay's edge.
-        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-        ctx.lineWidth = 3;
-        ctx.setLineDash([14, 10]);
-        ctx.beginPath();
-        ctx.moveTo(0, front - h * 0.1);
-        ctx.lineTo(w, front - h * 0.1);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        prop('sos', w * 0.06, front - h * 0.1, w * 0.2, 0);
-        prop('hedge', w * 0.42, ky, w * 0.3, 0);
-        break;
-      }
-      case 'meycauayan':
-      case 'marilao': {
-        const time = this.backdrop === 'meycauayan' ? 'morning' : 'noon';
-        sky(time, time === 'noon' ? 'arena' : 'city');
-        const roadTop = horizon + (front - horizon) * 0.22;
-        const roadBottom = horizon + (front - horizon) * 0.5;
-        prop('mango', w * 0.08, roadTop, w * 0.4, 0);
-        prop('palmTall', w * 0.94, roadTop, w * 0.36, 1);
-        expressway(roadTop, roadBottom);
-        drawGantry(ctx, w * 0.14, w * 0.86, roadTop + 2, w * 0.13, this.backdrop === 'meycauayan' ? 'Meycauayan' : 'Marilao', 'Exit');
-        guardrail(roadBottom + (front - horizon) * 0.06, w * 0.03);
-        pavement(roadBottom + (front - horizon) * 0.06);
-        prop('hedge', w * 0.8, roadBottom + (front - horizon) * 0.1, w * 0.32, 1);
-        break;
-      }
-      case 'exit': {
-        // Any exit on the road: its own sign, its own light, and what is on the horizon there.
-        sky(this.extra.time ?? 'noon', this.extra.landmark ?? 'none');
-        const roadTop = horizon + (front - horizon) * 0.22;
-        const roadBottom = horizon + (front - horizon) * 0.5;
-        prop('acaciaBig', w * 0.08, roadTop, w * 0.4, 0);
-        prop('palmTall', w * 0.94, roadTop, w * 0.36, 1);
-        expressway(roadTop, roadBottom);
-        drawGantry(ctx, w * 0.14, w * 0.86, roadTop + 2, w * 0.13, this.extra.sign ?? 'NLEX', 'Exit');
-        guardrail(roadBottom + (front - horizon) * 0.06, w * 0.03);
-        pavement(roadBottom + (front - horizon) * 0.06);
-        prop('hedge', w * 0.8, roadBottom + (front - horizon) * 0.1, w * 0.32, 1);
-        break;
-      }
-      case 'arena': {
-        sky('noon', 'arena');
-        const y = horizon + (front - horizon) * 0.3;
-        prop('acaciaBig', w * 0.06, y, w * 0.42, 0);
-        prop('palmTall', w * 0.96, y, w * 0.36, 0);
-        pavement(y);
-        // An empty stage, waiting for the fiesta.
-        roundRect(ctx, w * 0.22, y - h * 0.09, w * 0.56, h * 0.09, 8);
-        ctx.fillStyle = '#5A4A6E';
-        ctx.fill();
-        roundRect(ctx, w * 0.2, y - h * 0.125, w * 0.6, h * 0.04, 6);
-        ctx.fillStyle = C.danger;
-        ctx.fill();
-        ctx.font = `900 ${Math.max(10, w * 0.035)}px "Nunito Black", system-ui`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillText('ARENA FIESTA', w / 2, y - h * 0.105);
-        break;
-      }
-      case 'plaza': {
-        sky('sunset', 'none');
-        ctx.fillStyle = C.asphalt;
-        ctx.fillRect(0, horizon + (front - horizon) * 0.3, w, h);
-        drawTollPlaza(ctx, w * 0.12, w * 0.88, horizon + (front - horizon) * 0.55, w * 0.18, false, this.extra.sign?.toUpperCase());
-        break;
-      }
-      case 'fiesta': {
-        // Evening: lanterns and flags, gently twinkling (drawn live below). At the Arena, its dome;
-        // further north, what is on that horizon instead.
-        ctx.fillStyle = vgrad(ctx, 0, h, [
-          [0, '#1E2A5A'],
-          [0.5, '#5A3E7A'],
-          [1, '#2A2440'],
-        ]);
-        ctx.fillRect(0, 0, w, h);
-        const ground = horizon + h * 0.04;
-        if (this.extra.landmark === 'pinatubo') {
-          ctx.beginPath();
-          ctx.moveTo(0, ground);
-          ctx.lineTo(w * 0.3, ground - h * 0.14);
-          ctx.lineTo(w * 0.42, ground - h * 0.12);
-          ctx.lineTo(w * 0.52, ground - h * 0.15);
-          ctx.lineTo(w, ground - h * 0.02);
-          ctx.lineTo(w, ground);
-          ctx.closePath();
-          ctx.fillStyle = '#463C6E';
-          ctx.fill();
-        } else if (this.extra.landmark === 'lanterns') {
-          // A town's rooftops, with the lit windows of a lantern city.
-          const roof = w / 7;
-          for (let i = 0; i < 7; i += 1) {
-            const top = ground - h * (0.05 + ((i * 5) % 3) * 0.018);
-            ctx.fillStyle = i % 2 === 0 ? '#3F3768' : '#4A4074';
-            ctx.beginPath();
-            ctx.moveTo(i * roof, ground);
-            ctx.lineTo(i * roof, top);
-            ctx.lineTo((i + 0.5) * roof, top - h * 0.025);
-            ctx.lineTo((i + 1) * roof, top);
-            ctx.lineTo((i + 1) * roof, ground);
-            ctx.closePath();
-            ctx.fill();
-            ctx.fillStyle = '#FFD27A';
-            ctx.fillRect((i + 0.38) * roof, top + h * 0.012, roof * 0.24, h * 0.014);
-          }
-        } else {
-          ctx.beginPath();
-          ctx.ellipse(w * 0.5, ground, w * 0.42, h * 0.16, 0, Math.PI, 0);
-          ctx.fillStyle = '#C9D3DE';
-          ctx.fill();
-        }
-        ctx.fillStyle = '#3A3550';
-        ctx.fillRect(0, horizon + h * 0.04, w, h);
-        break;
-      }
+      const y = yRoad + (front - yRoad) * (1 - depth) * 0.72;
+      const unit = (w * 0.16 * size * (1.25 - depth * 0.55)) / 2.2;
+      const k = unit / s.ppu;
+      softShadow(ctx, x * w, y, s.w * k * 0.5, s.w * k * 0.09, 0.22);
+      // Whatever stands to the side is pushed out past the road.
+      ctx.drawImage(tinted(s, look.tint), x * w - s.ax * k, y - s.ay * k, s.w * k, s.h * k);
     }
-    if (this.backdrop !== 'garage' && this.backdrop !== 'fiesta') {
-      drawWarmLight(ctx, w, h, horizon, this.backdrop === 'plaza' ? 'sunset' : this.backdrop === 'exit' ? this.extra.time ?? 'noon' : 'noon');
+    // A named place gets its overhead sign; the plaza gets its canopy lamps.
+    if (this.backdrop === 'exit' || this.backdrop === 'meycauayan' || this.backdrop === 'marilao') {
+      const name = this.backdrop === 'exit' ? this.extra.sign ?? 'Exit' : this.backdrop === 'meycauayan' ? 'Meycauayan' : 'Marilao';
+      drawGantry(ctx, w * 0.14, w * 0.86, yRoad + 2, w * 0.13, name, 'Exit');
     }
-    void drawProp;
-    this.background = canvas;
+    if (this.artReady) {
+      this.background = canvas;
+    }
     return canvas;
   }
 

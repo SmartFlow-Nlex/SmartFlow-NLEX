@@ -134,6 +134,8 @@ function ThemedStack(): React.ReactElement | null {
         <Stack.Screen name="arcade/tollbound-heroes" options={{ gestureEnabled: false }} />
         {/* The racing game: steering is a sideways drag too. */}
         <Stack.Screen name="arcade/grand-prix" options={{ gestureEnabled: false }} />
+        {/* The 3D wildlife game: the move stick and camera are drags, which swipe-back would steal. */}
+        <Stack.Screen name="arcade/wildway-guardians" options={{ gestureEnabled: false }} />
         <Stack.Screen name="notifications" />
         {/* One interchange on the map, opened from the corridor list. */}
         <Stack.Screen name="corridor/[exitId]" />

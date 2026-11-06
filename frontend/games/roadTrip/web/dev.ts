@@ -1,83 +1,60 @@
-/** Development art sheets and a bare driving view, for checking art in a browser (debug builds only). */
+/** Development sheets, for checking art in a browser (debug builds only, reached with ?sheet=...). */
 import { createBot } from '../core/bot';
 import { STEP } from '../core/config';
 import { DrivingSim } from '../core/sim';
-import { EXPRESSIONS, type MissionId } from '../core/types';
-import { DriveRenderer } from './render/drive';
-import { drawCharacter, blinkAt } from './art/cast';
-import { drawCrewSheet } from './art/crewSheet';
-import { drawFoe } from './art/foes';
+import { EXPRESSIONS, HEROES, SIDEKICKS, type HeroId, type MissionId, type SidekickId } from '../core/types';
+import { art, blinkAt, drawCharacter, drawSidekick, preload } from './art/clay';
 import { makeCanvas } from './art/kit';
-import { drawPowerUp } from './art/powerups';
-import { drawBarrier, drawCone, drawJepoyRear, drawKikoRear, drawLaneBoard, drawNavieRear, drawPickup, drawPothole, drawTrafficRear } from './art/vehicles';
+import { DriveRenderer } from './render/drive';
 import { LOOKS } from './mission';
 
-function sheet(): void {
-  const { canvas, ctx } = makeCanvas(1200, 1500, 1);
+/** Every hero and sidekick: rear, turned and front, with a run of expressions. Whatever is missing shows as a gap. */
+function roster(): void {
+  const names = [
+    ...HEROES.flatMap((id) => [`h.${id}.rear`, `h.${id}.turn`, `h.${id}.front`]),
+    ...SIDEKICKS.flatMap((id) => [`s.${id}.front`, `s.${id}.evo`, `s.${id}.rear`]),
+  ];
+  const { canvas, ctx } = makeCanvas(1200, 2300, 1);
   document.body.appendChild(canvas);
-  ctx.fillStyle = '#DFF1FF';
-  ctx.fillRect(0, 0, 1200, 1500);
-  const ids = ['navie', 'jepoy', 'kiko', 'barrikada'] as const;
-  ids.forEach((id, row) => {
-    EXPRESSIONS.forEach((expr, col) => {
-      const size = id === 'barrikada' ? 70 : 120;
-      drawCharacter(ctx, id, 75 + col * 145, 160 + row * 190, size, {
-        expr,
-        anim: { t: 1.3, blink: blinkAt(1.3), talk: 0.6, lookX: 0, lookY: 0 },
+  ctx.fillStyle = '#E9DFC6';
+  ctx.fillRect(0, 0, 1200, 2300);
+  void preload(names).then(() => {
+    HEROES.forEach((id, row) => {
+      const y = 96 + row * 96;
+      const rear = art(`h.${id}.rear`);
+      const turn = art(`h.${id}.turn`);
+      if (rear !== null) {
+        const k = 72 / rear.h;
+        ctx.drawImage(rear.img, 16, y - 72, rear.w * k, 72);
+      }
+      if (turn !== null) {
+        const k = 72 / turn.h;
+        ctx.drawImage(turn.img, 90, y - 72, turn.w * k, 72);
+      }
+      (['idle', 'happy', 'worried', 'surprised', 'determined', 'hurt', 'celebrate'] as const).forEach((expr, col) => {
+        drawCharacter(ctx, id as HeroId, 200 + col * 86, y, 78, { expr, anim: { t: 1, blink: 0, talk: 0, lookX: 0, lookY: 0 } });
       });
     });
-  });
-  const rear = (x: number, y: number, s: number, draw: () => void): void => {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(s, s);
-    draw();
-    ctx.restore();
-  };
-  rear(110, 1080, 0.6, () => drawNavieRear(ctx, { wheel: 0.3 }));
-  rear(280, 1080, 0.6, () => drawKikoRear(ctx, { wheel: 0.3, t: 1 }));
-  rear(450, 1080, 0.6, () => drawJepoyRear(ctx, { wheel: 0.3, t: 1 }));
-  rear(620, 1080, 0.6, () => drawTrafficRear(ctx, 'car', '#E2453C', { wheel: 0.3 }));
-  rear(800, 1080, 0.6, () => drawTrafficRear(ctx, 'truck', '', { wheel: 0.3 }));
-  rear(1010, 1080, 0.6, () => drawTrafficRear(ctx, 'bus', '', { wheel: 0.3 }));
-  rear(100, 1300, 0.6, () => drawCone(ctx, false));
-  rear(220, 1300, 0.6, () => drawCone(ctx, true));
-  rear(400, 1300, 0.6, () => drawBarrier(ctx, false));
-  rear(600, 1300, 0.6, () => drawPothole(ctx, false));
-  rear(760, 1300, 0.6, () => drawLaneBoard(ctx, 1, 'LANE CLOSED'));
-  (['bolt', 'wrench', 'postcard', 'part', 'spark'] as const).forEach((kind, i) => {
-    rear(100 + i * 110, 1420, 0.7, () => drawPickup(ctx, kind, 0.4));
-  });
-}
-
-function compare(): void {
-  const { canvas, ctx } = makeCanvas(1200, 520, 1);
-  document.body.appendChild(canvas);
-  ctx.fillStyle = '#DFF1FF';
-  ctx.fillRect(0, 0, 1200, 520);
-  drawCharacter(ctx, 'navie', 230, 470, 400, { expr: 'idle', anim: { t: 0.5, blink: 0, talk: 0, lookX: 0, lookY: 0 } });
-  drawCharacter(ctx, 'navie', 640, 470, 400, { expr: 'happy', anim: { t: 0.5, blink: 0, talk: 0, lookX: 0, lookY: 0 } });
-  const img = new Image();
-  img.onload = () => ctx.drawImage(img, 860, 60, 300, 346);
-  img.src = new URLSearchParams(location.search).get('ref') ?? '';
-}
-
-function faces(id: 'navie' | 'jepoy' | 'kiko' | 'barrikada'): void {
-  const { canvas, ctx } = makeCanvas(1200, 700, 1);
-  document.body.appendChild(canvas);
-  ctx.fillStyle = '#DFF1FF';
-  ctx.fillRect(0, 0, 1200, 700);
-  EXPRESSIONS.forEach((expr, i) => {
-    const col = i % 4;
-    const row = Math.floor(i / 4);
-    drawCharacter(ctx, id, 150 + col * 300, 320 + row * 340, id === 'barrikada' ? 150 : 270, {
-      expr,
-      anim: { t: 0.8, blink: 0, talk: 0.7, lookX: 0, lookY: 0 },
+    SIDEKICKS.forEach((id, i) => {
+      const col = i % 6;
+      const row = Math.floor(i / 6);
+      const x = 60 + col * 196;
+      const y = 1290 + row * 160;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(0.5, 0.5);
+      drawSidekick(ctx, id as SidekickId, { expr: 'happy', t: 0, blink: 0, talk: 0, lookX: 0, evolved: false, action: 0 });
+      ctx.restore();
+      ctx.save();
+      ctx.translate(x + 94, y);
+      ctx.scale(0.42, 0.42);
+      drawSidekick(ctx, id as SidekickId, { expr: 'celebrate', t: 0, blink: 0, talk: 0, lookX: 0, evolved: true, action: 0 });
+      ctx.restore();
+      ctx.fillStyle = '#354844';
+      ctx.font = '700 12px sans-serif';
+      ctx.fillText(id, x - 20, y + 18);
     });
-    ctx.fillStyle = '#10284C';
-    ctx.font = '600 18px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(expr, 150 + col * 300, 340 + row * 340);
+    void EXPRESSIONS;
   });
 }
 
@@ -96,13 +73,16 @@ function drive(): void {
     missionId,
     seed: Number(params.get('seed') ?? '3'),
     settings: { difficulty: 'standard', gameSpeed: 1, warningBoost: Number(params.get('warn') ?? '0'), autoAbility: false },
-    loadout: { hero: (params.get('hero') as 'navie' | 'jepoy' | 'kiko' | null) ?? 'navie', sidekicks: ['pip', 'mila'], evolved: {} },
+    loadout: { hero: (params.get('hero') as HeroId | null) ?? 'navie', sidekicks: [(params.get('a') as SidekickId | null) ?? 'pip', (params.get('b') as SidekickId | null) ?? 'mila'], evolved: {} },
     upgrades: {},
     skipTutorial: params.get('tutorial') !== '1',
     scenario: null,
   });
   const bot = createBot({ useAbility: true });
   for (let i = 0; i < seconds * 60 && sim.state.outcome === null; i += 1) {
+    if (sim.state.choice !== null) {
+      sim.choose(sim.state.choice.options[0] ?? null);
+    }
     sim.step(STEP, bot(sim, STEP));
     sim.drainEvents();
   }
@@ -124,49 +104,147 @@ function drive(): void {
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
+  void blinkAt;
 }
 
-
-/** Barrikada's bots (healthy, hurt, low), the power-up capsules and the pick-ups, large. */
-function foes(): void {
-  const { canvas, ctx } = makeCanvas(1200, 900, 1);
+/** Everyone large enough to judge a face: each hero calm and delighted, then each sidekick. */
+function faces(): void {
+  const names = [...HEROES.map((id) => `h.${id}.front`), ...SIDEKICKS.map((id) => `s.${id}.front`)];
+  const { canvas, ctx } = makeCanvas(1240, 2100, 1);
   document.body.appendChild(canvas);
-  ctx.fillStyle = '#4A5262';
-  ctx.fillRect(0, 0, 1200, 900);
-  const at = (x: number, y: number, s: number, draw: () => void): void => {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(s, s);
-    draw();
-    ctx.restore();
+  ctx.fillStyle = '#E9DFC6';
+  ctx.fillRect(0, 0, 1240, 2100);
+  const label = (text: string, x: number, y: number): void => {
+    ctx.fillStyle = '#354844';
+    ctx.font = '700 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, x, y);
   };
-  (['conebot', 'drumbot', 'signbot'] as const).forEach((kind, row) => {
-    [
-      { t: 0, hurt: 0, hp: 1 },
-      { t: 0.5, hurt: 0, hp: 1 },
-      { t: 0, hurt: 1, hp: 0.66 },
-      { t: 0, hurt: 0, hp: 0.33 },
-    ].forEach((o, col) => at(130 + col * 200, 230 + row * 230, 0.85, () => drawFoe(ctx, kind, { ...o, outline: false })));
-    at(930, 230 + row * 230, 0.85, () => drawFoe(ctx, kind, { t: 0, hurt: 0, hp: 1, outline: true }));
+  void preload(names).then(() => {
+    const anim = { t: 1, blink: 0, talk: 0, lookX: 0, lookY: 0 };
+    HEROES.forEach((id, i) => {
+      const x = 80 + (i % 4) * 306;
+      const y = 170 + Math.floor(i / 4) * 200;
+      drawCharacter(ctx, id as HeroId, x, y, 140, { expr: 'idle', anim });
+      drawCharacter(ctx, id as HeroId, x + 150, y, 140, { expr: 'celebrate', anim });
+      label(id, x + 75, y + 18);
+    });
+    (['navie', 'ligaya', 'sinta'] as const).forEach((id, row) => {
+      (['idle', 'worried', 'determined', 'surprised', 'hurt', 'celebrate'] as const).forEach((expr, col) => {
+        drawCharacter(ctx, id, 90 + col * 200, 1620 + row * 200, 170, { expr, anim });
+        if (row === 0) {
+          label(expr, 90 + col * 200, 1450);
+        }
+      });
+    });
+    SIDEKICKS.forEach((id, i) => {
+      const x = 80 + (i % 7) * 176;
+      const y = 800 + Math.floor(i / 7) * 172;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(0.72, 0.72);
+      drawSidekick(ctx, id as SidekickId, { expr: 'idle', t: 0, blink: 0, talk: 0, lookX: 0, evolved: false, action: 0 });
+      ctx.restore();
+      label(id, x, y + 18);
+    });
   });
-  (['spread', 'magnet', 'bubble', 'rally'] as const).forEach((kind, i) => at(100 + i * 150, 820, 0.7, () => drawPowerUp(ctx, kind, 0.2)));
-  (['bolt', 'wrench', 'part', 'spark'] as const).forEach((kind, i) => at(720 + i * 120, 820, 0.8, () => drawPickup(ctx, kind, 0.4)));
+}
+
+/** One character, large, in several expressions and at every angle it has: ?sheet=close&who=navie */
+function closeUp(): void {
+  const who = new URLSearchParams(location.search).get('who') ?? 'navie';
+  const hero = (HEROES as readonly string[]).includes(who);
+  const prefix = hero ? 'h' : 's';
+  const names = ['front', 'face', 'q', 'q2'].map((v) => `${prefix}.${who}.${v}`);
+  const { canvas, ctx } = makeCanvas(1240, 860, 1);
+  document.body.appendChild(canvas);
+  ctx.fillStyle = '#E9DFC6';
+  ctx.fillRect(0, 0, 1240, 860);
+  void preload(names).then(() => {
+    // &talk=0.8 shows a talking mouth.
+    const anim = { t: 0, blink: 0, talk: Number(new URLSearchParams(location.search).get('talk') ?? 0), lookX: 0, lookY: 0 };
+    (['idle', 'happy', 'determined', 'worried', 'celebrate', 'hurt'] as const).forEach((expr, i) => {
+      const x = 215 + (i % 3) * 405;
+      const y = 400;
+      if (i < 3) {
+        if (hero) {
+          drawCharacter(ctx, who as HeroId, x, y, 370, { expr, anim });
+        } else {
+          ctx.save();
+          ctx.translate(x, y);
+          ctx.scale(1.45, 1.45);
+          drawSidekick(ctx, who as SidekickId, { expr, t: 0, blink: 0, talk: 0, lookX: 0, evolved: false, action: 0 });
+          ctx.restore();
+        }
+      }
+    });
+    (['worried', 'celebrate', 'hurt', 'surprised', 'idle', 'idle'] as const).forEach((expr, i) => {
+      const x = 110 + i * 205;
+      const y = 830;
+      const yaw = i === 4 ? 0 : i === 5 ? 35 : 15;
+      if (hero) {
+        drawCharacter(ctx, who as HeroId, x, y, 190, { expr, anim, yaw });
+      } else {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(0.8, 0.8);
+        drawSidekick(ctx, who as SidekickId, { expr, t: 0, blink: expr === 'idle' && i === 5 ? 0.6 : 0, talk: 0, lookX: 0, evolved: false, action: 0, yaw });
+        ctx.restore();
+      }
+    });
+  });
+}
+
+/** Everyone large, for judging faces: ?sheet=big&who=heroes|kicks&expr=idle&yaw=15&from=0&count=12 */
+function bigSheet(): void {
+  const q = new URLSearchParams(location.search);
+  const heroes = q.get('who') !== 'kicks';
+  const expr = (q.get('expr') ?? 'idle') as (typeof EXPRESSIONS)[number];
+  const yaw = Number(q.get('yaw') ?? 15);
+  const from = Number(q.get('from') ?? 0);
+  const count = Number(q.get('count') ?? (heroes ? 12 : 27));
+  const list = (heroes ? HEROES : SIDEKICKS).slice(from, from + count);
+  const cols = heroes ? 4 : 6;
+  const cell = heroes ? 310 : 206;
+  const tall = heroes ? 350 : 262;
+  const rows = Math.ceil(list.length / cols);
+  const { canvas, ctx } = makeCanvas(cols * cell, rows * tall, 1);
+  document.body.appendChild(canvas);
+  ctx.fillStyle = '#E9DFC6';
+  ctx.fillRect(0, 0, cols * cell, rows * tall);
+  const views = ['face', 'front', 'q', 'q2', 'frontR', 'qR', 'q2R', 'evo'];
+  void preload(list.flatMap((id) => views.map((v) => `${heroes ? 'h' : 's'}.${id}.${v}`))).then(() => {
+    const anim = { t: 0, blink: 0, talk: 0, lookX: 0, lookY: 0 };
+    list.forEach((id, i) => {
+      const x = cell / 2 + (i % cols) * cell;
+      const y = (Math.floor(i / cols) + 1) * tall - 26;
+      if (heroes) {
+        drawCharacter(ctx, id as HeroId, x, y, 268, { expr, anim, yaw });
+      } else {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(0.98, 0.98);
+        drawSidekick(ctx, id as SidekickId, { expr, t: 0, blink: 0, talk: 0, lookX: 0, evolved: q.get('evo') === '1', action: 0, yaw });
+        ctx.restore();
+      }
+      ctx.fillStyle = '#354844';
+      ctx.font = '700 13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(id, x, y + 18);
+    });
+  });
 }
 
 export function runDevSheet(name: string): void {
-  if (name === 'foes') {
-    foes();
+  if (name === 'big') {
+    bigSheet();
+  } else if (name === 'close') {
+    closeUp();
   } else if (name === 'drive') {
     drive();
-  } else if (name === 'cast') {
-    sheet();
-  } else if (name === 'crew') {
-    const { canvas, ctx } = makeCanvas(1200, 2960, 1);
-    document.body.appendChild(canvas);
-    drawCrewSheet(ctx, Number(new URLSearchParams(location.search).get('t') ?? '1.3'));
-  } else if (name === 'compare') {
-    compare();
-  } else if (name.startsWith('faces-')) {
-    faces(name.slice(6) as 'navie');
+  } else if (name === 'faces') {
+    faces();
+  } else {
+    roster();
   }
 }

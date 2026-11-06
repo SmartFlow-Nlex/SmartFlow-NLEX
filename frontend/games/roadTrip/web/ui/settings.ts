@@ -170,7 +170,7 @@ export function settingsPanel(app: AppApi, options: { inMission: boolean; onChan
     sections.push(
       h('section', { class: 'card soft' }, [
         h('h3', { text: 'Tutorial & progress' }),
-        toggle('Replay the tutorial', app.replayTutorial, (v) => app.setReplayTutorial(v), 'Runs again on Mission 1.'),
+        toggle('Replay the tutorial', app.replayTutorial, (v) => app.setReplayTutorial(v), 'Runs again on Level 1.'),
         resetArea,
       ]),
     );

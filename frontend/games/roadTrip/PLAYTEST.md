@@ -80,3 +80,72 @@ Sixteen stops are too many for one 30-minute session. Give each player a save at
 - Did they notice a new sidekick joining, and did they choose to equip it? Which six do they remember?
 - Could they tell what Walis, Ilaw and Tala were doing without being told?
 - Did they find the next stop on the map straight away, and did they try the small passed exits?
+
+## Added 3 Nov: the clay pass
+
+Give each player a save with about half the roster unlocked, plus one reveal waiting. Ask:
+
+- Before anyone explains it: what do the two tiles at the bottom left do? Do they try to tap them?
+- Can they tell a sidekick that is ready from one that is recharging, without colour? (Try once in greyscale.)
+- At a glance, what is the road telling them: which lane, what is coming, how far to go? Did the scenery ever hide a
+  hazard? Run this once in `lantern` and once in `rain`.
+- In Team, do they press a tile expecting it to equip? Do they find the one action in the footer?
+- At a checkpoint, can they say what they gain and lose before tapping? Did they ever take "Continue without upgrade"?
+- Which hero and which sidekick do they want next, and why? Do the goals on locked tiles make sense?
+- Heavy against nimble: can they feel the difference between Berto and Amihan with their eyes closed to the labels?
+
+On the same phone, also note: time to first frame, whether it stays smooth in the busiest stops (m3 finale, Sta. Rita in
+rain), whether the phone gets warm after ten minutes, and whether the faces load blank at any point.
+
+## Added 4 Nov: character polish
+
+- Without being told, what is on Navie's roof, seen from behind while driving? Do they say "cap"?
+- Does steering feel smoother, or does the car seem to snap between angles?
+- Can they tell Bumbo from Mila at a glance on the road? Did either sidekick ever hide a hazard?
+- Did they notice a sidekick's small effect when its ability fired? Did it distract them?
+- In Team, can they see at once which tile is selected, and that it differs from the one already driving?
+
+## Added 4 Nov: sculpted fronts
+
+- Open Garage and Team: what one word would they use for the characters' faces? Does anyone say "cute"? Does anyone say "stuck on"?
+- Is any face hard to read at phone size? Watch for Ilaw, Silip, Sibat and Kalaw, which were reshaped most.
+- Tap through a few heroes in Team: does the swing feel like a turn, or a jump between pictures?
+- Do the characters feel alive at rest, with the blink and glances? Does anything about it look twitchy?
+- Do they recognise a character from behind on the road as the one they picked from the front?
+
+## Added 5 Nov: the collection
+
+- Open Team: what one word would they use for the characters now? Do they say "cute"? Does anything still look plastic?
+- Which character do they most want to unlock, and why? Which do they not care about?
+- Are any of the 49 faces hard to tell apart, or hard to read at phone size?
+- Do they notice the different personalities when tapping through heroes (Ligaya dancing, Berto rocking, Ningning's stars)?
+- Is a locked character's goal clear from the tile and panel? Does the goal feel reachable, or like grinding?
+- Would they spend 350 Bolts on Kislap, or save for upgrades? Does Bolt pricing feel fair?
+- Do the new abilities feel useful and different? Is Ningning too strong? Is Tali worth choosing?
+- On a real phone: is driving as smooth as before?
+
+## Added 5 Nov: softer, rounder
+
+- Open Team: do they say "cute" unprompted? Does anything still read as a car with a face?
+- Would they want to collect them all? Which one first?
+- Do Bumbo's propeller and the little idle wiggles feel charming, or busy?
+- From behind on the road, can they still tell which lane the car fills? Do hits feel fair for the shape they see?
+
+## Added 5 Nov: the approved look
+
+- Put the Team screen next to the approved picture: what still looks different, and does it matter?
+- Does Navie's mouth look attached while talking, and during a worried or determined line?
+- From behind on the road, does Navie still read as Navie? Do hits feel fair for the shape they see?
+
+## Added 5 Nov: sidekicks and traps
+
+- Do they ever see a sidekick go through something? What was it?
+- Do the jumps look natural at speed, or too busy on a stretch full of cones?
+- Do the sidesteps ever look like the sidekick is about to hit the hero?
+
+## Added 6 Nov: a hundred levels
+
+- Does a level feel like a level, or like one long road cut up? Is any level too short or too long?
+- Is there a stretch where nobody new joins for too long?
+- Does the broken road read as broken asphalt at speed? Does it look flat, or like a bump?
+- Is the difficulty rise between bosses smooth, or does a generated level ever feel harder than the boss after it?

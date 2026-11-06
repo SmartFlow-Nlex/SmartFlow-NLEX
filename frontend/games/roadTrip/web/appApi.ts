@@ -5,6 +5,9 @@ import type { AudioEngine } from './audio';
 
 /** What screens and the mission runner may ask of the app shell. */
 export interface AppApi {
+  /** True once a road has run slowly on this device (this session). */
+  readonly slowDevice: boolean;
+  noteSlowDevice(): void;
   readonly save: SaveData;
   readonly audio: AudioEngine;
   /** True when the player asked to see the tutorial again. */

@@ -1,7 +1,10 @@
 import { MISSIONS } from './missions';
 import { CORE_REWARDS, ENDLESS_MILESTONES, EVOLVE_COST, SIDEKICK_DEFS, SIDEKICK_XP, heroBlockedFor } from './roster';
 import { JOURNEY, SIDEKICKS } from './types';
+import { levelOf, levelPlan } from './levels';
 import { PROCESSED_RUNS_KEPT, bumpRevision } from './save';
+import { HERO_DEFS } from './roster';
+import { addTally, applyUnlocks, levelsCleared } from './unlocks';
 import type {
   HeroId,
   MissionId,
@@ -51,10 +54,20 @@ export function journeyComplete(save: SaveData): boolean {
   return isCompleted(save, 'sta-ines');
 }
 
-/** The sidekicks a stop brings along. */
-function joinersAt(id: MissionId): SidekickId[] {
-  return SIDEKICKS.filter((s) => SIDEKICK_DEFS[s].unlock.after === id);
+/** Who a level brings along: the heroes and sidekicks that join when it is cleared. */
+export function joinersAt(id: MissionId): { heroes: HeroId[]; sidekicks: SidekickId[] } {
+  const level = levelOf(id);
+  if (level === 0) {
+    return { heroes: [], sidekicks: [] };
+  }
+  return {
+    heroes: (Object.keys(HERO_DEFS) as HeroId[]).filter((h) => HERO_DEFS[h].unlock.level === level),
+    sidekicks: SIDEKICKS.filter((s) => SIDEKICK_DEFS[s].unlock.level === level),
+  };
 }
+
+/** The Workshop opens here: early enough that Bolts always have somewhere to go. */
+export const WORKSHOP_LEVEL = 6;
 
 /** The Team screen is open from the start (Navie and two sidekicks); Kiko's arrival opens the Workshop. */
 export function teamOpen(_save: SaveData): boolean {
@@ -62,7 +75,7 @@ export function teamOpen(_save: SaveData): boolean {
 }
 
 export function workshopOpen(save: SaveData): boolean {
-  return save.heroes.includes('kiko');
+  return levelsCleared(save) >= WORKSHOP_LEVEL || save.heroes.includes('kiko');
 }
 
 export function hasSidekick(save: SaveData, id: SidekickId): boolean {
@@ -153,26 +166,29 @@ export function computePayout(save: SaveData, result: RunResult): Payout {
   }
 
   const unlocks: string[] = [];
-  if (firstClear) {
+  if (firstClear && JOURNEY.includes(result.missionId)) {
+    const level = levelOf(result.missionId);
+    const plan = levelPlan(result.missionId);
     if (result.missionId === 'm1-garage') {
-      unlocks.push('Hero unlocked: Kuya Jepoy', 'Sidekick joined: Bantay', "Next: Kiko's Convoy", 'Snapshot Challenge and Endless Expressway unlocked');
-    } else if (result.missionId === 'm2-convoy') {
-      unlocks.push('Hero unlocked: Kiko', 'Sidekick joined: Kumpuni', "Lola's parol now hangs in your garage", 'Workshop opened in the garage', 'Next: Jam at Bocaue Barrier');
+      unlocks.push('Snapshot Challenge and Endless Expressway unlocked');
+    }
+    if (level === WORKSHOP_LEVEL && !save.heroes.includes('kiko')) {
+      unlocks.push('Workshop opened in the garage');
+    }
+    if (result.missionId === 'm2-convoy') {
+      unlocks.push("Lola's parol now hangs in your garage");
     } else if (result.missionId === 'm3-finale') {
-      unlocks.push('Bocaue Barrier reopened!', 'Sidekick joined: Bumbo', 'Fiesta decorations in the garage', 'The road north is open on the map');
+      unlocks.push('Bocaue Barrier reopened!', 'Fiesta decorations in the garage', 'The road north is open on the map');
     } else if (result.missionId === 'sta-ines') {
       unlocks.push('You drove the whole of NLEX: every exit is open!');
-    } else if (JOURNEY.includes(result.missionId)) {
-      unlocks.push(...joinersAt(result.missionId).map((id) => `Sidekick joined: ${SIDEKICK_DEFS[id].name}`));
-      const next = JOURNEY[JOURNEY.indexOf(result.missionId) + 1];
-      if (next !== undefined) {
-        unlocks.push(`Next: ${MISSIONS[next].title}`);
-      }
     }
-  }
-  // Silip joins on any Snapshot win while missing (a first clear or a replay - e.g. after a migration).
-  if (result.missionId === 'snapshot' && save.sidekicks.silip === undefined) {
-    unlocks.push('Sidekick joined: Silip');
+    if (plan !== undefined && plan.reachesExit && result.missionId !== 'sta-ines') {
+      unlocks.push(`Exit reached: ${plan.to}`);
+    }
+    const next = JOURNEY[JOURNEY.indexOf(result.missionId) + 1];
+    if (next !== undefined) {
+      unlocks.push(`Next: Level ${levelOf(next)}, ${MISSIONS[next].title}`);
+    }
   }
   const coreDef = CORE_REWARDS[result.missionId];
   const cores = coreDef === undefined ? 0 : firstClear ? coreDef.first : coreDef.replay;
@@ -268,30 +284,9 @@ export function commitRun(save: SaveData, result: RunResult, now: Date = new Dat
     foundPostcard: previous.foundPostcard || (success && result.postcardFound),
   };
 
+  // Who joins is worked out from the levels cleared, by applyUnlocks below.
   const heroes = [...save.heroes];
   const sidekicks = { ...save.sidekicks };
-  const unlockHero = (id: HeroId): void => {
-    if (!heroes.includes(id)) {
-      heroes.push(id);
-    }
-  };
-  const unlockSidekick = (id: SidekickId): void => {
-    if (sidekicks[id] === undefined) {
-      sidekicks[id] = { xp: 0, evolved: false };
-    }
-  };
-  if (success && result.missionId === 'm1-garage') {
-    unlockHero('jepoy');
-  }
-  if (success && result.missionId === 'm2-convoy') {
-    unlockHero('kiko');
-  }
-  if (success) {
-    joinersAt(result.missionId).forEach(unlockSidekick);
-  }
-  if ((success && result.missionId === 'snapshot') || (result.missionId === 'endless' && result.distance >= 1000)) {
-    unlockSidekick('silip');
-  }
   for (const gain of payout.xp) {
     const progress = sidekicks[gain.id];
     if (progress !== undefined) {
@@ -309,6 +304,15 @@ export function commitRun(save: SaveData, result: RunResult, now: Date = new Dat
     };
   }
 
+  const played = result.outcome !== 'abandoned';
+  const friendship = { ...save.friendship };
+  if (played) {
+    for (const id of [result.hero, ...result.sidekicks]) {
+      if (id !== null) {
+        friendship[id] = (friendship[id] ?? 0) + 1;
+      }
+    }
+  }
   const next: SaveData = {
     ...save,
     bolts: save.bolts + payout.total,
@@ -320,8 +324,14 @@ export function commitRun(save: SaveData, result: RunResult, now: Date = new Dat
     endless,
     tutorialDone: save.tutorialDone || (success && result.missionId === 'm1-garage'),
     processedRuns: [...save.processedRuns, result.runId].slice(-PROCESSED_RUNS_KEPT),
+    tally: played ? addTally(save.tally, result.tally) : save.tally,
+    friendship,
   };
-  return { save: bumpRevision(next, now), payout, duplicate: false };
+  // The reward and whoever it unlocks are one save write.
+  const earned = applyUnlocks(next);
+  const lines = [...earned.heroes.map((id) => `Hero unlocked: ${HERO_DEFS[id].name}`), ...earned.sidekicks.map((id) => `Sidekick joined: ${SIDEKICK_DEFS[id].name}`)];
+  const finalPayout = lines.length > 0 ? { ...payout, unlocks: [...lines, ...payout.unlocks], newlyUnlocked: lines } : payout;
+  return { save: bumpRevision(earned.save, now), payout: finalPayout, duplicate: false };
 }
 
 // -- loadout --------------------------------------------------------------------
@@ -506,7 +516,16 @@ export function buyUpgrade(save: SaveData, id: UpgradeId, now: Date = new Date()
     bolts: save.bolts - check.cost,
     upgrades: { ...save.upgrades, [id]: upgradeLevel(save, id) + 1 },
   };
-  return { save: bumpRevision(next, now), bought: true };
+  // A Workshop task can be what someone was waiting for.
+  return { save: bumpRevision(applyUnlocks(next).save, now), bought: true };
+}
+
+/** A reveal has been shown: it never plays again. */
+export function clearReveal(save: SaveData, id: string, now: Date = new Date()): SaveData {
+  if (!save.reveals.includes(id)) {
+    return save;
+  }
+  return bumpRevision({ ...save, reveals: save.reveals.filter((r) => r !== id) }, now);
 }
 
 /** Marks a story scene or garage moment as seen. */

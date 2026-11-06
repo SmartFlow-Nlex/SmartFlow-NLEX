@@ -87,7 +87,8 @@ export function screenY(cam: Camera, z: number): number {
 
 /** The road's visual bend at distance z, in lanes. Zero at the player. */
 export function bendAt(cam: Camera, z: number): number {
-  const k = Math.max(0, z) / 60;
+  // Capped, so the sliver of road running on to the horizon stays in the picture.
+  const k = Math.min(1.8, Math.max(0, z) / 60);
   return cam.curve * k * k * 2.2;
 }
 

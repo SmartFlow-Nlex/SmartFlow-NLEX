@@ -15,13 +15,13 @@ const GAMES: {
   title: string;
   blurb: string;
   icon: keyof typeof Ionicons.glyphMap;
-  route: '/arcade/rush-hour' | '/arcade/tollbound-heroes' | '/arcade/grand-prix';
+  route: '/arcade/rush-hour' | '/arcade/tollbound-heroes' | '/arcade/grand-prix' | '/arcade/wildway-guardians';
 }[] = [
   {
     id: 'road-trip',
     route: '/arcade/tollbound-heroes',
     title: 'Tollbound Heroes',
-    blurb: 'Pick a hero - Navie, Kuya Jepoy or Kiko - and two sidekicks, and drive to the Arena Fiesta: three story missions, an Endless road, sidekicks to evolve.',
+    blurb: 'Pick a hero and two sidekicks, then drive the whole of NLEX, stop by stop. An Endless road and a garage full of crew to unlock.',
     icon: 'car-sport',
   },
   {
@@ -30,6 +30,13 @@ const GAMES: {
     title: 'Navie Grand Prix',
     blurb: 'Race Navie against five rival cars on three tracks: win the Fiesta cup, beat your ghost in time trials, upgrade in the pit.',
     icon: 'flag',
+  },
+  {
+    id: 'wildway-guardians',
+    route: '/arcade/wildway-guardians',
+    title: 'Wildway Guardians',
+    blurb: 'Navie calls the Guardians: unjam a toll plaza, clear a creek, fix a depot, then help a rufous hornbill home. Plan every trip to burn less.',
+    icon: 'paw',
   },
   {
     id: 'rush-hour',
@@ -76,7 +83,7 @@ export default function ArcadeScreen(): React.ReactElement {
           <Image source={mascotIcon} style={styles.heroMascot} resizeMode="contain" accessibilityIgnoresInvertColors />
           <View style={styles.heroText}>
             <Text style={styles.heroTitle}>Play with Navie</Text>
-            <Text style={styles.heroSubtitle}>A hero-and-sidekick road adventure, a racing cup and a daily sliding puzzle, all starring Navie.</Text>
+            <Text style={styles.heroSubtitle}>A hero-and-sidekick road adventure, a racing cup, a wildlife rescue and a daily sliding puzzle.</Text>
           </View>
         </View>
 

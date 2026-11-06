@@ -1,5 +1,8 @@
+import { JOURNEY_EXITS, LEVEL_PLAN, type JourneyExit, type LevelPlan, type RoadMix } from './levels';
 import type { PatternTag } from './patterns';
-import type { MachineId, MissionId } from './types';
+import type { MachineId, MissionId, StoryMissionId } from './types';
+
+export { JOURNEY_EXITS, type JourneyExit };
 
 /**
  * A short goal shown during a stretch of road ("Zap 6 bots", "Grab 15 Bolts",
@@ -12,10 +15,11 @@ export interface GoalDef {
 }
 
 /**
- * The whole story is one road: Balintawak to Sta. Ines, every NLEX exit.
- * Exits are real and in real order (frontend/constants/nlexSegments.ts,
- * checked by a test); distances are compressed for play and the story events
- * are fictional - the map says so.
+ * The whole story is one road: Balintawak to Sta. Ines, every NLEX exit, played as a
+ * hundred levels (core/levels.ts). Exits are real and in real order
+ * (frontend/constants/nlexSegments.ts, checked by a test); distances are compressed
+ * for play and the story events are fictional - the map says so. The story missions
+ * below are sixteen of the levels; the rest are road levels built from the plan.
  */
 
 export type SectionDef =
@@ -57,7 +61,7 @@ export interface Postcard {
 
 export interface MissionDef {
   id: MissionId;
-  /** Its stop along the road, from 1; 0 for the side modes (Snapshot, Endless). */
+  /** Its level along the road, 1 to 100; 0 for the side modes (Snapshot, Endless). */
   number: number;
   /** Boss missions: which road machine is at the end of this stretch. */
   machine?: MachineId;
@@ -95,8 +99,13 @@ const ROAD_RULES = [
   'Wrenches fix one dent. A postcard hides on this road - optional.',
 ];
 
-/** What a stretch of road is mostly made of. */
-type RoadMix = 'balanced' | 'roadworks' | 'bots' | 'traffic' | 'scenic';
+/** A road level's rules: as a story leg's, but with no postcard on it. */
+const LEVEL_RULES = [
+  'Steer around cones, barriers, potholes, broken road and slower traffic.',
+  ROAD_RULES[1],
+  'Wrenches fix one dent.',
+];
+
 
 function roadPools(mix: RoadMix, tier: number): { tag: PatternTag; weight: number }[] {
   const lean = (name: RoadMix, amount: number): number => (mix === name ? amount : 0);
@@ -158,7 +167,7 @@ function leg(number: number, requires: MissionId, o: LegOptions): MissionDef {
       { kind: 'arrive', length: 150 },
     ],
     gantries: [
-      { at: 120, title: o.to, sub: `${o.km} km` },
+      { at: 120, title: o.to, sub: 'Next exit' },
       { at: first + second - 60, title: o.to, sub: 'Exit' },
     ],
     postcard: { ...o.postcard, at: Math.round(first + second * 0.45) },
@@ -205,7 +214,7 @@ function convoyLeg(number: number, requires: MissionId, o: LegOptions & { rescue
     rules: o.rules,
     sections,
     gantries: [
-      { at: 120, title: o.to, sub: `${o.km} km` },
+      { at: 120, title: o.to, sub: 'Next exit' },
       { at: 1100, title: o.to, sub: 'Exit' },
     ],
     postcard: { ...o.postcard, at: 900 },
@@ -227,7 +236,7 @@ const BOSS_RULES = [
   'Three phases, each announced, with a safe break between. Phase 3: grab 3 signal sparks, then press TEAM HONK.',
 ];
 
-export const MISSIONS: Record<MissionId, MissionDef> = {
+const STORY: Record<StoryMissionId | 'snapshot' | 'endless', MissionDef> = {
   'm1-garage': {
     id: 'm1-garage',
     number: 1,
@@ -235,10 +244,10 @@ export const MISSIONS: Record<MissionId, MissionDef> = {
     kind: 'journey',
     kindLabel: 'Journey',
     from: 'Balintawak',
-    to: 'Meycauayan',
+    to: 'NLEX Harbor Link',
     time: 'morning',
-    objective: 'Drive from Balintawak to Meycauayan.',
-    win: 'Reach the Meycauayan exit.',
+    objective: 'Drive out of Balintawak and onto NLEX, heading north.',
+    win: 'Reach the end of the first stretch.',
     fail: 'Too many dents before the exit.',
     rules: [
       'Steer around cones, barriers, potholes and slower traffic.',
@@ -264,10 +273,11 @@ export const MISSIONS: Record<MissionId, MissionDef> = {
       },
       { kind: 'arrive', length: 150 },
     ],
+    // Same number of signs in the same places as when this mission drove to Meycauayan: signs take ids from the road's own counter.
     gantries: [
-      { at: 120, title: 'NLEX Harbor Link', sub: 'Valenzuela' },
-      { at: 470, title: 'Paso de Blas', sub: 'Valenzuela' },
-      { at: 1050, title: 'Meycauayan', sub: 'Exit 1 km' },
+      { at: 120, title: 'NLEX', sub: 'Northbound' },
+      { at: 470, title: 'NLEX Harbor Link', sub: '4 km' },
+      { at: 1050, title: 'NLEX Harbor Link', sub: '3 km' },
     ],
     postcard: {
       id: 'pc-sierra',
@@ -278,7 +288,7 @@ export const MISSIONS: Record<MissionId, MissionDef> = {
     },
     rewards: { firstClear: 60, replay: 20 },
     requires: null,
-    scenes: { before: 'opening', after: 'meet-jepoy' },
+    scenes: { before: 'opening', after: null },
   },
   'm2-convoy': {
     id: 'm2-convoy',
@@ -305,7 +315,7 @@ export const MISSIONS: Record<MissionId, MissionDef> = {
         length: 400,
         pools: [{ tag: 'convoy', weight: 4 }, { tag: 'traffic', weight: 1 }, { tag: 'pickup', weight: 1 }, { tag: 'convoyPart', weight: 1 }, { tag: 'bots', weight: 2 }],
         gap: [1.6, 2.2],
-        goal: { kind: 'foes', count: 5, text: 'Zap 5 bots before they reach Kiko' },
+        goal: { kind: 'foes', count: 5, text: 'Clear 5 bots for Kiko' },
       },
       { kind: 'rescue' },
       { kind: 'checkpoint' },
@@ -320,10 +330,11 @@ export const MISSIONS: Record<MissionId, MissionDef> = {
       },
       { kind: 'arrive', length: 150 },
     ],
+    // Same number of signs in the same places as before: signs take ids from the road's own counter.
     gantries: [
-      { at: 40, title: 'Marilao', sub: 'Exit' },
-      { at: 200, title: 'CDV / Ph. Arena', sub: '4 km' },
-      { at: 900, title: 'CDV / Ph. Arena', sub: '2 km' },
+      { at: 40, title: 'CDV / Ph. Arena', sub: '3 km' },
+      { at: 200, title: 'CDV / Ph. Arena', sub: '2 km' },
+      { at: 900, title: 'CDV / Ph. Arena', sub: '1 km' },
       { at: 1280, title: 'CDV / Ph. Arena', sub: 'Exit' },
     ],
     postcard: {
@@ -655,6 +666,111 @@ export const MISSIONS: Record<MissionId, MissionDef> = {
   },
 };
 
+// -- the road levels --------------------------------------------------------------------
+
+/** Names for a road level, by what its road is mostly made of. Repeats are fine on a road this long. */
+const LEVEL_TITLES: Record<RoadMix, readonly string[]> = {
+  balanced: ['Open Road', 'Steady Drive', 'Lane by Lane', 'Expressway Cruise', 'Keep It Moving', 'Northbound', 'Smooth Sailing'],
+  roadworks: ['Broken Road', 'Mind the Potholes', 'Road Repairs Ahead', 'Cracked Asphalt', 'Detour Lanes', 'Rough Patch', 'Cones and Craters'],
+  bots: ['Bot Patrol', 'Jam Gang Ambush', 'Purple Trouble', 'Bot Sweep', 'Gang on the Road', 'Barrikada\'s Scouts', 'Zap Them All'],
+  traffic: ['Rush Hour', 'Bumper to Bumper', 'Truck Convoy', 'Bus Lanes', 'Heavy Traffic', 'Weekend Crowd', 'Busy Lanes'],
+  scenic: ['Bolt Trail', 'Scenic Stretch', 'Treasure Road', 'Sunny Stretch', 'Shiny Bolts', 'Picnic Road', 'Fields of Bolts'],
+};
+
+const MIX_LABEL: Record<RoadMix, string> = {
+  balanced: 'Open road',
+  roadworks: 'Broken road',
+  bots: 'Bot patrol',
+  traffic: 'Traffic',
+  scenic: 'Bolt run',
+};
+
+function levelObjective(mix: RoadMix, to: string): string {
+  switch (mix) {
+    case 'roadworks':
+      return `The road toward ${to} is broken up. Steer around the holes and the repairs.`;
+    case 'bots':
+      return `Barrikada's bots are loose before ${to}. Zap them as you go.`;
+    case 'traffic':
+      return `Heavy traffic toward ${to}. Pick your lanes early.`;
+    case 'scenic':
+      return `Bolts all over the road to ${to}. Grab as many as you can.`;
+    default:
+      return `Keep the road moving on the way to ${to}.`;
+  }
+}
+
+function levelGoals(mix: RoadMix, tier: number): [GoalDef, GoalDef] {
+  const bolts = 12 + Math.round(tier * 3);
+  const foes = 6 + Math.round(tier * 1.6);
+  const grab = (n: number, more = false): GoalDef => ({ kind: 'bolts', count: n, text: `Grab ${n}${more ? ' more' : ''} Bolts` });
+  const zap = (n: number, more = false): GoalDef => ({ kind: 'foes', count: n, text: `Zap ${n}${more ? ' more' : ''} bots` });
+  const clean: GoalDef = { kind: 'clean', count: 1, text: 'No dents on this stretch' };
+  switch (mix) {
+    case 'roadworks':
+      return [clean, grab(bolts)];
+    case 'bots':
+      return [zap(foes), zap(foes + 2, true)];
+    case 'traffic':
+      return [clean, zap(foes)];
+    case 'scenic':
+      return [grab(bolts), grab(bolts + 4, true)];
+    default:
+      return [grab(bolts), zap(foes)];
+  }
+}
+
+/** One road level: a stretch, a safe checkpoint, a busier stretch, then the end of the level (or the exit itself). */
+function roadLevel(p: LevelPlan): MissionDef {
+  const first = Math.round(300 + p.tier * 14);
+  const second = Math.round(330 + p.tier * 16);
+  const names = LEVEL_TITLES[p.mix];
+  const signKm = Math.max(1, Math.ceil(p.kmLeft + 0.5));
+  return {
+    id: p.id,
+    number: p.level,
+    title: names[(p.level * 3 + p.stretch) % names.length],
+    kind: 'journey',
+    kindLabel: MIX_LABEL[p.mix],
+    from: p.from,
+    to: p.to,
+    time: p.time,
+    objective: levelObjective(p.mix, p.to),
+    win: p.reachesExit ? `Reach the ${p.to} exit.` : `Drive on toward ${p.to}.`,
+    fail: 'Too many dents.',
+    rules: LEVEL_RULES,
+    sections: [
+      { kind: 'patterns', length: first, pools: roadPools(p.mix, Math.max(0, p.tier - 0.5)), gap: legGap(Math.max(0, p.tier - 0.5)), goal: levelGoals(p.mix, p.tier)[0] },
+      { kind: 'checkpoint' },
+      { kind: 'patterns', length: second, pools: roadPools(p.mix, p.tier), gap: legGap(p.tier), goal: levelGoals(p.mix, p.tier)[1] },
+      { kind: 'arrive', length: 120 },
+    ],
+    gantries: p.reachesExit
+      ? [
+          { at: 100, title: p.to, sub: '1 km' },
+          { at: first + second - 60, title: p.to, sub: 'Exit' },
+        ]
+      : [{ at: Math.round((first + second) * 0.55), title: p.to, sub: `${signKm} km` }],
+    postcard: null,
+    rewards: { firstClear: Math.round(30 + p.level * 0.85), replay: Math.round(10 + p.level * 0.2) },
+    requires: null,
+    // Kuya Jepoy is met where his scene is set: at the Meycauayan exit.
+    scenes: { before: null, after: p.reachesExit && p.to === 'Meycauayan' ? 'meet-jepoy' : null },
+  };
+}
+
+/** Every mission: the hundred levels in order, each needing the one before, then the side modes. */
+export const MISSIONS: Record<MissionId, MissionDef> = (() => {
+  const out = {} as Record<MissionId, MissionDef>;
+  LEVEL_PLAN.forEach((p, i) => {
+    const base = p.story !== null ? STORY[p.story] : roadLevel(p);
+    out[p.id] = { ...base, number: p.level, requires: i === 0 ? null : LEVEL_PLAN[i - 1].id };
+  });
+  out.snapshot = STORY.snapshot;
+  out.endless = STORY.endless;
+  return out;
+})();
+
 /**
  * Endless Expressway: the same systems, no finish line. The road comes in
  * 700 m cycles, each a little busier (denser patterns, more of the hard and
@@ -695,41 +811,3 @@ export function missionLength(def: MissionDef): number {
   }
   return total;
 }
-
-/**
- * Every NLEX exit along the road, south to north, and the stop that reaches it.
- * Exits with no stop of their own (`passedOn`) are driven past, sign and all, on the way to a stop.
- */
-export interface JourneyExit {
-  /** The id in frontend/constants/nlexSegments.ts. */
-  id: string;
-  name: string;
-  province: 'Metro Manila' | 'Bulacan' | 'Pampanga';
-  /** The mission that ends here. */
-  mission: MissionId | null;
-  /** The mission that drives past it. */
-  passedOn: MissionId | null;
-}
-
-export const JOURNEY_EXITS: readonly JourneyExit[] = [
-  { id: 'balintawak', name: 'Balintawak', province: 'Metro Manila', mission: null, passedOn: null },
-  { id: 'harbor-link', name: 'NLEX Harbor Link', province: 'Metro Manila', mission: null, passedOn: 'm1-garage' },
-  { id: 'paso-de-blas', name: 'Paso de Blas', province: 'Metro Manila', mission: null, passedOn: 'm1-garage' },
-  { id: 'meycauayan', name: 'Meycauayan', province: 'Bulacan', mission: 'm1-garage', passedOn: null },
-  { id: 'marilao', name: 'Marilao', province: 'Bulacan', mission: null, passedOn: 'm2-convoy' },
-  { id: 'cdv-ph-arena', name: 'CDV / Ph. Arena', province: 'Bulacan', mission: 'm2-convoy', passedOn: null },
-  { id: 'bocaue-barrier', name: 'Bocaue Barrier', province: 'Bulacan', mission: 'm3-finale', passedOn: null },
-  { id: 'bocaue-interchange', name: 'Bocaue Interchange', province: 'Bulacan', mission: 'bocaue-interchange', passedOn: null },
-  { id: 'tambubong', name: 'Tambubong', province: 'Bulacan', mission: 'tambubong', passedOn: null },
-  { id: 'tabang', name: 'Tabang', province: 'Bulacan', mission: 'tabang', passedOn: null },
-  { id: 'balagtas', name: 'Balagtas', province: 'Bulacan', mission: 'balagtas', passedOn: null },
-  { id: 'sta-rita', name: 'Sta. Rita', province: 'Bulacan', mission: 'sta-rita', passedOn: null },
-  { id: 'pulilan', name: 'Pulilan', province: 'Bulacan', mission: 'pulilan', passedOn: null },
-  { id: 'san-simon', name: 'San Simon', province: 'Pampanga', mission: 'san-simon', passedOn: null },
-  { id: 'san-fernando', name: 'San Fernando', province: 'Pampanga', mission: 'san-fernando', passedOn: null },
-  { id: 'mexico', name: 'Mexico', province: 'Pampanga', mission: 'mexico', passedOn: null },
-  { id: 'angeles', name: 'Angeles', province: 'Pampanga', mission: 'angeles', passedOn: null },
-  { id: 'dau', name: 'Dau', province: 'Pampanga', mission: 'dau', passedOn: null },
-  { id: 'sctex', name: 'SCTEX', province: 'Pampanga', mission: 'sctex', passedOn: null },
-  { id: 'sta-ines', name: 'Sta. Ines', province: 'Pampanga', mission: 'sta-ines', passedOn: null },
-];

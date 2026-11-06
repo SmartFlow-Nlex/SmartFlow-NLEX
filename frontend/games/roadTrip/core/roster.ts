@@ -1,4 +1,6 @@
-import type { HeroId, MissionId, PowerUpKind, SidekickId } from './types';
+import { NEW_HEROES, NEW_SIDEKICKS } from './rosterNew';
+import { UNLOCK_LEVELS } from './unlockLevels';
+import type { CounterId, HeroId, MissionId, PowerUpKind, SidekickId, TeamTag } from './types';
 
 /**
  * Tollbound Heroes: who can drive, who can fly along, and the rules that keep
@@ -23,6 +25,13 @@ export const DAMAGE_MULT_CAP = 2;
 export const MAGNET_CAP = 2;
 export const WARNING_TEAM_CAP = 1;
 
+/** An unlock earned by playing: `counter` reaching `target`. `text` says exactly how. */
+export interface UnlockRule {
+  counter: CounterId;
+  target: number;
+  text: string;
+}
+
 // -- heroes -------------------------------------------------------------------
 
 export interface HeroDef {
@@ -45,13 +54,32 @@ export interface HeroDef {
   signature: { name: string; text: string; short: string; seconds: number; cooldown: number };
   strength: string;
   tradeOff: string;
-  /** 0-5 for the Team screen comparison bars. */
+  /** 1-5 for the Team screen's bars: worked out from the real numbers above (heroStats), never set by hand. */
   stats: { steering: number; toughness: number; power: number; scouting: number };
-  /** How the hero is earned. */
-  unlock: { after: MissionId | null; text: string };
+  /** How the hero is earned: clear this level (core/unlockLevels.ts); null if on the team from the start. */
+  unlock: { level: number | null };
+  tags: TeamTag[];
+  /** What it always does, in a line. */
+  passive: string;
+  /** A short biography. */
+  bio: string;
+  /** Things it says: the first when it joins. */
+  lines: string[];
 }
 
-export const HERO_DEFS: Record<HeroId, HeroDef> = {
+/** The Team screen's bars, from the numbers that actually drive the car. */
+export function heroStats(h: Pick<HeroDef, 'steer' | 'hitHalfW' | 'pulse' | 'extraDents' | 'warning'>): HeroDef['stats'] {
+  const bar = (v: number): number => Math.max(1, Math.min(5, Math.round(v)));
+  const shots = h.pulse.pattern === 'twin' ? 2 : 1;
+  return {
+    steering: bar((h.steer - 0.7) / 0.1),
+    toughness: bar(2 + h.extraDents * 2 + (h.hitHalfW <= 0.24 ? -1 : 0) + (h.hitHalfW >= 0.29 ? 1 : 0)),
+    power: bar((h.pulse.damage * shots) / h.pulse.every),
+    scouting: bar(2 + h.warning / 0.2),
+  };
+}
+
+const HERO_RAW: Record<string, Omit<HeroDef, 'stats' | 'unlock'>> = {
   navie: {
     id: 'navie',
     name: 'Navie',
@@ -71,8 +99,10 @@ export const HERO_DEFS: Record<HeroId, HeroDef> = {
     },
     strength: 'Balanced handling.',
     tradeOff: 'No protection.',
-    stats: { steering: 3, toughness: 2, power: 3, scouting: 3 },
-    unlock: { after: null, text: 'From the start' },
+    tags: ['Guide'],
+    passive: 'Reads the road: every part of the car is average, and nothing is missing.',
+    bio: 'Navie has driven this road every day since the garage opened, and still waves at the toll booths.',
+    lines: ['Everyone in? Seatbelts, snacks, good songs. Tara!', 'I know a better lane.', 'We got this. Slowly, then all at once.'],
   },
   jepoy: {
     id: 'jepoy',
@@ -93,8 +123,10 @@ export const HERO_DEFS: Record<HeroId, HeroDef> = {
     },
     strength: 'One extra dent, heavy horn.',
     tradeOff: 'Steers slower, a little wider.',
-    stats: { steering: 2, toughness: 5, power: 4, scouting: 1 },
-    unlock: { after: 'm1-garage', text: 'Joins after "Out of the Garage"' },
+    tags: ['Guard'],
+    passive: 'One extra dent before the run fails.',
+    bio: 'Big brother of the road. The town band still rides in the back, and nobody has told it the parade ended.',
+    lines: ['Beep beep! Kuya is here.', 'Kapit lang, ha.', 'Nobody gets left on the shoulder.'],
   },
   kiko: {
     id: 'kiko',
@@ -115,10 +147,16 @@ export const HERO_DEFS: Record<HeroId, HeroDef> = {
     },
     strength: 'Nimble, earlier warnings.',
     tradeOff: 'Weakest horn.',
-    stats: { steering: 5, toughness: 1, power: 2, scouting: 5 },
-    unlock: { after: 'm2-convoy', text: "Joins after \"Kiko's Convoy\"" },
+    tags: ['Tech', 'Guide'],
+    passive: 'Warnings arrive 0.6 s earlier.',
+    bio: "A student with a notebook full of engine diagrams, and Lola's lanterns in the back for the plaza.",
+    lines: ['I made notes, po.', 'Careful, careful. Okay, a little less careful.', 'The gears have a pattern. See?'],
   },
 };
+
+export const HERO_DEFS = Object.fromEntries(
+  Object.entries({ ...HERO_RAW, ...NEW_HEROES } as Record<string, Omit<HeroDef, 'stats' | 'unlock'>>).map(([id, h]) => [id, { ...h, stats: heroStats(h), unlock: { level: UNLOCK_LEVELS[id as HeroId] } }]),
+) as Record<HeroId, HeroDef>;
 
 /** Missions a hero cannot drive (story reasons), with why. */
 export function heroBlockedFor(hero: HeroId, mission: MissionId): string | null {
@@ -130,7 +168,10 @@ export function heroBlockedFor(hero: HeroId, mission: MissionId): string | null 
 
 // -- sidekicks -----------------------------------------------------------------
 
-export type SidekickRole = 'shot' | 'chain' | 'magnet' | 'repair' | 'guard' | 'scout' | 'sweep' | 'bolts' | 'pierce' | 'charge' | 'slow' | 'heavy';
+export type SidekickRole =
+  | 'shot' | 'chain' | 'magnet' | 'repair' | 'guard' | 'scout' | 'sweep' | 'bolts' | 'pierce' | 'charge' | 'slow' | 'heavy'
+  | 'reveal' | 'startShield' | 'chainCharge' | 'wade' | 'recovery' | 'shieldLong' | 'alert' | 'postcards' | 'chainCoins' | 'retrieve' | 'reroll' | 'lowVis' | 'bead' | 'shieldMend' | 'weatherEase'
+  | 'botPop' | 'glimmer' | 'wrenchReach' | 'ping' | 'botBolts' | 'mist';
 
 export interface SidekickStats {
   /** Seconds between actions (0 = always on). */
@@ -156,14 +197,19 @@ export interface SidekickDef {
   describe: (s: SidekickStats) => { what: string; range: string; cooldown: string; targets: string; limits: string };
   /** What the evolution changes, in one line. */
   evolution: string;
-  unlock: { after: MissionId | 'endless-1000' | null; text: string };
+  /** How it is earned: clear this level (core/unlockLevels.ts); null if on the team from the start. */
+  unlock: { level: number | null };
   /** Short reactions it says on the radio. */
   barks: { action: string[]; hurt: string; cheer: string };
+  /** How it helps a team (the original twelve: see sidekickTags). */
+  tags?: TeamTag[];
+  /** 'status' works by itself and has no recharge to show. Default: it acts and recharges. */
+  kind?: 'status';
 }
 
 const sec = (n: number): string => `${n % 1 === 0 ? n : n.toFixed(1)} s`;
 
-export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
+const SIDEKICK_RAW: Record<string, Omit<SidekickDef, 'unlock'>> = {
   pip: {
     id: 'pip',
     name: 'Pip',
@@ -181,7 +227,6 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
       limits: 'One target per dart; cannot hit what is behind the car.',
     }),
     evolution: 'Pip Turbo: two darts per volley, faster reload, longer reach.',
-    unlock: { after: null, text: 'From the start' },
     barks: { action: ['Pip-pip! Got it!', 'Bullseye!', 'Next one!'], hurt: 'Whoa, careful!', cheer: 'Pip-pip-hooray!' },
   },
   bumbo: {
@@ -190,7 +235,7 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
     evolvedName: 'Bumbo Max',
     role: 'chain',
     roleLabel: 'Chain zaps',
-    blurb: 'A chubby little bus with a horn-dish. Jolly, loud, loves a crowd.',
+    blurb: 'A round little bus with a propeller on top. Jolly, loud, loves a crowd.',
     base: { cooldown: 3.2, range: 26, power: 1, count: 2 },
     evolved: { cooldown: 2.6, range: 30, power: 1, count: 3 },
     describe: (s) => ({
@@ -201,8 +246,7 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
       limits: 'Waits until at least one target is in range; weak against a single tough bot.',
     }),
     evolution: 'Bumbo Max: chains to 3 targets and recharges faster.',
-    unlock: { after: 'm3-finale', text: 'Joins after "Jam at Bocaue Barrier"' },
-    barks: { action: ['BZZT! Sabay-sabay!', 'Zap party!', 'Kuryente!'], hurt: 'Aray, my dish!', cheer: 'Honk honk hooray!' },
+    barks: { action: ['BZZT! Sabay-sabay!', 'Zap party!', 'Kuryente!'], hurt: 'Aray, my propeller!', cheer: 'Honk honk hooray!' },
   },
   mila: {
     id: 'mila',
@@ -210,7 +254,7 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
     evolvedName: 'Mila Maxi',
     role: 'magnet',
     roleLabel: 'Pick-up magnet',
-    blurb: 'A scooter with a magnet for handlebars. Cheerful, collects everything.',
+    blurb: 'A round pink friend on a floating base, with magnet antennae. Cheerful, collects everything.',
     base: { cooldown: 0, range: 1.1, power: 0, count: 0 },
     evolved: { cooldown: 0, range: 1.6, power: 1, count: 0 },
     describe: (s) => ({
@@ -221,7 +265,6 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
       limits: 'Never pulls hazards; capped at 2 lanes with power-ups.',
     }),
     evolution: 'Mila Maxi: wider pull, and catches power-up capsules too.',
-    unlock: { after: null, text: 'From the start' },
     barks: { action: ['Shiny! Mine!', 'Come to Mila!', 'Magnet time!'], hurt: 'Eep!', cheer: 'So many Bolts!' },
   },
   kumpuni: {
@@ -241,7 +284,6 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
       limits: `${s.count} repair${s.count === 1 ? '' : 's'} per run; all non-wrench repairs together are capped at ${REPAIR_CAP}.`,
     }),
     evolution: 'Kumpuni Pro: two repairs per run and a shorter wait.',
-    unlock: { after: 'm2-convoy', text: "Built in Kiko's workshop after the convoy" },
     barks: { action: ['Tsk, a dent. Fixed!', 'Good as new, po!', 'Hold still...'], hurt: 'My toolbox!', cheer: 'Not a scratch!' },
   },
   bantay: {
@@ -250,18 +292,17 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
     evolvedName: 'Bantay Gold',
     role: 'guard',
     roleLabel: 'Guard',
-    blurb: 'A brave bulldog of a patrol scooter. Takes the hit so you do not.',
+    blurb: 'A friendly aspin in a travel scarf. Takes the hit so you do not.',
     base: { cooldown: 24, range: 0, power: 0, count: 1 },
     evolved: { cooldown: 18, range: 0, power: 0, count: 1 },
     describe: (s) => ({
-      what: 'Holds a guard charge that absorbs one hit, then recharges.',
+      what: 'Holds a guard charge that absorbs one hit, then recharges. Once per run, a brief emergency buffer when you drop to your last dent.',
       range: 'Your car',
       cooldown: `${sec(s.cooldown)} to recharge`,
       targets: 'Hazards, bots and thrown objects',
-      limits: 'One charge at a time; does not recharge while another shield is up.',
+      limits: 'One charge at a time; no recharge while another shield is up. The buffer never heals.',
     }),
     evolution: 'Bantay Gold: recharges in 18 s instead of 24.',
-    unlock: { after: 'm1-garage', text: 'Joins after "Out of the Garage"' },
     barks: { action: ['Arf! Blocked!', 'Not on my watch!', 'Bantay is here!'], hurt: 'Grr...', cheer: 'Good team! Arf!' },
   },
   silip: {
@@ -281,7 +322,6 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
       limits: `Team warning bonus capped at ${WARNING_TEAM_CAP} s. A jam means double damage for 1.5 s, or the machine's next throw delayed.`,
     }),
     evolution: 'Silip Radar: earlier warnings and jams more often.',
-    unlock: { after: 'endless-1000', text: 'Reach 1,000 m in Endless Expressway (or clear the Snapshot Challenge)' },
     barks: { action: ['Silip sees it!', 'Jammed!', 'Peekaboo!'], hurt: 'My lens!', cheer: 'Clear road ahead!' },
   },
   walis: {
@@ -301,7 +341,6 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
       limits: 'Only what is really in your way; waits if the lane is clear.',
     }),
     evolution: 'Walis Turbo: sweeps two at a time, sooner and from further away.',
-    unlock: { after: 'tambubong', text: 'Joins at Tambubong' },
     barks: { action: ['Swish! All clean!', 'Out of the way, cone!', 'Spotless!'], hurt: 'My bristles!', cheer: 'What a tidy road!' },
   },
   barya: {
@@ -321,7 +360,6 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
       limits: 'Adds to Bolt Rush; does not help in a fight.',
     }),
     evolution: 'Barya Ginto: +50% Bolts instead of +25%.',
-    unlock: { after: 'balagtas', text: 'Joins at Balagtas' },
     barks: { action: ['Ka-ching!', 'One more for the bank!', 'I counted that!'], hurt: 'My shine!', cheer: 'We are rich!' },
   },
   sibat: {
@@ -341,7 +379,6 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
       limits: 'Waits until a target is in range; one lane per shot.',
     }),
     evolution: 'Sibat Kidlat: harder hits, faster reload, longer reach.',
-    unlock: { after: 'pulilan', text: 'Joins at Pulilan' },
     barks: { action: ['Straight through!', 'Whoosh!', 'In a line, please.'], hurt: 'Off target!', cheer: 'Bullseye, all of them!' },
   },
   tala: {
@@ -361,7 +398,6 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
       limits: 'Not while the signature is on; does not make it last longer.',
     }),
     evolution: 'Tala Liwanag: the signature recharges 50% faster instead of 25%.',
-    unlock: { after: 'san-fernando', text: 'Joins at San Fernando' },
     barks: { action: ['Almost ready!', 'Shine on!', 'Charged with light!'], hurt: 'My flame!', cheer: 'All the stars are out!' },
   },
   ilaw: {
@@ -381,7 +417,6 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
       limits: 'Does not stack with Route Sense: the longer of the two counts.',
     }),
     evolution: 'Ilaw Bantay: a longer hold, sooner, and it spots trouble earlier.',
-    unlock: { after: 'angeles', text: 'Joins at Angeles' },
     barks: { action: ['Red light! Slow down!', 'Stop! Look! Steer!', 'Easy, easy!'], hurt: 'My lamps!', cheer: 'Green light, everyone!' },
   },
   maso: {
@@ -401,10 +436,33 @@ export const SIDEKICK_DEFS: Record<SidekickId, SidekickDef> = {
       limits: 'One target per swing; slow between swings.',
     }),
     evolution: 'Maso Bigat: a heavier swing, more often, from further away.',
-    unlock: { after: 'dau', text: 'Joins at Dau' },
     barks: { action: ['BONK!', 'Hammer time!', 'Hold still.'], hurt: 'Ow, my handle!', cheer: 'Nailed it!' },
   },
 };
+
+export const SIDEKICK_DEFS = Object.fromEntries(
+  Object.entries({ ...SIDEKICK_RAW, ...NEW_SIDEKICKS } as Record<string, Omit<SidekickDef, 'unlock'>>).map(([id, k]) => [id, { ...k, unlock: { level: UNLOCK_LEVELS[id as SidekickId] } }]),
+) as Record<SidekickId, SidekickDef>;
+
+/** How each of the original twelve helps a team (the new ones say so themselves). */
+const ORIGINAL_TAGS: Partial<Record<SidekickId, TeamTag[]>> = {
+  pip: ['Tech'],
+  bumbo: ['Tech', 'Rhythm'],
+  mila: ['Gatherer'],
+  kumpuni: ['Tech', 'Guard'],
+  bantay: ['Guard'],
+  silip: ['Guide', 'Tech'],
+  walis: ['Guide'],
+  barya: ['Gatherer'],
+  sibat: ['Tech'],
+  tala: ['Rhythm'],
+  ilaw: ['Guide', 'Guard'],
+  maso: ['Tech'],
+};
+
+export function sidekickTags(id: SidekickId): TeamTag[] {
+  return SIDEKICK_DEFS[id].tags ?? ORIGINAL_TAGS[id] ?? [];
+}
 
 export function sidekickStats(id: SidekickId, evolved: boolean): SidekickStats {
   const def = SIDEKICK_DEFS[id];
@@ -464,11 +522,11 @@ export interface RunUpgradeDef {
 
 /** Temporary: they last only for the current run and are offered at safe checkpoints. */
 export const RUN_UPGRADES: Record<RunUpgradeId, RunUpgradeDef> = {
-  wideHorn: { id: 'wideHorn', name: 'Wide Horn', gain: 'Pulses also hit the lanes beside yours.', cost: 'Each pulse does 25% less damage.' },
-  overclock: { id: 'overclock', name: 'Overclock', gain: 'Pulses fire 30% faster.', cost: 'Steering 8% slower.' },
+  wideHorn: { id: 'wideHorn', name: 'Wide Horn', gain: 'Pulses cover your lane and both neighbours.', cost: 'Each pulse does 25% less damage.' },
+  overclock: { id: 'overclock', name: 'Overclock', gain: '+30% pulse rate.', cost: 'Steering speed -8%.' },
   boltRush: { id: 'boltRush', name: 'Bolt Rush', gain: '+50% Bolts from pick-ups.', cost: 'Bots take one more hit.' },
   sturdy: { id: 'sturdy', name: 'Sturdy Frame', gain: '+1 dent before the run fails.', cost: 'Steering 10% slower.' },
-  squadDrill: { id: 'squadDrill', name: 'Squad Drill', gain: 'Sidekicks act 25% more often.', cost: 'Signature recharges 25% slower.' },
+  squadDrill: { id: 'squadDrill', name: 'Squad Drill', gain: 'Sidekicks act 25% more often.', cost: 'Signature recharge takes 25% longer.' },
   lookout: { id: 'lookout', name: 'Lookout', gain: 'Warnings 0.4 s earlier.', cost: 'Pulses do 15% less damage.' },
   secondWind: { id: 'secondWind', name: 'Second Wind', gain: 'Fixes a dent right now.', cost: 'Power-ups last 30% shorter.' },
 };

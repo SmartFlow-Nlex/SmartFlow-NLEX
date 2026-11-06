@@ -1,6 +1,8 @@
 /** Types shared by the simulation, the page and the React Native host. */
+import { JOURNEY } from './levels';
 
-export type MissionId =
+/** The story missions: the road's beats, each now one of the hundred levels (core/levels.ts). */
+export type StoryMissionId =
   | 'm1-garage'
   | 'm2-convoy'
   | 'm3-finale'
@@ -16,28 +18,12 @@ export type MissionId =
   | 'angeles'
   | 'dau'
   | 'sctex'
-  | 'sta-ines'
-  | 'snapshot'
-  | 'endless';
-/** The whole story: one road, Balintawak to Sta. Ines, played in this order. */
-export const JOURNEY: readonly MissionId[] = [
-  'm1-garage',
-  'm2-convoy',
-  'm3-finale',
-  'bocaue-interchange',
-  'tambubong',
-  'tabang',
-  'balagtas',
-  'sta-rita',
-  'pulilan',
-  'san-simon',
-  'san-fernando',
-  'mexico',
-  'angeles',
-  'dau',
-  'sctex',
-  'sta-ines',
-];
+  | 'sta-ines';
+/** A road level between the story missions: lv-2 to lv-99. */
+export type LevelId = `lv-${number}`;
+export type MissionId = StoryMissionId | LevelId | 'snapshot' | 'endless';
+/** The whole story: one road, Balintawak to Sta. Ines, a hundred levels played in this order. */
+export { JOURNEY } from './levels';
 export const ALL_MISSIONS: readonly MissionId[] = [...JOURNEY, 'snapshot', 'endless'];
 
 export type Difficulty = 'story' | 'relaxed' | 'standard' | 'expert';
@@ -45,7 +31,7 @@ export const DIFFICULTIES: readonly Difficulty[] = ['story', 'relaxed', 'standar
 
 /** The road machines the team un-jams: Haring (king), Prinsipe (prince) and Reyna (queen) Barrikada. */
 export type MachineId = 'barrikada' | 'prinsipe' | 'reyna';
-export type CharacterId = 'navie' | 'jepoy' | 'kiko' | MachineId | 'radio';
+export type CharacterId = HeroId | MachineId | 'radio';
 export type TeammateId = 'jepoy' | 'kiko';
 export const TEAMMATES: readonly TeammateId[] = ['jepoy', 'kiko'];
 
@@ -54,12 +40,57 @@ export function isMachine(id: string): id is MachineId {
 }
 
 /** Tollbound Heroes: the playable heroes. */
-export type HeroId = 'navie' | 'jepoy' | 'kiko';
-export const HEROES: readonly HeroId[] = ['navie', 'jepoy', 'kiko'];
+export type HeroId = 'navie' | 'jepoy' | 'kiko' | 'berto' | 'ligaya' | 'hiraya' | 'sinta' | 'amihan' | 'kidlat' | 'nico' | 'alon' | 'tiko' | 'ningning' | 'simoy' | 'sikat' | 'tali';
+export const HEROES: readonly HeroId[] = ['navie', 'jepoy', 'kiko', 'berto', 'ligaya', 'hiraya', 'sinta', 'amihan', 'kidlat', 'nico', 'alon', 'tiko', 'ningning', 'simoy', 'sikat', 'tali'];
 
 /** The collectible sidekicks: small hovering vehicle-creatures that fly with the hero. */
-export type SidekickId = 'pip' | 'bumbo' | 'mila' | 'kumpuni' | 'bantay' | 'silip' | 'walis' | 'barya' | 'sibat' | 'tala' | 'ilaw' | 'maso';
-export const SIDEKICKS: readonly SidekickId[] = ['pip', 'bumbo', 'mila', 'kumpuni', 'bantay', 'silip', 'walis', 'barya', 'sibat', 'tala', 'ilaw', 'maso'];
+export type SidekickId =
+  | 'pip' | 'bumbo' | 'mila' | 'kumpuni' | 'bantay' | 'silip' | 'walis' | 'barya' | 'sibat' | 'tala' | 'ilaw' | 'maso'
+  | 'parolito' | 'bibing' | 'kape' | 'sago' | 'sampy' | 'kawayan' | 'kalaw' | 'tarsi' | 'piko' | 'saranggola' | 'duwi' | 'silaw' | 'bitu' | 'gearo' | 'ulap'
+  | 'kono' | 'kislap' | 'dahon' | 'radyo' | 'ginto' | 'hamog';
+export const SIDEKICKS: readonly SidekickId[] = [
+  'pip', 'bumbo', 'mila', 'kumpuni', 'bantay', 'silip', 'walis', 'barya', 'sibat', 'tala', 'ilaw', 'maso',
+  'parolito', 'bibing', 'kape', 'sago', 'sampy', 'kawayan', 'kalaw', 'tarsi', 'piko', 'saranggola', 'duwi', 'silaw', 'bitu', 'gearo', 'ulap',
+  'kono', 'kislap', 'dahon', 'radyo', 'ginto', 'hamog',
+];
+
+/** How a character helps a team. Tags explain play styles; a few pairings have a recipe (core/tuning.ts). */
+export type TeamTag = 'Guide' | 'Guard' | 'Gatherer' | 'Rhythm' | 'Tech' | 'Nature' | 'Weather';
+
+/**
+ * What the road remembers across runs, for unlocks: only ever goes up. A run
+ * adds its tally to these when it is paid (so never twice for one run).
+ */
+export interface Tally {
+  cleanStretches: number;
+  chains: number;
+  goals: number;
+  checkpoints: number;
+  hazardsAvoided: number;
+  coins: number;
+  shieldBlocks: number;
+  lowHealthCheckpoints: number;
+  bots: number;
+  basePulseHits: number;
+  upgradesChosen: number;
+  scoutGoals: number;
+  courierGoals: number;
+  weatherGoals: number;
+  eveningGoals: number;
+  duskGoals: number;
+  collectionRuns: number;
+  weatherCleanStretches: number;
+  /** Road driven, in the game's metres. Counts from when this was added: older saves start at 0 rather than a guess. */
+  metres: number;
+}
+export const TALLY_KEYS: readonly (keyof Tally)[] = [
+  'cleanStretches', 'chains', 'goals', 'checkpoints', 'hazardsAvoided', 'coins', 'shieldBlocks', 'lowHealthCheckpoints', 'bots', 'basePulseHits', 'upgradesChosen', 'scoutGoals', 'courierGoals', 'weatherGoals', 'eveningGoals', 'duskGoals', 'collectionRuns', 'weatherCleanStretches', 'metres',
+];
+export function emptyTally(): Tally {
+  return Object.fromEntries(TALLY_KEYS.map((k) => [k, 0])) as unknown as Tally;
+}
+/** What an unlock rule counts: a tally, or something the save already knows. */
+export type CounterId = keyof Tally | 'postcards' | 'workshop' | 'arayatPostcards' | 'km' | 'endlessBest' | 'barkadas' | 'levels';
 
 /** Barrikada's fantasy minions: the only things pulses and sidekick attacks can hit (never traffic). */
 export type FoeKind = 'conebot' | 'drumbot' | 'signbot';
@@ -173,6 +204,12 @@ export interface SaveData {
   garageEvents: string[];
   endless: EndlessRecord;
   settings: Settings;
+  /** Running totals for unlocks. */
+  tally: Tally;
+  /** Newly unlocked characters not yet shown ('hero:berto', 'sidekick:kape'); the garage reveals them once. */
+  reveals: string[];
+  /** Runs driven together, per character: friendship is cosmetic and never touches stats. */
+  friendship: Partial<Record<HeroId | SidekickId, number>>;
 }
 
 export type RunOutcome = 'success' | 'failure' | 'abandoned';
@@ -204,6 +241,8 @@ export interface RunResult {
   /** Endless only: distance reached (m). */
   distance: number;
   durationS: number;
+  /** What this run adds to the unlock totals. */
+  tally: Tally;
 }
 
 export interface PayoutLine {
@@ -225,4 +264,6 @@ export interface Payout {
   xp: { id: SidekickId; amount: number; readyToEvolve: boolean }[];
   /** Endless: a new local best. */
   newBest: boolean;
+  /** Characters this run unlocked. */
+  newlyUnlocked?: string[];
 }

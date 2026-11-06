@@ -1,16 +1,21 @@
 import { PRESETS } from '../../core/config';
 import { speakerName, type Speaker } from '../../core/dialogue';
 import { JOURNEY_EXITS, type MissionDef } from '../../core/missions';
+import { levelOf, levelPlan } from '../../core/levels';
 import { canEvolve, endlessScore, heroFor } from '../../core/progression';
-import { EVOLVE_COST, HERO_DEFS, RUN_UPGRADES, SIDEKICK_DEFS, heroBlockedFor, sidekickStats, type RunUpgradeId } from '../../core/roster';
+import { EVOLVE_COST, HERO_DEFS, RUN_UPGRADES, RUN_UPGRADE_CAP, SIDEKICK_DEFS, heroBlockedFor, sidekickStats, type RunUpgradeId } from '../../core/roster';
+import { previewUpgrade } from '../../core/tuning';
+import { nextUnlocks } from '../../core/unlocks';
 import { mapSnapshot, syntheticSnapshot, validateSnapshot, type ScenarioConfig, type TrafficSnapshot } from '../../core/scenario';
 import type { DrivingSim } from '../../core/sim';
 import type { Payout, RunResult } from '../../core/types';
 import type { AppApi } from '../appApi';
 import { UPGRADE_ICON, icon, withIcon, type IconName } from './arcadeIcons';
 import { button, h } from './dom';
-import { pickupIcon, portrait } from './icons';
-import { sidekickPortrait } from './teamIcons';
+import { portraitEl } from '../art/clay';
+import { markIcon } from './clayIcons';
+import { progressBar } from './rosterPanels';
+import { nutIcon } from './screens';
 import { settingsPanel } from './settings';
 
 /** The overlays a mission shows over the road: briefing, pause and results. */
@@ -34,59 +39,27 @@ function sheet(title: string, children: (Node | null)[], options: { icon?: IconN
 }
 
 /** The run's team, as it will be locked for the run: hero + two sidekicks, with a Change button. */
-function teamSummary(api: OverlayApi, compact = false): HTMLElement {
+function teamSummary(api: OverlayApi): HTMLElement {
   const { app, def } = api;
   const save = app.save;
   const heroId = heroFor(save, def.id);
   const hero = HERO_DEFS[heroId];
   const blocked = heroBlockedFor(save.loadout.hero, def.id);
   const sidekicks = save.loadout.sidekicks.filter((id): id is NonNullable<typeof id> => id !== null && save.sidekicks[id] !== undefined);
-  if (compact) {
-    return h('div', { class: 'card soft team-summary' }, [
-      h('div', { class: 'row-title' }, [
-        h('h3', { text: 'Your team' }),
-        button('Change', () => app.openTeam(() => app.startMission(def.id)), { variant: 'ghost', class: 'small' }),
-      ]),
-      h('div', { class: 'team-faces' }, [
-        h('div', { class: 'team-face' }, [h('img', { class: 'slot-face', attrs: { src: portrait(heroId, 52), alt: '' } }), h('span', { text: hero.name })]),
-        ...sidekicks.map((id) => {
-          const evolved = save.sidekicks[id]?.evolved === true;
-          const d = SIDEKICK_DEFS[id];
-          return h('div', { class: 'team-face' }, [h('img', { class: 'slot-face', attrs: { src: sidekickPortrait(id, 52, evolved), alt: '' } }), h('span', { text: evolved ? d.evolvedName : d.name })]);
-        }),
-      ]),
-    ]);
-  }
   return h('div', { class: 'card soft team-summary' }, [
     h('div', { class: 'row-title' }, [
       h('h3', { text: 'Your team' }),
       button('Change', () => app.openTeam(() => app.startMission(def.id)), { variant: 'ghost', class: 'small' }),
     ]),
-    h('div', { class: 'team-row' }, [
-      h('div', { class: 'team-member hero' }, [
-        h('img', { class: 'slot-face', attrs: { src: portrait(heroId, 52), alt: '' } }),
-        h('div', { class: 'slot-text' }, [
-          h('div', { class: 'slot-label', text: `Hero · ${hero.role}` }),
-          h('div', { class: 'slot-name', text: hero.name }),
-          h('div', { class: 'slot-desc', text: `${hero.signature.name}: ${hero.signature.text}` }),
-        ]),
-      ]),
+    h('div', { class: 'team-faces' }, [
+      h('div', { class: 'team-face' }, [portraitEl('slot-face', heroId, 52, 'character'), h('span', { text: hero.name })]),
       ...sidekicks.map((id) => {
         const evolved = save.sidekicks[id]?.evolved === true;
         const d = SIDEKICK_DEFS[id];
-        const info = d.describe(sidekickStats(id, evolved));
-        return h('div', { class: 'team-member' }, [
-          h('img', { class: 'slot-face', attrs: { src: sidekickPortrait(id, 52, evolved), alt: '' } }),
-          h('div', { class: 'slot-text' }, [
-            h('div', { class: 'slot-label', text: `Sidekick · ${d.roleLabel}` }),
-            h('div', { class: 'slot-name', text: evolved ? d.evolvedName : d.name }),
-            h('div', { class: 'slot-desc', text: info.what }),
-          ]),
-        ]);
+        return h('div', { class: 'team-face' }, [portraitEl('slot-face', id, 52, 'sidekick', { evolved }), h('span', { text: evolved ? d.evolvedName : d.name })]);
       }),
     ]),
     blocked !== null ? h('p', { class: 'muted small-text', text: `${HERO_DEFS[save.loadout.hero].name} sits this one out: ${blocked} Navie drives instead.` }) : null,
-    h('p', { class: 'muted small-text', text: save.settings.autoAbility ? 'Automatic assist is ON: the signature fires by itself when it helps.' : 'Tap the hero button (or Space) for the signature. The team is fixed once the run starts.' }),
   ]);
 }
 
@@ -174,10 +147,8 @@ export function briefingOverlay(
   const start = withIcon(button('Start', handlers.onStart, { class: 'cta' }), 'play');
   start.setAttribute('data-autofocus', '');
   const steering = app.save.settings.steering;
-  const controlsHint =
-    steering === 'drag'
-      ? 'Steer: drag in the pad under your car. Keys: ← → (hold).'
-      : 'Steer: tap ‹ or › for one lane. Keys: ← →.';
+  const keys = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  const controlsHint = steering === 'drag' ? `Drag or tap under your car to steer.${keys ? ' Keys: ← →, Space for the signature, Esc to pause.' : ''}` : `Tap the arrows to change lanes.${keys ? ' Keys: ← →, Space for the signature, Esc to pause.' : ''}`;
   const tutorialNote =
     def.id === 'm1-garage' && app.save.tutorialDone && !app.replayTutorial ? 'Tutorial skipped - you can replay it from Settings.' : null;
   // Endless opens after the tutorial and has no story: who is driving, and its rules, are enough.
@@ -189,21 +160,24 @@ export function briefingOverlay(
         ? h('div', { class: 'chips' }, [h('span', { class: 'chip on', text: `Best ${best} m` })])
         : null
       : h('div', { class: 'chips' }, [
-          h('span', { class: 'chip on', text: def.number > 0 ? `Mission ${def.number} - ${def.kindLabel}` : def.kindLabel }),
+          h('span', { class: 'chip on', text: def.number > 0 ? `Level ${def.number} · ${def.kindLabel}` : def.kindLabel }),
           h('span', { class: 'chip' }, [icon('pin'), `${def.from} → ${def.to}`]),
         ]),
     h('p', { class: 'lead', text: def.objective }),
     h('div', { class: 'card soft' }, [
       h('dl', { class: 'facts' }, [h('dt', { text: 'Win' }), h('dd', { text: def.win }), h('dt', { text: 'Fail' }), h('dd', { text: preset.maxDents === null && def.kind !== 'convoy' && !compact ? 'Story mode: runs never fail.' : def.fail })]),
-      h('ul', { class: 'rules' }, def.rules.map((rule) => h('li', { text: rule }))),
     ]),
+    // The first time, the rules are open; after that they are one tap away.
+    def.rules.length > 0
+      ? h('details', { class: 'card soft details', attrs: app.save.missions[def.id]?.completed === true ? {} : { open: '' } }, [h('summary', { text: 'How it works' }), h('ul', { class: 'rules' }, def.rules.map((rule) => h('li', { text: rule })))])
+      : null,
     handlers.onSnapshot !== null ? snapshotCard(api, handlers.onSnapshot, start) : null,
-    teamSummary(api, compact),
+    teamSummary(api),
     h('div', { class: 'card soft row-title' }, [
-      h('div', {}, [h('h3', { text: `Difficulty: ${preset.label}` }), compact ? null : h('p', { class: 'muted small-text', text: preset.tagline })]),
+      h('h3', { text: `Difficulty: ${preset.label}` }),
       button('Change', () => app.openSettings(() => app.startMission(def.id), true), { variant: 'ghost', class: 'small' }),
     ]),
-    compact ? null : h('p', { class: 'muted small-text', text: `${controlsHint} Signature: Space. Pause: Esc.` }),
+    compact ? null : h('p', { class: 'muted small-text', text: controlsHint }),
     tutorialNote !== null ? h('p', { class: 'muted small-text', text: tutorialNote }) : null,
     h('div', { class: 'actions' }, [start, backTarget(withIcon(button('Back to map', handlers.onBack, { variant: 'secondary' }), 'back'))]),
   ], { icon: 'flag', tone: 'briefing' });
@@ -224,6 +198,7 @@ export function pauseOverlay(
         h('h3', { text: api.def.title }),
         h('p', { text: api.def.objective }),
         h('ul', { class: 'rules' }, api.def.rules.map((r) => h('li', { text: r }))),
+        h('p', { class: 'small-text', text: api.app.save.settings.steering === 'drag' ? 'Steering: drag or tap anywhere below your car. Your horn fires by itself; the round button is your signature.' : 'Steering: tap the arrows to change lanes. Your horn fires by itself; the round button is your signature.' }),
         h('p', { class: 'muted small-text', text: api.def.kind === 'endless' ? `Seed ${api.seed}` : `Run seed ${api.seed} - share it to replay this exact road.` }),
       ]),
     Team: () => {
@@ -293,50 +268,85 @@ export function pauseOverlay(
 }
 
 /**
- * A safe checkpoint: the run is frozen; three temporary upgrades, each with
- * its gain and its cost. Endless can also bank the run here.
+ * A safe checkpoint: the run is frozen, and three compact cards offer an upgrade
+ * for the rest of this run. Each says what you gain and what it costs, in words
+ * and with the real values before and after, from the same sums the road uses. A
+ * whole card is the button. Key hints only appear where there is a keyboard.
  */
-export function checkpointOverlay(api: OverlayApi, choice: { options: RunUpgradeId[]; canBank: boolean }, onPick: (id: RunUpgradeId | null, bank: boolean) => void): HTMLElement {
-  // Picture cards: the upgrade's icon, its name, and what you gain and what it costs - each in words
-  // and by an up / down tag, never by colour alone. The key to press sits in the corner.
-  const cards = choice.options.map((id, i) => {
-    const up = RUN_UPGRADES[id];
-    const b = h('button', { class: `upgrade-choice up-${id}`, attrs: { 'aria-label': `${up.name}. Gain: ${up.gain} Cost: ${up.cost}`, style: `animation-delay:${i * 70}ms` }, onClick: () => onPick(id, false) }, [
-      h('span', { class: 'choice-icon' }, [icon(UPGRADE_ICON[id])]),
-      h('span', { class: 'choice-main' }, [
-        h('strong', { class: 'choice-name', text: up.name }),
-        h('span', { class: 'choice-row choice-gain' }, [h('span', { class: 'choice-tag' }, [icon('up'), 'Gain']), h('span', { text: up.gain })]),
-        h('span', { class: 'choice-row choice-cost' }, [h('span', { class: 'choice-tag' }, [icon('down'), 'Cost']), h('span', { text: up.cost })]),
-      ]),
-      h('span', { class: 'choice-key', text: String(i + 1), attrs: { 'aria-hidden': 'true' } }),
-    ]);
-    if (i === 0) {
-      b.setAttribute('data-autofocus', '');
+export function checkpointOverlay(api: OverlayApi, onPick: (id: RunUpgradeId | null, bank: boolean) => void): HTMLElement {
+  const sim = api.sim;
+  const s = sim.state;
+  const keysHere = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  const cards = h('div', { class: 'tb-choices' });
+  const actions = h('div', { class: 'actions tb-check-actions' });
+  let picked = false;
+  const pick = (id: RunUpgradeId | null, bank: boolean): void => {
+    // A double tap never counts twice.
+    if (picked) {
+      return;
     }
+    picked = true;
+    window.removeEventListener('keydown', keys);
+    onPick(id, bank);
+  };
+  const render = (): void => {
+    const choice = s.choice;
+    const options = choice?.options ?? [];
+    cards.replaceChildren(
+      ...options.map((id, i) => {
+        const up = RUN_UPGRADES[id];
+        const rows = previewUpgrade(id, s.hero.id, s.runUpgrades, s.player.cooldownMax);
+        const b = h('button', { class: `tb-choice up-${id}`, attrs: { 'aria-label': `${up.name}. ${up.gain} ${up.cost} ${rows.map((r) => `${r.label} ${r.from} to ${r.to}`).join('. ')}`, style: `animation-delay:${i * 60}ms` }, onClick: () => pick(id, false) }, [
+          h('span', { class: 'tb-choice-ic' }, [icon(UPGRADE_ICON[id])]),
+          h('span', { class: 'tb-choice-main' }, [
+            h('strong', { class: 'tb-choice-name', text: up.name }),
+            // What it gives and what it costs, as the numbers this run will actually have.
+            ...rows.slice(0, 3).map((r) => h('span', { class: `tb-choice-line ${r.kind === 'gain' ? 'good' : 'cost'}` }, [icon(r.kind === 'gain' ? 'up' : 'down'), h('span', { class: 'tb-row-label', text: r.label }), h('span', { class: 'tb-row-val', text: `${r.from} → ${r.to}` })])),
+          ]),
+          keysHere ? h('span', { class: 'tb-choice-key', text: String(i + 1), attrs: { 'aria-hidden': 'true' } }) : null,
+        ]);
+        if (i === 0) {
+          b.setAttribute('data-autofocus', '');
+        }
+        return b;
+      }),
+    );
+    actions.replaceChildren();
+    if (s.rerollsLeft > 0 && options.length > 0) {
+      actions.append(withMark(button(`Duwi reshuffles (${s.rerollsLeft})`, () => {
+        sim.reroll();
+        api.app.audio.sfx('tap');
+        render();
+      }, { variant: 'secondary' })));
+    }
+    if (choice?.canBank === true) {
+      actions.append(withIcon(button(`Bank run (${Math.floor(s.route)} m)`, () => pick(null, true), { variant: 'secondary' }), 'trophy'));
+    }
+    actions.append(backTarget(options.length > 0 ? button('Continue without upgrade', () => pick(null, false), { variant: 'ghost' }) : withIcon(button('Drive on', () => pick(null, false), { class: 'cta' }), 'play')));
+  };
+  const withMark = (b: HTMLButtonElement): HTMLButtonElement => {
+    b.prepend(markIcon('shuffle', 'btn-ic'));
     return b;
-  });
+  };
   const keys = (e: KeyboardEvent): void => {
+    const options = s.choice?.options ?? [];
     const n = Number(e.key);
-    if (n >= 1 && n <= cards.length) {
+    if (n >= 1 && n <= options.length) {
       e.preventDefault();
-      window.removeEventListener('keydown', keys);
-      onPick(choice.options[n - 1], false);
+      pick(options[n - 1], false);
     } else if (e.key === 'Escape' || e.key === '0') {
       e.preventDefault();
-      window.removeEventListener('keydown', keys);
-      onPick(null, false);
+      pick(null, false);
     }
   };
   window.addEventListener('keydown', keys);
-  const endless = api.def.kind === 'endless';
+  render();
+  const held = s.runUpgrades.length;
   const el = sheet('Checkpoint', [
-    h('p', { class: 'lead', text: choice.options.length === 0 ? 'Safe stop.' : endless ? 'Pick one upgrade for this run.' : 'Safe stop - the road is clear. Pick one upgrade for the rest of this run.' }),
-    h('div', { class: 'choices' }, cards),
-    endless ? null : h('p', { class: 'muted small-text', text: `Run upgrades last for this run only (at most 4). Permanent upgrades are in the Workshop.${cards.length > 0 ? ` Keys: 1-${cards.length} to pick, Esc to skip.` : ''}` }),
-    h('div', { class: 'actions' }, [
-      choice.canBank ? withIcon(button(`Bank run (${Math.floor(api.sim.state.route)} m)`, () => onPick(null, true), { variant: 'secondary' }), 'trophy') : null,
-      backTarget(choice.options.length > 0 ? button(endless ? 'Skip' : 'Skip - no upgrade', () => onPick(null, false), { variant: 'ghost' }) : withIcon(button('Drive on', () => onPick(null, false), { class: 'cta' }), 'play')),
-    ]),
+    h('p', { class: 'tb-check-lead', text: `Safe stop. Pick one for this run (${held} of ${RUN_UPGRADE_CAP} so far).` }),
+    cards,
+    keysHere ? h('p', { class: 'muted small-text', text: 'Keys: 1-3 to pick, Esc to skip.' }) : null,
+    actions,
   ], { icon: 'flag', tone: 'checkpoint' });
   // The listener goes with the overlay.
   const observer = new MutationObserver(() => {
@@ -361,7 +371,7 @@ function friendshipCard(result: RunResult, heroName: string): HTMLElement {
   }
   return h('div', { class: 'card friendship' }, [
     h('div', { class: 'friend-row' }, [
-      h('img', { class: 'friend-face', attrs: { src: portrait('kiko', 72, 'happy'), alt: '' } }),
+      portraitEl('friend-face', 'kiko', 72, 'character'),
       h('div', {}, [h('div', { class: 'friend-who', text: 'Kiko' }), h('p', { class: 'friend-line', text: `Salamat, ${heroName}! Lola's lanterns made it - every single one.` })]),
     ]),
     h('dl', { class: 'friend-facts' }, facts.flatMap(([k, v]) => [h('dt', { text: k }), h('dd', { text: v })])),
@@ -384,7 +394,7 @@ export function resultsOverlay(api: OverlayApi, result: RunResult, payout: Payou
   const def = api.def;
   const endless = def.kind === 'endless';
   const hero = HERO_DEFS[result.hero];
-  const title = endless ? (success ? 'Run banked!' : 'Run over') : success ? BOSS_WIN[def.id] ?? `Arrived at ${def.to}!` : 'Not this time';
+  const title = endless ? (success ? 'Run banked!' : 'Run over') : success ? BOSS_WIN[def.id] ?? (levelPlan(def.id)?.reachesExit === false ? `Level ${levelOf(def.id)} cleared!` : `Arrived at ${def.to}!`) : 'Not this time';
   const why = endless
     ? `${Math.floor(result.distance)} m · score ${endlessScore(result)}${payout.newBest ? ' · new best!' : ''}`
     : success
@@ -408,15 +418,14 @@ export function resultsOverlay(api: OverlayApi, result: RunResult, payout: Payou
   const save = api.app.save;
   return sheet(title, [
     h('div', { class: `results-hero${success ? ' celebrate' : ''}` }, [
-      success ? h('span', { class: 'results-rays', attrs: { 'aria-hidden': 'true' } }) : null,
       h('div', { class: 'results-team' }, [
-        h('img', { class: 'results-face', attrs: { src: portrait(result.hero, 96, success ? 'happy' : 'idle'), alt: '' } }),
+        portraitEl('results-face', result.hero, 104, 'character', { expr: success ? 'celebrate' : 'worried' }),
         ...result.sidekicks
           .filter((id): id is NonNullable<typeof id> => id !== null)
-          .map((id) => h('img', { class: 'results-sidekick', attrs: { src: sidekickPortrait(id, 60, save.sidekicks[id]?.evolved === true, success ? 'celebrate' : 'worried'), alt: '' } })),
+          .map((id) => portraitEl('results-sidekick', id, 60, 'sidekick', { evolved: save.sidekicks[id]?.evolved === true, expr: success ? 'celebrate' : 'worried' })),
       ]),
       h('p', { class: 'lead', text: why }),
-      h('div', { class: 'results-total' }, [h('img', { class: 'stat-icon', attrs: { src: pickupIcon('bolt', 26), alt: '' } }), h('span', { text: `+${payout.total} Bolts` })]),
+      h('div', { class: 'results-total' }, [nutIcon(), h('span', { text: `+${payout.total} Bolts` })]),
       headline !== null && headline !== undefined ? h('p', { class: 'results-headline', text: headline }) : null,
     ]),
     success && def.id === 'm2-convoy' ? friendshipCard(result, hero.name) : null,
@@ -428,7 +437,7 @@ export function resultsOverlay(api: OverlayApi, result: RunResult, payout: Payou
             const xp = progress?.xp ?? 0;
             const pct = Math.min(100, Math.round((xp / EVOLVE_COST.xp) * 100));
             return h('div', { class: 'xp-row' }, [
-              h('img', { class: 'xp-face', attrs: { src: sidekickPortrait(x.id, 40, progress?.evolved === true), alt: '' } }),
+              portraitEl('xp-face', x.id, 40, 'sidekick', { evolved: progress?.evolved === true }),
               h('div', { class: 'xp-text' }, [
                 h('strong', { text: `${SIDEKICK_DEFS[x.id].name} +${x.amount} XP` }),
                 progress?.evolved
@@ -448,6 +457,16 @@ export function resultsOverlay(api: OverlayApi, result: RunResult, payout: Payou
     news.length > 0
       ? h('div', { class: 'card unlocks' }, [h('h3', { text: 'New' }), h('ul', {}, news.map((u) => h('li', { text: u })))])
       : null,
+    (() => {
+      // What this run moved, and who is nearest: a reason to go again.
+      const next = nextUnlocks(save, 2);
+      return next.length === 0
+        ? null
+        : h('div', { class: 'card soft tb-next' }, [
+            h('h3', { text: 'Nearly here' }),
+            ...next.map((n) => h('div', { class: 'tb-next-row' }, [portraitEl('tb-next-face', n.id, 40, n.kind === 'hero' ? 'character' : 'sidekick', { locked: true }), h('div', { class: 'tb-next-body' }, [h('strong', { text: n.name }), progressBar(n.progress)])])),
+          ]);
+    })(),
     h('details', { class: 'card soft details' }, [
       h('summary', { text: 'Details: how the Bolts were earned' }),
       h(

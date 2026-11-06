@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isReplyMood } from './assistantApi';
-import type { ChatMessage } from './assistantApi';
+import type { ChatMessage, ReplyTranslations } from './assistantApi';
 
 /**
  * Past conversations with Navie, kept on this phone so they can be reopened and
@@ -76,7 +76,27 @@ function readMessage(raw: unknown): ChatMessage | null {
   if (isReplyMood(item.mood)) {
     message.mood = item.mood;
   }
+  const translations = readTranslations(item.translations);
+  if (translations !== undefined) {
+    message.translations = translations;
+  }
   return message;
+}
+
+/** Anything unreadable is dropped, and just gets translated again when it is next needed. */
+function readTranslations(raw: unknown): ReplyTranslations | undefined {
+  if (typeof raw !== 'object' || raw === null) {
+    return undefined;
+  }
+  const { english, tagalog } = raw as Record<string, unknown>;
+  const translations: ReplyTranslations = {};
+  if (typeof english === 'string') {
+    translations.english = english;
+  }
+  if (typeof tagalog === 'string') {
+    translations.tagalog = tagalog;
+  }
+  return translations;
 }
 
 /**
@@ -165,6 +185,8 @@ export interface ChatHistory {
   chats: SavedChat[];
   /** Adds the chat, or replaces the stored copy of it. */
   save: (id: string, messages: ChatMessage[]) => void;
+  /** Changes a stored chat's messages from its latest copy; a chat since deleted stays gone. */
+  update: (id: string, change: (messages: ChatMessage[]) => ChatMessage[]) => void;
   remove: (id: string) => void;
   clear: () => void;
 }
@@ -231,6 +253,15 @@ export function useChatHistory(account: string | null): ChatHistory {
     [change],
   );
 
+  const update = useCallback(
+    (id: string, changeMessages: (messages: ChatMessage[]) => ChatMessage[]): void => {
+      change((current) =>
+        current.map((item) => (item.id === id ? toSavedChat(id, changeMessages(item.messages)) : item)),
+      );
+    },
+    [change],
+  );
+
   const remove = useCallback(
     (id: string): void => {
       change((current) => current.filter((item) => item.id !== id));
@@ -242,5 +273,5 @@ export function useChatHistory(account: string | null): ChatHistory {
     change(() => []);
   }, [change]);
 
-  return { chats, save, remove, clear };
+  return { chats, save, update, remove, clear };
 }

@@ -4,30 +4,31 @@ import { C } from './palette';
 
 /**
  * The journey map: a tall, scrolling paper map of the whole of NLEX running
- * north, Balintawak at the bottom and Sta. Ines at the top. Exits sit in their
+ * north, Balintawak at the bottom and Sta. Ines at the top, its hundred levels along
+ * the road. Exits sit in their
  * real order (frontend/constants/nlexSegments.ts) but distances are compressed,
  * and the map says so. Manila Bay is to the south-west, the Sierra Madre to the
  * east, Mount Arayat beside the road in Pampanga and Pinatubo to the north-west,
  * as in reality; everything else is decoration.
  */
 
-/** Space between two exits on the map, and at each end of the road (CSS px). */
-const ROW = 74;
+/** Space between two levels on the map, and at each end of the road (CSS px). */
+const ROW = 58;
 const END = 60;
 
-export function mapHeight(exits: number): number {
-  return END * 2 + (exits - 1) * ROW;
+export function mapHeight(points: number): number {
+  return END * 2 + (points - 1) * ROW;
 }
 
 /** Position on the map road for a fraction along it: 0 at the bottom, 1 at the top. */
 export function roadPoint(width: number, height: number, at: number): [number, number] {
   const y = height - END - (height - END * 2) * at;
-  // Left of centre, so every label fits to the right of its dot.
-  const x = width * (0.27 + Math.sin(at * Math.PI * 5.4 + 0.6) * 0.09);
+  // Left of centre, so every label fits to the right of its dot; winding gently, a bend every few levels.
+  const x = width * (0.3 + Math.sin(at * Math.PI * 16 + 0.6) * 0.13);
   return [x, y];
 }
 
-export function drawMap(ctx: Ctx, width: number, height: number, exits: readonly JourneyExit[], completedTo: number, snapshotAt: number, snapshotX: number): void {
+export function drawMap(ctx: Ctx, width: number, height: number, exits: readonly JourneyExit[], exitAt: readonly number[], completedTo: number, snapshotAt: number, snapshotX: number): void {
   // Paper.
   ctx.fillStyle = vgrad(ctx, 0, height, [
     [0, '#EFE5CC'],
@@ -48,7 +49,8 @@ export function drawMap(ctx: Ctx, width: number, height: number, exits: readonly
     ctx.lineTo(width, y);
     ctx.stroke();
   }
-  const atOf = (i: number): number => i / (exits.length - 1);
+  // Where an exit is along the road; half-way between two exits for a fraction.
+  const atOf = (i: number): number => (Number.isInteger(i) ? exitAt[i] : (exitAt[Math.floor(i)] + exitAt[Math.ceil(i)]) / 2);
   const small = Math.max(10, width * 0.026);
 
   // Manila Bay, to the south-west of the start.
@@ -186,7 +188,7 @@ export function drawMap(ctx: Ctx, width: number, height: number, exits: readonly
   ctx.setLineDash([]);
   if (completedTo > 0) {
     path(0, completedTo);
-    ctx.strokeStyle = C.nlexBlue;
+    ctx.strokeStyle = '#3E74B9';
     ctx.lineWidth = 8;
     ctx.stroke();
   }

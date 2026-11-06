@@ -23,13 +23,16 @@ import {
   AssistantError,
   ChatMessage,
   LanguageChoice,
+  ReplyTranslations,
   askAssistant,
   loadLanguageChoice,
   nextGreeting,
   saveLanguageChoice,
+  shownText,
   toolLabel,
   wakeAssistant,
 } from '../../../lib/assistantApi';
+import { useReplyTranslations } from '../../../lib/replyTranslations';
 import { dayLabel, isSameDay, useChatHistory } from '../../../lib/chatHistory';
 import type { SavedChat } from '../../../lib/chatHistory';
 import { ChatHistoryRow, ChatHistorySheet } from '../../../components/assistant/ChatHistory';
@@ -50,24 +53,61 @@ const quickQuestions = [
   'May traffic ba sa Bocaue?',
   'Show traffic at Balintawak',
   'Northbound conditions',
+  'Are e-bikes allowed on NLEX?',
 ] as const;
 
 /** What the assistant can actually answer, so the empty screen is not a blank prompt. */
 const capabilities = [
   { icon: 'speedometer-outline', text: 'Live traffic and forecasts for all 20 exits' },
   { icon: 'notifications-outline', text: 'Alerts, maintenance, Community reports and Arena events' },
-  { icon: 'language-outline', text: 'Replies in English or Tagalog - pick EN or TL above' },
+  { icon: 'book-outline', text: 'NLEX road rules: allowed vehicles, speed limits, lanes and more' },
+  { icon: 'language-outline', text: 'The whole chat in English or Tagalog - pick EN or TL above' },
 ] as const;
 
-/** The reply-language switch in the heading, left to right. */
+/** The chat's language switch in the heading, left to right. */
 const languageOptions: { value: LanguageChoice; label: string; name: string }[] = [
   { value: 'english', label: 'EN', name: 'English' },
   { value: 'tagalog', label: 'TL', name: 'Tagalog' },
 ];
 
+/**
+ * The lines the app itself says in Navie's bubbles, so a chat set to Tagalog does
+ * not break into English around every reply. The rest of the screen's labels stay
+ * English, like the rest of the app.
+ */
+const navieLines: Record<
+  LanguageChoice,
+  { checking: string; hello: string; translating: string; notTranslated: string; tryAgain: string }
+> = {
+  english: {
+    checking: 'Checking live NLEX data...',
+    hello: 'Navie is saying hi...',
+    translating: 'Translating...',
+    notTranslated: "Couldn't translate this one.",
+    tryAgain: 'Try again',
+  },
+  tagalog: {
+    checking: 'Tinitingnan ang NLEX ngayon...',
+    hello: 'Bumabati si Navie...',
+    translating: 'Isinasalin...',
+    notTranslated: 'Hindi ito naisalin.',
+    tryAgain: 'Subukan ulit',
+  },
+};
+
 /** What Navie says when the backend cannot be reached for a fresh welcome. */
-function offlineGreeting(name: string | null): string {
-  return `${name === null ? 'Hi!' : `Hi ${name}!`} I'm Navie. Ask me about NLEX traffic.`;
+function offlineGreeting(name: string | null): ReplyTranslations {
+  return {
+    english: `${name === null ? 'Hi!' : `Hi ${name}!`} I'm Navie. Ask me about NLEX traffic.`,
+    tagalog: `${name === null ? 'Kumusta!' : `Kumusta, ${name}!`} Ako si Navie. Magtanong ka tungkol sa traffic sa NLEX.`,
+  };
+}
+
+/** One message's translations, added to what it already has. */
+function withTranslations(message: ChatMessage, translations: ReplyTranslations | undefined): ChatMessage {
+  return translations === undefined
+    ? message
+    : { ...message, translations: { ...message.translations, ...translations } };
 }
 
 function formatTime(at: number): string {
@@ -106,6 +146,7 @@ export default function AssistantScreen(): React.ReactElement {
   const {
     chats: savedChats,
     save: saveChat,
+    update: updateChat,
     remove: removeChat,
     clear: clearChats,
   } = useChatHistory(session?.email ?? null);
@@ -132,9 +173,10 @@ export default function AssistantScreen(): React.ReactElement {
   /** Counts new chats: the screen opening is the first, every new chat another. */
   const [chatNumber, setChatNumber] = useState<number>(0);
   /** Navie's welcome for this chat; null while it is being written. */
-  const [greeting, setGreeting] = useState<string | null>(null);
-  /** Which language Navie replies in, from the EN / TL switch. Remembered on the phone. */
+  const [greeting, setGreeting] = useState<ChatMessage | null>(null);
+  /** The language of everything Navie says, from the EN / TL switch. Remembered on the phone. */
   const [language, setLanguage] = useState<LanguageChoice>('english');
+  const lines = navieLines[language];
 
   useEffect(() => {
     void loadLanguageChoice().then(setLanguage);
@@ -144,6 +186,44 @@ export default function AssistantScreen(): React.ReactElement {
     setLanguage(choice);
     void saveLanguageChoice(choice);
   }, []);
+
+  /**
+   * Every translation that has arrived, by message. `send` builds its messages
+   * from the list as it was when the question was asked, and a translation can
+   * land while it waits for the answer; laying these over any list about to be
+   * shown or saved means that cannot undo one.
+   */
+  const translatedRef = useRef<Map<string, ReplyTranslations>>(new Map());
+  const withTranslated = useCallback(
+    (list: ChatMessage[]): ChatMessage[] =>
+      list.map((message) => withTranslations(message, translatedRef.current.get(message.id))),
+    [],
+  );
+
+  const onTranslated = useCallback(
+    (owner: string | null, messageId: string, target: LanguageChoice, text: string): void => {
+      translatedRef.current.set(messageId, { ...translatedRef.current.get(messageId), [target]: text });
+      if (owner === null) {
+        setGreeting((current) =>
+          current?.id === messageId ? withTranslations(current, { [target]: text }) : current,
+        );
+        return;
+      }
+      updateChat(owner, withTranslated);
+      if (chatIdRef.current === owner) {
+        setMessages(withTranslated);
+      }
+    },
+    [updateChat, withTranslated],
+  );
+
+  // Before the first question the only thing Navie has said is the greeting.
+  const translations = useReplyTranslations({
+    owner: messages.length > 0 ? chatId : null,
+    messages: messages.length > 0 ? messages : greeting !== null ? [greeting] : [],
+    language,
+    onTranslated,
+  });
 
   // Wake the backend and the team's dashboard as soon as the screen opens, so
   // they are up by the time a question is typed - see wakeAssistant.
@@ -161,10 +241,18 @@ export default function AssistantScreen(): React.ReactElement {
   useEffect(() => {
     let cancelled = false;
     setGreeting(null);
-    void nextGreeting(firstName).then((text) => {
-      if (!cancelled) {
-        setGreeting(text ?? offlineGreeting(firstName));
+    void nextGreeting(firstName).then((written) => {
+      if (cancelled) {
+        return;
       }
+      const offline = offlineGreeting(firstName);
+      setGreeting({
+        id: `greeting-${Date.now()}`,
+        role: 'assistant',
+        text: written?.text ?? (offline.english as string),
+        at: Date.now(),
+        translations: written?.translations ?? offline,
+      });
     });
     return () => {
       cancelled = true;
@@ -208,7 +296,7 @@ export default function AssistantScreen(): React.ReactElement {
 
       try {
         const { reply, toolsUsed, mood } = await askAssistant(question, history, language);
-        const answered: ChatMessage[] = [
+        const answered = withTranslated([
           ...asked,
           {
             id: `a-${Date.now()}`,
@@ -217,8 +305,10 @@ export default function AssistantScreen(): React.ReactElement {
             at: Date.now(),
             toolsUsed,
             mood,
+            // If the switch was flipped while waiting, it gets translated like the rest.
+            translations: { [language]: reply },
           },
-        ];
+        ]);
         // Kept with the chat it was asked in, even if another is open now.
         if (!deletedRef.current.has(id)) {
           saveChat(id, answered);
@@ -237,12 +327,12 @@ export default function AssistantScreen(): React.ReactElement {
           if (history.length === 0) {
             removeChat(id);
           } else {
-            saveChat(id, history);
+            saveChat(id, withTranslated(history));
           }
         }
         if (stillOpen()) {
           // Put the question back rather than leaving the user to retype it.
-          setMessages(history);
+          setMessages(withTranslated(history));
           if (history.length === 0) {
             chatIdRef.current = null;
             setChatId(null);
@@ -259,7 +349,7 @@ export default function AssistantScreen(): React.ReactElement {
         setPendingChatId(null);
       }
     },
-    [isThinking, language, messages, removeChat, saveChat],
+    [isThinking, language, messages, removeChat, saveChat, withTranslated],
   );
 
   /** Resend whatever failed, straight from the error banner. */
@@ -320,15 +410,15 @@ export default function AssistantScreen(): React.ReactElement {
   /** EN / TL, past chats, and - once there is a conversation - a fresh one. */
   const heroControls = (
     <>
-      {/* Which language Navie replies in, whatever language the question is in. */}
-      <View accessibilityRole="radiogroup" accessibilityLabel="Reply language" style={styles.languageSwitch}>
+      {/* The language of the whole chat: Navie's replies, past and future. The user's stay as typed. */}
+      <View accessibilityRole="radiogroup" accessibilityLabel="Chat language" style={styles.languageSwitch}>
         {languageOptions.map((option) => {
           const selected = option.value === language;
           return (
             <Pressable
               key={option.value}
               accessibilityRole="radio"
-              accessibilityLabel={`Reply in ${option.name}`}
+              accessibilityLabel={`Chat in ${option.name}`}
               accessibilityState={{ selected }}
               hitSlop={4}
               onPress={() => pickLanguage(option.value)}
@@ -472,18 +562,19 @@ export default function AssistantScreen(): React.ReactElement {
           {/* The one big Navie in the app: this is his page. */}
           <WavingMascot size={190} />
 
-          {/* Navie's own words, so they get a bubble pointing back at him. */}
-          {greeting === null ? (
+          {/* Navie's own words, so they get a bubble pointing back at him. If it
+              cannot be translated, the English one beats waiting for ever. */}
+          {greeting === null || translations.stateOf(greeting) === 'waiting' ? (
             <View style={[styles.greetingBubble, styles.greetingWaiting]}>
               <View style={styles.greetingTail} />
               <ActivityIndicator color={colors.accent} size="small" />
-              <Text style={styles.thinkingText}>Navie is saying hi...</Text>
+              <Text style={styles.thinkingText}>{lines.hello}</Text>
             </View>
           ) : (
-            <Reveal delay={0} key={greeting} style={styles.greetingReveal}>
+            <Reveal delay={0} key={shownText(greeting, language)} style={styles.greetingReveal}>
               <View style={styles.greetingBubble}>
                 <View style={styles.greetingTail} />
-                <Text style={styles.introText}>{greeting}</Text>
+                <Text style={styles.introText}>{shownText(greeting, language)}</Text>
               </View>
             </Reveal>
           )}
@@ -562,6 +653,7 @@ export default function AssistantScreen(): React.ReactElement {
                   chat={chat}
                   active={false}
                   pending={chat.id === pendingChatId}
+                  language={language}
                   onPress={() => openChat(chat)}
                 />
               ))}
@@ -594,8 +686,30 @@ export default function AssistantScreen(): React.ReactElement {
                 />
                 <View style={styles.chatColumn}>
                   <View style={styles.chatBubble}>
-                    <Text style={styles.chatText}>{message.text}</Text>
+                    <Text style={styles.chatText}>{shownText(message, language)}</Text>
                   </View>
+
+                  {/* Until its translation arrives a reply stays readable in the
+                      language it was written in, with a note saying why. */}
+                  {translations.stateOf(message) === 'waiting' ? (
+                    <View style={styles.translationRow}>
+                      <ActivityIndicator color={colors.accent} size="small" />
+                      <Text style={styles.translationText}>{lines.translating}</Text>
+                    </View>
+                  ) : translations.stateOf(message) === 'failed' ? (
+                    <View style={styles.translationRow}>
+                      <Text style={styles.translationText}>{lines.notTranslated}</Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={lines.tryAgain}
+                        hitSlop={8}
+                        onPress={translations.retry}
+                        style={({ pressed }) => pressed && styles.pressedDim}
+                      >
+                        <Text style={styles.translationRetry}>{lines.tryAgain}</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
 
                   {/*
                     Provenance, not decoration: this says the answer came from the
@@ -639,7 +753,7 @@ export default function AssistantScreen(): React.ReactElement {
           <View style={styles.chatColumn}>
             <View style={[styles.chatBubble, styles.thinkingBubble]}>
               <ActivityIndicator color={colors.accent} size="small" />
-              <Text style={styles.thinkingText}>Checking live NLEX data...</Text>
+              <Text style={styles.thinkingText}>{lines.checking}</Text>
             </View>
           </View>
         </View>
@@ -671,6 +785,7 @@ export default function AssistantScreen(): React.ReactElement {
         onClose={() => setHistoryOpen(false)}
         chats={savedChats}
         activeChatId={chatId}
+        language={language}
         pendingChatId={pendingChatId}
         onOpen={openChat}
         onDelete={deleteChat}
@@ -775,7 +890,7 @@ const makeStyles = (c: ThemePalette) =>
       textAlign: 'center',
     },
     /*
-     * Three concrete things it can do. An empty chat that only says "ask me
+     * Concrete things it can do. An empty chat that only says "ask me
      * something" puts the whole burden of guessing the scope on the user.
      */
     // Sky-tinted rather than white, so it reads apart from the greeting.
@@ -909,6 +1024,23 @@ const makeStyles = (c: ThemePalette) =>
       color: c.text,
       fontSize: 16,
       lineHeight: 24,
+    },
+    translationRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 8,
+      marginLeft: 6,
+    },
+    translationText: {
+      color: c.textSecondary,
+      fontSize: 13,
+      fontWeight: '500',
+    },
+    translationRetry: {
+      color: c.accent,
+      fontSize: 13,
+      fontWeight: '700',
     },
     groundedRow: {
       flexDirection: 'row',

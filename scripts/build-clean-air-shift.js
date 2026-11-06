@@ -1,0 +1,137 @@
+#!/usr/bin/env node
+/**
+ * Builds Carbon Rush (folder: cleanAirShift) into one self-contained HTML page and writes it as a
+ * string module the app imports (frontend/games/cleanAirShift/generated/cleanAirShiftHtml.ts).
+ *
+ * The same small bundler as Navie Grand Prix's: every module under web/ and core/
+ * is transpiled to CommonJS and wrapped in a registry, starting from web/main.ts.
+ * Only relative imports are allowed. The brand font and the pictures (Rush Hour's
+ * top-down vehicles and Navie) are embedded, so the page needs no network.
+ *
+ *   node scripts/build-clean-air-shift.js                 build the app's copy
+ *   node scripts/build-clean-air-shift.js --html out.html also write a browser copy (dev host, debug tools on)
+ */
+const fs = require('fs');
+const path = require('path');
+const ts = require('typescript');
+
+const repo = path.join(__dirname, '..');
+const game = path.join(repo, 'frontend', 'games', 'cleanAirShift');
+const entry = path.join(game, 'web', 'main.ts');
+
+function resolveImport(fromFile, spec) {
+  const base = path.resolve(path.dirname(fromFile), spec);
+  for (const candidate of [base, `${base}.ts`, path.join(base, 'index.ts')]) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      return candidate;
+    }
+  }
+  throw new Error(`Cannot resolve "${spec}" from ${path.relative(repo, fromFile)}`);
+}
+
+function bundle(start) {
+  const modules = new Map();
+  const order = [];
+  function add(file) {
+    if (modules.has(file)) {
+      return modules.get(file).id;
+    }
+    const record = { id: modules.size, code: '' };
+    modules.set(file, record);
+    order.push(file);
+    const source = fs.readFileSync(file, 'utf8');
+    const result = ts.transpileModule(source, {
+      fileName: file,
+      reportDiagnostics: true,
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2019,
+        removeComments: true,
+        esModuleInterop: false,
+        isolatedModules: true,
+      },
+    });
+    if (result.diagnostics && result.diagnostics.length > 0) {
+      throw new Error(result.diagnostics.map((d) => `${path.relative(repo, file)}: ${ts.flattenDiagnosticMessageText(d.messageText, '\n')}`).join('\n'));
+    }
+    record.code = result.outputText.replace(/require\("([^"]+)"\)/g, (match, spec) => {
+      if (!spec.startsWith('.')) {
+        throw new Error(`${path.relative(repo, file)} imports "${spec}" - only relative imports can be bundled`);
+      }
+      return `__rt_require(${add(resolveImport(file, spec))})`;
+    });
+    return record.id;
+  }
+  add(start);
+  const defs = order
+    .map((file) => `/* ${path.relative(game, file).replace(/\\/g, '/')} */\nfunction (module, exports, __rt_require) {\n${modules.get(file).code}\n}`)
+    .join(',\n');
+  return {
+    code: `(function () {\n"use strict";\nvar defs = [\n${defs}\n];\nvar cache = [];\nfunction __rt_require(id) {\n  if (cache[id]) { return cache[id].exports; }\n  var module = { exports: {} };\n  cache[id] = module;\n  defs[id](module, module.exports, __rt_require);\n  return module.exports;\n}\n__rt_require(0);\n})();`,
+    files: order.length,
+  };
+}
+
+function fontFace() {
+  const file = path.join(repo, 'node_modules', '@expo-google-fonts', 'nunito', '900Black', 'Nunito_900Black.ttf');
+  const data = fs.readFileSync(file).toString('base64');
+  return `@font-face{font-family:"Nunito Black";src:url(data:font/ttf;base64,${data}) format("truetype");font-weight:900;font-display:block;}`;
+}
+
+const dataUri = (file, type) => `data:${type};base64,${fs.readFileSync(file).toString('base64')}`;
+
+/** Every picture the page draws, by name. Rush Hour's art is read, never changed. */
+function art() {
+  const out = {};
+  const folder = path.join(repo, 'frontend', 'assets', 'rush-hour');
+  for (const shape of ['sedan', 'hatch', 'suv', 'truck', 'bus']) {
+    for (let paint = 1; paint <= 6; paint += 1) {
+      out[`${shape}-${paint}`] = dataUri(path.join(folder, `${shape}-${paint}.webp`), 'image/webp');
+    }
+  }
+  out.navie = dataUri(path.join(folder, 'navie.webp'), 'image/webp');
+  for (const name of ['head', 'happy', 'worried', 'alert', 'excited']) {
+    out[name] = dataUri(path.join(game, 'assets', `navie-${name}.webp`), 'image/webp');
+  }
+  return out;
+}
+
+function page({ dev }) {
+  const { code, files } = bundle(entry);
+  const css = fs.readFileSync(path.join(game, 'web', 'styles.css'), 'utf8');
+  const devBoot = dev ? '<script>window.__CLEAN_AIR_DEV__ = true;</script>' : '';
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Carbon Rush</title>
+<style>${fontFace()}\n${css}</style>
+</head>
+<body>
+<div id="app"></div>
+${devBoot}<script>window.__CLEAN_AIR_ART__ = ${JSON.stringify(art())};</script>
+<script>${code}</script>
+</body>
+</html>`;
+  return { html, files };
+}
+
+const args = process.argv.slice(2);
+const htmlOut = args.includes('--html') ? args[args.indexOf('--html') + 1] : null;
+
+const app = page({ dev: false });
+const generated = path.join(game, 'generated', 'cleanAirShiftHtml.ts');
+fs.mkdirSync(path.dirname(generated), { recursive: true });
+fs.writeFileSync(
+  generated,
+  `/* eslint-disable */\n// GENERATED by scripts/build-clean-air-shift.js from frontend/games/cleanAirShift/web and core. Do not edit - rebuild.\n` +
+    `export const CLEAN_AIR_SHIFT_HTML: string = ${JSON.stringify(app.html)};\n`,
+);
+console.log(`Built ${path.relative(repo, generated)}: ${app.files} modules, ${(app.html.length / 1024).toFixed(0)} KB`);
+
+if (htmlOut !== null) {
+  const dev = page({ dev: true });
+  fs.writeFileSync(htmlOut, dev.html);
+  console.log(`Wrote browser copy ${htmlOut}`);
+}

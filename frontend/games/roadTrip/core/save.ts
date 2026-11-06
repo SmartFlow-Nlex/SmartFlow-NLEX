@@ -2,8 +2,11 @@ import {
   ALL_MISSIONS,
   DIFFICULTIES,
   HEROES,
+  JOURNEY,
   SIDEKICKS,
+  TALLY_KEYS,
   UPGRADES,
+  emptyTally,
   type EndlessRecord,
   type HeroId,
   type Loadout,
@@ -13,8 +16,10 @@ import {
   type Settings,
   type SidekickId,
   type SidekickProgress,
+  type Tally,
 } from './types';
-import { SIDEKICK_DEFS } from './roster';
+import { JOURNEY_EXITS, levelOf } from './levels';
+import { applyUnlocks } from './unlocks';
 
 /**
  * The save: one JSON object per account, written whole. What survives a
@@ -26,8 +31,14 @@ import { SIDEKICK_DEFS } from './roster';
  * that is not JSON at all is reported so the host can keep a copy of it.
  */
 
-/** 2 = Tollbound Heroes (heroes, sidekicks, Gear Cores, Endless). 1 = Navie's Road Trip. */
-export const SAVE_VERSION = 2;
+/**
+ * 4 = a hundred levels: progress through the old sixteen stops becomes progress along the levels.
+ * 3 = the whole cast: running totals for unlocks, friendship, reveals.
+ * 2 = Tollbound Heroes (heroes, sidekicks, Gear Cores, Endless). 1 = Navie's Road Trip.
+ */
+export const SAVE_VERSION = 4;
+/** How many characters are welcomed one by one after a save upgrade. */
+const UPGRADE_REVEALS = 3;
 /** How many recent run ids are kept for duplicate checks. */
 export const PROCESSED_RUNS_KEPT = 64;
 
@@ -73,6 +84,9 @@ export function defaultSave(now: Date = new Date()): SaveData {
     garageEvents: [],
     endless: { bestDistance: 0, bestScore: 0, runs: 0, milestones: [] },
     settings: { ...DEFAULT_SETTINGS },
+    tally: emptyTally(),
+    reveals: [],
+    friendship: {},
   };
 }
 
@@ -192,8 +206,44 @@ function migrate(raw: Record<string, unknown>): Record<string, unknown> {
     delete (out as Record<string, unknown>).team;
     version = 2;
   }
+  if (version <= 2) {
+    // 2 -> 3: everyone keeps everything they own. The running totals start from what the
+    // save can prove; what it cannot know (bots cleared, say) starts at zero and only goes up.
+    const missions = isObject(out.missions) ? out.missions : {};
+    const record = (id: string): Record<string, unknown> => (isObject(missions[id]) ? (missions[id] as Record<string, unknown>) : {});
+    const finished = JOURNEY.filter((id) => record(id).completed === true);
+    const tally = emptyTally();
+    tally.coins = int(out.lifetimeBolts, 0, 0, 10_000_000);
+    tally.checkpoints = finished.length;
+    tally.cleanStretches = finished.filter((id) => record(id).bestDents === 0).length;
+    out = { ...out, tally, reveals: [], friendship: {} };
+    version = 3;
+  }
+  if (version <= 3) {
+    // 3 -> 4: the sixteen stops are now sixteen of a hundred levels. A player keeps their place on the
+    // road: every level up to the furthest stop they finished counts as cleared. Mission 1 used to
+    // drive all the way to Meycauayan, so finishing it reaches that exit's level. Nothing is taken away.
+    const missions = isObject(out.missions) ? { ...out.missions } : {};
+    const record = (id: string): Record<string, unknown> => (isObject(missions[id]) ? (missions[id] as Record<string, unknown>) : {});
+    let reached = 0;
+    OLD_STOPS.forEach((id) => {
+      if (record(id).completed === true) {
+        reached = Math.max(reached, id === 'm1-garage' ? JOURNEY_EXITS.find((e) => e.id === 'meycauayan')!.level! : levelOf(id));
+      }
+    });
+    JOURNEY.slice(0, reached).forEach((id) => {
+      if (record(id).completed !== true) {
+        missions[id] = { ...record(id), completed: true, clears: Math.max(1, Number(record(id).clears) || 0) };
+      }
+    });
+    out = { ...out, missions };
+    version = 4;
+  }
   return { ...out, version };
 }
+
+/** The story stops of save versions 1 to 3, in their old order. */
+const OLD_STOPS: readonly MissionId[] = ['m1-garage', 'm2-convoy', 'm3-finale', 'bocaue-interchange', 'tambubong', 'tabang', 'balagtas', 'sta-rita', 'pulilan', 'san-simon', 'san-fernando', 'mexico', 'angeles', 'dau', 'sctex', 'sta-ines'];
 
 /**
  * The save's version. A missing or non-numeric one means version 1 - unless the
@@ -206,6 +256,9 @@ function declaredVersion(raw: Record<string, unknown>): number {
   }
   if (typeof raw.version === 'string' && /^\d+$/.test(raw.version)) {
     return Number(raw.version);
+  }
+  if (isObject(raw.tally)) {
+    return 3;
   }
   return isObject(raw.sidekicks) || Array.isArray(raw.heroes) || typeof raw.gearCores === 'number' ? 2 : 1;
 }
@@ -249,7 +302,7 @@ export function loadSave(stored: unknown, now: Date = new Date()): LoadedSave {
     repaired.value = true;
   }
 
-  const heroes = [...new Set(['navie', ...strings(source.heroes, 8)])].filter((id): id is HeroId => (HEROES as readonly string[]).includes(id));
+  const heroes = [...new Set(['navie', ...strings(source.heroes, 32)])].filter((id): id is HeroId => (HEROES as readonly string[]).includes(id));
   const sidekicks: SaveData['sidekicks'] = {};
   if (isObject(source.sidekicks)) {
     for (const id of SIDEKICKS) {
@@ -267,27 +320,7 @@ export function loadSave(stored: unknown, now: Date = new Date()): LoadedSave {
   if (sidekicks.mila === undefined) {
     sidekicks.mila = { xp: 0, evolved: false };
   }
-  // Unlocks follow from progress: anyone a finished mission earned is on the roster, whatever the
-  // save's history (idempotent - never removes, never adds XP).
-  const cleared = (id: MissionId): boolean => missions[id]?.completed === true;
-  const endlessBest = isObject(source.endless) ? int(source.endless.bestDistance, 0, 0, 10_000_000) : 0;
-  const earnedHeroes: [HeroId, boolean][] = [['jepoy', cleared('m1-garage')], ['kiko', cleared('m2-convoy')]];
-  for (const [id, earned] of earnedHeroes) {
-    if (earned && !heroes.includes(id)) {
-      heroes.push(id);
-      repaired.value = true;
-    }
-  }
-  const earnedSidekicks: [SidekickId, boolean][] = SIDEKICKS.map((id) => {
-    const after = SIDEKICK_DEFS[id].unlock.after;
-    return [id, after === 'endless-1000' ? cleared('snapshot') || endlessBest >= 1000 : after !== null && cleared(after)];
-  });
-  for (const [id, earned] of earnedSidekicks) {
-    if (earned && sidekicks[id] === undefined) {
-      sidekicks[id] = { xp: 0, evolved: false };
-      repaired.value = true;
-    }
-  }
+  // Who the levels cleared have earned is added at the end (applyUnlocks): idempotent, never removes.
   const loadoutRaw = isObject(source.loadout) ? source.loadout : {};
   const hero: HeroId = heroes.includes(loadoutRaw.hero as HeroId) ? (loadoutRaw.hero as HeroId) : 'navie';
   const pick = (value: unknown): SidekickId | null =>
@@ -322,6 +355,21 @@ export function loadSave(stored: unknown, now: Date = new Date()): LoadedSave {
     }
   }
 
+  const tallyRaw = isObject(source.tally) ? source.tally : {};
+  const tally: Tally = emptyTally();
+  for (const key of TALLY_KEYS) {
+    tally[key] = int(tallyRaw[key], 0, 0, 100_000_000);
+  }
+  const friendship: SaveData['friendship'] = {};
+  if (isObject(source.friendship)) {
+    for (const id of [...HEROES, ...SIDEKICKS]) {
+      const runs = int(source.friendship[id], 0, 0, 1_000_000);
+      if (runs > 0) {
+        friendship[id] = runs;
+      }
+    }
+  }
+
   const save: SaveData = {
     version: SAVE_VERSION,
     revision: int(source.revision, 0, 0, Number.MAX_SAFE_INTEGER),
@@ -341,8 +389,18 @@ export function loadSave(stored: unknown, now: Date = new Date()): LoadedSave {
     garageEvents: [...new Set(strings(source.garageEvents, 64))],
     endless,
     settings: readSettings(source.settings, repaired),
+    tally,
+    reveals: [...new Set(strings(source.reveals, 64))],
+    friendship,
   };
-  return { save, issues: repaired.value ? ['fields-repaired'] : [] };
+  // Anyone earned by numbers the save already holds is here too (idempotent, and never removes).
+  const earned = applyUnlocks(save);
+  if (earned.heroes.length > 0 || earned.sidekicks.length > 0) {
+    repaired.value = true;
+  }
+  // A long-time player can deserve many characters on upgrading. All of them join; only the first few get a fanfare.
+  const upgraded = version < SAVE_VERSION ? { ...earned.save, reveals: earned.save.reveals.slice(0, UPGRADE_REVEALS) } : earned.save;
+  return { save: upgraded, issues: repaired.value ? ['fields-repaired'] : [] };
 }
 
 export function serializeSave(save: SaveData): string {

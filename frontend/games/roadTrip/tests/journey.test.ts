@@ -3,11 +3,13 @@ import { join } from 'path';
 import { STEP } from '../core/config';
 import { BANTER, RADIO, RadioDirector, SCENES } from '../core/dialogue';
 import { JOURNEY_EXITS, MISSIONS } from '../core/missions';
+import { LEVEL_PLAN, levelOf, levelPlan, levelsPerStretch } from '../core/levels';
+import { HERO_DEFS } from '../core/roster';
 import { barrierOpen, commitRun, equipSidekick, heroFor, isUnlocked, journeyComplete, recommendedMission, selectHero } from '../core/progression';
 import { SIDEKICK_DEFS, heroBlockedFor } from '../core/roster';
 import { defaultSave, loadSave, serializeSave } from '../core/save';
 import { DrivingSim, type HazardEntity, type SimEvent } from '../core/sim';
-import { JOURNEY, SIDEKICKS, type HeroId, type MissionId, type RunResult, type SaveData, type SidekickId } from '../core/types';
+import { JOURNEY, SIDEKICKS, emptyTally, type HeroId, type MissionId, type RunResult, type SaveData, type SidekickId } from '../core/types';
 import { assert, test } from './harness';
 import { loadout, playMission, simOptions } from './play';
 
@@ -19,6 +21,7 @@ const run = (missionId: MissionId, runId: string): RunResult => ({
   outcome: 'success',
   hero: 'navie',
   sidekicks: ['pip', 'mila'],
+  tally: emptyTally(),
   boltsCollected: 12,
   foesDefeated: 0,
   goalsDone: 0,
@@ -49,29 +52,61 @@ function playedUpTo(stop: MissionId | null): SaveData {
 test('journey: every canonical NLEX exit is on the map, south to north, in the real order', () => {
   const source = readFileSync(join(process.cwd(), 'frontend/constants/nlexSegments.ts'), 'utf8');
   const list = source.slice(source.indexOf('nlexExitPoints'));
-  const canonical = [...list.matchAll(/\{ id: '([^']+)', name: '([^']+)'/g)].map((m) => [m[1], m[2]]);
+  const canonical = [...list.matchAll(/\{ id: '([^']+)', name: '([^']+)', city: '[^']+', km: (\d+)/g)].map((m) => [m[1], m[2], Number(m[3])]);
   assert.equal(canonical.length, 20, 'the canonical list was read');
-  assert.deepEqual(JOURNEY_EXITS.map((e) => [e.id, e.name]), canonical.reverse());
+  assert.deepEqual(JOURNEY_EXITS.map((e) => [e.id, e.name, e.km]), canonical.reverse(), 'names, order and real distances');
 });
 
-test('journey: every exit is either a stop or a named exit on a stop, and every stop has one exit', () => {
+test('journey: a hundred levels, at least two between every pair of exits, more where the road is longer', () => {
+  assert.equal(JOURNEY.length, 100);
+  assert.equal(new Set(JOURNEY).size, 100, 'no level twice');
+  const counts = levelsPerStretch();
+  assert.equal(counts.length, JOURNEY_EXITS.length - 1, 'one count per stretch between exits');
+  assert.ok(counts.every((n) => n >= 2), `every stretch has at least two: ${counts.join(' ')}`);
+  const km = JOURNEY_EXITS.slice(1).map((e, i) => e.km - JOURNEY_EXITS[i].km);
+  for (let i = 0; i < counts.length; i += 1) {
+    for (let j = 0; j < counts.length; j += 1) {
+      if (km[i] > km[j] + 2) {
+        assert.ok(counts[i] >= counts[j], `a longer stretch never has fewer levels (${JOURNEY_EXITS[i + 1].name} ${km[i]} km)`);
+      }
+    }
+  }
+});
+
+test('journey: every exit is reached by its own level, and every level is between two real exits', () => {
   for (const exit of JOURNEY_EXITS) {
     if (exit.id === 'balintawak') {
-      assert.equal(exit.mission, null, 'the road starts at the garage');
+      assert.equal(exit.level, null, 'the road starts at the garage');
       continue;
     }
-    assert.ok(exit.mission !== null || exit.passedOn !== null, `${exit.name} leads nowhere`);
+    const id = JOURNEY[exit.level! - 1];
+    assert.equal(MISSIONS[id].to, exit.name, `Level ${exit.level} reaches ${exit.name}`);
+    assert.ok(levelPlan(id)!.reachesExit);
+    // Its exit sign is on the road.
+    assert.ok(MISSIONS[id].kind === 'finale' || MISSIONS[id].gantries.some((g) => g.title === exit.name && g.sub === 'Exit'), `${exit.name} is signed on Level ${exit.level}`);
   }
-  const stops = JOURNEY_EXITS.flatMap((e) => (e.mission !== null ? [e.mission] : []));
-  assert.deepEqual(stops, [...JOURNEY], 'stops run in journey order');
-  for (const exit of JOURNEY_EXITS.filter((e) => e.mission !== null && e.mission !== 'm1-garage' && e.mission !== 'm2-convoy' && e.mission !== 'm3-finale')) {
-    assert.equal(MISSIONS[exit.mission!].to, exit.name, `the mission to ${exit.name} ends there`);
+  const names = new Set(JOURNEY_EXITS.map((e) => e.name));
+  for (const p of LEVEL_PLAN) {
+    assert.ok(names.has(p.from) && names.has(p.to), `Level ${p.level}: ${p.from} to ${p.to}`);
+    assert.ok(p.kmLeft >= 0 && (p.kmLeft === 0) === p.reachesExit, `Level ${p.level}: ${p.kmLeft} km left`);
   }
-  // Passed exits are really passed: each is signed on the mission's road.
-  const signs = (id: MissionId): string[] => MISSIONS[id].gantries.map((g) => g.title);
-  for (const exit of JOURNEY_EXITS.filter((e) => e.passedOn !== null)) {
-    assert.ok(signs(exit.passedOn!).includes(exit.name), `${exit.name} has a sign on ${exit.passedOn}`);
+});
+
+test('journey: the story missions keep their places: the tutorial first, every other one reaching its exit', () => {
+  assert.equal(JOURNEY[0], 'm1-garage');
+  const story = ['m2-convoy', 'm3-finale', 'bocaue-interchange', 'tambubong', 'tabang', 'balagtas', 'sta-rita', 'pulilan', 'san-simon', 'san-fernando', 'mexico', 'angeles', 'dau', 'sctex', 'sta-ines'] as MissionId[];
+  let last = 1;
+  for (const id of story) {
+    const level = levelOf(id);
+    assert.ok(level > last, `${id} comes after the one before`);
+    assert.ok(levelPlan(id)!.reachesExit, `${id} reaches its exit`);
+    last = level;
   }
+  assert.equal(levelOf('sta-ines'), 100, 'the last boss is the last level');
+  // Kuya Jepoy is met at Meycauayan, where his scene is set.
+  const meycauayan = JOURNEY_EXITS.find((e) => e.id === 'meycauayan')!.level!;
+  assert.equal(MISSIONS[JOURNEY[meycauayan - 1]].scenes.after, 'meet-jepoy');
+  assert.equal(HERO_DEFS.jepoy.unlock.level, meycauayan);
 });
 
 test('journey: missions run in a line, numbered in order, each needing the one before', () => {
@@ -101,18 +136,20 @@ test('endless: Story difficulty allows five dents, as its briefing says', () => 
   assert.ok(MISSIONS.endless.fail.includes('5'));
 });
 
-test('sidekicks: twelve in all; each joins at its own stop, and no earlier', () => {
-  assert.equal(SIDEKICKS.length, 12);
+test('sidekicks: the ones the story meets each join at their own stop, and no earlier', () => {
+  assert.equal(SIDEKICKS.length, 33);
   const joinAt: Partial<Record<SidekickId, MissionId>> = { walis: 'tambubong', barya: 'balagtas', sibat: 'pulilan', tala: 'san-fernando', ilaw: 'angeles', maso: 'dau' };
   for (const [id, stop] of Object.entries(joinAt) as [SidekickId, MissionId][]) {
-    assert.equal(SIDEKICK_DEFS[id].unlock.after, stop, id);
+    assert.equal(SIDEKICK_DEFS[id].unlock.level, levelOf(stop), id);
     const before = playedUpTo(stop);
     assert.equal(before.sidekicks[id], undefined, `${id} is not here before ${stop}`);
     const outcome = commitRun(before, run(stop, 'join'));
     assert.ok(outcome.save.sidekicks[id] !== undefined, `${id} joined at ${stop}`);
     assert.ok(outcome.payout.unlocks.includes(`Sidekick joined: ${SIDEKICK_DEFS[id].name}`), `${stop} announces ${id}: ${outcome.payout.unlocks.join(', ')}`);
   }
-  assert.equal(Object.keys(playedUpTo(null).sidekicks).length, 11, 'the twelfth still comes from an Endless milestone');
+  const all = playedUpTo(null);
+  assert.equal(Object.keys(all.sidekicks).length, SIDEKICKS.length, 'the whole road brings every sidekick');
+  assert.equal(all.heroes.length, Object.keys(HERO_DEFS).length, 'and every hero');
 });
 
 test('sidekicks: the new ones can be equipped, and each has its own name, role and evolved form', () => {
@@ -161,8 +198,12 @@ test('story: every scene and postcard a mission names exists, and every new stop
       assert.ok(!postcards.has(def.postcard.id), `${def.postcard.id} is used twice`);
       postcards.add(def.postcard.id);
     }
-    if (def.kind === 'journey' && !['m1-garage'].includes(id)) {
+    const plan = levelPlan(id)!;
+    if (def.kind === 'journey' && plan.story !== null && id !== 'm1-garage') {
       assert.ok(RADIO[`start-${id}`] !== undefined, `${id} starts with something to say`);
+    }
+    if (plan.story === null) {
+      assert.ok(RADIO[`start-mix-${plan.mix}`] !== undefined, `Level ${plan.level} starts with something to say`);
     }
   }
 });
@@ -204,7 +245,7 @@ const drive = (sim: DrivingSim, seconds: number, targetX = 0): SimEvent[] => {
 };
 
 const place = (sim: DrivingSim, id: number, kind: HazardEntity['kind'], x: number, z: number, hp = 0): void => {
-  sim.state.hazards.push({ id, kind, x, z, halfW: 0.3, len: 0.5, ownSpeed: 0, thrown: 0, spent: false, clearedHero: false, clearedKiko: false, hp, maxHp: hp, hurtT: 99, stun: 0, practice: false, knocked: -1, knockDir: 0, laneChange: null });
+  sim.state.hazards.push({ id, kind, x, z, halfW: 0.3, len: 0.5, ownSpeed: 0, thrown: 0, spent: false, clearedHero: false, clearedKiko: false, hp, maxHp: hp, hurtT: 99, stun: 0, slowT: 0, marked: 0, counted: false, practice: false, knocked: -1, knockDir: 0, laneChange: null });
 };
 
 const acted = (events: SimEvent[], action: string): boolean => events.some((e) => e.type === 'sidekick' && e.action === action);
@@ -227,7 +268,7 @@ test('sidekicks: Barya turns some Bolts into two', () => {
   const collect = (sidekicks: [SidekickId | null, SidekickId | null]): number => {
     const sim = quiet(sidekicks);
     for (let i = 0; i < 60; i += 1) {
-      sim.state.pickups.push({ id: 9100 + i, kind: 'bolt', power: null, x: 0, z: 4 + i * 1.5, collected: false, collectedT: -1 } as never);
+      sim.state.pickups.push({ id: 9100 + i, kind: 'bolt', power: null, x: 0, z: 4 + i * 1.5, collected: false, collectedT: -1, hidden: false, revealed: false, passed: false } as never);
     }
     drive(sim, 8);
     return sim.state.boltsCollected;

@@ -73,9 +73,25 @@ function bundle(start) {
 }
 
 function fontFace() {
-  const file = path.join(repo, 'node_modules', '@expo-google-fonts', 'nunito', '900Black', 'Nunito_900Black.ttf');
-  const data = fs.readFileSync(file).toString('base64');
-  return `@font-face{font-family:"Nunito Black";src:url(data:font/ttf;base64,${data}) format("truetype");font-weight:900;font-display:block;}`;
+  const face = (family, weightDir, fileName, weight) => {
+    const file = path.join(repo, 'node_modules', '@expo-google-fonts', 'nunito', weightDir, fileName);
+    const data = fs.readFileSync(file).toString('base64');
+    return `@font-face{font-family:"${family}";src:url(data:font/ttf;base64,${data}) format("truetype");font-weight:${weight};font-display:block;}`;
+  };
+  // One rounded humanist family for everything: Black for names and numbers, Bold for reading.
+  return face('Nunito Black', '900Black', 'Nunito_900Black.ttf', 900) + face('Nunito', '700Bold', 'Nunito_700Bold.ttf', 700);
+}
+
+/** The baked sprites, as one script of data URLs: decoded by the game only when first used. */
+function artScript() {
+  const dir = path.join(game, 'assets', 'art');
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+  const out = {};
+  for (const [name, meta] of Object.entries(manifest.sprites)) {
+    const { hash, bytes, ...rest } = meta;
+    out[name] = { ...rest, u: `data:image/webp;base64,${fs.readFileSync(path.join(dir, `${name}.webp`)).toString('base64')}` };
+  }
+  return `<script>window.__TB_ART__=${JSON.stringify(out)};</script>`;
 }
 
 function page({ dev }) {
@@ -92,6 +108,7 @@ function page({ dev }) {
 </head>
 <body>
 <div id="app"></div>
+${artScript()}
 ${devBoot}<script>${code}</script>
 </body>
 </html>`;

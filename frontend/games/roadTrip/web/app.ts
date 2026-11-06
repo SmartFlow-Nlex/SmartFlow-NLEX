@@ -1,7 +1,8 @@
 import { commitRun, type CommitOutcome } from '../core/progression';
 import { loadSave, serializeSave } from '../core/save';
 import { validateSnapshot, type TrafficSnapshot } from '../core/scenario';
-import type { MissionId, RunResult, SaveData } from '../core/types';
+import { HEROES, JOURNEY, SIDEKICKS, type MissionId, type RunResult, type SaveData } from '../core/types';
+import { applyUnlocks } from '../core/unlocks';
 import type { AppApi, Scene } from './appApi';
 import { AudioEngine } from './audio';
 import type { Host, InMessage } from './host';
@@ -161,10 +162,20 @@ export class App implements AppApi {
     this.startLoop();
   }
 
+  /** Set once a road has run slowly: the rest of this session draws fewer pixels and less scenery. */
+  slowDevice = false;
+
+  noteSlowDevice(): void {
+    if (!this.slowDevice) {
+      this.slowDevice = true;
+      this.resize();
+    }
+  }
+
   private resize(): void {
     const width = window.innerWidth;
     const height = window.innerHeight;
-    const ratio = Math.min(this.save.settings.reduceMotion ? 1.5 : 2, window.devicePixelRatio || 1);
+    const ratio = Math.min(this.save.settings.reduceMotion || this.slowDevice ? 1.5 : 2, window.devicePixelRatio || 1);
     if (width === this.width && height === this.height && ratio === this.dpr) {
       return;
     }
@@ -386,6 +397,22 @@ export class App implements AppApi {
         else this.goTitle();
       },
       setSave: (save: SaveData) => this.update(save),
+      /** Development only: a save cleared up to level n, with everyone that earns (what a real player there would have). */
+      clearTo: (n: number) => {
+        const missions = { ...this.save.missions };
+        JOURNEY.slice(0, n).forEach((id) => {
+          missions[id] = missions[id]?.completed === true ? missions[id] : { completed: true, clears: 1, bestScore: 0, bestDents: 0, foundPostcard: false };
+        });
+        this.update(applyUnlocks({ ...this.save, missions, tutorialDone: this.save.tutorialDone || n > 0, reveals: [] }).save);
+      },
+      /** Development only: everyone on the roster, in memory, for checking art and behaviour. */
+      unlockAll: () => {
+        const sidekicks = { ...this.save.sidekicks };
+        for (const id of SIDEKICKS) {
+          sidekicks[id] = sidekicks[id] ?? { xp: 0, evolved: false };
+        }
+        this.save = { ...this.save, heroes: [...HEROES], sidekicks, reveals: [] };
+      },
       autoplay: (on: boolean) => {
         this.autoplay = on;
       },

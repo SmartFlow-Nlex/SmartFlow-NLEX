@@ -1,24 +1,30 @@
 import { BANTER, CHARACTER_NAMES, SCENES, type SceneLine } from '../../core/dialogue';
 import { JOURNEY_EXITS, MISSIONS } from '../../core/missions';
+import { LEVEL_COUNT, levelPlan } from '../../core/levels';
 import {
   UPGRADE_DEFS,
   buyUpgrade,
   canBuy,
   barrierOpen,
   canEvolve,
+  clearReveal,
   equipSidekick,
-  evolveSidekick,
   isCompleted,
   isUnlocked,
+  joinersAt,
   journeyComplete,
   markSeen,
   recommendedMission,
   selectHero,
   upgradeLevel,
   workshopOpen,
+  WORKSHOP_LEVEL,
 } from '../../core/progression';
-import { EVOLVE_COST, HERO_DEFS, SIDEKICK_DEFS, sidekickStats, type SidekickDef } from '../../core/roster';
-import { HEROES, JOURNEY, SIDEKICKS, UPGRADES, type CharacterId, type MissionId, type TeammateId } from '../../core/types';
+import { HERO_DEFS, SIDEKICK_DEFS, sidekickTags } from '../../core/roster';
+import { activeSynergies, teamTags } from '../../core/tuning';
+import { CHARMS, counterValue, earnedCharms, heroRule, ruleProgress, sidekickRule } from '../../core/unlocks';
+import { HEROES, JOURNEY, SIDEKICKS, UPGRADES, type CharacterId, type HeroId, type MissionId, type SidekickId, type TeammateId } from '../../core/types';
+import { art, portraitEl, tileColours } from '../art/clay';
 import { makeCanvas } from '../art/kit';
 import { drawMap, mapHeight, roadPoint } from '../art/mapArt';
 import type { AppApi } from '../appApi';
@@ -27,8 +33,7 @@ import { StoryScene } from '../story';
 import { TeamStage } from '../title';
 import { icon, withIcon } from './arcadeIcons';
 import { announce, button, h } from './dom';
-import { pickupIcon, portrait } from './icons';
-import { sidekickPortrait } from './teamIcons';
+import { heroPanel, rosterTile, sidekickPanel, tagRow } from './rosterPanels';
 import { settingsPanel } from './settings';
 
 /**
@@ -47,9 +52,29 @@ export interface Screen {
   dispose?: () => void;
 }
 
+/** The clay Bolt, for the pills and totals. */
+export function nutIcon(): HTMLCanvasElement {
+  const nut = document.createElement('canvas');
+  nut.className = 'stat-icon';
+  nut.width = 48;
+  nut.height = 48;
+  nut.setAttribute('aria-hidden', 'true');
+  const draw = (): void => {
+    const s = art('p.bolt0');
+    if (s === null) {
+      setTimeout(draw, 60);
+      return;
+    }
+    const k = 44 / Math.max(s.w, s.h);
+    nut.getContext('2d')!.drawImage(s.img, 24 - (s.w * k) / 2, 24 - (s.h * k) / 2, s.w * k, s.h * k);
+  };
+  draw();
+  return nut;
+}
+
 function boltsPill(app: AppApi): HTMLElement {
   return h('div', { class: 'bolts-pill', attrs: { 'aria-label': `${app.save.bolts} Bolts` } }, [
-    h('img', { class: 'stat-icon', attrs: { src: pickupIcon('bolt', 22), alt: '' } }),
+    nutIcon(),
     h('span', { text: String(app.save.bolts) }),
   ]);
 }
@@ -83,13 +108,12 @@ export function titleScreen(app: AppApi, storageOk: boolean): Screen {
   withIcon(go, 'play');
   go.setAttribute('data-autofocus', '');
   const el = h('div', { class: 'screen title-screen' }, [
-    h('p', { class: 'safety', text: 'For passengers and parked drivers only. Never play while driving.' }),
+    h('p', { class: 'safety', text: 'For passengers and parked drivers. Never play while driving.' }),
     h('div', { class: 'title-block' }, [
       h('h1', { class: 'game-title tollbound', attrs: { 'aria-label': 'Tollbound Heroes' } }, [
         h('span', { class: 'title-top', text: 'Tollbound', attrs: { 'aria-hidden': 'true' } }),
         h('span', { class: 'title-bottom', text: 'Heroes', attrs: { 'aria-hidden': 'true' } }),
       ]),
-      h('p', { class: 'route-label', text: 'A SmartFlow NLEX game · Balintawak to Sta. Ines' }),
     ]),
     h('div', { class: 'title-actions' }, [
       go,
@@ -112,7 +136,7 @@ export function garageScreen(app: AppApi): Screen {
   const bubble = h('div', { class: 'bubble hidden', attrs: { 'aria-live': 'polite' } });
   let bubbleSpeaker: CharacterId | null = null;
   const next = recommendedMission(save);
-  const mapButton = button(next !== null ? `Journey Map - next: ${MISSIONS[next].to}` : 'Journey Map', () => app.goMap(), { class: 'big cta' });
+  const mapButton = button(next !== null ? `Journey Map · Level ${MISSIONS[next].number}` : 'Journey Map', () => app.goMap(), { class: 'big cta' });
   withIcon(mapButton, 'pin');
   mapButton.setAttribute('data-autofocus', '');
 
@@ -126,11 +150,11 @@ export function garageScreen(app: AppApi): Screen {
   }), 'star');
   const workshopButton = workshopOpen(save)
     ? withIcon(button('Workshop', () => app.goWorkshop(), { variant: 'secondary', ariaLabel: 'Workshop: permanent upgrades for Bolts' }), 'wrench')
-    : withIcon(button('Workshop', () => announce('The Workshop opens when Kiko joins.'), { variant: 'secondary', class: 'locked', ariaLabel: 'Workshop, locked: opens when Kiko joins' }), 'lock');
+    : withIcon(button('Workshop', () => announce(`The Workshop opens at Level ${WORKSHOP_LEVEL}.`), { variant: 'secondary', class: 'locked', ariaLabel: `Workshop, locked: opens at Level ${WORKSHOP_LEVEL}` }), 'lock');
   const endlessOpen = isUnlocked(save, 'endless');
   const endlessButton = endlessOpen
     ? button(`Endless Expressway${save.endless.bestDistance > 0 ? ` · best ${save.endless.bestDistance} m` : ''}`, () => app.startMission('endless'), { variant: 'secondary' })
-    : button('Endless Expressway', () => announce('Endless opens after Mission 1.'), { variant: 'secondary', class: 'locked', ariaLabel: 'Endless Expressway, locked: opens after Mission 1' });
+    : button('Endless Expressway', () => announce('Endless opens after Level 1.'), { variant: 'secondary', class: 'locked', ariaLabel: 'Endless Expressway, locked: opens after Level 1' });
   withIcon(endlessButton, endlessOpen ? 'infinity' : 'lock');
 
   // Arrivals the garage has not shown yet.
@@ -255,6 +279,7 @@ export function garageScreen(app: AppApi): Screen {
 
   const postcards = JOURNEY.filter((id) => save.missions[id]?.foundPostcard).length;
   const postcardTotal = JOURNEY.filter((id) => MISSIONS[id].postcard !== null).length;
+  const stat = (label: string, value: string): HTMLElement => h('span', { class: 'tb-stat' }, [h('strong', { text: value }), h('span', { text: label })]);
   const el = h('div', { class: 'screen garage-screen' }, [
     topbar('Garage', backButton('Back to the title', () => app.goTitle()), [
       boltsPill(app),
@@ -262,18 +287,24 @@ export function garageScreen(app: AppApi): Screen {
     ], true),
     bubble,
     h('div', { class: 'garage-bottom' }, [
-      h('p', { class: 'garage-status', text: `Postcards ${postcards}/${postcardTotal} · Sidekicks ${Object.keys(save.sidekicks).length}/${SIDEKICKS.length} · Cores ${save.gearCores}` }),
+      h('div', { class: 'tb-stats-row' }, [stat('Heroes', `${save.heroes.length}/${HEROES.length}`), stat('Sidekicks', `${Object.keys(save.sidekicks).length}/${SIDEKICKS.length}`), stat('Postcards', `${postcards}/${postcardTotal}`), stat('Cores', String(save.gearCores))]),
       mapButton,
       h('div', { class: 'row' }, [h('div', { class: 'cell' }, [teamButton]), h('div', { class: 'cell' }, [collectionButton])]),
       h('div', { class: 'row' }, [
-        h('div', { class: 'cell' }, [workshopButton, workshopOpen(save) ? null : lockedNote('Opens when Kiko joins')]),
-        h('div', { class: 'cell' }, [endlessButton, endlessOpen ? null : lockedNote('Opens after Mission 1')]),
+        h('div', { class: 'cell' }, [workshopButton, workshopOpen(save) ? null : lockedNote(`Opens at Level ${WORKSHOP_LEVEL}`)]),
+        h('div', { class: 'cell' }, [endlessButton, endlessOpen ? null : lockedNote('Opens after Level 1')]),
       ]),
     ]),
   ]);
 
   if (arrivals.length > 0) {
     setTimeout(startArrival, 400);
+  } else if (save.reveals.length > 0) {
+    if (revealsPaused) {
+      revealsPaused = false;
+    } else {
+      setTimeout(() => showReveal(app, el, () => app.goGarage()), 500);
+    }
   }
   app.audio.playMusic('garage');
 
@@ -316,14 +347,79 @@ export function garageScreen(app: AppApi): Screen {
   };
 }
 
+/**
+ * Someone new has joined: a moment of its own, with who they are, one thing they
+ * say, and a way to put them on the team. Plays once, whichever button is pressed.
+ */
+let revealsPaused = false;
+
+/** Where each scrap of a reveal's confetti flies: across, down, spin, colour. */
+const CONFETTI: readonly [number, number, number, string][] = [
+  [-84, -76, -140, '#F3C75A'], [-52, -104, 90, '#E5705F'], [-14, -118, -60, '#69AFA4'], [26, -112, 150, '#F58DAF'], [62, -94, -110, '#3C7FD6'], [90, -62, 70, '#F3C75A'],
+  [-98, -30, 120, '#69AFA4'], [100, -18, -130, '#E5705F'],
+];
+
+function showReveal(app: AppApi, host: HTMLElement, refresh: () => void): void {
+  const next = app.save.reveals[0];
+  if (next === undefined) {
+    return;
+  }
+  const [kind, id] = next.split(':') as ['hero' | 'sidekick', string];
+  const isHero = kind === 'hero';
+  if (isHero ? HERO_DEFS[id as HeroId] === undefined : SIDEKICK_DEFS[id as SidekickId] === undefined) {
+    app.update(clearReveal(app.save, next));
+    return;
+  }
+  const name = isHero ? HERO_DEFS[id as HeroId].name : SIDEKICK_DEFS[id as SidekickId].name;
+  const role = isHero ? HERO_DEFS[id as HeroId].role : SIDEKICK_DEFS[id as SidekickId].roleLabel;
+  const line = isHero ? HERO_DEFS[id as HeroId].lines[0] : SIDEKICK_DEFS[id as SidekickId].barks.cheer;
+  const ability = isHero ? `${HERO_DEFS[id as HeroId].signature.name}: ${HERO_DEFS[id as HeroId].signature.short}` : SIDEKICK_DEFS[id as SidekickId].describe(SIDEKICK_DEFS[id as SidekickId].base).what;
+  app.audio.sfx('win');
+  const close = (): void => {
+    overlay.remove();
+    app.update(clearReveal(app.save, next));
+    refresh();
+  };
+  const equip = button(isHero ? `Drive with ${name}` : `Put ${name} on the team`, () => {
+    if (isHero) {
+      app.update(selectHero(app.save, id as HeroId));
+    } else {
+      const slots = app.save.loadout.sidekicks;
+      app.update(equipSidekick(app.save, slots[0] === null ? 0 : 1, id as SidekickId));
+    }
+    close();
+  }, { class: 'cta' });
+  equip.setAttribute('data-autofocus', '');
+  const overlay = h('div', { class: 'overlay tb-reveal-wrap', attrs: { role: 'dialog', 'aria-modal': 'true', 'aria-label': `${name} joined the team` } }, [
+    h('div', { class: 'tb-reveal' }, [
+      h('p', { class: 'tb-reveal-kicker', text: isHero ? 'New hero' : 'New sidekick' }),
+      h('span', { class: 'tb-reveal-stage' }, [
+        portraitEl('tb-reveal-pic', id as HeroId, 170, isHero ? 'character' : 'sidekick', { expr: 'celebrate' }),
+        ...CONFETTI.map(([x, y, r, colour]) => h('span', { class: 'tb-confetti', attrs: { style: `--cx:${x}px;--cy:${y}px;--cr:${r}deg;background:${colour}` } })),
+      ]),
+      h('h2', { text: name }),
+      h('p', { class: 'tb-panel-role', text: role }),
+      h('p', { class: 'tb-reveal-blurb', text: ability }),
+      h('p', { class: 'tb-quote', text: `"${line}"` }),
+      h('div', { class: 'actions' }, [equip, button('Later', () => {
+        // "Later" means not now: anyone else waiting can wait for the next visit too.
+        revealsPaused = true;
+        close();
+      }, { variant: 'secondary' })]),
+    ]),
+  ]);
+  host.append(overlay);
+  equip.focus({ preventScroll: true });
+}
+
 // -- journey map ------------------------------------------------------------------------
 
-type NodeId = MissionId | 'garage' | `pass:${string}`;
+type NodeId = MissionId | 'garage';
 
 /**
- * The whole road, Balintawak at the bottom to Sta. Ines at the top, one node per
- * exit. It scrolls, and opens on the next stop. An exit with no mission of its
- * own (`passedOn`) is a small dot that points to the mission that drives past it.
+ * The whole road, Balintawak at the bottom to Sta. Ines at the top: a hundred levels
+ * between the real exits. Each exit's name sits by the level that reaches it, and a small
+ * portrait by a level shows who joins when it is cleared. It scrolls, and opens on the next level.
  */
 export function mapScreen(app: AppApi, focus?: string): Screen {
   const scene = new MapScene();
@@ -332,8 +428,10 @@ export function mapScreen(app: AppApi, focus?: string): Screen {
   const sheetEl = h('div', { class: 'map-sheet', attrs: { 'aria-live': 'polite' } });
   const road = h('div', { class: 'map-road' });
   const scroller = h('div', { class: 'map-scroll' }, [road]);
-  const atOf = (i: number): number => i / (JOURNEY_EXITS.length - 1);
+  const atOf = (level: number): number => level / LEVEL_COUNT;
+  const exitAt = JOURNEY_EXITS.map((exit) => atOf(exit.level ?? 0));
   const nodes: { id: NodeId; at: number; el: HTMLButtonElement }[] = [];
+  const nameOf = (id: HeroId | SidekickId, hero: boolean): string => (hero ? HERO_DEFS[id as HeroId].name : SIDEKICK_DEFS[id as SidekickId].name);
 
   const missionSheet = (id: MissionId): void => {
     const def = MISSIONS[id];
@@ -342,17 +440,21 @@ export function mapScreen(app: AppApi, focus?: string): Screen {
     const play = withIcon(button(record?.completed ? 'Play again' : 'Play', () => app.startMission(id), { class: 'cta', disabled: !unlocked }), unlocked ? 'play' : 'lock');
     play.setAttribute('data-autofocus', '');
     const sceneId = def.scenes.before;
-    const joiners = SIDEKICKS.filter((s) => SIDEKICK_DEFS[s].unlock.after === id && save.sidekicks[s] === undefined);
+    const joiners = joinersAt(id);
+    const joinChip = (who: HeroId | SidekickId, hero: boolean): HTMLElement => {
+      const owned = hero ? save.heroes.includes(who as HeroId) : save.sidekicks[who as SidekickId] !== undefined;
+      return h('span', { class: 'chip joins' }, [icon('star'), owned ? `${nameOf(who, hero)} joined here` : `${nameOf(who, hero)} joins here`]);
+    };
     sheetEl.append(
       h('div', { class: 'chips' }, [
-        h('span', { class: 'chip on', text: def.number > 0 ? `Mission ${def.number} - ${def.kindLabel}` : def.kindLabel }),
+        h('span', { class: 'chip on', text: def.number > 0 ? `Level ${def.number} · ${def.kindLabel}` : def.kindLabel }),
         record?.completed ? h('span', { class: 'chip done', text: 'Completed' }) : null,
-        id === recommended ? h('span', { class: 'chip next', text: 'Next stop' }) : null,
-        ...joiners.map((s) => h('span', { class: 'chip joins' }, [icon('star'), `${SIDEKICK_DEFS[s].name} joins here`])),
+        id === recommended ? h('span', { class: 'chip next', text: 'Next level' }) : null,
+        ...joiners.heroes.map((who) => joinChip(who, true)),
+        ...joiners.sidekicks.map((who) => joinChip(who, false)),
       ]),
       h('h2', { text: def.title }),
-      h('p', { class: 'muted', text: `${def.from} → ${def.to}` }),
-      h('p', { text: unlocked ? def.objective : `Locked - finish "${MISSIONS[def.requires!].title}" first.` }),
+      ...(unlocked ? [] : [h('p', { class: 'muted', text: `Locked: clear Level ${def.requires !== null ? MISSIONS[def.requires].number : 1} first.` })]),
       h('dl', { class: 'facts' }, [
         h('dt', { text: 'First completion' }),
         h('dd', { text: `+${def.rewards.firstClear} Bolts` }),
@@ -380,84 +482,69 @@ export function mapScreen(app: AppApi, focus?: string): Screen {
       sheetEl.append(h('h2', { text: "Navie's Garage" }), h('p', { class: 'muted', text: 'Balintawak - home, and where NLEX begins. Team, workshop and your postcards.' }), button('Go to the garage', () => app.goGarage()));
       return;
     }
-    if (id.startsWith('pass:')) {
-      const exit = JOURNEY_EXITS.find((e) => e.id === id.slice(5));
-      const on = exit?.passedOn ?? null;
-      if (exit !== undefined && on !== null) {
-        const def = MISSIONS[on];
-        const unlocked = isUnlocked(save, on);
-        sheetEl.append(
-          h('h2', { text: exit.name }),
-          h('p', { class: 'muted', text: `You drive past this exit on the way to ${def.to}, in "${def.title}". Watch for its sign!` }),
-          h('div', { class: 'actions' }, [withIcon(button(`Play "${def.title}"`, () => app.startMission(on), { class: 'cta', disabled: !unlocked }), unlocked ? 'play' : 'lock')]),
-        );
-      }
-      return;
-    }
-    missionSheet(id as MissionId);
+    missionSheet(id);
   };
 
-  const addNode = (id: NodeId, at: number, label: string, kind: 'home' | 'mission' | 'pass' | 'side', state: string, glyph: string): void => {
+  const addNode = (id: NodeId, at: number, label: string | null, kind: 'home' | 'mission' | 'side', state: string, glyph: string, joiners: HTMLElement | null = null): void => {
     const el = h(
       'button',
       {
         class: `map-node node-${kind} ${state}`,
-        attrs: { 'aria-label': `${label}${state === 'done' ? ', completed' : state === 'next' ? ', next stop' : state === 'locked' ? ', locked' : ''}` },
+        attrs: { 'aria-label': `${kind === 'mission' ? `Level ${glyph}${label !== null ? `, ${label}` : ''}` : label ?? glyph}${state.startsWith('done') ? ', completed' : state.startsWith('next') ? ', next level' : state.startsWith('locked') ? ', locked' : ''}` },
         onClick: () => {
           app.audio.sfx('tap');
           describe(id);
         },
       },
-      [h('span', { class: 'node-dot', attrs: { 'aria-hidden': 'true' }, text: glyph }), h('span', { class: 'node-label', text: label })],
+      [h('span', { class: 'node-dot', attrs: { 'aria-hidden': 'true' }, text: glyph }), label !== null ? h('span', { class: 'node-label', text: label }) : null, joiners],
     );
     nodes.push({ id, at, el });
     road.append(el);
   };
 
-  JOURNEY_EXITS.forEach((exit, i) => {
-    const at = atOf(i);
-    if (exit.mission !== null) {
-      const id = exit.mission;
-      const state = isCompleted(save, id) ? 'done' : id === recommended ? 'next' : isUnlocked(save, id) ? 'open' : 'locked';
-      addNode(id, at, exit.name, 'mission', `${state}${MISSIONS[id].kind === 'finale' ? ' boss' : ''}`, String(MISSIONS[id].number));
-    } else if (exit.passedOn !== null) {
-      addNode(`pass:${exit.id}`, at, exit.name, 'pass', isCompleted(save, exit.passedOn) ? 'done' : 'open', '');
-    } else {
-      addNode('garage', at, `${exit.name} · Garage`, 'home', 'done', '⌂');
-    }
+  addNode('garage', 0, 'Balintawak · Garage', 'home', 'done', '⌂');
+  const exitName = new Map(JOURNEY_EXITS.filter((e) => e.level !== null).map((e) => [e.level as number, e.name]));
+  JOURNEY.forEach((id) => {
+    const def = MISSIONS[id];
+    const state = isCompleted(save, id) ? 'done' : id === recommended ? 'next' : isUnlocked(save, id) ? 'open' : 'locked';
+    const kind = def.kind === 'finale' ? ' boss' : levelPlan(id)?.story !== null ? ' story' : '';
+    const joining = joinersAt(id);
+    const faces = [...joining.heroes.map((who) => ({ who: who as HeroId | SidekickId, hero: true })), ...joining.sidekicks.map((who) => ({ who: who as HeroId | SidekickId, hero: false }))];
+    // Who joins here: their faces by the level, in colour, so the road shows what is coming.
+    const joiners = faces.length === 0 ? null : h('span', { class: 'node-joiners', attrs: { 'aria-label': `${faces.map((f) => nameOf(f.who, f.hero)).join(' and ')} ${faces.length === 1 ? 'joins' : 'join'} here` } }, faces.map((f) => portraitEl('node-face', f.who, 30, f.hero ? 'character' : 'sidekick')));
+    addNode(id, atOf(def.number), exitName.get(def.number) ?? null, 'mission', `${state}${kind}${faces.length > 0 ? ' reward' : ''}`, String(def.number), joiners);
   });
-  const snapshotAt = atOf(JOURNEY_EXITS.findIndex((e) => e.id === 'marilao'));
+  const snapshotAt = exitAt[JOURNEY_EXITS.findIndex((e) => e.id === 'marilao')];
   addNode('snapshot', snapshotAt, 'Snapshot', 'side', isUnlocked(save, 'snapshot') ? 'open' : 'locked', '★');
 
-  /** How far the blue line runs: to the furthest exit whose mission is done. */
+  /** How far the blue line runs: to the furthest level cleared. */
   const completedTo = (): number => {
     let reached = 0;
-    JOURNEY_EXITS.forEach((exit, i) => {
-      if (exit.mission !== null && isCompleted(save, exit.mission)) {
-        reached = atOf(i);
+    JOURNEY.forEach((id) => {
+      if (isCompleted(save, id)) {
+        reached = atOf(MISSIONS[id].number);
       }
     });
     return reached;
   };
 
+  const height = mapHeight(LEVEL_COUNT + 1);
   const place = (): void => {
     const w = scroller.clientWidth || window.innerWidth;
-    const hgt = mapHeight(JOURNEY_EXITS.length);
-    const snapshotX = w * 0.74;
+    const snapshotX = w * 0.8;
     const ratio = Math.min(2, window.devicePixelRatio || 1);
-    const { canvas, ctx } = makeCanvas(w, hgt, ratio);
+    const { canvas, ctx } = makeCanvas(w, height, ratio);
     canvas.className = 'map-canvas';
     canvas.style.width = `${w}px`;
-    canvas.style.height = `${hgt}px`;
+    canvas.style.height = `${height}px`;
     canvas.setAttribute('aria-hidden', 'true');
-    drawMap(ctx, w, hgt, JOURNEY_EXITS, completedTo(), snapshotAt, snapshotX);
+    drawMap(ctx, w, height, JOURNEY_EXITS, exitAt, completedTo(), snapshotAt, snapshotX);
     road.querySelector('.map-canvas')?.remove();
     road.prepend(canvas);
-    road.style.height = `${hgt}px`;
+    road.style.height = `${height}px`;
     for (const node of nodes) {
-      const [x, y] = roadPoint(w, hgt, node.at);
-      // Anchor the dot (not the whole button) on the road.
-      // (The side trip is centred on its spot, its label underneath.)
+      const [x, y] = roadPoint(w, height, node.at);
+      // Anchor the dot (not the whole button) on the road. The side trip is centred on its spot.
       node.el.style.left = node.id === 'snapshot' ? `${snapshotX}px` : `${x - 24}px`;
       node.el.style.top = `${y - 24}px`;
     }
@@ -466,18 +553,17 @@ export function mapScreen(app: AppApi, focus?: string): Screen {
 
   const el = h('div', { class: 'screen map-screen' }, [
     topbar('Journey Map', backButton('Back to the garage', () => app.goGarage()), [boltsPill(app)], true),
-    h('p', { class: 'map-note', text: 'Real exits in real order, not to scale. The story is fictional.' }),
     scroller,
     sheetEl,
   ]);
   const start = (focus as NodeId | undefined) ?? recommended ?? 'sta-ines';
   describe(start);
-  // Once laid out: draw the road, and open on the stop that matters.
+  // Once laid out: draw the road, and open on the level that matters.
   requestAnimationFrame(() => {
     place();
     const node = nodes.find((n) => n.id === start);
     if (node !== undefined) {
-      const y = roadPoint(scroller.clientWidth || window.innerWidth, mapHeight(JOURNEY_EXITS.length), node.at)[1];
+      const y = roadPoint(scroller.clientWidth || window.innerWidth, height, node.at)[1];
       scroller.scrollTop = y - scroller.clientHeight / 2;
     }
   });
@@ -491,293 +577,261 @@ export function mapScreen(app: AppApi, focus?: string): Screen {
 
 // -- team (loadout) ----------------------------------------------------------------------
 
-/** Where a locked sidekick joins, in a few words. `unlock.text` has the full rule. */
-function joinLabel(d: SidekickDef): string {
-  if (d.unlock.after === 'endless-1000') {
-    return 'Endless: 1 km';
-  }
-  return d.unlock.after === null ? d.unlock.text : `Joins at ${MISSIONS[d.unlock.after].to}`;
-}
-
-function statBars(stats: Record<string, number>): HTMLElement {
-  return h(
-    'dl',
-    { class: 'stat-bars' },
-    Object.entries(stats).flatMap(([name, value]) => [
-      h('dt', { text: name[0].toUpperCase() + name.slice(1) }),
-      h('dd', { attrs: { 'aria-label': `${name} ${value} of 5` } }, [
-        h('span', { class: 'stat-bar' }, Array.from({ length: 5 }, (_, i) => h('span', { class: `stat-pip${i < value ? ' on' : ''}` }))),
-      ]),
-    ]),
-  );
-}
-
 /**
- * Team: one hero (three to choose, with their handling compared) and two
- * sidekicks (any two different ones you own). The line-up on the canvas shows
- * the current team and hops when someone is picked. The team is locked once a
- * run starts.
+ * Team. A stage with who you have chosen; two tabs; a grid you can browse; and one
+ * panel about whoever you are looking at. Looking is not choosing: tapping a tile
+ * only shows them. The one button at the bottom does the choosing, and says exactly
+ * what it will do. The scroll area stops above that button, so nothing hides behind it.
  */
 export function teamScreen(app: AppApi, back: () => void): Screen {
   const scene = new TeamStage(() => app.save);
   const stageSpace = h('div', { class: 'team-stage-space', attrs: { 'aria-hidden': 'true' } });
   scene.space = stageSpace;
   const body = h('div', { class: 'scroll team-scroll' });
-  let slot: 0 | 1 = 0;
-  // Stays open while heroes are compared: every pick redraws the sheet.
-  let moreOpen = false;
+  const footer = h('div', { class: 'actions footer tb-footer' });
+  let tab: 'hero' | 'sidekick' = 'hero';
+  let slot: 0 | 1 = app.save.loadout.sidekicks[0] === null ? 0 : app.save.loadout.sidekicks[1] === null ? 1 : 0;
+  let lookingHero: HeroId = app.save.loadout.hero;
+  let lookingSidekick: SidekickId = app.save.loadout.sidekicks[slot] ?? app.save.loadout.sidekicks[0] ?? app.save.loadout.sidekicks[1] ?? 'pip';
+
+  const syncStage = (): void => {
+    const save = app.save;
+    scene.previewHero = tab === 'hero' && lookingHero !== save.loadout.hero ? lookingHero : null;
+    scene.previewSidekick = tab === 'sidekick' && !save.loadout.sidekicks.includes(lookingSidekick) ? lookingSidekick : null;
+    scene.previewSlot = slot;
+  };
+
+  const renderFooter = (): void => {
+    const save = app.save;
+    footer.replaceChildren();
+    if (tab === 'hero') {
+      const d = HERO_DEFS[lookingHero];
+      if (!save.heroes.includes(lookingHero)) {
+        footer.append(button(`${d.name} is not here yet`, () => undefined, { disabled: true, variant: 'secondary' }));
+      } else if (save.loadout.hero === lookingHero) {
+        footer.append(button('Done', back, { class: 'cta' }));
+      } else {
+        footer.append(button(`Drive with ${d.name}`, () => {
+          app.update(selectHero(app.save, lookingHero));
+          app.audio.sfx('tap');
+          scene.cheer(lookingHero);
+          announce(`${d.name} is your hero.`);
+          rerender(`hero-${lookingHero}`);
+        }, { class: 'cta' }));
+      }
+      return;
+    }
+    const d = SIDEKICK_DEFS[lookingSidekick];
+    const inSlot = save.loadout.sidekicks.indexOf(lookingSidekick);
+    if (save.sidekicks[lookingSidekick] === undefined) {
+      footer.append(button(`${d.name} is not here yet`, () => undefined, { disabled: true, variant: 'secondary' }));
+    } else if (inSlot === slot) {
+      footer.append(button(`Take ${d.name} out of slot ${slot + 1}`, () => {
+        app.update(equipSidekick(app.save, slot, null));
+        app.audio.sfx('tap');
+        rerender(`sk-${lookingSidekick}`);
+      }, { variant: 'secondary' }), button('Done', back, { class: 'cta' }));
+    } else {
+      footer.append(button(`Put ${d.name} in slot ${slot + 1}`, () => {
+        app.update(equipSidekick(app.save, slot, lookingSidekick));
+        app.audio.sfx('tap');
+        scene.cheer(lookingSidekick);
+        announce(`${d.name} is in slot ${slot + 1}.`);
+        rerender(`sk-${lookingSidekick}`);
+      }, { class: 'cta' }));
+    }
+  };
+
+  let teamRoot: HTMLElement | null = null;
   const render = (): void => {
     const save = app.save;
     body.replaceChildren();
-    // Heroes.
-    body.append(h('h2', { class: 'section-title', text: 'Hero' }));
-    const heroRow = h('div', { class: 'hero-cards', attrs: { role: 'radiogroup', 'aria-label': 'Hero' } });
-    for (const id of HEROES) {
-      const d = HERO_DEFS[id];
-      const unlocked = save.heroes.includes(id);
-      const on = save.loadout.hero === id;
-      const card = h(
-        'button',
-        {
-          class: `hero-card${on ? ' on' : ''}${unlocked ? '' : ' locked'}`,
-          attrs: { 'data-key': `hero-${id}`, role: 'radio', 'aria-checked': String(on), 'aria-label': unlocked ? `${d.name}, ${d.role}` : `${d.name}, locked: ${d.unlock.text}` },
+    const tabs = h('div', { class: 'tb-tabs', attrs: { role: 'tablist', 'aria-label': 'Team' } }, (['hero', 'sidekick'] as const).map((id) =>
+      h('button', {
+        class: `tb-tab${tab === id ? ' on' : ''}`,
+        attrs: { role: 'tab', 'aria-selected': String(tab === id), 'data-key': `tab-${id}` },
+        onClick: () => {
+          tab = id;
+          app.audio.sfx('tap');
+          rerender(`tab-${id}`);
+        },
+      }, [id === 'hero' ? `Heroes ${save.heroes.length}/${HEROES.length}` : `Sidekicks ${Object.keys(save.sidekicks).length}/${SIDEKICKS.length}`]),
+    ));
+    body.append(tabs);
+    if (tab === 'hero') {
+      const grid = h('div', { class: 'tb-grid tb-browser', attrs: { role: 'group', 'aria-label': 'Heroes' } });
+      for (const id of HEROES) {
+        const d = HERO_DEFS[id];
+        const owned = save.heroes.includes(id);
+        const rule = heroRule(id);
+        grid.append(rosterTile({
+          id,
+          kind: 'character',
+          name: d.name,
+          sub: d.role,
+          owned,
+          selected: lookingHero === id,
+          equipped: save.loadout.hero === id ? 'Driving' : null,
+          progress: rule !== null ? ruleProgress(save, rule) : null,
+          key: `hero-${id}`,
           onClick: () => {
-            if (!unlocked) {
-              app.audio.sfx('deny');
-              announce(`${d.name}: ${d.unlock.text}.`);
-              return;
-            }
-            app.update(selectHero(app.save, id));
+            lookingHero = id;
             app.audio.sfx('tap');
-            scene.cheer(id);
-            announce(`${d.name} is your hero.`);
             rerender(`hero-${id}`);
           },
-        },
-        [
-          h('img', { class: 'hero-face', attrs: { src: portrait(id, 64), alt: '' } }),
-          h('strong', { class: 'hero-name', text: d.name }),
-          h('span', { class: 'hero-role', text: unlocked ? d.role : 'Locked' }),
-          on ? h('span', { class: 'pick-mark' }, [icon('check')]) : null,
-          unlocked ? null : h('span', { class: 'pick-mark lock' }, [icon('lock')]),
-        ],
-      );
-      heroRow.append(card);
-    }
-    body.append(heroRow);
-    const hero = HERO_DEFS[save.loadout.hero];
-    const more = h('details', { class: 'details', attrs: moreOpen ? { open: '' } : {} }, [
-      h('summary', { text: 'More' }),
-      h('p', { class: 'small-text good-note', text: `+ ${hero.strength}` }),
-      h('p', { class: 'small-text cost-note', text: `- ${hero.tradeOff}` }),
-    ]);
-    more.addEventListener('toggle', () => {
-      moreOpen = (more as HTMLDetailsElement).open;
-    });
-    body.append(
-      h('div', { class: 'card hero-detail' }, [
-        h('div', { class: 'row-title' }, [h('h3', { text: hero.signature.name }), h('span', { class: 'muted small-text', text: `Big button · ${hero.signature.cooldown} s recharge` })]),
-        h('p', { class: 'small-text', text: hero.signature.short }),
-        statBars(hero.stats),
-        more,
-      ]),
-    );
-    // Side by side: every unlocked hero's numbers, the chosen one highlighted.
-    const open = HEROES.filter((id) => save.heroes.includes(id));
-    if (open.length > 1) {
-      const stats: [string, keyof typeof hero.stats][] = [['Steering', 'steering'], ['Toughness', 'toughness'], ['Power', 'power'], ['Scouting', 'scouting']];
-      more.append(
-        h('table', { class: 'compare' }, [
-          h('caption', { class: 'small-text muted', text: 'Compare heroes (out of 5)' }),
-          h('thead', {}, [h('tr', {}, [h('th', { text: '' }), ...open.map((id) => h('th', { class: id === save.loadout.hero ? 'on' : '', attrs: { scope: 'col' }, text: HERO_DEFS[id].name }))])]),
-          h('tbody', {}, stats.map(([label, key]) => h('tr', {}, [h('th', { attrs: { scope: 'row' }, text: label }), ...open.map((id) => h('td', { class: id === save.loadout.hero ? 'on' : '', text: String(HERO_DEFS[id].stats[key]) }))]))),
-        ]),
-      );
-    }
-    // Sidekicks.
-    body.append(h('h2', { class: 'section-title', text: 'Sidekicks' }), h('p', { class: 'muted small-text', text: 'Pick a slot, then a sidekick.' }));
-    const slots = h('div', { class: 'slot-picks', attrs: { role: 'radiogroup', 'aria-label': 'Sidekick slot' } });
-    ([0, 1] as const).forEach((i) => {
-      const id = save.loadout.sidekicks[i];
-      const on = slot === i;
-      slots.append(
-        h(
-          'button',
-          {
-            class: `slot-pick${on ? ' on' : ''}`,
-            attrs: { 'data-key': `slot-${i}`, role: 'radio', 'aria-checked': String(on), 'aria-label': `Slot ${i + 1}: ${id === null ? 'empty' : SIDEKICK_DEFS[id].name}` },
-            onClick: () => {
-              slot = i;
-              rerender(`slot-${i}`);
-            },
+        }));
+      }
+      body.append(grid, heroPanel(save, lookingHero, false));
+    } else {
+      const slots = h('div', { class: 'tb-slots', attrs: { role: 'radiogroup', 'aria-label': 'Sidekick slot' } });
+      ([0, 1] as const).forEach((i) => {
+        const id = save.loadout.sidekicks[i];
+        slots.append(h('button', {
+          class: `tb-slot${slot === i ? ' on' : ''}`,
+          attrs: { style: id !== null ? tileColours(id) : '', 'data-key': `slot-${i}`, role: 'radio', 'aria-checked': String(slot === i), 'aria-label': `Slot ${i + 1}: ${id === null ? 'empty' : SIDEKICK_DEFS[id].name}` },
+          onClick: () => {
+            slot = i;
+            if (id !== null) {
+              lookingSidekick = id;
+            }
+            rerender(`slot-${i}`);
           },
-          [
-            id !== null ? h('img', { class: 'slot-face', attrs: { src: sidekickPortrait(id, 48, save.sidekicks[id]?.evolved === true), alt: '' } }) : h('span', { class: 'slot-face empty' }, [icon('team')]),
-            h('span', { text: `Slot ${i + 1}` }),
-            h('strong', { text: id === null ? 'Empty' : SIDEKICK_DEFS[id].name }),
-          ],
-        ),
-      );
-    });
-    body.append(slots);
-    const grid = h('div', { class: 'sidekick-grid' });
-    for (const id of SIDEKICKS) {
-      const d = SIDEKICK_DEFS[id];
-      const progress = save.sidekicks[id];
-      const owned = progress !== undefined;
-      const inSlot = save.loadout.sidekicks.indexOf(id);
-      const info = d.describe(sidekickStats(id, progress?.evolved === true));
-      grid.append(
-        h(
-          'button',
-          {
-            class: `sidekick-card${inSlot >= 0 ? ' on' : ''}${owned ? '' : ' locked'}`,
-            attrs: { 'data-key': `sk-${id}`, 'aria-label': owned ? `${d.name}, ${d.roleLabel}. ${info.what}${inSlot >= 0 ? ` In slot ${inSlot + 1}.` : ''}` : `${d.name}, locked: ${d.unlock.text}` },
-            onClick: () => {
-              if (!owned) {
-                app.audio.sfx('deny');
-                announce(`${d.name}: ${d.unlock.text}.`);
-                return;
-              }
-              app.update(equipSidekick(app.save, slot, app.save.loadout.sidekicks[slot] === id ? null : id));
-              app.audio.sfx('tap');
-              scene.cheer(id);
-              rerender(`sk-${id}`);
-            },
+        }, [
+          id !== null ? portraitEl('tb-slot-face', id, 40, 'sidekick', { evolved: save.sidekicks[id]?.evolved === true }) : h('span', { class: 'tb-slot-face empty' }, [icon('team')]),
+          h('span', { class: 'tb-slot-text' }, [h('span', { text: `Slot ${i + 1}` }), h('strong', { text: id === null ? 'Empty' : SIDEKICK_DEFS[id].name })]),
+        ]));
+      });
+      body.append(slots);
+      // What this team is good at.
+      const team = save.loadout.sidekicks.filter((x): x is SidekickId => x !== null);
+      const tags = teamTags(HERO_DEFS[save.loadout.hero].tags, team.map((k) => sidekickTags(k)));
+      const pairs = activeSynergies(save.loadout.hero, save.loadout.sidekicks);
+      body.append(h('div', { class: 'tb-teamline' }, [tagRow(tags.map((t) => t.tag).slice(0, 4)), ...pairs.map((p) => h('p', { class: 'tb-synergy' }, [h('strong', { text: `${p.name}: ` }), p.text]))]));
+      const grid = h('div', { class: 'tb-grid tb-browser', attrs: { role: 'group', 'aria-label': 'Sidekicks' } });
+      for (const id of SIDEKICKS) {
+        const d = SIDEKICK_DEFS[id];
+        const progress = save.sidekicks[id];
+        const inSlot = save.loadout.sidekicks.indexOf(id);
+        const rule = sidekickRule(id);
+        grid.append(rosterTile({
+          id,
+          kind: 'sidekick',
+          name: progress?.evolved ? d.evolvedName : d.name,
+          sub: d.roleLabel,
+          owned: progress !== undefined,
+          evolved: progress?.evolved === true,
+          selected: lookingSidekick === id,
+          equipped: inSlot >= 0 ? `Slot ${inSlot + 1}` : null,
+          progress: rule !== null ? ruleProgress(save, rule) : null,
+          key: `sk-${id}`,
+          onClick: () => {
+            lookingSidekick = id;
+            app.audio.sfx('tap');
+            rerender(`sk-${id}`);
           },
-          [
-            h('img', { class: 'sk-face', attrs: { src: sidekickPortrait(id, 64, progress?.evolved === true), alt: '' } }),
-            h('strong', { text: progress?.evolved ? d.evolvedName : d.name }),
-            h('span', { class: 'sk-role', text: owned ? d.roleLabel : joinLabel(d) }),
-            inSlot >= 0 ? h('span', { class: 'chip on', text: `Slot ${inSlot + 1}` }) : null,
-            inSlot >= 0 ? h('span', { class: 'pick-mark' }, [icon('check')]) : null,
-            owned ? null : h('span', { class: 'pick-mark lock' }, [icon('lock')]),
-          ],
-        ),
-      );
+        }));
+      }
+      body.append(grid, sidekickPanel(app, lookingSidekick, false, () => {
+        rerender(`sk-${lookingSidekick}`);
+        if (app.save.reveals[0] === `sidekick:${lookingSidekick}` && teamRoot !== null) {
+          showReveal(app, teamRoot, () => rerender(`sk-${lookingSidekick}`));
+        }
+      }));
     }
-    body.append(grid);
+    syncStage();
+    renderFooter();
   };
   /** Re-draws after a pick without losing the place: same scroll, focus back on the same control. */
   const rerender = (key: string): void => {
     const top = body.scrollTop;
+    const across = body.querySelector<HTMLElement>('.tb-browser')?.scrollLeft ?? 0;
     render();
     body.scrollTop = top;
+    const strip = body.querySelector<HTMLElement>('.tb-browser');
+    if (strip !== null) {
+      strip.scrollLeft = key.startsWith('tab-') ? 0 : across;
+    }
     const picked = body.querySelector<HTMLElement>(`[data-key="${key}"]`);
-    picked?.classList.add('just-picked');
     picked?.focus({ preventScroll: true });
   };
   render();
-  const done = button('Done', back);
-  done.setAttribute('data-autofocus', '');
+  // Open on whoever is chosen, wherever in the list they are.
+  requestAnimationFrame(() => body.querySelector<HTMLElement>('.tb-tilecard.selected')?.scrollIntoView({ block: 'nearest', inline: 'center' }));
   const el = h('div', { class: 'screen panel-screen team-screen' }, [
-    topbar('Team', backButton('Back', back), [withIcon(button('Collection', () => app.openCollection(() => app.openTeam(back)), { variant: 'ghost', class: 'small' }), 'star')]),
+    topbar('Team', backButton('Back', back), [button('Collection', () => app.openCollection(() => app.openTeam(back)), { variant: 'ghost', class: 'small' })]),
     stageSpace,
     body,
-    h('div', { class: 'actions footer' }, [done]),
+    footer,
   ]);
+  teamRoot = el;
   return { el, scene, onBack: () => (back(), true) };
 }
 
-// -- collection (sidekicks, XP, evolution) ----------------------------------------------------
+// -- collection (who you have met, who is still out there) --------------------------------------
 
+/**
+ * Collection: everyone in one place. Unlocking, improving and friendship are kept
+ * apart: the progress bar is about joining, Evolve about getting stronger, and the
+ * friendship line changes nothing on the road.
+ */
 export function collectionScreen(app: AppApi, back: () => void): Screen {
   const scene = new GarageScene(() => app.save);
-  scene.dim = 0.55;
-  const body = h('div', { class: 'scroll' });
+  scene.dim = 0.3;
+  scene.cast = false;
+  const body = h('div', { class: 'scroll tb-collection' });
   const wallet = h('div', { class: 'wallet' });
-  // Open rows stay open through a redraw: evolving one redraws the whole list.
-  const opened = new Set<string>();
+  const panel = h('div', { class: 'tb-collection-panel' });
+  let looking: { kind: 'hero'; id: HeroId } | { kind: 'sidekick'; id: SidekickId } = { kind: 'hero', id: app.save.loadout.hero };
   const render = (): void => {
     const save = app.save;
     wallet.replaceChildren(boltsPill(app), h('div', { class: 'bolts-pill cores', attrs: { 'aria-label': `${save.gearCores} Gear Cores` } }, [icon('gear', 'core-glyph'), h('span', { text: String(save.gearCores) })]));
-    body.replaceChildren(
-      h('details', { class: 'card soft details collection-how' }, [
-        h('summary', { text: 'How to evolve' }),
-        h('ul', { class: 'rules' }, [
-          `Costs ${EVOLVE_COST.xp} XP, ${EVOLVE_COST.cores} Gear Cores and ${EVOLVE_COST.bolts} Bolts.`,
-          'XP: every run a sidekick joins.',
-          'Gear Cores: missions and Endless milestones.',
-        ].map((line) => h('li', { text: line }))),
-      ]),
-    );
+    const top = body.scrollTop;
+    body.replaceChildren();
+    const heroGrid = h('div', { class: 'tb-grid' });
+    for (const id of HEROES) {
+      const d = HERO_DEFS[id];
+      const rule = heroRule(id);
+      heroGrid.append(rosterTile({ id, kind: 'character', name: d.name, sub: d.role, owned: save.heroes.includes(id), selected: looking.kind === 'hero' && looking.id === id, equipped: save.loadout.hero === id ? 'Driving' : null, progress: rule !== null ? ruleProgress(save, rule) : null, key: `c-h-${id}`, onClick: () => {
+        looking = { kind: 'hero', id };
+        app.audio.sfx('tap');
+        render();
+      } }));
+    }
+    const skGrid = h('div', { class: 'tb-grid' });
     for (const id of SIDEKICKS) {
       const d = SIDEKICK_DEFS[id];
       const progress = save.sidekicks[id];
-      const owned = progress !== undefined;
-      const evolved = progress?.evolved === true;
-      const now = d.describe(sidekickStats(id, evolved));
-      const check = canEvolve(save, id);
-      const pct = Math.min(100, Math.round(((progress?.xp ?? 0) / EVOLVE_COST.xp) * 100));
-      const card = h('details', { class: `card details collection-card${owned ? '' : ' locked'}`, attrs: { 'data-sk': id, tabindex: '-1', ...(opened.has(id) ? { open: '' } : {}) } }, [
-        h('summary', {}, [
-          h('div', { class: 'evolve-preview' }, [
-            h('figure', {}, [h('img', { attrs: { src: sidekickPortrait(id, 84, false, owned ? 'happy' : 'idle'), alt: '' } })]),
-            h('span', { class: 'evolve-arrow', text: '→', attrs: { 'aria-hidden': 'true' } }),
-            h('figure', { class: evolved ? '' : 'future' }, [h('img', { attrs: { src: sidekickPortrait(id, 84, true, 'celebrate'), alt: '' } })]),
-          ]),
-          h('div', { class: 'collection-name' }, [
-            h('div', { class: 'collection-title' }, [h('strong', { text: evolved ? d.evolvedName : d.name }), check.ok ? h('span', { class: 'chip next', text: 'Ready' }) : null]),
-            h('span', { class: 'sk-role', text: owned ? d.roleLabel : joinLabel(d) }),
-            owned && !evolved
-              ? h('div', { class: 'xp-line' }, [
-                  h('div', { class: 'xp-bar', attrs: { role: 'progressbar', 'aria-label': `${d.name} XP`, 'aria-valuenow': String(pct), 'aria-valuemin': '0', 'aria-valuemax': '100' } }, [h('div', { class: 'xp-fill', attrs: { style: `width:${pct}%` } })]),
-                  h('span', { class: 'small-text', text: `${progress!.xp}/${EVOLVE_COST.xp}` }),
-                ])
-              : null,
-          ]),
-        ]),
-        h('p', { class: 'muted small-text', text: d.blurb }),
-        owned ? h('p', { text: now.what }) : h('p', { class: 'small-text', text: d.unlock.text }),
-        owned
-          ? h('dl', { class: 'facts' }, [
-              h('dt', { text: 'Range' }),
-              h('dd', { text: now.range }),
-              h('dt', { text: 'Cooldown' }),
-              h('dd', { text: now.cooldown }),
-              h('dt', { text: 'Targets' }),
-              h('dd', { text: now.targets }),
-              h('dt', { text: 'Limits' }),
-              h('dd', { text: now.limits }),
-              h('dt', { text: evolved ? 'Evolved' : 'Evolves' }),
-              h('dd', { text: d.evolution }),
-            ])
-          : null,
-        owned && !evolved
-          ? button(
-              check.ok ? `Evolve (${EVOLVE_COST.cores} Cores, ${EVOLVE_COST.bolts} Bolts)` : check.missing ?? 'Not yet',
-              () => {
-                const out = evolveSidekick(app.save, id);
-                if (out.evolved) {
-                  app.update(out.save);
-                  app.audio.sfx('win');
-                  announce(`${d.name} evolved into ${d.evolvedName}!`);
-                  render();
-                  // Bring the new form into view with a moment of celebration.
-                  const shown = body.querySelector<HTMLElement>(`[data-sk="${id}"]`);
-                  shown?.classList.add('just-evolved');
-                  shown?.scrollIntoView({ block: 'center' });
-                  shown?.focus({ preventScroll: true });
-                } else {
-                  app.audio.sfx('deny');
-                }
-              },
-              { disabled: !check.ok, variant: check.ok ? 'primary' : 'secondary' },
-            )
-          : null,
-      ]);
-      card.addEventListener('toggle', () => {
-        if ((card as HTMLDetailsElement).open) {
-          opened.add(id);
-        } else {
-          opened.delete(id);
-        }
-      });
-      body.append(card);
+      const rule = sidekickRule(id);
+      const ready = progress !== undefined && canEvolve(save, id).ok;
+      const inSlot = save.loadout.sidekicks.indexOf(id);
+      skGrid.append(rosterTile({ id, kind: 'sidekick', name: progress?.evolved ? d.evolvedName : d.name, sub: ready ? 'Ready to evolve' : d.roleLabel, owned: progress !== undefined, evolved: progress?.evolved === true, selected: looking.kind === 'sidekick' && looking.id === id, equipped: inSlot >= 0 ? `Slot ${inSlot + 1}` : null, progress: rule !== null ? ruleProgress(save, rule) : null, key: `c-s-${id}`, onClick: () => {
+        looking = { kind: 'sidekick', id };
+        app.audio.sfx('tap');
+        render();
+      } }));
     }
+    const charms = earnedCharms(save);
+    body.append(
+      h('h2', { class: 'section-title', text: `Heroes ${save.heroes.length}/${HEROES.length}` }),
+      heroGrid,
+      h('h2', { class: 'section-title', text: `Sidekicks ${Object.keys(save.sidekicks).length}/${SIDEKICKS.length}` }),
+      skGrid,
+      h('h2', { class: 'section-title', text: `Travel charms ${charms.length}/${CHARMS.length}` }),
+      h('ul', { class: 'tb-charms' }, CHARMS.map((c) => h('li', { class: charms.includes(c.id) ? 'on' : '' }, [h('strong', { text: c.name }), h('span', { text: charms.includes(c.id) ? 'In the garage' : c.how })]))),
+      h('p', { class: 'tb-muted small-text', text: `Postcards found: ${counterValue(save, 'postcards')}. Charms decorate the garage; they change nothing on the road.` }),
+    );
+    body.scrollTop = top;
+    panel.replaceChildren(looking.kind === 'hero' ? heroPanel(save, looking.id, true) : sidekickPanel(app, looking.id, true, () => {
+      render();
+      // Evolving just redraws; someone newly bought is celebrated first.
+      if (looking.kind === 'sidekick' && app.save.reveals[0] === `sidekick:${looking.id}`) {
+        showReveal(app, panel, render);
+      }
+    }));
+    panel.scrollTop = 0;
   };
   render();
-  const el = h('div', { class: 'screen panel-screen' }, [topbar('Collection', backButton('Back', back), [wallet]), body, h('div', { class: 'actions footer' }, [button('Done', back)])]);
+  const el = h('div', { class: 'screen panel-screen tb-collection-screen' }, [topbar('Collection', backButton('Back', back), [wallet]), body, panel]);
   return { el, scene, onBack: () => (back(), true) };
 }
 
@@ -785,16 +839,14 @@ export function collectionScreen(app: AppApi, back: () => void): Screen {
 
 export function workshopScreen(app: AppApi, back: () => void): Screen {
   const scene = new GarageScene(() => app.save);
-  scene.dim = 0.5;
+  scene.dim = 0.3;
+  scene.cast = false;
   const body = h('div', { class: 'scroll' });
   const pillHolder = h('div', {});
   const render = (): void => {
     pillHolder.replaceChildren(boltsPill(app));
     body.replaceChildren(
-      h('div', { class: 'card soft' }, [
-        h('p', { text: 'Earn Bolts on the road, by completing missions (the first time pays most), driving clean, teamwork and finding postcards.' }),
-        h('p', { class: 'muted small-text', text: 'Upgrades are optional - every mission can be finished without them.' }),
-      ]),
+      h('p', { class: 'muted small-text', text: 'Optional: every mission can be finished without these.' }),
     );
     for (const id of UPGRADES) {
       const def = UPGRADE_DEFS[id];
@@ -844,7 +896,7 @@ export function workshopScreen(app: AppApi, back: () => void): Screen {
   const el = h('div', { class: 'screen panel-screen' }, [
     topbar("Kiko's Workshop", backButton('Back', back), [pillHolder]),
     body,
-    h('div', { class: 'actions footer' }, [button('Done', back)]),
+    h('div', { class: 'actions footer' }, [button('Done', back, { class: 'cta' })]),
   ]);
   return { el, scene, onBack: () => (back(), true) };
 }
@@ -853,8 +905,9 @@ export function workshopScreen(app: AppApi, back: () => void): Screen {
 
 export function settingsScreen(app: AppApi, back: () => void, openDifficulty = false): Screen {
   const scene = new GarageScene(() => app.save);
-  scene.dim = 0.55;
-  const done = button('Done', back);
+  scene.dim = 0.3;
+  scene.cast = false;
+  const done = button('Done', back, { class: 'cta' });
   const el = h('div', { class: 'screen panel-screen' }, [
     topbar('Settings & help', backButton('Back', back), [], true),
     h('div', { class: 'scroll' }, [settingsPanel(app, { inMission: false, openDifficulty })]),

@@ -5,13 +5,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Radius, softShadow, useTheme, useThemedStyles } from '../../theme';
 import type { ThemePalette } from '../../theme';
 import SheetModal from '../SheetModal';
+import { shownText } from '../../lib/assistantApi';
+import type { LanguageChoice } from '../../lib/assistantApi';
 import { historyGroup, whenLabel } from '../../lib/chatHistory';
 import type { SavedChat } from '../../lib/chatHistory';
 
-/** Navie's last words in a chat, which say more about it than the question does. */
-function previewOf(chat: SavedChat): string {
+/**
+ * Navie's last words in a chat, which say more about it than the question does.
+ * In the switch's language when that chat has been seen in it; a chat is only
+ * translated when it is opened, so an old one may still show its own language.
+ */
+function previewOf(chat: SavedChat, language: LanguageChoice): string {
   const reply = [...chat.messages].reverse().find((message) => message.role === 'assistant');
-  return (reply?.text ?? chat.messages[chat.messages.length - 1].text).replace(/\s+/g, ' ').trim();
+  return shownText(reply ?? chat.messages[chat.messages.length - 1], language).replace(/\s+/g, ' ').trim();
 }
 
 function questionCount(chat: SavedChat): string {
@@ -25,6 +31,8 @@ export interface ChatHistoryRowProps {
   active: boolean;
   /** Navie is still answering in this chat. */
   pending: boolean;
+  /** The EN / TL switch, for the preview. */
+  language: LanguageChoice;
   onPress: () => void;
   /** Offered in the full history only; the short list on the empty chat is for opening. */
   onDelete?: () => void;
@@ -34,6 +42,7 @@ export const ChatHistoryRow: React.FC<ChatHistoryRowProps> = ({
   chat,
   active,
   pending,
+  language,
   onPress,
   onDelete,
 }) => {
@@ -64,7 +73,7 @@ export const ChatHistoryRow: React.FC<ChatHistoryRowProps> = ({
           <Text style={styles.rowWhen}>{whenLabel(chat.updatedAt)}</Text>
         </View>
         <Text numberOfLines={2} style={styles.rowPreview}>
-          {pending ? 'Navie is still answering…' : previewOf(chat)}
+          {pending ? 'Navie is still answering…' : previewOf(chat, language)}
         </Text>
         <View style={styles.rowMeta}>
           <Text style={styles.rowMetaText}>{questionCount(chat)}</Text>
@@ -96,6 +105,7 @@ export interface ChatHistorySheetProps {
   onClose: () => void;
   chats: SavedChat[];
   activeChatId: string | null;
+  language: LanguageChoice;
   pendingChatId: string | null;
   onOpen: (chat: SavedChat) => void;
   onDelete: (id: string) => void;
@@ -114,6 +124,7 @@ export const ChatHistorySheet: React.FC<ChatHistorySheetProps> = ({
   onClose,
   chats,
   activeChatId,
+  language,
   pendingChatId,
   onOpen,
   onDelete,
@@ -209,6 +220,7 @@ export const ChatHistorySheet: React.FC<ChatHistorySheetProps> = ({
                     key={chat.id}
                     chat={chat}
                     active={chat.id === activeChatId}
+                    language={language}
                     pending={chat.id === pendingChatId}
                     onPress={() => onOpen(chat)}
                     onDelete={() => confirmDelete(chat)}

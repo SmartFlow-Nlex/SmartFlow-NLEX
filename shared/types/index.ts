@@ -221,6 +221,7 @@ export const ASSISTANT_TOOLS = [
   'get_event_forecasts',
   'get_incident_hotspots',
   'get_traffic_forecast',
+  'get_road_rules',
 ] as const;
 
 export type AssistantToolName = (typeof ASSISTANT_TOOLS)[number];

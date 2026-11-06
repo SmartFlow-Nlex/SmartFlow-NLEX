@@ -14,7 +14,8 @@ import {
 } from '../core/progression';
 import { EVOLVE_COST } from '../core/roster';
 import { defaultSave } from '../core/save';
-import type { RunResult, SaveData } from '../core/types';
+import { JOURNEY, emptyTally, type RunResult, type SaveData } from '../core/types';
+import { levelOf } from '../core/levels';
 import { assert, test } from './harness';
 
 const run = (over: Partial<RunResult> = {}): RunResult => ({
@@ -25,6 +26,7 @@ const run = (over: Partial<RunResult> = {}): RunResult => ({
   outcome: 'success',
   hero: 'navie',
   sidekicks: ['pip', 'mila'],
+  tally: emptyTally(),
   boltsCollected: 12,
   foesDefeated: 0,
   goalsDone: 0,
@@ -96,26 +98,34 @@ test('reward: teamwork bonuses are explained and capped at 25', () => {
   assert.ok(teamwork.every((l) => l.note.length > 0));
 });
 
-test('progress: missions unlock in order and recruit friends into empty slots', () => {
+test('progress: levels unlock in order, and friends join at their levels', () => {
   let save = defaultSave();
   assert.ok(isUnlocked(save, 'm1-garage'));
-  assert.ok(!isUnlocked(save, 'm2-convoy'));
+  assert.ok(!isUnlocked(save, JOURNEY[1]));
   assert.equal(recommendedMission(save), 'm1-garage');
   save = commitRun(save, run()).save;
-  assert.deepEqual(save.heroes, ['navie', 'jepoy'], 'Jepoy becomes a playable hero');
-  assert.ok(save.sidekicks.bantay !== undefined, 'Bantay joins');
-  assert.ok(isUnlocked(save, 'm2-convoy'));
+  assert.ok(isUnlocked(save, JOURNEY[1]) && !isUnlocked(save, JOURNEY[2]), 'one level at a time');
   assert.ok(isUnlocked(save, 'snapshot'));
   assert.ok(isUnlocked(save, 'endless'));
   assert.ok(save.tutorialDone);
-  save = commitRun(save, run({ runId: 'r2', missionId: 'm2-convoy', kikoEngineLeft: 3, kikoEngineMax: 3 })).save;
-  assert.ok(workshopOpen(save));
+  const driveTo = (upTo: number): void => {
+    for (const id of JOURNEY.slice(0, upTo)) {
+      if (save.missions[id]?.completed !== true) {
+        save = commitRun(save, run({ runId: `run-${id}`, missionId: id, kikoEngineLeft: id === 'm2-convoy' ? 3 : null, kikoEngineMax: id === 'm2-convoy' ? 3 : null, teamHonk: id === 'm3-finale' })).save;
+      }
+    }
+  };
+  driveTo(levelOf('m2-convoy') - 1);
+  assert.ok(workshopOpen(save), 'the Workshop opened on the way');
+  assert.ok(save.heroes.includes('jepoy') && save.sidekicks.bantay !== undefined, 'Kuya Jepoy and Bantay joined on the way');
+  assert.ok(!save.heroes.includes('kiko'), 'Kiko waits for his convoy');
+  driveTo(levelOf('m2-convoy'));
   assert.ok(save.heroes.includes('kiko') && save.sidekicks.kumpuni !== undefined);
-  assert.equal(recommendedMission(save), 'm3-finale');
-  save = commitRun(save, run({ runId: 'r3', missionId: 'm3-finale', teamHonk: true })).save;
+  assert.equal(recommendedMission(save), JOURNEY[levelOf('m2-convoy')]);
+  driveTo(levelOf('m3-finale'));
   assert.ok(save.sidekicks.bumbo !== undefined);
-  assert.equal(save.gearCores, 1 + 2 + 3, 'Gear Cores for the three first clears');
-  assert.equal(recommendedMission(save), 'bocaue-interchange', 'the road carries on north');
+  assert.equal(save.gearCores, 1 + 2 + 3, 'Gear Cores for the three story first clears');
+  assert.equal(recommendedMission(save), JOURNEY[levelOf('m3-finale')], 'the road carries on north');
 });
 
 test('loadout: only owned heroes and sidekicks; one sidekick never fills both slots; story blocks are respected', () => {
@@ -160,7 +170,6 @@ test('endless: pays distance (capped) and first-time milestone Cores; keeps a lo
   assert.equal(first.payout.cores, 2, 'milestones 1000 and 2000');
   assert.ok(first.payout.newBest);
   save = first.save;
-  assert.ok(save.sidekicks.silip !== undefined, 'Silip joins at 1000 m');
   assert.equal(save.endless.bestDistance, 2100);
   const second = commitRun(save, run({ runId: 'e2', missionId: 'endless', outcome: 'failure', distance: 2500, boltsCollected: 0 }));
   assert.equal(second.payout.cores, 0, 'milestones pay once');

@@ -70,7 +70,7 @@ test('collisions: one hazard is one dent, never one dent per frame', () => {
     len: HAZARDS.truck.len,
     ownSpeed: 0,
     thrown: 0,
-    spent: false, clearedHero: false, clearedKiko: false, hp: 0, maxHp: 0, hurtT: 99, stun: 0,
+    spent: false, clearedHero: false, clearedKiko: false, hp: 0, maxHp: 0, hurtT: 99, stun: 0, slowT: 0, marked: 0, counted: false,
     practice: false,
     knocked: -1,
     knockDir: 0,
@@ -87,7 +87,7 @@ test('collisions: one hazard is one dent, never one dent per frame', () => {
 test('collisions: post-hit protection stops a second hazard right after the first', () => {
   const sim = new DrivingSim(simOptions('m1-garage', { difficulty: 'standard', skipTutorial: true, seed: 5 }));
   for (const z of [5, 8]) {
-    sim.state.hazards.push({ id: 900 + z, kind: 'cone', x: 0, z, halfW: HAZARDS.cone.halfW, len: HAZARDS.cone.len, ownSpeed: 0, thrown: 0, spent: false, clearedHero: false, clearedKiko: false, hp: 0, maxHp: 0, hurtT: 99, stun: 0, practice: false, knocked: -1, knockDir: 0, laneChange: null });
+    sim.state.hazards.push({ id: 900 + z, kind: 'cone', x: 0, z, halfW: HAZARDS.cone.halfW, len: HAZARDS.cone.len, ownSpeed: 0, thrown: 0, spent: false, clearedHero: false, clearedKiko: false, hp: 0, maxHp: 0, hurtT: 99, stun: 0, slowT: 0, marked: 0, counted: false, practice: false, knocked: -1, knockDir: 0, laneChange: null });
   }
   for (let i = 0; i < 60; i += 1) {
     sim.step(STEP, { axis: 0, targetX: 0, ability: false });
@@ -168,7 +168,7 @@ test('fairness: fallbacks to the safe pattern are rare', () => {
 
 function hazard(id: number, kind: HazardKind, x: number, z: number): HazardEntity {
   const spec = HAZARDS[kind];
-  return { id, kind, x, z, halfW: spec.halfW, len: spec.len, ownSpeed: spec.ownSpeed, thrown: spec.thrown, spent: false, clearedHero: false, clearedKiko: false, hp: 0, maxHp: 0, hurtT: 99, stun: 0, practice: false, knocked: -1, knockDir: 0, laneChange: null };
+  return { id, kind, x, z, halfW: spec.halfW, len: spec.len, ownSpeed: spec.ownSpeed, thrown: spec.thrown, spent: false, clearedHero: false, clearedKiko: false, hp: 0, maxHp: 0, hurtT: 99, stun: 0, slowT: 0, marked: 0, counted: false, practice: false, knocked: -1, knockDir: 0, laneChange: null };
 }
 
 /** A convoy run with nothing placed by the director (so the test controls the road). */
@@ -485,7 +485,7 @@ function quietRoad(hero: HeroId = 'navie', sidekicks: [SidekickId | null, Sideki
 
 function bot(id: number, kind: FoeKind, x: number, z: number): HazardEntity {
   const spec = FOES[kind];
-  return { id, kind, x, z, halfW: spec.halfW, len: spec.len, ownSpeed: spec.ownSpeed, thrown: 0, spent: false, clearedHero: false, clearedKiko: false, hp: spec.hp, maxHp: spec.hp, hurtT: 99, stun: 0, practice: false, knocked: -1, knockDir: 0, laneChange: null };
+  return { id, kind, x, z, halfW: spec.halfW, len: spec.len, ownSpeed: spec.ownSpeed, thrown: 0, spent: false, clearedHero: false, clearedKiko: false, hp: spec.hp, maxHp: spec.hp, hurtT: 99, stun: 0, slowT: 0, marked: 0, counted: false, practice: false, knocked: -1, knockDir: 0, laneChange: null };
 }
 
 const drive = (sim: DrivingSim, seconds: number, targetX: number | null = 0, ability = false): SimEvent[] => {
@@ -570,11 +570,11 @@ test('sidekicks: Pip darts, Bumbo chains, Mila pulls, Kumpuni repairs (capped), 
 
   // Mila: a Bolt one lane over is pulled in.
   const mila = quietRoad('navie', ['mila', null]);
-  mila.state.pickups.push({ id: 8200, kind: 'bolt', power: null, x: 0.9, z: 6, collected: false, collectedT: -1 });
+  mila.state.pickups.push({ id: 8200, kind: 'bolt', power: null, x: 0.9, z: 6, collected: false, collectedT: -1, hidden: false, revealed: false, passed: false });
   drive(mila, 0.8, 0);
   assert.equal(mila.state.boltsCollected, 1);
   const none = quietRoad('navie', [null, null]);
-  none.state.pickups.push({ id: 8201, kind: 'bolt', power: null, x: 0.9, z: 6, collected: false, collectedT: -1 });
+  none.state.pickups.push({ id: 8201, kind: 'bolt', power: null, x: 0.9, z: 6, collected: false, collectedT: -1, hidden: false, revealed: false, passed: false });
   drive(none, 0.8, 0);
   assert.equal(none.state.boltsCollected, 0, 'without Mila it stays put');
 
@@ -617,7 +617,7 @@ test('caps: protection never stacks past 6 s; non-wrench repairs stop at 3 per r
 
 test('power-ups: capsules rotate predictably, show at once, and expire', () => {
   const sim = quietRoad('navie');
-  sim.state.pickups.push({ id: 9000, kind: 'powerup', power: 'spread', x: 0, z: 3, collected: false, collectedT: -1 });
+  sim.state.pickups.push({ id: 9000, kind: 'powerup', power: 'spread', x: 0, z: 3, collected: false, collectedT: -1, hidden: false, revealed: false, passed: false });
   const events = drive(sim, 0.5, 0);
   assert.ok(events.some((e) => e.type === 'power' && e.kind === 'spread'));
   assert.ok(sim.state.powers.spread !== undefined);
@@ -652,7 +652,7 @@ test('goals: a short goal counts progress and pays when done', () => {
   const sim = quietRoad('navie');
   assert.ok(sim.state.goal !== null && sim.state.goal.kind === 'bolts');
   for (let i = 0; i < 15; i += 1) {
-    sim.state.pickups.push({ id: 9100 + i, kind: 'bolt', power: null, x: 0, z: 3 + i * 1.2, collected: false, collectedT: -1 });
+    sim.state.pickups.push({ id: 9100 + i, kind: 'bolt', power: null, x: 0, z: 3 + i * 1.2, collected: false, collectedT: -1, hidden: false, revealed: false, passed: false });
   }
   const events = drive(sim, 3, 0);
   assert.ok(events.some((e) => e.type === 'goalDone'));

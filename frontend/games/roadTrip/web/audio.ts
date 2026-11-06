@@ -34,8 +34,21 @@ export type Sfx =
 
 export type MusicMood = 'garage' | 'drive' | 'boss' | 'none';
 
-const VOICE: Record<CharacterId | SidekickId, { base: number; wave: OscillatorType; speed: number; wobble: number }> = {
+const VOICE: Partial<Record<CharacterId | SidekickId, { base: number; wave: OscillatorType; speed: number; wobble: number }>> = {
+  berto: { base: 170, wave: 'triangle', speed: 0.09, wobble: 0.04 },
+  ligaya: { base: 700, wave: 'sine', speed: 0.05, wobble: 0.26 },
+  hiraya: { base: 540, wave: 'sine', speed: 0.07, wobble: 0.1 },
+  sinta: { base: 460, wave: 'triangle', speed: 0.06, wobble: 0.08 },
+  amihan: { base: 840, wave: 'sine', speed: 0.05, wobble: 0.2 },
+  kidlat: { base: 380, wave: 'square', speed: 0.05, wobble: 0.04 },
+  nico: { base: 300, wave: 'triangle', speed: 0.08, wobble: 0.06 },
+  alon: { base: 340, wave: 'sine', speed: 0.075, wobble: 0.16 },
+  tiko: { base: 660, wave: 'square', speed: 0.05, wobble: 0.24 },
   navie: { base: 620, wave: 'sine', speed: 0.065, wobble: 0.14 },
+  ningning: { base: 780, wave: 'sine', speed: 0.05, wobble: 0.22 },
+  simoy: { base: 720, wave: 'sine', speed: 0.07, wobble: 0.12 },
+  sikat: { base: 420, wave: 'triangle', speed: 0.055, wobble: 0.1 },
+  tali: { base: 520, wave: 'sine', speed: 0.06, wobble: 0.16 },
   jepoy: { base: 250, wave: 'square', speed: 0.075, wobble: 0.1 },
   kiko: { base: 760, wave: 'triangle', speed: 0.055, wobble: 0.2 },
   barrikada: { base: 140, wave: 'sawtooth', speed: 0.085, wobble: 0.02 },
@@ -55,6 +68,12 @@ const VOICE: Record<CharacterId | SidekickId, { base: number; wave: OscillatorTy
   tala: { base: 930, wave: 'sine', speed: 0.06, wobble: 0.18 },
   ilaw: { base: 600, wave: 'square', speed: 0.05, wobble: 0.04 },
   maso: { base: 170, wave: 'square', speed: 0.08, wobble: 0.05 },
+  kono: { base: 900, wave: 'triangle', speed: 0.06, wobble: 0.08 },
+  kislap: { base: 1200, wave: 'sine', speed: 0.04, wobble: 0.24 },
+  dahon: { base: 360, wave: 'sine', speed: 0.09, wobble: 0.06 },
+  radyo: { base: 760, wave: 'square', speed: 0.04, wobble: 0.1 },
+  ginto: { base: 640, wave: 'square', speed: 0.045, wobble: 0.14 },
+  hamog: { base: 440, wave: 'sine', speed: 0.1, wobble: 0.08 },
 };
 
 const MOODS: Record<Exclude<MusicMood, 'none'>, { bpm: number; chords: number[][]; bass: OscillatorType; lead: OscillatorType }> = {
@@ -319,7 +338,7 @@ export class AudioEngine {
     if (this.ctx === null || this.volumes.voices <= 0.001) {
       return;
     }
-    const v = VOICE[speaker];
+    const v = VOICE[speaker] ?? VOICE.pip!;
     let seed = 0;
     for (let i = 0; i < text.length; i += 1) {
       seed = (seed * 31 + text.charCodeAt(i)) >>> 0;

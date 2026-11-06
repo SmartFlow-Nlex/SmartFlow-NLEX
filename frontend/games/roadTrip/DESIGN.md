@@ -413,3 +413,471 @@ Their art is in `web/art/sidekicks.ts`. `FIT` scales the tall and wide ones so t
   sidekicks a frame would be too heavy). The postcard wall shows the five most recent.
 - **Old saves.** Still version 2. Progress is untouched, and a one-time `road-north` garage event tells a
   returning player what is new.
+
+## 13. The clay road trip (sixth brief, 3 Nov 2026)
+
+The brief asked for a charming Philippine road-trip game with tactile, handmade warmth, keeping this
+game's own identity: vehicle heroes, two companion slots, the real route, and the personalities of Navie,
+Kuya Jepoy, Kiko, Pip and Mila. Everything below is original art; nothing is copied from another game.
+
+### Rendering: baked clay, not a new engine
+
+The renderer stayed a 2D canvas in the WebView, because replacing it would have risked the whole game for a
+look that sprites can give. What changed is where the sprites come from:
+
+- `scripts/tollbound-art/` holds a small signed-distance modeller (`sdf.js`), a ray-marcher (`render.js`)
+  and the models (`scenes/`). `bake.js` renders them in worker threads, caches them in `.cache/` (ignored by
+  git), encodes WebP through headless Chrome, and writes `assets/art/*.webp` plus `manifest.json`.
+- `web/art/clay.ts` draws those sprites; `web/art/clayFaces.ts` paints faces on at run time from the points
+  the bake stored, so 8 expressions need no extra art. Eyes, brows and mouths vary per character.
+- `web/render/roadscape.ts` is the new road: textures sampled row by row, painted lines as vector shapes,
+  authored scenery clusters, overpass, hills and four moods.
+- The build inlines the art as `window.__TB_ART__` in its own script; `generated/roadTripHtml.ts` is now about
+  2.5 MB. Sprites decode on demand: `preload()` covers the active team and road, everything else is lazy.
+
+Rebake with `node scripts/tollbound-art/bake.js [prefixes]`, then rebuild. After a bake, regenerate the
+briefs with `node scripts/tollbound-art/write-briefs.js` (`assets/art/BRIEFS.md`: identity, silhouette,
+palette, materials, views, scale, pivot, animation states and paths for every hero and companion).
+
+### Direction
+
+Palette tokens in `web/styles.css`: paper `#F8EDD8`, ink `#354844`, jade `#69AFA4`, guava `#D7A9A2`, gold
+`#E9B54C`, Navie `#3E74B9`. Road colour comes from the mood. Type is Nunito at about 16 px, with Nunito Black for
+headings. Rear view while driving; faces only in portraits, garage and cards. Hazards keep a contact shadow, and
+scenery always stands past the guardrails.
+
+### World moods (`core/moods.ts`)
+
+`morning` (provincial fields), `town` (edge of town, overpass, sari-sari and stalls off the road), `lantern`
+(Pampanga evening, parols) and `rain` (gentle, wet road). Each stop has one, and Endless cycles them. The garage
+is the hub: tools, souvenirs, a postcard wall, and the unlocked heroes parked. Mood affects the look, plus
+small capped rules (gust, rain, rough road) that are announced before they arrive.
+
+### Roster: 12 heroes, 27 sidekicks
+
+The brief proposed 18 sidekicks. The game already had 12 tied to the story and to saves, so all 12 stay and the
+brief's new ones join them, for 27. Bantay was in both lists: same id, same guard job, same unlock after Mission 1,
+redrawn as an aspin with a scarf, plus the once-per-run buffer. The brief's hero "Tala" is named **Hiraya** because
+Tala is already a sidekick; the brief allowed working names.
+
+`core/rosterNew.ts` holds the new definitions. `core/tuning.ts` holds the global caps (signature cooldown floor,
+pulse interval floor, rally, recovery, shield extension, Bolt bonuses, weather reduction), the upgrade
+preview maths, and five deliberate pairings (Ligaya + Piko, Kuya Jepoy + Kawayan, Nico + Tarsi, Kidlat + Bitu,
+Amihan + Ulap). Hero stats are computed from the real numbers, so a bar can't drift from what the car does.
+
+### Economy (`core/unlocks.ts`)
+
+Unlock, improvement and friendship are separate. Original characters keep their story unlocks; new ones have one
+measurable goal, kept in `save.tally`, shown as progress on locked tiles.
+
+The brief's numbers were proposals, to be tuned against real play. Measured along the road, one stop gives about 100 to 150
+Bolts, 30 to 50 hazards passed and 20 pick-up chains, so "100 Bolts" and "5 chains" fell inside the first mission, and a first
+run brought five new characters at once. Now, with an autopilot and with a deliberately sloppy driver, a first run brings at most
+one by goal (Tarsi, for the first postcard) on top of the story's own, no run brings more than three, and both drivers end
+the first pass with people still to earn (a test holds this):
+
+| Who | Brief | Now | Why |
+| --- | --- | --- | --- |
+| Ligaya | 2 chain objectives | 40 chains | Chains come about 20 per stop |
+| Piko | 5 chains | 100 chains | Same |
+| Kape | 100 Bolts | 300 Bolts | About 100 to 150 per stop |
+| Sago | 20 hazards | 150 hazards | About 30 to 50 per stop |
+| Sampy | 3 clean stretches | 6 | Berto keeps the 3; they no longer arrive together |
+| Saranggola | 2 collection objectives | 3 runs with the postcard | "Or 3 chains" was true of every run |
+| Duwi | 4 checkpoint upgrades | 6 | Spreads the early stops |
+| Kidlat | not set | 100 bots | About the end of the first pass |
+| Bitu | not set | 200 pulses | Late in the first pass |
+
+After a save upgrade, everyone earned joins, but only the first 3 get a reveal. "Later" pauses any others until the next garage
+visit. Friendship is runs together and gives
+words only. Charms decorate the garage and change nothing on the road. A new character gets a reveal with an
+equip button. `window.__rt.unlockAll()` (debug builds only) and `?sheet=roster|faces|drive` are the dev gallery.
+
+### Screens
+
+- **HUD:** route, health and Bolts in a compact block; pause on the left, all secondary settings inside pause; a
+  measurable goal chip; callouts that leave; the steering hint only during the tutorial (help is in pause);
+  signature bottom right with its cooldown ring; sidekick status tiles bottom left, not buttons, with state shown by
+  shape and motion as well as colour. A touch on a tile does nothing, and does not fall through to steering.
+- **Team:** a lively stage, Hero and Sidekick tabs, one horizontal strip of tiles, a scrolling panel with role,
+  signature, passive, limit, labelled stats and unlock progress, and one action in the footer. Looking is not
+  equipping.
+- **Collection:** counts and progress for everyone, plus friendship, charms and evolution.
+- **Checkpoint:** two lines per card, gain and cost, as the real numbers (`Signature recharge 18 s → 22.5 s`) from
+  `previewUpgrade()`, the same calculation the run uses. The road is frozen behind it. "Continue without upgrade"
+  is always there. Keyboard hints only show with a real mouse and keyboard. Duwi reshuffles once per run.
+- **Briefing:** win and fail always; rules fold away once a stop is done; the team as faces and names.
+
+### Saves
+
+`SAVE_VERSION` 3. The 2 → 3 migration keeps everything and seeds `tally` from what the save already knows (lifetime
+Bolts, checkpoints and clean stretches from records). It is idempotent, and `applyUnlocks` runs on load, so an old
+save earns what it already deserves (with a reveal). `commitRun` applies tally, friendship and unlocks in the same
+save write as the rewards, keyed by run id, so a repeated commit pays nothing twice.
+
+### Limits worth knowing
+
+- Baking needs Node and Chrome on the developer's machine. The game itself needs neither.
+- Sprites are one fixed set of views, so a hero is not free to turn through every angle. Steering shows a three-quarter
+  view mirrored for the other way.
+- A fresh person has not played this, and no phone has run it yet (AUDIT.md section L).
+
+## 14. Character polish (seventh brief, 4 Nov 2026)
+
+Ysa asked for cuter, more polished heroes and sidekicks in the spirit of EverWing's character presentation, with
+everything else left exactly as it was: road, scenery, camera, traffic, mechanics, controls, hit boxes, abilities. The quality
+bar was `frontend/assets/mascot-loading.png`. Nothing in `core/` changed, and no road or scenery sprite was rebaked.
+
+### Finish
+
+`scenes/polish.js` moves character models onto a set of materials only they use (`gloss`, `satin`, `felt`, `pane`, `lens`, `lamp`,
+`tread`, `chrome`, `jelly` in `render.js`), under softer light. Gloss has a clear coat reflecting a small procedural studio: sky, ground,
+one big soft window of light, a cool strip. Metal reflects in its own colour. Tyres get ribs and a sidewall ring from the renderer, headlights
+are glass domes in a rim, tail lights are candy lenses. The world's materials and code path are untouched, so traffic and scenery
+still bake to identical sprites. Paint can be limited to one group with `on`, so a seam on a cap cannot run on down the car.
+
+### Models
+
+- **Navie** is remodelled towards the mascot: round hips, a bubble cabin, a wide curved visor. From behind, the cap now has six panel
+  seams, a button, a small N badge and a white-edged half-moon opening with a strap, so it reads as a cap on the road.
+- **Bumbo** is a saturated orange bean with a round porthole at the back and a tall bent antenna carrying the gold dish, tipped back so the gold
+  shows from behind. **Mila** is candy pink, with two mint antennae rising in a U, uneven as if listening, ending in cream magnet tips. **Pip** has a striped
+  parasol. All keep their colours, accessories and jobs.
+- Every other hero and sidekick takes the finish, wheels, lamps and glass through the shared kit, with the same shapes.
+
+### Motion (looks only, all in `render/drive.ts`)
+
+- The lean is a soft spring instead of a straight chase, and a breath of squash goes with it.
+- The car steps through three real views (`rear`, `mid`, `turn`, mirrored for the other side). Blending two views was tried first and showed four tail
+  lights mid-turn. Navie wears letters, which a mirror turns backwards, so Navie alone also has `midR` and `turnR`.
+- `blitBent` draws a sprite in rows with its top swayed, so Navie's cap trails a turn and Mila's antennae wave with no extra sprites.
+- Flyers ride a slow swell and road sidekicks give small hops. Their tilt trails the car.
+- `render/sidekickFx.ts`: each of the 27 has its own small flourish when its ability fires, within about one body of it. Reduced motion turns
+  the sway, spring, squash and flourishes off.
+- Contact shadows have two layers: broad soft shade and a tight dark line under the tyres. A flyer's shade softens as it rises.
+
+### Faces and Team
+
+Eyes have a big and a tiny catchlight, the same way round on everyone; iris eyes have a white, a deepening colour disc and a pupil; cheeks are soft blush.
+Team tiles use one scale per kind of character with feet on one line, a contact shadow and a wash of the character's colour. Selected tiles lift 2 px with a thin edge in that colour,
+a soft glow and a small bar. The stage has a pool of light on the floor. Names, abilities and the selection system are unchanged.
+
+## 15. Sculpted fronts (eighth brief, 4 Nov 2026)
+
+Ysa was happy with the characters from behind but not from the front: awkward, poorly proportioned, less polished. The brief was to fix the
+models themselves, not to hide the problem, and to leave the rear views, road, scenery, camera, mechanics and abilities exactly as they were.
+
+### Why the fronts were weaker
+
+The rear views were pure geometry; the fronts were not. Inspecting the pipeline showed:
+
+- **Faces were flat decals.** Eyes, brows, mouths and cheeks were 2D drawings painted over the finished picture at run time, so they had no depth, took no light or
+  shadow, and were never occluded by anything. That is why they looked as if they floated.
+- **Face panels were painted ovals** with a hard edge on a body built separately, so they read as stickers rather than windscreens.
+- **Headlights were discs** up to two thirds the size of an eye, stuck on the nose, with the mouth squeezed between them.
+- **Eyes, mouth and lamps were never designed together:** each was placed on its own, on whichever surface was nearby.
+
+### What changed
+
+`scenes/sculpt.js` puts the face into the model. It finds the real surface with a ray, so everything sits on the curve that is actually there, then:
+
+- **Eyes:** a real ball, seated in a soft swelling of the skin, with a lid opening cut round it. The rim, the crease and the shadow are all geometry and light.
+- **Smile:** a shallow groove cut along the surface, following its curve, in a deep shade of whatever it is cut into. On a car it sits where a grille would.
+  Jepoy's grille itself is the smile: its slats hang deepest in the middle.
+- **Lamps:** smaller glass domes in a thin dark seat. Radius is down to about half what it was.
+- **Blush:** painted into the surface, so it curves with the face.
+- **Windscreens:** a rounded pane with a seal in a deeper body colour, wrapping the cabin, in place of an oval.
+- **Bumpers:** plump, and wrapped round the nose.
+- Skin colour, material and shade come from the survey, so all 39 faces use one kit and match their own bodies.
+
+`render.js` measures each eye opening as it draws (`track`), and `bake.js` stores it per view with the iris position, the foreshortening and the local skin colour. At run time
+`clayFaces.ts` draws only what moves, always clipped to that opening: iris, pupil, catchlights, the lid's shade, and lids that close in the skin's own colour. So an eye cannot
+float or stray outside its lid, at any angle. Machines (Barrikada and friends) keep their older painted faces; the brief was about heroes and sidekicks.
+
+### Rear views
+
+Rear jobs bake from each character's original part list and the sculpted front is its own list, so rear sprites keep the same hash and are not even redrawn. The exceptions are
+Bumbo and Mila, whose antennae the brief asked to attach more naturally, seen from every side.
+
+### Angles and motion
+
+Fronts are baked at 0, 15, 35 and 55 degrees (`face`, `front`, `q`, `q2`) for heroes, and 0, 15, 35 for sidekicks. The other side is a mirror image, except Navie, whose lettering has
+its own views. `viewFor` picks the nearest. Eyes look most of the way toward the viewer whichever way the body turns.
+
+On the Team stage someone newly picked swings in from the side on a soft spring and settles at 15 degrees, with a moment of delight on their face; the two sidekicks turn slightly in toward
+the hero. At rest: blinking, small quick glances (`idleGaze`) and a slow breath. Reduced motion holds them still at rest.
+
+`node scripts/tollbound-art/review.js out.png [names]` renders any character from the front, both three-quarters, both sides and behind, for checking. It is not part of the game.
+
+### Four that needed more than a face
+
+Silip, Sibat, Ilaw and Kalaw have `frontParts`, a front model reshaped where the face goes. They keep their accessories and identity; their rear views still come from `make`.
+
+- **Silip:** the lens was as wide as the face, and the eyes were squeezed up by the arms. It is now a smaller lens, set as a round nose between proper eyes.
+- **Sibat:** a rounded nose in its own red, in place of a point aimed between the eyes.
+- **Ilaw:** the amber lamp is the face, so it is the big one, with red and green smaller above and below.
+- **Kalaw:** beak and casque are smaller and clear of the eyes, with the beak below them and the casque on top of the head.
+
+Sago's pearls beside the face moved out to the flanks. Ulap has a smooth mound under the face, because the cloud's lumps made the eyes uneven. Saranggola has a pad behind the face, because the eyes showed through the paper.
+
+### Limits
+
+- Mouths: the baked smile is always there. Opening for speech or delight draws over it; a worried or hurt face keeps a small smile, and shows the feeling through eyes and brows.
+- Rotation is in steps between baked angles, quick enough to read as a turn. It is not free rotation.
+- The in-between angles are baked smaller than `front`, because only `front` is ever held: `face` 0.68, `q` 0.66 and `q2` 0.6 of its sharpness. Change `FRONT_YAWS` in `scenes/index.js` if one is ever held on screen.
+- Bitu's pebbles and Ulap's raindrops float by design, as they did before. Amihan's ribbon tail is unchanged because it belongs to the rear view.
+
+## 16. The collection (ninth brief, 5 Nov 2026)
+
+Ysa asked for every hero and sidekick to move to a cute, whimsical, hand-painted look inspired by the charm of Ooblets (an original identity, nothing copied), with four new heroes, six new sidekicks and real unlocks. The expressway, camera, controls, collisions and every existing ability were to stay exactly as they were. The reference images the brief mentions did not arrive with it; only the text did.
+
+### Names
+
+Five of the ten names the brief asked for already belonged to someone, and the brief also said not to break existing characters. The new characters keep the brief's design, ability and unlock, under a close name of their own. Changing a display name is one line in `core/rosterNew.ts`.
+
+| The brief's name | Already | New name | Why |
+|---|---|---|---|
+| Tala (hero) | a sidekick | Ningning | "Sparkle" |
+| Amihan (hero) | a hero | Simoy | "Breeze" |
+| Piko (sidekick) | a sidekick | Kono | "Cone" |
+| Tiko (sidekick) | a hero | Radyo | "Radio" |
+| Ulap (sidekick) | a sidekick | Hamog | "Mist" |
+
+Sikat, Tali, Kislap, Dahon and Ginto kept their names.
+
+### The look
+
+- **Materials.** `render.js` has a new character finish: `painted`, `soft`, `felt`, `tin` and softer `pane`, `lens`, `lamp`, `tread`, `jelly`. Almost nothing is mirrored. Light wraps further, shadows warm toward plum, and a `brush` value paints broad blotches of warmer and cooler colour with a little direction in them. World materials are untouched, and the `finish` key in `CHARACTER_LIGHT` is part of each job's hash, so changing the finish redraws characters and nothing else.
+- **Eyes.** Small dark ovals, seated in a soft dimple in the real surface by `scenes/sculpt.js`. They are part of the model. Only the glints and lids are drawn at run time, clipped to the outline the bake measured.
+- **Faces belong together.** The mouth moved up beside the eyes wherever a windscreen is the face, so features read as one small face rather than eyes on the glass and a grin on the bumper.
+- **Softer fronts.** Smaller seated lamps, panes that melt into the paint, Navie's bumper blended into the body.
+- **Rear views are the same shapes in the new paint.** The rear part lists were not edited: 65 of 65 outlines are unchanged.
+
+### No two faces alike
+
+Three things combine, so the roster is not one face in many colours:
+
+1. **Sculpted in the model** (`sculpt` in `heroes.js`, `FACE_TUNING` in `sidekicks.js`): eye height, width, spacing, tilt, colour, and smile shape (`smile`, `cat`, `smirk`, `wave`, `flat`).
+2. **Resting lids and glints** (`RESTING` in `clayFaces.ts`): heavy lids (Berto, Kape, Dahon, Hamog), keen lids (Tiko, Ginto), a narrowed eye (Nico), a mouth a little open (Ligaya, Pip, Bantay), brows that stay on (Kuya Jepoy, Maso, Bitu). Everyone else shows small brows only for a strong feeling.
+3. **How they move** (`HERO_MOTION` and `RHYTHM` in `clay.ts`): each hero has its own idle and its own reaction to being picked. Navie gives one confident bounce, Ligaya dances, Berto rocks slowly, Ningning throws tiny gold stars, Tali cheers. Bumbo's top really does spin, and floaters like Mila rise slowly.
+
+None of the motion exists on the road, where movement belongs to the game.
+
+### New heroes
+
+Each is a real signature on the existing mechanics, never a new system.
+
+| Hero | Role | Signature | Uses | Passive | Earned by |
+|---|---|---|---|---|---|
+| Ningning | Offensive | Star Horn, 5 s, 17 s recharge | Spread Horn | Spread capsules last a quarter longer | Clear 150 bots |
+| Simoy | Control | Breeze Sense, 4 s, 16 s | Route Sense's slow, no arrow | Warnings 0.2 s earlier | Drive 25 km |
+| Sikat | Defense | Sun Shield, 3.5 s, 18 s | Bubble Shield | One extra dent | Survive 2,000 m in Endless |
+| Tali | Support | Team Rally, 6 s, 18 s | Sidekick Rally | Sidekicks act 10% more often | Barkada with 3 teammates |
+
+### New sidekicks
+
+| Sidekick | Ability | Uses | Earned by |
+|---|---|---|---|
+| Kono | Bot Pop: extra horn blast, bots only | The sidekick shot | Clear 60 bots |
+| Kislap | Bolt Glimmer: draws in Bolts for 2.5 s, every 9 s | The magnet | 350 Bolts |
+| Dahon | Wrench Helper: reach for wrenches | The magnet; repair value unchanged | 450 Bolts |
+| Radyo | Scout Ping: warnings 0.25 s earlier | The warning lead, under the team cap | Dodge 450 hazards |
+| Ginto | Bolt Bonus: 1 Bolt per bot, 15 a run | Plain Bolts, counted for nothing else | Collect 1,400 Bolts |
+| Hamog | Shield Mist: 1.4 s shield just before a hit, every 28 s | The shield system, never stacking | Block 8 hits |
+
+### Unlocks
+
+Rules read numbers the save already holds. One new number was needed: `tally.metres`. It counts from now on, and older saves start at 0 rather than a guess. `km`, `endlessBest` and `barkadas` are read straight from the save.
+
+Pacing is from a real drive of the whole road: 19 km, 146 bots, 589 hazards dodged, about 1,670 Bolts picked up, about 4,000 Bolts earned. `economy.test.ts` holds it: at most 3 arrivals on any stop.
+
+`buySidekick` spends Bolts and adds the sidekick in one save. A purchase is celebrated at once, ahead of anyone still queued, and that sidekick can go on the team straight away. No new currency.
+
+### Unlock celebration
+
+The existing reveal card, with a short pop, a hop and a little confetti: under a second, skippable, off under reduced motion.
+
+### Limits
+
+- **These are real 3D models, baked.** Every character is modelled in 3D and rendered ahead of time to 7 angles (heroes) or 5 (sidekicks). The game shows those renders with live blinks, glints and motion. It is not a live 3D engine, which would need a new dependency and new performance risk on phones. Rotation goes in steps between the angles.
+- **Navie in the game now has smaller eyes than `frontend/assets/mascot-loading.png`**, as the brief asked. The app's mascot art elsewhere was not changed, so the two differ.
+- A baked smile stays on a worried or hurt face, which shows the feeling through eyes and brows.
+- Bumbo's "spin" narrows and widens a flat top part: convincing for a quick flourish, not a true rotation.
+
+## 17. Softer, rounder, more lovable (tenth brief, 5 Nov 2026)
+
+Ysa judged section 16 "too plain, too stiff, too clean": closer, but still shiny toy cars with faces, and asked for a much stronger push toward a cozy, collectible, Ooblets-inspired feeling, without touching the game itself. Navie, Bumbo and Mila were brought up to standard first, then everyone else.
+
+### Why section 16 still read as plain
+
+| What it looked like | Why | What changed |
+|---|---|---|
+| A car with a face | The proportions were still a real car's: long, on full-size wheels | `scenes/chibi.js`: every hero is shorter and rounder on small chubby wheels. Navie and Bumbo and Mila were remodelled outright |
+| Flat, plastic | Light was a smooth airbrushed gradient, with nothing painted about it | New finish in `render.js` (below) |
+| Sticker faces | Stark cream ovals sitting on the body | Panels melt into the paint, in colours of each body |
+| Generic, lifeless | One face formula, perfectly symmetrical | Bigger bean eyes with more sparkle, mouth quirks, one eye slightly different, heads tilted |
+| Stiff | Upright, facing front | Everyone leans, tilts, breathes and now and then wiggles |
+
+### The finish
+
+The character branch of `render.js` is now closer to gouache on plush than to a lit model. Light falls in soft bands whose edges wander, as a brush leaves them, instead of a smooth gradient. The midtone is the paint colour itself, shadows turn warm plum rather than grey, lights lift toward warm cream. A soft pale edge (`nap`) gives silhouettes the look of a soft toy. Paint carries mottling and a fine tooth, reduced on pale colours so white never looks dirty. There is no mirror reflection left on any character. The world's materials and code path are untouched.
+
+### The shapes
+
+`chibify(parts, c)` works part by part rather than warping space, so a wheel stays a circle and an accessory keeps its shape. `SHAPE` in `heroes.js` and `sidekicks.js` sets each character's length, height, wheels and how pillowy corners get. Long vehicles shrink most, so a jeepney is still the longest and a coupe the lowest. `remapSpec` moves a face spec onto the new shape, so faces are still written in the model's own coordinates.
+
+Rear views come from the same parts as fronts, so a character is the same round thing on the road as in the Team screen. This is a change from sections 15 and 16, which held rear shapes fixed. Road widths stayed within about 5% of before, so a character still fills the same part of a lane as its hit box. Hit boxes themselves are numbers in `core/` and did not change.
+
+Mirrors became little ears, lamps grow out of the body instead of being dots stuck on it, and bumpers melt in.
+
+### Pilot characters
+
+- **Navie:** one round bean of a body and a big soft head with no neck, on tiny wheels, with a big cap at a jaunty angle and a patch N on the hood. The cap is tilted, which is why Navie's right-hand views still matter.
+- **Bumbo:** a squashy mochi with a real two-bladed yellow propeller growing from a nub on its head. It wobbles at rest and spins when picked. Before, it was a funnel-shaped dish; Ysa's briefs call it a propeller, so its blurb and one line were updated. Its ability is unchanged.
+- **Mila:** a round mochi on a small floating disc, in place of the scooter deck and wheels, with two antennae that don't quite agree.
+
+### Faces
+
+Bean eyes are a little larger, with brighter glints and light gathering low in the dark. `quirk` adds a small thing about the mouth: a fang (Kidlat, Piko, Ginto) or a bit of tongue (Tiko, Bantay). Smiles are a line of paint in a shallow crease, in shapes that vary by character. `eyeSizes` makes one eye a touch different. The art test now holds that faces stay balanced, rather than symmetrical.
+
+### The Team stage
+
+Warm light behind the team (painted once, then reused), sidekicks closer and leaning in, one a little nearer than the other, everyone at their own resting tilt (`lean` in `HERO_MOTION`), softer breathing, and now and then a small wiggle or hop. Sidekick glints still drift toward the hero.
+
+### Also
+
+The unlock card shows the ability. The Garage shelf holds 16, so past that everyone takes turns, moving along after each run. The ten newest have radio voices, and Ningning, Sikat and Tali have fitting ability sounds.
+
+### Limits
+
+Still baked 3D models, as in section 16. Faces are less symmetrical on purpose. The panel-free look is not used everywhere: heroes with dark bodies keep a pale face so the eyes can be read.
+
+### Navie and the sidekicks went back (same day)
+
+After seeing section 17, Ysa asked for Navie and the sidekicks to go back to how they looked before it: "I don't like the edit now". They now use the section 16 look again, called the classic finish in the code. The other 15 heroes keep section 17 for now, because Ysa named only Navie and the sidekicks, so the two looks do not fully match on the Team screen. That is Ysa's call to make.
+
+- `CLASSIC_LIGHT` (`finish: 'painted-2'`) makes `render.js` use `CLASSIC_MATS` and the smoother shading branch. `polishClassic`, `classicWheels`, `classicMirrors` and `spec.classic` in `sculpt.js` hold the rest.
+- `FACES[id].classic` gives those characters the quieter glints. Bumbo's funnel dish, Mila's scooter, their descriptions and Team stage spacing are all as they were.
+- What stayed from section 17 for everyone: the unlock card's ability line, the Garage shelf taking turns, radio voices, ability sounds.
+- Sprites were checked against the renders from before: 177 of 177 hashes matched, with nothing redrawn, and redrawing a sample with today's code gave 0 bytes of difference.
+
+## 18. The approved reference (eleventh brief, 5 Nov 2026)
+
+Ysa supplied a picture of the Team screen as the final, approved character design, with the brief "do not reinterpret it, implement it". This replaces the looks in sections 15, 16 and 17, including the split where Navie and the sidekicks went back to section 16. There is now one finish for the whole cast.
+
+### Navie, top to bottom
+
+Cap with a thick blue N in a ring; white windscreen with the eyes, brows and nothing else; pink cheeks at its lower corners; an open smile on the blue hood, between the lamps; a white N below the mouth; then the bumper. `scenes/navie.js` was rebuilt to this: a shorter crown, one smooth arc of a visor (`bend` in `sdf.js`), ball mirrors, chunky dark tyres with pale hubs, flat cream lamps with a pale ring. Rear views use the same body, cap and proportions.
+
+### What is new in the toolkit
+
+| Piece | Where | What it does |
+|---|---|---|
+| `dee` | `sdf.js` | A D-shaped slab, for an open mouth |
+| `bend` | `sdf.js` | Bends a part along its length, so a visor is one arc rather than creased pieces |
+| `openMouth` | `sculpt.js` | A real cut in the skin, with an inside and a tongue seated in it. The bake measures the opening in every view (`mouthOpen`, `mouthLid`) |
+| `iris`, `eyeDepth` | `sculpt.js` | A coloured eye painted on the dark oval, and how far it domes out |
+| Lamp seating | `sculpt.js` | A lamp slides up, then in, until the surface faces forward enough for the disc to lie whole |
+| `drawOpenMouth` | `clayFaces.ts` | At rest the mouth is in the model. To talk or show another feeling, the opening is covered softly with the skin round it and a new mouth is drawn in the same place, so it stays attached at any angle |
+
+### One finish
+
+`CHARACTER_LIGHT` (`finish: 'approved-2'`) and `CHARACTER_MATS` in `render.js`: soft wrapped light, shadows that keep their colour, gentle highlights, slight hand-painted mottling, nothing metallic. The gouache and classic code paths were removed. Bump `finish` to redraw characters after changing their materials, because render code is not part of a sprite's hash.
+
+### The others
+
+- **Bumbo and Mila** were rebuilt to the picture: Bumbo round, with a cream face, pale spots, a purple band, a yellow propeller and an open smile; Mila with a smooth mint U, yellow bands, white tips and a mint floating base. Their blurbs and Bumbo's hurt line were updated to match. Their abilities were not touched.
+- **Kuya Jepoy, Kiko, Berto and Ligaya** appear small in the picture, so they were moved toward it: Jepoy's gold dome and yellow lamps, Kiko's mint frame, Berto's big yellow salakot, Ligaya's truer red.
+- **Everyone else** gets the finish, the lamps, crisp painted smiles and, for heroes, brows at rest.
+
+### Where the picture was not followed exactly
+
+- Kiko has a second smile on the hood in the picture. It reads as a mistake beside the one on the windscreen, so only one was kept.
+- Berto's horns are short stubs, not gone: the picture barely shows them, but his bio says they are not removable.
+- The picture's numbers (Heroes 8/12, Sidekicks 11/27), the sparkle marks and the star are not art: the screen still shows real counts, as the brief asked.
+- Navie's eye has no white crescent at one side. Everything else about it follows the picture.
+
+### Limits
+
+The game has no meshes or skeletons, so there are none to update. Characters are signed-distance models baked into sprites from fixed angles. Turning between those angles is a change of sprite, as it always was. Shading is rendered, so it is smoother and less painterly than the picture.
+
+### A second picture: size and windshield (same day)
+
+Ysa supplied a newer picture, made from a screenshot of this build, with a brief asking for Navie 10 to 15% bigger on the Team screen and no blue on the windshield.
+
+- **The windshield:** the blue was the tuft added under the visor to follow the first picture. It is gone from the model, so the white runs unbroken up to the visor.
+- **The size:** measured at a phone's size, the build already drew Navie larger than the new picture (380 by 435 against 350 by 380, on a screen 851 wide), with Bumbo almost touching a mirror. The brief named the picture as the exact target and the earlier oversized version as something to avoid, so `STAGE_SIZE` in `title.ts` sets Navie to 0.92 of the base size, which matches the picture's width. This is 8% smaller than the build before it, not larger, and Ysa was told. It is one number if that is wrong. Only the Team stage reads it: the road, hit boxes, tiles and Garage do not.
+- **The letter N:** its diagonal is now a `slant` part with level ends, in place of a rotated box whose corners left small notches.
+
+Height still differs slightly (400 against 380), because the model was scaled evenly rather than stretched.
+
+## 19. Sidekicks get past what is on the road (5 Nov 2026)
+
+Ysa saw sidekicks going straight through traps and asked for them to dodge or jump. They held a fixed formation beside the hero with nothing telling them what was coming.
+
+`core/sidekickDodge.ts` is how they move and nothing more. It reads the hazards and never writes to them, and `sim.ts` does not import it, so abilities, aiming and hits are the same as before. `drive.ts` adds its sideways shift and hop when it draws a sidekick.
+
+| Who | What it goes over | What it goes round |
+|---|---|---|
+| Runner | Cone, rolling cone, barrier, sweeping barrier, pothole | Car, truck, bus, bots |
+| Flyer | All of those but trucks and buses, by rising | Truck, bus |
+
+- **A jump** is an arc set by distance rather than time, so it clears the thing at any speed, with about half a second in the air at road speed. It is high enough at both ends of the stretch where it is over the thing, not only at the top.
+- **A sidestep** starts about 0.4 s ahead and eases to the nearest free spot, onto the shoulder if it must. Things too close together to fit between count as one block.
+- **Alongside something, a sidekick stays on its side until it is past**, so the hero steering cannot drag it through a truck.
+- **If a thing is zapped mid-jump**, the sidekick falls rather than snapping to the road.
+- **Heights** in `HEIGHTS` are measured from the baked sprites, and a test holds them to the art. A redrawn trap must update them.
+
+Not covered: only the sim's hazards are avoided. Kiko's car in a convoy and the boss machine are not on that list.
+
+## 20. A hundred levels along NLEX, and a broken road that looks broken (6 Nov 2026)
+
+Ysa asked for 100 levels spread between the real NLEX exits, every hero and sidekick arriving at a level, and broken road that looks like damaged asphalt rather than a rock.
+
+### The plan (`core/levels.ts`)
+
+Pure data with no runtime imports, so the map, the sim, the save and the tests read one table.
+
+- **20 exits, 19 stretches.** Each stretch gets at least 2 levels. The other 62 are shared by the stretch's real length in km (largest remainder). Balintawak to Harbor Link is 6 levels and Pulilan to San Simon is 8, while the short Bocaue stretches are 3.
+- **The level that reaches an exit is the last one of its stretch.** Every other level ends part way, and its sheet says how many km before the exit it stops.
+- **The 16 story missions are levels too.** m1 is Level 1, and each other story mission is the last level of its stretch, so the bosses and convoys sit on the exits they always did (m2 at CDV, Level 27; Barrikada at the Bocaue barrier, Level 30; Sta. Ines is Level 100).
+- **The other 84 levels are built by `roadLevel()`** from the plan:
+  - a mix (balanced, roadworks, bots, traffic or scenic)
+  - a time of day, with rain or gusts now and then
+  - broken road from Level 3 on
+  - a difficulty tier that climbs from 0.3 at Level 1 to 5 at Level 100, pinned at the story levels so the climb follows the story's own
+  - two stretches of road with a checkpoint between, longer as the tier rises
+- **Each level needs the one before.** Snapshot and Endless keep their own rules.
+
+### Who joins where (`core/unlockLevels.ts`)
+
+- Navie, Pip and Mila are there from the start.
+- Story characters join where the story meets them. Kuya Jepoy joins at Meycauayan (Level 17); Kiko and Kumpuni join at m2; Bumbo at the barrier; Walis, Barya, Sibat, Tala, Ilaw and Maso at their stops.
+- The other 36 are spread evenly between Level 2 and Level 99, in a fixed order (Bantay at 3, Tali at 97). No two arrive on one level unless the story puts them there, so most levels bring someone.
+- The rule is "clear Level N". It reuses the unlock-rule UI, so Team, Collection and the results "Nearly here" card show "Clear Level N" and a bar of levels.
+- **Buying sidekicks with Bolts is gone.** Characters already bought stay. Bolts still pay for upgrades and evolving.
+- **The Workshop opens at Level 6** (the first exit), or with Kiko as before.
+
+### Saves (version 4)
+
+A version 3 save keeps its place. Old story progress maps onto the level of the stop it reached, and every level up to it counts as cleared. Anyone who should already have joined by then joins on load.
+
+### The map
+
+The map has 100 nodes on a winding road. Exit names sit on the level that reaches them, with the faces of whoever joins there. Story levels have a ring, bosses keep their mark, and Snapshot sits at Marilao.
+
+### Broken road (`web/render/brokenRoad.ts`)
+
+Potholes and broken stretches used to be baked sprites that read as rocks. They are now drawn flat on the road in perspective, with the same projection as the lane lines, and the same shape every time for the same id.
+
+- **A pothole:**
+  - a cracked halo with a lit rim, and a bowl that is lit on the far wall and dark at the bottom
+  - a puddle in rain, and loose gravel and chunks round it
+  - the yellow outline when outlines are on
+- **A broken stretch:**
+  - torn edges with a shadowed drop
+  - the exposed base, with damp and dusty blotches and grit
+  - slabs of what is left of the top layer, with their own grain and cracks
+  - small holes, cracks running out into the good road, and loose chunks
+- Nothing near the camera is squashed onto the bottom of the screen; it fades as it passes under the car.
+- Hits, sizes and where they appear are unchanged; only the drawing is new. The pothole and gravel sprites were removed from the bake (354 sprites).

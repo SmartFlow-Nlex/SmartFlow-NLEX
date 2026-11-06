@@ -8,11 +8,15 @@ import { POWERUP_DEFS, RUN_UPGRADES, SIDEKICK_DEFS } from '../core/roster';
 import { newRunId, newSeed } from '../core/rng';
 import { mapSnapshot, type ScenarioConfig, type TrafficSnapshot } from '../core/scenario';
 import { DrivingSim, NO_INPUT, type SimEvent } from '../core/sim';
-import type { MissionId, Payout, RunResult } from '../core/types';
+import { missionMood } from '../core/moods';
+import { levelPlan } from '../core/levels';
+import { ALL_MISSIONS, type MissionId, type Payout, type RunResult } from '../core/types';
+import { preload, teamArt } from './art/clay';
 import type { AudioEngine } from './audio';
 import { InputController } from './input';
 import { laneAt, screenX } from './render/camera';
 import { DriveRenderer, type DriveLook } from './render/drive';
+import type { Landmark } from './render/roadscape';
 import { announce } from './ui/dom';
 import { Hud } from './ui/hud';
 import { convoyCards } from './ui/onboarding';
@@ -26,61 +30,39 @@ import type { AppApi, Scene } from './appApi';
  * "game speed" assist and capped so an interruption never jumps the road.
  */
 
-export const LOOKS: Record<MissionId, DriveLook> = {
-  'm1-garage': {
-    time: 'morning',
-    landmark: 'city',
-    props: ['house', 'billboard', 'lamp'],
-    near: ['mango', 'palmTall', 'banana', 'hedge', 'acaciaBig'],
-    far: ['nipa', 'pylon', 'mango', 'bamboo'],
-    camera: 'solo',
-  },
-  'm2-convoy': {
-    time: 'noon',
-    landmark: 'arena',
-    props: ['billboard', 'lamp', 'house'],
-    near: ['acaciaBig', 'bamboo', 'mango', 'hedge', 'banana'],
-    far: ['pylon', 'nipa', 'acaciaBig', 'bamboo'],
-    camera: 'convoy',
-  },
-  'm3-finale': {
-    time: 'sunset',
-    landmark: 'plaza',
-    props: ['banderitas', 'lamp'],
-    near: ['palmTall', 'hedge', 'mango'],
-    far: ['nipa', 'palmTall', 'pylon'],
-    camera: 'solo',
-  },
-  'bocaue-interchange': { time: 'morning', landmark: 'none', props: ['banderitas', 'lamp', 'billboard'], near: ['mango', 'hedge', 'banana', 'acaciaBig'], far: ['nipa', 'pylon', 'bamboo'], camera: 'solo' },
-  tambubong: { time: 'morning', landmark: 'none', props: ['lamp', 'house', 'billboard'], near: ['hedge', 'mango', 'acaciaBig', 'banana'], far: ['pylon', 'nipa', 'mango'], camera: 'solo' },
-  tabang: { time: 'noon', landmark: 'none', props: ['house', 'lamp', 'billboard'], near: ['banana', 'mango', 'hedge', 'palmTall'], far: ['nipa', 'bamboo', 'pylon'], camera: 'solo' },
-  balagtas: { time: 'noon', landmark: 'none', props: ['house', 'banderitas', 'lamp'], near: ['acaciaBig', 'hedge', 'banana', 'mango'], far: ['nipa', 'mango', 'bamboo'], camera: 'solo' },
-  'sta-rita': { time: 'noon', landmark: 'none', props: ['billboard', 'lamp', 'house'], near: ['banana', 'hedge', 'palmTall', 'mango', 'bamboo'], far: ['nipa', 'bamboo', 'acaciaBig'], camera: 'convoy' },
-  pulilan: { time: 'sunset', landmark: 'none', props: ['lamp', 'house'], near: ['acaciaBig', 'bamboo', 'hedge', 'mango'], far: ['nipa', 'acaciaBig', 'mango'], camera: 'solo' },
-  'san-simon': { time: 'morning', landmark: 'none', props: ['billboard', 'lamp'], near: ['hedge', 'banana', 'mango', 'bamboo'], far: ['pylon', 'nipa', 'pylon'], camera: 'solo' },
-  'san-fernando': { time: 'sunset', landmark: 'lanterns', props: ['banderitas', 'lamp'], near: ['palmTall', 'hedge', 'mango'], far: ['nipa', 'palmTall', 'pylon'], camera: 'solo' },
-  mexico: { time: 'morning', landmark: 'arayat', props: ['lamp', 'billboard'], near: ['acaciaBig', 'mango', 'hedge', 'banana'], far: ['nipa', 'mango', 'bamboo'], camera: 'solo' },
-  angeles: { time: 'noon', landmark: 'arayat', props: ['billboard', 'lamp', 'house'], near: ['mango', 'acaciaBig', 'hedge', 'palmTall'], far: ['pylon', 'nipa', 'acaciaBig'], camera: 'convoy' },
-  dau: { time: 'noon', landmark: 'city', props: ['billboard', 'lamp', 'house'], near: ['hedge', 'palmTall', 'mango'], far: ['pylon', 'pylon', 'nipa'], camera: 'solo' },
-  sctex: { time: 'sunset', landmark: 'pinatubo', props: ['lamp', 'billboard'], near: ['acaciaBig', 'hedge', 'bamboo'], far: ['pylon', 'nipa', 'acaciaBig'], camera: 'solo' },
-  'sta-ines': { time: 'sunset', landmark: 'pinatubo', props: ['banderitas', 'lamp'], near: ['palmTall', 'hedge', 'acaciaBig'], far: ['nipa', 'pylon', 'bamboo'], camera: 'solo' },
-  snapshot: {
-    time: 'noon',
-    landmark: 'none',
-    props: ['lamp', 'billboard'],
-    near: ['acaciaBig', 'hedge', 'mango', 'banana'],
-    far: ['pylon', 'nipa', 'bamboo'],
-    camera: 'solo',
-  },
-  endless: {
-    time: 'morning',
-    landmark: 'city',
-    props: ['billboard', 'lamp', 'house'],
-    near: ['mango', 'palmTall', 'bamboo', 'hedge', 'acaciaBig', 'banana'],
-    far: ['nipa', 'pylon', 'mango', 'bamboo'],
-    camera: 'solo',
-  },
+const LANDMARKS: Partial<Record<MissionId, Landmark>> = {
+  'm1-garage': 'city',
+  'm2-convoy': 'arena',
+  'm3-finale': 'plaza',
+  'bocaue-interchange': 'city',
+  'san-fernando': 'lanterns',
+  mexico: 'arayat',
+  angeles: 'arayat',
+  dau: 'city',
+  sctex: 'pinatubo',
+  'sta-ines': 'pinatubo',
+  endless: 'city',
 };
+const CONVOYS: readonly MissionId[] = ['m2-convoy', 'sta-rita', 'angeles'];
+
+export const LOOKS = Object.fromEntries(
+  ALL_MISSIONS.map((id) => [id, { mood: missionMood(id).mood, landmark: LANDMARKS[id] ?? levelPlan(id)?.landmark ?? 'none', camera: CONVOYS.includes(id) ? 'convoy' : 'solo' } as DriveLook]),
+) as Record<MissionId, DriveLook>;
+
+/** A road level's opening line: one for the kind of road it is. */
+function startLineFor(id: MissionId): string {
+  const plan = levelPlan(id);
+  return plan === undefined || plan.story !== null ? 'm1-route' : `start-mix-${plan.mix}`;
+}
+
+/** Everything on the road that is not the team: decoded before the run starts. */
+const ROAD_ART: readonly string[] = [
+  't.car0', 't.car1', 't.car2', 't.car3', 't.car4', 't.car5', 't.car6', 't.truck', 't.bus',
+  'z.cone', 'z.barrier', 'z.sweep',
+  'f.conebot', 'f.drumbot', 'f.signbot',
+  'p.bolt0', 'p.bolt1', 'p.bolt2', 'p.wrench', 'p.postcard', 'p.part', 'p.spark',
+  'u.spread', 'u.magnet', 'u.bubble', 'u.rally',
+];
 
 /** What the button refuses, in words. */
 const ABILITY_REFUSALS = { cooldown: 'Signature recharging', active: 'Already running', none: 'Nothing to do now' } as const;
@@ -130,7 +112,19 @@ export class MissionRunner implements Scene {
     this.root = document.createElement('div');
     this.root.className = 'mission';
     this.renderer.setLook(LOOKS[missionId]);
+    if (this.app.slowDevice) {
+      this.renderer.startCoarse();
+    }
+    this.renderer.onSlow = () => this.app.noteSlowDevice();
     this.sim = this.makeSim();
+    {
+      const st = this.sim.state;
+      const machine = this.def.machine !== undefined ? [`m.${this.def.machine}`] : [];
+      const kiko = st.kiko !== null ? ['h.kiko.rear'] : [];
+      // The faces that can speak or cheer mid-run, so a callout never opens on a blank portrait.
+      const faces = [`h.${st.hero.id}.front`, ...st.sidekicks.flatMap((k) => [`s.${k.id}.front`, `s.${k.id}.evo`]), 'h.navie.front', 'h.jepoy.front', 'h.kiko.front', 'c.radio'];
+      void preload([...ROAD_ART, ...teamArt(st.hero.id, st.sidekicks.map((k) => k.id)), ...machine, ...kiko, ...faces]);
+    }
     this.input = new InputController({
       playerX: () => this.sim.state.player.x,
       laneWidthPx: () => laneAt(this.renderer.cam, 0),
@@ -316,7 +310,7 @@ export class MissionRunner implements Scene {
       this.startCountdown();
     }
     this.app.audio.playMusic(this.def.kind === 'finale' ? 'boss' : 'drive');
-    this.radio.trigger(this.def.id === 'm1-garage' ? 'm1-start' : this.def.id === 'm2-convoy' ? 'm2-start' : this.def.kind === 'finale' ? 'boss-intro' : RADIO[`start-${this.def.id}`] !== undefined ? `start-${this.def.id}` : 'm1-route');
+    this.radio.trigger(this.def.id === 'm1-garage' ? 'm1-start' : this.def.id === 'm2-convoy' ? 'm2-start' : this.def.kind === 'finale' ? 'boss-intro' : RADIO[`start-${this.def.id}`] !== undefined ? `start-${this.def.id}` : startLineFor(this.def.id));
   }
 
   private buildHud(): void {
@@ -417,12 +411,13 @@ export class MissionRunner implements Scene {
     this.choosing = true;
     this.app.audio.sfx('postcard');
     this.setOverlay(
-      checkpointOverlay(this.overlayApi(), choice, (id, bank) => {
+      checkpointOverlay(this.overlayApi(), (id, bank) => {
         if (!this.choosing) {
           return;
         }
         this.choosing = false;
         this.sim.choose(id, bank);
+        this.handleEvents(this.sim.drainEvents());
         this.app.audio.sfx('buy');
         this.setOverlay(null);
         if (this.flow.send('resume') !== null) {
@@ -599,7 +594,8 @@ export class MissionRunner implements Scene {
           break;
         case 'pickup': {
           const colour = e.kind === 'bolt' ? '#FFC93C' : e.kind === 'spark' ? '#5FD3FF' : e.kind === 'part' ? '#21B3A2' : e.kind === 'powerup' ? '#FFFFFF' : '#FFFFFF';
-          this.renderer.particles.spawn(carX, carY - laneAt(cam, 0) * 0.3, e.kind === 'bolt' ? 5 : 12, colour, { kind: 'star', speed: 90, size: 5 });
+          // A pickup is a small soft puff; only a Bolt's flight to the counter says "coin".
+          this.renderer.particles.spawn(carX, carY - laneAt(cam, 0) * 0.3, e.kind === 'bolt' ? 3 : 8, colour, { kind: 'dot', speed: e.kind === 'bolt' ? 60 : 90, size: e.kind === 'bolt' ? 3 : 4.5 });
           // The look of it: a Bolt flies up into the counter; a wrench heals; a capsule bursts in its colour.
           if (e.kind === 'bolt') {
             const to = this.hud?.boltTarget() ?? null;
@@ -639,10 +635,7 @@ export class MissionRunner implements Scene {
         case 'powerEnd':
           break;
         case 'signature':
-          audio.sfx(e.hero === 'jepoy' ? 'shield' : e.hero === 'kiko' ? 'spark' : 'go');
-          if (e.hero === 'jepoy') {
-            this.renderer.jepoyShowT = 0;
-          }
+          audio.sfx(e.hero === 'jepoy' || e.hero === 'berto' || e.hero === 'sikat' ? 'shield' : e.hero === 'kiko' || e.hero === 'kidlat' || e.hero === 'hiraya' || e.hero === 'ningning' || e.hero === 'tali' ? 'spark' : e.hero === 'sinta' ? 'repair' : e.hero === 'nico' ? 'signal' : 'go');
           this.radio.trigger(`signature-${e.hero}`);
           break;
         case 'shieldBlock':
@@ -651,11 +644,11 @@ export class MissionRunner implements Scene {
           break;
         case 'repair':
           audio.sfx('repair');
-          this.hud?.toast(e.by === 'wrench' ? 'Dent fixed!' : `${SIDEKICK_DEFS[e.by].name} fixed a dent!`);
-          if (e.by !== 'wrench') {
-            this.bark(e.by, 'action');
-          } else {
+          this.hud?.toast(e.by === 'wrench' ? 'Dent fixed!' : e.by === 'hero' ? 'Sinta fixed a dent!' : `${SIDEKICK_DEFS[e.by].name} fixed a dent!`);
+          if (e.by === 'wrench') {
             this.radio.trigger('wrench');
+          } else if (e.by !== 'hero') {
+            this.bark(e.by, 'action');
           }
           break;
         case 'abilityUnavailable':
@@ -707,11 +700,41 @@ export class MissionRunner implements Scene {
           } else if (e.action === 'slow') {
             audio.sfx('signal');
             this.bark(e.id, 'action');
+          } else if (e.action === 'sendoff' || e.action === 'mend' || e.action === 'buffer') {
+            audio.sfx('shield');
+            this.bark(e.id, 'action');
+          } else if (e.action === 'reveal' || e.action === 'alert' || e.action === 'wade' || e.action === 'sip' || e.action === 'retrieve' || e.action === 'coins') {
+            audio.sfx(e.action === 'coins' || e.action === 'retrieve' ? 'bolt' : 'signal');
+            this.bark(e.id, 'action');
           }
           break;
         case 'checkpoint':
           break;
         case 'runUpgrade':
+          break;
+        case 'chain':
+          audio.sfx('part');
+          this.radio.trigger('chain');
+          break;
+        case 'chainBroken':
+          break;
+        case 'weather':
+          if (e.phase === 'warn') {
+            audio.sfx('signal');
+            this.radio.trigger(`weather-${e.kind}`);
+          }
+          break;
+        case 'rough':
+          if (e.on) {
+            audio.sfx('bump');
+            this.radio.trigger('rough');
+          }
+          break;
+        case 'reroll':
+          audio.sfx('tap');
+          break;
+        case 'stashShown':
+          audio.sfx('signal');
           break;
         case 'goal':
           announce(`New goal: ${e.text}`);
@@ -904,71 +927,71 @@ export class MissionRunner implements Scene {
     if (s.tutorial !== null) {
       switch (s.tutorial.step) {
         case 'steer':
-          return [steering === 'drag' ? 'Practice: drag left and right in the pad under your car (or hold ← →).' : 'Practice: tap ‹ and › to change lanes (or press ← →).', 'Learn'];
+          return [steering === 'drag' ? 'Drag left, then right' : 'Tap left, then right', 'Learn'];
         case 'bolts':
-          return [`Collect Bolts - the golden nuts (${Math.min(3, s.tutorial.bolts)}/3).`, 'Learn'];
+          return [`Grab the gold nuts ${Math.min(3, s.tutorial.bolts)}/3`, 'Learn'];
         case 'cones':
-          return ['Weave around the cones. Practice cones cannot dent you.', 'Learn'];
+          return ['Steer round the cones', 'Learn'];
         case 'pulse':
-          return [`Your horn fires by itself: line up with the purple bots (${s.tutorial.zapped}/2).`, 'Learn'];
+          return [`Line up with the purple bots ${s.tutorial.zapped}/2`, 'Learn'];
         case 'wrench':
-          return ['Grab the wrench - wrenches fix one dent.', 'Learn'];
+          return ['Grab the wrench: it fixes a dent', 'Learn'];
         case 'go':
-          return ['Nice! The real road starts now.', 'Learn'];
+          return ['Nice! Now the real road', 'Learn'];
       }
     }
     if (s.rescue !== null) {
       switch (s.rescue.phase) {
         case 'slowing':
-          return ['Kiko is pulling into the safe lay-by...', 'Lay-by'];
+          return ['Pulling into the lay-by', 'Lay-by'];
         case 'align':
-          return [`Line up in front of Kiko and hold steady - ${Math.round(s.rescue.progress * 100)}%`, 'Lay-by'];
+          return [`Line up with Kiko ${Math.round(s.rescue.progress * 100)}%`, 'Lay-by'];
         case 'push':
-          return ["Jump-starting Kiko's engine...", 'Lay-by'];
+          return ['Jump-starting Kiko', 'Lay-by'];
         case 'resume':
-          return ['Kiko is running again - back on the road!', 'Lay-by'];
+          return ['Back on the road!', 'Lay-by'];
       }
     }
     if (s.boss !== null) {
       const b = s.boss;
       if (b.stage === 'intro') {
-        return [`${CHARACTER_NAMES[this.def.machine ?? 'barrikada']} is waking up...`, 'Boss'];
+        return [`${CHARACTER_NAMES[this.def.machine ?? 'barrikada']} wakes`, 'Boss'];
       }
       if (b.stage === 'honkReady') {
-        return ['TEAM HONK is charged - press the button!', 'Honk'];
+        return ['TEAM HONK is ready: press it!', 'Honk'];
       }
       if (b.stage === 'honk') {
-        return ['SABAY-SABAY - everyone honks together!', 'Honk'];
+        return ['Sabay-sabay!', 'Honk'];
       }
       if (b.stage === 'down') {
-        return ['The gears are resetting...', 'Boss'];
+        return ['The gears reset', 'Boss'];
       }
       if (b.stage === 'break') {
-        return ['Safe break - grab the wrench.', 'Break'];
+        return ['Safe break: grab the wrench', 'Break'];
       }
       if (b.phase === 1) {
-        return ['Line up with the OPEN gear (bright ring + target).', 'Phase 1'];
+        return ['Line up with the open gear', 'Phase 1'];
       }
       if (b.phase === 2) {
-        return ['Take one open gear - your sidekicks hit the other. Dodge the sweeps.', 'Phase 2'];
+        return ['One gear each: you and your sidekicks', 'Phase 2'];
       }
-      return [`Grab signal sparks to charge TEAM HONK (${b.sparks}/3).`, 'Phase 3'];
+      return [`Grab the sparks ${b.sparks}/3`, 'Phase 3'];
     }
     if (s.goal !== null && !s.goal.done) {
       if (s.goal.kind === 'clean') {
-        return [s.goal.failed ? 'Clean stretch missed - keep going!' : s.goal.text, 'Goal'];
+        return [s.goal.failed ? 'Missed. Keep going!' : s.goal.text, 'Goal'];
       }
-      return [`${s.goal.text} - ${Math.min(s.goal.progress, s.goal.count)}/${s.goal.count}`, 'Goal'];
+      return [`${s.goal.text} ${Math.min(s.goal.progress, s.goal.count)}/${s.goal.count}`, 'Goal'];
     }
     if (s.kiko !== null) {
       if (s.kiko.strain > 0.5) {
-        return ['Smoother! Kiko is cutting the corner.', 'Convoy'];
+        return ['Smoother! Kiko is cutting in', 'Convoy'];
       }
-      return ['Lead Kiko - change lanes early', 'Convoy'];
+      return ['Lead Kiko: turn early', 'Convoy'];
     }
     if (this.def.kind === 'endless') {
-      return [`${Math.floor(s.route)} m · bank your run at a checkpoint`, 'Endless'];
+      return ['Bank your run at a checkpoint', 'Endless'];
     }
-    return [this.def.kind === 'scenario' ? 'Reach the end of the run.' : `Drive to ${this.def.to}.`, 'Goal'];
+    return [this.def.kind === 'scenario' ? 'Reach the end' : `Drive to ${this.def.to}`, 'Goal'];
   }
 }

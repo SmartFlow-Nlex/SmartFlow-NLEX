@@ -49,3 +49,6 @@ dist/
 .env.bak-*
 # Playwright CLI output (may contain credentials)
 .playwright-cli/
+
+# Tollbound Heroes art bake cache
+scripts/tollbound-art/.cache/

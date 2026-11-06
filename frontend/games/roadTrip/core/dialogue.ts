@@ -27,6 +27,19 @@ export const CHARACTER_NAMES: Record<CharacterId, string> = {
   navie: 'Navie',
   jepoy: 'Kuya Jepoy',
   kiko: 'Kiko',
+  berto: 'Berto',
+  ligaya: 'Ligaya',
+  hiraya: 'Hiraya',
+  sinta: 'Sinta',
+  amihan: 'Amihan',
+  kidlat: 'Kidlat',
+  nico: 'Nico',
+  alon: 'Alon',
+  tiko: 'Tiko',
+  ningning: 'Ningning',
+  simoy: 'Simoy',
+  sikat: 'Sikat',
+  tali: 'Tali',
   barrikada: 'Haring Barrikada',
   prinsipe: 'Prinsipe Barrikada',
   reyna: 'Reyna Barrikada',
@@ -74,7 +87,7 @@ export const SCENES: Record<string, StoryScene> = {
       { speaker: 'navie', expr: 'determined', text: "If anyone gets stuck, they'll need a guide. That's what I'm here for!" },
       { speaker: 'radio', expr: 'speaking', text: '...and drivers report strange road-works near Bocaue. Please drive carefully.' },
       { speaker: 'navie', expr: 'worried', text: 'Road-works on fiesta day? Hmm.' },
-      { speaker: 'navie', expr: 'determined', text: "First stop: Meycauayan. Let's check the road and help wherever we can." },
+      { speaker: 'navie', expr: 'determined', text: "North we go. Let's check the road and help wherever we can." },
     ],
   },
   'meet-jepoy': {
@@ -208,8 +221,8 @@ const L = (
  */
 const HERO_VOICE: Record<string, Partial<Record<HeroId, string[]>>> = {
   'm1-start': {
-    jepoy: ['Tara na! Engine warm, band on board. Meycauayan, here we come!'],
-    kiko: ['Mirrors checked, seatbelt on po. Meycauayan, here we come!'],
+    jepoy: ['Tara na! Engine warm, band on board. NLEX, here we come!'],
+    kiko: ['Mirrors checked, seatbelt on po. NLEX, here we come!'],
   },
   firstHit: {
     jepoy: ['Oof! A dent - a wrench will sort it, walang problema.'],
@@ -228,7 +241,28 @@ const HERO_VOICE: Record<string, Partial<Record<HeroId, string[]>>> = {
 
 /** Radio lines by trigger id; a trigger with several lines picks one in turn. */
 export const RADIO: Record<string, RadioLine[]> = {
-  'm1-start': [L('m1-start', 'navie', 'determined', "Engine warm, cap on. Meycauayan, here we come!", 1, { once: true })],
+  'm1-start': [L('m1-start', 'navie', 'determined', 'Engine warm, cap on. NLEX, here we come!', 1, { once: true })],
+  // A road level opens with a line for the kind of road it is (core/levels.ts). Lines take turns.
+  'start-mix-balanced': [
+    L('start-mix-balanced', 'navie', 'determined', 'Open road ahead. Nice and steady.', 1),
+    L('start-mix-balanced', 'navie', 'happy', 'North again! Eyes on the lanes.', 1),
+  ],
+  'start-mix-roadworks': [
+    L('start-mix-roadworks', 'navie', 'worried', 'The road is broken up ahead. Watch for the holes!', 1),
+    L('start-mix-roadworks', 'navie', 'determined', 'Cracked asphalt. Steer around the bad patches.', 1),
+  ],
+  'start-mix-bots': [
+    L('start-mix-bots', 'navie', 'determined', 'Purple bots ahead. Horn ready!', 1),
+    L('start-mix-bots', 'navie', 'determined', "Barrikada's gang again. Let's clear the way.", 1),
+  ],
+  'start-mix-traffic': [
+    L('start-mix-traffic', 'navie', 'determined', 'Busy lanes today. Pick a gap early.', 1),
+    L('start-mix-traffic', 'navie', 'worried', 'Trucks and buses everywhere. Easy does it.', 1),
+  ],
+  'start-mix-scenic': [
+    L('start-mix-scenic', 'navie', 'happy', 'Bolts all over the road! Grab what you can.', 1),
+    L('start-mix-scenic', 'navie', 'happy', 'So many shiny Bolts. Collect them all!', 1),
+  ],
   'm1-route': [L('m1-route', 'navie', 'happy', 'The real road starts now. Bolts, wrenches, and watch those cones!', 1, { once: true })],
   firstBolt: [L('firstBolt', 'navie', 'happy', 'Bolts! These will fix up the garage.', 0, { once: true })],
   firstHit: [L('firstHit', 'navie', 'hurt', 'Oof! A dent. A wrench will fix that.', 1, { once: true })],
@@ -272,6 +306,28 @@ export const RADIO: Record<string, RadioLine[]> = {
     L('signature-kiko', 'kiko', 'determined', 'Gear Scan running... weak points marked, po!', 0, { cooldown: 12 }),
     L('signature-kiko', 'kiko', 'happy', 'Scanning! Hit the marked ones!', 0, { cooldown: 12 }),
   ],
+  'signature-berto': [L('signature-berto', 'berto', 'determined', 'Load Brace. Roll right over it.', 0, { cooldown: 12 })],
+  'signature-ligaya': [L('signature-ligaya', 'ligaya', 'happy', 'Rally Beat! And a one, and a two!', 0, { cooldown: 12 })],
+  'signature-hiraya': [L('signature-hiraya', 'hiraya', 'determined', 'Star Sweep. Everybody gets a little.', 0, { cooldown: 12 })],
+  'signature-sinta': [L('signature-sinta', 'sinta', 'determined', 'Steady now. Repair booked for the next stop.', 0, { cooldown: 12 })],
+  'signature-amihan': [L('signature-amihan', 'amihan', 'happy', 'Windstep! Light hands!', 0, { cooldown: 12 })],
+  'signature-kidlat': [L('signature-kidlat', 'kidlat', 'determined', 'Capacitor: release!', 0, { cooldown: 8 })],
+  'signature-nico': [L('signature-nico', 'nico', 'determined', 'Searchlight on. What are you hiding, road?', 0, { cooldown: 12 })],
+  'signature-alon': [L('signature-alon', 'alon', 'determined', 'Foam Break! Mind the wake.', 0, { cooldown: 12 })],
+  'signature-tiko': [L('signature-tiko', 'tiko', 'happy', 'Echo Trick! Echo Trick!', 0, { cooldown: 12 })],
+  'weather-gust': [L('weather-gust', 'navie', 'worried', 'Crosswind coming. Hold your line!', 1, { cooldown: 25 })],
+  'weather-rain': [L('weather-rain', 'navie', 'worried', 'Rain ahead. Easy on the steering.', 1, { cooldown: 30 })],
+  rough: [L('rough', 'navie', 'worried', 'Road repairs: this bit is bumpy.', 0, { cooldown: 40 })],
+  chain: [L('chain', 'navie', 'happy', 'Five in a row!', 0, { cooldown: 18 })],
+  'teach-berto': [L('teach-berto', 'berto', 'determined', 'Load Brace rolls right over cones. Tap it.', 2, { once: true })],
+  'teach-ligaya': [L('teach-ligaya', 'ligaya', 'determined', 'Chain your Bolts, then tap Rally Beat!', 2, { once: true })],
+  'teach-hiraya': [L('teach-hiraya', 'hiraya', 'determined', 'Tap Star Sweep when the bots spread out.', 2, { once: true })],
+  'teach-sinta': [L('teach-sinta', 'sinta', 'determined', 'Tap it to book a repair for the next stop.', 2, { once: true })],
+  'teach-amihan': [L('teach-amihan', 'amihan', 'determined', 'Windstep makes me quicker. Tap before a tight gap!', 2, { once: true })],
+  'teach-kidlat': [L('teach-kidlat', 'kidlat', 'determined', 'Three charges or more, then release up the lane.', 2, { once: true })],
+  'teach-nico': [L('teach-nico', 'nico', 'determined', 'Case Finder shows what is hidden ahead. Tap it.', 2, { once: true })],
+  'teach-alon': [L('teach-alon', 'alon', 'determined', 'Foam Break slows the bots. Tap it, buy some time.', 2, { once: true })],
+  'teach-tiko': [L('teach-tiko', 'tiko', 'determined', 'Echo Trick doubles my horn. Sort of. Tap it!', 2, { once: true })],
   'teach-navie': [L('teach-navie', 'navie', 'determined', 'Busy road ahead - tap Route Sense to slow it down!', 2, { once: true })],
   'teach-jepoy': [L('teach-jepoy', 'jepoy', 'determined', 'Tap my shield - it covers us AND Kiko!', 2, { once: true })],
   'teach-kiko': [L('teach-kiko', 'kiko', 'determined', 'Tap Gear Scan - bots take double damage!', 2, { once: true })],
@@ -466,7 +522,7 @@ export interface Banter {
 }
 
 export const BANTER: Banter[] = [
-  { id: 'b-start-1', stage: 'start', lines: [{ speaker: 'navie', expr: 'happy', text: 'Garage tidy, tank full. Meycauayan first!' }] },
+  { id: 'b-start-1', stage: 'start', lines: [{ speaker: 'navie', expr: 'happy', text: 'Garage tidy, tank full. North we go!' }] },
   { id: 'b-start-2', stage: 'start', lines: [{ speaker: 'navie', expr: 'idle', text: 'The map shows the next stop. Tap Journey Map when ready.' }] },
   {
     id: 'b-jepoy-1',

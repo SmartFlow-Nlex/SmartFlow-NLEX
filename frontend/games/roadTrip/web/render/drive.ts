@@ -1,32 +1,22 @@
-import { GEAR_X, GEAR_Y, drawBarrikada } from '../art/boss';
-import { blinkAt } from '../art/cast';
-import { FOE_BOX, drawFoe } from '../art/foes';
-import { POWERUP_BOX, drawPowerUp } from '../art/powerups';
-import { drawSidekick, SIDEKICK_BOX } from '../art/sidekicks';
-import { makeCanvas, rgba, roundRect, shade, vgrad, type Ctx } from '../art/kit';
-import { C, TIMES, type TimeOfDay } from '../art/palette';
-import { ROADSIDE_BOX, drawRoadside, drawTreeLine, drawWarmLight, type RoadsideKind } from '../art/roadside';
-import { drawGantry, drawGround, drawProp, drawSkyLayer, drawTollPlaza, type Landmark, type PropKind } from '../art/scenery';
+import { GEAR_X, GEAR_Y } from '../art/boss';
+import { art, blitBent, blitClay, blitOutline, flashCopy, hasRightViews, sidekickRhythm, sidekickSway, softShadow, tinted, type ClaySprite } from '../art/clay';
+import { drawClayFace } from '../art/clayFaces';
+import { makeCanvas, roundRect, vgrad, type Ctx } from '../art/kit';
+import { FX_SECONDS, sidekickFx } from './sidekickFx';
+import { C } from '../art/palette';
+import { drawGantry } from '../art/scenery';
 import { SpriteCache, blit } from '../art/sprites';
-import {
-  CAR_COLOURS,
-  UNITS_PER_LANE,
-  drawBarrier,
-  drawCone,
-  drawJepoyRear,
-  drawKikoRear,
-  drawLaneBoard,
-  drawNavieRear,
-  drawPickup,
-  drawPothole,
-  drawTrafficRear,
-  type PickupLook,
-} from '../art/vehicles';
+import { UNITS_PER_LANE } from '../art/vehicles';
 import { KIKO_FRONT, SPAWN_Z } from '../../core/config';
+import type { Mood } from '../../core/moods';
 import type { HazardEntity, SidekickState, SimState } from '../../core/sim';
-import type { FoeKind, PowerUpKind, SidekickId } from '../../core/types';
-import { bendAt, laneAt, makeCamera, screenX, screenY, zAtY, type Camera, type CameraProfile } from './camera';
+import { FLY_HEIGHT, SidekickDodge } from '../../core/sidekickDodge';
+import { drawBrokenPatch, drawPothole } from './brokenRoad';
+import { hiddenShowZ } from '../../core/tuning';
+import type { FoeKind, HeroId, PowerUpKind, SidekickId } from '../../core/types';
+import { laneAt, makeCamera, screenX, screenY, zAtY, type Camera, type CameraProfile } from './camera';
 import { Particles } from './effects';
+import { Roadscape, type Drawable, type Landmark } from './roadscape';
 
 /**
  * Draws a running mission: sky, road, roadside, every entity in depth order,
@@ -35,14 +25,8 @@ import { Particles } from './effects';
  */
 
 export interface DriveLook {
-  time: TimeOfDay;
+  mood: Mood;
   landmark: Landmark;
-  /** The older, simpler props, still mixed in for variety. */
-  props: PropKind[];
-  /** Layered roadside just past the barriers. */
-  near: RoadsideKind[];
-  /** Further out across the fields: huts, pylons, big trees. */
-  far: RoadsideKind[];
   camera: CameraProfile;
 }
 
@@ -51,25 +35,8 @@ export interface DriveSettings {
   hazardOutlines: boolean;
 }
 
-interface Drawable {
-  z: number;
-  draw: () => void;
-}
-
 const FAR_Z = 82;
-const PROP_SPACING = 8.5;
-const FAR_SPACING = 23;
-const SIGN_SPACING = 97;
-const SIGNS: RoadsideKind[] = ['signSlow', 'kmpost', 'signKeep', 'sos', 'signExit', 'kmpost'];
 const VISIBLE_Z = SPAWN_Z;
-
-function hash(n: number): number {
-  let x = Math.imul(n ^ 0x9e3779b9, 0x85ebca6b);
-  x ^= x >>> 13;
-  x = Math.imul(x, 0xc2b2ae35);
-  x ^= x >>> 16;
-  return (x >>> 0) / 4294967296;
-}
 
 /** Navie's recorded x at road distance d (the same lookup the simulation uses). */
 function trailX(trail: readonly { d: number; x: number }[], d: number): number {
@@ -87,23 +54,58 @@ function trailX(trail: readonly { d: number; x: number }[], d: number): number {
   return trail[trail.length - 1].x;
 }
 
-/** Traffic colours without purple: purple belongs to Barrikada's bots, the only combat targets (CAR_COLOURS is shared with Grand Prix). */
-const TRAFFIC_COLOURS = [...CAR_COLOURS.filter((c) => c !== '#7A5CE0'), '#A0764A'];
-
 /** Each power-up capsule's colour (as drawn in powerups.ts), for its pick-up burst. */
-const POWER_COLOURS: Record<PowerUpKind, string> = { spread: '#F0653E', magnet: '#E2539E', bubble: '#3A8CF4', rally: '#2EAD5B' };
+const POWER_COLOURS: Record<PowerUpKind, string> = { spread: '#D9704C', magnet: '#C96C9A', bubble: '#4D8CCB', rally: '#5FA56C' };
+
+/** The model width that fills a hazard's real hit box: what you see is what you hit. */
+const MODEL_WIDE: Record<string, number> = { car: 2.86, truck: 2.92, bus: 3.0, cone: 1.2, rollingCone: 1.2, barrier: 3.68, sweepBarrier: 3.68, pothole: 2.7, conebot: 1.3, drumbot: 1.7, signbot: 2.2 };
+
+/** How each hero sits on its springs: bob size (of a lane), bob speed, lean. Heavy ones roll slowly; light ones chatter. */
+const HANDLING: Record<HeroId, [number, number, number]> = {
+  navie: [0.006, 17, 0.11],
+  jepoy: [0.009, 9, 0.07],
+  kiko: [0.007, 19, 0.12],
+  berto: [0.011, 7, 0.06],
+  ligaya: [0.009, 11, 0.09],
+  hiraya: [0.004, 21, 0.13],
+  sinta: [0.008, 10, 0.08],
+  amihan: [0.005, 24, 0.16],
+  kidlat: [0.006, 22, 0.12],
+  nico: [0.006, 13, 0.09],
+  alon: [0.012, 6, 0.08],
+  tiko: [0.01, 14, 0.14],
+  ningning: [0.006, 19, 0.12],
+  simoy: [0.005, 20, 0.13],
+  sikat: [0.01, 11, 0.08],
+  tali: [0.008, 13, 0.09],
+};
+
+/** A sidekick's size on the road: lanes per model unit. */
+const SIDEKICK_UNIT = 0.135;
+/** Sidekicks that fly (shadow on the road beneath) rather than run alongside. */
+const FLYERS: ReadonlySet<SidekickId> = new Set<SidekickId>(['kislap', 'hamog', 'pip', 'silip', 'barya', 'sibat', 'tala', 'parolito', 'saranggola', 'silaw', 'bitu', 'ulap', 'kalaw', 'sampy']);
+const BOT_COLOUR = '#7B59B8';
+
 
 export class DriveRenderer {
   cam: Camera = makeCamera(390, 844);
   readonly particles = new Particles();
   private readonly sprites = new SpriteCache();
-  /** The formation sidekicks as looping 8 fps frames (redrawing their vector art every frame cost ~12% of a frame). */
-  private readonly sidekickSprites = new SpriteCache();
+  private readonly scape = new Roadscape();
   /** Pre-drawn text tags (gear and scan labels). */
   private readonly tags = new Map<string, { canvas: HTMLCanvasElement; w: number; h: number }>();
   private readonly gearFrames = new Map<string, HTMLCanvasElement>();
-  private background: HTMLCanvasElement | null = null;
-  private look: DriveLook = { time: 'morning', landmark: 'city', props: ['palm', 'acacia'], near: ['mango'], far: ['nipa'], camera: 'solo' };
+  private look: DriveLook = { mood: 'morning', landmark: 'none', camera: 'solo' };
+  /** Frame-time watch: if frames run long for a while, the road draws coarser rows and less scenery. */
+  private moodFade = 0;
+  private slowFrames = 0;
+  /** Called once when this device turns out to be slow. */
+  onSlow: (() => void) | null = null;
+
+  /** Starts a road at the lower quality when this session already knows the device is slow. */
+  startCoarse(): void {
+    this.scape.quality = 2;
+  }
   /** The nearest road distance on screen (bottom edge); negative, behind the car. */
   private nearZ = -3;
   /** Seconds until Kiko's next exhaust puff. */
@@ -112,9 +114,21 @@ export class DriveRenderer {
   private shake = 0;
   private shakeT = 0;
   /** Seconds left of Jepoy's shoulder appearance. */
-  jepoyShowT = 0;
   /** Lean, smoothed. */
   private lean = 0;
+  /** Steering feel, all of it looks only: the lean's spring speed, what trails it, how far round the car has turned, and to which side. */
+  private leanV = 0;
+  private leanLag = 0;
+  private turnMix = 0;
+  private turnSide = 1;
+  private frameDt = 0;
+  /** Each slot's ability flourish: its age, and the action value last seen, to notice a new one. */
+  private readonly fxAge: [number, number] = [9, 9];
+  /** Hazard outlines, from the settings: drawn on potholes too. */
+  private outlines = false;
+  /** How the sidekicks get past what is on the road: only how they move, never whether anything hits. */
+  private readonly dodge = new SidekickDodge();
+  private readonly fxSeen: [number, number] = [0, 0];
   private bounceT = 0;
 
   private topInset = 0;
@@ -149,20 +163,17 @@ export class DriveRenderer {
     this.dpr = dpr;
     this.sprites.resolution = Math.min(2.2, (this.cam.lane0 * 1.5 * dpr) / UNITS_PER_LANE);
     this.sprites.clear();
-    // Sidekicks are drawn about 0.42 of a lane wide (175 units of body); a little headroom for the nearer slot.
-    this.sidekickSprites.resolution = Math.min(2.2, ((this.cam.lane0 * 0.42 * 1.2) / 175) * dpr);
-    this.sidekickSprites.clear();
+    this.scape.resize(dpr);
     this.fx.resolution = Math.min(3, dpr);
     this.fx.clear();
     this.tags.clear();
     this.gearFrames.clear();
-    this.background = null;
   }
 
   setLook(look: DriveLook): void {
     const recamera = look.camera !== this.look.camera;
     this.look = look;
-    this.background = null;
+    this.scape.setMood(look.mood, look.landmark);
     if (recamera) {
       this.resize(this.cam.width, this.cam.height, this.dpr);
     }
@@ -175,29 +186,11 @@ export class DriveRenderer {
 
   dispose(): void {
     this.sprites.clear();
-    this.sidekickSprites.clear();
     this.fx.clear();
     this.flyers = [];
     this.pops = [];
     this.particles.clear();
-    this.background = null;
-  }
-
-  private ensureBackground(): HTMLCanvasElement {
-    if (this.background !== null) {
-      return this.background;
-    }
-    // Everything static for this size, drawn once: sky, tree line, fields and the warm light.
-    const { width, height, horizonY } = this.cam;
-    const pad = 40;
-    const { canvas, ctx } = makeCanvas(width + pad * 2, height, this.dpr);
-    drawGround(ctx, width + pad * 2, height, horizonY, this.look.time);
-    ctx.translate(pad, 0);
-    drawSkyLayer(ctx, width, horizonY, this.look.time, this.look.landmark);
-    drawTreeLine(ctx, width, horizonY, this.look.time);
-    drawWarmLight(ctx, width, height, horizonY, this.look.time);
-    this.background = canvas;
-    return canvas;
+    this.scape.dispose();
   }
 
   draw(ctx: Ctx, s: SimState, t: number, dt: number, settings: DriveSettings): void {
@@ -208,9 +201,40 @@ export class DriveRenderer {
     cam.camX += (follow - cam.camX) * Math.min(1, dt * 4);
     this.reduceMotion = settings.reduceMotion;
     cam.curve = settings.reduceMotion || s.boss !== null ? 0 : Math.sin(s.distance / 260) * 0.32 + Math.sin(s.distance / 97) * 0.08;
-    this.lean += ((s.player.vx / 3.3) * 0.11 - this.lean) * Math.min(1, dt * 10);
+    // Adaptive quality: three seconds of long frames mean coarser rows, less scenery and fewer pixels.
+    if (dt > 0 && this.scape.quality === 1) {
+      this.slowFrames = dt > 1 / 34 ? this.slowFrames + 1 : Math.max(0, this.slowFrames - 2);
+      if (this.slowFrames > 90) {
+        this.scape.quality = 2;
+        this.onSlow?.();
+      }
+    }
+    if (s.mood !== this.scape.currentMood) {
+      this.scape.setMood(s.mood, this.look.landmark);
+      // The hour changes behind a moment of soft air (Endless, at its safe stops), not with a jump.
+      this.moodFade = 1;
+    }
+    this.frameDt = dt;
+    this.outlines = settings.hazardOutlines;
+    const leanTo = (s.player.vx / 3.3) * HANDLING[s.hero.id][2];
+    const step = Math.min(dt, 0.05);
+    if (settings.reduceMotion) {
+      this.lean += (leanTo - this.lean) * Math.min(1, dt * 10);
+      this.leanV = 0;
+      this.leanLag = this.lean;
+    } else {
+      // A soft spring: it settles with a little give, so a lane change has weight.
+      this.leanV += ((leanTo - this.lean) * 90 - this.leanV * 13) * step;
+      this.lean += this.leanV * step;
+      this.leanLag += (this.lean - this.leanLag) * Math.min(1, dt * 6);
+    }
+    const swinging = s.player.vx / Math.max(1, s.preset.lateral);
+    const turnTo = Math.max(0, Math.min(1, (Math.abs(swinging) - 0.12) / 0.48));
+    this.turnMix += (turnTo * turnTo * (3 - 2 * turnTo) - this.turnMix) * Math.min(1, dt * 12);
+    if (Math.abs(swinging) > 0.02) {
+      this.turnSide = swinging > 0 ? 1 : -1;
+    }
     this.bounceT += dt;
-    this.jepoyShowT = Math.max(0, this.jepoyShowT - dt);
 
     ctx.save();
     if (!settings.reduceMotion && this.shake > 0) {
@@ -223,13 +247,12 @@ export class DriveRenderer {
     }
 
     // Sky (parallax shift with the camera, none under reduced motion).
-    const bg = this.ensureBackground();
     const shift = settings.reduceMotion ? 0 : -cam.camX * 10;
-    ctx.drawImage(bg, -40 + shift, 0, bg.width / this.dpr, bg.height / this.dpr);
-    this.drawRoad(ctx, s);
+    this.scape.drawSky(ctx, cam, shift);
+    this.drawRoad(ctx, s, t);
     // Everything with depth, far to near; distant things sit behind a layer of haze.
     const items: Drawable[] = [];
-    this.collectProps(ctx, s, items);
+    this.scape.collect(ctx, cam, s.distance, s.mission.number * 1000, this.nearZ - 1, items, (z) => (z > 0 ? 2.45 : 2.45));
     this.collectEntities(ctx, s, t, dt, settings, items);
     const hazeZ = 46;
     items.push({ z: hazeZ, draw: () => this.drawHaze(ctx, hazeZ) });
@@ -246,8 +269,19 @@ export class DriveRenderer {
     this.particles.update(dt);
     this.particles.draw(ctx);
     this.drawWarnings(ctx, s, t);
+    // Rain falls in front of everything, thin enough to see through.
+    const rain = s.weather.kind === 'rain' ? (s.weather.phase === 'active' ? 1 : s.weather.phase === 'warn' ? 0.35 : 0.14) : s.mood === 'rain' ? 0.14 : 0;
+    this.scape.drawRain(ctx, cam, dt, rain, settings.reduceMotion);
+    if (s.weather.kind === 'gust') {
+      this.drawGust(ctx, s, t, dt, settings.reduceMotion);
+    }
     ctx.restore();
 
+    if (this.moodFade > 0) {
+      ctx.fillStyle = `${this.scape.look.haze}${this.moodFade})`;
+      ctx.fillRect(0, 0, width, height);
+      this.moodFade = Math.max(0, this.moodFade - dt * 1.6);
+    }
     if (this.flashA > 0) {
       ctx.fillStyle = `rgba(255,255,255,${this.flashA})`;
       ctx.fillRect(0, 0, width, height);
@@ -268,11 +302,19 @@ export class DriveRenderer {
 
   // -- road ------------------------------------------------------------------
 
-  private drawRoad(ctx: Ctx, s: SimState): void {
+  private drawRoad(ctx: Ctx, s: SimState, t: number): void {
     const cam = this.cam;
     const rows = 48;
     const top = cam.horizonY + 1;
     const bottom = cam.height;
+    const zs: number[] = [];
+    for (let i = 0; i <= rows; i += 1) {
+      const y = top + (bottom - top) * ((i / rows) ** 1.6);
+      zs.push(Math.min(FAR_Z, zAtY(cam, y)));
+    }
+    // A little past the bottom of the screen, so a wall's top leaves the picture before the wall ends.
+    zs.push(Math.max(0.7 - cam.depth, zAtY(cam, bottom) - 2.5));
+    const near = this.nearZ;
     const quad = (x0a: number, x0b: number, za: number, x1a: number, x1b: number, zb: number, fill: string): void => {
       ctx.beginPath();
       ctx.moveTo(screenX(cam, x0a, za), screenY(cam, za));
@@ -283,82 +325,20 @@ export class DriveRenderer {
       ctx.fillStyle = fill;
       ctx.fill();
     };
-    // Depth samples, one per screen row band (dense near, sparse far), as polygons:
-    // whole shapes have no seams between strips.
-    const zs: number[] = [];
-    for (let i = 0; i <= rows; i += 1) {
-      const y = top + (bottom - top) * ((i / rows) ** 1.6);
-      zs.push(Math.min(FAR_Z, zAtY(cam, y)));
-    }
-    const strip = (half: number, fill: string): void => {
-      ctx.beginPath();
-      zs.forEach((z, i) => {
-        const x = screenX(cam, -half, z);
-        const y = screenY(cam, z);
-        if (i === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      });
-      for (let i = zs.length - 1; i >= 0; i -= 1) {
-        ctx.lineTo(screenX(cam, half, zs[i]), screenY(cam, zs[i]));
-      }
-      ctx.closePath();
-      ctx.fillStyle = fill;
-      ctx.fill();
-    };
-    const near = this.nearZ;
-    const look = TIMES[this.look.time];
-    // Verge: darker, mown grass along the road; then the shoulder and asphalt.
-    strip(3.1, shade(look.field, -0.12));
-    strip(2.25, '#B5BDC8');
-    strip(1.5, C.asphalt);
-    // Faint bands that scroll past - the sense of speed. Whole quads, so no seams either.
-    const bandLen = 6;
-    const bandPhase = s.distance % (bandLen * 2);
-    for (let k = Math.floor(near / (bandLen * 2)) - 1; k < FAR_Z / (bandLen * 2) + 1; k += 1) {
-      const za = k * bandLen * 2 - bandPhase;
-      const zb = za + bandLen;
-      if (zb < near || za > FAR_Z) {
-        continue;
-      }
-      const a = Math.max(near, za);
-      const b = Math.min(FAR_Z, zb);
-      const mid = (a + b) / 2;
-      // Split long near bands so they follow the curve.
-      quad(-1.5, 1.5, a, -1.5, 1.5, mid, 'rgba(10,16,28,0.07)');
-      quad(-1.5, 1.5, mid, -1.5, 1.5, b, 'rgba(10,16,28,0.07)');
-    }
-
-    // Lane dashes and edge lines.
-    const period = 7;
-    const dash = 3.4;
-    const phase = s.distance % period;
-    ctx.fillStyle = C.laneLine;
-    for (let k = Math.floor(near / period) - 1; k < FAR_Z / period + 1; k += 1) {
-      const za = k * period - phase;
-      const zb = za + dash;
-      if (zb < near || za > FAR_Z) {
-        continue;
-      }
-      for (const x of [-0.5, 0.5]) {
-        const a = Math.max(za, near);
-        quad(x - 0.025, x + 0.025, a, x - 0.025, x + 0.025, zb, C.laneLine);
-      }
-    }
-    for (const x of [-1.5, 1.5]) {
-      quad(x - 0.03, x + 0.03, near, x - 0.03, x + 0.03, FAR_Z, x < 0 ? C.edgeLine : '#F4F7FB');
-    }
+    this.scape.drawGround(ctx, cam, s.distance, near);
+    void quad;
+    // Road repairs: a stretch where the top layer has torn away, across every lane, so it can be read from afar.
+    this.drawRough(ctx, s);
     this.drawBarriers(ctx, s, zs);
-    // Potholes are flat on the road: drawn now, under everything standing.
+    // Potholes are holes in the road: drawn flat on it now, under everything standing.
     for (const h of s.hazards) {
-      if (h.kind === 'pothole' && h.z < VISIBLE_Z) {
-        const scale = laneAt(cam, h.z) / UNITS_PER_LANE;
-        const sprite = this.sprites.get('pothole', [-110, -110, 110, 10], (c) => drawPothole(c, false));
-        blit(ctx, sprite, screenX(cam, h.x, h.z), screenY(cam, h.z), scale, this.fade(h.z));
+      if (h.kind === 'pothole' && h.z < VISIBLE_Z && h.z + h.len > this.nearZ) {
+        ctx.globalAlpha = this.fade(h.z);
+        drawPothole(ctx, cam, h, this.scape.look.asphalt, this.scape.look.wet, this.nearZ, this.outlines && !h.spent);
+        ctx.globalAlpha = 1;
       }
     }
+    void t;
     // Finale telegraphs painted on the road: amber "v" chevrons coming at you where
     // something will roll, green "^" arrows up the lane that stays open.
     if (s.boss !== null) {
@@ -420,9 +400,28 @@ export class DriveRenderer {
       ctx.strokeStyle = top;
       ctx.stroke();
     };
+    const look = this.scape.look;
+    // A soft shadow on the ground along both barriers.
+    for (const x of [-2.05, 2.12]) {
+      const inner = x < 0 ? x + 0.2 : x - 0.2;
+      ctx.beginPath();
+      zs.forEach((z, i) => {
+        if (i === 0) {
+          ctx.moveTo(screenX(cam, x, z), screenY(cam, z));
+        } else {
+          ctx.lineTo(screenX(cam, x, z), screenY(cam, z));
+        }
+      });
+      for (let i = zs.length - 1; i >= 0; i -= 1) {
+        ctx.lineTo(screenX(cam, inner, zs[i]), screenY(cam, zs[i]));
+      }
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(40,46,56,0.14)';
+      ctx.fill();
+    }
     // Median: concrete Jersey barrier.
-    wall(-2.05, 0.3, '#C3CAD3', '#EEF2F6');
-    wall(-2.05, 0.1, 'rgba(90,100,115,0.35)', 'rgba(255,255,255,0)');
+    wall(-2.05, 0.3, look.median, look.medianTop);
+    wall(-2.05, 0.1, 'rgba(60,66,76,0.2)', 'rgba(255,255,255,0)');
     // Guardrail: posts every 2 units, then the beam over them.
     const postPhase = s.distance % 2;
     const near = this.nearZ;
@@ -434,11 +433,11 @@ export class DriveRenderer {
       const lane = laneAt(cam, z);
       const sx = screenX(cam, 2.15, z);
       const sy = screenY(cam, z);
-      ctx.fillStyle = '#6F7B8A';
+      ctx.fillStyle = '#6B736F';
       ctx.fillRect(sx - lane * 0.018, sy - lane * 0.26, lane * 0.036, lane * 0.26);
     }
-    wall(2.12, 0.27, '#AEB8C4', '#F4F7FA');
-    wall(2.12, 0.19, '#8E9AA9', 'rgba(255,255,255,0)');
+    wall(2.12, 0.27, look.rail, look.railTop);
+    wall(2.12, 0.19, 'rgba(70,78,84,0.28)', 'rgba(255,255,255,0)');
     // Reflectors: amber on the median, white on the guardrail, every 8 units.
     const refPhase = s.distance % 8;
     for (let k = Math.floor(near / 8); k < 10; k += 1) {
@@ -448,10 +447,14 @@ export class DriveRenderer {
       }
       const lane = laneAt(cam, z);
       const r = Math.max(1.2, lane * 0.03);
-      ctx.fillStyle = '#FFB020';
-      ctx.fillRect(screenX(cam, -2.04, z) - r, screenY(cam, z) - lane * 0.2 - r, r * 2, r * 2);
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(screenX(cam, 2.11, z) - r, screenY(cam, z) - lane * 0.23 - r, r * 2, r * 2);
+      ctx.fillStyle = '#E3AC4C';
+      ctx.beginPath();
+      ctx.arc(screenX(cam, -2.04, z), screenY(cam, z) - lane * 0.2, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#F8F2E4';
+      ctx.beginPath();
+      ctx.arc(screenX(cam, 2.11, z), screenY(cam, z) - lane * 0.23, r, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
@@ -459,9 +462,11 @@ export class DriveRenderer {
   private drawHaze(ctx: Ctx, z: number): void {
     const cam = this.cam;
     const y = screenY(cam, z);
+    // The air takes the colour of the hour: warm at dusk, grey in rain.
+    const haze = this.scape.look.haze;
     ctx.fillStyle = vgrad(ctx, cam.horizonY - 30, y, [
-      [0, 'rgba(255,255,255,0.3)'],
-      [1, 'rgba(255,255,255,0)'],
+      [0, `${haze}0.3)`],
+      [1, `${haze}0)`],
     ]);
     ctx.fillRect(0, cam.horizonY - 30, cam.width, y - cam.horizonY + 30);
   }
@@ -502,15 +507,19 @@ export class DriveRenderer {
     ctx.fillText('LAY-BY', 0, 0);
     ctx.restore();
     // Decorative cones along the bay's edge (not hazards: nothing moves here).
-    const cone = this.sprites.get('cone-false', [-60, -135, 60, 10], (c) => drawCone(c, false));
-    for (const z of [11, 8.5, -8.5]) {
-      if (z > this.nearZ) {
-        blit(ctx, cone, screenX(cam, 0.4, z), screenY(cam, z), (laneAt(cam, z) / UNITS_PER_LANE) * 0.7);
+    const cone = art('z.cone');
+    if (cone !== null) {
+      for (const z of [11, 8.5, -8.5]) {
+        if (z > this.nearZ) {
+          blitClay(ctx, cone, screenX(cam, 0.4, z), screenY(cam, z), (laneAt(cam, z) * 0.22) / cone.ppu);
+        }
       }
     }
     // The roadside assistance point: an SOS call box beside the bay.
-    const sos = this.sprites.get('rs-sos-0', ROADSIDE_BOX.sos, (c) => drawRoadside(c, 'sos', 0));
-    blit(ctx, sos, screenX(cam, 2.5, 3), screenY(cam, 3), (laneAt(cam, 3) / 200) * 1.3);
+    const sos = art('w.sos');
+    if (sos !== null) {
+      blitClay(ctx, sos, screenX(cam, 2.5, 3), screenY(cam, 3), (laneAt(cam, 3) * 0.42) / sos.ppu);
+    }
     // Where to line up: Navie's footprint in front of Kiko, filling while it is held steady.
     if (r.phase === 'align' || r.phase === 'push') {
       const x = k.x;
@@ -558,125 +567,75 @@ export class DriveRenderer {
     return z > VISIBLE_Z - 12 ? Math.max(0, (VISIBLE_Z - z) / 12) : 1;
   }
 
-  // -- roadside -----------------------------------------------------------------
-
-  /**
-   * Three layers, all placed by a hash of their index so the same road always
-   * looks the same: near props just past the barriers (trees, hedges, the
-   * older props), far props across the fields (huts, pylons, big trees), and
-   * readable signs on the right every so often.
-   */
-  private collectProps(ctx: Ctx, s: SimState, items: Drawable[]): void {
-    const cam = this.cam;
-    const look = this.look;
-    const seed = s.mission.number * 1000;
-    const minZ = this.nearZ - 1;
-    const roadside = (kind: RoadsideKind, variant: number, x: number, z: number, size: number, alpha = 1): void => {
-      items.push({
-        z,
-        draw: () => {
-          const scale = (laneAt(cam, z) / 200) * size;
-          const sprite = this.sprites.get(`rs-${kind}-${variant}`, ROADSIDE_BOX[kind], (c) => drawRoadside(c, kind, variant));
-          blit(ctx, sprite, screenX(cam, x, z), screenY(cam, z), scale, Math.min(1, this.fade(z) + 0.25) * alpha);
-        },
-      });
-    };
-
-    // Near layer.
-    const base = Math.floor(s.distance / PROP_SPACING);
-    for (let k = -2; k < 13; k += 1) {
-      const index = base + k;
-      const z = index * PROP_SPACING - s.distance;
-      if (z < minZ || z > 92) {
-        continue;
-      }
-      for (const side of [-1, 1]) {
-        const r = hash(index * 2 + (side > 0 ? 1 : 0) + seed);
-        if (r < 0.12) {
-          continue;
-        }
-        const variant = Math.floor(r * 31) % 4;
-        const offset = 2.75 + r * 1.1;
-        if (r < 0.3 && look.props.length > 0) {
-          // The older props, kept for variety (billboards, houses, lamps).
-          const kind = look.props[Math.floor(r * 997) % look.props.length];
-          const x = side * (kind === 'house' || kind === 'billboard' ? 3.6 + r : offset);
-          items.push({
-            z,
-            draw: () => {
-              const scale = laneAt(cam, z) / 200;
-              const sprite = this.sprites.get(`prop-${kind}-${variant}`, [-120, -240, 120, 10], (c) => drawProp(c, kind, variant));
-              blit(ctx, sprite, screenX(cam, x, z), screenY(cam, z), scale * 1.15, Math.min(1, this.fade(z) + 0.2));
-            },
-          });
-          continue;
-        }
-        const kind = look.near[Math.floor(r * 7919) % look.near.length];
-        roadside(kind, variant, side * offset, z, kind === 'hedge' ? 1.1 : 1.2);
-        // A low hedge in front of most trees fills the verge.
-        if (kind !== 'hedge' && r > 0.55) {
-          roadside('hedge', (variant + 1) % 4, side * (offset - 0.35), z - 1.6, 0.9);
-        }
-      }
-    }
-
-    // Far layer.
-    const farBase = Math.floor(s.distance / FAR_SPACING);
-    for (let k = -1; k < 6; k += 1) {
-      const index = farBase + k;
-      const z = index * FAR_SPACING - s.distance + 6;
-      if (z < minZ || z > 110) {
-        continue;
-      }
-      for (const side of [-1, 1]) {
-        const r = hash(index * 7 + (side > 0 ? 3 : 0) + seed + 77);
-        if (r < 0.2) {
-          continue;
-        }
-        const kind = look.far[Math.floor(r * 4111) % look.far.length];
-        roadside(kind, Math.floor(r * 13) % 4, side * (5.2 + r * 3.5), z, kind === 'pylon' ? 1.5 : 1.35, 0.95);
-      }
-    }
-
-    // Signs on the right.
-    const signBase = Math.floor(s.distance / SIGN_SPACING);
-    for (let k = 0; k < 2; k += 1) {
-      const index = signBase + k;
-      const z = index * SIGN_SPACING - s.distance + 40;
-      if (z < minZ || z > 92) {
-        continue;
-      }
-      const kind = SIGNS[index % SIGNS.length];
-      roadside(kind, index % 4, kind === 'signExit' ? 3.2 : 2.4, z, kind === 'kmpost' ? 0.9 : 1.1);
+  /** Road repairs: the road broken up across all three lanes (web/render/brokenRoad.ts). */
+  private drawRough(ctx: Ctx, s: SimState): void {
+    for (const r of s.rough) {
+      ctx.globalAlpha = this.fade(r.z);
+      drawBrokenPatch(ctx, this.cam, r, this.scape.look.asphalt, this.scape.look.wet, this.nearZ, VISIBLE_Z);
+      ctx.globalAlpha = 1;
     }
   }
 
-  // -- entities --------------------------------------------------------------------
+  /** Gusts are told by leaves streaking across, before and while they blow. */
+  private drawGust(ctx: Ctx, s: SimState, t: number, dt: number, reduceMotion: boolean): void {
+    const w = s.weather;
+    if (w.phase === 'calm') {
+      return;
+    }
+    void dt;
+    const cam = this.cam;
+    const strength = w.phase === 'active' ? 1 : 0.5;
+    const count = reduceMotion ? 5 : 16;
+    ctx.fillStyle = 'rgba(214,196,120,0.75)';
+    ctx.strokeStyle = 'rgba(248,244,232,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < count; i += 1) {
+      const speed = 0.7 + (i % 5) * 0.2;
+      const u = (t * speed + i * 0.37) % 1;
+      const x = w.dir > 0 ? u * cam.width : (1 - u) * cam.width;
+      const y = cam.horizonY + ((i * 53) % (cam.playerY - cam.horizonY));
+      const len = (14 + (i % 4) * 8) * strength;
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + w.dir * len, y - 2);
+    }
+    ctx.stroke();
+    for (let i = 0; i < count / 2; i += 1) {
+      const u = (t * 0.9 + i * 0.61) % 1;
+      const x = w.dir > 0 ? u * cam.width : (1 - u) * cam.width;
+      const y = cam.horizonY + 20 + ((i * 97) % (cam.playerY - cam.horizonY));
+      ctx.beginPath();
+      ctx.ellipse(x, y, 3.4, 1.8, t * 6 + i, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
-  private hazardSprite(h: HazardEntity, outline: boolean, t: number): { sprite: ReturnType<SpriteCache['get']>; lift: number } {
+  /** Scale so a sprite's model width fills the hazard's real hit width on the road. */
+  private fitWide(sprite: ClaySprite, h: HazardEntity, lane: number): number {
+    const wide = MODEL_WIDE[h.kind] ?? 2;
+    return (2 * h.halfW * lane) / (wide * sprite.ppu);
+  }
+
+  /** What to show for a hazard. Traffic has no faces; hazards are low and striped; bots are drawn separately. */
+  private hazardSprite(h: HazardEntity): ClaySprite | null {
     switch (h.kind) {
-      case 'car': {
-        const colour = TRAFFIC_COLOURS[h.id % TRAFFIC_COLOURS.length];
-        return { sprite: this.sprites.get(`car-${colour}`, [-120, -170, 120, 10], (c) => drawTrafficRear(c, 'car', colour, { wheel: 0 })), lift: 0 };
-      }
+      case 'car':
+        return art(`t.car${h.id % 7}`);
       case 'truck':
-        return { sprite: this.sprites.get('truck', [-140, -265, 140, 10], (c) => drawTrafficRear(c, 'truck', '', { wheel: 0 })), lift: 0 };
+        return art('t.truck');
       case 'bus':
-        return { sprite: this.sprites.get('bus', [-145, -285, 145, 10], (c) => drawTrafficRear(c, 'bus', '', { wheel: 0 })), lift: 0 };
+        return art('t.bus');
       case 'cone':
-        return { sprite: this.sprites.get(`cone-${outline}`, [-60, -135, 60, 10], (c) => drawCone(c, outline)), lift: 0 };
-      case 'rollingCone': {
-        const frame = Math.floor(t * 12) % 4;
-        return { sprite: this.sprites.get(`roll-${outline}-${frame}`, [-70, -110, 70, 10], (c) => drawCone(c, outline, frame + 1)), lift: 0 };
-      }
+      case 'rollingCone':
+        return art('z.cone');
       case 'barrier':
+        return art('z.barrier');
       case 'sweepBarrier':
-        return {
-          sprite: this.sprites.get(`barrier-${outline}-${h.kind}`, [-160, -165, 160, 10], (c) => drawBarrier(c, outline, h.kind === 'sweepBarrier')),
-          lift: 0,
-        };
+        return art('z.sweep');
       default:
-        return { sprite: this.sprites.get('pothole', [-110, -110, 110, 10], (c) => drawPothole(c, false)), lift: 0 };
+        // Potholes are drawn flat on the road (brokenRoad.ts), not as a sprite.
+        return null;
     }
   }
 
@@ -695,37 +654,70 @@ export class DriveRenderer {
             this.drawBot(ctx, s, h, outline, t);
             return;
           }
-          const { sprite } = this.hazardSprite(h, outline, t);
-          const scale = laneAt(cam, h.z) / UNITS_PER_LANE;
+          const sprite = this.hazardSprite(h);
+          if (sprite === null) {
+            return;
+          }
+          const w = laneAt(cam, h.z);
+          const k = this.fitWide(sprite, h, w);
           const x = screenX(cam, h.x, h.z);
           const y = screenY(cam, h.z);
+          const source = tinted(sprite, this.scape.look.tint);
           if (h.knocked >= 0 && h.ownSpeed > 0) {
             // Bumped traffic steers off toward the shoulder, fading at the end.
             ctx.save();
             ctx.translate(x, y);
             ctx.rotate(h.knockDir * Math.min(0.12, h.knocked * 0.3));
-            blit(ctx, sprite, 0, 0, scale, Math.max(0, Math.min(1, (2.6 - h.knocked) / 0.6)));
+            ctx.globalAlpha = Math.max(0, Math.min(1, (2.6 - h.knocked) / 0.6));
+            blitClay(ctx, sprite, 0, 0, k, source);
             ctx.restore();
             return;
           }
           if (h.knocked >= 0) {
             // Knocked aside: tumble to the shoulder and fade.
             ctx.save();
-            ctx.translate(x, y - h.knocked * 120 * scale * 3 + h.knocked * h.knocked * 300 * scale * 3);
+            ctx.translate(x, y - h.knocked * w * 1.2 + h.knocked * h.knocked * w * 3);
             ctx.rotate(h.knockDir * h.knocked * 6);
-            blit(ctx, sprite, 0, 0, scale, Math.max(0, 1 - h.knocked / 1.2));
+            ctx.globalAlpha = Math.max(0, 1 - h.knocked / 1.2);
+            blitClay(ctx, sprite, 0, 0, k, source);
             ctx.restore();
             return;
           }
-          blit(ctx, sprite, x, y, scale, this.fade(h.z));
+          const fade = this.fade(h.z);
+          const dim = s.dim && h.z > 24 ? 0.72 + 0.28 * Math.max(0, 1 - (h.z - 24) / 30) : 1;
+          // A contact shadow, wider for wider things, so everything sits on the road.
+          softShadow(ctx, x, y, sprite.w * k * 0.52, Math.max(2, sprite.w * k * 0.12), 0.26 * fade);
+          // The ring stays at full strength in the dark: that is what it is for.
+          const ring = this.hazardRing(s, outline);
+          if (h.kind === 'rollingCone') {
+            // On its side, rolling at you.
+            ctx.save();
+            ctx.translate(x, y - sprite.h * k * 0.28);
+            ctx.rotate(t * 7);
+            if (ring > 0) {
+              ctx.globalAlpha = fade;
+              blitOutline(ctx, sprite, 0, sprite.h * k * 0.3, k, ring === 2);
+            }
+            ctx.globalAlpha = fade * dim;
+            blitClay(ctx, sprite, 0, sprite.h * k * 0.3, k, source);
+            ctx.restore();
+          } else {
+            if (ring > 0) {
+              ctx.globalAlpha = fade;
+              blitOutline(ctx, sprite, x, y, k, ring === 2);
+            }
+            ctx.globalAlpha = fade * dim;
+            blitClay(ctx, sprite, x, y, k, source);
+          }
+          ctx.globalAlpha = 1;
+          this.hazardMarks(ctx, s, h, sprite, k, x, y, w, t);
           // Indicator: a steady amber arrow over a car about to change lanes (no blinking).
           const lc = h.laneChange;
           if (lc !== null && lc.signalAt !== null && !lc.done) {
             const dir = Math.sign(lc.toX - lc.fromX);
-            const w = laneAt(cam, h.z);
             const ay = y - w * 0.68;
-            ctx.fillStyle = '#FFB020';
-            ctx.strokeStyle = '#6B4A00';
+            ctx.fillStyle = '#E9B54C';
+            ctx.strokeStyle = '#5A4214';
             ctx.lineWidth = Math.max(1, w * 0.02);
             ctx.beginPath();
             ctx.moveTo(x + dir * w * 0.28, ay);
@@ -739,8 +731,13 @@ export class DriveRenderer {
       });
     }
 
+    const stashZ = hiddenShowZ(s.hero.id, s.sidekicks.map((k) => k.id));
     for (const p of s.pickups) {
       if (p.z > VISIBLE_Z) {
+        continue;
+      }
+      // A hidden stash stays out of sight until it is close, or someone has shown it.
+      if (p.hidden && !p.revealed && p.z > stashZ) {
         continue;
       }
       items.push({
@@ -749,38 +746,46 @@ export class DriveRenderer {
           const w = laneAt(cam, p.z);
           const x = screenX(cam, p.x, p.z);
           const ground = screenY(cam, p.z);
-          if (p.kind === 'powerup' && p.power !== null) {
-            const k = p.collected ? p.collectedT / 0.5 : 0;
-            const frame = Math.floor(t * 6) % 6;
-            const sprite = this.sprites.get(`pu-${p.power}-${frame}`, POWERUP_BOX, (c) => drawPowerUp(c, p.power!, frame / 6));
-            const bob = p.collected ? -w * k * 0.6 : Math.sin(t * 3 + p.id) * w * 0.05;
-            if (!p.collected) {
-              ctx.fillStyle = 'rgba(10,22,41,0.22)';
-              ctx.beginPath();
-              ctx.ellipse(x, ground, w * 0.18, w * 0.045, 0, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            blit(ctx, sprite, x, ground - w * 0.42 + bob, ((w * 0.5) / 116) * (1 + k * 0.4), (1 - k) * this.fade(p.z));
+          const k0 = p.collected ? p.collectedT / 0.5 : 0;
+          if (p.collected && k0 >= 1) {
             return;
           }
-          if (p.collected) {
-            // Pop upward and shrink.
-            const k = p.collectedT / 0.5;
-            const frame = this.pickupFrame(p.kind as PickupLook, t);
-            blit(ctx, frame, x, ground - w * (0.35 + k * 0.6), (w / 300) * (1 - k * 0.6), 1 - k);
+          const fade = this.fade(p.z) * (p.z < -0.5 ? Math.max(0, 1 + (p.z + 0.5) / 0.9) : 1);
+          if (fade <= 0.01) {
             return;
           }
-          const bob = Math.sin(t * 4 + p.id) * w * 0.04;
-          ctx.fillStyle = 'rgba(10,22,41,0.22)';
-          ctx.beginPath();
-          ctx.ellipse(x, ground, w * 0.16, w * 0.04, 0, 0, Math.PI * 2);
-          ctx.fill();
-          if (p.kind === 'spark') {
-            // The finale's sparks: a turning halo of rays, unmistakable from afar.
-            this.sparkHalo(ctx, x, ground - w * 0.32 + bob, w * 0.42, t, this.fade(p.z));
+          const sprite = this.pickupSprite(p.kind, p.power, t, p.id);
+          if (sprite === null) {
+            return;
           }
-          const size = p.kind === 'bolt' ? 260 : 220;
-          blit(ctx, this.pickupFrame(p.kind as PickupLook, t), x, ground - w * 0.32 + bob, w / size, this.fade(p.z));
+          // Pick-ups float: sized by what they are, small beside everything that can hit you.
+          const px = p.kind === 'bolt' ? 0.3 : p.kind === 'powerup' ? 0.46 : p.kind === 'postcard' ? 0.5 : p.kind === 'spark' ? 0.46 : 0.42;
+          const k = ((w * px) / Math.max(sprite.w, sprite.h)) * (1 - k0 * 0.5);
+          const bob = p.collected ? -w * k0 * 0.5 : Math.sin(t * 3.4 + p.id) * w * 0.03;
+          const float = w * 0.34;
+          if (!p.collected) {
+            softShadow(ctx, x, ground, w * 0.13, w * 0.035, 0.28 * fade);
+          }
+          // A revealed stash gets a small warm marker; the postcard always gets a beam, so it can be seen.
+          if (p.hidden && p.revealed && !p.collected) {
+            this.reveal(ctx, x, ground, w, t, '#F2C879', fade);
+          } else if (p.kind === 'postcard' && !p.collected) {
+            this.reveal(ctx, x, ground, w, t, '#F8EDD8', fade);
+          } else if (p.kind === 'spark' && !p.collected) {
+            this.sparkHalo(ctx, x, ground - float + bob, w * 0.36, t, fade);
+          }
+          ctx.globalAlpha = (1 - k0) * fade;
+          const flip = p.kind === 'bolt' && Math.floor(t * 8 + p.id) % 6 >= 3;
+          if (flip) {
+            ctx.save();
+            ctx.translate(x, ground - float + bob);
+            ctx.scale(-1, 1);
+            ctx.drawImage(sprite.img, -sprite.w * k * 0.5, -sprite.h * k * 0.5, sprite.w * k, sprite.h * k);
+            ctx.restore();
+          } else {
+            ctx.drawImage(sprite.img, x - sprite.w * k * 0.5, ground - float + bob - sprite.h * k * 0.5, sprite.w * k, sprite.h * k);
+          }
+          ctx.globalAlpha = 1;
         },
       });
     }
@@ -793,9 +798,7 @@ export class DriveRenderer {
         z: sign.z,
         draw: () => {
           const scale = laneAt(cam, sign.z) / 200;
-          const sprite = this.sprites.get(`board-${sign.openX}-${sign.sign}`, [-120, -160, 120, 10], (c) =>
-            drawLaneBoard(c, sign.openX, sign.sign === 'gap' ? 'GAP AHEAD' : 'LANE CLOSED'),
-          );
+          const sprite = this.sprites.get(`board-${sign.openX}-${sign.sign}`, [-120, -160, 120, 10], (c) => this.laneBoard(c, sign.openX, sign.sign === 'gap' ? 'GAP AHEAD' : 'LANE CLOSED'));
           blit(ctx, sprite, screenX(cam, -2.45, sign.z), screenY(cam, sign.z), scale * 1.25, this.fade(sign.z));
         },
       });
@@ -822,7 +825,7 @@ export class DriveRenderer {
         z: b.z + 14,
         draw: () => {
           const z = b.z + 14;
-          drawTollPlaza(ctx, screenX(cam, -1.6, z), screenX(cam, 1.6, z), screenY(cam, z), laneAt(cam, z), b.stage === 'down');
+          this.drawCanopy(ctx, screenX(cam, -1.8, z), screenX(cam, 1.8, z), screenY(cam, z), laneAt(cam, z), b.stage === 'down');
         },
       });
       items.push({
@@ -833,7 +836,16 @@ export class DriveRenderer {
     for (const pulse of s.pulses) {
       items.push({ z: pulse.z, draw: () => this.drawPulse(ctx, pulse) });
     }
-    // The sidekicks: hovering in formation beside the hero (they never collide).
+    // The sidekicks: in formation beside the hero, jumping or stepping round what they meet (they never collide).
+    this.dodge.update(
+      dt,
+      s.speed,
+      s.hazards,
+      s.sidekicks.map((k) => {
+        const sprite = art(`s.${k.id}.rear`);
+        return { slot: k.slot, x: k.x, z: k.z, flying: FLYERS.has(k.id), halfW: sprite === null ? 0.16 : (sprite.w / sprite.ppu) * SIDEKICK_UNIT * 0.5 };
+      }),
+    );
     for (const k of s.sidekicks) {
       items.push({ z: k.z, draw: () => this.drawSidekickInFormation(ctx, s, k, t) });
     }
@@ -845,25 +857,6 @@ export class DriveRenderer {
       items.push({ z: k.z, draw: () => this.drawKiko(ctx, s, t, dt) });
     }
 
-    // Jepoy honking on the shoulder when his shield goes up (never on a lane, never solid).
-    if (this.jepoyShowT > 0) {
-      const k = this.jepoyShowT;
-      const z = 1.4 + (1.2 - Math.min(1.2, k)) * 4;
-      items.push({
-        z,
-        draw: () => {
-          const w = laneAt(cam, z);
-          ctx.save();
-          ctx.translate(screenX(cam, -2.25, z), screenY(cam, z));
-          ctx.globalAlpha = Math.min(1, k * 2) * 0.92;
-          const scale = (w / UNITS_PER_LANE) * 0.9;
-          ctx.scale(scale, scale);
-          drawJepoyRear(ctx, { wheel: s.distance, t });
-          ctx.restore();
-        },
-      });
-    }
-
     // The hero.
     items.push({
       z: 0,
@@ -871,48 +864,110 @@ export class DriveRenderer {
     });
   }
 
-  /** One of Barrikada's bots: flashes and squashes when hit, pops when zapped; marked under Gear Scan, ringed while jammed. */
+  /** Whether what can hit you gets a clear ring round its shape (the setting, or Silaw at dusk): 0 none, 2 evolved Silaw's heavy one. */
+  private hazardRing(s: SimState, outline: boolean): 0 | 1 | 2 {
+    const silaw = s.dim ? s.sidekicks.find((m) => m.id === 'silaw') : undefined;
+    if (silaw !== undefined && silaw.stats.power > 1) {
+      return 2;
+    }
+    return outline || silaw !== undefined ? 1 : 0;
+  }
+
+  /** Marks over a hazard: Kalaw's early warning, foam or jelly. */
+  private hazardMarks(ctx: Ctx, s: SimState, h: HazardEntity, sprite: ClaySprite, k: number, x: number, y: number, w: number, t: number): void {
+    if (h.marked > 0) {
+      // Kalaw's call: a chevron over it, bouncing.
+      const by = y - sprite.ay * k - w * 0.14 - Math.sin(t * 8) * w * 0.03;
+      ctx.fillStyle = '#E9B54C';
+      ctx.strokeStyle = '#5A4214';
+      ctx.lineWidth = Math.max(1.5, w * 0.02);
+      ctx.beginPath();
+      ctx.moveTo(x - w * 0.14, by - w * 0.1);
+      ctx.lineTo(x + w * 0.14, by - w * 0.1);
+      ctx.lineTo(x, by + w * 0.05);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    if (h.slowT > 0) {
+      // Wading: suds round its feet.
+      ctx.fillStyle = 'rgba(244,248,246,0.9)';
+      for (let i = 0; i < 5; i += 1) {
+        const a = (i / 5) * Math.PI * 2 + t * 1.5;
+        ctx.beginPath();
+        ctx.arc(x + Math.cos(a) * sprite.w * k * 0.5, y - Math.abs(Math.sin(a)) * w * 0.05, Math.max(1.5, w * 0.05), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  /** One of the gang's bots: flashes and squashes when hit, a soft poof when cleared; marked under Gear Scan, ringed while jammed. */
   private drawBot(ctx: Ctx, s: SimState, h: HazardEntity, outline: boolean, t: number): void {
     const cam = this.cam;
     const kind = h.kind as FoeKind;
+    const sprite = art(`f.${kind}`);
+    if (sprite === null) {
+      return;
+    }
     const w = laneAt(cam, h.z);
-    const scale = w / UNITS_PER_LANE;
+    const k = this.fitWide(sprite, h, w);
     const x = screenX(cam, h.x, h.z);
     const y = screenY(cam, h.z);
     if (h.spent && h.knocked >= 0) {
-      // Zapped: a quick pop - swell and fade.
-      const k = Math.min(1, h.knocked / 0.35);
-      if (k >= 1) {
+      // Cleared: swells a little and fades.
+      const p = Math.min(1, h.knocked / 0.35);
+      if (p >= 1) {
         return;
       }
       ctx.save();
-      ctx.globalAlpha = 1 - k;
+      ctx.globalAlpha = 1 - p;
       ctx.translate(x, y);
-      ctx.scale(scale * (1 + k * 0.5), scale * (1 - k * 0.3));
-      drawFoe(ctx, kind, { t, hurt: 1, hp: 0, outline });
+      ctx.scale(1 + p * 0.3, 1 - p * 0.25);
+      blitClay(ctx, sprite, 0, 0, k, flashCopy(sprite));
       ctx.restore();
       return;
     }
-    const hurt = h.hurtT < 0.18 ? 1 : 0;
-    const hpBucket = Math.round((h.hp / Math.max(1, h.maxHp)) * 3) / 3;
-    const frame = Math.floor(t * 4) % 2;
-    const sprite = this.sprites.get(`foe-${kind}-${outline}-${hpBucket}-${hurt}-${frame}`, FOE_BOX[kind], (c) =>
-      drawFoe(c, kind, { t: frame * 0.5, hurt, hp: hpBucket, outline }),
-    );
-    // A violet glow on the road marks every bot as a target (traffic never has one).
     const fade = this.fade(h.z);
-    ctx.fillStyle = `rgba(176,104,255,${0.3 * fade})`;
+    const hurt = h.hurtT < 0.14;
+    // A soft violet pool marks every bot as a target; traffic never has one.
+    softShadow(ctx, x, y, w * 0.32, w * 0.075, 0.28 * fade);
+    ctx.fillStyle = `rgba(150,110,220,${0.26 * fade})`;
     ctx.beginPath();
-    ctx.ellipse(x, y, w * 0.3, w * 0.075, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, y, w * 0.34, w * 0.08, 0, 0, Math.PI * 2);
     ctx.fill();
-    // A little hop as it marches (drawn only: where it is on the road does not change).
-    const hop = this.reduceMotion ? 0 : Math.abs(Math.sin(t * 6 + h.id * 1.7)) * w * 0.025;
-    blit(ctx, sprite, x, y - hop, scale, fade);
+    // Each bot marches to its own beat. Drawn only: where it is on the road does not change.
+    const hop = this.reduceMotion ? 0 : Math.abs(Math.sin(t * (kind === 'drumbot' ? 4 : 6) + h.id * 1.7)) * w * 0.03;
+    const squash = hurt ? 0.12 : 0;
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.translate(x, y - hop);
+    ctx.scale(1 + squash, 1 - squash);
+    const ring = this.hazardRing(s, outline);
+    if (ring > 0) {
+      blitOutline(ctx, sprite, 0, 0, k, ring === 2);
+    }
+    blitClay(ctx, sprite, 0, 0, k, hurt ? flashCopy(sprite) : tinted(sprite, this.scape.look.tint));
+    ctx.restore();
+    // Hit points as pips, only once it has taken a hit.
+    if (h.maxHp > 1 && h.hp < h.maxHp) {
+      const pips = Math.min(6, Math.ceil(h.maxHp));
+      const left = Math.ceil(h.hp);
+      const size = Math.max(2.4, w * 0.045);
+      const gap = size * 1.5;
+      const py = y - sprite.ay * k - size * 2;
+      for (let i = 0; i < pips; i += 1) {
+        ctx.beginPath();
+        ctx.arc(x + (i - (pips - 1) / 2) * gap, py, size / 2, 0, Math.PI * 2);
+        ctx.fillStyle = i < left ? '#F4C25A' : 'rgba(53,72,68,0.55)';
+        ctx.fill();
+      }
+    }
+    this.hazardMarks(ctx, s, h, sprite, k, x, y, w, t);
     if (s.scan > 0) {
       // Gear Scan mark: a target reticle and "x2".
       const r = w * 0.32;
       const cy = y - w * 0.32;
-      ctx.strokeStyle = 'rgba(255,214,64,0.95)';
+      ctx.strokeStyle = 'rgba(233,181,76,0.95)';
       ctx.lineWidth = Math.max(2, w * 0.025);
       ctx.beginPath();
       ctx.arc(x, cy, r, 0, Math.PI * 2);
@@ -921,11 +976,11 @@ export class DriveRenderer {
       ctx.moveTo(x + r * 0.6, cy);
       ctx.lineTo(x + r * 1.3, cy);
       ctx.stroke();
-      this.tag(ctx, 'x2', x + r, cy - r, w * 0.13, '#FFD640', '#3A2A00');
+      this.tag(ctx, 'x2', x + r, cy - r, w * 0.13, '#E9B54C', '#3A2A00');
     }
     if (h.stun > 0) {
-      // Jammed by Silip: a lime static ring.
-      ctx.strokeStyle = `rgba(160,230,60,${this.reduceMotion ? 0.8 : 0.5 + 0.4 * Math.sin(t * 20)})`;
+      // Jammed by Silip: a dashed static ring.
+      ctx.strokeStyle = `rgba(150,200,90,${this.reduceMotion ? 0.8 : 0.5 + 0.4 * Math.sin(t * 20)})`;
       ctx.lineWidth = Math.max(2, w * 0.03);
       ctx.setLineDash([w * 0.06, w * 0.05]);
       ctx.beginPath();
@@ -978,8 +1033,8 @@ export class DriveRenderer {
     if (pulse.big) {
       const r = w * 1.6;
       ctx.fillStyle = vgrad(ctx, y - r, y + r, [
-        [0, 'rgba(255,255,255,0.9)'],
-        [1, 'rgba(255,190,60,0.7)'],
+        [0, 'rgba(255,248,232,0.9)'],
+        [1, 'rgba(233,181,76,0.7)'],
       ]);
       ctx.beginPath();
       ctx.ellipse(x, y, r, r * 0.55, 0, 0, Math.PI * 2);
@@ -987,89 +1042,132 @@ export class DriveRenderer {
       return;
     }
     if (pulse.from !== 'hero') {
-      // A dart: a short glowing streak.
+      if (pulse.from === 'bitu') {
+        // Bitu's bead: a small dark pebble with a warm core, not a streak.
+        ctx.fillStyle = '#5A4E48';
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(2.5, w * 0.05), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#E08A4C';
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(1.2, w * 0.022), 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+      // A dart: a short warm streak with a bright nose.
       const tail = screenY(cam, pulse.z - 1.4) - laneAt(cam, pulse.z - 1.4) * 0.42;
-      ctx.strokeStyle = 'rgba(255,150,40,0.95)';
+      ctx.strokeStyle = 'rgba(217,140,60,0.95)';
       ctx.lineWidth = Math.max(2.5, w * 0.05);
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(x, tail);
       ctx.lineTo(x, y);
       ctx.stroke();
-      ctx.fillStyle = '#FFF3C4';
+      ctx.fillStyle = '#FBEFCF';
       ctx.beginPath();
       ctx.arc(x, y, Math.max(2, w * 0.035), 0, Math.PI * 2);
       ctx.fill();
       return;
     }
-    // The horn's sound wave, pre-drawn: a glowing cyan ring with a white core and two trailing arcs.
-    const sprite = this.fx.get('horn-wave', [-56, -36, 56, 40], (c) => {
-      const g = c.createRadialGradient(0, 0, 4, 0, 0, 54);
-      g.addColorStop(0, 'rgba(210,244,255,0.75)');
-      g.addColorStop(0.6, 'rgba(127,211,255,0.35)');
-      g.addColorStop(1, 'rgba(127,211,255,0)');
-      c.fillStyle = g;
-      c.beginPath();
-      c.ellipse(0, 0, 54, 32, 0, 0, Math.PI * 2);
-      c.fill();
-      c.lineWidth = 6;
-      c.strokeStyle = '#1F8FD6';
-      c.beginPath();
-      c.ellipse(0, 0, 38, 21, 0, 0, Math.PI * 2);
-      c.stroke();
-      c.lineWidth = 3;
-      c.strokeStyle = '#FFFFFF';
-      c.stroke();
+    // The horn: nested arcs of sound, pointing up the road. An echo is the same, hollow and paler.
+    const sprite = this.fx.get(pulse.base ? 'horn-wave' : 'horn-echo', [-46, -30, 46, 30], (c) => {
       c.lineCap = 'round';
-      c.lineWidth = 3.5;
-      c.strokeStyle = 'rgba(31,143,214,0.75)';
-      for (const k of [1, 2]) {
+      const colours = pulse.base ? ['#F8EDD8', '#7FC4C0', '#F8EDD8'] : ['rgba(248,237,216,0.65)', 'rgba(127,196,192,0.5)', 'rgba(248,237,216,0.4)'];
+      [38, 26, 14].forEach((r, i) => {
+        c.lineWidth = pulse.base ? 7 - i : 3;
+        c.strokeStyle = colours[i];
         c.beginPath();
-        c.ellipse(0, 6 + k * 6, 38 - k * 9, 21 - k * 4, 0, Math.PI * 0.15, Math.PI * 0.85);
+        c.ellipse(0, 22, r, r * 0.92, 0, Math.PI * 1.2, Math.PI * 1.8);
         c.stroke();
-      }
+      });
+      c.lineWidth = pulse.base ? 2.6 : 1.5;
+      c.strokeStyle = 'rgba(53,72,68,0.55)';
+      c.beginPath();
+      c.ellipse(0, 22, 41, 38, 0, Math.PI * 1.22, Math.PI * 1.78);
+      c.stroke();
     });
-    blit(ctx, sprite, x, y, (w * 0.15) / 38);
+    blit(ctx, sprite, x, y, (w * 0.34) / 46);
   }
 
-  private sidekickScreen(k: SidekickState): { x: number; y: number; w: number } {
+  sidekickScreen(k: SidekickState): { x: number; y: number; w: number } {
     const cam = this.cam;
-    return { x: screenX(cam, k.x, k.z), y: screenY(cam, k.z), w: laneAt(cam, k.z) };
+    return { x: screenX(cam, k.x + this.dodge.pose(k.slot).dx, k.z), y: screenY(cam, k.z), w: laneAt(cam, k.z) };
   }
 
+  /**
+   * A sidekick in the world: seen from behind like the hero, at its real scale,
+   * flying or running beside the car, with a shadow where it really is on the road.
+   * Faces and frames belong to the HUD and the garage.
+   */
   private drawSidekickInFormation(ctx: Ctx, s: SimState, k: SidekickState, t: number): void {
     const { x, y, w } = this.sidekickScreen(k);
-    const scale = (w * 0.42) / 175;
-    const hop = k.action * w * 0.08;
+    const sprite = art(`s.${k.id}.rear`);
+    if (sprite === null) {
+      return;
+    }
+    const fly = FLYERS.has(k.id);
+    const [bob, speed, squash, tilt] = sidekickRhythm(k.id);
+    const still = this.reduceMotion;
+    const phase = still ? 0 : t * speed + k.slot * 1.3;
+    const cheer = k.mood === 'celebrate' && !still ? Math.abs(Math.sin(t * 9 + k.slot)) * w * 0.07 : 0;
+    // Flyers ride a slow swell; those on the road give small hops.
+    const wave = fly ? 0.5 + 0.5 * Math.sin(phase) : Math.abs(Math.sin(phase));
+    const pose = this.dodge.pose(k.slot);
+    const lift = (fly ? w * FLY_HEIGHT : 0) + wave * bob * (w / 220) * (fly ? 1.6 : 1) + k.action * w * 0.08 + cheer + pose.hop * w;
+    // Off the ground: the shadow stays on the road, smaller and softer the higher it goes.
+    const air = Math.min(1, pose.hop / 0.7);
+    const unit = w * SIDEKICK_UNIT;
+    const scale = unit / sprite.ppu;
+    const across = sprite.w * scale;
+    if (fly) {
+      // The higher it floats, the softer and smaller its shade.
+      const high = still ? 0 : wave;
+      softShadow(ctx, x, y, across * 0.4 * (1 - high * 0.14) * (1 - air * 0.25), Math.max(1.5, across * 0.1 * (1 - high * 0.14) * (1 - air * 0.25)), 0.2 * (1 - high * 0.25) * (1 - air * 0.3));
+    } else {
+      softShadow(ctx, x, y, across * 0.44 * (1 - air * 0.3), Math.max(1.5, across * 0.12 * (1 - air * 0.3)), 0.22 * (1 - air * 0.3));
+      softShadow(ctx, x, y - 0.5, across * 0.3 * (1 - air * 0.4), Math.max(1, across * 0.05), 0.36 * (1 - wave * 0.4) * (1 - air * 0.6));
+    }
+    // A small stretch in the air, and a lean into a sidestep.
+    const sq = still ? 0 : Math.sin(phase * 2) * squash + k.action * 0.06 + air * 0.05;
+    const leanIn = still ? 0 : Math.max(-0.16, Math.min(0.16, pose.vx * 0.05));
+    const sway = still ? 0 : (Math.sin(phase * 0.9 + 0.6) * w * 0.016 + (this.leanLag - this.lean) * w * 0.5 + k.action * Math.sin(t * 22) * w * 0.014) * sidekickSway(k.id);
     ctx.save();
+    ctx.translate(x, y - lift);
+    ctx.rotate((still ? this.lean * 0.8 : this.leanLag * 0.9) + (still ? 0 : Math.sin(phase * 0.7) * tilt * 0.5) + leanIn);
+    ctx.scale(1 - sq, 1 + sq);
+    blitBent(ctx, sprite, 0, 0, scale, tinted(sprite, this.scape.look.tint), sway, 0.34, 6);
+    ctx.restore();
+    // Its own little flourish when it acts. Only the look; the ability is the same.
+    if (k.action > this.fxSeen[k.slot] + 0.01) {
+      this.fxAge[k.slot] = 0;
+    }
+    this.fxSeen[k.slot] = k.action;
+    this.fxAge[k.slot] += this.frameDt;
+    if (!still && this.fxAge[k.slot] < FX_SECONDS) {
+      sidekickFx(ctx, k.id, x, y - lift, unit, sprite.ay * scale, this.fxAge[k.slot] / FX_SECONDS);
+    }
     if (k.evolved) {
-      // Evolved forms read at a glance even this small: a gold glow on the road and a halo.
-      ctx.fillStyle = 'rgba(255,201,60,0.35)';
+      // Evolved: a small gold star riding above. Never a ring.
+      ctx.fillStyle = '#E9B54C';
+      ctx.strokeStyle = 'rgba(90,66,20,0.7)';
+      ctx.lineWidth = 1;
+      const sy = y - lift - sprite.ay * scale - w * 0.07;
+      const r = Math.max(3, w * 0.04);
       ctx.beginPath();
-      ctx.ellipse(x, y + w * 0.02, w * 0.26, w * 0.07, 0, 0, Math.PI * 2);
+      for (let i = 0; i < 10; i += 1) {
+        const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+        const rr = i % 2 === 0 ? r : r * 0.45;
+        ctx.lineTo(x + Math.cos(a) * rr, sy + Math.sin(a) * rr);
+      }
+      ctx.closePath();
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,215,90,0.9)';
-      ctx.lineWidth = Math.max(1.5, w * 0.015);
-      ctx.beginPath();
-      ctx.arc(x, y - hop - w * 0.21, w * 0.25, 0, Math.PI * 2);
       ctx.stroke();
     }
-    ctx.translate(x, y - hop);
-    ctx.rotate(this.lean * 0.6);
-    // Cached frames: a 6-frame, one-second loop, eyes open or shut, at rest or acting (few enough keys not to churn).
-    const frame = (Math.floor(t * 6) + k.slot * 3) % 6;
-    const b = blinkAt(t, 3 + k.slot) > 0.5 ? 1 : 0;
-    const a = k.action > 0.3 ? 1 : 0;
-    const sprite = this.sidekickSprites.get(`${k.id}|${k.evolved ? 1 : 0}|${k.mood}|${b}|${a}|${frame}|${k.slot}`, SIDEKICK_BOX, (c) =>
-      drawSidekick(c, k.id, { expr: k.mood, t: frame / 6, blink: b, talk: 0, lookX: k.slot === 0 ? 0.3 : -0.3, evolved: k.evolved, action: a }),
-    );
-    blit(ctx, sprite, 0, 0, scale);
-    ctx.restore();
-    // Bantay holding a guard charge: a thin ring under the hero, so the protection is visible.
+    // Bantay holding a guard charge: a dashed line under the hero, so the protection can be seen.
     if (k.id === 'bantay' && k.charged && s.player.shield <= 0) {
       const cam = this.cam;
       const hw = laneAt(cam, 0);
-      ctx.strokeStyle = 'rgba(200,215,235,0.75)';
+      ctx.strokeStyle = 'rgba(248,237,216,0.8)';
       ctx.lineWidth = Math.max(1.5, hw * 0.02);
       ctx.setLineDash([hw * 0.05, hw * 0.04]);
       ctx.beginPath();
@@ -1175,8 +1273,69 @@ export class DriveRenderer {
         ctx.beginPath();
         ctx.arc(screenX(cam, s.player.x, 0), cam.playerY - hw * 0.3, hw * (0.45 + k * 0.5), 0, Math.PI * 2);
         ctx.stroke();
+      } else if (z.kind === 'star') {
+        // Star Sweep: little stars where it lands.
+        ctx.fillStyle = '#F2DFA0';
+        const r = tw * 0.2 * (0.5 + (1 - k) * 0.7);
+        ctx.beginPath();
+        for (let i = 0; i < 10; i += 1) {
+          const a = (i / 10) * Math.PI * 2;
+          const rr = i % 2 === 0 ? r : r * 0.42;
+          ctx.lineTo(tx + Math.cos(a) * rr, ty + Math.sin(a) * rr);
+        }
+        ctx.closePath();
+        ctx.fill();
+      } else if (z.kind === 'lance') {
+        // Capacitor: a jagged bolt up the lane.
+        const hw = laneAt(cam, 0);
+        const hx = screenX(cam, s.player.x, 0);
+        const hy = cam.playerY - hw * 0.4;
+        ctx.strokeStyle = 'rgba(233,196,76,0.95)';
+        ctx.lineWidth = Math.max(4, hw * 0.07);
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(hx, hy);
+        for (let i = 1; i < 6; i += 1) {
+          const u = i / 6;
+          ctx.lineTo(hx + (tx - hx) * u + (i % 2 === 0 ? 1 : -1) * tw * 0.3 * (1 - u * 0.7), hy + (ty - hy) * u);
+        }
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+        ctx.strokeStyle = '#FFFBE8';
+        ctx.lineWidth = Math.max(1.5, hw * 0.025);
+        ctx.stroke();
+      } else if (z.kind === 'foam') {
+        ctx.fillStyle = 'rgba(244,248,246,0.9)';
+        for (let i = 0; i < 6; i += 1) {
+          const a = (i / 6) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.arc(tx + Math.cos(a) * tw * 0.26 * (1.3 - k), ty + Math.sin(a) * tw * 0.14, Math.max(1.5, tw * 0.06), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else if (z.kind === 'reveal') {
+        ctx.strokeStyle = '#F2C879';
+        ctx.lineWidth = Math.max(2, tw * 0.03);
+        ctx.beginPath();
+        ctx.arc(tx, ty, tw * (0.15 + (1 - k) * 0.6), 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (z.kind === 'mark') {
+        ctx.strokeStyle = '#E9B54C';
+        ctx.lineWidth = Math.max(2, tw * 0.03);
+        ctx.beginPath();
+        ctx.arc(tx, ty - tw * 0.1, tw * (0.5 - (1 - k) * 0.3), 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (z.kind === 'mend' || z.kind === 'sip' || z.kind === 'retrieve') {
+        // Small things happening at the car: a rising arc in the helper's colour.
+        const hw = laneAt(cam, 0);
+        const hx = screenX(cam, s.player.x, 0);
+        const hy = cam.playerY - hw * 0.5;
+        ctx.strokeStyle = z.kind === 'mend' ? '#C9A04C' : z.kind === 'sip' ? '#B98A5E' : '#D97C6C';
+        ctx.lineWidth = Math.max(2, hw * 0.03);
+        ctx.beginPath();
+        ctx.arc(hx, hy - (1 - k) * hw * 0.3, hw * 0.24, Math.PI * 1.1, Math.PI * 1.9);
+        ctx.stroke();
       } else if (z.kind === 'honk') {
-        ctx.strokeStyle = '#FFC93C';
+        ctx.strokeStyle = '#E9B54C';
         ctx.lineWidth = Math.max(3, tw * 0.06);
         ctx.beginPath();
         ctx.ellipse(tx, ty, tw * (0.5 + (1 - k) * 2.5), tw * (0.25 + (1 - k) * 1.2), 0, 0, Math.PI * 2);
@@ -1207,14 +1366,13 @@ export class DriveRenderer {
     const w = laneAt(cam, z);
     const sx = screenX(cam, x, z);
     const sy = screenY(cam, z) - w * 0.32;
-    const colour = by === 'hero' ? '#7FD3FF' : by === 'pip' || by === 'maso' ? '#FFB24A' : by === 'bumbo' || by === 'sibat' ? '#7FE7FF' : '#C38BFF';
+    const colour = by === 'hero' ? '#CDE6DF' : by === 'pip' || by === 'maso' ? '#E9B56C' : by === 'bumbo' || by === 'sibat' ? '#A8DCE0' : '#B79BD8';
     // Never too small to see, even far up the road.
-    this.particles.spawn(sx, sy, dead ? 12 : 5, dead ? '#C38BFF' : colour, { kind: dead ? 'star' : undefined, speed: dead ? 150 : 80, size: Math.max(dead ? 5 : 3, w * 0.05) });
+    this.particles.spawn(sx, sy, dead ? 9 : 4, dead ? '#B79BD8' : colour, { speed: dead ? 120 : 70, size: Math.max(dead ? 5 : 3, w * 0.06) });
     if (dead) {
       // A comic pop and gold confetti.
       this.pops.push({ x: sx, y: sy, r: Math.max(24, w * 0.42), t: 0, spin: Math.random() * Math.PI });
-      this.particles.spawn(sx, sy, 6, '#FFD34D', { kind: 'star', speed: 190, size: Math.max(4, w * 0.04) });
-      this.rings.push({ x: sx, y: sy, r: Math.max(26, w * 0.4), t: 0, colour: '#FFFFFF' });
+      this.particles.spawn(sx, sy, 4, '#F2DFA0', { kind: 'star', speed: 150, size: Math.max(3.5, w * 0.04) });
     }
     if (this.pops.length > 8) {
       this.pops.shift();
@@ -1282,27 +1440,14 @@ export class DriveRenderer {
       return;
     }
     const sprite = this.fx.get('pop', [-60, -60, 60, 60], (c) => {
-      c.beginPath();
-      for (let k = 0; k < 24; k += 1) {
-        const a = (k / 24) * Math.PI * 2;
-        const r = k % 2 === 0 ? 52 : 30;
-        c.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      // A soft puff of clay dust: round blobs, no outline.
+      const blobs: [number, number, number, string][] = [[0, 0, 30, '#F4EEF2'], [-24, 8, 20, '#E7DCEF'], [24, 6, 22, '#E7DCEF'], [-10, -20, 20, '#FBF7F4'], [14, -18, 18, '#FBF7F4'], [4, 20, 16, '#D9C9E6']];
+      for (const [x, y, r, col] of blobs) {
+        c.fillStyle = col;
+        c.beginPath();
+        c.arc(x, y, r, 0, Math.PI * 2);
+        c.fill();
       }
-      c.closePath();
-      const g = c.createRadialGradient(0, 0, 4, 0, 0, 52);
-      g.addColorStop(0, '#FFFFFF');
-      g.addColorStop(0.4, '#FFF2A0');
-      g.addColorStop(1, '#FF9A1F');
-      c.fillStyle = g;
-      c.fill();
-      c.lineJoin = 'round';
-      c.lineWidth = 4;
-      c.strokeStyle = '#7A2E00';
-      c.stroke();
-      c.beginPath();
-      c.arc(0, 0, 14, 0, Math.PI * 2);
-      c.fillStyle = 'rgba(255,255,255,0.9)';
-      c.fill();
     });
     for (const p of this.pops) {
       p.t += dt;
@@ -1325,19 +1470,24 @@ export class DriveRenderer {
     if (this.flyers.length === 0) {
       return;
     }
-    const sprite = this.pickupFrame('bolt', t);
-    const DUR = 0.55;
+    const sprite = art('p.bolt0');
+    const DUR = 0.42;
     for (const f of this.flyers) {
       f.t += dt;
       const k = Math.min(1, f.t / DUR);
       const e = k * k * (3 - 2 * k);
       // Quadratic curve: out to the side, then up into the counter.
-      const cx = f.x0 + f.side * 70;
+      const cx = f.x0 + f.side * 26;
       const cy = (f.y0 + f.y1) / 2;
       const u = 1 - e;
       const x = u * u * f.x0 + 2 * u * e * cx + e * e * f.x1;
       const y = u * u * f.y0 + 2 * u * e * cy + e * e * f.y1;
-      blit(ctx, sprite, x, y, 0.56 - 0.18 * e, k < 0.85 ? 1 : (1 - k) / 0.15);
+      if (sprite !== null) {
+        const size = 15 - 5 * e;
+        ctx.globalAlpha = k < 0.85 ? 0.95 : (1 - k) / 0.15;
+        ctx.drawImage(sprite.img, x - size / 2, y - size / 2, size, size);
+        ctx.globalAlpha = 1;
+      }
       if (k >= 1) {
         this.particles.spawn(f.x1, f.y1, 3, '#FFE27A', { kind: 'star', speed: 70, size: 4, up: 0, life: 0.35 });
       }
@@ -1424,10 +1574,78 @@ export class DriveRenderer {
     }
   }
 
-  private pickupFrame(kind: PickupLook, t: number): ReturnType<SpriteCache['get']> {
-    const frames = kind === 'bolt' || kind === 'part' ? 12 : 6;
-    const frame = Math.floor((t * 6) % frames);
-    return this.sprites.get(`pickup-${kind}-${frame}`, [-60, -60, 60, 60], (c) => drawPickup(c, kind, (frame / frames) * (Math.PI * 2) / 3 * (kind === 'bolt' ? 1 : 1.5)));
+  /** The sprite for a pick-up: bolts turn through three baked angles. */
+  private pickupSprite(kind: string, power: PowerUpKind | null, t: number, id: number): ClaySprite | null {
+    switch (kind) {
+      case 'bolt': {
+        const turn = Math.floor(t * 8 + id) % 6;
+        const frame = turn < 3 ? turn : turn - 3;
+        return art(`p.bolt${frame}`);
+      }
+      case 'powerup':
+        return art(`u.${power ?? 'spread'}`);
+      case 'wrench':
+        return art('p.wrench');
+      case 'postcard':
+        return art('p.postcard');
+      case 'part':
+        return art('p.part');
+      default:
+        return art('p.spark');
+    }
+  }
+
+  /** A soft column of light on something worth finding. */
+  private reveal(ctx: Ctx, x: number, ground: number, w: number, t: number, colour: string, alpha: number): void {
+    const h = w * 1.3;
+    const pulse = this.reduceMotion ? 1 : 0.8 + 0.2 * Math.sin(t * 4);
+    const g = ctx.createLinearGradient(0, ground, 0, ground - h);
+    g.addColorStop(0, colour);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.save();
+    ctx.globalAlpha = 0.42 * alpha * pulse;
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.12, ground);
+    ctx.lineTo(x + w * 0.12, ground);
+    ctx.lineTo(x + w * 0.2, ground - h);
+    ctx.lineTo(x - w * 0.2, ground - h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** A lane board beside the road: real text on a plain painted panel. */
+  private laneBoard(c: Ctx, openX: number, text: string): void {
+    roundRect(c, -96, -148, 192, 96, 12);
+    c.fillStyle = '#E9B54C';
+    c.fill();
+    c.fillStyle = '#354844';
+    c.font = '900 26px "Nunito Black", system-ui';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(text, 0, -124, 176);
+    // Which lane stays open: three little lanes, one bright.
+    [-1, 0, 1].forEach((lane) => {
+      roundRect(c, lane * 42 - 16, -102, 32, 34, 7);
+      c.fillStyle = Math.round(openX) === lane ? '#5FA56C' : 'rgba(53,72,68,0.3)';
+      c.fill();
+    });
+    c.fillStyle = '#6B736F';
+    c.fillRect(-5, -52, 10, 60);
+  }
+
+  /** The plaza's canopy, behind the machine: simple and solid. */
+  private drawCanopy(ctx: Ctx, left: number, right: number, y: number, lane: number, open: boolean): void {
+    const top = y - lane * 2.5;
+    ctx.fillStyle = '#BDB7A4';
+    ctx.fillRect(left - lane * 0.12, top, lane * 0.24, lane * 2.5);
+    ctx.fillRect(right - lane * 0.12, top, lane * 0.24, lane * 2.5);
+    ctx.fillStyle = open ? '#5FA56C' : '#D9B15C';
+    roundRect(ctx, left - lane * 0.3, top - lane * 0.4, right - left + lane * 0.6, lane * 0.55, lane * 0.1);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(40,46,56,0.2)';
+    ctx.fillRect(left - lane * 0.3, top + lane * 0.1, right - left + lane * 0.6, lane * 0.05);
   }
 
   /**
@@ -1466,26 +1684,23 @@ export class DriveRenderer {
     // The sputter: a cough after a hit, an uneven idle while his engine is weak.
     const sputter = this.reduceMotion ? 0 : coughing ? Math.sin(t * 46) * (1.4 - k.hitT) * 0.5 : low ? Math.max(0, Math.sin(t * 7.3) * Math.sin(t * 2.1)) * 0.35 : 0;
     const wob = k.wobble > 0 ? Math.sin(t * 40) * 0.08 * k.wobble : 0;
+    softShadow(ctx, x, y, w * 0.34, w * 0.07, 0.3);
+    const sprite = art('h.kiko.rear');
     ctx.save();
     ctx.translate(x + sputter * w * 0.03, y + Math.sin(t * 15) * w * 0.004 - Math.abs(sputter) * w * 0.03);
     ctx.rotate(wob + (k.vx / 2.3) * 0.07);
-    const scale = w / UNITS_PER_LANE;
-    ctx.scale(scale, scale);
-    // Pre-drawn frames: 8 for the wobbling roof stars x 3 for the rolling tread.
-    const starFrame = Math.floor(((t * 2) % (Math.PI * 2)) / ((Math.PI * 2) / 8));
-    const treadFrame = Math.floor(((s.distance * 27) % 9) / 3);
-    const sprite = this.sprites.get(`kiko-${starFrame}-${treadFrame}`, [-135, -270, 135, 18], (c) =>
-      drawKikoRear(c, { wheel: treadFrame / 9, t: (starFrame * Math.PI) / 8 }),
-    );
-    blit(ctx, sprite, 0, 0, 1, k.invulnerable > 0 ? 0.75 : 1);
-    ctx.globalAlpha = 1;
+    if (sprite !== null) {
+      ctx.globalAlpha = k.invulnerable > 0 ? 0.75 : 1;
+      blitClay(ctx, sprite, 0, 0, (w * 0.2) / sprite.ppu, tinted(sprite, this.scape.look.tint));
+      ctx.globalAlpha = 1;
+    }
     if (s.player.shield > 0) {
       const fadeOut = Math.min(1, s.player.shield / 0.8);
-      ctx.fillStyle = `rgba(255,201,60,${0.16 * fadeOut})`;
-      ctx.strokeStyle = `rgba(255,201,60,${0.85 * fadeOut})`;
-      ctx.lineWidth = 8;
+      ctx.fillStyle = `rgba(233,181,76,${0.14 * fadeOut})`;
+      ctx.strokeStyle = `rgba(233,181,76,${0.8 * fadeOut})`;
+      ctx.lineWidth = Math.max(2, w * 0.025);
       ctx.beginPath();
-      ctx.ellipse(0, -100, 145, 120, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, -w * 0.3, w * 0.46, w * 0.38, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
@@ -1502,7 +1717,7 @@ export class DriveRenderer {
       const bx = x + w * 0.42;
       const by = y - w * 0.5;
       roundRect(ctx, bx - w * 0.1, by - w * 0.14, w * 0.2, w * 0.2, w * 0.05);
-      ctx.fillStyle = C.yellow;
+      ctx.fillStyle = '#E9B54C';
       ctx.fill();
       ctx.fillStyle = C.ink;
       ctx.font = `900 ${w * 0.16}px system-ui`;
@@ -1532,77 +1747,136 @@ export class DriveRenderer {
     }
   }
 
-/** The hero's rear view (Navie, Kuya Jepoy or Kiko), leaning into turns, with what its abilities are doing. */
+  /**
+   * The hero from behind: leaning into turns (a turned view when it really swings
+   * across), riding its own suspension, with what its abilities are doing. A plain
+   * rear view; faces are for portraits and the garage.
+   */
   private drawHero(ctx: Ctx, s: SimState, t: number): void {
     const cam = this.cam;
     const p = s.player;
+    const hero = s.hero.id;
     const w = laneAt(cam, 0);
     const x = screenX(cam, p.x, 0);
     const y = cam.playerY;
+    const [bobSize, bobSpeed] = HANDLING[hero];
     const hit = p.hitT < 0.35 ? Math.sin(p.hitT * 40) * (0.35 - p.hitT) * 0.4 : 0;
-    const bounce = Math.sin(this.bounceT * 17) * w * 0.006 + (p.hitT < 0.3 ? -Math.sin((p.hitT / 0.3) * Math.PI) * w * 0.08 : 0);
-    ctx.save();
-    ctx.translate(x, y + bounce);
-    ctx.rotate(this.lean + hit);
-    const scale = w / UNITS_PER_LANE;
-    ctx.scale(scale, scale);
-    // Pre-drawn frames (rolling tread x brake light; Kiko's roof stars too), like the escort Kiko.
+    const rough = s.onRough && s.brace <= 0 && !this.reduceMotion ? Math.sin(this.bounceT * 38) * w * 0.012 : 0;
+    const bounce = Math.sin(this.bounceT * bobSpeed) * w * bobSize + rough + (p.hitT < 0.3 ? -Math.sin((p.hitT / 0.3) * Math.PI) * w * 0.08 : 0);
+    // Three real views as it swings across; the other side is their mirror image (or, for lettering, its own views). The lean between them stays continuous.
+    const mix = this.turnMix;
+    const view = mix > 0.62 ? 'turn' : mix > 0.2 ? 'mid' : 'rear';
+    const right = view !== 'rear' && this.turnSide > 0;
+    const ownRight = right && hasRightViews(hero);
+    const sprite = art(`h.${hero}.${view}${ownRight ? 'R' : ''}`) ?? art(`h.${hero}.rear`);
+    const flip = right && !ownRight;
+    const scale = 0.2 * Math.sqrt(s.hero.hitHalfW / 0.26);
+    // Soft shade all round, and a tighter dark line right under the tyres, so the car sits on the road.
+    const girth = s.hero.hitHalfW / 0.26;
+    softShadow(ctx, x, y + w * 0.012, w * 0.43 * girth, w * 0.1, 0.3);
+    softShadow(ctx, x - this.lean * w * 0.12, y - w * 0.006, w * 0.35 * girth, w * 0.04, 0.46);
     // Protected after a hit: shown as a soft ghost, never by flashing.
-    const brake = p.hitT < 0.4 ? 1 : 0;
     const alpha = p.invulnerable > 0 ? 0.72 : 1;
-    const hero = s.hero.id;
-    const treadFrame = Math.floor(((s.distance * (hero === 'navie' ? 0.35 : 1) * 27) % 9) / 3);
-    const starFrame = hero === 'kiko' ? Math.floor(((t * 2) % (Math.PI * 2)) / ((Math.PI * 2) / 8)) : 0;
-    const box: [number, number, number, number] = hero === 'kiko' ? [-135, -270, 135, 18] : [-150, -300, 150, 22];
-    const key = hero === 'kiko' && brake === 0 ? `kiko-${starFrame}-${treadFrame}` : `hero-${hero}-${starFrame}-${treadFrame}-${brake}`;
-    const sprite = this.sprites.get(key, box, (c) => {
-      const pose = { wheel: treadFrame / 9, t: (starFrame * Math.PI) / 8, brake };
-      if (hero === 'jepoy') {
-        drawJepoyRear(c, pose);
-      } else if (hero === 'kiko') {
-        drawKikoRear(c, pose);
-      } else {
-        drawNavieRear(c, pose);
+    if (sprite !== null) {
+      const k = (w * scale) / sprite.ppu;
+      const source = tinted(sprite, this.scape.look.tint);
+      if (this.scape.look.wet) {
+        // On a wet road, a dim reflection.
+        ctx.save();
+        ctx.translate(x, y + w * 0.02);
+        ctx.scale(flip ? -1 : 1, -0.42);
+        ctx.globalAlpha = 0.16;
+        ctx.drawImage(source, -sprite.ax * k, -sprite.h * k * 0.92, sprite.w * k, sprite.h * k);
+        ctx.restore();
       }
-    });
-    if (p.hitT < 0.3) {
-      // Hit: a quick squash and a red glow on the car itself (on top of the red screen edge).
-      const k = Math.sin((p.hitT / 0.3) * Math.PI);
-      ctx.scale(1 + k * 0.06, 1 - k * 0.1);
+      ctx.save();
+      ctx.translate(x, y + bounce);
+      ctx.rotate(this.lean * (0.7 - 0.35 * mix) + hit);
+      // A breath of squash as it swings; the cap and whatever stands on the roof trail the turn.
+      const give = this.reduceMotion ? 0 : Math.min(0.03, Math.abs(this.leanV) * 0.1);
+      ctx.scale(1 + give, 1 - give * 0.6);
+      const trail = this.reduceMotion ? 0 : (this.leanLag - this.lean) * w * 0.62 + Math.sin(this.bounceT * HANDLING[hero][1] * 0.5) * w * 0.0016;
+      if (p.hitT < 0.3) {
+        // Hit: a quick squash.
+        const q = Math.sin((p.hitT / 0.3) * Math.PI);
+        ctx.scale(1 + q * 0.06, 1 - q * 0.1);
+      }
+      if (flip) {
+        ctx.scale(-1, 1);
+      }
+      ctx.globalAlpha = alpha;
+      blitBent(ctx, sprite, 0, 0, k, p.hitT < 0.12 ? flashCopy(sprite) : source, flip ? -trail : trail, 0.42);
+      ctx.globalAlpha = 1;
+      ctx.restore();
     }
-    blit(ctx, sprite, 0, 0, 1, alpha);
-    if (p.hitT < 0.45) {
-      const k = 1 - p.hitT / 0.45;
-      ctx.fillStyle = `rgba(226,59,59,${0.38 * k})`;
-      ctx.beginPath();
-      ctx.ellipse(0, -110, 150, 120, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    const cy = y - w * 0.32;
     if (p.shield > 0) {
+      // A shield: a dome with a clear rim. It thins as it runs out.
       const fadeOut = Math.min(1, p.shield / 0.8);
-      ctx.fillStyle = `rgba(255,201,60,${0.18 * fadeOut})`;
-      ctx.strokeStyle = `rgba(255,201,60,${0.9 * fadeOut})`;
-      ctx.lineWidth = 8;
+      ctx.fillStyle = `rgba(233,181,76,${0.14 * fadeOut})`;
+      ctx.strokeStyle = `rgba(233,181,76,${0.85 * fadeOut})`;
+      ctx.lineWidth = Math.max(2, w * 0.022 * (0.5 + 0.5 * Math.min(1, p.shield / 2)));
       ctx.beginPath();
-      ctx.ellipse(0, -100, 150, 125, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, cy, w * 0.48, w * 0.42, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+    }
+    if (s.brace > 0) {
+      // Load Brace: a chunky bar across the front, low on the road.
+      ctx.fillStyle = 'rgba(210,195,176,0.9)';
+      roundRect(ctx, x - w * 0.38, y - w * 0.92, w * 0.76, w * 0.06, w * 0.03);
+      ctx.fill();
+    }
+    if (s.windstep > 0 && !this.reduceMotion) {
+      ctx.strokeStyle = 'rgba(248,244,232,0.8)';
+      ctx.lineWidth = Math.max(1.5, w * 0.02);
+      ctx.lineCap = 'round';
+      for (const side of [-1, 1]) {
+        for (let i = 0; i < 3; i += 1) {
+          const off = ((t * 3 + i * 0.33) % 1) * w * 0.5;
+          ctx.beginPath();
+          ctx.moveTo(x + side * w * 0.42, y - w * 0.1 - i * w * 0.14 + off);
+          ctx.lineTo(x + side * w * 0.5, y - w * 0.22 - i * w * 0.14 + off);
+          ctx.stroke();
+        }
+      }
+    }
+    if (s.steady > 0) {
+      ctx.strokeStyle = 'rgba(95,165,108,0.75)';
+      ctx.lineWidth = Math.max(1.5, w * 0.02);
+      ctx.beginPath();
+      ctx.ellipse(x, y, w * 0.46, w * 0.1, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    if (s.caseFinder > 0) {
+      // Case Finder: a searchlight sweeping the road ahead.
+      const a = Math.sin(t * 2.4) * 0.4;
+      const sx = x;
+      const sy = y - w * 0.75;
+      ctx.fillStyle = 'rgba(255,243,196,0.13)';
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx + Math.sin(a - 0.2) * cam.height * 0.6, sy - Math.cos(a - 0.2) * cam.height * 0.5);
+      ctx.lineTo(sx + Math.sin(a + 0.2) * cam.height * 0.6, sy - Math.cos(a + 0.2) * cam.height * 0.5);
+      ctx.closePath();
+      ctx.fill();
     }
     if (s.scan > 0) {
       // Gear Scan: a sweeping beam from the roof.
       const a = Math.sin(t * 5) * 0.5;
-      ctx.fillStyle = 'rgba(255,214,64,0.18)';
+      const sx = x;
+      const sy = y - w * 0.7;
+      ctx.fillStyle = 'rgba(233,181,76,0.16)';
       ctx.beginPath();
-      ctx.moveTo(0, -200);
-      ctx.lineTo(Math.sin(a - 0.25) * 700, -200 - Math.cos(a - 0.25) * 700);
-      ctx.lineTo(Math.sin(a + 0.25) * 700, -200 - Math.cos(a + 0.25) * 700);
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx + Math.sin(a - 0.25) * w * 2.4, sy - Math.cos(a - 0.25) * w * 2.4);
+      ctx.lineTo(sx + Math.sin(a + 0.25) * w * 2.4, sy - Math.cos(a + 0.25) * w * 2.4);
       ctx.closePath();
       ctx.fill();
     }
-    ctx.restore();
     if (s.slowmo > 0) {
-      // Route Sense: speed lines streaming past, cool blue.
-      ctx.strokeStyle = 'rgba(120,190,255,0.35)';
+      // Route Sense: pale lines streaming slowly past.
+      ctx.strokeStyle = 'rgba(248,237,216,0.34)';
       ctx.lineWidth = 2;
       for (let i = 0; i < 6; i += 1) {
         const lx = x + (i - 2.5) * w * 0.45;
@@ -1612,6 +1886,22 @@ export class DriveRenderer {
         ctx.lineTo(lx, y - w * 0.9 + off);
         ctx.stroke();
       }
+    }
+    if (s.postcardMark !== null) {
+      // Somebody's seen the postcard: a pale flag over its lane, at the far end of the road.
+      const z = VISIBLE_Z;
+      const fx = screenX(cam, s.postcardMark.lane, z);
+      const fy = screenY(cam, z);
+      ctx.fillStyle = '#F8EDD8';
+      ctx.strokeStyle = 'rgba(53,72,68,0.7)';
+      ctx.lineWidth = 1.5;
+      roundRect(ctx, fx - 9, fy - 26, 18, 13, 2.5);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(fx, fy - 13);
+      ctx.lineTo(fx, fy - 2);
+      ctx.stroke();
     }
   }
 
@@ -1625,18 +1915,37 @@ export class DriveRenderer {
     const sink = b.stage === 'down' ? Math.min(1, b.t / 1.2) * 0.25 : 0;
     const x = screenX(cam, 0, z) + b.sway * 0;
     const y = screenY(cam, z) + (1 - rise) * 260 * scale + sink * 260 * scale;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(scale, scale);
-    const expr = b.stage === 'down' || b.stage === 'honk' ? 'surprised' : b.phase === 3 ? 'worried' : 'determined';
-    drawBarrikada(ctx, expr, t, {
-      skin: s.mission.machine,
-      shadow: true,
-      gears: b.gears.map((g) => ({ state: g.state, t: g.t, flash: g.flash })),
-      overheat: b.phase === 3 ? 1 : 0,
-      hurtT: b.hurtT,
-    });
-    ctx.restore();
+    // The machine: one model at the road's scale, its chest gears one lane apart.
+    const machineId = s.mission.machine ?? 'barrikada';
+    const sprite = art(`m.${machineId}`);
+    if (sprite !== null) {
+      // Gears sit 1.5 model units apart; a lane at this distance is GEAR_X[2] * scale wide.
+      const k = (laneAt(cam, z) / 1.5) / sprite.ppu;
+      const shake = b.hurtT < 0.16 && !this.reduceMotion ? Math.sin(b.hurtT * 90) * laneAt(cam, z) * 0.012 : 0;
+      softShadow(ctx, x, y, sprite.w * k * 0.5, sprite.w * k * 0.07, 0.34);
+      ctx.save();
+      ctx.translate(x + shake, y);
+      blitClay(ctx, sprite, 0, 0, k, sprite.img);
+      if (sprite.face !== undefined) {
+        // The one great lens, by mood: calm in the road, worried as it overheats.
+        const expr = b.stage === 'down' || b.stage === 'honk' ? 'surprised' : b.phase === 3 ? 'worried' : 'determined';
+        ctx.translate(-sprite.ax * k, -sprite.ay * k);
+        ctx.scale(k, k);
+        drawClayFace(ctx, machineId, sprite.face, expr, { t, blink: 0, talk: 0, lookX: 0, lookY: 0 });
+      }
+      ctx.restore();
+      if (b.phase === 3) {
+        // Overheat: a little smoke from the head.
+        const lane = laneAt(cam, z);
+        ctx.fillStyle = 'rgba(120,124,130,0.3)';
+        for (let i = 0; i < 4; i += 1) {
+          const u = (t * 0.4 + i * 0.25) % 1;
+          ctx.beginPath();
+          ctx.arc(x + Math.sin(i * 2 + t) * lane * 0.3, y - lane * (3.5 + u * 1.4), lane * (0.12 + u * 0.22), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
     this.bossDraw = { x, y, scale };
     if (b.stage !== 'fight' && b.stage !== 'honkReady') {
       return;
@@ -1785,13 +2094,6 @@ export class DriveRenderer {
     }
     // A rounded warning sign with a glow and a chevron pointing down into its lane (pre-drawn: no text per frame).
     const sprite = this.fx.get('warn', [-34, -52, 34, 18], (c) => {
-      const g = c.createRadialGradient(0, -18, 2, 0, -18, 34);
-      g.addColorStop(0, 'rgba(255,214,64,0.6)');
-      g.addColorStop(1, 'rgba(255,214,64,0)');
-      c.fillStyle = g;
-      c.beginPath();
-      c.arc(0, -18, 34, 0, Math.PI * 2);
-      c.fill();
       c.beginPath();
       c.moveTo(0, -44);
       c.quadraticCurveTo(4, -44, 6, -40);
@@ -1802,13 +2104,13 @@ export class DriveRenderer {
       c.lineTo(-6, -40);
       c.quadraticCurveTo(-4, -44, 0, -44);
       c.closePath();
-      c.fillStyle = '#FFD640';
+      c.fillStyle = '#E9B54C';
       c.fill();
       c.lineJoin = 'round';
-      c.lineWidth = 3.5;
-      c.strokeStyle = '#3A2A00';
+      c.lineWidth = 2.5;
+      c.strokeStyle = '#5A4214';
       c.stroke();
-      c.fillStyle = '#3A2A00';
+      c.fillStyle = '#4A3610';
       c.beginPath();
       c.moveTo(-2.6, -33);
       c.lineTo(2.6, -33);
@@ -1825,7 +2127,7 @@ export class DriveRenderer {
       c.lineTo(8, 3);
       c.lineCap = 'round';
       c.lineWidth = 4;
-      c.strokeStyle = '#FFD640';
+      c.strokeStyle = '#E9B54C';
       c.stroke();
     });
     const pulse = this.reduceMotion ? 1 : 1 + Math.sin(t * 6) * 0.08;
@@ -1835,9 +2137,7 @@ export class DriveRenderer {
     const centre = screenX(cam, 0, z);
     const spacing = Math.max(laneAt(cam, z), 50 * size);
     for (const lane of lanes) {
-      blit(ctx, sprite, centre + lane * spacing, cam.horizonY - 6 * size, size);
+      blit(ctx, sprite, centre + lane * spacing, cam.horizonY + 40 * size, size);
     }
-    void bendAt;
-    void rgba;
   }
 }

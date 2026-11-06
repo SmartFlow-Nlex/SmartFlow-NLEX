@@ -17,6 +17,7 @@ import { getSupabase, isSupabaseConfigured } from '../auth/supabaseClient';
  */
 
 const CHAT_PATH = '/api/assistant/chat';
+const TRANSLATE_PATH = '/api/assistant/translate';
 
 export type ChatRole = 'user' | 'assistant';
 
@@ -33,6 +34,25 @@ export interface ChatMessage {
   toolsUsed?: string[];
   /** What the answer found, for the mascot beside it. Assistant messages only. */
   mood?: ReplyMood;
+  /**
+   * Navie's words in each language they have been written in, kept with the
+   * chat. `text` stays as first written. Flipping the switch back and forth
+   * therefore costs one translation, and a speed cannot read differently on the
+   * second flip. Absent from chats saved before the switch translated anything.
+   */
+  translations?: ReplyTranslations;
+}
+
+export type ReplyTranslations = Partial<Record<LanguageChoice, string>>;
+
+/** The words to show or send: the user's as they typed them, Navie's in this language if known. */
+export function shownText(message: ChatMessage, language: LanguageChoice): string {
+  return message.role === 'assistant' ? (message.translations?.[language] ?? message.text) : message.text;
+}
+
+/** Whether this is a reply of Navie's not yet written in this language. */
+export function needsTranslation(message: ChatMessage, language: LanguageChoice): boolean {
+  return message.role === 'assistant' && message.translations?.[language] === undefined;
 }
 
 /**
@@ -70,6 +90,7 @@ const labels: Record<AssistantToolName, string> = {
   get_event_forecasts: 'Event forecasts',
   get_incident_hotspots: 'ML hotspots',
   get_traffic_forecast: 'SmartFlow forecast',
+  get_road_rules: 'NLEX road rules',
 };
 
 /**
@@ -117,6 +138,12 @@ async function recentGreetings(): Promise<string[]> {
   }
 }
 
+/** A welcome from Navie, in English and in whichever other language it was asked for. */
+export interface Greeting {
+  text: string;
+  translations: ReplyTranslations;
+}
+
 /**
  * A fresh welcome from Navie for a new chat, written by the model, or null when
  * the backend cannot be reached in time.
@@ -125,19 +152,26 @@ async function recentGreetings(): Promise<string[]> {
  * saw recently, so opening the chat twice never gives the same line. Remembered
  * in AsyncStorage rather than memory so that holds across app restarts too;
  * storage failing only costs that memory, never the greeting.
+ *
+ * The language is read here, not passed in: the screen's own copy is still
+ * 'english' for a moment after opening, while the saved pick loads.
  */
-async function fetchGreeting(name: string | null): Promise<string | null> {
+async function fetchGreeting(name: string | null): Promise<Greeting | null> {
   const avoid = await recentGreetings();
+  const language = await loadLanguageChoice();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GREETING_TIMEOUT_MS);
   try {
     const response = await fetch(`${BACKEND_API_BASE_URL}/api/assistant/greeting`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, hour: new Date().getHours(), avoid }),
+      body: JSON.stringify({ name, hour: new Date().getHours(), avoid, language }),
       signal: controller.signal,
     });
-    const payload = (await response.json()) as { success?: boolean; data?: { greeting?: string } };
+    const payload = (await response.json()) as {
+      success?: boolean;
+      data?: { greeting?: string; translations?: ReplyTranslations };
+    };
     const greeting = payload.data?.greeting?.trim();
     if (!response.ok || payload.success !== true || greeting === undefined || greeting.length === 0) {
       return null;
@@ -150,7 +184,7 @@ async function fetchGreeting(name: string | null): Promise<string | null> {
     } catch {
       // Next greeting just will not know about this one.
     }
-    return greeting;
+    return { text: greeting, translations: { english: greeting, ...payload.data?.translations } };
   } catch {
     return null;
   } finally {
@@ -176,6 +210,8 @@ const NEXT_GREETING_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 
 interface StoredGreeting {
   text: string;
+  /** Absent from one stored before greetings were translated. */
+  translations?: ReplyTranslations;
   name: string | null;
   partOfDay: string;
   at: number;
@@ -186,7 +222,7 @@ function partOfDayNow(): string {
   return hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
 }
 
-async function takeStoredGreeting(name: string | null): Promise<string | null> {
+async function takeStoredGreeting(name: string | null): Promise<Greeting | null> {
   try {
     const stored = JSON.parse((await AsyncStorage.getItem(NEXT_GREETING_KEY)) ?? 'null') as StoredGreeting | null;
     // Taken once: a greeting shown twice would not be "new" any more.
@@ -198,7 +234,8 @@ async function takeStoredGreeting(name: string | null): Promise<string | null> {
       stored.partOfDay === partOfDayNow() &&
       Date.now() - stored.at < NEXT_GREETING_MAX_AGE_MS
     ) {
-      return stored.text;
+      // Greetings are always written in English first, so that one needs no asking for.
+      return { text: stored.text, translations: { english: stored.text, ...stored.translations } };
     }
   } catch {
     // Nothing usable stored; the caller asks the server instead.
@@ -207,11 +244,11 @@ async function takeStoredGreeting(name: string | null): Promise<string | null> {
 }
 
 async function prepareNextGreeting(name: string | null): Promise<void> {
-  const text = await fetchGreeting(name);
-  if (text === null) {
+  const greeting = await fetchGreeting(name);
+  if (greeting === null) {
     return;
   }
-  const stored: StoredGreeting = { text, name, partOfDay: partOfDayNow(), at: Date.now() };
+  const stored: StoredGreeting = { ...greeting, name, partOfDay: partOfDayNow(), at: Date.now() };
   try {
     await AsyncStorage.setItem(NEXT_GREETING_KEY, JSON.stringify(stored));
   } catch {
@@ -224,7 +261,7 @@ async function prepareNextGreeting(name: string | null): Promise<void> {
  * otherwise a fresh one from the server, or null when it cannot be reached.
  * Either way the following chat's greeting starts being written straight away.
  */
-export async function nextGreeting(name: string | null): Promise<string | null> {
+export async function nextGreeting(name: string | null): Promise<Greeting | null> {
   const ready = await takeStoredGreeting(name);
   const greeting = ready ?? (await fetchGreeting(name));
   void prepareNextGreeting(name);
@@ -243,11 +280,18 @@ export class AssistantError extends Error {
   }
 }
 
-/** Only role and content go to the server; ids and timestamps are ours. */
-function toWireHistory(history: ChatMessage[]): { role: ChatRole; content: string }[] {
+/**
+ * Only role and content go to the server; ids and timestamps are ours. Navie's
+ * replies go in the chat's language where they have it: replies in the other
+ * language are what pull the model into answering in it.
+ */
+function toWireHistory(
+  history: ChatMessage[],
+  language: LanguageChoice,
+): { role: ChatRole; content: string }[] {
   return history.slice(-10).map((message) => ({
     role: message.role,
-    content: message.text,
+    content: shownText(message, language),
   }));
 }
 
@@ -257,7 +301,7 @@ const RETRY_DELAY_MS = 1200;
 const wait = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The EN / TL switch in the Assistant header: which language Navie replies in. */
+/** The EN / TL switch in the Assistant header: the language of everything Navie says in a chat. */
 export type LanguageChoice = 'english' | 'tagalog';
 
 const LANGUAGE_KEY = 'smartflow.lex.language';
@@ -312,9 +356,36 @@ async function postOnce(
     return await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await signInHeader()) },
-      body: JSON.stringify({ message, history: toWireHistory(history), language }),
+      body: JSON.stringify({ message, history: toWireHistory(history, language), language }),
       signal: controller.signal,
     });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * One of Navie's messages in the other language; null when it could not be done.
+ * The server refuses a translation that changed a number, an exit or a direction,
+ * so null can also mean the words came back wrong twice.
+ */
+export async function translateReply(text: string, language: LanguageChoice): Promise<string | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ASSISTANT_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${BACKEND_API_BASE_URL}${TRANSLATE_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, language }),
+      signal: controller.signal,
+    });
+    const payload = (await response.json()) as { success?: boolean; data?: { translation?: string } };
+    const translation = payload.data?.translation?.trim();
+    return response.ok && payload.success === true && translation !== undefined && translation.length > 0
+      ? translation
+      : null;
+  } catch {
+    return null;
   } finally {
     clearTimeout(timeout);
   }

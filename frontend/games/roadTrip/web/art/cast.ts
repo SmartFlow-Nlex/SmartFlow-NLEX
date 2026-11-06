@@ -1,4 +1,4 @@
-import type { CharacterId, Expression } from '../../core/types';
+import type { CharacterId, Expression, MachineId } from '../../core/types';
 import { drawCheeks, drawExtras, drawEyes, drawMouth, starPath, type FaceAnim, type FaceStyle } from './faces';
 import { BRAND_FONT, ellipsePath, groundShadow, hgrad, paint, rgba, rgrad, roundRect, shade, sheen, vgrad, type Ctx } from './kit';
 import { C } from './palette';
@@ -610,7 +610,7 @@ export function drawCharacter(ctx: Ctx, id: CharacterId, x: number, y: number, s
   } else if (id === 'kiko') {
     drawKikoFront(ctx, pose);
   } else {
-    drawBarrikada(ctx, pose.expr, pose.anim.t, { skin: id, shadow: pose.shadow !== false, gears: null });
+    drawBarrikada(ctx, pose.expr, pose.anim.t, { skin: id as MachineId, shadow: pose.shadow !== false, gears: null });
   }
   ctx.restore();
 }
