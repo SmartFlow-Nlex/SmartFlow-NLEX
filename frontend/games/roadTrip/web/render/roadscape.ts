@@ -537,7 +537,8 @@ export class Roadscape {
   }
 
   /** Fields, then the road, row by row: each row samples the textures at its own distance. */
-  drawGround(ctx: Ctx, cam: Camera, distance: number, nearZ: number): void {
+  /** `beforeLines` draws on the road surface itself, under the painted lines (broken road). */
+  drawGround(ctx: Ctx, cam: Camera, distance: number, nearZ: number, beforeLines?: () => void): void {
     const look = this.look;
     if (this.road === null) {
       this.road = buildRoadTexture(look);
@@ -620,6 +621,7 @@ export class Roadscape {
       }
       y += step;
     }
+    beforeLines?.();
     this.drawLines(ctx, cam, distance, nearZ);
   }
 

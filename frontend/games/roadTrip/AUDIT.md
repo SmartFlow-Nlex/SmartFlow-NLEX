@@ -742,6 +742,25 @@ Ysa's request: 100 levels between the NLEX exits, heroes and sidekicks arriving 
 
 Ysa asked for less text. Removed: the title tagline, the Journey Map note, and the route and objective lines on a level's sheet (a locked level still says which level to clear). In the Collection, a hero shows the signature in one line and bare stat bars, and a sidekick shows what it does in one line; bios, quotes, trade-offs, team-ups and the Reach / How often / Limit rows are gone from there. The Team screen still has that detail. Panels went from 51-109 words to 18-44. Found while doing it: `append(null)` printed "null" on the sheet, and Snapshot and Endless would have said "clear Level -1"; both fixed.
 
+### The broken road redrawn to Ysa's reference (same day)
+
+| Finding | Fix |
+|---|---|
+| The first redraw read as dirt and loose slabs, not the cracked asphalt in the reference | A stretch is now grey asphalt cracked all over: big blocks, fine crazing, weathering. Potholes are shallow, dark and mottled |
+| Fine cells on a jittered grid looked like brickwork, and splitting every square along one diagonal made the big blocks lean one way | Cells come from triangles split along a random diagonal, with walls through their middles |
+| Painting a stretch took about 80 ms, nearly all of it stroking fine crazing | Crazing is one tile stamped through a soft mask, and soft things are painted at quarter size: about 25 ms in all |
+| Split into stages, it still all landed in one frame, because canvas drawing is queued until the canvas is used | Each stage makes its canvas finish (`settle`); nine stages, one a frame, while the stretch fades in at the horizon |
+| Cracks near the car stepped sideways, and taller rows made that worse | Rows at most 2 px tall |
+| Fading rows behind the car showed stripes where they overlapped | Rows start and end on whole device pixels |
+
+| Check | Result |
+|---|---|
+| Real page, side by side with the reference | Same kind of surface: blocks, crazing, dust, dark potholes, lane lines on top. Checked in sun and in rain (Level 13) |
+| Frame rate against the build before, alternating runs (Levels 50 and 71, Tambubong) | 58 to 60 fps, the same or better. Worst single frame 7.5 to 8.5 ms against 6 to 6.5 ms before |
+| Painting stages | 1 to 7 ms each, after the tile is made at level load |
+| Soak with everyone | Heap flat at 15 MB, no console errors |
+| Tests | Road Trip 206 passed, Grand Prix 23 passed, TypeScript clean |
+
 ## Performance (measured, not promised)
 
 Headless Chrome 155 on the development PC (Windows 11), phone emulation 390x844 @2x, autopilot

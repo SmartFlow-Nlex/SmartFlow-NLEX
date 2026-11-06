@@ -870,14 +870,23 @@ The map has 100 nodes on a winding road. Exit names sit on the level that reache
 
 Potholes and broken stretches used to be baked sprites that read as rocks. They are now drawn flat on the road in perspective, with the same projection as the lane lines, and the same shape every time for the same id.
 
-- **A pothole:**
-  - a cracked halo with a lit rim, and a bowl that is lit on the far wall and dark at the bottom
-  - a puddle in rain, and loose gravel and chunks round it
-  - the yellow outline when outlines are on
-- **A broken stretch:**
-  - torn edges with a shadowed drop
-  - the exposed base, with damp and dusty blotches and grit
-  - slabs of what is left of the top layer, with their own grain and cracks
-  - small holes, cracks running out into the good road, and loose chunks
-- Nothing near the camera is squashed onto the bottom of the screen; it fades as it passes under the car.
+Redrawn the same day to Ysa's reference picture: cracked asphalt rather than torn-up road.
+
+- **A pothole** is shallow and dark:
+  - a sunken, crazed halo with cracks running out
+  - a crumbling rim a little paler than the road
+  - a mottled bottom, lit on the far wall and darkest on the near side
+  - a puddle in rain, and the yellow outline when outlines are on
+- **A broken stretch** stays grey asphalt, cracked all over:
+  - big cracks round broken blocks about a lane wide, each with a pale lip and a dark core
+  - fine crazing ("alligator" cells) in soft-edged patches between them
+  - pale, dusty weathering, darker worn spots and flecks of aggregate
+- **How a stretch is drawn:**
+  - It is a texture painted once per stretch, in road units, on the road's own asphalt, grain and wheel tracks. Its damage thins out at both ends, so it meets the good road without a seam.
+  - It is laid on the road in rows, like the road itself, from `drawGround` before the painted lines, so the lines stay on top.
+  - Rows are at most 2 px tall and start and end on whole device pixels. Taller rows show cracks stepping sideways, and overlapping rows show stripes where they fade.
+  - Behind the car, where the view stretches the road, the damage fades out (z from -0.2 down to -2.6), as the reference keeps that part plain.
+- **Cost:**
+  - The texture is painted in nine stages, one a frame, while the stretch is still fading in at the horizon. Each stage makes its canvas finish drawing (`settle`); canvas drawing is otherwise queued and would all land in one frame.
+  - The fine crazing is one seamless tile, made when a level loads (`prepareBrokenRoad`), and stamped through a quarter-size soft mask. Stroking thousands of tiny walls per stretch took about 50 ms.
 - Hits, sizes and where they appear are unchanged; only the drawing is new. The pothole and gravel sprites were removed from the bake (354 sprites).

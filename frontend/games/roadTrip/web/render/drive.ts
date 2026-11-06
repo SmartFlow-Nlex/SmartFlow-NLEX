@@ -11,7 +11,7 @@ import { KIKO_FRONT, SPAWN_Z } from '../../core/config';
 import type { Mood } from '../../core/moods';
 import type { HazardEntity, SidekickState, SimState } from '../../core/sim';
 import { FLY_HEIGHT, SidekickDodge } from '../../core/sidekickDodge';
-import { drawBrokenPatch, drawPothole } from './brokenRoad';
+import { drawBrokenPatch, drawPothole, prepareBrokenRoad } from './brokenRoad';
 import { hiddenShowZ } from '../../core/tuning';
 import type { FoeKind, HeroId, PowerUpKind, SidekickId } from '../../core/types';
 import { laneAt, makeCamera, screenX, screenY, zAtY, type Camera, type CameraProfile } from './camera';
@@ -89,6 +89,8 @@ const BOT_COLOUR = '#7B59B8';
 
 export class DriveRenderer {
   cam: Camera = makeCamera(390, 844);
+  /** Broken road's crazing tile, made while the level loads rather than when the first stretch appears. */
+  private readonly brokenRoadReady = prepareBrokenRoad();
   readonly particles = new Particles();
   private readonly sprites = new SpriteCache();
   private readonly scape = new Roadscape();
@@ -325,10 +327,9 @@ export class DriveRenderer {
       ctx.fillStyle = fill;
       ctx.fill();
     };
-    this.scape.drawGround(ctx, cam, s.distance, near);
+    // Road repairs are part of the road surface: cracked asphalt under the painted lines.
+    this.scape.drawGround(ctx, cam, s.distance, near, () => this.drawRough(ctx, s));
     void quad;
-    // Road repairs: a stretch where the top layer has torn away, across every lane, so it can be read from afar.
-    this.drawRough(ctx, s);
     this.drawBarriers(ctx, s, zs);
     // Potholes are holes in the road: drawn flat on it now, under everything standing.
     for (const h of s.hazards) {
@@ -567,7 +568,7 @@ export class DriveRenderer {
     return z > VISIBLE_Z - 12 ? Math.max(0, (VISIBLE_Z - z) / 12) : 1;
   }
 
-  /** Road repairs: the road broken up across all three lanes (web/render/brokenRoad.ts). */
+  /** Road repairs: the road cracked up across all three lanes (web/render/brokenRoad.ts). */
   private drawRough(ctx: Ctx, s: SimState): void {
     for (const r of s.rough) {
       ctx.globalAlpha = this.fade(r.z);

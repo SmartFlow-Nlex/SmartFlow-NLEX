@@ -1,4 +1,5 @@
 import { commitRun, type CommitOutcome } from '../core/progression';
+import { crackTexture } from './render/brokenRoad';
 import { loadSave, serializeSave } from '../core/save';
 import { validateSnapshot, type TrafficSnapshot } from '../core/scenario';
 import { HEROES, JOURNEY, SIDEKICKS, type MissionId, type RunResult, type SaveData } from '../core/types';
@@ -419,6 +420,8 @@ export class App implements AppApi {
       mission: () => this.mission,
       frames: () => this.frameTimes.slice(),
       scene: () => this.scene,
+      /** Development only: a broken stretch's texture, flat, for checking how it is painted. */
+      crackTexture,
     };
   }
 }
