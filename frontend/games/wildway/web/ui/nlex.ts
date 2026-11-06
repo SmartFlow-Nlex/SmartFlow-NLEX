@@ -3,7 +3,7 @@ import { FACTORS, VEHICLES } from '../../core/emissions';
 import { ASSUMPTIONS, crewHours, CREW_HOURS, facilityDay, UPGRADE_OPTIONS, type Upgrade } from '../../core/facility';
 import { HORNBILL_MISSION, MISSIONS, type MissionDef } from '../../core/mission';
 import { missionOpen, NLEX_STOPS, progress } from '../../core/nlex';
-import { BOCAUE_PLAZA, CLASS_LABEL, plazaSolved, simulatePlaza, type LaneMode, type PlazaResult, type VehicleClass } from '../../core/plaza';
+import { BOCAUE_PLAZA, CLASS_LABEL, plazaSolved, simulatePlaza, type LaneMode, type PlazaProblem, type PlazaResult, type VehicleClass } from '../../core/plaza';
 import { UPGRADES, upgradeUnlocked, type CompletionReport, type SaveData, type SimPart } from '../../core/save';
 import { button, h, icon } from '../dom';
 import { page } from './screens';
@@ -137,17 +137,18 @@ export function missionBriefing(def: MissionDef, navie: string, onGo: () => void
 
 const MODE_LABEL: Record<LaneMode, string> = { tag: 'Toll tag', cash: 'Cash', closed: 'Closed' };
 
-export function lanePuzzle(o: { initial: readonly LaneMode[]; navie: string; reduce: boolean; onDone: (modes: LaneMode[] | null) => void; onHow: (r: PlazaResult) => void }): HTMLElement {
-  const P = BOCAUE_PLAZA;
+export function lanePuzzle(o: { plaza?: PlazaProblem; initial: readonly LaneMode[]; navie: string; reduce: boolean; onDone: (modes: LaneMode[] | null) => void; onHow: (r: PlazaResult) => void }): HTMLElement {
+  const P = o.plaza ?? BOCAUE_PLAZA;
   let modes: LaneMode[] = o.initial.map((m, i) => (P.lanes[i].underRepair ? 'closed' : m));
   const jam = simulatePlaza(P, P.jammed);
-  const hints = [L.gridLaneHintCash, L.gridLaneHintTruck, L.gridLaneHintRepair, L.gridLaneHintStaff];
+  const down = P.tagDown ?? [];
+  const hints = [...(down.length > 0 ? [`Lane ${down.map((i) => P.lanes[i].id).join(', ')} has no working tag reader: cash, or closed.`] : []), L.gridLaneHintCash, L.gridLaneHintTruck, L.gridLaneHintRepair, L.gridLaneHintStaff];
   let hintAt = 0;
   const lanesEl = h('div', { class: 'lanes' });
   const totals = h('div', { class: 'lane-totals' });
   const problems = h('div', { class: 'lane-problems', attrs: { role: 'status', 'aria-live': 'polite' } });
   const go = button('Switch on these lanes', () => (plazaSolved(simulatePlaza(P, modes)) ? o.onDone(modes) : undefined), { class: 'big', iconName: 'check' });
-  const hintText = h('p', { class: 'hint-text', text: 'Tap a lane to change it. Each change runs the hour again.' });
+  const hintText = h('p', { class: 'hint-text', text: down.length > 0 ? hints[0] : 'Tap a lane to change it. Each change runs the hour again.' });
   const render = (): void => {
     const r = simulatePlaza(P, modes);
     lanesEl.replaceChildren(
@@ -165,8 +166,9 @@ export function lanePuzzle(o: { initial: readonly LaneMode[]; navie: string; red
         };
         return h(
           'button',
-          { class: `lane ${modes[i]} ${lane.underRepair ? 'repair' : ''}`, attrs: { type: 'button', 'aria-label': `Lane ${lane.id}${lane.wide ? ', wide' : ''}: ${MODE_LABEL[modes[i]]}${lane.underRepair ? ', coned off for repairs' : ''}` }, onClick: cycle },
+          { class: `lane ${modes[i]} ${lane.underRepair ? 'repair' : ''} ${down.includes(i) ? 'broken' : ''}`, attrs: { type: 'button', 'aria-label': `Lane ${lane.id}${lane.wide ? ', wide' : ''}: ${MODE_LABEL[modes[i]]}${lane.underRepair ? ', coned off for repairs' : ''}${down.includes(i) ? ', tag reader down' : ''}` }, onClick: cycle },
           h('span', { class: 'lane-num', text: String(lane.id) }),
+          down.includes(i) ? h('span', { class: 'lane-broken', text: 'No tag' }) : null,
           h('span', { class: 'lane-mode', text: lane.underRepair ? 'Repairs' : MODE_LABEL[modes[i]] }),
           lane.wide ? h('span', { class: 'lane-tag', text: 'Wide' }) : h('span', { class: 'lane-tag blank', text: ' ' }),
           h('span', { class: 'lane-q' }, fill),
@@ -195,7 +197,7 @@ export function lanePuzzle(o: { initial: readonly LaneMode[]; navie: string; red
   return h(
     'div',
     { class: 'screen menu board' },
-    h('div', { class: 'board-top' }, h('div', { class: 'kicker', text: 'Control room console' }), h('h2', { text: 'Set the six lanes' })),
+    h('div', { class: 'board-top' }, h('div', { class: 'kicker', text: 'Control room console' }), h('h2', { text: down.length > 0 ? 'Set the lanes again' : 'Set the six lanes' })),
     h(
       'div',
       { class: 'scroll' },
@@ -226,8 +228,9 @@ export function plazaHow(r: PlazaResult, onClose: () => void): HTMLElement {
 
 /* ---- The depot's upgrade planner ---- */
 
-export function energyPlanner(o: { navie: string; onDone: (picks: Upgrade[] | null) => void; onHow: (picks: Upgrade[]) => void }): HTMLElement {
-  let picks: Upgrade[] = [];
+export function energyPlanner(o: { navie: string; locked?: readonly Upgrade[]; onDone: (picks: Upgrade[] | null) => void; onHow: (picks: Upgrade[]) => void }): HTMLElement {
+  const locked = o.locked ?? [];
+  let picks: Upgrade[] = [...locked];
   const repaired = { repairs: ['sensor', 'leak', 'idling'] as const, upgrades: [] as Upgrade[] };
   const now = facilityDay({ repairs: [...repaired.repairs], upgrades: [] });
   const list = h('div', { class: 'upgrade-list' });
@@ -241,15 +244,19 @@ export function energyPlanner(o: { navie: string; onDone: (picks: Upgrade[] | nu
     list.replaceChildren(
       ...UPGRADE_OPTIONS.map((u) => {
         const on = picks.includes(u.id);
+        const fixed = locked.includes(u.id);
         const alone = facilityDay({ repairs: [...repaired.repairs], upgrades: [u.id] });
         return h(
           'button',
-          { class: `upgrade ${on ? 'on' : ''}`, attrs: { type: 'button', 'aria-pressed': String(on) }, onClick: () => {
+          { class: `upgrade ${on ? 'on' : ''} ${fixed ? 'fixed' : ''}`, attrs: { type: 'button', 'aria-pressed': String(on), 'aria-disabled': String(fixed) }, onClick: () => {
+            if (fixed) {
+              return;
+            }
             picks = on ? picks.filter((x) => x !== u.id) : [...picks, u.id];
             render();
           } },
-          h('span', { class: 'upgrade-body' }, h('span', { class: 'upgrade-title', text: u.label }), h('span', { class: 'upgrade-text', text: `${u.blurb} On its own: ${kg(now.co2Kg - alone.co2Kg)} less a day.` })),
-          h('span', { class: 'upgrade-cost' }, on ? icon('check') : h('span', { text: `${u.hours} h` })),
+          h('span', { class: 'upgrade-body' }, h('span', { class: 'upgrade-title', text: fixed ? `${u.label} (this mission’s job)` : u.label }), h('span', { class: 'upgrade-text', text: `${u.blurb} On its own: ${kg(now.co2Kg - alone.co2Kg)} less a day.` })),
+          h('span', { class: 'upgrade-cost' }, fixed ? h('span', { text: `${u.hours} h` }) : on ? icon('check') : h('span', { text: `${u.hours} h` })),
         );
       }),
     );
@@ -275,7 +282,7 @@ export function energyPlanner(o: { navie: string; onDone: (picks: Upgrade[] | nu
   return h(
     'div',
     { class: 'screen menu board' },
-    h('div', { class: 'board-top' }, h('div', { class: 'kicker', text: 'Depot office' }), h('h2', { text: 'Choose the upgrades' })),
+    h('div', { class: 'board-top' }, h('div', { class: 'kicker', text: 'Depot office' }), h('h2', { text: locked.length > 0 ? 'Balance the crew day' : 'Choose the upgrades' })),
     h('div', { class: 'scroll' }, h('div', { class: 'navie-row hint' }, h('img', { class: 'navie-img small', attrs: { src: o.navie, alt: 'Navie' } }), hintText), list),
     h('div', { class: 'board-foot' }, foot, verdict, h('div', { class: 'title-row' }, button('Back', () => o.onDone(null), { class: 'secondary', iconName: 'back' }), h('button', { class: 'text-btn', text: 'How this was calculated', attrs: { type: 'button' }, onClick: () => o.onHow(picks) })), go),
   );
@@ -328,7 +335,7 @@ export function progressDashboard(o: { save: SaveData; ecoUpgrades: readonly str
 
 /* ---- Results for an NLEX mission ---- */
 
-export function nlexResults(o: { def: MissionDef; report: CompletionReport; parts: (SimPart & { lines: string[] })[]; navie: string; onHow: (id: string) => void; onNext: () => void }): HTMLElement {
+export function nlexResults(o: { def: MissionDef; report: CompletionReport; parts: (SimPart & { lines: string[] })[]; navie: string; achievements?: readonly string[]; next?: string | null; onHow: (id: string) => void; onNext: () => void }): HTMLElement {
   const { def, report } = o;
   const column = (label: string, value: number, max: number, cls: string): HTMLElement => {
     const fill = h('div', { class: `col-fill ${cls}` });
@@ -363,8 +370,9 @@ export function nlexResults(o: { def: MissionDef; report: CompletionReport; part
         );
       }),
       h('div', { class: 'card points' }, h('div', { class: 'tally-head' }, icon('star'), h('h3', { text: 'Guardian Points' })), h('p', { class: 'tally', text: report.points > 0 ? `+${report.points}` : 'None new this time' }), h('p', { class: 'muted small-text', text: 'A game currency for Command Center upgrades. It is not a measure of CO₂, animals or places.' })),
+      (o.achievements ?? []).length > 0 ? h('div', { class: 'card' }, h('div', { class: 'tally-head' }, icon('star'), h('h3', { text: 'Achievements' })), ...(o.achievements ?? []).map((t) => h('p', { class: 'tally', text: t }))) : null,
       h('p', { class: 'muted small-text', text: 'Less CO₂ does not rescue an animal or heal a place by itself. These are separate results, and the game keeps them apart.' }),
-      button('Back to the Command Center', o.onNext, { class: 'big', iconName: 'next' }),
+      button(o.next ?? 'Back to the Command Center', o.onNext, { class: 'big', iconName: 'next' }),
     ),
   );
 }

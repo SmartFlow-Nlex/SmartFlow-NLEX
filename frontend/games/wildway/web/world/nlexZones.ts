@@ -64,6 +64,18 @@ export function buildPlaza(r: Renderer): Zone {
     tunnelW: [-19.8, 19],
     tunnelE: [19.8, 19],
     faults: [19.6, 0],
+    /* The toll sensor at lane 1's entry, reached from the west walkway. */
+    sensor: [-19.6, -8.6],
+    /* The service shed with the spare power cells, and the control-room door. */
+    cell: [28, 2.6],
+    door: [21.4, 9],
+    clueTyres: [27, -21],
+    clueFlyer: [-24.5, 11],
+    patch1: [-20.6, 3.2],
+    patch2: [21.2, -15],
+    patch3: [-21.4, -17],
+    critter1: [25.5, 14.2],
+    staff: [23.5, -13.5],
   };
   /* Islands and booths between the lanes. */
   for (const x of PLAZA_ISLANDS) {
@@ -156,6 +168,25 @@ export function buildPlaza(r: Renderer): Zone {
     b.rbox(20.6, 0.85, 3.2, 0.9, 1.7, 0.7, '#8b98ad', 0.2);
     b.rbox(20.6, 1.5, 2.83, 0.6, 0.3, 0.05, '#ffc32d', 0.1);
     colliders.push({ x: 20.6, z: 3.2, r: 0.7 });
+  }
+  /* The service shed, east, with spare power cells. */
+  {
+    const b = s.cell(30, 3).solid;
+    b.rbox(30.6, 1.3, 2.6, 2.6, 2.6, 3, '#aeb4bd', 0.25);
+    b.rbox(30.6, 2.75, 2.6, 2.9, 0.25, 3.3, '#1e5bb8', 0.2);
+    b.rbox(29.28, 1.05, 2.6, 0.08, 2, 1.5, '#2b303a', 0.15);
+    colliders.push({ x: 30.6, z: 2.6, r: 1.6 });
+  }
+  /* A traffic counter cabinet on the west walkway, and a drain grate on the east. */
+  {
+    const b = s.cell(-22, -17).solid;
+    b.rbox(-22.6, 0.75, -17, 0.8, 1.5, 0.6, '#d8dde5', 0.2);
+    b.rbox(-22.18, 1.1, -17, 0.05, 0.4, 0.4, '#20252f', 0.1);
+    colliders.push({ x: -22.6, z: -17, r: 0.6 });
+    s.cell(22, -15).soft.rbox(22.4, 0.03, -15, 1.2, 0.04, 0.8, '#3d4350', 0.05);
+    /* The toll sensor post on the barrier at lane 1. */
+    const p = s.cell(-17.4, -8.6).solid;
+    p.tube([-17.6, 0.9, -8.6], [-17.6, 2.2, -8.6], 0.07, 0.07, '#8b98ad', 5, false);
   }
   /* A service road, palms and the embankments beyond. */
   for (let i = 0; i < 260; i += 1) {
@@ -268,6 +299,22 @@ export function buildRiver(r: Renderer): Zone {
     litter: [0, 6],
     /* Firm ground on the north bank, near the culvert: where a resumed run starts. */
     bankEast: [24.5, 9.5],
+    /* The oil trail on the south bank, leading east to the culvert. */
+    trace1: [9, -6.6],
+    trace2: [15.5, -7.2],
+    trace3: [22.6, -7],
+    trace: [15.5, -7.2],
+    /* Native grass to replant the bare bank. */
+    seedTray: [16.4, 10],
+    reed1: [11.6, 6.8],
+    reed2: [15.6, 7.1],
+    reed3: [20.8, 6.9],
+    reeds: [15.6, 7.1],
+    patch1: [-20, 4],
+    patch2: [-31, 11.4],
+    patch3: [-29, -8.4],
+    critter1: [7, 5.9],
+    critter2: [-9, 6],
   };
   /* The barangay hall, with the sorting bins out front. */
   {
@@ -337,6 +384,11 @@ export function buildRiver(r: Renderer): Zone {
     b.rbox(19.6, 2, 13.22, 2.2, 1.05, 0.06, '#dfeefc', 0.15);
     colliders.push({ x: 19.6, z: 13.3, r: 1.4 });
   }
+  /* A mango tree for Awit, and a big stone for Dayo. */
+  roundTree(s, -33, height(-33, 13), 13, 1.35, rand);
+  colliders.push({ x: -33, z: 13, r: 0.9 });
+  s.cell(-30, -9.6).solid.ellipsoid(-30, height(-30, -9.6) + 0.35, -9.6, 0.9, 0.55, 0.75, '#9aa0aa', { rows: 4, cols: 8 });
+  colliders.push({ x: -30, z: -9.6, r: 0.9 });
   /* Bushes and trees between the houses; reeds come later, after the clean-up. */
   for (let i = 0; i < 220; i += 1) {
     const x = -44 + rand() * 88;
@@ -464,6 +516,13 @@ export function buildDepot(r: Renderer): Zone {
     installSign: [10, -14],
     faults: [0, 0],
     install: [0, 0],
+    /* The roof junction box, up the west ladder, and the inverter by the switchboard. */
+    wiring: [-22.4, 10.4],
+    inverter: [2.6, 13.4],
+    patch1: [-4, 6.4],
+    patch2: [30, 10],
+    patch3: [-31.4, 5.6],
+    critter1: [23.4, 15.4],
   };
   /* Workshop with a flat roof, for the panels later. */
   {
@@ -511,6 +570,17 @@ export function buildDepot(r: Renderer): Zone {
     b.tube([x, 0, z], [x, 9, z], 0.22, 0.16, '#8b98ad', 7, false);
     b.rbox(x, 9.1, z, 1.6, 0.25, 0.9, '#5e6b7c', 0.15);
     colliders.push({ x, z, r: 0.5 });
+  }
+  /* The roof junction box by the ladder, the inverter, and the old meter log. */
+  {
+    const b = s.cell(-20, 10).solid;
+    b.rbox(-20.5, 5.6, 10.4, 0.4, 0.9, 0.9, '#e8ecf1', 0.2);
+    b.rbox(0.33, 2.2, 13.4, 0.12, 1.2, 0.9, '#f4f6f8', 0.2);
+    b.rbox(0.42, 2.4, 13.4, 0.04, 0.4, 0.6, '#20252f', 0.1);
+    const p = s.cell(31, 11).solid;
+    p.tube([31.2, 0, 11], [31.2, 1.2, 11], 0.06, 0.06, '#7d5a3c', 4, false);
+    p.rbox(31.2, 1.3, 11, 0.6, 0.15, 0.45, '#c79a5c', 0.15);
+    colliders.push({ x: 31.2, z: 11, r: 0.4 });
   }
   /* The daylight sensor on the first pole. */
   s.cell(-28, -22).solid.rbox(-27.6, 7.4, -22, 0.4, 0.4, 0.4, '#e8ecf1', 0.2);
@@ -721,5 +791,386 @@ export function buildNlexProps(r: Renderer): Record<string, Mesh> {
   make('stakeMark', (b) => {
     b.cone(0, 0, 0, 0.28, 0.7, '#ffc32d', 8, '#ffffff');
   });
+  /* Guardian patches: a round badge that spins slowly where it is hidden. */
+  make('patch', (b) => {
+    b.ellipsoid(0, 0, 0, 0.34, 0.34, 0.07, '#ffc32d', { rows: 3, cols: 12 });
+    b.ellipsoid(0, 0, 0.05, 0.25, 0.25, 0.04, '#1464e8', { rows: 3, cols: 12 });
+    b.ellipsoid(0, 0.02, 0.09, 0.12, 0.07, 0.03, '#5ebf56', { rows: 2, cols: 8, yaw: 0.5 });
+  });
+  /* The Gridlock. */
+  make('sensorBad', (b) => {
+    b.rbox(0, 0, 0, 0.5, 0.42, 0.42, '#e8ecf1', 0.15);
+    b.ball(0, 0.05, -0.22, 0.09, '#e2452f', 3, 6);
+  });
+  make('sensorGood', (b) => {
+    b.rbox(0, 0, 0, 0.5, 0.42, 0.42, '#e8ecf1', 0.15);
+    b.ball(0, 0.05, -0.22, 0.09, '#14c46b', 3, 6);
+  });
+  make('powerCell', (b) => {
+    b.rbox(0, 0.28, 0, 0.62, 0.56, 0.42, '#ffc32d', 0.2);
+    b.rbox(0, 0.28, 0, 0.64, 0.14, 0.44, '#20252f', 0.1);
+    b.rbox(0.16, 0.6, 0, 0.12, 0.08, 0.12, '#8b98ad', 0.05);
+  });
+  make('tyreMarks', (b) => {
+    for (const dx of [-0.8, 0.8]) {
+      b.rbox(dx, 0.02, 0, 0.32, 0.03, 3.2, '#2b303a', 0.05);
+    }
+  }, false);
+  make('flyer', (b) => {
+    b.rbox(0, 0.02, 0, 0.42, 0.02, 0.56, '#8bdc5e', 0.05, 0.4);
+    b.rbox(0, 0.035, 0, 0.3, 0.01, 0.16, '#3d4350', 0.02, 0.4);
+  }, false);
+  /* The creek. */
+  make('traceMark', (b) => {
+    b.ellipsoid(0, 0.12, 0, 0.5, 0.18, 0.4, '#8d929b', { rows: 3, cols: 7 });
+    b.ellipsoid(0.1, 0.27, 0.05, 0.3, 0.03, 0.22, '#2a2433', { rows: 2, cols: 7 });
+    b.ellipsoid(0.16, 0.29, 0.08, 0.12, 0.02, 0.08, '#7d5cff', { rows: 2, cols: 6 });
+  });
+  make('seedTray', (b) => {
+    b.rbox(0, 0.4, 0, 1.6, 0.2, 0.9, '#8a6341', 0.15);
+    b.tube([-0.7, 0, -0.35], [-0.7, 0.4, -0.35], 0.05, 0.05, '#7d5a3c', 4, false);
+    b.tube([0.7, 0, 0.35], [0.7, 0.4, 0.35], 0.05, 0.05, '#7d5a3c', 4, false);
+    for (let i = 0; i < 6; i += 1) {
+      b.ellipsoid(-0.55 + (i % 3) * 0.55, 0.62, -0.2 + Math.floor(i / 3) * 0.4, 0.18, 0.2, 0.18, '#4aa24c', { rows: 3, cols: 6 });
+    }
+  });
+  make('grassPlug', (b) => {
+    b.ellipsoid(0, 0.08, 0, 0.3, 0.1, 0.3, '#6b4a2f', { rows: 2, cols: 7 });
+    for (let i = 0; i < 6; i += 1) {
+      const a = i * 1.05;
+      b.tube([Math.cos(a) * 0.08, 0.1, Math.sin(a) * 0.08], [Math.cos(a) * 0.3, 0.9 + (i % 2) * 0.3, Math.sin(a) * 0.3], 0.04, 0.015, '#5ebf56', 4, false);
+    }
+  });
+  make('dragonfly', (b) => {
+    b.tube([0, 0, -0.3], [0, 0, 0.25], 0.035, 0.02, '#1e88e5', 5, true);
+    b.ball(0, 0, 0.28, 0.06, '#1565c0', 3, 5);
+    for (const z of [0.1, -0.05]) {
+      b.ellipsoid(0.22, 0.02, z, 0.22, 0.01, 0.05, '#dff3ff', { rows: 2, cols: 6 });
+      b.ellipsoid(-0.22, 0.02, z, 0.22, 0.01, 0.05, '#dff3ff', { rows: 2, cols: 6 });
+    }
+  });
+  make('frog', (b) => {
+    b.ellipsoid(0, 0.14, 0, 0.2, 0.14, 0.24, '#5ebf56', { rows: 4, cols: 8 });
+    for (const x of [-0.09, 0.09]) {
+      b.ball(x, 0.27, 0.12, 0.06, '#e8f5c8', 3, 5);
+      b.ball(x, 0.28, 0.16, 0.03, '#1f1a17', 3, 4);
+    }
+    b.ellipsoid(0, 0.05, -0.12, 0.24, 0.05, 0.12, '#3f9f4d', { rows: 2, cols: 6 });
+  });
+  make('butterfly', (b) => {
+    b.tube([0, 0, -0.08], [0, 0, 0.08], 0.02, 0.02, '#3a2a1c', 4, true);
+    b.ellipsoid(0.11, 0.02, 0.02, 0.11, 0.01, 0.09, '#ff9a3c', { rows: 2, cols: 6 });
+    b.ellipsoid(-0.11, 0.02, 0.02, 0.11, 0.01, 0.09, '#ff9a3c', { rows: 2, cols: 6 });
+    b.ellipsoid(0.08, 0.02, -0.07, 0.07, 0.01, 0.06, '#ffd24a', { rows: 2, cols: 6 });
+    b.ellipsoid(-0.08, 0.02, -0.07, 0.07, 0.01, 0.06, '#ffd24a', { rows: 2, cols: 6 });
+  }, false);
+  make('swallow', (b) => {
+    b.ellipsoid(0, 0, 0, 0.09, 0.07, 0.16, '#1d2a52', { rows: 3, cols: 6 });
+    b.ellipsoid(0, -0.03, 0.03, 0.07, 0.04, 0.1, '#f2efe6', { rows: 2, cols: 6 });
+    b.ellipsoid(0.16, 0.02, 0, 0.17, 0.015, 0.05, '#1d2a52', { rows: 2, cols: 5, yaw: -0.3 });
+    b.ellipsoid(-0.16, 0.02, 0, 0.17, 0.015, 0.05, '#1d2a52', { rows: 2, cols: 5, yaw: 0.3 });
+    b.ellipsoid(0, 0, -0.2, 0.05, 0.01, 0.1, '#1d2a52', { rows: 2, cols: 5 });
+  });
+  make('sparrow', (b) => {
+    b.ellipsoid(0, 0.12, 0, 0.1, 0.09, 0.14, '#9a6b42', { rows: 3, cols: 6 });
+    b.ball(0, 0.22, 0.1, 0.07, '#7a4a2a', 3, 6);
+    b.ball(0.04, 0.21, 0.16, 0.025, '#f2efe6', 2, 4);
+    b.ellipsoid(0, 0.12, -0.16, 0.05, 0.02, 0.08, '#6b4a2f', { rows: 2, cols: 5 });
+  });
+  make('gecko', (b) => {
+    b.ellipsoid(0, 0, 0, 0.06, 0.03, 0.16, '#c8b89a', { rows: 3, cols: 6 });
+    b.ball(0, 0.01, 0.17, 0.05, '#c8b89a', 3, 5);
+    b.tube([0, 0, -0.14], [0, 0, -0.36], 0.03, 0.01, '#c8b89a', 4, false);
+  });
+  /* The depot. */
+  make('junctionBad', (b) => {
+    for (let i = 0; i < 5; i += 1) {
+      b.tube([-0.25, 0.4 - i * 0.12, -0.2], [-0.25 + Math.sin(i) * 0.5, 0.1 + i * 0.1, 0.25], 0.03, 0.03, ['#e2452f', '#ffc32d', '#1464e8', '#2ead5b', '#20252f'][i], 4, false);
+    }
+  }, false);
+  make('inverterOn', (b) => {
+    b.rbox(0, 0, 0, 0.05, 0.3, 0.5, '#14c46b', 0.05);
+  }, false);
+  /* Eco Delivery Rush: the six supplies, a decoy, and what they look like carried. */
+  make('itemSeedlings', (b) => {
+    b.rbox(0, 0.1, 0, 0.9, 0.2, 0.6, '#3d4756', 0.1);
+    for (let i = 0; i < 6; i += 1) {
+      b.ellipsoid(-0.3 + (i % 3) * 0.3, 0.32, -0.15 + Math.floor(i / 3) * 0.3, 0.12, 0.14, 0.12, '#4aa24c', { rows: 3, cols: 6 });
+    }
+  });
+  make('itemTents', (b) => {
+    b.tube([-0.45, 0.22, 0], [0.45, 0.22, 0], 0.2, 0.2, '#2ead5b', 8, true);
+    b.tube([-0.2, 0.22, 0], [-0.15, 0.22, 0], 0.21, 0.21, '#ffc32d', 8, false);
+    b.tube([0.15, 0.22, 0], [0.2, 0.22, 0], 0.21, 0.21, '#ffc32d', 8, false);
+  });
+  make('itemTraps', (b) => {
+    b.rbox(0, 0.3, 0, 0.72, 0.6, 0.72, '#6b7488', 0.25);
+    b.rbox(0, 0.35, 0.37, 0.3, 0.3, 0.05, '#20252f', 0.1);
+    b.ball(0, 0.38, 0.4, 0.07, '#3fa9f5', 3, 6);
+  });
+  make('itemDecoy', (b) => {
+    b.rbox(0, 0.3, 0, 0.72, 0.6, 0.72, '#6b7488', 0.25);
+    b.rbox(0, 0.35, 0.37, 0.3, 0.3, 0.05, '#20252f', 0.1);
+  });
+  make('itemMedkit', (b) => {
+    b.rbox(0, 0.25, 0, 0.7, 0.5, 0.45, '#f4f6f8', 0.2);
+    b.rbox(0, 0.3, 0.23, 0.32, 0.1, 0.03, '#e2452f', 0.03);
+    b.rbox(0, 0.3, 0.23, 0.1, 0.32, 0.03, '#e2452f', 0.03);
+  });
+  make('itemRope', (b) => {
+    b.tube([0, 0.05, 0], [0, 0.32, 0], 0.32, 0.3, '#c79a5c', 10, true);
+    b.tube([0, 0.32, 0], [0, 0.34, 0], 0.14, 0.14, '#8a6341', 8, true);
+  });
+  make('itemWater', (b) => {
+    for (const x of [-0.2, 0.2]) {
+      b.tube([x, 0, 0], [x, 0.5, 0], 0.17, 0.15, '#7fd0ff', 8, true);
+      b.tube([x, 0.5, 0], [x, 0.58, 0], 0.07, 0.07, '#1464e8', 6, true);
+    }
+  });
+  make('generator', (b) => {
+    b.rbox(0, 0.4, 0, 1.3, 0.8, 0.8, '#e2452f', 0.2);
+    b.tube([-0.65, 0.85, -0.4], [0.65, 0.85, -0.4], 0.04, 0.04, '#20252f', 4, false);
+  });
+  /* The Command Center: things that change as the team plays. */
+  make('pedestal', (b) => {
+    b.rbox(0, 0.08, 0, 0.9, 0.16, 0.9, '#8b98ad', 0.1);
+    b.tube([0, 0.16, 0], [0, 0.8, 0], 0.3, 0.26, '#f4f6f8', 10, false);
+    b.rbox(0, 0.86, 0, 0.72, 0.12, 0.72, '#1464e8', 0.1);
+    b.rbox(0, 0.86, 0, 0.76, 0.05, 0.76, '#ffc32d', 0.05);
+  });
+  make('trophy', (b) => {
+    b.rbox(0, 0.06, 0, 0.5, 0.12, 0.5, '#8a6341', 0.1);
+    b.tube([0, 0.12, 0], [0, 0.42, 0], 0.06, 0.08, '#ffc32d', 6, false);
+    b.tube([0, 0.42, 0], [0, 0.78, 0], 0.12, 0.26, '#ffc32d', 10, true);
+    b.ball(0, 0.92, 0, 0.1, '#fff6c2', 3, 6);
+  });
+  make('airLightBad', (b) => b.ball(0, 0, 0, 0.13, '#e2452f', 3, 6), false);
+  make('airLightOk', (b) => b.ball(0, 0, 0, 0.13, '#14c46b', 3, 6), false);
+  make('anemometer', (b) => {
+    for (let i = 0; i < 3; i += 1) {
+      const a = (i / 3) * Math.PI * 2;
+      b.tube([0, 0, 0], [Math.cos(a) * 0.5, 0, Math.sin(a) * 0.5], 0.03, 0.03, '#8b98ad', 4, false);
+      b.ball(Math.cos(a) * 0.5, 0, Math.sin(a) * 0.5, 0.11, '#ffc32d', 3, 6);
+    }
+  });
+  make('solarLamp', (b) => {
+    b.tube([0, 0, 0], [0, 2.6, 0], 0.06, 0.05, '#4a5568', 5, false);
+    b.rbox(0, 2.75, 0, 0.7, 0.06, 0.45, '#2b4f9e', 0.05);
+    b.ball(0, 2.45, 0.18, 0.16, '#fff3a6', 3, 6);
+  });
+  make('tollModel', (b) => {
+    b.rbox(0, 0.4, 0, 0.6, 0.8, 0.6, '#f4f6f8', 0.2);
+    b.tube([0.3, 0.75, 0], [2.4, 0.75, 0], 0.05, 0.05, '#ffffff', 4, false);
+    for (let i = 0; i < 4; i += 1) {
+      b.rbox(0.7 + i * 0.5, 0.75, 0, 0.18, 0.12, 0.12, '#e2452f', 0.02);
+    }
+    b.ball(0, 0.95, 0, 0.12, '#14c46b', 3, 6);
+  });
+  make('creekDisplay', (b) => {
+    b.rbox(0, 0.1, 0, 3.6, 0.2, 1.2, '#c79a5c', 0.1);
+    for (const [x, c] of [[-1.2, '#3f9b4a'], [0, '#2b6fd6'], [1.2, '#6b7488']] as [number, string][]) {
+      b.rbox(x, 0.6, 0, 0.8, 0.8, 0.7, c, 0.25);
+    }
+    b.tube([1.9, 0.2, 0], [1.9, 0.9, 0], 0.26, 0.26, '#2c3b55', 8, true);
+  });
+  make('nestBox', (b) => {
+    b.tube([0, 0, 0], [0, 2.2, 0], 0.07, 0.07, '#7d5a3c', 5, false);
+    b.rbox(0, 2.55, 0, 0.6, 0.7, 0.6, '#8a6341', 0.15);
+    b.ball(0, 2.6, 0.31, 0.12, '#3a2a1c', 3, 6);
+    b.rbox(0, 2.95, 0, 0.75, 0.1, 0.75, '#2fae6b', 0.1);
+  });
+  make('seedlingRack', (b) => {
+    b.rbox(0, 0.4, 0, 1.6, 0.1, 0.7, '#8a6341', 0.05);
+    for (let i = 0; i < 4; i += 1) {
+      b.ellipsoid(-0.6 + i * 0.4, 0.58, 0, 0.16, 0.16, 0.16, '#4aa24c', { rows: 3, cols: 6 });
+    }
+  });
   return props;
+}
+
+/* ---- Eco Delivery Rush: a supply yard at Balintawak ---- */
+
+/** Where the van stands, and where the team piles what it finds. */
+export const YARD_VAN: [number, number] = [6, -14];
+export const YARD_STAGE: [number, number] = [2.4, -11.6];
+
+export function buildYard(r: Renderer): Zone {
+  const rand = seeded(9101);
+  const s = new Scatter();
+  const colliders: Collider[] = [];
+  const inYard = (x: number, z: number): boolean => Math.abs(x) < 30 && Math.abs(z) < 24;
+  const height = (x: number, z: number): number => (inYard(x, z) || (Math.abs(x) < 5 && z < 0) ? 0 : smooth(32, 56, Math.max(Math.abs(x), Math.abs(z) + 4)) * 6);
+  const spots: Record<string, [number, number]> = {
+    spawn: [0, -33],
+    supervisor: [21, 5.2],
+    items: [0, 0],
+    itemSeedlings: [14, -2.4],
+    itemTents: [9, 14.2],
+    itemTraps: [-4, -3.6],
+    itemMedkit: [-19.4, -6],
+    itemRope: [-6, 7.6],
+    itemWater: [-14, -11.8],
+    stage: [2.4, -10.2],
+    van: [6.4, -10],
+    desk: [-6, -17.6],
+    patch1: [14.2, 14.2],
+    patch2: [-18, 3.8],
+    patch3: [-20.4, 7.6],
+    critter1: [23.6, -13.6],
+  };
+  /* The warehouse, with a gutter along the front. */
+  {
+    const b = s.cell(-12, 15).solid;
+    b.rbox(-12, 3, 15, 24, 6, 10, '#d9c9a8', 0.25);
+    b.rbox(-12, 6.15, 15, 24.6, 0.3, 10.6, '#8a4a22', 0.2);
+    b.tube([-24.2, 5.95, 9.75], [0.2, 5.95, 9.75], 0.12, 0.12, '#8b98ad', 6, false);
+    b.rbox(-12, 2.2, 9.96, 6, 4.4, 0.08, '#5a3f28', 0.15);
+    boxColliders(colliders, -24, 10, 0, 20);
+  }
+  /* Tall storage racks: tents on the top shelf. */
+  {
+    const b = s.cell(10, 17).solid;
+    for (const x of [5, 10, 15]) {
+      for (const z of [16, 18]) {
+        b.tube([x, 0, z], [x, 5, z], 0.08, 0.08, '#ff7a1a', 5, false);
+      }
+    }
+    for (const y of [1.2, 2.6, 4.2]) {
+      b.rbox(10, y, 17, 10.4, 0.12, 2.2, '#4a5568', 0.05);
+    }
+    for (const [x, y] of [[6.5, 1.5], [12, 1.5], [7.5, 2.9], [13.5, 2.9]] as [number, number][]) {
+      b.rbox(x, y + 0.3, 17, 1.4, 0.6, 1.4, ['#c79a5c', '#8a6341'][Math.floor(x) % 2], 0.2);
+    }
+    boxColliders(colliders, 5, 16, 15, 18, 1.1);
+  }
+  /* The yard office. */
+  {
+    const b = s.cell(22, 12).solid;
+    b.rbox(22.5, 1.8, 12, 9, 3.6, 8, '#f7fafc', 0.3);
+    b.rbox(22.5, 3.75, 12, 9.4, 0.3, 8.4, '#1e5bb8', 0.2);
+    b.rbox(22.5, 1.1, 7.96, 1.2, 2.2, 0.08, '#3d5a80', 0.15);
+    b.rbox(19.8, 2.2, 7.96, 2, 1, 0.08, '#9fd6f2', 0.15);
+    boxColliders(colliders, 18, 8, 27, 16);
+  }
+  /* A locked cage: the specialist kit inside, reachable through the mesh. */
+  {
+    const b = s.cell(-24, -6).solid;
+    for (let x = -28; x <= -21; x += 1.75) {
+      for (const z of [-10, -2]) {
+        b.tube([x, 0, z], [x, 2.4, z], 0.05, 0.05, '#8b98ad', 4, false);
+        colliders.push({ x, z, r: 0.4 });
+      }
+    }
+    for (let z = -10; z <= -2; z += 2) {
+      for (const x of [-28, -21]) {
+        b.tube([x, 0, z], [x, 2.4, z], 0.05, 0.05, '#8b98ad', 4, false);
+        colliders.push({ x, z, r: 0.4 });
+      }
+    }
+    for (const y of [0.3, 1.2, 2.3]) {
+      s.cell(-24, -6).soft.tube([-28, y, -10], [-21, y, -10], 0.025, 0.025, '#aeb4bd', 3, false);
+      s.cell(-24, -6).soft.tube([-28, y, -2], [-21, y, -2], 0.025, 0.025, '#aeb4bd', 3, false);
+      s.cell(-24, -6).soft.tube([-21, y, -10], [-21, y, -2], 0.025, 0.025, '#aeb4bd', 3, false);
+      s.cell(-24, -6).soft.tube([-28, y, -10], [-28, y, -2], 0.025, 0.025, '#aeb4bd', 3, false);
+    }
+  }
+  /* The nursery bench, the tap stand and the dispatch desk. */
+  {
+    const b = s.cell(14, -4).solid;
+    b.rbox(14, 0.45, -4.4, 3, 0.12, 1.2, '#8a6341', 0.05);
+    for (const x of [12.7, 15.3]) {
+      b.tube([x, 0, -4.4], [x, 0.45, -4.4], 0.06, 0.06, '#7d5a3c', 4, false);
+    }
+    colliders.push({ x: 14, z: -4.4, r: 1.1 });
+    const t = s.cell(-14, -14).solid;
+    t.tube([-14, 0, -14], [-14, 1.1, -14], 0.08, 0.08, '#8b98ad', 5, false);
+    t.tube([-14, 1.05, -14], [-14, 1.05, -13.6], 0.04, 0.04, '#8b98ad', 4, false);
+    colliders.push({ x: -14, z: -14, r: 0.5 });
+    const d = s.cell(-6, -20).solid;
+    d.rbox(-6, 0.5, -19.6, 2.4, 1, 1, '#17304d', 0.2);
+    d.rbox(-6, 1.05, -19.6, 2.2, 0.08, 0.9, '#dfeefc', 0.05);
+    colliders.push({ x: -6, z: -19.6, r: 1.2 });
+    /* A tree in the corner, where the sparrows are. */
+    roundTree(s, 26, 0, -19, 1.1, rand);
+    colliders.push({ x: 26, z: -19, r: 0.8 });
+  }
+  /* The fence, open at the gate. */
+  {
+    const fence = (x0: number, z0: number, x1: number, z1: number): void => {
+      const n = Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 4);
+      for (let i = 0; i <= n; i += 1) {
+        const x = x0 + ((x1 - x0) * i) / n;
+        const z = z0 + ((z1 - z0) * i) / n;
+        s.cell(x, z).solid.tube([x, 0, z], [x, 1.8, z], 0.06, 0.06, '#6b7488', 4, false);
+        colliders.push({ x, z, r: 0.35 });
+      }
+      for (const y of [0.6, 1.6]) {
+        s.cell((x0 + x1) / 2, (z0 + z1) / 2).soft.tube([x0, y, z0], [x1, y, z1], 0.03, 0.03, '#8b98ad', 4, false);
+      }
+    };
+    fence(-30, -24, -5, -24);
+    fence(5, -24, 30, -24);
+    fence(-30, 24, 30, 24);
+    fence(-30, -24, -30, 24);
+    fence(30, -24, 30, 24);
+  }
+  for (let i = 0; i < 4; i += 1) {
+    s.cell(0 + i * 4, -14).soft.rbox(1 + i * 4, 0.03, -14, 0.18, 0.04, 6, '#f2f2ee', 0.1);
+  }
+  /* Trees and houses outside. */
+  for (let i = 0; i < 200; i += 1) {
+    const x = -66 + rand() * 132;
+    const z = -66 + rand() * 132;
+    if ((Math.abs(x) < 34 && Math.abs(z) < 28) || (Math.abs(x) < 7 && z < 0)) {
+      continue;
+    }
+    const y = height(x, z);
+    const k = rand();
+    if (k < 0.4) {
+      tallTree(s, x, y, z, 0.85 + rand() * 0.4, rand, Math.floor(rand() * 3));
+    } else if (k < 0.65) {
+      roundTree(s, x, y, z, 1.1, rand);
+    } else if (k < 0.8) {
+      palm(s, x, y, z, 0.9, rand);
+    } else {
+      bush(s, x, y, z, 0.9, rand);
+    }
+  }
+  const terrain = buildTerrain(r, {
+    minX: -72,
+    maxX: 72,
+    minZ: -72,
+    maxZ: 72,
+    step: 2,
+    height,
+    color: (x, z, _h, slope) => {
+      if (inYard(x, z)) {
+        return (Math.floor(x / 8) + Math.floor(z / 8)) & 1 ? yardPaint : mix3(yardPaint, concrete, 0.5);
+      }
+      if (Math.abs(x) < 4.5 && z < 0) {
+        return asphalt;
+      }
+      const patch = Math.sin(x * 0.2 + z * 0.13) * 0.2 + Math.sin(z * 0.27 - x * 0.08) * 0.2;
+      return groundColor(9, patch, slope);
+    },
+  });
+  const chunks = s.build(r);
+  const cloudMesh = clouds(r, 63, 150);
+  const images: ZoneImage[] = [
+    { key: 'yardSign', x: -12, y: 5, z: 9.86, yaw: Math.PI, w: 8, h: 0.8 },
+    { key: 'yardOffice', x: 22.5, y: 3.2, z: 7.88, yaw: Math.PI, w: 4, h: 0.45 },
+  ];
+  return {
+    id: 'yard',
+    geometry: { terrain, chunks, water: null },
+    cloudMesh,
+    env: DAY,
+    height,
+    colliders,
+    walkable: (x, z) => (Math.abs(x) < 29.4 && Math.abs(z) < 23.4) || (Math.abs(x) < 4.2 && z < 0 && z > -44),
+    spots,
+    waterY: null,
+    images,
+    meshes: [terrain, cloudMesh, ...chunks.flatMap((c) => [c.solid, c.soft].filter((m): m is Mesh => m !== null))],
+  };
 }

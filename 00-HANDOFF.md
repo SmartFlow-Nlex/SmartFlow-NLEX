@@ -18,7 +18,7 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - They work from **mockup screenshots** and expect the app to match them closely ("make it identical"), then send phone screenshots of what is wrong.
 
 ### How Ysa wants things done
-- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-13**, so next is **Ysa-Commit-14**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
+- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-15**, so next is **Ysa-Commit-16**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
 - **"Make the server up":** start Metro from the **repo root**, then give the `exp://` address and a QR code (see §1). Check the phone can really load the bundle, not just the manifest.
 - Never commit `.env` (it holds keys; it is in `.gitignore`).
 - Use real data only — no mock traffic data, no fake posts.
@@ -278,6 +278,22 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - **Remember me** starts unticked. Sign-up no longer remembers the account silently either, since it has no box to opt in with.
 - **Wording:** the wrong-code message (`mfa.ts`) and the reset-link message (`forgot-password.tsx`) use the panel's exact text. "TRAFFIC INTELLIGENCE" is gone from the tab header.
 - **Welcome email:** `sendWelcomeEmail` (`frontend/auth/welcomeEmail.ts`) runs once `register` succeeds, and calls a Google Apps Script running as navie.smartflow@gmail.com (`supabase/welcome-email.gs`, which has the setup steps). The backend cannot send it: Render's free tier blocks outgoing SMTP. The script takes the session token, asks Supabase whose it is, and writes only to that address, once, within 15 minutes of the account's creation. Without `EXPO_PUBLIC_WELCOME_EMAIL_URL` in `.env`, nothing is sent and sign-up still works.
+
+### 7 Nov — Ysa-Commit-15 (Wildway Guardians gameplay expansion)
+- **Wildway Guardians** (`frontend/games/wildway/`) grew from walk-to-the-marker into an adventure, with nothing removed:
+  - **Four NLEX missions:** The Gridlock in five stages, with a tag reader that fails on one of the player's own lanes; Creek Rescue; Solar Power Rescue; and the new Eco Delivery Rush, in a supply yard at Balintawak.
+  - **Puzzles:** circuits, sensor dials and van packing.
+  - **A living Command Center:** people walking about, a patrol car, side quests, a workshop, an achievement gallery.
+  - **Things to find:** hidden patches and wildlife to spot.
+  - **Getting around:** a hint button and a Go button.
+  - **Save version 3**, which older saves load into.
+- Every number is simulated: no NLEX data, by Ysa's request. The heroes stay Dayo, Baging, Sukat and Awit, not the copyrighted characters the brief named.
+- Details, including what is still planned (RFID Rescue, Rainy Day, Night Shift, Eco Convoy, Wasteworks Showdown): `frontend/games/wildway/README.md`, section "The gameplay expansion".
+- Rebuild with `node scripts/build-wildway.js` if you edit it. Not yet played on a real phone.
+
+### 7 Nov — Ysa-Commit-14 (broken road redrawn to Ysa's reference)
+- **Tollbound Heroes:** broken stretches are grey asphalt cracked all over (big dark cracks in lane-wide blocks, fine crazing, dusty weathering), with the lane lines on top; potholes are shallow, dark and mottled. Gameplay is unchanged. The texture paints in nine stages, one per frame, so nothing stutters. Details: `DESIGN.md` section 20, `AUDIT.md` (the broken road redrawn).
+- Only the Road Trip files went in. The Wildway expansion and the Arcade blurb that goes with it were still uncommitted at the time and were left out.
 
 ### 3–6 Nov — Ysa-Commit-13 (Navie's language switch live, Tollbound Heroes art and 100 levels, Wildway)
 - **Navie's EN / TL switch** translates the whole chat (`POST /api/assistant/translate`). It had never been deployed, so on phones every switch said "Hindi ito naisalin" (Render answered 404). Also fixed: Tagalog to English turned "papuntang Manila" into northbound, which the fact check refused, so southbound replies could never switch; `withEnglishDirections` now puts the direction in English before the model sees it. Road rules come from the sourced table in `backend/src/services/roadRules.ts`.

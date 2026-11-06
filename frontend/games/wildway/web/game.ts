@@ -2,12 +2,13 @@ import type { MissionRun } from '../core/mission';
 import { newActor, pose, poseBird, type Actor, type ActionPose, type BirdState } from './anim';
 import type { GameAudio } from './audio';
 import { angleTo, clamp, ease, lerp, placement, mat4, type Vec3 } from './gl/math';
+import { MeshBuilder } from './gl/builder';
 import type { Mesh, Renderer } from './gl/renderer';
 import type { InputController } from './input';
 import { makeAwit, makeBaging, makeChief, makeDayo, makeDriver, makeHornbill, makeOfficer, makeRanger, makeResident, makeSpecialist, makeSukat, makeVet, makeVehicle, type HeroId, type VehicleKind } from './models';
 import type { ZoneId } from '../core/mission';
 import type { Texture } from './gl/renderer';
-import { buildDepot, buildNlexProps, buildPlaza, buildRiver } from './world/nlexZones';
+import { buildDepot, buildNlexProps, buildPlaza, buildRiver, buildYard } from './world/nlexZones';
 import { BRIDGE, buildForest, buildForestProps, buildStation, creekZ, type Zone } from './world/zones';
 
 /**
@@ -54,6 +55,27 @@ interface Follow {
   x: number;
   z: number;
 }
+
+/** Little bursts of feedback: sparks off a repair, confetti, splashes, leaves, a sparkle. */
+export type BurstKind = 'spark' | 'confetti' | 'splash' | 'leaf' | 'sparkle' | 'dust';
+
+interface Particle {
+  mesh: Mesh;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  life: number;
+  max: number;
+  spin: number;
+  yaw: number;
+  scale: number;
+  gravity: number;
+}
+
+const MAX_PARTICLES = 90;
 
 const SPEED: Record<HeroId, number> = { dayo: 6.2, baging: 5.6, sukat: 5.2, awit: 6.6 };
 const CAMERA_DIST = 11.5;
@@ -117,6 +139,17 @@ export class Game {
   private lastNotice = 0;
   highDetail = true;
   showShadows = true;
+  /** Workshop gear: walking speed, kite time and vine reach. Set by the app from the save. */
+  speedBoost = 1;
+  glideMax = 4.5;
+  vinesExtra = 0;
+  /** Fewer, gentler particles. */
+  reduceMotion = false;
+  /** Whether the beacon is drawn: the guidance setting, or a hint just asked for. */
+  showBeacon = true;
+  private particles: Particle[] = [];
+  private particleMeshes: Record<BurstKind, Mesh[]> = { spark: [], confetti: [], splash: [], leaf: [], sparkle: [], dust: [] };
+  private cheerLeft = 0;
   private readonly upgradesAtBuild: { list: readonly string[] } = { list: [] };
 
   constructor(
@@ -141,7 +174,11 @@ export class Game {
       driver1: newActor('person', makeDriver(r, '#e2452f'), 0, 0, 0),
       driver2: newActor('person', makeDriver(r, '#2fae6b'), 0, 0, 0),
       driver3: newActor('person', makeDriver(r, '#7d5cff'), 0, 0, 0),
+      ben: newActor('person', makeDriver(r, '#ffc32d'), 0, 0, 0),
+      tech: newActor('person', makeDriver(r, '#14995c'), 0, 0, 0),
+      staff: newActor('person', makeResident(r, '#1e5bb8', '#33405a', '#8d5a3b'), 0, 0, 0),
     };
+    this.buildParticles();
     this.bird = newActor('bird', makeHornbill(r), 0, 0, 0, 0, 1.3);
     input.onSwitch = (i) => {
       if (!this.busy && !this.paused) {
@@ -176,6 +213,7 @@ export class Game {
       plaza: () => buildPlaza(this.r),
       river: () => buildRiver(this.r),
       depot: () => buildDepot(this.r),
+      yard: () => buildYard(this.r),
     };
     this.zone = builders[id]();
     this.zoneId = id;
@@ -190,6 +228,7 @@ export class Game {
     this.keepOut = null;
     this.guide = null;
     this.birdVisible = false;
+    this.particles = [];
     this.audio.setRegion(id === 'forest' || id === 'river' ? 'forest' : 'station');
     this.audio.setHum(0);
     for (const npc of Object.values(this.npcs)) {
@@ -338,7 +377,7 @@ export class Game {
       if (!it.when()) {
         continue;
       }
-      const reach = this.active === 'baging' && it.stretchRadius !== undefined ? it.stretchRadius : it.radius;
+      const reach = this.active === 'baging' && it.stretchRadius !== undefined ? it.stretchRadius + this.vinesExtra : it.radius;
       const d = Math.hypot(h.x - it.x, h.z - it.z);
       if (d < reach && d < bestD) {
         best = it;
@@ -388,6 +427,15 @@ export class Game {
       }
       this.moveFollowers(dt);
     }
+    if (!this.paused) {
+      this.updateParticles(dt);
+      if (this.cheerLeft > 0) {
+        this.cheerLeft -= dt;
+        for (const id of HERO_ORDER) {
+          this.heroes[id].pose = this.cheerLeft > 0 ? 'cheer' : 'none';
+        }
+      }
+    }
     for (const a of [...Object.values(this.heroes), ...Object.values(this.npcs), this.bird]) {
       a.t += this.paused ? 0 : dt;
       a.squash *= 1 - ease(8, dt);
@@ -410,7 +458,7 @@ export class Game {
     const amt = Math.min(1, Math.hypot(mx, my));
     this.handleGlide(dt);
     const carrying = this.carrying.length > 0;
-    const speed = SPEED[this.active] * (this.gliding ? 1.35 : 1) * (carrying ? 0.82 : 1);
+    const speed = SPEED[this.active] * this.speedBoost * (this.gliding ? 1.35 : 1) * (carrying ? 0.82 : 1);
     if (amt > 0.05) {
       const fx = Math.sin(this.camYaw);
       const fz = Math.cos(this.camYaw);
@@ -484,12 +532,12 @@ export class Game {
         this.gliding = false;
       }
     } else {
-      this.glideLeft = Math.min(4.5, this.glideLeft + dt * 1.2);
+      this.glideLeft = Math.min(this.glideMax, this.glideLeft + dt * 1.2);
     }
   }
 
   get glideShare(): number {
-    return this.glideLeft / 4.5;
+    return this.glideLeft / this.glideMax;
   }
 
   private tryMove(h: Actor, dx: number, dz: number): void {
@@ -613,7 +661,7 @@ export class Game {
         a.x = goal.x;
         a.z = goal.z;
       } else if (d > 0.25) {
-        const v = Math.min(d * 5, SPEED[id] * 1.15);
+        const v = Math.min(d * 5, SPEED[id] * this.speedBoost * 1.15);
         a.x += (dx / d) * v * dt;
         a.z += (dz / d) * v * dt;
         a.yaw += angleTo(a.yaw, Math.atan2(dx, dz)) * ease(10, dt);
@@ -695,8 +743,14 @@ export class Game {
       }
     }
     for (const p of this.worldProps) {
-      if (p.visible()) {
-        r.draw(p.mesh, { model: placement(this.model, p.x, p.y, p.z, p.yaw, p.scale) });
+      /* Off-screen props cost a draw call each: skip them, using the mesh's own bounding sphere. */
+      const m = p.mesh;
+      const c = Math.cos(p.yaw);
+      const sn = Math.sin(p.yaw);
+      const cx = p.x + (m.center[0] * c + m.center[2] * sn) * p.scale;
+      const cz = p.z + (-m.center[0] * sn + m.center[2] * c) * p.scale;
+      if (p.visible() && r.visible([cx, p.y + m.center[1] * p.scale, cz], m.radius * p.scale + 0.5)) {
+        r.draw(m, { model: placement(this.model, p.x, p.y, p.z, p.yaw, p.scale) });
       }
     }
     for (const im of zone.images ?? []) {
@@ -724,7 +778,98 @@ export class Game {
       r.draw(this.bird.ch.mesh, { model: placement(this.model, this.bird.x, this.bird.y, this.bird.z, this.bird.yaw, this.bird.scale), bones });
     }
     this.drawCarried();
+    this.drawParticles();
     this.drawBeacon();
+  }
+
+  /* ---- Feedback ---- */
+
+  private buildParticles(): void {
+    const one = (fn: (b: MeshBuilder) => void): Mesh => {
+      const b = new MeshBuilder();
+      fn(b);
+      return this.r.mesh(b, false);
+    };
+    this.particleMeshes = {
+      spark: ['#ffd24a', '#ff9a3c', '#fff6c2'].map((c) => one((b) => b.ball(0, 0, 0, 0.09, c, 3, 5))),
+      confetti: ['#e2452f', '#ffc32d', '#1464e8', '#2ead5b', '#ff4fa3', '#7d5cff'].map((c) => one((b) => b.rbox(0, 0, 0, 0.22, 0.03, 0.12, c, 0.1))),
+      splash: ['#bfe9ff', '#7fd0ff', '#ffffff'].map((c) => one((b) => b.ball(0, 0, 0, 0.1, c, 3, 5))),
+      leaf: ['#5ebf56', '#7fd06a', '#3f9f4d'].map((c) => one((b) => b.ellipsoid(0, 0, 0, 0.16, 0.03, 0.08, c, { rows: 2, cols: 5 }))),
+      sparkle: ['#fff6c2', '#ffffff'].map((c) =>
+        one((b) => {
+          b.rbox(0, 0, 0, 0.36, 0.06, 0.06, c, 0.1);
+          b.rbox(0, 0, 0, 0.06, 0.36, 0.06, c, 0.1);
+        }),
+      ),
+      dust: ['#d5d0c4', '#c7c2b6'].map((c) => one((b) => b.ball(0, 0, 0, 0.22, c, 3, 6))),
+    };
+  }
+
+  /** A burst of particles at a spot. Reduced motion keeps a few, slow and small. */
+  burst(kind: BurstKind, x: number, y: number, z: number, count = 14): void {
+    const meshes = this.particleMeshes[kind];
+    const n = this.reduceMotion ? Math.min(count, 4) : count;
+    const speed = this.reduceMotion ? 0.4 : 1;
+    for (let i = 0; i < n && this.particles.length < MAX_PARTICLES; i += 1) {
+      const a = Math.random() * Math.PI * 2;
+      const up = kind === 'confetti' ? 5 + Math.random() * 3 : kind === 'leaf' ? 1.6 + Math.random() : kind === 'dust' ? 0.6 + Math.random() * 0.6 : 2.4 + Math.random() * 2;
+      const out = kind === 'sparkle' ? 0.6 : kind === 'dust' ? 1.4 : 1.8 + Math.random() * 1.6;
+      const max = kind === 'confetti' ? 2.2 : kind === 'sparkle' ? 0.9 : 1 + Math.random() * 0.5;
+      this.particles.push({
+        mesh: meshes[i % meshes.length],
+        x,
+        y,
+        z,
+        vx: Math.cos(a) * out * speed,
+        vy: up * speed,
+        vz: Math.sin(a) * out * speed,
+        life: max,
+        max,
+        spin: (Math.random() - 0.5) * 8,
+        yaw: a,
+        scale: kind === 'sparkle' ? 0.7 + Math.random() * 0.6 : 1,
+        gravity: kind === 'confetti' ? 3 : kind === 'leaf' ? 1.2 : kind === 'sparkle' ? 0 : kind === 'dust' ? -0.4 : 9,
+      });
+    }
+  }
+
+  /** Everyone cheers for a moment, under a shower of confetti. */
+  celebrate(seconds = 2.4): void {
+    this.cheerLeft = seconds;
+    const h = this.heroes[this.active];
+    this.burst('confetti', h.x, h.y + 2.4, h.z, 28);
+    this.audio.play('star');
+  }
+
+  get particleCount(): number {
+    return this.particles.length;
+  }
+
+  private updateParticles(dt: number): void {
+    for (let i = this.particles.length - 1; i >= 0; i -= 1) {
+      const p = this.particles[i];
+      p.life -= dt;
+      if (p.life <= 0) {
+        this.particles.splice(i, 1);
+        continue;
+      }
+      p.vy -= p.gravity * dt;
+      const drag = p.gravity === 3 || p.gravity === 1.2 ? 0.9 : 1;
+      p.vx *= drag ** (dt * 60 * 0.05);
+      p.vz *= drag ** (dt * 60 * 0.05);
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      p.yaw += p.spin * dt;
+    }
+  }
+
+  private drawParticles(): void {
+    for (const p of this.particles) {
+      const k = p.life / p.max;
+      const s = p.scale * (0.35 + 0.65 * Math.min(1, k * 2));
+      this.r.draw(p.mesh, { model: placement(this.model, p.x, p.y, p.z, p.yaw, s), noOutline: true });
+    }
   }
 
   private distance(c: Vec3): number {
@@ -764,7 +909,7 @@ export class Game {
 
   private drawBeacon(): void {
     const guide = this.guideNow;
-    if (guide === null || this.busy) {
+    if (guide === null || this.busy || !this.showBeacon) {
       return;
     }
     const [x, z] = guide;

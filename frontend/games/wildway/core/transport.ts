@@ -463,6 +463,74 @@ export const RIVER_TRANSPORT: TransportProblem = {
   baselineLabel: 'The usual way: three truck runs on the main road at 6:00 AM',
 };
 
+/* ---- Eco Delivery Rush: the field supplies from the Balintawak yard to the ridge's partner station ---- */
+
+const DELIVERY_DEADLINE = 12 * 60;
+
+/** Everything the team gathered and packed at the yard. Packing it tight is what lets one van take it all. */
+export const DELIVERY_TRANSPORT: TransportProblem = {
+  id: 'nlex-delivery',
+  demand: {
+    people: 2,
+    peopleLabel: 'the field technicians',
+    peopleDeadline: DELIVERY_DEADLINE,
+    cargo: [
+      { id: 'seedlings', label: 'Seedling trays', kg: 80, enclosed: false, deadline: DELIVERY_DEADLINE },
+      { id: 'fieldgear', label: 'Tents, rope, tools and water', kg: 75, enclosed: false, deadline: DELIVERY_DEADLINE },
+      { id: 'kit', label: 'Specialist kit and camera traps', kg: 60, enclosed: true, deadline: DELIVERY_DEADLINE },
+    ],
+  },
+  fleets: [
+    {
+      id: 'two-vans',
+      label: 'Two vans, loaded loose',
+      blurb: 'The usual way: whatever does not fit goes in a second van.',
+      trips: [
+        { vehicleId: 'van', people: 2, cargo: ['kit', 'fieldgear'] },
+        { vehicleId: 'van', people: 0, cargo: ['seedlings'] },
+      ],
+    },
+    { id: 'one-van', label: 'One van, packed tight', blurb: 'Everything the team packed, in one field van.', trips: [{ vehicleId: 'van', people: 2, cargo: ['kit', 'fieldgear', 'seedlings'] }] },
+    { id: 'evan', label: 'Electric van, packed tight', blurb: 'Everything the team packed, in the electric van.', trips: [{ vehicleId: 'evan', people: 2, cargo: ['kit', 'fieldgear', 'seedlings'] }] },
+    {
+      id: 'van-pickup',
+      label: 'Van and pickup',
+      blurb: 'Van for the team and the kit, pickup for the open loads.',
+      trips: [
+        { vehicleId: 'van', people: 2, cargo: ['kit'] },
+        { vehicleId: 'pickup', people: 0, cargo: ['seedlings', 'fieldgear'] },
+      ],
+    },
+    { id: 'pickup-all', label: 'Just the pickup', blurb: 'Everything in the open back of the pickup.', trips: [{ vehicleId: 'pickup', people: 2, cargo: ['kit', 'fieldgear', 'seedlings'] }] },
+  ],
+  routes: [
+    {
+      id: 'nlex',
+      label: 'NLEX, then the provincial road',
+      blurb: 'Expressway most of the way.',
+      distanceKm: 52,
+      movingMin: 62,
+      windows: { early: { stationaryMin: 6, movingFactor: 1.02 }, mid: { stationaryMin: 24, movingFactor: 1.2 }, late: { stationaryMin: 8, movingFactor: 1.05 } },
+    },
+    {
+      id: 'old',
+      label: 'Old national road',
+      blurb: 'Shorter, through the town centres.',
+      distanceKm: 46,
+      movingMin: 100,
+      windows: { early: { stationaryMin: 18, movingFactor: 1.15 }, mid: { stationaryMin: 34, movingFactor: 1.3 }, late: { stationaryMin: 26, movingFactor: 1.2 } },
+    },
+  ],
+  departures: [
+    { id: 'early', label: '6:00 AM', time: 6 * 60 },
+    { id: 'mid', label: '8:00 AM', time: 8 * 60 },
+    { id: 'late', label: '10:00 AM', time: 10 * 60 },
+  ],
+  availableFrom: { evan: { time: 7 * 60 + 30, because: 'on the morning clinic run' } },
+  baseline: { fleetId: 'two-vans', routeId: 'nlex', departureId: 'early' },
+  baselineLabel: 'The usual way: two vans, loaded loose, by NLEX at 6:00 AM',
+};
+
 /* ---- The Eco Expressway: getting the chosen upgrades and the installers to the depot ---- */
 
 export interface DepotCargo {

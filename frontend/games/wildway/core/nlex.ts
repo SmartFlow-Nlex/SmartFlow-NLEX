@@ -16,7 +16,7 @@ export interface NlexStop {
 }
 
 export const NLEX_STOPS: readonly NlexStop[] = [
-  { id: 'balintawak', name: 'Balintawak', theme: 'Start of the line: Navie’s briefing on NLEX operations', missionId: null },
+  { id: 'balintawak', name: 'Balintawak', theme: 'Supply yard: packing and sending field deliveries', missionId: 'nlex-delivery' },
   { id: 'valenzuela', name: 'Valenzuela', theme: 'Community environmental missions', missionId: 'nlex-river' },
   { id: 'bocaue', name: 'Bocaue', theme: 'Toll plaza and traffic flow', missionId: 'nlex-gridlock' },
   { id: 'san-fernando', name: 'San Fernando', theme: 'Eco facility and support missions', missionId: 'nlex-eco' },
@@ -30,6 +30,7 @@ const NEEDS: Record<string, string | null> = {
   'hornbill-homecoming': null,
   'nlex-river': 'nlex-gridlock',
   'nlex-eco': 'nlex-gridlock',
+  'nlex-delivery': 'nlex-gridlock',
 };
 
 export const missionOpen = (save: SaveData, missionId: string): boolean => {

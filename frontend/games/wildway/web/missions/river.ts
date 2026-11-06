@@ -6,11 +6,15 @@ import type { Interaction } from '../game';
 import type { Vec3 } from '../gl/math';
 import type { HeroId, VehicleKind } from '../models';
 import { riverZ } from '../world/nlexZones';
+
+const RIVER_WATER_Y = -0.9;
 import { anyHero, HERO_NAME, navieKey, ScriptBase } from './base';
 
 /**
- * River Rescue, at a made-up creek in a made-up barangay. The oil is left to the
- * specialist: the heroes report it and keep back.
+ * Creek Rescue, at a made-up creek in a made-up barangay. Sukat follows the oil to where
+ * it starts, and the oil is left to the specialist: the heroes report it and keep back.
+ * Then the rubbish, the trash rack, the water channels at the gate, and native grass on
+ * the bare bank. Wildlife comes back once the water runs clean.
  */
 
 /* Murky but still plainly water: grey-green, not the brown of the banks. */
@@ -34,7 +38,8 @@ const BANK_FOR: Record<string, [number, number]> = {
 };
 
 const BIN_SPOT: Record<WasteKind, string> = { bio: 'binBio', recycle: 'binRecycle', residual: 'binResidual' };
-const SPAWN: Record<string, string> = { meet: 'spawn', survey: 'officer', hazard: 'footbridge', collect: 'bins', rack: 'bins', gate: 'bankEast', plan: 'bankEast' };
+const SPAWN: Record<string, string> = { meet: 'spawn', survey: 'officer', trace: 'footbridge', hazard: 'footbridge', collect: 'bins', rack: 'bins', gate: 'bankEast', replant: 'bankEast', plan: 'bankEast' };
+const REEDS = [1, 2, 3] as const;
 
 export class RiverScript extends ScriptBase {
   protected readonly def = RIVER_MISSION;
@@ -85,6 +90,18 @@ export class RiverScript extends ScriptBase {
       this.prop(item.id, x, z, () => !this.sorted(item.id) && !carried(), { y: item.floating ? -0.9 : undefined, yaw: x * 0.7 });
     }
     this.prop('drum', s.drum[0], s.drum[1], () => !this.has('hazardSafe'), { yaw: 0.4 });
+    /* The oil trail, until the drum is taken away. */
+    for (const n of [1, 2, 3]) {
+      const [x, z] = s[`trace${n}`];
+      this.prop('traceMark', x + 0.6, z - 0.4, () => !this.has('hazardSafe'), { yaw: n });
+    }
+    /* Native grass: the tray, the marked spots, and what has been planted. */
+    this.prop('seedTray', s.seedTray[0], s.seedTray[1] + 0.9, () => this.step() === 'replant' || this.stepAtLeast('plan'), { yaw: 0.2 });
+    for (const n of REEDS) {
+      const [x, z] = s[`reed${n}`];
+      this.prop('stakeMark', x, z - 1.2, () => this.step() === 'replant' && !this.has(`reed:${n}`));
+      this.prop('grassPlug', x, z - 1.2, () => this.has(`reed:${n}`), { yaw: n * 1.3 });
+    }
     this.prop('oilSheen', s.drum[0] + 1, riverZ(s.drum[0] + 1) - 1, () => !this.has('hazardSafe'), { y: -0.86 });
     this.prop('rackJunk', 31.3, riverZ(31.3), () => !this.has('rackCleared'), { y: -0.35 });
     /* Reeds along the banks, once the water runs clean. */
@@ -119,6 +136,35 @@ export class RiverScript extends ScriptBase {
         when: () => this.step() === 'survey',
         by: { sukat: { label: 'Scan the creek', hold: 1, pose: 'scan', run: () => this.survey() } },
       },
+      ...[1, 2, 3].map(
+        (n): Interaction => ({
+          id: `trace${n}`,
+          x: s[`trace${n}`][0],
+          z: s[`trace${n}`][1],
+          radius: 2.8,
+          suggest: 'sukat',
+          when: () => this.step() === 'trace' && (n === 1 || this.has(`trace:${n - 1}`)) && !this.has(`trace:${n}`),
+          by: { sukat: { label: 'Read the oil trail', hold: 0.8, pose: 'scan', run: () => this.trace(n) } },
+        }),
+      ),
+      {
+        id: 'tray',
+        x: s.seedTray[0],
+        z: s.seedTray[1],
+        radius: 2.6,
+        when: () => this.step() === 'replant' && this.canCarryMore() && REEDS.filter((n) => !this.has(`reed:${n}`)).length > g.carrying.filter((c) => c.id.startsWith('grass')).length,
+        by: anyHero({ label: 'Take a native grass seedling', hold: 0, run: () => this.pickUp(`grass${g.carrying.length}`, 'grassPlug') }),
+      },
+      ...REEDS.map(
+        (n): Interaction => ({
+          id: `reed${n}`,
+          x: s[`reed${n}`][0],
+          z: s[`reed${n}`][1],
+          radius: 2,
+          when: () => this.step() === 'replant' && !this.has(`reed:${n}`) && g.carrying.some((c) => c.id.startsWith('grass')),
+          by: anyHero({ label: 'Plant the native grass', hold: 0.6, pose: 'work', run: () => this.plant(n) }),
+        }),
+      ),
       {
         id: 'hazard',
         x: s.hazardTalk[0],
@@ -164,7 +210,12 @@ export class RiverScript extends ScriptBase {
     for (const item of RIVER_ITEMS) {
       const [x, z] = item.floating ? BANK_FOR[item.id] : LITTER_AT[item.id];
       const when = (): boolean => this.stepAtLeast('collect') && !this.sorted(item.id) && !g.carrying.some((c) => c.id === item.id) && this.canCarryMore();
-      const take = (): void => this.pickUp(item.id, item.id);
+      const take = (): void => {
+        this.pickUp(item.id, item.id);
+        if (item.floating) {
+          g.burst('splash', x, RIVER_WATER_Y + 0.6, z - 3, 14);
+        }
+      };
       list.push(
         item.floating
           ? { id: `item-${item.id}`, x, z, radius: 2.4, stretchRadius: 3.6, suggest: 'baging', when, by: { baging: { label: `Stretch and fish out the ${item.label}`, hold: 0.8, pose: 'stretch', run: take } } }
@@ -183,6 +234,7 @@ export class RiverScript extends ScriptBase {
       });
     }
     g.interactions = list;
+    this.extras();
     const where = spawnAt ?? SPAWN[this.step() ?? 'meet'] ?? 'spawn';
     const [sx, sz] = s[where];
     g.placeTeam(sx, sz - (where === 'bins' ? 2.5 : 0), where === 'spawn' ? 1.6 : 2.6);
@@ -217,7 +269,25 @@ export class RiverScript extends ScriptBase {
       await this.say('Dayo', 'dayo', L.riverScan2);
     });
     this.ctx.flag('riverSurveyed');
+  }
+
+  /** Each oil mark points to the next. The last is the drum. */
+  private async trace(n: number): Promise<void> {
+    const g = this.ctx.game;
+    g.audio.play('scan');
+    const [x, z] = g.zone.spots[`trace${n}`];
+    g.burst('sparkle', x + 0.6, 0.8, z - 0.4, 6);
+    this.ctx.flag(`trace:${n}`);
+    if (n < 3) {
+      await this.line('sukat', 'Sukat', n === 1 ? L.riverTrace1 : L.riverTrace2);
+      return;
+    }
     const s = g.zone.spots;
+    await this.scene(async () => {
+      g.cameraTo([s.drum[0] - 6, 4, s.drum[1] - 6], [s.drum[0], 0.4, s.drum[1]], 3);
+      await this.say('Sukat', 'sukat', L.riverTrace3);
+      await this.navie(L.riverTraceAfter, 'alert');
+    });
     g.placeNpc('bautista', s.hazardTalk[0] + 1.2, s.hazardTalk[1] - 0.6, -0.8);
   }
 
@@ -251,6 +321,8 @@ export class RiverScript extends ScriptBase {
       g.heroes[g.active].pose = 'none';
     }
     g.audio.play('drop');
+    const [bx, bz] = g.zone.spots[BIN_SPOT[kind]];
+    g.burst(kind === 'bio' ? 'leaf' : 'sparkle', bx, 1.8, bz, 10);
     for (const c of right) {
       this.ctx.flag(`sorted:${c.id}`);
     }
@@ -266,6 +338,11 @@ export class RiverScript extends ScriptBase {
 
   private async openGate(): Promise<void> {
     const g = this.ctx.game;
+    const ok = await this.ctx.circuit('valves', 'Floodgate channels', L.riverValves, 'water');
+    if (!ok) {
+      g.notice('The channels are still blocked. Come back whenever you like.');
+      return;
+    }
     await this.scene(async () => {
       g.cameraTo([22, 5, -6], [8, -0.6, 0], 2.2);
       g.audio.play('done');
@@ -278,10 +355,36 @@ export class RiverScript extends ScriptBase {
         g.water = { deep: mixV(from.deep, CLEAR.deep), shallow: mixV(from.shallow, CLEAR.shallow), foam: mixV(from.foam, CLEAR.foam), flow: from.flow + (CLEAR.flow - from.flow) * k };
         await this.ctx.wait(0.05);
       }
-      const n = g.npcs.paz;
+      g.burst('splash', 30, -0.3, riverZ(30), 20);
       await this.say('Kagawad Paz', 'paz', L.riverGate1);
-      void n;
+      await this.say('Kagawad Paz', 'paz', L.riverReplant1);
+      await this.navie(L.riverReplant2, 'hello');
     });
+  }
+
+  private async plant(n: number): Promise<void> {
+    const g = this.ctx.game;
+    const i = g.carrying.findIndex((c) => c.id.startsWith('grass'));
+    if (i < 0) {
+      return;
+    }
+    g.carrying.splice(i, 1);
+    if (g.carrying.length === 0) {
+      g.heroes[g.active].pose = 'none';
+    }
+    g.audio.play('drop');
+    const [x, z] = g.zone.spots[`reed${n}`];
+    g.burst('leaf', x, 0.8, z - 1.2, 10);
+    this.ctx.flag(`reed:${n}`);
+    const left = REEDS.filter((k) => !this.has(`reed:${k}`)).length;
+    if (left > 0) {
+      g.notice(`Planted. ${left} to go.`);
+      return;
+    }
+    await this.line('paz', 'Kagawad Paz', L.riverReplantDone);
+    if (!this.ctx.hasDiscovered('d-dragonfly') || !this.ctx.hasDiscovered('d-frog')) {
+      await this.line('sukat', 'Sukat', L.riverCritters);
+    }
   }
 
   private async plan(): Promise<void> {
@@ -297,6 +400,7 @@ export class RiverScript extends ScriptBase {
       this.faceAndFrame(n);
       await this.say('Kagawad Paz', 'paz', L.riverDone1);
       await this.say('Sukat', 'sukat', L.riverDone2);
+      this.cheer();
       await this.navie(L.celebrate, 'clear');
     });
     this.ctx.finish();
@@ -304,7 +408,8 @@ export class RiverScript extends ScriptBase {
 
   /* ---- Every frame ---- */
 
-  tick(): void {
+  tick(dt: number): void {
+    this.tickExtras(dt);
     const g = this.ctx.game;
     const s = g.zone.spots;
     const step = this.step();
@@ -315,6 +420,12 @@ export class RiverScript extends ScriptBase {
       target = s.officer;
     } else if (step === 'survey') {
       target = s.footbridge;
+    } else if (step === 'trace') {
+      const n = [1, 2, 3].find((k) => !this.has(`trace:${k}`)) ?? 3;
+      target = s[`trace${n}`];
+    } else if (step === 'replant') {
+      const open = REEDS.filter((n) => !this.has(`reed:${n}`));
+      target = g.carrying.some((c) => c.id.startsWith('grass')) ? this.nearest(open.map((n) => s[`reed${n}`])) : s.seedTray;
     } else if (step === 'hazard') {
       target = s.hazardTalk;
     } else if (step === 'collect') {

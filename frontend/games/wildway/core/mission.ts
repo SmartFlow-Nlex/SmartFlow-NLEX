@@ -1,5 +1,5 @@
 import { UPGRADE_OPTIONS, type Upgrade } from './facility';
-import { depotTransport, HORNBILL_TRANSPORT, RIVER_TRANSPORT, type DepotCargo, type Plan, type TransportProblem } from './transport';
+import { DELIVERY_TRANSPORT, depotTransport, HORNBILL_TRANSPORT, RIVER_TRANSPORT, type DepotCargo, type Plan, type TransportProblem } from './transport';
 
 /**
  * Missions as data, and the state machine that runs them: a mission is an ordered list
@@ -7,7 +7,7 @@ import { depotTransport, HORNBILL_TRANSPORT, RIVER_TRANSPORT, type DepotCargo, t
  * can be tested without drawing anything.
  */
 
-export type ZoneId = 'forest' | 'station' | 'plaza' | 'river' | 'depot';
+export type ZoneId = 'forest' | 'station' | 'plaza' | 'river' | 'depot' | 'yard';
 
 export interface MissionStep {
   id: string;
@@ -112,7 +112,7 @@ export const GRIDLOCK_MISSION: MissionDef = {
   speciesIds: [],
   regionId: 'bocaue-plaza',
   storyIndividuals: [],
-  requiredTasks: ['Find the faults', 'Repair the signal, the cable and the jammer', 'Set the lanes safely', 'Reopen the plaza'],
+  requiredTasks: ['Watch the queue build and find the clues', 'Repair the signal, the cable, the sensor and the jammer, then bring the power back', 'Set the lanes safely', 'Reopen the plaza', 'Handle whatever goes wrong next'],
   serviceConstraints: 'Lane 4 stays closed for repairs. Three toll collectors are on shift.',
   transport: null,
   rescueObjectives: [],
@@ -122,9 +122,10 @@ export const GRIDLOCK_MISSION: MissionDef = {
   steps: [
     { id: 'call', zone: 'station', objective: 'obj.call', needs: ['callTaken'], target: 'navie' },
     { id: 'survey', zone: 'plaza', objective: 'obj.plazaSurvey', needs: ['plazaSurveyed'], target: 'overlook' },
-    { id: 'repair', zone: 'plaza', objective: 'obj.plazaRepair', needs: ['fixSignal', 'fixCable', 'removeJammer'], target: 'faults' },
+    { id: 'repair', zone: 'plaza', objective: 'obj.plazaRepair', needs: ['fixSignal', 'fixCable', 'fixSensor', 'removeJammer', 'powerOn'], target: 'faults' },
     { id: 'lanes', zone: 'plaza', objective: 'obj.plazaLanes', needs: ['lanesSet'], target: 'console' },
     { id: 'reopen', zone: 'plaza', objective: 'obj.plazaReopen', needs: ['reopened'], target: 'console' },
+    { id: 'surprise', zone: 'plaza', objective: 'obj.plazaSurprise', needs: ['replanned'], target: 'console' },
   ],
 };
 
@@ -145,17 +146,20 @@ export const WASTE_LABEL: Record<WasteKind, string> = { bio: 'Biodegradable', re
 
 export const RIVER_MISSION: MissionDef = {
   id: 'nlex-river',
-  title: 'River Rescue',
+  title: 'Creek Rescue',
   chapter: 0,
   kind: 'nlex',
   locationId: 'valenzuela',
   summary: 'Rubbish is choking a creek in a community off the expressway. The water has stopped flowing.',
   fiction: 'A made-up creek and barangay near Valenzuela. No real waterway is described, and the waste amounts are invented for the game.',
-  environmentObjectives: [{ id: 'creek-clean', label: 'Community creek cleared and flowing' }],
+  environmentObjectives: [
+    { id: 'creek-clean', label: 'Community creek cleared and flowing' },
+    { id: 'creek-bank', label: 'Creek bank replanted with native grasses' },
+  ],
   speciesIds: [],
   regionId: 'valenzuela-creek',
   storyIndividuals: [],
-  requiredTasks: ['Meet the barangay officer', 'Survey the creek', 'Leave the oil to the specialist', 'Collect and sort the rubbish', 'Clear the trash rack', 'Open the floodgate', 'Plan the collection run'],
+  requiredTasks: ['Meet the barangay officer', 'Survey the creek', 'Trace the oil to its source', 'Leave the oil to the specialist', 'Collect and sort the rubbish', 'Clear the trash rack', 'Route the water back through the gate', 'Replant the bank', 'Plan the collection run'],
   serviceConstraints: 'Waste stays sorted. Everything is collected before the afternoon rain.',
   transport: RIVER_TRANSPORT,
   rescueObjectives: [],
@@ -166,27 +170,29 @@ export const RIVER_MISSION: MissionDef = {
     { id: 'call', zone: 'station', objective: 'obj.call', needs: ['callTaken'], target: 'navie' },
     { id: 'meet', zone: 'river', objective: 'obj.riverMeet', needs: ['officerMet'], target: 'officer' },
     { id: 'survey', zone: 'river', objective: 'obj.riverSurvey', needs: ['riverSurveyed'], target: 'footbridge' },
+    { id: 'trace', zone: 'river', objective: 'obj.riverTrace', needs: ['trace:1', 'trace:2', 'trace:3'], target: 'trace' },
     { id: 'hazard', zone: 'river', objective: 'obj.riverHazard', needs: ['hazardSafe'], target: 'drum' },
     { id: 'collect', zone: 'river', objective: 'obj.riverCollect', needs: RIVER_ITEMS.map((i) => `sorted:${i.id}`), target: 'litter' },
     { id: 'rack', zone: 'river', objective: 'obj.riverRack', needs: ['rackCleared'], target: 'rack' },
     { id: 'gate', zone: 'river', objective: 'obj.riverGate', needs: ['flowRestored'], target: 'gate' },
+    { id: 'replant', zone: 'river', objective: 'obj.riverReplant', needs: ['reed:1', 'reed:2', 'reed:3'], target: 'reeds' },
     { id: 'plan', zone: 'river', objective: 'obj.riverPlan', needs: ['planChosen'], target: 'dispatch' },
   ],
 };
 
 export const ECO_MISSION: MissionDef = {
   id: 'nlex-eco',
-  title: 'The Eco Expressway',
+  title: 'Solar Power Rescue',
   chapter: 0,
   kind: 'nlex',
   locationId: 'san-fernando',
-  summary: 'An expressway maintenance depot is wasting energy all day. The Wasteworks made sure of it.',
-  fiction: 'A made-up maintenance depot near San Fernando. Every wattage and hour count is a game assumption, shown with the sums.',
+  summary: 'The Wasteworks scrambled a maintenance depot’s wiring the week its solar roof was due. It is wasting energy all day.',
+  fiction: 'A made-up maintenance depot near San Fernando. Every wattage, hour count and the solar yield are game assumptions, shown with the sums.',
   environmentObjectives: [{ id: 'depot-lean', label: 'Depot energy waste cut' }],
   speciesIds: [],
   regionId: 'san-fernando-depot',
   storyIndividuals: [],
-  requiredTasks: ['Meet the depot chief', 'Audit the energy', 'Fix the sensor, the leak and the idling', 'Choose upgrades within the crew day', 'Plan the delivery', 'Install the upgrades'],
+  requiredTasks: ['Meet the depot chief', 'Audit the energy', 'Fix the sensor, the leak, the idling and the roof wiring', 'Balance the crew day around the solar roof', 'Plan the delivery', 'Install, and switch the solar on'],
   serviceConstraints: 'The installers have one working day.',
   transport: null,
   rescueObjectives: [],
@@ -197,14 +203,53 @@ export const ECO_MISSION: MissionDef = {
     { id: 'call', zone: 'station', objective: 'obj.call', needs: ['callTaken'], target: 'navie' },
     { id: 'meet', zone: 'depot', objective: 'obj.depotMeet', needs: ['chiefMet'], target: 'chief' },
     { id: 'audit', zone: 'depot', objective: 'obj.depotAudit', needs: ['audited'], target: 'meter' },
-    { id: 'repair', zone: 'depot', objective: 'obj.depotRepair', needs: ['fixSensor', 'fixLeak', 'engineOff'], target: 'faults' },
+    { id: 'repair', zone: 'depot', objective: 'obj.depotRepair', needs: ['fixSensor', 'fixLeak', 'engineOff', 'fixWiring'], target: 'faults' },
     { id: 'energy', zone: 'depot', objective: 'obj.depotEnergy', needs: ['energyPlanned'], target: 'office' },
     { id: 'plan', zone: 'depot', objective: 'obj.depotPlan', needs: ['planChosen'], target: 'dispatch' },
     { id: 'install', zone: 'depot', objective: 'obj.depotInstall', needs: ['installDone'], target: 'install' },
   ],
 };
 
-export const MISSIONS: readonly MissionDef[] = [GRIDLOCK_MISSION, HORNBILL_MISSION, RIVER_MISSION, ECO_MISSION];
+/** What the team gathers at the yard. Each takes a different hero to reach, or anyone. */
+export const DELIVERY_ITEMS: readonly { id: string; label: string; spot: string; hero: 'dayo' | 'baging' | 'sukat' | 'awit' | null }[] = [
+  { id: 'seedlings', label: 'seedling trays', spot: 'itemSeedlings', hero: null },
+  { id: 'tents', label: 'field tents', spot: 'itemTents', hero: 'dayo' },
+  { id: 'traps', label: 'camera-trap kit', spot: 'itemTraps', hero: 'sukat' },
+  { id: 'medkit', label: 'specialist kit', spot: 'itemMedkit', hero: 'baging' },
+  { id: 'rope', label: 'rope and tools', spot: 'itemRope', hero: 'awit' },
+  { id: 'water', label: 'water jugs', spot: 'itemWater', hero: null },
+];
+
+export const DELIVERY_MISSION: MissionDef = {
+  id: 'nlex-delivery',
+  title: 'Eco Delivery Rush',
+  chapter: 0,
+  kind: 'nlex',
+  locationId: 'balintawak',
+  summary: 'The field team at Malaya Ridge needs supplies by noon. The yard at Balintawak is a mess, and nothing is packed.',
+  fiction: 'A made-up supply yard at Balintawak and a made-up run to the ridge. Distances and loads are invented for the game.',
+  environmentObjectives: [{ id: 'delivery-packed', label: 'Field supplies packed and sent' }],
+  speciesIds: [],
+  regionId: 'balintawak-yard',
+  storyIndividuals: [],
+  requiredTasks: ['Meet the yard supervisor', 'Find the six supplies', 'Pack the van', 'Plan the run', 'Send it off'],
+  serviceConstraints: 'Two technicians and everything they need at the ridge by 12:00 noon.',
+  transport: DELIVERY_TRANSPORT,
+  rescueObjectives: [],
+  habitatObjectives: [],
+  evidenceReferences: [],
+  rewards: NLEX_REWARDS,
+  steps: [
+    { id: 'call', zone: 'station', objective: 'obj.call', needs: ['callTaken'], target: 'navie' },
+    { id: 'meet', zone: 'yard', objective: 'obj.yardMeet', needs: ['supervisorMet'], target: 'supervisor' },
+    { id: 'gather', zone: 'yard', objective: 'obj.yardGather', needs: DELIVERY_ITEMS.map((i) => `got:${i.id}`), target: 'items' },
+    { id: 'load', zone: 'yard', objective: 'obj.yardLoad', needs: ['loaded'], target: 'van' },
+    { id: 'plan', zone: 'yard', objective: 'obj.yardPlan', needs: ['planChosen'], target: 'desk' },
+    { id: 'send', zone: 'yard', objective: 'obj.yardSend', needs: ['sent'], target: 'van' },
+  ],
+};
+
+export const MISSIONS: readonly MissionDef[] = [GRIDLOCK_MISSION, HORNBILL_MISSION, RIVER_MISSION, ECO_MISSION, DELIVERY_MISSION];
 
 /** The upgrades a depot run chose, from its flags. */
 export const chosenUpgrades = (run: MissionRun): Upgrade[] => UPGRADE_OPTIONS.filter((o) => run.flags.includes(`up:${o.id}`)).map((o) => o.id);

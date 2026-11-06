@@ -31,16 +31,19 @@ The game is one self-contained HTML page in a WebView, with no network use, no l
 | `core/nlex.ts` | The NLEX line of stops, what opens when, and the progress totals. |
 | `core/species.ts`, `core/speciesFacts.ts` | The 100-species roster and the checked records. |
 | `core/mission.ts` | Missions as data, and the step machine that saves and resumes. |
-| `core/save.ts` | Versioned save, atomic mission completion, upgrades. |
+| `core/save.ts` | Versioned save, atomic mission completion, upgrades, patches, side quests, gear, achievements. |
+| `core/progression.ts` | Patches, wildlife observations, side quests, gear, the Atlas quiz, achievements and Command Center decorations, as data. |
+| `core/puzzles.ts` | The puzzle kit: circuits, sensor dials, van packing. Pure, with solvability tests. |
 | `core/registry.ts` | Which models and animations exist. |
 | `core/content.ts` | Everything the game says, in one place, ready for a Filipino version beside it. |
 | `web/gl/` | Our own WebGL 1 toon renderer: bands of light, outlines, rigid skinning, stylised water. |
 | `web/models.ts`, `web/anim.ts` | Characters built from code, and their animation. |
-| `web/world/` | Terrain, scenery and the five zones: Malaya Ridge, the Command Center, the toll plaza, the creek, the depot. |
+| `web/world/` | Terrain, scenery and the six zones: Malaya Ridge, the Command Center, the toll plaza, the creek, the depot, the supply yard. |
 | `web/game.ts` | The live world: movement, camera, followers, interactions. |
-| `web/hornbill.ts`, `web/missions/` | The four mission scripts, and what they share. |
+| `web/hornbill.ts`, `web/missions/` | The five mission scripts, and what they share: patches and wildlife in every zone. |
+| `web/hub.ts` | The living Command Center: people walking about, the patrol car, side quests, trophies, decorations. |
 | `web/navieArt.ts` | Navie, generated: resized copies of the app's own mascot images. |
-| `web/app.ts`, `web/ui/` | Menus, flow, save handling. |
+| `web/app.ts`, `web/ui/` | Menus, flow, save handling, puzzle screens (`ui/puzzles.ts`), Command Center screens (`ui/hubScreens.ts`). |
 | `tests/` | Unit tests. |
 
 ## Original characters, not Adventure Time
@@ -133,9 +136,9 @@ Added on 6 November 2026, on top of the slice above, and without removing any of
 
 | Mission | Stop | What the player does | Simulated comparison |
 | --- | --- | --- | --- |
-| The Great NLEX Gridlock | Bocaue | Scan the plaza, fix the signal, the cable and the Wasteworks jammer, set the six lanes, reopen | One hour of plaza idling, against the jammed plaza |
-| River Rescue | Valenzuela | Meet the barangay officer, leave the oil to the specialist, collect and sort 8 pieces of rubbish, clear the trash rack, open the floodgate, plan the collection | The collection run, against three truck runs |
-| The Eco Expressway | San Fernando | Audit the depot, fix the sensor, the air leak and the idling, choose upgrades within the crew's 8 hours, plan the delivery, install | One depot day, plus the delivery run |
+| The Great NLEX Gridlock | Bocaue | Scan the plaza, fix the signal, the cable and the Wasteworks jammer, set the six lanes, reopen (expanded below) | One hour of plaza idling, against the jammed plaza |
+| Creek Rescue (first called River Rescue) | Valenzuela | Meet the barangay officer, leave the oil to the specialist, collect and sort 8 pieces of rubbish, clear the trash rack, open the floodgate, plan the collection | The collection run, against three truck runs |
+| Solar Power Rescue (first called The Eco Expressway) | San Fernando | Audit the depot, fix the sensor, the air leak and the idling, choose upgrades within the crew's 8 hours, plan the delivery, install | One depot day, plus the delivery run |
 | The Hornbill Homecoming | Malaya Ridge (fictional) | As before, now starting with a call to the Command Center | The supply run |
 
 Each place is made up, and each briefing says so. The plaza has six lanes, with service walkways and a staff tunnel: heroes never walk on the lanes. Every repair has two hero options.
@@ -159,20 +162,62 @@ The progress dashboard's CO₂ total adds each mission's best simulated saving o
 
 The save went to version 2. Version 1 saves load unchanged, and an unfinished version 1 hornbill run resumes after the new call step.
 
+## The gameplay expansion
+
+Added on 6 November 2026, second round, without removing anything. The cast, the art style and the core mechanics are unchanged.
+
+**Shared systems.**
+- *Puzzles* (`core/puzzles.ts`, `web/ui/puzzles.ts`): four rotate-the-pieces circuits (the booth cable, the weather station, the creek's water channels, the depot's roof wiring), a three-dial sensor calibration solved by deduction (the sensor only says how many dials are right), and packing the van. Every one can be left and come back to, and offers a hint. Tests prove each circuit solvable from its start and not already solved, and the van packable.
+- *Patches and wildlife* in every zone: 15 Guardian patches, each reachable only by one hero, and 6 kinds of common wildlife Sukat can observe (butterflies, swallows, dragonflies, a frog, a house gecko, tree sparrows). Each fact is a plain, general one about the animal, never about a made-up place. Dragonflies and the frog appear only after the creek runs clean.
+- *Feedback*: sparks off repairs, confetti and the team cheering at the end of a mission, splashes, leaves, a sparkle on anything found.
+- *Navigation*: the objective shows how many parts are done (for example 2/5). A hint button asks Navie what to do now and who can do it. A Go button appears when the objective is more than 24 m away and fades the team most of the way. The guide arrow can be turned off in Settings; the hint button still shows it for a while.
+
+**The living Command Center (`web/hub.ts`).** People walk about and stop to talk when you come near, with lines that change once missions are done. A patrol car drives a loop and stops for the team. Two maintenance vehicles are parked by the gate.
+- *Stations*: Navie's Mission Station is a menu (missions, side quests, the Atlas quiz, recent achievements). The Eco Workshop sells field gear and Command Center improvements. The Guardian Achievement Gallery has trophies on pedestals, patches, field notes and mission records. There is a notice board.
+- *Side quests*: four short jobs, each paid once, with no timers: tidy 4 bits of litter into the recycling bin; rewire the weather station (circuit); check 3 air-quality sensors (Sukat); and Navie's Atlas quiz, where each question quotes a checked species record.
+- *Gear* changes play: trail boots (walk 10% faster), Sukat's field lens (hidden patches and wildlife sparkle within 14 m), Awit's long kite (glides last half as long again), Baging's long vines (1 m more reach).
+- *Decorations* appear on their own as missions are finished: the plaza's lane-light model, the creek cleanup display, solar path lamps, the field van with seedling trays, and a hornbill nest-box model.
+
+**The missions now.**
+
+| Mission | What changed |
+| --- | --- |
+| The Great NLEX Gridlock | Five stages. The queue builds while the camera sweeps along it, and two optional clues can be scanned. There are five repairs, each done a different way: the signal (climb or glide), the cable (stretch or splice, then a circuit), the toll sensor (Sukat, dials), the jammer, then Dayo carries a power cell to the control room. Next come the lanes. Then a tag reader fails on one of the player's own tag lanes, the lane stops, and the lanes must be set again under that new rule. The ending reads the simulation: if cars are still in line when the hour ends, it says how many. |
+| Creek Rescue (was River Rescue) | Sukat follows an oil trail to the drum. The specialist still does the handling. The floodgate is a water-channel circuit. Afterwards, native grass is replanted at three spots on the bare bank. That is a new environment objective, not wildlife habitat. |
+| Solar Power Rescue (was The Eco Expressway) | The Wasteworks scrambled the depot's roof wiring: a circuit puzzle among the repairs. The planner is now "Balance the crew day": the solar roof is this mission's job and takes 6 of the 8 hours, so the choice is what fits in the rest. After installing comes a switch-on scene. Its kWh figure is the simulated day's own, and it says when the roof could make more than the depot uses in daylight. |
+| Eco Delivery Rush (new, Balintawak) | A new supply yard. Six supplies, four of which need one particular hero: tents on a high rack (Dayo), a kit in a locked cage (Baging), rope on the gutter (Awit), and three look-alike crates (Sukat finds the right one). Then pack the van, plan the run to the ridge, and watch the chosen vehicles drive out of the gate. If the hornbill expedition has not been played, "To Malaya Ridge" starts it. |
+
+**The delivery run's numbers.** These are game assumptions: 52 km by NLEX and the provincial road, or 46 km by the old national road, and two technicians plus 215 kg by noon. The usual way is two vans loaded loose, at 54.9 kg CO₂, simulated. The best plan is the electric van at 10:00 AM by NLEX, at 25.1 kg. The e-van cannot go at 6:00 (it is on the clinic run), and at 8:00 traffic would drain its battery.
+
+**The Gridlock's surprise.** The failed reader is always one of the player's own tag lanes. Tests check that for every working setting, at least one working setting remains once that reader is down.
+
+**Save version 3** adds patches, field notes, side quest progress, gear, achievements and the guide setting. Version 2 saves load with those empty. Every grant is keyed by id, so it is given once. Points still never turn into kilograms, animals or places.
+
+**Achievements**: 13, from "First call answered" to "Corridor Guardians", each 10 points, once. They are read from the save, so replays cannot earn them twice.
+
 ## Separate measures
 
 These never convert into one another, and replays don't inflate them: individuals helped, species helped (capped at 100), habitat objectives, simulated emissions, Guardian Points, and self-reported Beyond the Game badges.
 
 ## Performance
 
-Measured in Chrome on the development PC, on 5 November 2026. **These numbers say what the game asks of a device. They do not predict a phone's frame rate, because no phone has run it yet.**
+Measured in Chrome on the development PC, at phone size (390 × 844, double density), on 6 November 2026. **These numbers say what the game asks of a device. They do not predict a phone's frame rate, because no phone has run it yet.**
 
-| Scene | Triangles | Draw calls | Geometry | Frame time on the PC |
+| Place | Triangles | Draw calls | Geometry | Frame time on the PC |
 | --- | --- | --- | --- | --- |
-| Malaya Ridge, walking | about 43,000 | 50 | 8 MB | 6.9 ms median, capped by a 144 Hz screen |
-| Field Station | about 38,000 | 32 | 5.5 MB | 6.9 ms median, capped by a 144 Hz screen |
+| Malaya Ridge | about 80,000 | 54 | 8.9 MB | 6.9 ms median |
+| Toll plaza | about 78,000 | 42 | 7.4 MB | 6.9 ms median |
+| Eco Command Center | about 58,000 | 41 | 6.5 MB | 6.9 ms median |
+| Maintenance depot | about 39,000 | 44 | 5.0 MB | 6.9 ms median |
+| Barangay creek | about 22,000 | 21 | 3.6 MB | 6.9 ms median |
+| Supply yard (new) | about 40,000 | 45 | 5.4 MB | 6.9 ms median |
+| Command Center as played, every mission done | about 62,000 | 56 | | 7.0 ms median, 8.6 ms p95 |
 
-JavaScript memory read between 12 and 82 MB across runs, because that reading depends on garbage collection. The page itself is 507 KB and adds about that to the app bundle.
+The PC's frame time is capped by its 144 Hz screen. JavaScript memory read about 45 MB in the busiest Command Center. The page is 1,048 KB, of which 218 KB is Navie's art.
+
+The expansion's moving props (people, the patrol car, trophies, decorations, critters, patches) would have taken the Command Center to 123 draw calls. Props are now skipped when off screen, using each mesh's own bounding sphere, which brings it to 56.
+
+Triangle counts went up on 6 November. That is not new detail: an old culling bug had been hiding scenery near the edges of a tall phone screen, and the fix draws it.
 
 **For slow phones:** Settings has a Smoother option, which lowers the drawing resolution and drops scenery outlines. If frames average over 38 ms across 120 frames, the game switches to it once by itself and says so.
 
@@ -181,6 +226,10 @@ JavaScript memory read between 12 and 82 MB across runs, because that reading de
 **Built on 6 November:** the Eco Command Center, Navie as mission guide, the NLEX Operations Board, the Environmental Progress dashboard, three NLEX missions in three new places, the toll plaza and depot models, three eco upgrades unlocked by missions.
 
 **Built before:** Field Station hub, four switchable heroes with working abilities, The Hornbill Homecoming, Malaya Ridge as the exploration zone, the transport board, rescue-support and habitat objectives, separate results, Atlas with all 100 entries, checkpoints, the next-season scene, recap, Beyond the Game, workshop, gallery, settings.
+
+**Built in the expansion (second round, 6 November):** see "The gameplay expansion" above.
+
+**Planned, not built:** RFID Rescue (Marilao), Rainy Day Rescue (Pulilan), Night Shift Guardians (Angeles), The Eco Convoy (Dau), The Wasteworks Showdown (the finale), and a wildlife follow-up visit to the hornbill. These are the brief's Priority 3.
 
 **Not built yet:** missions at Angeles and Dau, the other nine Chapter 1 missions, Chapters 2 to 10, 99 species models, a Filipino translation (the text is structured for one), guest save merge, voice acting, recorded music.
 

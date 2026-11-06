@@ -396,6 +396,7 @@ export function settingsScreen(o: { save: SaveData; onChange: (c: Partial<SaveDa
       seg('Graphics', s.graphics, [{ value: 'detailed', label: 'Detailed' }, { value: 'smooth', label: 'Smoother' }], (v) => o.onChange({ graphics: v }), 'Smoother draws less, for older phones.'),
       seg('Reduce motion', s.reduceMotion ? 'on' : 'off', onOff, (v) => o.onChange({ reduceMotion: v === 'on' }), 'Shorter camera moves and fewer effects.'),
       seg<TextScale>('Text size', s.textScale, [{ value: 1, label: '100%' }, { value: 1.2, label: '120%' }, { value: 1.4, label: '140%' }], (v) => o.onChange({ textScale: v })),
+      seg('Guide arrow', s.guide ? 'on' : 'off', onOff, (v) => o.onChange({ guide: v === 'on' }), 'Off: find your own way. The hint button still shows it.'),
     ),
     h('div', { class: 'card' }, h('h3', { text: 'About this game' }), h('p', { class: 'muted small-text', text: 'A SmartFlow NLEX student project. An original story and cast. The game’s places are fictional, and it is not connected with any wildlife agency.' })),
   );

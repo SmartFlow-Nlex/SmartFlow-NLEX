@@ -21,6 +21,10 @@ export interface HudHandlers {
   onAbilityDown: () => void;
   onAbilityUp: () => void;
   onAtlas: () => void;
+  /** Navie says what to do next. */
+  onHint: () => void;
+  /** Jump most of the way to a far objective. */
+  onGo: () => void;
 }
 
 export class Hud {
@@ -29,6 +33,7 @@ export class Hud {
   private readonly guide: HTMLElement;
   private readonly guideArrow: HTMLElement;
   private readonly guideDist: HTMLElement;
+  private readonly goBtn: HTMLButtonElement;
   private readonly heroBtns = new Map<HeroId, HTMLButtonElement>();
   private readonly actionBtn: HTMLButtonElement;
   private readonly actionText: HTMLElement;
@@ -58,12 +63,14 @@ export class Hud {
     this.objective = h('div', { class: 'objective-text' });
     this.guideArrow = h('span', { class: 'guide-arrow', html: ICONS.next });
     this.guideDist = h('span', { class: 'guide-dist' });
-    this.guide = h('div', { class: 'guide' }, this.guideArrow, this.guideDist);
+    this.goBtn = h('button', { class: 'go-btn hidden', text: 'Go', label: 'Go most of the way there', attrs: { type: 'button' }, onClick: () => handlers.onGo() });
+    this.guide = h('div', { class: 'guide' }, this.guideArrow, this.guideDist, this.goBtn);
     const top = h(
       'div',
       { class: 'hud-top' },
       h('button', { class: 'round-btn', label: 'Pause', attrs: { type: 'button' }, html: ICONS.pause, onClick: () => handlers.onPause() }),
       h('div', { class: 'objective' }, this.objective, this.guide),
+      h('button', { class: 'round-btn hint-btn', label: 'Ask Navie for a hint', attrs: { type: 'button' }, html: ICONS.info, onClick: () => handlers.onHint() }),
       h('button', { class: 'round-btn', label: 'Open the Wildlife Atlas', attrs: { type: 'button' }, html: ICONS.book, onClick: () => handlers.onAtlas() }),
     );
     const team = h('div', { class: 'team', attrs: { role: 'group', 'aria-label': 'Choose a hero' } });
@@ -131,6 +138,11 @@ export class Hud {
       this.guideArrow.style.transform = `rotate(${(angle - Math.PI / 2).toFixed(3)}rad)`;
       setText(this.guideDist, `${Math.max(1, Math.round(dist))} m`);
     }
+  }
+
+  /** The Go button, for an objective a long walk away. */
+  setGo(visible: boolean): void {
+    this.goBtn.classList.toggle('hidden', !visible);
   }
 
   setActive(id: HeroId): void {

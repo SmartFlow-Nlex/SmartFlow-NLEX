@@ -1,10 +1,12 @@
-import { NLEX_LINES, OBJECTIVES } from '../core/content';
+import { HINTS, HUB_LINES, NLEX_LINES, OBJECTIVES } from '../core/content';
 import { savings } from '../core/emissions';
 import { DEPOT_BEFORE, facilityDay } from '../core/facility';
-import { chosenUpgrades, currentStep, ECO_MISSION, GRIDLOCK_MISSION, HORNBILL_MISSION, isFinished, missionById, missionTransport, MISSIONS, newRun, RIVER_MISSION, setFlag, type MissionDef, type MissionRun } from '../core/mission';
+import { chosenUpgrades, currentStep, DELIVERY_MISSION, ECO_MISSION, GRIDLOCK_MISSION, HORNBILL_MISSION, isFinished, missionById, missionTransport, MISSIONS, newRun, RIVER_MISSION, setFlag, type MissionDef, type MissionRun } from '../core/mission';
 import { missionOpen, NLEX_STOPS, progress } from '../core/nlex';
-import { BOCAUE_PLAZA, simulatePlaza } from '../core/plaza';
-import { buyUpgrade, bumpRevision, completeMission, loadSave, serializeSave, UPGRADES, type SaveData, type SimPart } from '../core/save';
+import { allModeSets, BOCAUE_PLAZA, plazaSolved, simulatePlaza } from '../core/plaza';
+import { ACHIEVEMENTS, COLLECTIBLES, DISCOVERIES, GEAR, GEAR_EFFECT } from '../core/progression';
+import { CIRCUITS, DIALS, LOADS } from '../core/puzzles';
+import { awardAchievements, buyGear, buyUpgrade, bumpRevision, collect, completeMission, discover, loadSave, serializeSave, sideStep, UPGRADES, type SaveData, type SimPart } from '../core/save';
 import type { SpeciesRecord } from '../core/species';
 import { ROSTER } from '../core/speciesFacts';
 import { comparePlan, type Comparison, type Plan } from '../core/transport';
@@ -16,8 +18,12 @@ import { placement, mat4, type Vec3 } from './gl/math';
 import { Renderer } from './gl/renderer';
 import { HornbillScript, nextSeason } from './hornbill';
 import { navieKey, type MissionContext, type MissionScript } from './missions/base';
+import { DeliveryScript } from './missions/delivery';
 import { EcoScript } from './missions/eco';
-import { GridlockScript, lanesFromFlags } from './missions/gridlock';
+import { GridlockScript, lanesFromFlags, plazaFor } from './missions/gridlock';
+import { HubScript, type HubPlace } from './hub';
+import { achievementGallery, navieMenu, noticeBoard, quizScreen, workshopScreen } from './ui/hubScreens';
+import { circuitPuzzle, dialPuzzle, loadPuzzle, type PuzzleHandle } from './ui/puzzles';
 import { RiverScript } from './missions/river';
 import { NAVIE_ART } from './navieArt';
 import { depotHow, energyPlanner, lanePuzzle, missionBriefing, nlexResults, opsBoardScreen, plazaHow, progressDashboard } from './ui/nlex';
@@ -50,6 +56,15 @@ export class WildwayApp {
   private fadeEl!: HTMLElement;
   private portraits: Portraits = {};
   private script: MissionScript | null = null;
+  /** The Command Center's living parts, between missions. */
+  private hub: HubScript | null = null;
+  /** The puzzle on screen, if any: development hooks can finish it. */
+  private activePuzzle: PuzzleHandle | null = null;
+  /** The guide shows for a while after a hint, even with the arrow turned off. */
+  private hintShowUntil = 0;
+  private worldTime = 0;
+  /** Development: finish any puzzle that opens, as the play-through bot does. */
+  autoSolve = false;
   /** The mission being played, or last played. */
   private mission: MissionDef = HORNBILL_MISSION;
   private run: MissionRun | null = null;
@@ -133,6 +148,8 @@ export class WildwayApp {
         this.input.state.abilityHeld = false;
       },
       onAtlas: () => this.openAtlasFromWorld(),
+      onHint: () => this.hint(),
+      onGo: () => this.goNear(),
     });
     root.append(this.hud.el, this.overlayRoot, this.fadeEl);
     this.input = new InputController(this.hud.surface, this.hud.stick, this.hud.knob);
@@ -182,7 +199,7 @@ export class WildwayApp {
     this.cleanups.push(() => window.removeEventListener('pointerdown', tap));
     if (this.host.boot.debug) {
       (window as unknown as { __ww: unknown; __wwDev: unknown }).__ww = this;
-      (window as unknown as { __wwDev: unknown }).__wwDev = { ROSTER, notesScreen, MISSIONS };
+      (window as unknown as { __wwDev: unknown }).__wwDev = { ROSTER, notesScreen, MISSIONS, PLAZA: { allModeSets, simulatePlaza, plazaSolved, plazaFor } };
       this.autoGraphics = false;
     }
 
@@ -222,8 +239,33 @@ export class WildwayApp {
     if (this.game !== undefined) {
       this.game.highDetail = s.graphics === 'detailed';
       this.game.showShadows = true;
+      this.game.reduceMotion = s.reduceMotion;
+      this.applyGear();
     }
     this.fitCanvas();
+  }
+
+  /** Workshop gear changes how the heroes move and reach. */
+  private applyGear(): void {
+    const has = (id: string): boolean => this.save.gear.includes(id);
+    this.game.speedBoost = has('boots') ? GEAR_EFFECT.bootsSpeed : 1;
+    this.game.glideMax = has('kite') ? GEAR_EFFECT.kiteSeconds : GEAR_EFFECT.baseKiteSeconds;
+    this.game.vinesExtra = has('vines') ? GEAR_EFFECT.vinesExtra : 0;
+  }
+
+  /** Saves a step forward outside the story, then grants any achievement it earned, once. */
+  private progressed(next: SaveData): void {
+    const { save, ids } = awardAchievements(next);
+    this.persist(save);
+    ids.forEach((id, i) => {
+      const a = ACHIEVEMENTS.find((x) => x.id === id);
+      if (a !== undefined && this.inWorld) {
+        window.setTimeout(() => {
+          this.audio.play('star');
+          this.hud.notice(`Achievement: ${a.title}! +10 points`, 3.4);
+        }, 900 + i * 3600);
+      }
+    });
   }
 
   private persist(next: SaveData): void {
@@ -342,6 +384,9 @@ export class WildwayApp {
       bautista: shot(() => ({ ch: makeSpecialist(r), kind: 'person' }), face, faceAt),
       ramos: shot(() => ({ ch: makeChief(r), kind: 'person' }), face, faceAt),
       driver: shot(() => ({ ch: makeDriver(r, '#e2452f'), kind: 'person' }), face, faceAt),
+      ben: shot(() => ({ ch: makeDriver(r, '#ffc32d'), kind: 'person' }), face, faceAt),
+      tech: shot(() => ({ ch: makeDriver(r, '#14995c'), kind: 'person' }), face, faceAt),
+      staff: shot(() => ({ ch: makeResident(r, '#1e5bb8', '#33405a', '#8d5a3b'), kind: 'person' }), face, faceAt),
     };
   }
 
@@ -393,6 +438,8 @@ export class WildwayApp {
       sign('hallSign', 'BARANGAY HALL', 860, 100, '#1e5bb8');
       sign('depotSign', 'MAINTENANCE DEPOT', 933, 100, '#ffc32d', '#17233f');
       sign('officeSign', 'OFFICE', 890, 100, '#1e5bb8');
+      sign('yardSign', 'BALINTAWAK SUPPLY YARD', 1000, 100, '#2fae6b');
+      sign('yardOffice', 'YARD OFFICE', 890, 100, '#1e5bb8');
       sign('centerSign', 'SmartFlow NLEX Eco Command Center', 980, 120, '#0f2a5c', '#ffffff', 0.5);
       this.paintLiveScreens();
     };
@@ -571,6 +618,13 @@ export class WildwayApp {
         }
       }
     }
+    this.worldTime += dt;
+    this.game.showBeacon = this.save.settings.guide || this.worldTime < this.hintShowUntil;
+    if (this.autoSolve && this.activePuzzle !== null) {
+      const p = this.activePuzzle;
+      this.activePuzzle = null;
+      window.setTimeout(() => p.solve(), 300);
+    }
     this.game.update(dt);
     if (this.titleOrbit) {
       this.orbit += this.save.settings.reduceMotion ? 0 : dt * 0.08;
@@ -578,6 +632,7 @@ export class WildwayApp {
       this.game.cameraTo([Math.sin(this.orbit) * d, 12, Math.cos(this.orbit) * d], [0, 2.5, 0], 2);
     } else if (this.inWorld && !paused) {
       this.script?.tick(dt);
+      this.hub?.tick(dt);
       this.hud.tick(dt);
       this.updateHud();
     }
@@ -604,22 +659,61 @@ export class WildwayApp {
     this.hud.setAbility(g.active === 'awit' && !g.busy, g.glideShare);
     this.hud.setActive(g.active);
     const guide = g.guideNow;
-    if (guide !== null) {
+    if (guide !== null && g.showBeacon) {
       const h2 = g.heroes[g.active];
       const dx = guide[0] - h2.x;
       const dz = guide[1] - h2.z;
       const d = Math.hypot(dx, dz);
       const angle = g.cameraYaw - Math.atan2(dx, dz);
       this.hud.setGuide(d > 3 ? angle : null, d);
+      this.hud.setGo(d > 24 && !g.busy && g.guide !== null && guide[0] === g.guide[0] && guide[1] === g.guide[1]);
     } else {
       this.hud.setGuide(null, 0);
+      this.hud.setGo(false);
     }
     if (this.run !== null) {
       const step = currentStep(this.mission, this.run);
-      this.hud.setObjective(step !== null ? OBJECTIVES[step.objective] : '');
+      const run = this.run;
+      /* A step with several parts says how many are done. */
+      const count = step !== null && step.needs.length > 2 ? ` (${step.needs.filter((n) => run.flags.includes(n)).length}/${step.needs.length})` : '';
+      this.hud.setObjective(step !== null ? `${OBJECTIVES[step.objective]}${count}` : '');
     } else {
-      this.hud.setObjective('SmartFlow NLEX Eco Command Center');
+      const open = MISSIONS.some((m) => m.kind === 'nlex' && missionOpen(this.save, m.id) && this.save.missions[m.id] === undefined);
+      this.hud.setObjective(open ? 'Talk to Navie for your next mission' : 'SmartFlow NLEX Eco Command Center');
     }
+  }
+
+  /** Navie's hint for what to do now, and the guide shown for a while. */
+  private hint(): void {
+    const g = this.game;
+    if (g.busy || this.hud.speaking) {
+      return;
+    }
+    this.audio.play('tap');
+    const step = this.run === null ? null : currentStep(this.mission, this.run);
+    const text = step === null ? (this.save.sideQuests.length < 4 ? 'Talk to me for missions. The notice board has small jobs around the Command Center too.' : 'Talk to me for missions, any time.') : HINTS[step.objective] ?? 'Follow the arrow. If someone else is needed, the button says who.';
+    this.hintShowUntil = this.worldTime + 12;
+    g.busy = true;
+    void this.hud.say('Navie', navieKey('thinking'), text).then(() => {
+      g.busy = false;
+      this.hud.setHudHidden(false);
+    });
+  }
+
+  /** The Go button: a quick fade most of the way to a far objective, so nobody has to trek. */
+  private goNear(): void {
+    const g = this.game;
+    const goal = g.guideNow;
+    if (goal === null || g.busy) {
+      return;
+    }
+    const h0 = g.heroes[g.active];
+    const d = Math.hypot(goal[0] - h0.x, goal[1] - h0.z);
+    const k = Math.max(0, (d - 4.5) / d);
+    const x = h0.x + (goal[0] - h0.x) * k;
+    const z = h0.z + (goal[1] - h0.z) * k;
+    this.audio.play('whoosh');
+    void this.fade(() => g.placeTeam(x, z, Math.atan2(goal[0] - x, goal[1] - z)), 0.3);
   }
 
   /** A tap on "Switch to Sukat" does the switch, so nobody has to hunt for the right hero. */
@@ -838,6 +932,7 @@ export class WildwayApp {
   private leaveWorld(): void {
     this.inWorld = false;
     this.script = null;
+    this.hub = null;
     this.run = this.save.active;
     this.game.carrying = [];
     this.game.interactions = [];
@@ -857,7 +952,7 @@ export class WildwayApp {
       flag: (name) => this.flag(name),
       openBoard: () => this.openBoard(),
       flutePuzzle: () => this.flutePuzzle(),
-      lanePuzzle: () =>
+      lanePuzzle: (plaza) =>
         new Promise((resolve) => {
           this.game.busy = true;
           const done = (m: Parameters<Parameters<typeof lanePuzzle>[0]['onDone']>[0]): void => {
@@ -866,7 +961,7 @@ export class WildwayApp {
             resolve(m);
           };
           this.showScreen(
-            lanePuzzle({ initial: lanesFromFlags((this.run as MissionRun).flags) ?? BOCAUE_PLAZA.jammed, navie: NAVIE_ART.thinking.uri, reduce: this.save.settings.reduceMotion, onDone: done, onHow: (r) => this.overlay(plazaHow(r, () => this.overlay(null))) }),
+            lanePuzzle({ plaza: plaza ?? BOCAUE_PLAZA, initial: lanesFromFlags((this.run as MissionRun).flags) ?? BOCAUE_PLAZA.jammed, navie: NAVIE_ART.thinking.uri, reduce: this.save.settings.reduceMotion, onDone: done, onHow: (r) => this.overlay(plazaHow(r, () => this.overlay(null))) }),
             () => done(null),
           );
         }),
@@ -878,14 +973,65 @@ export class WildwayApp {
             this.showScreen(null, null);
             resolve(p);
           };
-          this.showScreen(energyPlanner({ navie: NAVIE_ART.thinking.uri, onDone: done, onHow: (picks) => this.overlay(depotHow(picks, () => this.overlay(null))) }), () => done(null));
+          this.showScreen(energyPlanner({ navie: NAVIE_ART.thinking.uri, locked: ['solar'], onDone: done, onHow: (picks) => this.overlay(depotHow(picks, () => this.overlay(null))) }), () => done(null));
         }),
+      circuit: (id, kicker, hint, theme = 'power') => this.puzzle((done) => circuitPuzzle({ level: CIRCUITS[id], kicker, theme, navie: NAVIE_ART.thinking.uri, hint, reduce: this.save.settings.reduceMotion, onDone: done })),
+      dials: (id, kicker, names, hint) => this.puzzle((done) => dialPuzzle({ level: DIALS[id], kicker, names, navie: NAVIE_ART.thinking.uri, hint, onDone: done })),
+      loadVan: (id, hint) => this.puzzle((done) => loadPuzzle({ level: LOADS[id], navie: NAVIE_ART.thinking.uri, hint, onDone: done })),
+      collect: (id) => {
+        const r = collect(this.save, id);
+        if (r.added) {
+          this.progressed(r.save);
+          const c = COLLECTIBLES.find((x) => x.id === id);
+          this.hud.notice(`Guardian patch: ${c?.label ?? 'found'}! ${this.save.collectibles.length} of ${COLLECTIBLES.length}. +5 points`, 3);
+        }
+        return r.added;
+      },
+      discover: (id) => {
+        const r = discover(this.save, id);
+        if (r.added) {
+          this.progressed(r.save);
+          this.hud.notice(`Field note added: ${DISCOVERIES.find((d) => d.id === id)?.name ?? ''}. +5 points`, 3);
+        }
+        return r.added;
+      },
+      hasCollected: (id) => this.save.collectibles.includes(id),
+      hasDiscovered: (id) => this.save.discoveries.includes(id),
+      hasGear: (id) => this.save.gear.includes(id),
       wait: (s) => new Promise((resolve) => this.waits.push({ left: s, done: resolve })),
       fade: (fn, seconds = 0.6) => this.fade(fn, seconds),
       finish: () => this.finishMission(),
       reduceMotion: () => this.save.settings.reduceMotion,
       upgrades: () => this.save.upgrades,
     };
+  }
+
+  /** Opens a puzzle over the world and resolves with whether it was solved. */
+  private puzzle(make: (done: (ok: boolean) => void) => PuzzleHandle): Promise<boolean> {
+    return new Promise((resolve) => {
+      const g = this.game;
+      g.busy = true;
+      const done = (ok: boolean): void => {
+        this.activePuzzle = null;
+        g.busy = false;
+        this.showScreen(null, null);
+        this.audio.play(ok ? 'done' : 'tap');
+        resolve(ok);
+      };
+      const handle = make(done);
+      this.activePuzzle = handle;
+      this.showScreen(handle.el, () => done(false));
+    });
+  }
+
+  /** Development: finish the puzzle on screen. */
+  solvePuzzle(): boolean {
+    const p = this.activePuzzle;
+    if (p === null) {
+      return false;
+    }
+    p.solve();
+    return true;
   }
 
   /** Records a flag and saves it, so a resume finds the mission just as it was left. */
@@ -919,6 +1065,7 @@ export class WildwayApp {
   }
 
   private startMission(def: MissionDef): void {
+    this.hub = null;
     this.mission = def;
     const runId = `${def.id}-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffffff).toString(16)}`;
     this.run = newRun(def.id, runId);
@@ -936,6 +1083,7 @@ export class WildwayApp {
     }
     this.mission = def;
     this.comparison = null;
+    this.hub = null;
     this.enterMissionWorld(false);
   }
 
@@ -947,6 +1095,8 @@ export class WildwayApp {
         return new RiverScript(ctx);
       case ECO_MISSION.id:
         return new EcoScript(ctx);
+      case DELIVERY_MISSION.id:
+        return new DeliveryScript(ctx);
       default:
         return new HornbillScript(ctx);
     }
@@ -1079,7 +1229,7 @@ export class WildwayApp {
     const h1 = (v: number): string => (v >= 100 ? v.toFixed(0) : v.toFixed(1));
     if (def.id === GRIDLOCK_MISSION.id) {
       const jam = simulatePlaza(BOCAUE_PLAZA, BOCAUE_PLAZA.jammed);
-      const mine = simulatePlaza(BOCAUE_PLAZA, lanesFromFlags(run.flags) ?? BOCAUE_PLAZA.jammed);
+      const mine = simulatePlaza(plazaFor(run.flags), lanesFromFlags(run.flags) ?? BOCAUE_PLAZA.jammed);
       parts.push({
         id: 'plaza',
         label: 'The toll plaza, one hour',
@@ -1102,7 +1252,7 @@ export class WildwayApp {
     const problem = missionTransport(def, run);
     if (problem !== null && run.plan !== null) {
       const c = comparePlan(problem, run.plan);
-      parts.push({ id: 'transport', label: def.kind === 'wildlife' ? 'The transport' : def.id === ECO_MISSION.id ? 'The delivery run' : 'The collection run', baselineKg: c.baseline.co2Kg, planKg: c.player.co2Kg, lines: c.reasons, c });
+      parts.push({ id: 'transport', label: def.kind === 'wildlife' ? 'The transport' : def.id === ECO_MISSION.id ? 'The delivery run' : def.id === DELIVERY_MISSION.id ? 'The run to the ridge' : 'The collection run', baselineKg: c.baseline.co2Kg, planKg: c.player.co2Kg, lines: c.reasons, c });
     }
     return parts;
   }
@@ -1116,7 +1266,9 @@ export class WildwayApp {
     const planKg = parts.reduce((a, p) => a + p.planKg, 0);
     const choice = def.id === GRIDLOCK_MISSION.id ? (lanesFromFlags(run.flags) ?? []).join(',') : def.id === ECO_MISSION.id ? chosenUpgrades(run).join(',') : null;
     const { save, report } = completeMission(this.save, def, run, { baselineKg, planKg, savings: savings(baselineKg, planKg), choice, parts: parts.map(({ id, label, baselineKg: b, planKg: p }) => ({ id, label, baselineKg: b, planKg: p })) });
-    this.persist(save);
+    const awarded = awardAchievements(save);
+    this.persist(awarded.save);
+    const newTitles = awarded.ids.map((id) => ACHIEVEMENTS.find((a) => a.id === id)?.title).filter((t): t is string => t !== undefined);
     this.audio.play('star');
     const transport = parts.find((p) => p.id === 'transport');
     if (def.kind === 'wildlife' && transport?.c !== undefined) {
@@ -1149,7 +1301,7 @@ export class WildwayApp {
           this.audio.play('tap');
           const close = (): void => this.overlay(null);
           if (id === 'plaza') {
-            this.overlay(plazaHow(simulatePlaza(BOCAUE_PLAZA, lanesFromFlags(run.flags) ?? BOCAUE_PLAZA.jammed), close));
+            this.overlay(plazaHow(simulatePlaza(plazaFor(run.flags), lanesFromFlags(run.flags) ?? BOCAUE_PLAZA.jammed), close));
           } else if (id === 'depot') {
             this.overlay(depotHow(chosenUpgrades(run), close));
           } else {
@@ -1160,7 +1312,16 @@ export class WildwayApp {
             }
           }
         },
-        onNext: this.tapped(() => this.enterHub()),
+        achievements: newTitles,
+        next: def.id === DELIVERY_MISSION.id && this.save.missions[HORNBILL_MISSION.id] === undefined ? 'To Malaya Ridge' : null,
+        onNext: this.tapped(() => {
+          /* The supplies went to the ridge: the hornbill expedition is next, if it has not been done. */
+          if (def.id === DELIVERY_MISSION.id && this.save.missions[HORNBILL_MISSION.id] === undefined && this.save.active === null) {
+            this.startMission(HORNBILL_MISSION);
+          } else {
+            this.enterHub();
+          }
+        }),
       }),
       null,
     );
@@ -1214,48 +1375,34 @@ export class WildwayApp {
     this.game.guide = null;
     this.run = null;
     this.script = null;
+    this.hub = null;
     this.game.releaseCamera();
     const g = this.game;
     g.busy = false;
     void this.fade(() => {
       this.showScreen(null, null);
-      g.loadZone('station', this.save.upgrades);
-      const s = g.zone.spots;
-      g.placeTeam(s.spawn[0], s.spawn[1], 0.8);
-      g.placeNpc('ranger', s.briefing[0] - 1, s.briefing[1] + 1.5, 3.1);
-      g.placeNpc('vet', s.care[0] - 1, s.care[1] - 0.6, 0.6);
-      g.placeNpc('joy', s.community[0] + 1, s.community[1] + 1, 1.2);
-      g.placeNpc('ernesto', s.garden[0] + 2, s.garden[1] + 2, -2);
-      const all = (label: string, run: () => void): Partial<Record<HeroId, { label: string; hold: number; run: () => void }>> => {
-        const out: Partial<Record<HeroId, { label: string; hold: number; run: () => void }>> = {};
-        for (const id of HERO_ORDER) {
-          out[id] = { label, hold: 0, run };
-        }
-        return out;
-      };
       const back = (): void => this.showScreen(null, null);
-      const talk = (speaker: string, portrait: string, text: string): void => {
-        g.busy = true;
-        void this.hud.say(speaker, portrait, text).then(() => {
-          g.busy = false;
-          this.hud.setHudHidden(false);
-        });
-      };
-      g.interactions = [
-        { id: 'navie', x: s.navie[0], z: s.navie[1], radius: 3.6, when: () => true, by: all('Talk to Navie', () => this.talkToNavie()) },
-        { id: 'ops', x: s.ops[0], z: s.ops[1], radius: 3.8, when: () => true, by: all('NLEX Operations Board', () => this.showOpsBoard(back)) },
-        { id: 'progress', x: s.progress[0], z: s.progress[1], radius: 3.8, when: () => true, by: all('Environmental Progress', () => this.showProgress(back)) },
-        { id: 'board', x: s.board[0], z: s.board[1], radius: 4, when: () => true, by: all('Eco Dispatch Station: past runs', () => this.showGallery(back)) },
-        { id: 'atlas', x: s.atlas[0], z: s.atlas[1], radius: 4, when: () => true, by: all('Open the Wildlife Atlas', () => this.showAtlas(back)) },
-        { id: 'workshop', x: s.workshop[0], z: s.workshop[1], radius: 4, when: () => true, by: all('Restoration workshop', () => this.showUpgrades(back)) },
-        { id: 'gallery', x: s.gallery[0], z: s.gallery[1], radius: 3.4, when: () => true, by: all('Mission gallery', () => this.showGallery(back)) },
-        { id: 'tower', x: s.tower[0], z: s.tower[1], radius: 3.6, when: () => Object.keys(this.save.missions).length > 0, by: all('Watch the habitat feed', () => this.watchFeed()) },
-        { id: 'map', x: s.map[0], z: s.map[1], radius: 3, when: () => true, by: all('World map', () => this.showMap(back)) },
-        { id: 'community', x: s.community[0], z: s.community[1], radius: 4, when: () => true, by: all('Talk to Ate Joy', () => talk('Ate Joy', 'joy', 'Kumusta! The barangay wants to share rides to the market now, since your hornbill run. Small things, pero nakakatulong.')) },
-        { id: 'garden', x: s.garden[0], z: s.garden[1], radius: 3.6, when: () => true, by: all('Talk to Mang Ernesto', () => talk('Mang Ernesto', 'ernesto', 'Native seedlings only in these beds. What grows well here is what belongs here, and that is what we plant out on the ridge.')) },
-        { id: 'care', x: s.care[0], z: s.care[1], radius: 3.6, when: () => true, by: all('Talk to Dr. Mayumi', () => talk('Dr. Mayumi', 'vet', 'This care unit is only ever a stop on the way. The goal for every animal here is going home.')) },
-        { id: 'briefing', x: s.briefing[0], z: s.briefing[1], radius: 3.6, when: () => true, by: all('Talk to Ranger Ligaya', () => talk('Ranger Ligaya', 'ranger', 'More field reports are coming in from partner stations. We will need you again when those chapters open.')) },
-      ];
+      const hub = new HubScript(this.context(), {
+        save: () => this.save,
+        sideStep: (flag) => this.sideQuestStep(flag),
+        open: (place: HubPlace) => {
+          const go: Record<HubPlace, () => void> = {
+            navie: () => this.talkToNavie(),
+            ops: () => this.showOpsBoard(back),
+            progress: () => this.showProgress(back),
+            board: () => this.showGallery(back),
+            atlas: () => this.showAtlas(back),
+            workshop: () => this.showUpgrades(back),
+            gallery: () => this.showGallery(back),
+            map: () => this.showMap(back),
+            feed: () => this.watchFeed(),
+            notice: () => this.showNotice(back),
+          };
+          go[place]();
+        },
+      });
+      this.hub = hub;
+      hub.enter();
     }, 0.6).then(() => {
       if (!this.save.coachSeen.includes('welcome-center')) {
         this.navieBriefing();
@@ -1263,23 +1410,76 @@ export class WildwayApp {
     });
   }
 
+  /** Navie's menu: missions, a hint, the quiz, and recent achievements. */
   private talkToNavie(): void {
-    const g = this.game;
-    g.busy = true;
-    const open = Object.values(MISSIONS).some((m) => m.kind === 'nlex' && missionOpen(this.save, m.id) && this.save.missions[m.id] === undefined);
-    void this.hud.say('Navie', navieKey(open ? 'hello' : 'clear'), open ? NLEX_LINES.idle : NLEX_LINES.noMission).then(() => {
-      g.busy = false;
-      this.hud.setHudHidden(false);
-      this.showOpsBoard(() => this.showScreen(null, null));
-    });
+    const back = (): void => this.showScreen(null, null);
+    const open = MISSIONS.some((m) => m.kind === 'nlex' && missionOpen(this.save, m.id) && this.save.missions[m.id] === undefined);
+    const render = (): void =>
+      this.showScreen(
+        navieMenu({
+          save: this.save,
+          navie: NAVIE_ART[open ? 'hello' : 'clear'].uri,
+          line: open ? NLEX_LINES.idle : NLEX_LINES.noMission,
+          onMissions: this.tapped(() => this.showOpsBoard(render)),
+          onSide: this.save.sideQuests.length < 4 ? this.tapped(() => this.showNotice(render)) : null,
+          onQuiz: this.tapped(() => this.showQuiz(render)),
+          onBriefing: this.tapped(() => this.navieBriefing()),
+          onBack: this.tapped(back),
+        }),
+        back,
+      );
+    render();
   }
 
+  /** A side quest step: saved, its points once, and a word when the quest is done. */
+  private sideQuestStep(flag: string): void {
+    const r = sideStep(this.save, flag);
+    this.progressed(r.save);
+    if (r.completed !== null) {
+      this.audio.play('star');
+      this.game.celebrate(1.6);
+      this.hud.notice(`Side quest done: ${r.completed.title}! +${r.completed.points} points`, 3.4);
+    }
+  }
+
+  private showNotice(back: () => void): void {
+    const render = (): void => this.showScreen(noticeBoard({ save: this.save, onQuiz: this.tapped(() => this.showQuiz(render)), onBack: this.tapped(back) }), back);
+    render();
+  }
+
+  private showQuiz(back: () => void): void {
+    this.showScreen(
+      quizScreen({
+        navie: NAVIE_ART.thinking.uri,
+        onRight: () => this.audio.play('ok'),
+        onWrong: () => this.audio.play('deny'),
+        onDone: this.tapped(() => {
+          this.sideQuestStep('quiz:done');
+          back();
+        }),
+        onBack: this.tapped(back),
+      }),
+      back,
+    );
+  }
+
+  /** The Eco Workshop: gear that changes how the team plays, and Command Center improvements. */
   private showUpgrades(back: () => void): void {
     const render = (): void => {
       this.showScreen(
-        upgradesScreen({
+        workshopScreen({
           save: this.save,
-          onBuy: (id) => {
+          onGear: (id) => {
+            const next = buyGear(this.save, id);
+            if (next !== null) {
+              this.progressed(next);
+              this.applyGear();
+              this.audio.play('done');
+              this.hud.notice(`${GEAR.find((g) => g.id === id)?.title ?? 'Gear'}: ready to use.`);
+            }
+            render();
+          },
+          onUpgrade: (id) => {
             const next = buyUpgrade(this.save, id);
             if (next !== null) {
               this.persist(next);
@@ -1298,14 +1498,13 @@ export class WildwayApp {
 
   private showGallery(back: () => void): void {
     this.showScreen(
-      galleryScreen({
+      achievementGallery({
         save: this.save,
         defs: MISSIONS,
         onReplay: (def) => {
           this.audio.play('tap');
           this.showBriefing(def, () => this.showGallery(back));
         },
-        onSeason: this.tapped(() => this.watchFeed()),
         onBack: this.tapped(back),
       }),
       back,
@@ -1313,6 +1512,7 @@ export class WildwayApp {
   }
 
   private watchFeed(): void {
+    this.hub = null;
     this.run = null;
     this.script = new HornbillScript(this.context2());
     this.playNextSeason(() => this.enterHub());

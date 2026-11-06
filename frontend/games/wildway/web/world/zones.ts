@@ -437,7 +437,12 @@ export function buildForestProps(r: Renderer): Record<string, Mesh> {
 
 /* ---- The Greenway Field Station ---- */
 
+/** The patrol car's loop round the Command Center, outside every building. */
+export const PATROL_RADIUS = 29;
+const RING: [number, number][] = Array.from({ length: 25 }, (_, i) => [Math.sin((i / 24) * Math.PI * 2) * PATROL_RADIUS, Math.cos((i / 24) * Math.PI * 2) * PATROL_RADIUS] as [number, number]);
+
 const STATION_PATHS: readonly (readonly (readonly [number, number])[])[] = [
+  ...RING.slice(0, 24).map((p, i) => [p, RING[i + 1]] as const),
   [[0, 0], [0, 22]],
   [[0, 0], [16, 13]],
   [[0, 0], [22, -2]],
@@ -482,6 +487,26 @@ export function buildStation(r: Renderer, upgrades: readonly string[]): Zone {
     navie: [-5.2, 7.6],
     ops: [-8.6, 14.2],
     progress: [8.6, 14.2],
+    /* Side quests and the living parts of the Command Center. */
+    weather: [-23, -6.4],
+    notice: [4, -4.4],
+    recycle: [-9, -4.8],
+    sensor1: [24, 8],
+    sensor2: [-10, -20.6],
+    sensor3: [8, 21.8],
+    litter1: [12, 4],
+    litter2: [-15, 9.5],
+    litter3: [6, -12],
+    litter4: [-3, 14],
+    patch1: [-21.6, -12.6],
+    patch2: [-9, -27],
+    patch3: [-8.4, -12.6],
+    critter1: [9, -21.2],
+    trophies: [-5, -9.4],
+    decPlaza: [-11.8, 7.2],
+    decCreek: [-20, 8.6],
+    decVan: [24, -12],
+    decNest: [18.5, 4.5],
   };
   const solidAt = (x: number, z: number): MeshBuilder => s.cell(x, z).solid;
 
@@ -669,13 +694,47 @@ export function buildStation(r: Renderer, upgrades: readonly string[]): Zone {
     }
   }
 
+  /* The weather station, the notice board, the recycling bin and the air-quality sensor posts. */
+  {
+    const b = solidAt(-25, -8);
+    b.tube([-25, 0, -8], [-25, 4.2, -8], 0.1, 0.08, '#8b98ad', 6, false);
+    b.rbox(-25, 1.2, -8, 0.9, 1, 0.6, '#f4f6f8', 0.2);
+    b.rbox(-24.4, 2.2, -8, 1, 0.06, 0.7, '#2b4f9e', 0.05);
+    b.tube([-25, 3.4, -8], [-24.1, 3.4, -8], 0.03, 0.03, '#8b98ad', 4, false);
+    b.cone(-23.9, 3.25, -8, 0.12, 0.35, '#ffc32d', 6);
+    colliders.push({ x: -25, z: -8, r: 0.7 });
+    const n = solidAt(4, -7);
+    n.tube([2.6, 0, -6.8], [2.6, 2.4, -6.8], 0.08, 0.08, '#7d5a3c', 5, false);
+    n.tube([5.4, 0, -6.8], [5.4, 2.4, -6.8], 0.08, 0.08, '#7d5a3c', 5, false);
+    n.rbox(4, 1.75, -6.8, 3.2, 1.3, 0.14, '#8a6341', 0.2);
+    n.rbox(4, 1.75, -6.72, 2.9, 1.05, 0.04, '#f6ecd6', 0.1);
+    for (const [x, y, c] of [[3, 1.95, '#ffd24a'], [4.1, 1.6, '#7fd0ff'], [5.1, 1.9, '#ff8fb5']] as [number, number, string][]) {
+      n.rbox(x, y, -6.68, 0.7, 0.5, 0.02, c, 0.05);
+    }
+    colliders.push({ x: 4, z: -6.8, r: 1.4 });
+    const bin = solidAt(-9, -6.6);
+    bin.rbox(-9, 0.6, -6.6, 1.2, 1.2, 1, '#2b6fd6', 0.3);
+    bin.rbox(-9, 1.26, -6.6, 1.3, 0.14, 1.1, '#1e5bb8', 0.2);
+    colliders.push({ x: -9, z: -6.6, r: 0.7 });
+    for (const [x, z] of [[25.2, 8.8], [-11, -21.6], [9, 22.8]] as [number, number][]) {
+      const p = solidAt(x, z);
+      p.tube([x, 0, z], [x, 1.4, z], 0.06, 0.06, '#8b98ad', 5, false);
+      p.rbox(x, 1.45, z, 0.4, 0.3, 0.3, '#f4f6f8', 0.15);
+      colliders.push({ x, z, r: 0.4 });
+    }
+  }
+
   /* The forest all round, and a fence at the station's edge. */
   const nearAnyPath = (x: number, z: number): number => Math.min(...STATION_PATHS.map((p) => nearLine(x, z, p[0], p[1])));
   for (let i = 0; i < 1100; i += 1) {
     const a = rand() * 6.28;
-    const d = 30 + rand() * 45;
+    const d = 31.5 + rand() * 45;
     const x = Math.cos(a) * d;
     const z = Math.sin(a) * d;
+    /* Leave the gate and the parked maintenance vehicles clear. */
+    if (Math.abs(x) < 11 && z < -27 && z > -42) {
+      continue;
+    }
     const y = height(x, z);
     const scale = 0.85 + rand() * 0.5;
     const k = rand();

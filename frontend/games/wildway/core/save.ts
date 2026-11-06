@@ -1,5 +1,6 @@
 import { CALCULATION_VERSION, type Savings } from './emissions';
 import { HORNBILL_MISSION, missionById, restoreRun, type MissionDef, type MissionRun } from './mission';
+import { ACHIEVEMENT_POINTS, ACHIEVEMENTS, COLLECTIBLES, DISCOVERIES, DISCOVERY_POINTS, GEAR, newAchievements, PATCH_POINTS, SIDE_QUESTS, sideQuestDone, type AchievementView, type SideQuest } from './progression';
 import type { Plan } from './transport';
 
 /**
@@ -11,8 +12,12 @@ import type { Plan } from './transport';
  * replaying the mission, can never count an animal or a reward twice.
  */
 
-/** 2 added NLEX missions: environment objectives, and records without a transport plan. Version 1 saves load as they are. */
-export const SAVE_VERSION = 2;
+/**
+ * 2 added NLEX missions: environment objectives, and records without a transport plan.
+ * 3 added patches, wildlife observations, side quests, workshop gear and achievements.
+ * Older saves load as they are, with those lists empty.
+ */
+export const SAVE_VERSION = 3;
 const RUNS_KEPT = 64;
 
 export type TextScale = 1 | 1.2 | 1.4;
@@ -26,6 +31,8 @@ export interface Settings {
   graphics: Graphics;
   subtitles: boolean;
   lead: string;
+  /** The arrow and the marker to the next objective. Off, the hint button still shows the way. */
+  guide: boolean;
 }
 
 /** One simulated comparison inside a mission: the plaza, the depot, the transport. */
@@ -76,10 +83,19 @@ export interface SaveData {
   badges: string[];
   coachSeen: string[];
   processedRuns: string[];
+  /** Guardian patches found, by id. */
+  collectibles: string[];
+  /** Wildlife observed, by id. */
+  discoveries: string[];
+  /** Side quest progress, and the quests finished. */
+  sideFlags: string[];
+  sideQuests: string[];
+  gear: string[];
+  achievements: string[];
   settings: Settings;
 }
 
-export const DEFAULT_SETTINGS: Settings = { sound: true, music: true, reduceMotion: false, textScale: 1, graphics: 'detailed', subtitles: true, lead: 'dayo' };
+export const DEFAULT_SETTINGS: Settings = { sound: true, music: true, reduceMotion: false, textScale: 1, graphics: 'detailed', subtitles: true, lead: 'dayo', guide: true };
 
 export function defaultSave(now: Date = new Date()): SaveData {
   const stamp = now.toISOString();
@@ -101,6 +117,12 @@ export function defaultSave(now: Date = new Date()): SaveData {
     badges: [],
     coachSeen: [],
     processedRuns: [],
+    collectibles: [],
+    discoveries: [],
+    sideFlags: [],
+    sideQuests: [],
+    gear: [],
+    achievements: [],
     settings: { ...DEFAULT_SETTINGS },
   };
 }
@@ -186,6 +208,12 @@ export function loadSave(stored: unknown, now: Date = new Date()): { save: SaveD
       badges: strings(raw.badges),
       coachSeen: strings(raw.coachSeen),
       processedRuns: strings(raw.processedRuns, RUNS_KEPT),
+      collectibles: strings(raw.collectibles).filter((id) => COLLECTIBLES.some((c) => c.id === id)),
+      discoveries: strings(raw.discoveries).filter((id) => DISCOVERIES.some((d) => d.id === id)),
+      sideFlags: strings(raw.sideFlags),
+      sideQuests: strings(raw.sideQuests).filter((id) => SIDE_QUESTS.some((q) => q.id === id)),
+      gear: strings(raw.gear).filter((id) => GEAR.some((g) => g.id === id)),
+      achievements: strings(raw.achievements).filter((id) => ACHIEVEMENTS.some((a) => a.id === id)),
       settings: {
         sound: typeof s.sound === 'boolean' ? s.sound : d.sound,
         music: typeof s.music === 'boolean' ? s.music : d.music,
@@ -194,6 +222,7 @@ export function loadSave(stored: unknown, now: Date = new Date()): { save: SaveD
         graphics: oneOf<Graphics>(s.graphics as Graphics, ['smooth', 'detailed'], d.graphics),
         subtitles: typeof s.subtitles === 'boolean' ? s.subtitles : d.subtitles,
         lead: oneOf(s.lead, ['dayo', 'baging', 'sukat', 'awit'], d.lead),
+        guide: typeof s.guide === 'boolean' ? s.guide : d.guide,
       },
     },
     issues: [],
@@ -309,3 +338,59 @@ export function buyUpgrade(save: SaveData, id: string): SaveData | null {
 }
 
 export const firstMission = (): MissionDef => HORNBILL_MISSION;
+
+/* ---- Patches, wildlife, side quests, gear and achievements: each granted once ---- */
+
+/** A patch found. Finding it again, on a replay, gives nothing. */
+export function collect(save: SaveData, id: string): { save: SaveData; added: boolean } {
+  if (save.collectibles.includes(id) || !COLLECTIBLES.some((c) => c.id === id)) {
+    return { save, added: false };
+  }
+  return { save: { ...save, collectibles: [...save.collectibles, id], guardianPoints: save.guardianPoints + PATCH_POINTS }, added: true };
+}
+
+export function discover(save: SaveData, id: string): { save: SaveData; added: boolean } {
+  if (save.discoveries.includes(id) || !DISCOVERIES.some((d) => d.id === id)) {
+    return { save, added: false };
+  }
+  return { save: { ...save, discoveries: [...save.discoveries, id], guardianPoints: save.guardianPoints + DISCOVERY_POINTS }, added: true };
+}
+
+/** One step of a side quest. The quest's points come once, when its last step is done. */
+export function sideStep(save: SaveData, flag: string): { save: SaveData; completed: SideQuest | null } {
+  const flags = save.sideFlags.includes(flag) ? save.sideFlags : [...save.sideFlags, flag];
+  const quest = SIDE_QUESTS.find((q) => q.needs.includes(flag) && !save.sideQuests.includes(q.id) && sideQuestDone(flags, q)) ?? null;
+  return {
+    save: { ...save, sideFlags: flags, sideQuests: quest === null ? save.sideQuests : [...save.sideQuests, quest.id], guardianPoints: save.guardianPoints + (quest?.points ?? 0) },
+    completed: quest,
+  };
+}
+
+export function buyGear(save: SaveData, id: string): SaveData | null {
+  const gear = GEAR.find((g) => g.id === id);
+  if (gear === undefined || save.gear.includes(id) || save.guardianPoints < gear.cost) {
+    return null;
+  }
+  return { ...save, guardianPoints: save.guardianPoints - gear.cost, gear: [...save.gear, id] };
+}
+
+export const NLEX_MISSION_IDS = ['nlex-gridlock', 'nlex-river', 'nlex-eco', 'nlex-delivery'];
+
+export const achievementView = (save: SaveData): AchievementView => ({
+  missions: Object.keys(save.missions),
+  missionsBelowBaseline: Object.entries(save.missions).filter(([, r]) => r.bestSavedKg > 0).map(([id]) => id),
+  collectibles: save.collectibles,
+  discoveries: save.discoveries,
+  sideQuests: save.sideQuests,
+  gear: save.gear,
+  nlexMissionIds: NLEX_MISSION_IDS,
+});
+
+/** Grants every achievement the save now qualifies for, once each. */
+export function awardAchievements(save: SaveData): { save: SaveData; ids: string[] } {
+  const ids = newAchievements(achievementView(save), save.achievements);
+  if (ids.length === 0) {
+    return { save, ids };
+  }
+  return { save: { ...save, achievements: [...save.achievements, ...ids], guardianPoints: save.guardianPoints + ids.length * ACHIEVEMENT_POINTS }, ids };
+}

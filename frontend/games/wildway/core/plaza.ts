@@ -34,6 +34,8 @@ export interface PlazaProblem {
   /** How the plaza stood when the Wasteworks had jammed it. */
   jammed: readonly LaneMode[];
   minutes: number;
+  /** Lanes whose tag reader has failed: they can take cash, or close. */
+  tagDown?: readonly number[];
 }
 
 export const CLASS_LABEL: Record<VehicleClass, string> = {
@@ -96,6 +98,11 @@ export function checkModes(p: PlazaProblem, modes: readonly LaneMode[]): string[
       out.push(`Lane ${lane.id} is coned off for repairs. It has to stay closed.`);
     }
   });
+  for (const i of p.tagDown ?? []) {
+    if (modes[i] === 'tag') {
+      out.push(`Lane ${p.lanes[i].id}’s tag reader is down. It can take cash, or close.`);
+    }
+  }
   const cash = modes.filter((m) => m === 'cash').length;
   if (cash > p.cashStaff) {
     out.push(`There are ${p.cashStaff} toll collectors on shift, so at most ${p.cashStaff} cash lanes.`);
@@ -224,6 +231,19 @@ export const FLOWING_MIN = 3;
 export function plazaSolved(r: PlazaResult): boolean {
   return r.problems.length === 0 && r.leftWaiting <= r.lanes.length && r.lanes.every((l) => l.averageMin <= FLOWING_MIN);
 }
+
+/**
+ * The surprise once the plaza reopens: a tag reader fails on one of the player's own
+ * tag lanes. A narrow lane if there is one, so the trucks' wide lanes stay as they were
+ * when they can. Tests check a working setting is always still possible.
+ */
+export function failureLane(p: PlazaProblem, modes: readonly LaneMode[]): number {
+  const tags = modes.map((m, i) => (m === 'tag' ? i : -1)).filter((i) => i >= 0);
+  const narrow = tags.filter((i) => !p.lanes[i].wide);
+  return (narrow.length > 0 ? narrow[narrow.length - 1] : tags[0]) ?? 0;
+}
+
+export const withTagDown = (p: PlazaProblem, lane: number): PlazaProblem => ({ ...p, tagDown: [...(p.tagDown ?? []), lane] });
 
 /** Every possible setting, for tests. */
 export function allModeSets(p: PlazaProblem): LaneMode[][] {
