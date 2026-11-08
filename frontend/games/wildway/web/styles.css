@@ -377,7 +377,7 @@ p { margin: 0.35rem 0; line-height: 1.42; }
 
 /* ---- Gameplay expansion: hints, quick travel, puzzles, the Command Center's screens ---- */
 .hint-btn { font-size: 20px; background: var(--sun); }
-.go-btn { margin-left: 4px; min-height: 26px; padding: 0 10px; border: 2px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink); font: 900 0.78rem var(--brand); cursor: pointer; pointer-events: auto; }
+.go-btn { margin-left: 4px; min-width: 52px; min-height: 42px; padding: 0 14px; border: 2px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink); font: 900 0.78rem var(--brand); cursor: pointer; pointer-events: auto; }
 .go-btn:active { transform: translateY(1px); }
 .puzzle .scroll { display: flex; flex-direction: column; gap: 12px; }
 .circuit-grid { display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 6px; width: 100%; max-width: 420px; margin: 0 auto; padding: 8px; border: 2.5px solid var(--line); border-radius: 18px; background: #17304d; box-shadow: 0 4px 0 var(--line); }
@@ -434,3 +434,53 @@ p { margin: 0.35rem 0; line-height: 1.42; }
   .lpiece { min-width: 76px; }
 }
 .reduce-motion .ctile.turn svg { animation: none; }
+
+/* ---- Simpler missions and more animals: the step pill, the photo flash, short results ---- */
+.objective-top { display: flex; align-items: center; gap: 6px; max-width: 100%; }
+.mission-name { overflow: hidden; padding: 2px 9px; border: 2px solid var(--line); border-radius: 999px; background: var(--blue); color: #fff; font: 900 0.72rem/1.2 var(--brand); white-space: nowrap; text-overflow: ellipsis; }
+.step-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 2px solid var(--line); border-radius: 999px; background: #fff; }
+.step-dot { width: 9px; height: 9px; border: 2px solid var(--line); border-radius: 50%; background: #e4e9f1; }
+.step-dot.now { background: var(--sun); }
+.step-dot.done { background: var(--leaf); }
+.step-dot.pop { animation: dot-pop 600ms ease-out; }
+.step-count { font-size: 0.72rem; font-weight: 900; }
+.objective-text.pop { animation: obj-pop 650ms ease-out; }
+@keyframes dot-pop { 0% { transform: scale(1); } 40% { transform: scale(1.9); } 100% { transform: scale(1); } }
+@keyframes obj-pop { 0% { transform: scale(1); background: #fff; } 35% { transform: scale(1.08); background: #d8f7e4; } 100% { transform: scale(1); background: #fff; } }
+.photo-flash { position: absolute; inset: 0; z-index: 14; background: #fff; opacity: 0; pointer-events: none; }
+.photo-flash.on { animation: flash 420ms ease-out; }
+@keyframes flash { 0% { opacity: 0.85; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .photo-flash.on, .step-dot.pop, .objective-text.pop { animation-duration: 1ms; } }
+
+.brief h2 { margin-bottom: 6px; }
+.brief-steps { list-style: none; margin: 10px 0 4px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.brief-steps li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 2.5px solid var(--line); border-radius: 14px; background: var(--sky); font-weight: 800; }
+.brief-num { flex: none; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: 2px solid var(--line); border-radius: 50%; background: var(--sun); font: 900 0.9rem var(--brand); }
+
+.lane-legend { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { padding: 2px 9px; border: 2px solid var(--line); border-radius: 999px; font-size: 0.75rem; font-weight: 900; }
+.chip.tag { background: #d6e8ff; }
+.chip.cash { background: #fff1c2; }
+.chip.closed { background: #e4e9f1; }
+
+.vehicle-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.vehicle-card { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 120px; padding: 12px 6px 10px; border: 2.5px solid var(--line); border-radius: 18px; background: #fff; box-shadow: 0 3px 0 var(--line); font-family: var(--ui); color: var(--ink); cursor: pointer; }
+.vehicle-card.on { background: #d8f7e4; outline: 3px solid var(--leaf); }
+.vehicle-card.no { background: #eef1f6; color: var(--muted); cursor: default; }
+.vehicle-icons { display: flex; gap: 2px; font-size: 26px; }
+.vehicle-name { font: 900 1rem var(--brand); }
+.vehicle-kg { font-size: 0.86rem; font-weight: 900; }
+.vehicle-why { font-size: 0.8rem; font-weight: 800; }
+.vehicle-badge { position: absolute; top: -10px; right: -4px; display: inline-flex; align-items: center; gap: 3px; padding: 1px 8px; border: 2px solid var(--line); border-radius: 999px; background: var(--leaf); color: #fff; font-size: 0.72rem; font-weight: 900; }
+.center { text-align: center; }
+
+.result-cheer { margin: 6px 0 0; font: 900 1.1rem var(--brand); color: #fff; }
+.result-chips { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 6px; }
+.result-chip { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 2.5px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 3px 0 var(--line); font-weight: 900; }
+.result-chip svg { flex: none; width: 24px; height: 24px; }
+.result-chip .sim-tag { margin-left: auto; }
+.result-details { margin-top: 6px; }
+/* "Mission complete!" fits the narrowest phone at the largest text. */
+.result-head h2 { font-size: clamp(1.25rem, 6.4vw, 1.7rem); }
+.guide-dist { white-space: nowrap; }
+@media (max-width: 360px) { .step-dot { display: none; } }

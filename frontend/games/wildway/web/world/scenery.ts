@@ -23,6 +23,17 @@ export interface ZoneGeometry {
 export class Scatter {
   private cells = new Map<string, { solid: MeshBuilder; soft: MeshBuilder; x: number; z: number }>();
   private readonly size = 26;
+  /** Where a bird can sit: the tops of tree crowns and palms, as they are planted. */
+  readonly perches: Vec3[] = [];
+  /** Flower heads, for butterflies to visit. */
+  readonly flowers: Vec3[] = [];
+
+  /** A point given in a planted piece's own frame, in the world. */
+  static at(x: number, y: number, z: number, yaw: number, scale: number, lx: number, ly: number, lz: number): Vec3 {
+    const c = Math.cos(yaw);
+    const n = Math.sin(yaw);
+    return [x + (c * lx + n * lz) * scale, y + ly * scale, z + (-n * lx + c * lz) * scale];
+  }
 
   cell(x: number, z: number): { solid: MeshBuilder; soft: MeshBuilder } {
     const cx = Math.floor(x / this.size);
@@ -96,7 +107,9 @@ export function tallTree(s: Scatter, x: number, y: number, z: number, scale: num
     ['#2a8a5c', '#3ea973', '#6fd089'],
     ['#3f9a3f', '#60b84a', '#8ed25a'],
   ][crown % 3];
-  solid.at(x, y, z, rand() * 6.28, scale, () => {
+  const yaw = rand() * 6.28;
+  s.perches.push(Scatter.at(x, y, z, yaw, scale, 0.3, 8.5, 0.2), Scatter.at(x, y, z, yaw, scale, 1.6, 6.97, 0.4));
+  solid.at(x, y, z, yaw, scale, () => {
     solid.sway = 0;
     solid.tube([0, -0.4, 0], [0, 5.4, 0], 0.5, 0.32, '#7d5a3c', 7, false);
     solid.tube([0, 3.4, 0], [1.7, 5.2, 0.3], 0.18, 0.1, '#7d5a3c', 5, false);
@@ -112,7 +125,9 @@ export function tallTree(s: Scatter, x: number, y: number, z: number, scale: num
 
 export function roundTree(s: Scatter, x: number, y: number, z: number, scale: number, rand: () => number): void {
   const { solid } = s.cell(x, z);
-  solid.at(x, y, z, rand() * 6.28, scale, () => {
+  const yaw = rand() * 6.28;
+  s.perches.push(Scatter.at(x, y, z, yaw, scale, 0.5, 4.8, 0.2));
+  solid.at(x, y, z, yaw, scale, () => {
     solid.tube([0, -0.3, 0], [0, 2.2, 0], 0.26, 0.2, '#86613f', 6, false);
     solid.sway = 0.6;
     solid.ellipsoid(0, 3.2, 0, 1.8, 1.5, 1.8, '#3fa24f', { rows: 6, cols: 8 });
@@ -123,7 +138,9 @@ export function roundTree(s: Scatter, x: number, y: number, z: number, scale: nu
 
 export function palm(s: Scatter, x: number, y: number, z: number, scale: number, rand: () => number): void {
   const { solid } = s.cell(x, z);
-  solid.at(x, y, z, rand() * 6.28, scale, () => {
+  const yaw = rand() * 6.28;
+  s.perches.push(Scatter.at(x, y, z, yaw, scale, 0.9, 5.12, 0));
+  solid.at(x, y, z, yaw, scale, () => {
     solid.tube([0, -0.3, 0], [0.5, 3, 0], 0.2, 0.13, '#94744b', 6, false);
     solid.tube([0.5, 3, 0], [0.9, 5, 0], 0.13, 0.1, '#94744b', 6, false);
     solid.sway = 0.8;
@@ -151,6 +168,8 @@ export function bamboo(s: Scatter, x: number, y: number, z: number, rand: () => 
 
 export function bush(s: Scatter, x: number, y: number, z: number, size: number, rand: () => number): void {
   const { solid } = s.cell(x, z);
+  /* A low perch: small birds sit on bushes, where the camera can see them. */
+  s.perches.push([x, y + size * 1.3, z]);
   solid.sway = 0.2;
   solid.ellipsoid(x, y + size * 0.55, z, size, size * 0.8, size, '#3f9f4d', { rows: 5, cols: 8 });
   solid.ellipsoid(x + size * 0.5, y + size * 0.42, z + size * 0.2, size * 0.65, size * 0.55, size * 0.65, '#5ebf56', { rows: 4, cols: 7 });
@@ -163,6 +182,7 @@ export function bush(s: Scatter, x: number, y: number, z: number, size: number, 
 
 export function rock(s: Scatter, x: number, y: number, z: number, size: number, rand: () => number): void {
   const { solid } = s.cell(x, z);
+  s.perches.push([x, y + size * 0.98, z]);
   solid.ellipsoid(x, y + size * 0.3, z, size, size * 0.72, size * 0.85, '#9aa1a8', { rows: 4, cols: 7, yaw: rand() * 6.28, tiltX: rand() * 0.3 });
   solid.ellipsoid(x + size * 0.2, y + size * 0.62, z, size * 0.55, size * 0.32, size * 0.5, '#bcc2c8', { rows: 3, cols: 6 });
 }
@@ -192,6 +212,7 @@ export function flower(s: Scatter, x: number, y: number, z: number, rand: () => 
   const { soft } = s.cell(x, z);
   const colors = ['#ffd24a', '#ff8fb5', '#ffffff', '#ff9d3c', '#b98cff'];
   soft.sway = 0.14;
+  s.flowers.push([x, y + 0.3, z]);
   soft.ball(x, y + 0.26, z, 0.09, colors[Math.floor(rand() * colors.length)], 3, 5);
   soft.cone(x, y - 0.02, z, 0.03, 0.24, '#4aa24c', 3);
   soft.sway = 0;
@@ -200,6 +221,7 @@ export function flower(s: Scatter, x: number, y: number, z: number, rand: () => 
 export function stump(s: Scatter, x: number, y: number, z: number, rand: () => number): void {
   const { solid } = s.cell(x, z);
   const r = 0.4 + rand() * 0.3;
+  s.perches.push([x, y + 0.44, z]);
   solid.tube([x, y - 0.2, z], [x, y + 0.42, z], r, r * 0.9, '#7d5a3c', 8, false);
   solid.disc(x, y + 0.42, z, r * 0.9, '#d8b27a', 10);
 }

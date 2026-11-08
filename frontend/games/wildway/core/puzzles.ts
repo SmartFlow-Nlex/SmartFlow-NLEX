@@ -108,7 +108,7 @@ export function circuitSolved(grid: Tile[][]): boolean {
 export const CIRCUITS: Record<string, CircuitLevel> = {
   cable: {
     id: 'cable',
-    title: 'Reconnect the booth cable',
+    title: 'Reconnect the RFID scanner',
     seed: 1,
     solution: ['P3P6PAPC', 'S2P9PAP5', 'P3PAPCK1'],
   },
@@ -129,6 +129,13 @@ export const CIRCUITS: Record<string, CircuitLevel> = {
     title: 'Wire the solar roof to the depot',
     seed: 4,
     solution: ['P6P3S4P9PC', 'P5PAP5P6P5', 'P3P6PBPCP9', 'P9P5P6P3PC', 'K2P9P3PAK1'],
+  },
+  /* The simplified Solar Power Rescue: one small board, two panel strings to the box. */
+  solarLite: {
+    id: 'solarLite',
+    title: 'Connect the solar panels',
+    seed: 5,
+    solution: ['P6PAP6K8', 'S2PAPD.0', 'P3P5P3K8'],
   },
 };
 

@@ -245,8 +245,11 @@ export interface CompletionReport {
   newBest: boolean;
 }
 
-/** Missions whose results depend on a transport plan. */
-export const needsPlan = (def: MissionDef): boolean => def.transport !== null || def.id === 'nlex-eco';
+/**
+ * Missions whose results depend on a transport plan. Since the missions were simplified,
+ * only Eco Delivery Rush has one; older records with a plan still load, plan and all.
+ */
+export const needsPlan = (def: MissionDef): boolean => def.transport !== null;
 
 export interface MissionOutcome {
   baselineKg: number;
@@ -279,7 +282,10 @@ export function completeMission(save: SaveData, def: MissionDef, run: MissionRun
     }
   }
   const sameVersion = was !== undefined && was.calculationVersion === CALCULATION_VERSION;
-  const newBest = !sameVersion || result.planKg < (was as MissionRecord).bestPlanKg;
+  /* A run with nothing measured (the simplified creek and hornbill) never replaces a measured best. */
+  const measured = result.baselineKg > 0 || result.planKg > 0;
+  /* Compared by what was saved, so a record from before the simplification (a different baseline) is only replaced by a better result. */
+  const newBest = first || (measured && (!sameVersion || result.savings.savedKg > (was as MissionRecord).bestSavedKg || (was as MissionRecord).baselineKg === 0));
   const record: MissionRecord = {
     completedAt: was?.completedAt ?? now.toISOString(),
     plays: (was?.plays ?? 0) + 1,

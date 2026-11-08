@@ -1,6 +1,7 @@
 import type { MissionRun } from '../core/mission';
 import { newActor, pose, poseBird, type Actor, type ActionPose, type BirdState } from './anim';
 import type { GameAudio } from './audio';
+import { Fauna } from './fauna';
 import { angleTo, clamp, ease, lerp, placement, mat4, type Vec3 } from './gl/math';
 import { MeshBuilder } from './gl/builder';
 import type { Mesh, Renderer } from './gl/renderer';
@@ -39,6 +40,8 @@ export interface Interaction {
   when: () => boolean;
   /** Who to suggest when the active hero cannot do it. */
   suggest?: HeroId;
+  /** Lower loses: an animal's photo button never hides a mission's button. */
+  priority?: number;
 }
 
 export interface Prop {
@@ -151,6 +154,10 @@ export class Game {
   private particleMeshes: Record<BurstKind, Mesh[]> = { spark: [], confetti: [], splash: [], leaf: [], sparkle: [], dust: [] };
   private cheerLeft = 0;
   private readonly upgradesAtBuild: { list: readonly string[] } = { list: [] };
+  /** The animals living in the loaded zone. */
+  readonly fauna: Fauna;
+  /** Taking a photo: leaves between the lens and the animal fade out of the way. */
+  photoCut = false;
 
   constructor(
     readonly r: Renderer,
@@ -179,6 +186,7 @@ export class Game {
       staff: newActor('person', makeResident(r, '#1e5bb8', '#33405a', '#8d5a3b'), 0, 0, 0),
     };
     this.buildParticles();
+    this.fauna = new Fauna(r);
     this.bird = newActor('bird', makeHornbill(r), 0, 0, 0, 0, 1.3);
     input.onSwitch = (i) => {
       if (!this.busy && !this.paused) {
@@ -231,6 +239,23 @@ export class Game {
     this.particles = [];
     this.audio.setRegion(id === 'forest' || id === 'river' ? 'forest' : 'station');
     this.audio.setHum(0);
+    /* A fresh set of animals for the new place: the mission or the hub fills it. */
+    const z = this.zone;
+    const plaza = id === 'plaza';
+    this.fauna.clear({
+      height: (x, zz) => z.height(x, zz),
+      waterY: z.waterY,
+      water: (x, zz) => z.waterY !== null && z.height(x, zz) < z.waterY - 0.3,
+      land: (x, zz) =>
+        (z.waterY === null || z.height(x, zz) > z.waterY + 0.12) &&
+        !z.colliders.some((c) => Math.hypot(c.x - x, c.z - zz) < c.r + 0.25) &&
+        (!plaza || Math.abs(x) > 18.8) &&
+        Math.abs(x) < 70 &&
+        Math.abs(zz) < 80,
+      perches: z.perches ?? [],
+      flowers: z.flowers ?? [],
+      burst: (kind, x, y, zz, n) => this.burst(kind, x, y, zz, n),
+    });
     for (const npc of Object.values(this.npcs)) {
       npc.visible = false;
     }
@@ -379,9 +404,11 @@ export class Game {
       }
       const reach = this.active === 'baging' && it.stretchRadius !== undefined ? it.stretchRadius + this.vinesExtra : it.radius;
       const d = Math.hypot(h.x - it.x, h.z - it.z);
-      if (d < reach && d < bestD) {
+      /* Anything with a lower priority only wins when nothing else is in reach. */
+      const score = d - (it.priority ?? 0) * 1000;
+      if (d < reach && score < bestD) {
         best = it;
-        bestD = d;
+        bestD = score;
       }
     }
     if (best === null) {
@@ -428,6 +455,8 @@ export class Game {
       this.moveFollowers(dt);
     }
     if (!this.paused) {
+      this.fauna.reduceMotion = this.reduceMotion;
+      this.fauna.update(dt, HERO_ORDER.map((id) => this.heroes[id]));
       this.updateParticles(dt);
       if (this.cheerLeft > 0) {
         this.cheerLeft -= dt;
@@ -724,7 +753,8 @@ export class Game {
       /* In a scene the view is chosen by hand: only clear leaves from right in front of the lens. */
       const e = this.eye;
       const t = this.target;
-      r.setCut(e, [e[0] + (t[0] - e[0]) * 0.4, e[1] + (t[1] - e[1]) * 0.4, e[2] + (t[2] - e[2]) * 0.4], 1.8);
+      const k = this.photoCut ? 0.85 : 0.4;
+      r.setCut(e, [e[0] + (t[0] - e[0]) * k, e[1] + (t[1] - e[1]) * k, e[2] + (t[2] - e[2]) * k], this.photoCut ? 2.6 : 1.8);
     }
     r.draw(zone.cloudMesh, { noOutline: true });
     r.draw(zone.geometry.terrain, { noOutline: true });
@@ -772,6 +802,7 @@ export class Game {
         this.drawActor(n);
       }
     }
+    this.fauna.draw(this.eye, (x, y, z, radius) => r.blob(x, y, z, radius, [0.05, 0.09, 0.2, 0.28]));
     if (this.birdVisible) {
       poseBird(this.bird, this.birdState);
       const bones = this.bird.ch.rig.update();

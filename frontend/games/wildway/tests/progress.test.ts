@@ -20,17 +20,16 @@ const complete = (save: SaveData, run: MissionRun) => {
   return completeMission(save, M, run, { baselineKg: c.baseline.co2Kg, planKg: c.player.co2Kg, savings: c.savings });
 };
 
-test('mission: steps run in order, and a later flag cannot skip one', () => {
+test('mission: three steps that run in order, and a later flag cannot skip one', () => {
   let run = newRun(M.id, 'r');
-  assert.equal(currentStep(M, run)?.id, 'call', 'it starts with the call to the Command Center');
-  run = setFlag(M, run, 'callTaken');
-  assert.equal(currentStep(M, run)?.id, 'walk');
-  run = setFlag(M, run, 'rangerAsked');
-  assert.equal(currentStep(M, run)?.id, 'walk', 'out of order: stays put');
-  run = setFlag(M, run, 'reachedBank');
-  assert.equal(currentStep(M, run)?.id, 'scan');
+  assert.equal(M.steps.length, 3);
+  assert.equal(currentStep(M, run)?.id, 'find', 'it starts at Malaya Ridge, finding the bird');
+  run = setFlag(M, run, 'logCleared');
+  assert.equal(currentStep(M, run)?.id, 'find', 'out of order: stays put');
   run = setFlag(M, run, 'birdScanned');
-  assert.equal(currentStep(M, run)?.id, 'plan', 'the earlier flag now counts');
+  assert.equal(currentStep(M, run)?.id, 'path', 'the earlier flag counts, and the path needs the crossing too');
+  run = setFlag(M, run, 'crossingOpen');
+  assert.equal(currentStep(M, run)?.id, 'help');
 });
 
 test('mission: repeating a flag changes nothing', () => {
@@ -47,7 +46,8 @@ test('mission: every step can be finished, and finishes the mission', () => {
 test('mission: the specialist decides on care: the player has no step doing it', () => {
   const objectives = M.steps.map((s) => s.objective).join(' ');
   assert.ok(!/treat|heal|capture|catch/.test(objectives));
-  assert.ok(M.steps.some((s) => s.id === 'assess'));
+  /* The team brings the specialist's kit; the specialist does the assessing. */
+  assert.ok(M.steps.find((s) => s.id === 'help')?.needs.includes('kitDelivered'));
 });
 
 test('checkpoint: a saved run restores to the same place', () => {

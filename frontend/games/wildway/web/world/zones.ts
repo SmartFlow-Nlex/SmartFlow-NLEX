@@ -42,6 +42,9 @@ export interface Zone {
   /** Can someone on foot stand here? */
   walkable: (x: number, z: number) => boolean;
   spots: Record<string, [number, number]>;
+  /** Tree tops a bird can sit on, and flower heads for butterflies, recorded as the scenery was planted. */
+  perches?: Vec3[];
+  flowers?: Vec3[];
   waterY: number | null;
   /** Everything that must be freed when the zone is left. */
   meshes: Mesh[];
@@ -294,6 +297,8 @@ export function buildForest(r: Renderer): Zone {
     colliders,
     walkable: (x, z) => height(x, z) > FOREST_WATER_Y + 0.15 && height(x, z) < 5 && Math.abs(x) < 64 && Math.abs(z) < 76,
     spots,
+    perches: s.perches,
+    flowers: s.flowers,
     waterY: FOREST_WATER_Y,
     meshes: [terrain, water, cloudMesh, ...chunks.flatMap((c) => [c.solid, c.soft].filter((m): m is Mesh => m !== null))],
   };
@@ -606,6 +611,7 @@ export function buildStation(r: Renderer, upgrades: readonly string[]): Zone {
         b.sway = 0.1;
         b.ellipsoid(x + (k % 2 === 0 ? -0.5 : 0.5), 0.95, z, 0.5, 0.42, 0.5, k % 2 === 0 ? '#5ebf56' : '#3f9f4d', { rows: 4, cols: 6 });
         b.ball(x + (k % 2 === 0 ? -0.5 : 0.5), 1.4, z, 0.13, ['#ffd24a', '#ff8fb5', '#ff9d3c'][k % 3], 3, 5);
+        s.flowers.push([x + (k % 2 === 0 ? -0.5 : 0.5), 1.5, z]);
         b.sway = 0;
       }
       colliders.push({ x, z: -24, r: 2.2 });
@@ -808,6 +814,8 @@ export function buildStation(r: Renderer, upgrades: readonly string[]): Zone {
     colliders,
     walkable: (x, z) => Math.hypot(x, z) < 37,
     spots,
+    perches: s.perches,
+    flowers: s.flowers,
     waterY: null,
     meshes: [terrain, cloudMesh, ...chunks.flatMap((c) => [c.solid, c.soft].filter((m): m is Mesh => m !== null))],
   };

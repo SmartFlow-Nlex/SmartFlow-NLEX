@@ -18,7 +18,7 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - They work from **mockup screenshots** and expect the app to match them closely ("make it identical"), then send phone screenshots of what is wrong.
 
 ### How Ysa wants things done
-- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-15**, so next is **Ysa-Commit-16**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
+- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-16**, so next is **Ysa-Commit-17**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
 - **"Make the server up":** start Metro from the **repo root**, then give the `exp://` address and a QR code (see §1). Check the phone can really load the bundle, not just the manifest.
 - Never commit `.env` (it holds keys; it is in `.gitignore`).
 - Use real data only — no mock traffic data, no fake posts.
@@ -278,6 +278,16 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - **Remember me** starts unticked. Sign-up no longer remembers the account silently either, since it has no box to opt in with.
 - **Wording:** the wrong-code message (`mfa.ts`) and the reset-link message (`forgot-password.tsx`) use the panel's exact text. "TRAFFIC INTELLIGENCE" is gone from the tab header.
 - **Welcome email:** `sendWelcomeEmail` (`frontend/auth/welcomeEmail.ts`) runs once `register` succeeds, and calls a Google Apps Script running as navie.smartflow@gmail.com (`supabase/welcome-email.gs`, which has the setup steps). The backend cannot send it: Render's free tier blocks outgoing SMTP. The script takes the session token, asks Supabase whose it is, and writes only to that address, once, within 15 minutes of the account's creation. Without `EXPO_PUBLIC_WELCOME_EMAIL_URL` in `.env`, nothing is sent and sign-up still works.
+
+### 8 Nov — Ysa-Commit-16 (Wildway Guardians: simpler missions, more animals)
+- From the professor's feedback, "more animals, less reading, simpler missions", with the NLEX missions kept as a major part (Ysa's request):
+  - **Every mission is three steps** and starts in its own place, with no trip back to Navie first. Objectives are 3 to 7 words, descriptions one sentence, and Navie speaks one short sentence at a time. Unit tests check the word counts.
+  - **Carbon is still calculated** in the Gridlock (the lanes the player opens), Solar (the roof only) and Delivery (four vehicle cards). Creek Rescue and the hornbill mission no longer have a CO₂ result.
+  - **14 kinds of animated wildlife** in all six places (`web/fauna.ts`, `web/world/wildlife.ts`), never on traffic lanes. They react to the team, and any hero can photograph them for field notes.
+  - **Three animal activities** at the Command Center: Butterfly Watch, Find the Bird, Wildlife Spotter.
+  - **Old saves:** missions left half-way under the old, longer steps start afresh (`RUN_VERSION` 2). Finished records are kept.
+- Details and limits: `frontend/games/wildway/README.md`, section "Simpler missions and more animals". Bot-played and checked at five phone sizes in headless Chrome; not yet played on a real phone.
+- This push was also used to make Render rebuild the backend, which had stopped answering on 8 Nov (down for everyone, Render's status page green). The dashboard service is on a teammate's Render account and a push here does not restart it.
 
 ### 7 Nov — Ysa-Commit-15 (Wildway Guardians gameplay expansion)
 - **Wildway Guardians** (`frontend/games/wildway/`) grew from walk-to-the-marker into an adventure, with nothing removed:

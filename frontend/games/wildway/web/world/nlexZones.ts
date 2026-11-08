@@ -256,6 +256,8 @@ export function buildPlaza(r: Renderer): Zone {
     colliders,
     walkable: (x, z) => Math.abs(x) > 17.9 && Math.abs(x) < 33 && Math.abs(z) < 58,
     spots,
+    perches: s.perches,
+    flowers: s.flowers,
     waterY: null,
     images,
     meshes: [terrain, cloudMesh, ...chunks.flatMap((c) => [c.solid, c.soft].filter((m): m is Mesh => m !== null))],
@@ -474,6 +476,8 @@ export function buildRiver(r: Renderer): Zone {
     colliders,
     walkable: (x, z) => height(x, z) > RIVER_WATER_Y + 0.15 && Math.abs(x) < 42 && Math.abs(z) < 25 && !(Math.abs(x - 35) < 3.2),
     spots,
+    perches: s.perches,
+    flowers: s.flowers,
     waterY: RIVER_WATER_Y,
     side: (x, z) => z - riverZ(x),
     bridges: [{ x: RIVER_BRIDGE.x, z: riverZ(RIVER_BRIDGE.x), halfWidth: RIVER_BRIDGE.halfWidth, halfLength: RIVER_BRIDGE.halfLength, deck: RIVER_BRIDGE.deck }],
@@ -671,6 +675,8 @@ export function buildDepot(r: Renderer): Zone {
     colliders,
     walkable: (x, z) => (Math.abs(x) < 33.3 && Math.abs(z) < 27.3) || (Math.abs(x) < 4.2 && z < 0 && z > -44),
     spots,
+    perches: s.perches,
+    flowers: s.flowers,
     waterY: null,
     images,
     meshes: [terrain, cloudMesh, ...chunks.flatMap((c) => [c.solid, c.soft].filter((m): m is Mesh => m !== null))],
@@ -697,6 +703,24 @@ export function buildNlexProps(r: Renderer): Record<string, Mesh> {
     b.rbox(0, 0, -0.08, 0.5, 0.1, 0.06, '#fff0ec', 0.1, -0.78);
   });
   make('sigDark', (b) => b.rbox(0, 0, 0, 1, 0.55, 0.12, '#3d4350', 0.2));
+  /* The flowering bush where a fantail hides, for Find the Bird. */
+  make('hideBush', (b) => {
+    b.ellipsoid(0, 0.75, 0, 1.15, 0.85, 1.05, '#3f9f4d', { rows: 6, cols: 9 });
+    b.ellipsoid(0.45, 0.62, 0.3, 0.75, 0.6, 0.7, '#5ebf56', { rows: 5, cols: 8 });
+    b.ellipsoid(-0.4, 0.95, -0.2, 0.7, 0.55, 0.65, '#4aa24c', { rows: 5, cols: 8 });
+    for (const [x, y, z, c] of [[0.5, 1.5, 0.4, '#ff8fb5'], [-0.6, 1.4, 0.3, '#ffd24a'], [0.1, 1.62, -0.5, '#ffffff'], [-0.2, 1.2, 0.95, '#ff8fb5'], [0.9, 1.05, -0.3, '#ffd24a']] as [number, number, number, string][]) {
+      b.ball(x, y, z, 0.12, c, 3, 6);
+    }
+  });
+  /* The RFID tag scanner by the last booth: red while jammed, green once fixed. */
+  for (const [name, light] of [['rfidPost', '#e2452f'], ['rfidPostOk', '#14c46b']] as [string, string][]) {
+    make(name, (b) => {
+      b.tube([0, 0, 0], [0, 2.1, 0], 0.08, 0.07, '#8b98ad', 6, false);
+      b.rbox(0, 2.35, 0, 0.62, 0.48, 0.34, '#20252f', 0.22);
+      b.rbox(0, 2.38, 0.18, 0.44, 0.28, 0.04, light, 0.1);
+      b.rbox(0, 2.7, 0, 0.5, 0.08, 0.3, '#1e5bb8', 0.15);
+    });
+  }
   make('jammer', (b) => {
     b.rbox(0, 0.35, 0, 0.9, 0.7, 0.6, '#5a5f6b', 0.25);
     b.tube([0.3, 0.7, 0], [0.3, 1.4, 0], 0.03, 0.02, '#20252f', 4, false);
@@ -1169,6 +1193,8 @@ export function buildYard(r: Renderer): Zone {
     colliders,
     walkable: (x, z) => (Math.abs(x) < 29.4 && Math.abs(z) < 23.4) || (Math.abs(x) < 4.2 && z < 0 && z > -44),
     spots,
+    perches: s.perches,
+    flowers: s.flowers,
     waterY: null,
     images,
     meshes: [terrain, cloudMesh, ...chunks.flatMap((c) => [c.solid, c.soft].filter((m): m is Mesh => m !== null))],

@@ -1,8 +1,10 @@
 import type { Upgrade } from '../../core/facility';
 import { currentStep, hasFlag, type MissionDef, type MissionRun, type ZoneId } from '../../core/mission';
 import type { LaneMode, PlazaProblem } from '../../core/plaza';
-import { COLLECTIBLES, DISCOVERIES, type GearId } from '../../core/progression';
+import { COLLECTIBLES, discoveryFor, type FaunaKind, type GearId } from '../../core/progression';
 import type { Actor } from '../anim';
+import type { Agent } from '../fauna';
+import { wildlifeFor } from '../world/wildlife';
 import type { Game, HeroAction, Interaction, Prop } from '../game';
 import type { Mesh } from '../gl/renderer';
 import type { HeroId } from '../models';
@@ -29,6 +31,8 @@ export interface MissionContext {
   circuit: (levelId: string, kicker: string, hint: string, theme?: 'power' | 'water') => Promise<boolean>;
   dials: (levelId: string, kicker: string, names: readonly string[], hint: string) => Promise<boolean>;
   loadVan: (levelId: string, hint: string) => Promise<boolean>;
+  /** Eco Delivery Rush's vehicle choice: sets the run's plan. False if the player backs out. */
+  chooseVehicle: () => Promise<boolean>;
   /** Patches and wildlife: each counted once, ever. True if it was new. */
   collect: (id: string) => boolean;
   discover: (id: string) => boolean;
@@ -87,28 +91,17 @@ const PATCH_ACTION: Record<HeroId, { label: string; pose: HeroAction['pose']; ho
   sukat: { label: 'Scan for the patch', pose: 'scan', hold: 0.8 },
 };
 
-type CritterMove = 'flutter' | 'hover' | 'hop' | 'circle' | 'crawl';
+export interface ExtrasOptions {
+  /** A photo of this kind is wanted now even if it is already in the field notes: a mission or quest step. */
+  wants?: (kind: FaunaKind) => boolean;
+  /** Told about every photo taken, after the field note is written. */
+  onPhoto?: (kind: FaunaKind, agent: Agent) => void;
+}
 
-/** How each kind of wildlife looks and moves where it is found. */
-const CRITTER: Record<string, { mesh: string; n: number; move: CritterMove; dx: number; dz: number; y: number }> = {
-  'd-butterfly': { mesh: 'butterfly', n: 4, move: 'flutter', dx: -3, dz: -3.6, y: 1.4 },
-  'd-swallow': { mesh: 'swallow', n: 3, move: 'circle', dx: 0, dz: -2.4, y: 4.6 },
-  'd-dragonfly': { mesh: 'dragonfly', n: 3, move: 'hover', dx: 0, dz: -3.4, y: -0.2 },
-  'd-frog': { mesh: 'frog', n: 1, move: 'hop', dx: 0, dz: -2.4, y: 0 },
-  'd-gecko': { mesh: 'gecko', n: 1, move: 'crawl', dx: -2.3, dz: 0, y: 2.2 },
-  'd-sparrow': { mesh: 'sparrow', n: 3, move: 'hop', dx: 1.4, dz: -2, y: 0 },
-};
-
-/**
- * Adds the zone's hidden patches and its wildlife to the world. Each patch needs one
- * hero; wildlife is observed by Sukat from where the team stands, never handled.
- * `flagOn` says whether a run flag is set, for wildlife that returns after a cleanup.
- */
-export function addExtras(ctx: MissionContext, flagOn: (flag: string) => boolean): { tick: (dt: number) => void } {
+export function addExtras(ctx: MissionContext, flagOn: (flag: string) => boolean, opts: ExtrasOptions = {}): { tick: (dt: number) => void } {
   const g = ctx.game;
   const zone = g.zoneId;
   const spots = g.zone.spots;
-  const critters: { p: Prop; move: CritterMove; x: number; y: number; z: number; k: number }[] = [];
   const patches: { p: Prop; id: string }[] = [];
   let t = 0;
   let sparkle = 0;
@@ -146,84 +139,88 @@ export function addExtras(ctx: MissionContext, flagOn: (flag: string) => boolean
       by: c.hero === null ? anyHero(action) : { [c.hero]: action },
     });
   }
-  for (const d of DISCOVERIES.filter((x) => x.zone === zone)) {
-    const spot = spots[d.spot];
-    const look = CRITTER[d.id];
-    if (spot === undefined || look === undefined) {
+  /* The animals that live here, and a photo button for each kind that follows the nearest one. */
+  const plan = zone === null ? [] : wildlifeFor(zone, { flag: flagOn });
+  for (const sp of plan) {
+    g.fauna.spawn(sp);
+  }
+  const photos: { kind: FaunaKind; it: Interaction; agent: Agent | null }[] = [];
+  for (const kind of Array.from(new Set(plan.map((p) => p.kind)))) {
+    const d = discoveryFor(kind);
+    if (d === null) {
       continue;
     }
-    const [x, z] = spot;
-    const shown = (): boolean => d.afterFlag === undefined || flagOn(d.afterFlag);
-    for (let i = 0; i < look.n; i += 1) {
-      const cx = x + look.dx + (i - (look.n - 1) / 2) * 0.9;
-      const cz = z + look.dz + (i % 2) * 0.5;
-      const cy = (g.zone.waterY !== null && look.move === 'hover' ? g.zone.waterY : g.zone.height(cx, cz)) + look.y + 0.4;
-      const p: Prop = { mesh: g.props[look.mesh], x: cx, y: cy, z: cz, yaw: i, scale: 1, visible: shown };
-      g.worldProps.push(p);
-      critters.push({ p, move: look.move, x: cx, y: cy, z: cz, k: i * 1.7 });
-    }
-    g.interactions.push({
-      id: `observe-${d.id}`,
-      x,
-      z,
-      radius: 3.2,
-      suggest: 'sukat',
-      when: () => shown() && !ctx.hasDiscovered(d.id),
-      by: {
-        sukat: {
-          label: `Observe: ${d.name.toLowerCase()}`,
-          hold: 1,
-          pose: 'scan',
-          run: async () => {
-            g.audio.play('scan');
-            if (ctx.discover(d.id)) {
-              g.busy = true;
-              await ctx.hud.say('Sukat', 'sukat', `${d.name}! ${d.fact}`);
-              g.busy = false;
-              ctx.hud.setHudHidden(false);
-            }
-          },
-        },
-      },
-    });
+    const entry: { kind: FaunaKind; it: Interaction; agent: Agent | null } = { kind, agent: null, it: null as unknown as Interaction };
+    const wanted = (): boolean => !ctx.hasDiscovered(d.id) || (opts.wants?.(kind) ?? false);
+    const snap = async (): Promise<void> => {
+      const a = entry.agent;
+      if (a === null) {
+        return;
+      }
+      /* Like a real camera: frame the animal for a moment (even the owl up its tree), then the flash. */
+      const h = g.heroes[g.active];
+      const dx = a.x - h.x;
+      const dz = a.z - h.z;
+      const dd = Math.hypot(dx, dz) || 1;
+      const ux = dx / dd;
+      const uz = dz / dd;
+      /* High in a tree, look down on it from above the leaves; the eagle from below; the rest at eye level. */
+      const high = a.y - g.zone.height(a.x, a.z) > 3;
+      const big = kind === 'egret' || kind === 'macaque' || kind === 'owl';
+      const back = kind === 'eagle' ? 13 : high ? 5.2 : big ? 4.4 : 2.8;
+      const side = kind === 'eagle' ? 1.1 : big ? 1.6 : 2.1;
+      const lift = kind === 'eagle' ? -7 : high ? 2.8 : 0.9;
+      g.busy = true;
+      g.photoCut = true;
+      g.fauna.notice(a, { x: a.x - ux * back, z: a.z - uz * back });
+      /* The camera follows the animal while it frames it: swallows and the eagle keep flying. */
+      const frame = (): void => {
+        const ty = a.y + 0.2 * a.scale;
+        g.cameraTo([a.x - ux * back - uz * side, ty + lift, a.z - uz * back + ux * side], [a.x, ty, a.z], 6);
+      };
+      const zoom = ctx.reduceMotion() ? 0.35 : 0.75;
+      for (let t = 0; t < zoom; t += 1 / 20) {
+        frame();
+        await ctx.wait(1 / 20);
+      }
+      g.audio.play('snap');
+      ctx.hud.flash();
+      g.burst('sparkle', a.x, a.y + 0.35 * a.scale, a.z, 6);
+      const fresh = ctx.discover(d.id);
+      if (!fresh) {
+        ctx.hud.notice(`Photo: ${d.name}`, 1.6);
+      }
+      await ctx.wait(ctx.reduceMotion() ? 0.3 : 0.6);
+      g.releaseCamera();
+      g.photoCut = false;
+      g.busy = false;
+      opts.onPhoto?.(kind, a);
+    };
+    const label = `Photo: ${d.name}`;
+    const by = anyHero({ label, hold: 0.4, run: snap });
+    by.sukat = { label, hold: 0.4, pose: 'scan', run: snap };
+    /* From a distance: the eagle overhead, the owl in its tree, the rest a few steps away. */
+    const radius = kind === 'eagle' ? 30 : kind === 'owl' ? 12 : kind === 'swallow' ? 5 : kind === 'fish' || kind === 'dragonfly' ? 8.5 : 7;
+    /* Birds flying overhead lose to an animal right in front of the team. */
+    entry.it = { id: `photo-${kind}`, x: 0, z: 0, radius, priority: kind === 'swallow' || kind === 'eagle' ? -2 : -1, when: () => entry.agent !== null && wanted(), by };
+    g.interactions.push(entry.it);
+    photos.push(entry);
   }
   return {
     tick: (dt: number) => {
       t += dt;
-      const calm = ctx.reduceMotion() ? 0.35 : 1;
-      for (const c of critters) {
-        const k = t * calm + c.k;
-        if (c.move === 'flutter') {
-          c.p.x = c.x + Math.sin(k * 0.9) * 1.6;
-          c.p.z = c.z + Math.cos(k * 0.7) * 1.2;
-          c.p.y = c.y + Math.abs(Math.sin(k * 3.1)) * 0.5;
-          c.p.yaw = k * 0.9 + Math.sin(k * 6) * 0.4;
-          c.p.scale = 0.8 + Math.abs(Math.sin(k * 14)) * 0.4;
-        } else if (c.move === 'hover') {
-          c.p.x = c.x + Math.sin(k * 0.6) * 2.2 + Math.sin(k * 3) * 0.2;
-          c.p.z = c.z + Math.cos(k * 0.45) * 1;
-          c.p.y = c.y + Math.sin(k * 2) * 0.15;
-          c.p.yaw = Math.cos(k * 0.6);
-        } else if (c.move === 'circle') {
-          c.p.x = c.x + Math.sin(k * 0.8) * 4;
-          c.p.z = c.z + Math.cos(k * 0.8) * 4;
-          c.p.y = c.y + Math.sin(k * 1.7) * 0.6;
-          c.p.yaw = k * 0.8 + Math.PI / 2;
-        } else if (c.move === 'hop') {
-          const hop = (k * 0.7) % 1;
-          c.p.y = c.y + (hop < 0.25 ? Math.sin((hop / 0.25) * Math.PI) * 0.35 : 0);
-          c.p.x = c.x + Math.sin(Math.floor(k * 0.7) * 2.3) * 0.6;
-          c.p.z = c.z + Math.cos(Math.floor(k * 0.7) * 1.7) * 0.6;
-          c.p.yaw = Math.floor(k * 0.7) * 1.3;
-        } else {
-          c.p.z = c.z + Math.sin(k * 0.3) * 0.8;
-          c.p.yaw = Math.cos(k * 0.3) > 0 ? 0 : Math.PI;
+      const h0 = g.heroes[g.active];
+      for (const ph of photos) {
+        ph.agent = g.fauna.nearest(ph.kind, h0.x, h0.z);
+        if (ph.agent !== null) {
+          ph.it.x = ph.agent.x;
+          ph.it.z = ph.agent.z;
         }
       }
       for (const pt of patches) {
         pt.p.yaw = t * 1.2;
       }
-      /* Sukat's lens: what is hidden nearby glints now and then. */
+      /* Sukat's lens: what is hidden nearby glints now and then, animals not yet photographed too. */
       sparkle -= dt;
       if (ctx.hasGear('lens') && sparkle <= 0) {
         sparkle = 1.1;
@@ -231,6 +228,13 @@ export function addExtras(ctx: MissionContext, flagOn: (flag: string) => boolean
         for (const pt of patches) {
           if (!ctx.hasCollected(pt.id) && Math.hypot(pt.p.x - h.x, pt.p.z - h.z) < 14) {
             g.burst('sparkle', pt.p.x, pt.p.y + 0.2, pt.p.z, 3);
+          }
+        }
+        for (const ph of photos) {
+          const a = ph.agent;
+          const d = discoveryFor(ph.kind);
+          if (a !== null && d !== null && !ctx.hasDiscovered(d.id) && Math.hypot(a.x - h.x, a.z - h.z) < 14) {
+            g.burst('sparkle', a.x, a.y + 0.5 * a.scale, a.z, 2);
           }
         }
       }
@@ -258,8 +262,8 @@ export abstract class ScriptBase implements MissionScript {
   constructor(protected readonly ctx: MissionContext) {}
 
   /** Call after the zone's own interactions are set: adds its patches and wildlife. */
-  protected extras(): void {
-    this.extrasTick = addExtras(this.ctx, (f) => this.has(f)).tick;
+  protected extras(opts: ExtrasOptions = {}): void {
+    this.extrasTick = addExtras(this.ctx, (f) => this.has(f), opts).tick;
   }
 
   protected tickExtras(dt: number): void {
@@ -357,36 +361,25 @@ export abstract class ScriptBase implements MissionScript {
     return g.carrying.length === 0 || (g.active === 'baging' && g.carrying.length < 2);
   }
 
-  /* ---- The call at Navie's Mission Station ---- */
-
-  /** The Command Center, with only the call to answer. */
-  protected enterCenter(onCall: () => Promise<void>): void {
-    const { game: g, upgrades } = this.ctx;
-    g.loadZone('station', upgrades());
-    const s = g.zone.spots;
-    g.placeTeam(s.spawn[0], s.spawn[1], -0.6);
-    g.placeNpc('joy', s.community[0] + 1, s.community[1] + 1, 1.2);
-    g.placeNpc('ernesto', s.garden[0] + 2, s.garden[1] + 2, -2);
-    const call: Interaction = {
-      id: 'call',
-      x: s.navie[0],
-      z: s.navie[1],
-      radius: 4,
-      when: () => this.step() === 'call',
-      by: anyHero({ label: 'Answer the call', hold: 0, run: () => this.answerCall(onCall) }),
-    };
-    g.interactions = [call];
+  /** The first moment in a place: the camera on whoever greets the team, one short line, then play. */
+  protected async greet(n: Actor | null, speaker: string, portrait: string, text: string): Promise<void> {
+    await this.scene(async () => {
+      if (n !== null) {
+        this.faceAndFrame(n);
+        n.pose = 'wave';
+      }
+      await this.say(speaker, portrait, text);
+      if (n !== null) {
+        n.pose = 'none';
+      }
+    });
   }
 
-  private answerCall(onCall: () => Promise<void>): Promise<void> {
+  /** A step is done: a check, a sparkle and a happy sound. */
+  protected stepDone(x: number, y: number, z: number): void {
     const g = this.ctx.game;
-    const [x, z] = g.zone.spots.navie;
-    g.audio.play('ok');
-    return this.scene(async () => {
-      /* Facing Navie's screen. */
-      g.cameraTo([x + Math.sin(2.6) * 6.5, 3.4, z + Math.cos(2.6) * 6.5], [x, 2.9, z], 5);
-      await onCall();
-    });
+    g.burst('sparkle', x, y, z, 10);
+    g.audio.play('star');
   }
 
   /** Points the guide at a named spot when the step is in this zone. */

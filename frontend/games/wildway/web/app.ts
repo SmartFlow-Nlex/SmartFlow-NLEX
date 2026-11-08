@@ -1,10 +1,10 @@
 import { HINTS, HUB_LINES, NLEX_LINES, OBJECTIVES } from '../core/content';
 import { savings } from '../core/emissions';
 import { DEPOT_BEFORE, facilityDay } from '../core/facility';
-import { chosenUpgrades, currentStep, DELIVERY_MISSION, ECO_MISSION, GRIDLOCK_MISSION, HORNBILL_MISSION, isFinished, missionById, missionTransport, MISSIONS, newRun, RIVER_MISSION, setFlag, type MissionDef, type MissionRun } from '../core/mission';
+import { chosenUpgrades, currentStep, DELIVERY_CHOICES, DELIVERY_DEPARTURE, DELIVERY_MISSION, DELIVERY_ROUTE, depotRepairs, ECO_MISSION, GRIDLOCK_MISSION, HORNBILL_MISSION, isFinished, missionById, missionTransport, MISSIONS, newRun, RIVER_MISSION, setFlag, type MissionDef, type MissionRun } from '../core/mission';
 import { missionOpen, NLEX_STOPS, progress } from '../core/nlex';
 import { allModeSets, BOCAUE_PLAZA, plazaSolved, simulatePlaza } from '../core/plaza';
-import { ACHIEVEMENTS, COLLECTIBLES, DISCOVERIES, GEAR, GEAR_EFFECT } from '../core/progression';
+import { ACHIEVEMENTS, COLLECTIBLES, DISCOVERIES, GEAR, GEAR_EFFECT, SIDE_QUESTS } from '../core/progression';
 import { CIRCUITS, DIALS, LOADS } from '../core/puzzles';
 import { awardAchievements, buyGear, buyUpgrade, bumpRevision, collect, completeMission, discover, loadSave, serializeSave, sideStep, UPGRADES, type SaveData, type SimPart } from '../core/save';
 import type { SpeciesRecord } from '../core/species';
@@ -26,7 +26,7 @@ import { achievementGallery, navieMenu, noticeBoard, quizScreen, workshopScreen 
 import { circuitPuzzle, dialPuzzle, loadPuzzle, type PuzzleHandle } from './ui/puzzles';
 import { RiverScript } from './missions/river';
 import { NAVIE_ART } from './navieArt';
-import { depotHow, energyPlanner, lanePuzzle, missionBriefing, nlexResults, opsBoardScreen, plazaHow, progressDashboard } from './ui/nlex';
+import { depotHow, energyPlanner, lanePuzzle, missionBriefing, nlexResults, opsBoardScreen, plazaHow, progressDashboard, vehicleChooser } from './ui/nlex';
 import type { Host } from './host';
 import { InputController } from './input';
 import { makeAwit, makeBaging, makeChief, makeDayo, makeDriver, makeHornbill, makeOfficer, makeRanger, makeResident, makeSpecialist, makeSukat, makeVet, type HeroId, type Portraits } from './models';
@@ -42,6 +42,15 @@ import { atlasScreen, dispatchOverlay, galleryScreen, mapScreen, notesScreen, re
  */
 
 const DEV_FRAME = 1 / 30;
+
+/** Short names for the HUD's mission pill, so it fits beside the step count on a phone. */
+const HUD_TITLE: Record<string, string> = {
+  'nlex-gridlock': 'NLEX Gridlock',
+  'nlex-river': 'Creek Rescue',
+  'nlex-eco': 'Solar Rescue',
+  'nlex-delivery': 'Delivery Rush',
+  'hornbill-homecoming': 'Hornbill Home',
+};
 
 export class WildwayApp {
   private root!: HTMLElement;
@@ -675,11 +684,13 @@ export class WildwayApp {
       const step = currentStep(this.mission, this.run);
       const run = this.run;
       /* A step with several parts says how many are done. */
-      const count = step !== null && step.needs.length > 2 ? ` (${step.needs.filter((n) => run.flags.includes(n)).length}/${step.needs.length})` : '';
+      const count = step !== null && step.needs.length > 2 ? ` ${step.needs.filter((n) => run.flags.includes(n)).length}/${step.needs.length}` : '';
       this.hud.setObjective(step !== null ? `${OBJECTIVES[step.objective]}${count}` : '');
+      this.hud.setMission(HUD_TITLE[this.mission.id] ?? this.mission.title, run.step, this.mission.steps.length);
     } else {
-      const open = MISSIONS.some((m) => m.kind === 'nlex' && missionOpen(this.save, m.id) && this.save.missions[m.id] === undefined);
-      this.hud.setObjective(open ? 'Talk to Navie for your next mission' : 'SmartFlow NLEX Eco Command Center');
+      const open = MISSIONS.some((m) => missionOpen(this.save, m.id) && this.save.missions[m.id] === undefined);
+      this.hud.setObjective(open ? 'Talk to Navie for a mission' : 'Explore! Photo the animals');
+      this.hud.setMission(null, 0, 0);
     }
   }
 
@@ -691,7 +702,7 @@ export class WildwayApp {
     }
     this.audio.play('tap');
     const step = this.run === null ? null : currentStep(this.mission, this.run);
-    const text = step === null ? (this.save.sideQuests.length < 4 ? 'Talk to me for missions. The notice board has small jobs around the Command Center too.' : 'Talk to me for missions, any time.') : HINTS[step.objective] ?? 'Follow the arrow. If someone else is needed, the button says who.';
+    const text = step === null ? (this.save.sideQuests.length < SIDE_QUESTS.length ? 'Talk to me for missions. The notice board has animal activities too!' : 'Talk to me for missions, any time.') : HINTS[step.objective] ?? 'Follow the arrow. The button says who can help.';
     this.hintShowUntil = this.worldTime + 12;
     g.busy = true;
     void this.hud.say('Navie', navieKey('thinking'), text).then(() => {
@@ -978,6 +989,38 @@ export class WildwayApp {
       circuit: (id, kicker, hint, theme = 'power') => this.puzzle((done) => circuitPuzzle({ level: CIRCUITS[id], kicker, theme, navie: NAVIE_ART.thinking.uri, hint, reduce: this.save.settings.reduceMotion, onDone: done })),
       dials: (id, kicker, names, hint) => this.puzzle((done) => dialPuzzle({ level: DIALS[id], kicker, names, navie: NAVIE_ART.thinking.uri, hint, onDone: done })),
       loadVan: (id, hint) => this.puzzle((done) => loadPuzzle({ level: LOADS[id], navie: NAVIE_ART.thinking.uri, hint, onDone: done })),
+      chooseVehicle: () =>
+        new Promise((resolve) => {
+          const problem = DELIVERY_MISSION.transport as NonNullable<typeof DELIVERY_MISSION.transport>;
+          this.game.busy = true;
+          const close = (picked: string | null): void => {
+            this.game.busy = false;
+            this.showScreen(null, null);
+            if (picked === null) {
+              resolve(false);
+              return;
+            }
+            const plan: Plan = { fleetId: picked, routeId: DELIVERY_ROUTE, departureId: DELIVERY_DEPARTURE };
+            this.audio.play('ok');
+            this.comparison = comparePlan(problem, plan);
+            this.run = { ...(this.run as MissionRun), plan };
+            this.flag('planChosen');
+            resolve(true);
+          };
+          this.showScreen(
+            vehicleChooser({
+              problem,
+              choices: DELIVERY_CHOICES,
+              routeId: DELIVERY_ROUTE,
+              departureId: DELIVERY_DEPARTURE,
+              navie: NAVIE_ART.thinking.uri,
+              onPick: (id) => close(id),
+              onBack: () => close(null),
+              onHow: (id) => this.overlay(howCalculated(problem, comparePlan(problem, { fleetId: id, routeId: DELIVERY_ROUTE, departureId: DELIVERY_DEPARTURE }), () => this.overlay(null))),
+            }),
+            () => close(null),
+          );
+        }),
       collect: (id) => {
         const r = collect(this.save, id);
         if (r.added) {
@@ -991,7 +1034,7 @@ export class WildwayApp {
         const r = discover(this.save, id);
         if (r.added) {
           this.progressed(r.save);
-          this.hud.notice(`Field note added: ${DISCOVERIES.find((d) => d.id === id)?.name ?? ''}. +5 points`, 3);
+          this.hud.notice(`New photo: ${DISCOVERIES.find((d) => d.id === id)?.name ?? ''}! +5`, 2.6);
         }
         return r.added;
       },
@@ -1084,6 +1127,10 @@ export class WildwayApp {
     this.mission = def;
     this.comparison = null;
     this.hub = null;
+    if (isFinished(def, this.run)) {
+      this.finishMission();
+      return;
+    }
     this.enterMissionWorld(false);
   }
 
@@ -1110,10 +1157,12 @@ export class WildwayApp {
     this.game.active = this.save.settings.lead as HeroId;
     this.game.carrying = [];
     const script = this.makeScript(this.mission, this.context());
-    this.script = script;
+    /* The new script only ticks once its own place is built: until then the old place is still loaded. */
+    this.script = null;
     void this.fade(() => {
       this.showScreen(null, null);
       script.enter();
+      this.script = script;
     }, 0.6).then(() => {
       if (fresh) {
         void script.opening();
@@ -1232,21 +1281,21 @@ export class WildwayApp {
       const mine = simulatePlaza(plazaFor(run.flags), lanesFromFlags(run.flags) ?? BOCAUE_PLAZA.jammed);
       parts.push({
         id: 'plaza',
-        label: 'The toll plaza, one hour',
+        label: 'Idling at the plaza, one hour',
         baselineKg: jam.co2Kg,
         planKg: mine.co2Kg,
-        lines: [`Stopped with engines on: ${h1(mine.carHours + mine.truckHours)} hours instead of ${h1(jam.carHours + jam.truckHours)}.`, `Still queuing at the end of the hour: ${mine.leftWaiting} instead of ${jam.leftWaiting}.`, 'Baseline: the plaza as the Wasteworks left it, with the same traffic.'],
+        lines: [`Stopped with engines on: ${h1(mine.carHours + mine.truckHours)} hours instead of ${h1(jam.carHours + jam.truckHours)}.`, `Still queuing at the end of the hour: ${mine.leftWaiting} instead of ${jam.leftWaiting}.`, 'Before: the jammed plaza, with the same traffic.'],
       });
     }
     if (def.id === ECO_MISSION.id) {
       const before = facilityDay(DEPOT_BEFORE);
-      const after = facilityDay({ repairs: ['sensor', 'leak', 'idling'], upgrades: chosenUpgrades(run) });
+      const after = facilityDay({ repairs: depotRepairs(run), upgrades: chosenUpgrades(run) });
       parts.push({
         id: 'depot',
-        label: 'The depot, one ordinary day',
+        label: 'The depot, one day',
         baselineKg: before.co2Kg,
         planKg: after.co2Kg,
-        lines: [`Grid electricity: ${h1(after.gridKWh)} kWh instead of ${h1(before.gridKWh)}.`, `Diesel burned idling: ${h1(after.idleL)} L instead of ${h1(before.idleL)}.`, ...(after.solarKWh > 0 ? [`Made on the roof: ${h1(after.solarKWh)} kWh.`] : []), 'Baseline: the depot as the Wasteworks left it.'],
+        lines: [`Grid electricity: ${h1(after.gridKWh)} kWh instead of ${h1(before.gridKWh)}.`, ...(after.solarKWh > 0 ? [`Made on the roof: ${h1(after.solarKWh)} kWh.`] : []), ...(after.idleL < before.idleL - 0.05 ? [`Diesel burned idling: ${h1(after.idleL)} L instead of ${h1(before.idleL)}.`] : []), 'Before: the same depot with the solar roof off.'],
       });
     }
     const problem = missionTransport(def, run);
@@ -1271,9 +1320,9 @@ export class WildwayApp {
     const newTitles = awarded.ids.map((id) => ACHIEVEMENTS.find((a) => a.id === id)?.title).filter((t): t is string => t !== undefined);
     this.audio.play('star');
     const transport = parts.find((p) => p.id === 'transport');
-    if (def.kind === 'wildlife' && transport?.c !== undefined) {
-      const c = transport.c;
-      this.comparison = c;
+    if (def.kind === 'wildlife') {
+      const c = transport?.c;
+      this.comparison = c ?? null;
       const individual = def.storyIndividuals[0];
       this.showScreen(
         resultsScreen({
@@ -1283,7 +1332,12 @@ export class WildwayApp {
           run,
           individualName: this.save.nicknames[individual.id] ?? individual.defaultNickname,
           portrait: this.portraits.hornbill,
-          onHow: this.tapped(() => this.overlay(howCalculated(missionTransport(def, run) ?? HORNBILL_MISSION.transport as NonNullable<typeof HORNBILL_MISSION.transport>, c, () => this.overlay(null)))),
+          onHow: this.tapped(() => {
+            const problem = missionTransport(def, run);
+            if (problem !== null && c !== undefined) {
+              this.overlay(howCalculated(problem, c, () => this.overlay(null)));
+            }
+          }),
           onNickname: (name) => this.persist({ ...this.save, nicknames: { ...this.save.nicknames, [individual.id]: name || individual.defaultNickname } }),
           onNext: this.tapped(() => this.playNextSeason(() => this.showRecap())),
         }),
@@ -1369,10 +1423,13 @@ export class WildwayApp {
   enterHub(): void {
     this.titleOrbit = false;
     this.inWorld = true;
-    /* The old mission's props ask its run what to show: drop them before the run goes. */
+    /* The old mission's props, crossing and colliders ask its run about themselves: drop them before the run goes. */
     this.game.worldProps = [];
     this.game.interactions = [];
     this.game.guide = null;
+    this.game.bridgeOpen = () => false;
+    this.game.dynamicColliders = () => [];
+    this.game.fauna.clear();
     this.run = null;
     this.script = null;
     this.hub = null;
@@ -1421,7 +1478,7 @@ export class WildwayApp {
           navie: NAVIE_ART[open ? 'hello' : 'clear'].uri,
           line: open ? NLEX_LINES.idle : NLEX_LINES.noMission,
           onMissions: this.tapped(() => this.showOpsBoard(render)),
-          onSide: this.save.sideQuests.length < 4 ? this.tapped(() => this.showNotice(render)) : null,
+          onSide: this.save.sideQuests.length < SIDE_QUESTS.length ? this.tapped(() => this.showNotice(render)) : null,
           onQuiz: this.tapped(() => this.showQuiz(render)),
           onBriefing: this.tapped(() => this.navieBriefing()),
           onBack: this.tapped(back),

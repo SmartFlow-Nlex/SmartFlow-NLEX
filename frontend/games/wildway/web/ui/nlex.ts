@@ -1,9 +1,10 @@
-import { NLEX_LINES as L } from '../../core/content';
+import { DONE_LINES, NLEX_LINES as L } from '../../core/content';
 import { FACTORS, VEHICLES } from '../../core/emissions';
 import { ASSUMPTIONS, crewHours, CREW_HOURS, facilityDay, UPGRADE_OPTIONS, type Upgrade } from '../../core/facility';
 import { HORNBILL_MISSION, MISSIONS, type MissionDef } from '../../core/mission';
 import { missionOpen, NLEX_STOPS, progress } from '../../core/nlex';
-import { BOCAUE_PLAZA, CLASS_LABEL, plazaSolved, simulatePlaza, type LaneMode, type PlazaProblem, type PlazaResult, type VehicleClass } from '../../core/plaza';
+import { allModeSets, BOCAUE_PLAZA, plazaSolved, simulatePlaza, type LaneMode, type PlazaProblem, type PlazaResult } from '../../core/plaza';
+import { evaluatePlan, type TransportProblem, type Violation } from '../../core/transport';
 import { UPGRADES, upgradeUnlocked, type CompletionReport, type SaveData, type SimPart } from '../../core/save';
 import { button, h, icon } from '../dom';
 import { page } from './screens';
@@ -18,17 +19,19 @@ const kg = (v: number): string => `${Math.abs(v) >= 100 ? v.toFixed(0) : v.toFix
 const fmt = (v: number, digits = 1): string => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(digits));
 
 const GOAL: Record<string, string> = {
-  'nlex-gridlock': 'Cut the time cars spend stopped with engines running',
-  'nlex-river': 'Collect sorted waste with fewer, cleaner trips',
-  'nlex-eco': 'Cut a day of wasted energy at the depot',
-  'hornbill-homecoming': 'Supply the rescue with a lower-emission run',
+  'nlex-gridlock': 'Fix the RFID scanner, move the traffic',
+  'nlex-river': 'Clean the creek, welcome the wildlife',
+  'nlex-eco': 'Switch on the depot’s solar power',
+  'nlex-delivery': 'Send the supplies the greener way',
+  'hornbill-homecoming': 'Help a hurt hornbill home',
 };
 
 /** Each stop's simulated condition, before and after its mission. Made-up, like the places. */
 const CONDITION: Record<string, [string, string]> = {
   'nlex-gridlock': ['Toll plaza jammed', 'Toll plaza flowing'],
   'nlex-river': ['Creek blocked', 'Creek flowing'],
-  'nlex-eco': ['Depot wasting energy', 'Depot running lean'],
+  'nlex-eco': ['Solar roof off', 'Solar roof on'],
+  'nlex-delivery': ['Supplies waiting', 'Supplies sent'],
 };
 
 export type MissionStatus = 'done' | 'open' | 'locked';
@@ -49,7 +52,7 @@ export function opsBoardScreen(o: { save: SaveData; navie: string; onMission: (d
         'span',
         { class: `ops-pill ${st}` },
         st === 'done' ? icon('check') : st === 'locked' ? icon('lock') : icon('play'),
-        h('span', { text: st === 'done' ? `Done. Best: ${kg(best.bestSavedKg)} CO₂ less, simulated` : st === 'locked' ? 'Opens after The Great NLEX Gridlock' : 'Open' }),
+        h('span', { text: st === 'done' ? (best.bestSavedKg > 0.05 ? `Done · ${kg(best.bestSavedKg)} less CO₂` : 'Done') : st === 'locked' ? 'After the Gridlock' : 'Play' }),
       ),
     );
   };
@@ -58,11 +61,11 @@ export function opsBoardScreen(o: { save: SaveData; navie: string; onMission: (d
     const def = stop.missionId === null ? null : MISSIONS.find((m) => m.id === stop.missionId) ?? null;
     let body: HTMLElement;
     if (stop.id === 'balintawak') {
-      body = h('button', { class: 'ops-mission open', attrs: { type: 'button' }, onClick: () => o.onBriefing() }, h('span', { class: 'ops-mission-title', text: 'Navie’s briefing' }), h('span', { class: 'ops-mission-goal', text: 'How the Command Center works, and why transport choices matter' }));
+      body = h('button', { class: 'ops-mission open', attrs: { type: 'button' }, onClick: () => o.onBriefing() }, h('span', { class: 'ops-mission-title', text: 'Navie’s welcome' }), h('span', { class: 'ops-mission-goal', text: 'What the Command Center does' }));
     } else if (def !== null) {
       body = missionCard(def);
     } else {
-      body = h('div', { class: 'ops-mission soon' }, h('span', { class: 'ops-mission-title', text: stop.theme }), h('span', { class: 'ops-pill locked' }, icon('lock'), h('span', { text: 'In production: no mission here yet' })));
+      body = h('div', { class: 'ops-mission soon' }, h('span', { class: 'ops-mission-title', text: stop.theme }), h('span', { class: 'ops-pill locked' }, icon('lock'), h('span', { text: 'Coming soon' })));
     }
     const done = def !== null && o.save.missions[def.id] !== undefined;
     return h(
@@ -84,13 +87,12 @@ export function opsBoardScreen(o: { save: SaveData; navie: string; onMission: (d
     'NLEX Operations Board',
     o.onBack,
     h('div', { class: 'navie-row' }, h('img', { class: 'navie-img', attrs: { src: o.navie, alt: 'Navie' } }), h('p', { class: 'lead-line', text: L.idle })),
-    h('p', { class: 'muted small-text', text: 'A stylised line, north at the top. The stops are themes for made-up missions, not real incidents. Traffic and emissions in every mission are simulated.' }),
+    h('p', { class: 'muted small-text', text: 'Made-up missions. All numbers are simulated.' }),
     h('div', { class: 'ops-line' }, ...stops),
     h(
       'div',
       { class: 'card' },
-      h('div', { class: 'kicker', text: 'Wildlife expeditions' }),
-      h('p', { class: 'muted small-text', text: 'The Command Center plans the supply runs. The animals live far from the expressway, in their own habitats.' }),
+      h('div', { class: 'kicker', text: 'Wildlife missions' }),
       missionCard(hornbill),
     ),
   );
@@ -99,56 +101,77 @@ export function opsBoardScreen(o: { save: SaveData; navie: string; onMission: (d
 /* ---- A briefing, for any mission ---- */
 
 export function missionBriefing(def: MissionDef, navie: string, onGo: () => void, onBack: () => void): HTMLElement {
-  const jobs =
-    def.kind === 'wildlife'
-      ? [
-          { i: 'paw' as const, t: 'Help the animal' },
-          { i: 'tree' as const, t: 'Mend its habitat' },
-          { i: 'truck' as const, t: 'Plan the transport' },
-        ]
-      : [
-          { i: 'warn' as const, t: 'Fix the problem' },
-          { i: 'leaf' as const, t: 'Help the place' },
-          { i: 'truck' as const, t: 'Cut the emissions' },
-        ];
   return page(
-    def.kind === 'wildlife' ? `Chapter ${def.chapter}` : 'NLEX mission',
+    def.kind === 'wildlife' ? 'Wildlife mission' : 'NLEX mission',
     onBack,
     h(
       'div',
-      { class: 'card' },
-      h('div', { class: 'kicker', text: def.kind === 'wildlife' ? 'Field report' : 'Alert from Navie' }),
+      { class: 'card brief' },
       h('h2', { text: def.title }),
       h('div', { class: 'navie-row' }, h('img', { class: 'navie-img', attrs: { src: navie, alt: 'Navie' } }), h('p', { class: 'lead', text: def.summary })),
-      h('p', { class: 'muted', text: def.fiction }),
+      h('ol', { class: 'brief-steps' }, ...def.requiredTasks.map((t, i) => h('li', {}, h('span', { class: 'brief-num', text: String(i + 1) }), h('span', { text: t })))),
+      h('p', { class: 'muted small-text', text: def.fiction }),
     ),
-    h(
-      'div',
-      { class: 'card' },
-      h('h3', { text: 'Three separate jobs' }),
-      h('div', { class: 'triple' }, ...jobs.map((j) => h('div', { class: 'triple-item' }, icon(j.i), h('span', { text: j.t })))),
-      h('p', { class: 'muted small-text', text: 'Each has its own result. Saving CO₂ does not rescue an animal, and points convert into nothing.' }),
-    ),
-    button('Head out', onGo, { class: 'big', iconName: 'play' }),
+    button('Let’s go!', onGo, { class: 'big', iconName: 'play' }),
   );
 }
 
 /* ---- The toll plaza console ---- */
 
-const MODE_LABEL: Record<LaneMode, string> = { tag: 'Toll tag', cash: 'Cash', closed: 'Closed' };
+const MODE_LABEL: Record<LaneMode, string> = { tag: 'RFID', cash: 'Cash', closed: 'Closed' };
+
+/** What is wrong with a lane setting, in a few words. */
+function laneProblems(P: PlazaProblem, modes: readonly LaneMode[], r: PlazaResult): string[] {
+  const out: string[] = [];
+  if (modes.filter((m) => m === 'cash').length > P.cashStaff) {
+    out.push(L.gridLaneHintStaff);
+  }
+  for (const i of P.tagDown ?? []) {
+    if (modes[i] === 'tag') {
+      out.push(`Lane ${P.lanes[i].id}’s RFID is down: cash or closed.`);
+    }
+  }
+  const has = (m: LaneMode, wide: boolean): boolean => P.lanes.some((l, i) => modes[i] === m && (!wide || l.wide));
+  if (!has('tag', false)) {
+    out.push('Cars with RFID tags need an RFID lane.');
+  } else if (!has('tag', true)) {
+    out.push('Trucks with tags need a wide RFID lane: 1 or 6.');
+  }
+  if (!has('cash', false)) {
+    out.push('Cash cars need a cash lane.');
+  } else if (!has('cash', true)) {
+    out.push('Cash trucks need a wide cash lane: 1 or 6.');
+  }
+  if (out.length === 0 && !plazaSolved(r)) {
+    out.push(r.leftWaiting > P.lanes.length ? 'The lines keep growing. Open more lanes!' : 'One lane is too slow. Spread the cars out.');
+  }
+  return out;
+}
+
+/** Working settings, worked out once per plaza the first time a hint is asked for. */
+const SOLVED = new Map<string, LaneMode[][]>();
+function workingSettings(P: PlazaProblem): LaneMode[][] {
+  const key = (P.tagDown ?? []).join(',');
+  let list = SOLVED.get(key);
+  if (list === undefined) {
+    list = allModeSets(P)
+      .filter((m) => P.lanes.every((l, i) => !l.underRepair || m[i] === 'closed'))
+      .filter((m) => plazaSolved(simulatePlaza(P, m)));
+    SOLVED.set(key, list);
+  }
+  return list;
+}
 
 export function lanePuzzle(o: { plaza?: PlazaProblem; initial: readonly LaneMode[]; navie: string; reduce: boolean; onDone: (modes: LaneMode[] | null) => void; onHow: (r: PlazaResult) => void }): HTMLElement {
   const P = o.plaza ?? BOCAUE_PLAZA;
   let modes: LaneMode[] = o.initial.map((m, i) => (P.lanes[i].underRepair ? 'closed' : m));
-  const jam = simulatePlaza(P, P.jammed);
   const down = P.tagDown ?? [];
-  const hints = [...(down.length > 0 ? [`Lane ${down.map((i) => P.lanes[i].id).join(', ')} has no working tag reader: cash, or closed.`] : []), L.gridLaneHintCash, L.gridLaneHintTruck, L.gridLaneHintRepair, L.gridLaneHintStaff];
-  let hintAt = 0;
+  const tips = [L.gridLaneHintCash, L.gridLaneHintTruck, L.gridLaneHintStaff, L.gridLaneHintRepair];
+  let tipAt = 0;
   const lanesEl = h('div', { class: 'lanes' });
-  const totals = h('div', { class: 'lane-totals' });
-  const problems = h('div', { class: 'lane-problems', attrs: { role: 'status', 'aria-live': 'polite' } });
-  const go = button('Switch on these lanes', () => (plazaSolved(simulatePlaza(P, modes)) ? o.onDone(modes) : undefined), { class: 'big', iconName: 'check' });
-  const hintText = h('p', { class: 'hint-text', text: down.length > 0 ? hints[0] : 'Tap a lane to change it. Each change runs the hour again.' });
+  const status = h('div', { class: 'lane-problems', attrs: { role: 'status', 'aria-live': 'polite' } });
+  const go = button('Open the plaza!', () => (plazaSolved(simulatePlaza(P, modes)) ? o.onDone(modes) : undefined), { class: 'big', iconName: 'check' });
+  const tipText = h('p', { class: 'hint-text', text: 'Tap a lane to change it.' });
   const render = (): void => {
     const r = simulatePlaza(P, modes);
     lanesEl.replaceChildren(
@@ -166,46 +189,104 @@ export function lanePuzzle(o: { plaza?: PlazaProblem; initial: readonly LaneMode
         };
         return h(
           'button',
-          { class: `lane ${modes[i]} ${lane.underRepair ? 'repair' : ''} ${down.includes(i) ? 'broken' : ''}`, attrs: { type: 'button', 'aria-label': `Lane ${lane.id}${lane.wide ? ', wide' : ''}: ${MODE_LABEL[modes[i]]}${lane.underRepair ? ', coned off for repairs' : ''}${down.includes(i) ? ', tag reader down' : ''}` }, onClick: cycle },
+          { class: `lane ${modes[i]} ${lane.underRepair ? 'repair' : ''} ${down.includes(i) ? 'broken' : ''}`, attrs: { type: 'button', 'aria-label': `Lane ${lane.id}${lane.wide ? ', wide' : ''}: ${MODE_LABEL[modes[i]]}${lane.underRepair ? ', under repair' : ''}` }, onClick: cycle },
           h('span', { class: 'lane-num', text: String(lane.id) }),
-          down.includes(i) ? h('span', { class: 'lane-broken', text: 'No tag' }) : null,
-          h('span', { class: 'lane-mode', text: lane.underRepair ? 'Repairs' : MODE_LABEL[modes[i]] }),
+          h('span', { class: 'lane-mode', text: lane.underRepair ? 'Repair' : MODE_LABEL[modes[i]] }),
           lane.wide ? h('span', { class: 'lane-tag', text: 'Wide' }) : h('span', { class: 'lane-tag blank', text: ' ' }),
           h('span', { class: 'lane-q' }, fill),
-          h('span', { class: 'lane-min', text: modes[i] === 'closed' ? '–' : `${fmt(rep.averageMin)} min` }),
         );
       }),
     );
-    const hours = r.carHours + r.truckHours;
-    totals.replaceChildren(
-      h('div', { class: 'lt-row' }, h('span', { text: 'Stopped with engines on' }), h('b', { text: `${fmt(hours)} h` })),
-      h('div', { class: 'lt-row' }, h('span', { text: 'Jammed plaza, same hour' }), h('b', { text: `${fmt(jam.carHours + jam.truckHours)} h` })),
-      h('div', { class: 'lt-row' }, h('span', { text: 'CO₂ from idling' }), h('b', { text: kg(r.co2Kg) }), h('span', { class: 'sim-tag', text: 'Simulated' })),
-    );
-    const list = [...r.problems];
-    if (r.problems.length === 0 && !plazaSolved(r)) {
-      list.push(r.leftWaiting > P.lanes.length ? `${r.leftWaiting} vehicles are still queuing at the end of the hour: the lines keep growing.` : 'One lane is still too slow. Spread the load.');
-    }
-    problems.replaceChildren(...(list.length === 0 ? [h('div', { class: 'verdict good' }, icon('check'), h('span', { text: 'Safe, staffed, and every line keeps moving.' }))] : list.map((t) => h('div', { class: 'verdict bad' }, icon('warn'), h('span', { text: t })))));
-    go.disabled = !plazaSolved(r);
+    const list = laneProblems(P, modes, r);
+    status.replaceChildren(list.length === 0 ? h('div', { class: 'verdict good' }, icon('check'), h('span', { text: 'Traffic moving!' })) : h('div', { class: 'verdict bad' }, icon('warn'), h('span', { text: list[0] })));
+    go.disabled = list.length > 0;
   };
   render();
+  /* A hint sets one lane right: towards the working setting closest to what is on screen. */
   const hint = (): void => {
-    hintText.textContent = hints[hintAt % hints.length];
-    hintAt += 1;
+    const near = workingSettings(P)
+      .map((m) => ({ m, diff: m.filter((x, i) => x !== modes[i]).length }))
+      .sort((a, b) => a.diff - b.diff || simulatePlaza(P, a.m).co2Kg - simulatePlaza(P, b.m).co2Kg)[0];
+    const i = near === undefined ? -1 : near.m.findIndex((x, k) => x !== modes[k]);
+    if (near === undefined || i < 0) {
+      tipText.textContent = tips[tipAt % tips.length];
+      tipAt += 1;
+      return;
+    }
+    modes = modes.map((m, k) => (k === i ? near.m[i] : m));
+    tipText.textContent = `Lane ${P.lanes[i].id}: ${MODE_LABEL[near.m[i]]}.`;
+    render();
   };
   return h(
     'div',
     { class: 'screen menu board' },
-    h('div', { class: 'board-top' }, h('div', { class: 'kicker', text: 'Control room console' }), h('h2', { text: down.length > 0 ? 'Set the lanes again' : 'Set the six lanes' })),
+    h('div', { class: 'board-top' }, h('div', { class: 'kicker', text: 'Control room' }), h('h2', { text: 'Open the lanes!' })),
     h(
       'div',
       { class: 'scroll' },
-      h('div', { class: 'card' }, h('h3', { text: 'This hour at the plaza' }), ...(['tagCar', 'cashCar', 'tagTruck', 'cashTruck'] as VehicleClass[]).map((c) => h('div', { class: 'need-line' }, icon(c.includes('Truck') ? 'truck' : 'people'), h('span', { text: `${CLASS_LABEL[c]}: ${P.perHour[c]}` }))), h('p', { class: 'muted small-text', text: 'Invented traffic for a made-up plaza. Trucks need a wide lane. Three toll collectors are on shift.' })),
+      h('div', { class: 'navie-row hint' }, h('img', { class: 'navie-img small', attrs: { src: o.navie, alt: 'Navie' } }), tipText, h('button', { class: 'text-btn', text: 'Hint', attrs: { type: 'button' }, onClick: hint })),
       lanesEl,
-      h('div', { class: 'navie-row hint' }, h('img', { class: 'navie-img small', attrs: { src: o.navie, alt: 'Navie' } }), hintText, h('button', { class: 'text-btn', text: 'Hint', attrs: { type: 'button' }, onClick: hint })),
+      h('div', { class: 'lane-legend' }, h('span', { class: 'chip tag', text: 'RFID: fast' }), h('span', { class: 'chip cash', text: 'Cash: slow' }), h('span', { class: 'chip closed', text: 'Closed' })),
     ),
-    h('div', { class: 'board-foot' }, totals, problems, h('div', { class: 'title-row' }, button('Back', () => o.onDone(null), { class: 'secondary', iconName: 'back' }), h('button', { class: 'text-btn', text: 'How this was calculated', attrs: { type: 'button' }, onClick: () => o.onHow(simulatePlaza(P, modes)) })), go),
+    h('div', { class: 'board-foot' }, status, h('div', { class: 'title-row' }, button('Back', () => o.onDone(null), { class: 'secondary', iconName: 'back' }), h('button', { class: 'text-btn', text: 'See the numbers', attrs: { type: 'button' }, onClick: () => o.onHow(simulatePlaza(P, modes)) })), go),
+  );
+}
+
+/* ---- Eco Delivery Rush: the vehicle ---- */
+
+const FLEET_NAME: Record<string, string> = { 'two-vans': 'Two vans', 'one-van': 'One van', evan: 'Electric van', 'pickup-all': 'Pickup truck', 'van-pickup': 'Van and pickup' };
+const WHY_NOT: Record<Violation['kind'], string> = {
+  enclosed: 'The kit needs a roof',
+  capacity: 'Too full',
+  seats: 'Not enough seats',
+  deadline: 'Too late',
+  battery: 'Battery too low',
+  availability: 'Not free yet',
+  route: 'Road closed',
+  unserved: 'Leaves things behind',
+  overserved: 'Counted twice',
+  compatibility: 'Loads must stay apart',
+};
+
+/** Pick the vehicle: each card shows its simulated CO2 for the round trip, and the greenest is marked. */
+export function vehicleChooser(o: { problem: TransportProblem; choices: readonly string[]; routeId: string; departureId: string; navie: string; onPick: (fleetId: string) => void; onBack: () => void; onHow: (fleetId: string) => void }): HTMLElement {
+  const results = o.choices.map((id) => ({ id, r: evaluatePlan(o.problem, { fleetId: id, routeId: o.routeId, departureId: o.departureId }) }));
+  const greenest = results.filter((x) => x.r.feasible).sort((a, b) => a.r.co2Kg - b.r.co2Kg)[0]?.id ?? null;
+  let picked: string | null = null;
+  const list = h('div', { class: 'vehicle-list' });
+  const go = button('Choose', () => (picked !== null ? o.onPick(picked) : undefined), { class: 'big', iconName: 'check' });
+  const render = (): void => {
+    list.replaceChildren(
+      ...results.map(({ id, r }) => {
+        const trips = r.trips.length;
+        return h(
+          'button',
+          {
+            class: `vehicle-card ${picked === id ? 'on' : ''} ${r.feasible ? '' : 'no'}`,
+            attrs: { type: 'button', 'aria-pressed': String(picked === id), 'aria-disabled': String(!r.feasible) },
+            onClick: () => {
+              if (r.feasible) {
+                picked = id;
+                render();
+              }
+            },
+          },
+          h('span', { class: 'vehicle-icons' }, ...Array.from({ length: trips }, () => icon('truck'))),
+          h('span', { class: 'vehicle-name', text: FLEET_NAME[id] ?? id }),
+          r.feasible ? h('span', { class: 'vehicle-kg', text: `${kg(r.co2Kg)} CO₂` }) : h('span', { class: 'vehicle-why', text: WHY_NOT[r.violations[0]?.kind ?? 'route'] }),
+          id === greenest ? h('span', { class: 'vehicle-badge' }, icon('leaf'), h('span', { text: 'Greenest' })) : null,
+        );
+      }),
+    );
+    go.disabled = picked === null;
+  };
+  render();
+  return h(
+    'div',
+    { class: 'screen menu board' },
+    h('div', { class: 'board-top' }, h('div', { class: 'kicker', text: 'Run to the ridge, 10:00 AM' }), h('h2', { text: 'Choose a vehicle' })),
+    h('div', { class: 'scroll' }, h('div', { class: 'navie-row hint' }, h('img', { class: 'navie-img small', attrs: { src: o.navie, alt: 'Navie' } }), h('p', { class: 'hint-text', text: 'Less CO₂ is greener!' })), list, h('p', { class: 'muted small-text center', text: 'CO₂ for the round trip. Simulated.' })),
+    h('div', { class: 'board-foot' }, h('div', { class: 'title-row' }, button('Back', () => o.onBack(), { class: 'secondary', iconName: 'back' }), h('button', { class: 'text-btn', text: 'See the numbers', attrs: { type: 'button' }, onClick: () => o.onHow(picked ?? greenest ?? o.choices[0]) })), go),
   );
 }
 
@@ -237,7 +318,7 @@ export function energyPlanner(o: { navie: string; locked?: readonly Upgrade[]; o
   const foot = h('div', { class: 'lane-totals' });
   const verdict = h('div', { class: 'lane-problems', attrs: { role: 'status', 'aria-live': 'polite' } });
   const go = button('Order these upgrades', () => (picks.length > 0 && crewHours(picks) <= CREW_HOURS ? o.onDone(picks) : undefined), { class: 'big', iconName: 'check' });
-  const hintText = h('p', { class: 'hint-text', text: L.ecoPlanHint });
+  const hintText = h('p', { class: 'hint-text', text: 'Pick what fits in the crew’s day.' });
   const render = (): void => {
     const day = facilityDay({ repairs: [...repaired.repairs], upgrades: picks });
     const hours = crewHours(picks);
@@ -342,36 +423,51 @@ export function nlexResults(o: { def: MissionDef; report: CompletionReport; part
     fill.style.setProperty('--grow', String(Math.max(0.03, value / Math.max(max, 0.001))));
     return h('div', { class: 'col' }, h('div', { class: 'col-value', text: kg(value) }), h('div', { class: 'col-track' }, fill), h('div', { class: 'col-label', text: label }));
   };
+  const saved = o.parts.reduce((a, p) => a + p.baselineKg - p.planKg, 0);
+  const chip = (name: Parameters<typeof icon>[0], text: string, sim = false): HTMLElement => h('div', { class: 'result-chip' }, icon(name), h('span', { text }), sim ? h('span', { class: 'sim-tag tiny', text: 'Simulated' }) : null);
+  /* The full breakdown, one tap away. */
+  const details = h(
+    'div',
+    { class: 'result-details hidden' },
+    ...o.parts.map((part) => {
+      const s = part.baselineKg - part.planKg;
+      const pct = part.baselineKg > 0 ? (s / part.baselineKg) * 100 : null;
+      return h(
+        'div',
+        { class: 'card' },
+        h('div', { class: 'tally-head' }, icon('truck'), h('h3', { text: part.label }), h('span', { class: 'sim-tag', text: 'Simulated' })),
+        h('div', { class: 'columns' }, column('Before', part.baselineKg, Math.max(part.baselineKg, part.planKg), 'base'), column('You', part.planKg, Math.max(part.baselineKg, part.planKg), 'you')),
+        h('p', { class: `tally ${s < 0 ? 'worse' : ''}`, text: Math.abs(s) < 0.05 ? 'About the same as before.' : `${kg(Math.abs(s))} CO₂ ${s > 0 ? 'less' : 'more'}${pct !== null ? ` (${Math.abs(pct).toFixed(0)}%)` : ''}` }),
+        ...part.lines.map((t) => h('p', { class: 'muted reason', text: t })),
+        h('button', { class: 'text-btn', text: 'How this was calculated', attrs: { type: 'button' }, onClick: () => o.onHow(part.id) }),
+      );
+    }),
+    h('p', { class: 'muted small-text', text: report.firstCompletion ? 'Points are a game currency, not CO₂ or animals.' : 'Already counted: replays do not add to the totals.' }),
+    h('p', { class: 'muted small-text', text: 'Less CO₂ does not rescue an animal or heal a place by itself. The game keeps these results apart.' }),
+  );
+  const more = h('button', { class: 'text-btn', text: o.parts.length > 0 ? 'See the numbers' : 'More', attrs: { type: 'button', 'aria-expanded': 'false' } });
+  more.addEventListener('click', () => {
+    const open = details.classList.toggle('hidden') === false;
+    more.setAttribute('aria-expanded', String(open));
+    more.textContent = open ? 'Hide the numbers' : o.parts.length > 0 ? 'See the numbers' : 'More';
+  });
   return h(
     'div',
     { class: 'screen menu results' },
     h(
       'div',
       { class: 'scroll no-top' },
-      h('div', { class: 'result-head' }, h('div', { class: 'kicker light', text: def.title }), h('h2', { text: 'Mission complete' }), h('img', { class: 'result-bird navie-result', attrs: { src: o.navie, alt: 'Navie' } })),
+      h('div', { class: 'result-head' }, h('div', { class: 'kicker light', text: def.title }), h('h2', { text: 'Mission complete!' }), h('img', { class: 'result-bird navie-result', attrs: { src: o.navie, alt: 'Navie' } }), h('p', { class: 'result-cheer', text: DONE_LINES[def.id] ?? L.celebrate })),
       h(
         'div',
-        { class: 'card' },
-        h('div', { class: 'tally-head' }, icon('leaf'), h('h3', { text: 'The place' })),
-        ...def.environmentObjectives.map((ob) => h('p', { class: 'tally', text: ob.label })),
-        h('p', { class: 'muted', text: report.firstCompletion ? 'Added to your environmental objectives.' : 'Already counted: replays do not add to the total.' }),
+        { class: 'result-chips' },
+        ...def.environmentObjectives.slice(0, 1).map((ob) => chip('leaf', ob.label)),
+        o.parts.length > 0 ? chip('truck', Math.abs(saved) < 0.05 ? 'Same CO₂ as before' : `${kg(Math.abs(saved))} ${saved > 0 ? 'less' : 'more'} CO₂`, true) : null,
+        chip('star', report.points > 0 ? `+${report.points} points` : 'Already counted'),
+        ...(o.achievements ?? []).map((t) => chip('check', t)),
       ),
-      ...o.parts.map((part) => {
-        const saved = part.baselineKg - part.planKg;
-        const pct = part.baselineKg > 0 ? (saved / part.baselineKg) * 100 : null;
-        return h(
-          'div',
-          { class: 'card' },
-          h('div', { class: 'tally-head' }, icon('truck'), h('h3', { text: part.label }), h('span', { class: 'sim-tag', text: 'Simulated' })),
-          h('div', { class: 'columns' }, column('Baseline', part.baselineKg, Math.max(part.baselineKg, part.planKg), 'base'), column('Your plan', part.planKg, Math.max(part.baselineKg, part.planKg), 'you')),
-          h('p', { class: `tally ${saved < 0 ? 'worse' : ''}`, text: Math.abs(saved) < 0.05 ? 'About the same as the baseline.' : `${kg(Math.abs(saved))} CO₂ ${saved > 0 ? 'less' : 'more'} than the baseline${pct !== null ? ` (${Math.abs(pct).toFixed(0)}%)` : ''}` }),
-          ...part.lines.map((t) => h('p', { class: 'muted reason', text: t })),
-          h('button', { class: 'text-btn', text: 'How this was calculated', attrs: { type: 'button' }, onClick: () => o.onHow(part.id) }),
-        );
-      }),
-      h('div', { class: 'card points' }, h('div', { class: 'tally-head' }, icon('star'), h('h3', { text: 'Guardian Points' })), h('p', { class: 'tally', text: report.points > 0 ? `+${report.points}` : 'None new this time' }), h('p', { class: 'muted small-text', text: 'A game currency for Command Center upgrades. It is not a measure of CO₂, animals or places.' })),
-      (o.achievements ?? []).length > 0 ? h('div', { class: 'card' }, h('div', { class: 'tally-head' }, icon('star'), h('h3', { text: 'Achievements' })), ...(o.achievements ?? []).map((t) => h('p', { class: 'tally', text: t }))) : null,
-      h('p', { class: 'muted small-text', text: 'Less CO₂ does not rescue an animal or heal a place by itself. These are separate results, and the game keeps them apart.' }),
+      more,
+      details,
       button(o.next ?? 'Back to the Command Center', o.onNext, { class: 'big', iconName: 'next' }),
     ),
   );

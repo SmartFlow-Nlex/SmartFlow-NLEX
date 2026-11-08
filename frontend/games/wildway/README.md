@@ -2,7 +2,7 @@
 
 A third-person 3D wildlife rescue adventure in the SmartFlow NLEX Arcade. Tagline: *Change the journey. Protect their future.*
 
-**What exists today is a vertical slice.** It has three playable NLEX missions and 1 of 100 species with a playable wildlife mission. The other 99 species are on the roster with honest labels. This document says what is built and what is only planned.
+**What exists today is a vertical slice.** It has four playable NLEX missions and 1 of 100 species with a playable wildlife mission, plus 14 kinds of animated wildlife to photograph across six places. The other 99 species are on the roster with honest labels. This document says what is built and what is only planned.
 
 **The flow:** the SmartFlow NLEX Eco Command Center, then an NLEX mission or a wildlife expedition, each with its own simulated emissions decision, then results that keep every measure apart, then back to the Command Center.
 
@@ -41,7 +41,9 @@ The game is one self-contained HTML page in a WebView, with no network use, no l
 | `web/world/` | Terrain, scenery and the six zones: Malaya Ridge, the Command Center, the toll plaza, the creek, the depot, the supply yard. |
 | `web/game.ts` | The live world: movement, camera, followers, interactions. |
 | `web/hornbill.ts`, `web/missions/` | The five mission scripts, and what they share: patches and wildlife in every zone. |
-| `web/hub.ts` | The living Command Center: people walking about, the patrol car, side quests, trophies, decorations. |
+| `web/hub.ts` | The living Command Center: people walking about, the patrol car, side quests, trophies, decorations, the animal activities. |
+| `web/fauna.ts` | The animals: their models, behaviour loops, reactions and drawing. |
+| `web/world/wildlife.ts` | Which animals live in which place, and when (the creek's wildlife returns once it is clean). |
 | `web/navieArt.ts` | Navie, generated: resized copies of the app's own mascot images. |
 | `web/app.ts`, `web/ui/` | Menus, flow, save handling, puzzle screens (`ui/puzzles.ts`), Command Center screens (`ui/hubScreens.ts`). |
 | `tests/` | Unit tests. |
@@ -162,7 +164,59 @@ The progress dashboard's CO₂ total adds each mission's best simulated saving o
 
 The save went to version 2. Version 1 saves load unchanged, and an unfinished version 1 hornbill run resumes after the new call step.
 
+## Simpler missions and more animals
+
+Added on 8 November 2026, after the professor's feedback: more animals, less reading, simpler missions. Nothing was removed from the world: the Command Center, Navie, the cast, the five missions, the 100-species roster, the emissions models and the save all carry on.
+
+**Three steps per mission, and no trip back to Navie.** A mission starts from Navie's menu or the Operations Board and goes straight to its place. The HUD shows the mission's short name, the step as one line, and dots with a count (1/3) that tick as steps finish.
+
+| Mission | Step 1 | Step 2 | Step 3 |
+| --- | --- | --- | --- |
+| The Great NLEX Gridlock | Find the broken scanner (Sukat scans the RFID scanner) | Fix the scanner (one wiring puzzle) | Get the traffic moving (open the lanes; Hint fills one lane in) |
+| Creek Rescue | Pick up the litter (5 pieces, each straight into the right sorted sack) | Clear the blockage (Baging or Dayo; the water runs clean) | Spot the animals coming back (photograph a fish, a dragonfly and a frog) |
+| Solar Power Rescue | Find the power switch | Connect the solar panels (a small 4×3 wiring puzzle) | Turn on the solar power (the lights and the inverter come on) |
+| Eco Delivery Rush | Collect the supplies (one for each hero, straight into the van) | Choose a greener vehicle (four cards, each with its simulated CO₂) | Send the delivery |
+| The Hornbill Homecoming | Find the hurt hornbill (Sukat scans it from the bank) | Clear the path (the trunk, then the crossing) | Help the ranger (bring the kit, plant two saplings, watch the release) |
+
+A bot plays each mission in 12 to 25 seconds with every line skipped; with reading and walking that comes to roughly two to five minutes.
+
+**What was taken out to get there** (shared code stays): the call at Navie's station; the Gridlock's survey, five repairs, power cell and tag-reader surprise; the creek's oil trail, floodgate puzzle, replanting and collection-run plan; the depot's audit, four repairs, crew-day planner and installers' delivery plan; the yard's packing puzzle and full transport board; the hornbill's station planning, quiet-zone signs, generator and two of the four saplings.
+
+**Carbon, still calculated.** The Gridlock runs the plaza's simulated hour on the lanes the player opens. Solar Power Rescue runs the depot's simulated day with the roof on, and credits nothing else, because the simplified mission makes no other repairs. Eco Delivery Rush runs the transport model for each vehicle on the fixed 10:00 AM run by NLEX: the electric van is greenest, at 25.1 kg against the usual way's 54.9 kg. Creek Rescue and the hornbill mission have no CO₂ result now. Their results are the creek flowing, the bird helped and the gap replanted. Every results screen opens with a few short lines; "See the numbers" opens the breakdown and how it was calculated.
+
+**Animals everywhere** (`web/fauna.ts`, `web/world/wildlife.ts`). There are 14 kinds, drawn larger than life so they read from the play camera. Each has a small skeleton and its own behaviour loop:
+- sparrows peck and hop in flocks; bulbuls and fantails move between bushes, rocks and trees; swallows loop overhead
+- a kingfisher dives; an egret wades and strikes; butterflies visit real flower heads; dragonflies hover and dart
+- frogs sit, puff their throats and hop into the water; fish show their fins and leap; a gecko scurries
+- macaques sit, groom and keep their distance; a Philippine eagle soars; a Philippine eagle-owl roosts
+
+Each animal is offset in time, so a flock never moves in step. They react to the team: small birds fly off, frogs hide in the water, macaques walk away.
+
+| Place | Animals out |
+| --- | --- |
+| Command Center | 36: sparrows, bulbuls, a fantail, butterflies, swallows, a gecko |
+| Malaya Ridge | 29: butterflies, bulbuls, a fantail, a kingfisher, dragonflies, frogs, fish, macaques, the eagle, the eagle-owl |
+| Toll plaza | 24, on the verges only: sparrows, bulbuls, butterflies, swallows, egrets |
+| Creek | 8 while it is dirty; 24 once it is clean: fish, dragonflies, frogs, an egret, a kingfisher, butterflies, a fantail |
+| Depot, supply yard | 13 each: sparrows, bulbuls, butterflies, swallows, and a gecko or a fantail |
+
+Nothing is put on a traffic lane. The two Atlas species appear only in the Luzon forest, inside their checked ranges, and their photo notes quote their checked cards. Small birds prefer low perches (bushes, rocks, stumps) so they stay in view; the scenery records these, and tree-tops and flower heads, as it is planted.
+
+**Photos.** Any hero can photograph an animal from a few steps away. The camera frames it (leaves in the way fade out), the animal pauses and turns to look, there is a flash, and the first photo of each kind adds a field note (+5 points). The facts are in the Gallery's field notes, not on screen. A photo button always loses to a mission's button, and birds flying overhead lose to an animal right in front of the team.
+
+**Short animal activities** at the Command Center, once each and under a minute: Butterfly Watch (watch 3 garden butterflies), Find the Bird (follow a song, louder as you get close, to a fantail hiding in a bush), Wildlife Spotter (photograph 3 kinds there). The litter quest is now called Habitat Helper. A new achievement, Wildlife photographer, is for 10 kinds.
+
+**Less reading.** Every objective is 3 to 7 words, mission descriptions are one sentence, Navie speaks one short sentence at a time, and a results screen opens with one cheer. Tests check the word counts.
+
+**The world reacts.** The creek turns from murky to clear and its wildlife comes back. The plaza's lane lights turn green and the queues roll through. The depot's lights and inverter come on. At Malaya Ridge, the saplings have grown by next season (labelled as an illustrative story moment). One trip's CO₂ is never shown restoring a habitat.
+
+**Saves.** Finished missions keep their records, and a replay with nothing measured never replaces a measured best. A mission left half-way under the old, longer steps is not resumed: it starts afresh, because its old steps no longer exist.
+
+**Limits.** No phone has run this yet; the figures below are from the PC. The Philippine eagle and the eagle-owl are the only other Atlas species with a model: they are seen and photographed, not played. The rufous hornbill is still the only species with a mission, and 97 species have no model yet. Fish show themselves by their fins and their leaps, because the water is drawn opaque.
+
 ## The gameplay expansion
+
+*Parts of the missions in this section were simplified on 8 November 2026: see the section above. The shared systems, the Command Center and the progression still apply.*
 
 Added on 6 November 2026, second round, without removing anything. The cast, the art style and the core mechanics are unchanged.
 
@@ -201,7 +255,7 @@ These never convert into one another, and replays don't inflate them: individual
 
 ## Performance
 
-Measured in Chrome on the development PC, at phone size (390 × 844, double density), on 6 November 2026. **These numbers say what the game asks of a device. They do not predict a phone's frame rate, because no phone has run it yet.**
+Measured in Chrome on the development PC, at phone size (390 × 844, double density), on 6 November 2026, and again on 8 November with the animals (the second table). **These numbers say what the game asks of a device. They do not predict a phone's frame rate, because no phone has run it yet.**
 
 | Place | Triangles | Draw calls | Geometry | Frame time on the PC |
 | --- | --- | --- | --- | --- |
@@ -212,6 +266,19 @@ Measured in Chrome on the development PC, at phone size (390 × 844, double dens
 | Barangay creek | about 22,000 | 21 | 3.6 MB | 6.9 ms median |
 | Supply yard (new) | about 40,000 | 45 | 5.4 MB | 6.9 ms median |
 | Command Center as played, every mission done | about 62,000 | 56 | | 7.0 ms median, 8.6 ms p95 |
+
+**With the animals, as played** (8 November): each place with its mission's props and animals, the normal camera.
+
+| Place | Animals out | Draw calls | Triangles | Frame time on the PC |
+| --- | --- | --- | --- | --- |
+| Command Center | 36 | 71 | about 67,000 | 7.0 ms median, 8.2 ms p95 |
+| Malaya Ridge | 29 | 79 | about 91,000 | 7.0 ms median, 8.2 ms p95 |
+| Toll plaza | 24 | 56 | about 90,000 | 7.0 ms median, 8.0 ms p95 |
+| Creek, cleaned | 24 | 37 | about 26,000 | 7.0 ms median, 8.0 ms p95 |
+| Maintenance depot | 13 | 63 | about 53,000 | 6.9 ms median, 7.9 ms p95 |
+| Supply yard | 13 | 59 | about 44,000 | 6.9 ms median, 8.0 ms p95 |
+
+Each animal is one draw (its outline is dropped beyond 24 m), animals off screen or over 64 m away are skipped, and only animals on the ground near the camera get a shadow. The page is now 1,061 KB.
 
 The PC's frame time is capped by its 144 Hz screen. JavaScript memory read about 45 MB in the busiest Command Center. The page is 1,048 KB, of which 218 KB is Navie's art.
 
@@ -229,8 +296,10 @@ Triangle counts went up on 6 November. That is not new detail: an old culling bu
 
 **Built in the expansion (second round, 6 November):** see "The gameplay expansion" above.
 
+**Built on 8 November:** three-step missions, short text everywhere, 14 kinds of animated wildlife in every place, photos and field notes, three animal activities at the Command Center, a simpler lane screen and vehicle choice, short results with the numbers one tap away. See "Simpler missions and more animals" above.
+
 **Planned, not built:** RFID Rescue (Marilao), Rainy Day Rescue (Pulilan), Night Shift Guardians (Angeles), The Eco Convoy (Dau), The Wasteworks Showdown (the finale), and a wildlife follow-up visit to the hornbill. These are the brief's Priority 3.
 
-**Not built yet:** missions at Angeles and Dau, the other nine Chapter 1 missions, Chapters 2 to 10, 99 species models, a Filipino translation (the text is structured for one), guest save merge, voice acting, recorded music.
+**Not built yet:** missions at Angeles and Dau, the other nine Chapter 1 missions, Chapters 2 to 10, 97 species models, a Filipino translation (the text is structured for one), guest save merge, voice acting, recorded music.
 
 **Partly built:** Controller code exists, but has not been tested with a real controller.

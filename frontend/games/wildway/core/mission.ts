@@ -61,15 +61,16 @@ export const HORNBILL_MISSION: MissionDef = {
   chapter: 1,
   kind: 'wildlife',
   locationId: 'malaya-ridge',
-  summary: 'A rufous hornbill is in difficulty near a damaged forest access road at Malaya Ridge, in the Sierra Madre foothills.',
-  fiction: 'Malaya Ridge and its partner station are fictional, far from NLEX: no hornbills live beside the expressway. The Command Center only plans the supply run.',
+  summary: 'A hurt hornbill needs help at Malaya Ridge!',
+  fiction: 'Malaya Ridge is made up, far from NLEX: no hornbills live beside the expressway.',
   environmentObjectives: [],
   speciesIds: ['sp-009'],
   regionId: 'malaya-ridge',
   storyIndividuals: [{ id: 'hornbill-male-1', speciesId: 'sp-009', defaultNickname: 'Kalaw' }],
-  requiredTasks: ['Observe from a safe distance', 'Plan the deliveries', 'Restore access', 'Keep the area quiet', 'Remove the disturbance', 'Repair the forest connection'],
-  serviceConstraints: 'Three staff and the assessment kit by 10:00 AM; saplings and tools by 11:30 AM.',
-  transport: HORNBILL_TRANSPORT,
+  requiredTasks: ['Find the hornbill', 'Clear the path', 'Help the ranger'],
+  serviceConstraints: 'The rangers bring the specialist and the kit once the track is clear.',
+  /* No transport plan in the simplified mission: the carbon lessons live in the NLEX missions. */
+  transport: null,
   rescueObjectives: ['Get the specialist and the kit to the bird'],
   habitatObjectives: [{ id: 'malaya-corridor', label: 'Malaya Ridge forest gap replanted' }],
   evidenceReferences: [
@@ -81,20 +82,9 @@ export const HORNBILL_MISSION: MissionDef = {
   ],
   rewards: { guardianPoints: 100, plannedWell: 25, optionalChannel: 15, perClue: 5 },
   steps: [
-    { id: 'call', zone: 'station', objective: 'obj.call', needs: ['callTaken'], target: 'navie' },
-    { id: 'walk', zone: 'forest', objective: 'obj.walk', needs: ['reachedBank'], target: 'bank' },
-    { id: 'scan', zone: 'forest', objective: 'obj.scan', needs: ['birdScanned'], target: 'bird' },
-    { id: 'ranger', zone: 'forest', objective: 'obj.ranger', needs: ['rangerAsked'], target: 'ranger' },
-    { id: 'plan', zone: 'station', objective: 'obj.plan', needs: ['planChosen'], target: 'board' },
-    { id: 'log', zone: 'forest', objective: 'obj.log', needs: ['logCleared'], target: 'log' },
-    { id: 'cross', zone: 'forest', objective: 'obj.cross', needs: ['crossingOpen'], target: 'crossing' },
-    { id: 'deliver', zone: 'forest', objective: 'obj.deliver', needs: ['kitDelivered', 'saplingsDelivered'], target: 'crates' },
-    { id: 'signs', zone: 'forest', objective: 'obj.signs', needs: ['signA', 'signB'], target: 'signs' },
-    { id: 'assess', zone: 'forest', objective: 'obj.assess', needs: ['assessed'], target: 'tent' },
-    { id: 'noise', zone: 'forest', objective: 'obj.noise', needs: ['noiseFound'], target: 'noiseSpot' },
-    { id: 'noiseOff', zone: 'forest', objective: 'obj.noiseOff', needs: ['noiseOff'], target: 'generator' },
-    { id: 'plant', zone: 'forest', objective: 'obj.plant', needs: ['plantA', 'plantB', 'plantC', 'plantD'], target: 'stakes' },
-    { id: 'release', zone: 'forest', objective: 'obj.release', needs: ['released'], target: 'tent' },
+    { id: 'find', zone: 'forest', objective: 'obj.find', needs: ['birdScanned'], target: 'bird' },
+    { id: 'path', zone: 'forest', objective: 'obj.path', needs: ['logCleared', 'crossingOpen'], target: 'log' },
+    { id: 'help', zone: 'forest', objective: 'obj.help', needs: ['kitDelivered', 'plantC', 'plantD'], target: 'tent' },
   ],
 };
 
@@ -106,13 +96,13 @@ export const GRIDLOCK_MISSION: MissionDef = {
   chapter: 0,
   kind: 'nlex',
   locationId: 'bocaue',
-  summary: 'The Wasteworks has jammed a toll plaza. Cars are queuing with their engines running.',
-  fiction: 'A made-up version of a toll plaza at Bocaue. None of this happened there, and every traffic number is invented for the game.',
+  summary: 'A broken RFID scanner has jammed a toll plaza!',
+  fiction: 'A made-up toll plaza. Every traffic number is invented for the game.',
   environmentObjectives: [{ id: 'plaza-flow', label: 'Toll plaza flowing again' }],
   speciesIds: [],
   regionId: 'bocaue-plaza',
   storyIndividuals: [],
-  requiredTasks: ['Watch the queue build and find the clues', 'Repair the signal, the cable, the sensor and the jammer, then bring the power back', 'Set the lanes safely', 'Reopen the plaza', 'Handle whatever goes wrong next'],
+  requiredTasks: ['Find the broken scanner', 'Fix the scanner', 'Get the traffic moving'],
   serviceConstraints: 'Lane 4 stays closed for repairs. Three toll collectors are on shift.',
   transport: null,
   rescueObjectives: [],
@@ -120,12 +110,9 @@ export const GRIDLOCK_MISSION: MissionDef = {
   evidenceReferences: [],
   rewards: NLEX_REWARDS,
   steps: [
-    { id: 'call', zone: 'station', objective: 'obj.call', needs: ['callTaken'], target: 'navie' },
-    { id: 'survey', zone: 'plaza', objective: 'obj.plazaSurvey', needs: ['plazaSurveyed'], target: 'overlook' },
-    { id: 'repair', zone: 'plaza', objective: 'obj.plazaRepair', needs: ['fixSignal', 'fixCable', 'fixSensor', 'removeJammer', 'powerOn'], target: 'faults' },
-    { id: 'lanes', zone: 'plaza', objective: 'obj.plazaLanes', needs: ['lanesSet'], target: 'console' },
-    { id: 'reopen', zone: 'plaza', objective: 'obj.plazaReopen', needs: ['reopened'], target: 'console' },
-    { id: 'surprise', zone: 'plaza', objective: 'obj.plazaSurprise', needs: ['replanned'], target: 'console' },
+    { id: 'find', zone: 'plaza', objective: 'obj.gridFind', needs: ['scannerFound'], target: 'scanner' },
+    { id: 'fix', zone: 'plaza', objective: 'obj.gridFix', needs: ['scannerFixed'], target: 'scanner' },
+    { id: 'flow', zone: 'plaza', objective: 'obj.gridFlow', needs: ['reopened'], target: 'console' },
   ],
 };
 
@@ -144,39 +131,32 @@ export const RIVER_ITEMS: readonly { id: string; label: string; kind: WasteKind;
 
 export const WASTE_LABEL: Record<WasteKind, string> = { bio: 'Biodegradable', recycle: 'Recyclables', residual: 'Residual' };
 
+/** The five pieces the team picks up in the simplified mission, west to east along the creek. */
+export const CREEK_LITTER: readonly string[] = ['can', 'bottle', 'wrappers', 'jar', 'peels'];
+
 export const RIVER_MISSION: MissionDef = {
   id: 'nlex-river',
   title: 'Creek Rescue',
   chapter: 0,
   kind: 'nlex',
   locationId: 'valenzuela',
-  summary: 'Rubbish is choking a creek in a community off the expressway. The water has stopped flowing.',
-  fiction: 'A made-up creek and barangay near Valenzuela. No real waterway is described, and the waste amounts are invented for the game.',
-  environmentObjectives: [
-    { id: 'creek-clean', label: 'Community creek cleared and flowing' },
-    { id: 'creek-bank', label: 'Creek bank replanted with native grasses' },
-  ],
+  summary: 'Let’s clean up a creek blocked by rubbish!',
+  fiction: 'A made-up creek and barangay. No real waterway is described.',
+  environmentObjectives: [{ id: 'creek-clean', label: 'Community creek cleared and flowing' }],
   speciesIds: [],
   regionId: 'valenzuela-creek',
   storyIndividuals: [],
-  requiredTasks: ['Meet the barangay officer', 'Survey the creek', 'Trace the oil to its source', 'Leave the oil to the specialist', 'Collect and sort the rubbish', 'Clear the trash rack', 'Route the water back through the gate', 'Replant the bank', 'Plan the collection run'],
-  serviceConstraints: 'Waste stays sorted. Everything is collected before the afternoon rain.',
-  transport: RIVER_TRANSPORT,
+  requiredTasks: ['Collect the litter', 'Clear the blockage', 'Spot the returning wildlife'],
+  serviceConstraints: 'Waste goes into the barangay’s sorted sacks.',
+  transport: null,
   rescueObjectives: [],
   habitatObjectives: [],
   evidenceReferences: [],
   rewards: NLEX_REWARDS,
   steps: [
-    { id: 'call', zone: 'station', objective: 'obj.call', needs: ['callTaken'], target: 'navie' },
-    { id: 'meet', zone: 'river', objective: 'obj.riverMeet', needs: ['officerMet'], target: 'officer' },
-    { id: 'survey', zone: 'river', objective: 'obj.riverSurvey', needs: ['riverSurveyed'], target: 'footbridge' },
-    { id: 'trace', zone: 'river', objective: 'obj.riverTrace', needs: ['trace:1', 'trace:2', 'trace:3'], target: 'trace' },
-    { id: 'hazard', zone: 'river', objective: 'obj.riverHazard', needs: ['hazardSafe'], target: 'drum' },
-    { id: 'collect', zone: 'river', objective: 'obj.riverCollect', needs: RIVER_ITEMS.map((i) => `sorted:${i.id}`), target: 'litter' },
-    { id: 'rack', zone: 'river', objective: 'obj.riverRack', needs: ['rackCleared'], target: 'rack' },
-    { id: 'gate', zone: 'river', objective: 'obj.riverGate', needs: ['flowRestored'], target: 'gate' },
-    { id: 'replant', zone: 'river', objective: 'obj.riverReplant', needs: ['reed:1', 'reed:2', 'reed:3'], target: 'reeds' },
-    { id: 'plan', zone: 'river', objective: 'obj.riverPlan', needs: ['planChosen'], target: 'dispatch' },
+    { id: 'collect', zone: 'river', objective: 'obj.riverCollect', needs: CREEK_LITTER.map((id) => `sorted:${id}`), target: 'litter' },
+    { id: 'clear', zone: 'river', objective: 'obj.riverClear', needs: ['flowRestored'], target: 'rack' },
+    { id: 'wildlife', zone: 'river', objective: 'obj.riverWildlife', needs: ['spot:fish', 'spot:dragonfly', 'spot:frog'], target: 'wildlife' },
   ],
 };
 
@@ -186,27 +166,23 @@ export const ECO_MISSION: MissionDef = {
   chapter: 0,
   kind: 'nlex',
   locationId: 'san-fernando',
-  summary: 'The Wasteworks scrambled a maintenance depot’s wiring the week its solar roof was due. It is wasting energy all day.',
-  fiction: 'A made-up maintenance depot near San Fernando. Every wattage, hour count and the solar yield are game assumptions, shown with the sums.',
-  environmentObjectives: [{ id: 'depot-lean', label: 'Depot energy waste cut' }],
+  summary: 'The depot’s new solar roof won’t switch on!',
+  fiction: 'A made-up depot. Every wattage and the solar yield are game assumptions.',
+  environmentObjectives: [{ id: 'depot-lean', label: 'Depot running on solar' }],
   speciesIds: [],
   regionId: 'san-fernando-depot',
   storyIndividuals: [],
-  requiredTasks: ['Meet the depot chief', 'Audit the energy', 'Fix the sensor, the leak, the idling and the roof wiring', 'Balance the crew day around the solar roof', 'Plan the delivery', 'Install, and switch the solar on'],
-  serviceConstraints: 'The installers have one working day.',
+  requiredTasks: ['Find the power switch', 'Connect the solar panels', 'Turn on the solar power'],
+  serviceConstraints: 'The panels are on the roof already: only the wiring is scrambled.',
   transport: null,
   rescueObjectives: [],
   habitatObjectives: [],
   evidenceReferences: [],
   rewards: NLEX_REWARDS,
   steps: [
-    { id: 'call', zone: 'station', objective: 'obj.call', needs: ['callTaken'], target: 'navie' },
-    { id: 'meet', zone: 'depot', objective: 'obj.depotMeet', needs: ['chiefMet'], target: 'chief' },
-    { id: 'audit', zone: 'depot', objective: 'obj.depotAudit', needs: ['audited'], target: 'meter' },
-    { id: 'repair', zone: 'depot', objective: 'obj.depotRepair', needs: ['fixSensor', 'fixLeak', 'engineOff', 'fixWiring'], target: 'faults' },
-    { id: 'energy', zone: 'depot', objective: 'obj.depotEnergy', needs: ['energyPlanned'], target: 'office' },
-    { id: 'plan', zone: 'depot', objective: 'obj.depotPlan', needs: ['planChosen'], target: 'dispatch' },
-    { id: 'install', zone: 'depot', objective: 'obj.depotInstall', needs: ['installDone'], target: 'install' },
+    { id: 'find', zone: 'depot', objective: 'obj.ecoFind', needs: ['switchFound'], target: 'inverter' },
+    { id: 'connect', zone: 'depot', objective: 'obj.ecoConnect', needs: ['fixWiring'], target: 'wiring' },
+    { id: 'switch', zone: 'depot', objective: 'obj.ecoSwitch', needs: ['installDone'], target: 'inverter' },
   ],
 };
 
@@ -220,19 +196,27 @@ export const DELIVERY_ITEMS: readonly { id: string; label: string; spot: string;
   { id: 'water', label: 'water jugs', spot: 'itemWater', hero: null },
 ];
 
+/** The four the team fetches, one for each hero. The seedlings and the water are by the van already. */
+export const DELIVERY_PICKS: readonly string[] = ['tents', 'medkit', 'rope', 'traps'];
+
+/** The simplified run: only the vehicle is chosen. The route and the time are fixed. */
+export const DELIVERY_ROUTE = 'nlex';
+export const DELIVERY_DEPARTURE = 'late';
+export const DELIVERY_CHOICES: readonly string[] = ['two-vans', 'one-van', 'evan', 'pickup-all'];
+
 export const DELIVERY_MISSION: MissionDef = {
   id: 'nlex-delivery',
   title: 'Eco Delivery Rush',
   chapter: 0,
   kind: 'nlex',
   locationId: 'balintawak',
-  summary: 'The field team at Malaya Ridge needs supplies by noon. The yard at Balintawak is a mess, and nothing is packed.',
-  fiction: 'A made-up supply yard at Balintawak and a made-up run to the ridge. Distances and loads are invented for the game.',
+  summary: 'The field team needs supplies by noon!',
+  fiction: 'A made-up supply yard and a made-up run. Distances and loads are invented for the game.',
   environmentObjectives: [{ id: 'delivery-packed', label: 'Field supplies packed and sent' }],
   speciesIds: [],
   regionId: 'balintawak-yard',
   storyIndividuals: [],
-  requiredTasks: ['Meet the yard supervisor', 'Find the six supplies', 'Pack the van', 'Plan the run', 'Send it off'],
+  requiredTasks: ['Collect the supplies', 'Choose a greener vehicle', 'Send the delivery'],
   serviceConstraints: 'Two technicians and everything they need at the ridge by 12:00 noon.',
   transport: DELIVERY_TRANSPORT,
   rescueObjectives: [],
@@ -240,11 +224,8 @@ export const DELIVERY_MISSION: MissionDef = {
   evidenceReferences: [],
   rewards: NLEX_REWARDS,
   steps: [
-    { id: 'call', zone: 'station', objective: 'obj.call', needs: ['callTaken'], target: 'navie' },
-    { id: 'meet', zone: 'yard', objective: 'obj.yardMeet', needs: ['supervisorMet'], target: 'supervisor' },
-    { id: 'gather', zone: 'yard', objective: 'obj.yardGather', needs: DELIVERY_ITEMS.map((i) => `got:${i.id}`), target: 'items' },
-    { id: 'load', zone: 'yard', objective: 'obj.yardLoad', needs: ['loaded'], target: 'van' },
-    { id: 'plan', zone: 'yard', objective: 'obj.yardPlan', needs: ['planChosen'], target: 'desk' },
+    { id: 'gather', zone: 'yard', objective: 'obj.yardGather', needs: DELIVERY_PICKS.map((id) => `got:${id}`), target: 'items' },
+    { id: 'choose', zone: 'yard', objective: 'obj.yardChoose', needs: ['planChosen'], target: 'van' },
     { id: 'send', zone: 'yard', objective: 'obj.yardSend', needs: ['sent'], target: 'van' },
   ],
 };
@@ -252,11 +233,32 @@ export const DELIVERY_MISSION: MissionDef = {
 export const MISSIONS: readonly MissionDef[] = [GRIDLOCK_MISSION, HORNBILL_MISSION, RIVER_MISSION, ECO_MISSION, DELIVERY_MISSION];
 
 /** The upgrades a depot run chose, from its flags. */
-export const chosenUpgrades = (run: MissionRun): Upgrade[] => UPGRADE_OPTIONS.filter((o) => run.flags.includes(`up:${o.id}`)).map((o) => o.id);
+export const chosenUpgrades = (run: MissionRun): Upgrade[] => {
+  const picked = UPGRADE_OPTIONS.filter((o) => run.flags.includes(`up:${o.id}`)).map((o) => o.id);
+  /* The simplified mission has no planner: connecting and switching on the roof is the upgrade. */
+  return picked.length > 0 ? picked : run.flags.includes('installDone') ? ['solar'] : [];
+};
+
+/** The repairs a depot run actually made. The simplified mission makes none, so none are credited. */
+export const depotRepairs = (run: MissionRun): ('sensor' | 'leak' | 'idling')[] => [
+  ...(run.flags.includes('fixSensor') ? (['sensor'] as const) : []),
+  ...(run.flags.includes('fixLeak') ? (['leak'] as const) : []),
+  ...(run.flags.includes('engineOff') ? (['idling'] as const) : []),
+];
 
 /** The transport problem for a run: fixed for most missions, built from the player's choices at the depot. */
 export function missionTransport(def: MissionDef, run: MissionRun): TransportProblem | null {
+  /* Runs saved before the simplification kept their plans: they are scored on the problem they planned. */
+  if (def.id === HORNBILL_MISSION.id && run.plan !== null) {
+    return HORNBILL_TRANSPORT;
+  }
+  if (def.id === RIVER_MISSION.id && run.plan !== null) {
+    return RIVER_TRANSPORT;
+  }
   if (def.id === ECO_MISSION.id) {
+    if (run.plan === null) {
+      return null;
+    }
     const cargo: DepotCargo[] = UPGRADE_OPTIONS.filter((o) => chosenUpgrades(run).includes(o.id) && o.cargo !== null).map((o) => o.cargo as DepotCargo);
     return depotTransport(cargo);
   }
@@ -272,9 +274,18 @@ export interface MissionRun {
   step: number;
   flags: string[];
   plan: Plan | null;
+  /** Which version of the missions' steps this run was started under. */
+  v?: number;
 }
 
-export const newRun = (missionId: string, runId: string): MissionRun => ({ missionId, runId, step: 0, flags: [], plan: null });
+/**
+ * 2: the simplified three-step missions. A run left half-way under the old, longer steps
+ * would resume in a muddle, so it is not resumed: the mission simply starts afresh.
+ * Finished missions are kept in the save's records and are not affected.
+ */
+export const RUN_VERSION = 2;
+
+export const newRun = (missionId: string, runId: string): MissionRun => ({ missionId, runId, step: 0, flags: [], plan: null, v: RUN_VERSION });
 
 export const hasFlag = (run: MissionRun, flag: string): boolean => run.flags.includes(flag);
 
@@ -298,11 +309,11 @@ export function restoreRun(def: MissionDef, raw: unknown): MissionRun | null {
     return null;
   }
   const r = raw as Partial<MissionRun>;
-  if (r.missionId !== def.id || typeof r.runId !== 'string' || !Array.isArray(r.flags) || !r.flags.every((f) => typeof f === 'string')) {
+  if (r.missionId !== def.id || typeof r.runId !== 'string' || !Array.isArray(r.flags) || !r.flags.every((f) => typeof f === 'string') || r.v !== RUN_VERSION) {
     return null;
   }
   const plan = r.plan !== null && typeof r.plan === 'object' && typeof r.plan.fleetId === 'string' && typeof r.plan.routeId === 'string' && typeof r.plan.departureId === 'string' ? r.plan : null;
-  let run: MissionRun = { missionId: def.id, runId: r.runId, step: 0, flags: [], plan };
+  let run: MissionRun = { missionId: def.id, runId: r.runId, step: 0, flags: [], plan, v: RUN_VERSION };
   for (const flag of r.flags) {
     run = setFlag(def, run, flag);
   }

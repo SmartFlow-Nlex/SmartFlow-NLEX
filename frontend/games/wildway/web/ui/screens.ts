@@ -136,51 +136,61 @@ export function dispatchOverlay(c: Comparison, onDone: () => void, reduce: boole
   return el;
 }
 
-export function resultsScreen(o: { def: MissionDef; c: Comparison; report: CompletionReport; run: { flags: string[] }; individualName: string; onHow: () => void; onNext: () => void; onNickname: (name: string) => void; portrait: string }): HTMLElement {
+/** Results for a wildlife mission: the animal, the habitat and the points, with the details one tap away. */
+export function resultsScreen(o: { def: MissionDef; c?: Comparison; report: CompletionReport; run: { flags: string[] }; individualName: string; onHow: () => void; onNext: () => void; onNickname: (name: string) => void; portrait: string }): HTMLElement {
   const { c, report, def } = o;
-  const saved = c.savings.savedKg;
   const input = h('input', { class: 'nick', attrs: { type: 'text', maxlength: '20', value: o.individualName, 'aria-label': 'Optional nickname for this hornbill' } });
   input.addEventListener('change', () => o.onNickname(input.value.trim()));
   const animals = report.newAnimals.length;
-  const maxBar = Math.max(c.baseline.co2Kg, c.player.co2Kg, 0.001);
-  const column = (label: string, value: number, cls: string): HTMLElement => {
-    const fill = h('div', { class: `col-fill ${cls}` });
-    fill.style.setProperty('--grow', String(Math.max(0.03, value / maxBar)));
-    return h('div', { class: 'col' }, h('div', { class: 'col-value', text: kg(value) }), h('div', { class: 'col-track' }, fill), h('div', { class: 'col-label', text: label }));
-  };
+  const chip = (name: Parameters<typeof icon>[0], text: string): HTMLElement => h('div', { class: 'result-chip' }, icon(name), h('span', { text }));
+  const details = h(
+    'div',
+    { class: 'result-details hidden' },
+    h('div', { class: 'card' }, h('p', { class: 'muted', text: report.newSpecies.length > 0 ? 'New in your Atlas: Rufous hornbill.' : 'Rufous hornbill is already in your Atlas.' }), h('label', { class: 'nick-row' }, h('span', { text: 'Nickname, if you like' }), input)),
+    o.run.flags.includes('channelRestored') ? h('p', { class: 'muted small-text', text: 'You also got the old water channel flowing.' }) : null,
+    c === undefined
+      ? null
+      : (() => {
+          const maxBar = Math.max(c.baseline.co2Kg, c.player.co2Kg, 0.001);
+          const column = (label: string, value: number, cls: string): HTMLElement => {
+            const fill = h('div', { class: `col-fill ${cls}` });
+            fill.style.setProperty('--grow', String(Math.max(0.03, value / maxBar)));
+            return h('div', { class: 'col' }, h('div', { class: 'col-value', text: kg(value) }), h('div', { class: 'col-track' }, fill), h('div', { class: 'col-label', text: label }));
+          };
+          return h(
+            'div',
+            { class: 'card' },
+            h('div', { class: 'tally-head' }, icon('truck'), h('h3', { text: 'The transport' }), h('span', { class: 'sim-tag', text: 'Simulated' })),
+            h('div', { class: 'columns' }, column('Usual way', c.baseline.co2Kg, 'base'), column('Your plan', c.player.co2Kg, 'you')),
+            h('p', { class: `tally ${c.savings.savedKg < 0 ? 'worse' : ''}`, text: savingsLine(c) }),
+            h('button', { class: 'text-btn', text: 'How this was calculated', attrs: { type: 'button' }, onClick: () => o.onHow() }),
+          );
+        })(),
+    h('p', { class: 'muted small-text', text: 'Points are a game currency, not animals or CO₂. The specialist did the handling: in real life, report a hurt wild animal to DENR.' }),
+  );
+  const more = h('button', { class: 'text-btn', text: 'More', attrs: { type: 'button', 'aria-expanded': 'false' } });
+  more.addEventListener('click', () => {
+    const open = details.classList.toggle('hidden') === false;
+    more.setAttribute('aria-expanded', String(open));
+    more.textContent = open ? 'Less' : 'More';
+  });
   return h(
     'div',
     { class: 'screen menu results' },
     h(
       'div',
       { class: 'scroll no-top' },
-      h('div', { class: 'result-head' }, h('div', { class: 'kicker light', text: def.title }), h('h2', { text: 'Mission complete' }), h('img', { class: 'result-bird', attrs: { src: o.portrait, alt: 'Rufous hornbill' } })),
+      h('div', { class: 'result-head' }, h('div', { class: 'kicker light', text: def.title }), h('h2', { text: 'Mission complete!' }), h('img', { class: 'result-bird', attrs: { src: o.portrait, alt: 'Rufous hornbill' } }), h('p', { class: 'result-cheer', text: `${o.individualName} is home!` })),
       h(
         'div',
-        { class: 'card' },
-        h('div', { class: 'tally-head' }, icon('paw'), h('h3', { text: 'The animal' })),
-        h('p', { class: 'tally', text: report.firstCompletion ? `${animals} individual ${animals === 1 ? 'animal' : 'animals'} helped` : 'Already counted: replays do not add to the total.' }),
-        h('p', { class: 'muted', text: report.newSpecies.length > 0 ? 'New in your Atlas: Rufous hornbill.' : 'Rufous hornbill is already in your Atlas.' }),
-        h('label', { class: 'nick-row' }, h('span', { text: 'Nickname, if you like' }), input),
+        { class: 'result-chips' },
+        chip('paw', report.firstCompletion ? `${animals} hornbill helped` : 'Already counted'),
+        chip('tree', 'Forest gap replanted'),
+        chip('star', report.points > 0 ? `+${report.points} points` : 'Already counted'),
       ),
-      h(
-        'div',
-        { class: 'card' },
-        h('div', { class: 'tally-head' }, icon('tree'), h('h3', { text: 'The habitat' })),
-        h('p', { class: 'tally', text: 'Forest gap replanted, disturbance removed.' }),
-        h('p', { class: 'muted', text: o.run.flags.includes('channelRestored') ? 'You also got the old water channel flowing again.' : 'The old sluice is still shut. You can open it on a replay.' }),
-      ),
-      h(
-        'div',
-        { class: 'card' },
-        h('div', { class: 'tally-head' }, icon('truck'), h('h3', { text: 'The transport' }), h('span', { class: 'sim-tag', text: 'Simulated' })),
-        h('div', { class: 'columns' }, column('Usual way', c.baseline.co2Kg, 'base'), column('Your plan', c.player.co2Kg, 'you')),
-        h('p', { class: `tally ${saved < 0 ? 'worse' : ''}`, text: savingsLine(c) }),
-        ...c.reasons.map((r) => h('p', { class: 'muted reason', text: r })),
-        h('button', { class: 'text-btn', text: 'How this was calculated', attrs: { type: 'button' }, onClick: () => o.onHow() }),
-      ),
-      h('div', { class: 'card points' }, h('div', { class: 'tally-head' }, icon('star'), h('h3', { text: 'Guardian Points' })), h('p', { class: 'tally', text: report.points > 0 ? `+${report.points}` : 'None new this time' }), h('p', { class: 'muted small-text', text: 'A game currency for station upgrades. It is not a measure of animals or of CO₂.' })),
-      button('See what happens next season', o.onNext, { class: 'big', iconName: 'next' }),
+      more,
+      details,
+      button('See next season', o.onNext, { class: 'big', iconName: 'next' }),
     ),
   );
 }

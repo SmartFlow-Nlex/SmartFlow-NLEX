@@ -1,16 +1,16 @@
 import { NLEX_LINES as L } from '../../core/content';
 import { VEHICLES } from '../../core/emissions';
-import { DELIVERY_ITEMS, DELIVERY_MISSION } from '../../core/mission';
+import { DELIVERY_ITEMS, DELIVERY_MISSION, DELIVERY_PICKS } from '../../core/mission';
 import type { HeroAction, Interaction, Prop } from '../game';
 import type { HeroId, VehicleKind } from '../models';
 import { YARD_STAGE, YARD_VAN } from '../world/nlexZones';
 import { anyHero, navieKey, ScriptBase } from './base';
 
 /**
- * Eco Delivery Rush, at a made-up supply yard in Balintawak. Six supplies, each reached a
- * different way; a van packed tight; a plan for the run; and the van leaving through the
- * gate. The field team it supplies is the one at Malaya Ridge, where the hornbill
- * expedition goes next.
+ * Eco Delivery Rush, at a made-up supply yard, in three steps: collect four supplies (one
+ * for each hero), choose the vehicle, and send it off. Each supply goes straight into the
+ * van, so nobody carries anything across the yard. The vehicle choice runs the transport
+ * model, so its CO2 figures are calculated.
  */
 
 /** Where each supply sits in the yard: on the rack, in the cage, on the gutter... */
@@ -23,16 +23,12 @@ const ITEM_AT: Record<string, { x: number; y: number; z: number; mesh: string }>
   water: { x: -14, y: 0, z: -13, mesh: 'itemWater' },
 };
 
-const PICK: Record<string, { hero: HeroId | null; label: string; pose?: HeroAction['pose']; hold: number }> = {
-  seedlings: { hero: null, label: 'Pick up the seedling trays', hold: 0 },
-  tents: { hero: 'dayo', label: 'Climb the rack for the tents', pose: 'climb', hold: 1 },
-  traps: { hero: null, label: 'Pick up the camera-trap kit', hold: 0 },
-  medkit: { hero: 'baging', label: 'Stretch through the cage for the kit', pose: 'stretch', hold: 0.8 },
-  rope: { hero: 'awit', label: 'Glide up to the gutter for the rope', pose: 'glide', hold: 0.8 },
-  water: { hero: null, label: 'Pick up the water jugs', hold: 0 },
+const PICK: Record<string, { hero: HeroId; label: string; pose: HeroAction['pose']; hold: number }> = {
+  tents: { hero: 'dayo', label: 'Climb up for the tents', pose: 'climb', hold: 0.8 },
+  medkit: { hero: 'baging', label: 'Stretch for the kit', pose: 'stretch', hold: 0.7 },
+  rope: { hero: 'awit', label: 'Glide up for the rope', pose: 'glide', hold: 0.7 },
+  traps: { hero: 'sukat', label: 'Find the camera kit', pose: 'scan', hold: 0.7 },
 };
-
-const SPAWN: Record<string, string> = { meet: 'spawn', gather: 'supervisor', load: 'stage', plan: 'desk', send: 'van' };
 
 /** The road out: through the gate and away down the access road. */
 const ROUTE: readonly [number, number][] = [
@@ -48,38 +44,8 @@ export class DeliveryScript extends ScriptBase {
   private driving = -1;
   private dust = 0;
 
-  enter(spawnAt?: string): void {
-    if (this.step() === 'call') {
-      this.enterCenter(() => this.call());
-      return;
-    }
-    this.enterYard(spawnAt);
-  }
-
-  async opening(): Promise<void> {
-    if (this.step() === 'call') {
-      await this.line(navieKey('alert'), 'Navie', L.incoming);
-    }
-  }
-
-  private async call(): Promise<void> {
-    const g = this.ctx.game;
-    await this.navie(L.delCall1, 'alert');
-    await this.navie(L.delCall2, 'thinking');
-    this.ctx.flag('callTaken');
-    await this.ctx.fade(() => {
-      g.releaseCamera();
-      this.enterYard('spawn');
-    }, 0.6);
-    await this.line('dayo', 'Dayo', L.delArrive);
-  }
-
   private got(id: string): boolean {
     return this.has(`got:${id}`);
-  }
-
-  private carried(id: string): boolean {
-    return this.ctx.game.carrying.some((c) => c.id === id);
   }
 
   /** The vehicles the chosen plan sends, or the field van before there is a plan. */
@@ -89,7 +55,7 @@ export class DeliveryScript extends ScriptBase {
     return f === null || !this.has('planChosen') ? ['van'] : f.trips.map((t) => VEHICLES[t.vehicleId].id as VehicleKind);
   }
 
-  private enterYard(spawnAt?: string): void {
+  enter(spawnAt?: string): void {
     const g = this.ctx.game;
     g.loadZone('yard', this.ctx.upgrades());
     const s = g.zone.spots;
@@ -97,64 +63,31 @@ export class DeliveryScript extends ScriptBase {
     this.convoy = [];
     this.driving = -1;
     g.placeNpc('ben', s.supervisor[0], s.supervisor[1] + 1.2, Math.PI);
-    /* The vehicles at the loading bay: the chosen plan's, once there is one. */
     this.fleet().forEach((kind, i) => {
       const p = this.prop(g.vehicleMesh(kind), YARD_VAN[0] + i * 4.6, YARD_VAN[1], () => !this.has('sent'), { y: 0, yaw: Math.PI });
       this.convoy.push({ p, d: -i * 7 });
     });
-    for (const item of DELIVERY_ITEMS) {
-      const at = ITEM_AT[item.id];
-      this.prop(at.mesh, at.x, at.z, () => !this.got(item.id) && !this.carried(item.id), { y: at.y, yaw: item.id === 'tents' ? 0 : 0.3 });
+    for (const id of DELIVERY_PICKS) {
+      const at = ITEM_AT[id];
+      this.prop(at.mesh, at.x, at.z, () => !this.got(id), { y: at.y, yaw: id === 'tents' ? 0 : 0.3 });
     }
-    /* Two crates that look like the camera-trap kit, and are not. */
+    /* Two crates that look like the camera kit: Sukat can tell which is which. */
     for (const x of [-6, -2]) {
       this.prop('itemDecoy', x, -6, () => true, { y: 0, yaw: 0.3 });
     }
-    /* What the team has found, piled by the van until it is packed. */
+    /* The supplies by the van: the seedlings and the water from the start, the rest as they come. */
     DELIVERY_ITEMS.forEach((item, i) => {
-      this.prop(ITEM_AT[item.id].mesh, YARD_STAGE[0] - (i % 3) * 1.1, YARD_STAGE[1] - Math.floor(i / 3) * 1.1, () => this.got(item.id) && !this.has('loaded'), { y: 0, yaw: i });
+      const ready = (): boolean => !DELIVERY_PICKS.includes(item.id) || this.got(item.id);
+      this.prop(ITEM_AT[item.id].mesh, YARD_STAGE[0] - (i % 3) * 1.1, YARD_STAGE[1] - Math.floor(i / 3) * 1.1, () => ready() && !this.has('sent'), { y: 0, yaw: i });
     });
     const list: Interaction[] = [
       {
-        id: 'supervisor',
-        x: s.supervisor[0],
-        z: s.supervisor[1],
-        radius: 3.4,
-        when: () => this.step() === 'meet',
-        by: anyHero({ label: 'Talk to Kuya Ben', hold: 0, run: () => this.meet() }),
-      },
-      {
-        id: 'scanCrates',
-        x: s.itemTraps[0],
-        z: s.itemTraps[1],
-        radius: 3,
-        suggest: 'sukat',
-        when: () => this.step() === 'gather' && !this.has('trapsFound'),
-        by: { sukat: { label: 'Scan the three crates', hold: 0.8, pose: 'scan', run: () => this.scanCrates() } },
-      },
-      {
-        id: 'stage',
-        x: s.stage[0],
-        z: s.stage[1],
-        radius: 2.8,
-        when: () => this.step() === 'gather' && this.ctx.game.carrying.length > 0,
-        by: anyHero({ label: 'Put it by the van', hold: 0, run: () => this.stage() }),
-      },
-      {
-        id: 'load',
+        id: 'choose',
         x: s.van[0],
         z: s.van[1],
-        radius: 3,
-        when: () => this.step() === 'load',
-        by: anyHero({ label: 'Pack the van', hold: 0, run: () => this.load() }),
-      },
-      {
-        id: 'desk',
-        x: s.desk[0],
-        z: s.desk[1],
-        radius: 3,
-        when: () => this.step() === 'plan',
-        by: anyHero({ label: 'Plan the run to the ridge', hold: 0, run: () => this.plan() }),
+        radius: 3.2,
+        when: () => this.step() === 'choose',
+        by: anyHero({ label: 'Choose a vehicle', hold: 0, run: () => this.choose() }),
       },
       {
         id: 'send',
@@ -162,101 +95,70 @@ export class DeliveryScript extends ScriptBase {
         z: s.van[1],
         radius: 3.2,
         when: () => this.step() === 'send' && this.driving < 0,
-        by: anyHero({ label: 'Send it off', hold: 0, run: () => this.send() }),
+        by: anyHero({ label: 'Send it off!', hold: 0, run: () => this.send() }),
       },
     ];
-    for (const item of DELIVERY_ITEMS) {
-      const pick = PICK[item.id];
-      const [x, z] = s[item.spot];
-      const action: HeroAction = { label: pick.label, hold: pick.hold, pose: pick.pose, run: () => this.take(item.id) };
+    for (const id of DELIVERY_PICKS) {
+      const pick = PICK[id];
+      const item = DELIVERY_ITEMS.find((i) => i.id === id);
+      const [x, z] = s[item?.spot ?? 'items'];
       list.push({
-        id: `item-${item.id}`,
+        id: `item-${id}`,
         x,
         z,
-        radius: 2.6,
-        stretchRadius: item.id === 'medkit' ? 4.4 : undefined,
-        suggest: pick.hero ?? undefined,
-        when: () => this.step() === 'gather' && !this.got(item.id) && !this.carried(item.id) && this.canCarryMore() && (item.id !== 'traps' || this.has('trapsFound')),
-        by: pick.hero === null ? anyHero(action) : { [pick.hero]: action },
+        radius: 2.8,
+        stretchRadius: id === 'medkit' ? 4.4 : undefined,
+        suggest: pick.hero,
+        when: () => this.step() === 'gather' && !this.got(id),
+        by: { [pick.hero]: { label: pick.label, hold: pick.hold, pose: pick.pose, run: () => this.take(id) } },
       });
     }
     g.interactions = list;
     this.extras();
-    const where = spawnAt ?? SPAWN[this.step() ?? 'meet'] ?? 'spawn';
-    const [sx, sz] = s[where];
-    g.placeTeam(sx, sz - (where === 'supervisor' ? 2.6 : 0), where === 'spawn' ? 0 : Math.PI);
+    const where = spawnAt ?? (this.step() === 'gather' ? 'spawn' : 'van');
+    const [sx, sz] = where === 'spawn' ? [1, -22] : s[where];
+    g.placeTeam(sx, sz - (where === 'van' ? 3 : 0), where === 'spawn' ? 0 : Math.PI);
+  }
+
+  async opening(): Promise<void> {
+    await this.greet(this.ctx.game.npcs.ben, 'Kuya Ben', 'ben', L.delArrive);
   }
 
   afterDispatch(): void {
-    this.enterYard('van');
-    void this.line(navieKey('clear'), 'Navie', 'Packed, planned and ready. Send it off from the van.');
+    /* The vehicle is chosen on its own screen. */
   }
 
   /* ---- Steps ---- */
 
-  private async meet(): Promise<void> {
-    const n = this.ctx.game.npcs.ben;
-    await this.scene(async () => {
-      this.faceAndFrame(n);
-      n.pose = 'wave';
-      await this.say('Kuya Ben', 'ben', L.delMeet1);
-      n.pose = 'none';
-      await this.say('Kuya Ben', 'ben', L.delMeet2);
-    });
-    this.ctx.flag('supervisorMet');
-  }
-
-  private async scanCrates(): Promise<void> {
+  /** Step 1: each supply goes straight into the van. */
+  private async take(id: string): Promise<void> {
     const g = this.ctx.game;
-    g.audio.play('scan');
-    g.burst('sparkle', -4, 1, -6, 8);
-    this.ctx.flag('trapsFound');
-    await this.line('sukat', 'Sukat', L.delTraps);
-  }
-
-  private take(id: string): void {
     const at = ITEM_AT[id];
-    this.pickUp(id, at.mesh);
-    if (at.y > 1) {
-      this.ctx.game.burst('dust', at.x, at.y, at.z, 6);
-    }
-  }
-
-  private async stage(): Promise<void> {
-    const g = this.ctx.game;
-    const ids = g.carrying.map((c) => c.id).filter((id) => DELIVERY_ITEMS.some((i) => i.id === id));
-    g.carrying = [];
-    g.heroes[g.active].pose = 'none';
-    g.audio.play('drop');
+    g.audio.play(id === 'traps' ? 'scan' : 'pickup');
+    g.burst(at.y > 1 ? 'dust' : 'sparkle', at.x, at.y + 0.5, at.z, 8);
     g.burst('sparkle', YARD_STAGE[0], 1, YARD_STAGE[1], 8);
-    for (const id of ids) {
-      this.ctx.flag(`got:${id}`);
+    this.ctx.flag(`got:${id}`);
+    const left = DELIVERY_PICKS.filter((k) => !this.got(k)).length;
+    const label = DELIVERY_ITEMS.find((i) => i.id === id)?.label ?? id;
+    g.notice(`${label.charAt(0).toUpperCase()}${label.slice(1)}: packed!`);
+    if (left === 0) {
+      this.stepDone(YARD_STAGE[0], 1.2, YARD_STAGE[1]);
+      await this.line('ben', 'Kuya Ben', L.delAllGot);
     }
-    const left = DELIVERY_ITEMS.filter((i) => !this.got(i.id)).length;
-    if (left > 0) {
-      g.notice(`${DELIVERY_ITEMS.length - left} of ${DELIVERY_ITEMS.length} by the van.`);
+  }
+
+  /** Step 2: pick the vehicle. The yard is rebuilt with what was chosen. */
+  private async choose(): Promise<void> {
+    const chosen = await this.ctx.chooseVehicle();
+    if (!chosen) {
       return;
     }
-    await this.line(navieKey('clear'), 'Navie', L.delAllGot);
+    await this.ctx.fade(() => this.enter('van'), 0.4);
+    this.stepDone(YARD_VAN[0], 2, YARD_VAN[1]);
+    await this.line(navieKey('clear'), 'Navie', L.delChosen);
   }
 
-  private async load(): Promise<void> {
-    const ok = await this.ctx.loadVan('delivery', 'Tap a piece, then a space. Tap it again to turn it. No water next to electronics.');
-    if (!ok) {
-      this.ctx.game.notice('Still to pack. Come back whenever you like.');
-      return;
-    }
-    this.ctx.flag('loaded');
-    this.ctx.game.audio.play('done');
-    await this.line('ben', 'Kuya Ben', L.delLoaded);
-  }
-
-  private async plan(): Promise<void> {
-    await this.line(navieKey('thinking'), 'Navie', L.delPlan);
-    await this.ctx.openBoard();
-  }
-
-  /** The van, and anything else the plan sends, drive out of the gate. */
+  /** Step 3: the chosen vehicles drive out of the gate. */
   private async send(): Promise<void> {
     const g = this.ctx.game;
     const ben = g.npcs.ben;
@@ -319,24 +221,12 @@ export class DeliveryScript extends ScriptBase {
     const s = g.zone.spots;
     const step = this.step();
     let target: [number, number] | null = null;
-    if (step === 'call') {
-      target = s.navie ?? null;
-    } else if (step === 'meet') {
-      target = s.supervisor;
-    } else if (step === 'gather') {
-      /* Nobody can switch heroes while carrying: then only point at what this hero can take. */
-      const carrying = g.carrying.length > 0;
-      const open = DELIVERY_ITEMS.filter((i) => !this.got(i.id) && !this.carried(i.id)).filter((i) => !carrying || ((i.hero === null || i.hero === g.active) && (i.id !== 'traps' || this.has('trapsFound'))));
-      if (carrying && (!this.canCarryMore() || open.length === 0)) {
-        target = s.stage;
-      } else {
-        const spots = open.map((i) => (i.id === 'traps' && !this.has('trapsFound') ? s.itemTraps : s[i.spot]));
-        target = spots.length === 0 ? s.stage : this.nearest(spots);
-      }
-    } else if (step === 'load' || step === 'send') {
+    if (step === 'gather') {
+      /* The nearest supply still to fetch. */
+      const open = DELIVERY_PICKS.filter((id) => !this.got(id)).map((id) => s[DELIVERY_ITEMS.find((i) => i.id === id)?.spot ?? 'items']);
+      target = this.nearest(open);
+    } else if (step === 'choose' || step === 'send') {
       target = s.van;
-    } else if (step === 'plan') {
-      target = s.desk;
     }
     /* Round the warehouse, the racks, the office and the cage, never into them. */
     this.guideTo(

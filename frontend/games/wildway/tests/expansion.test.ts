@@ -3,10 +3,11 @@ import { ACHIEVEMENTS, COLLECTIBLES, decorationsFor, DISCOVERIES, GEAR, QUIZ, SI
 import { allModeSets, BOCAUE_PLAZA, failureLane, plazaSolved, simulatePlaza, withTagDown } from '../core/plaza';
 import { awardAchievements, buyGear, collect, completeMission, defaultSave, discover, loadSave, SAVE_VERSION, serializeSave, sideStep } from '../core/save';
 import { savings } from '../core/emissions';
-import { DELIVERY_ITEMS, DELIVERY_MISSION, ECO_MISSION, GRIDLOCK_MISSION, MISSIONS, newRun, RIVER_MISSION, restoreRun, setFlag } from '../core/mission';
+import { DELIVERY_CHOICES, DELIVERY_DEPARTURE, DELIVERY_ITEMS, DELIVERY_MISSION, DELIVERY_PICKS, DELIVERY_ROUTE, ECO_MISSION, GRIDLOCK_MISSION, MISSIONS, newRun, RIVER_MISSION, restoreRun, setFlag } from '../core/mission';
+import { HINTS, HUB_LINES, LINES, NLEX_LINES, OBJECTIVES } from '../core/content';
 import { missionOpen, NLEX_STOPS } from '../core/nlex';
 import { allPlans, comparePlan, evaluatePlan } from '../core/transport';
-import { ROSTER } from '../core/speciesFacts';
+import { ROSTER, speciesById } from '../core/speciesFacts';
 import { assert, test } from './harness';
 
 /* ---- Puzzles ---- */
@@ -109,13 +110,23 @@ test('delivery: the usual way works, a better plan exists, and the electric van 
   assert.ok(c.savings.savedKg > 0);
 });
 
-test('delivery: six supplies, each found once, two of them by anyone and four by one hero each', () => {
+test('delivery: four supplies to fetch, one for each hero; the other two are by the van already', () => {
   assert.equal(DELIVERY_ITEMS.length, 6);
-  assert.equal(new Set(DELIVERY_ITEMS.map((i) => i.id)).size, 6);
-  const heroes = DELIVERY_ITEMS.map((i) => i.hero).filter((h) => h !== null);
+  assert.equal(DELIVERY_PICKS.length, 4);
+  const heroes = DELIVERY_PICKS.map((id) => DELIVERY_ITEMS.find((i) => i.id === id)?.hero);
   assert.deepEqual([...heroes].sort(), ['awit', 'baging', 'dayo', 'sukat']);
   const gather = DELIVERY_MISSION.steps.find((s) => s.id === 'gather');
-  assert.equal(gather?.needs.length, 6);
+  assert.deepEqual(gather?.needs, DELIVERY_PICKS.map((id) => `got:${id}`));
+});
+
+test('delivery: the vehicle choice runs the transport model at its fixed time and route', () => {
+  const p = DELIVERY_MISSION.transport as NonNullable<typeof DELIVERY_MISSION.transport>;
+  const r = DELIVERY_CHOICES.map((id) => evaluatePlan(p, { fleetId: id, routeId: DELIVERY_ROUTE, departureId: DELIVERY_DEPARTURE }));
+  assert.ok(r.filter((x) => x.feasible).length >= 3, 'a real choice');
+  assert.ok(!r.find((x) => x.plan.fleetId === 'pickup-all')?.feasible, 'the open pickup cannot carry the kit');
+  const greenest = r.filter((x) => x.feasible).sort((a, b) => a.co2Kg - b.co2Kg)[0];
+  assert.equal(greenest.plan.fleetId, 'evan');
+  assert.ok(comparePlan(p, greenest.plan).savings.savedKg > 0, 'and it beats the usual way');
 });
 
 test('missions: every mission step can be finished, in order, from its flags', () => {
@@ -130,11 +141,32 @@ test('missions: every mission step can be finished, in order, from its flags', (
   }
 });
 
-test('missions: an old save mid-Gridlock resumes at the new repairs, not past them', () => {
-  const raw = { missionId: GRIDLOCK_MISSION.id, runId: 'old', step: 3, flags: ['callTaken', 'plazaSurveyed', 'fixSignal', 'fixCable', 'removeJammer'], plan: null };
-  const run = restoreRun(GRIDLOCK_MISSION, raw);
-  assert.ok(run !== null);
-  assert.equal(GRIDLOCK_MISSION.steps[run?.step ?? 0].id, 'repair');
+test('missions: a Gridlock run saved under the old steps is not resumed; a new one is, at its step', () => {
+  const raw = { missionId: GRIDLOCK_MISSION.id, runId: 'old', step: 3, flags: ['callTaken', 'plazaSurveyed', 'fixSignal', 'fixCable', 'removeJammer', 'reopened'], plan: null };
+  assert.equal(restoreRun(GRIDLOCK_MISSION, raw), null);
+  const run = setFlag(GRIDLOCK_MISSION, newRun(GRIDLOCK_MISSION.id, 'new'), 'scannerFound');
+  const back = restoreRun(GRIDLOCK_MISSION, JSON.parse(JSON.stringify(run)));
+  assert.equal(GRIDLOCK_MISSION.steps[back?.step ?? 0].id, 'fix');
+});
+
+test('missions: every mission has three steps, each said in a few words', () => {
+  for (const def of MISSIONS) {
+    assert.equal(def.steps.length, 3, def.id);
+    assert.equal(def.requiredTasks.length, 3, def.id);
+    for (const step of def.steps) {
+      assert.ok(step.zone !== 'station', `${def.id} starts in its own place, with no trip back to the Command Center`);
+      const words = (OBJECTIVES[step.objective] ?? '').split(/\s+/).length;
+      assert.ok(words >= 3 && words <= 7, `${step.objective}: ${words} words`);
+      assert.ok((HINTS[step.objective] ?? '').length > 0, `${step.objective} has a hint`);
+    }
+    assert.ok(def.summary.split(/[.!?]/).filter((x) => x.trim().length > 0).length === 1, `${def.id}: one sentence`);
+  }
+});
+
+test('text: every line is short: one sentence or two, never a paragraph', () => {
+  for (const [k, v] of Object.entries({ ...NLEX_LINES, ...LINES, ...HINTS, ...HUB_LINES })) {
+    assert.ok(v.split(/\s+/).length <= 16, `${k}: ${v}`);
+  }
 });
 
 test('missions: titles and the line', () => {
@@ -148,6 +180,17 @@ test('missions: titles and the line', () => {
 });
 
 /* ---- Progression ---- */
+
+test('wildlife: every kind of animal has one photo note; the two Atlas species quote their checked cards', () => {
+  assert.equal(new Set(DISCOVERIES.map((d) => d.kind)).size, DISCOVERIES.length);
+  for (const id of ['d-butterfly', 'd-swallow', 'd-dragonfly', 'd-frog', 'd-gecko', 'd-sparrow']) {
+    assert.ok(DISCOVERIES.some((d) => d.id === id), `${id} is kept, so old saves keep their notes`);
+  }
+  for (const d of DISCOVERIES.filter((x) => x.speciesId !== undefined)) {
+    const card = speciesById(d.speciesId as string)?.card ?? '';
+    assert.ok(card.startsWith(d.fact.replace(/\.$/, '')), `${d.id} quotes ${d.speciesId}`);
+  }
+});
 
 test('progression: ids are unique, every patch and observation has a zone spot name', () => {
   for (const list of [COLLECTIBLES.map((c) => c.id), DISCOVERIES.map((d) => d.id), SIDE_QUESTS.map((q) => q.id), GEAR.map((g) => g.id), ACHIEVEMENTS.map((a) => a.id)]) {

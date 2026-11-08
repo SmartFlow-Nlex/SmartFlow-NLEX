@@ -2,8 +2,9 @@ import { button, h, icon, ICONS, setText } from '../dom';
 import type { Portraits, HeroId } from '../models';
 
 /**
- * The exploration HUD: only the current objective, the prompt for what is in reach, the
- * team, and the guide arrow. Plus the speech line, which is always readable as subtitles.
+ * The exploration HUD: the mission's name, one objective with a 1/3 step count, the
+ * prompt for what is in reach, the team, and the guide arrow. Plus the speech line, which
+ * is always readable as subtitles. Nothing else covers the world.
  */
 
 export const HERO_INFO: Record<HeroId, { name: string; role: string; can: string }> = {
@@ -30,6 +31,11 @@ export interface HudHandlers {
 export class Hud {
   readonly el: HTMLElement;
   private readonly objective: HTMLElement;
+  private readonly missionName: HTMLElement;
+  private readonly steps: HTMLElement;
+  private readonly flashEl: HTMLElement;
+  private shownStep = -1;
+  private shownMission = '';
   private readonly guide: HTMLElement;
   private readonly guideArrow: HTMLElement;
   private readonly guideDist: HTMLElement;
@@ -61,6 +67,9 @@ export class Hud {
     this.knob = h('div', { class: 'stick-knob' });
     this.stick = h('div', { class: 'stick', attrs: { 'aria-hidden': 'true' } }, this.knob);
     this.objective = h('div', { class: 'objective-text' });
+    this.missionName = h('div', { class: 'mission-name hidden' });
+    this.steps = h('div', { class: 'step-pill hidden', attrs: { 'aria-hidden': 'true' } });
+    this.flashEl = h('div', { class: 'photo-flash', attrs: { 'aria-hidden': 'true' } });
     this.guideArrow = h('span', { class: 'guide-arrow', html: ICONS.next });
     this.guideDist = h('span', { class: 'guide-dist' });
     this.goBtn = h('button', { class: 'go-btn hidden', text: 'Go', label: 'Go most of the way there', attrs: { type: 'button' }, onClick: () => handlers.onGo() });
@@ -69,7 +78,7 @@ export class Hud {
       'div',
       { class: 'hud-top' },
       h('button', { class: 'round-btn', label: 'Pause', attrs: { type: 'button' }, html: ICONS.pause, onClick: () => handlers.onPause() }),
-      h('div', { class: 'objective' }, this.objective, this.guide),
+      h('div', { class: 'objective' }, h('div', { class: 'objective-top' }, this.missionName, this.steps), this.objective, this.guide),
       h('button', { class: 'round-btn hint-btn', label: 'Ask Navie for a hint', attrs: { type: 'button' }, html: ICONS.info, onClick: () => handlers.onHint() }),
       h('button', { class: 'round-btn', label: 'Open the Wildlife Atlas', attrs: { type: 'button' }, html: ICONS.book, onClick: () => handlers.onAtlas() }),
     );
@@ -122,8 +131,42 @@ export class Hud {
       this.noticeEl,
       this.bannerEl,
       this.speech,
+      this.flashEl,
       this.live,
     );
+  }
+
+  /** The mission's name and its steps as dots: done ones ticked, the current one lit. Null between missions. */
+  setMission(name: string | null, step: number, total: number): void {
+    this.missionName.classList.toggle('hidden', name === null);
+    this.steps.classList.toggle('hidden', name === null);
+    if (name === null) {
+      this.shownStep = -1;
+      this.shownMission = '';
+      return;
+    }
+    if (name !== this.shownMission) {
+      this.shownMission = name;
+      this.shownStep = -1;
+      setText(this.missionName, name);
+    }
+    if (step !== this.shownStep) {
+      const ticked = this.shownStep >= 0 && step > this.shownStep;
+      this.shownStep = step;
+      const dots = Array.from({ length: total }, (_, i) => h('span', { class: `step-dot ${i < step ? 'done' : i === step ? 'now' : ''} ${ticked && i === step - 1 ? 'pop' : ''}` }));
+      this.steps.replaceChildren(...dots, h('span', { class: 'step-count', text: `${Math.min(step + 1, total)}/${total}` }));
+      this.objective.classList.toggle('pop', ticked);
+      if (ticked) {
+        window.setTimeout(() => this.objective.classList.remove('pop'), 700);
+      }
+    }
+  }
+
+  /** A camera flash, for a wildlife photo. */
+  flash(): void {
+    this.flashEl.classList.remove('on');
+    void this.flashEl.offsetWidth;
+    this.flashEl.classList.add('on');
   }
 
   setObjective(text: string): void {

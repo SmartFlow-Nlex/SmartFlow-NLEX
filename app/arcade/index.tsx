@@ -35,7 +35,7 @@ const GAMES: {
     id: 'wildway-guardians',
     route: '/arcade/wildway-guardians',
     title: 'Wildway Guardians',
-    blurb: 'Navie calls the Guardians: unjam a toll plaza, clear a creek, switch a depot to solar, pack a field delivery, then help a rufous hornbill home. Plan every trip to burn less.',
+    blurb: 'Fix a toll plaza, clean a creek, switch on solar, send supplies the greener way and help a hornbill home. Photograph the wildlife you meet.',
     icon: 'paw',
   },
   {

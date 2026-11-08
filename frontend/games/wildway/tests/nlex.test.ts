@@ -1,6 +1,6 @@
 import { CHARGING_LOSS, FACTORS, journey, VEHICLES } from '../core/emissions';
 import { ASSUMPTIONS, crewHours, CREW_HOURS, DEPOT_BEFORE, facilityDay, UPGRADE_OPTIONS, type Upgrade } from '../core/facility';
-import { chosenUpgrades, ECO_MISSION, GRIDLOCK_MISSION, HORNBILL_MISSION, missionById, missionTransport, MISSIONS, newRun, RIVER_ITEMS, RIVER_MISSION, setFlag, type MissionDef, type MissionRun } from '../core/mission';
+import { chosenUpgrades, CREEK_LITTER, DELIVERY_MISSION, depotRepairs, ECO_MISSION, GRIDLOCK_MISSION, HORNBILL_MISSION, missionById, missionTransport, MISSIONS, newRun, RIVER_MISSION, setFlag, type MissionDef, type MissionRun } from '../core/mission';
 import { missionOpen, NLEX_STOPS, progress } from '../core/nlex';
 import { allModeSets, BOCAUE_PLAZA, checkModes, plazaSolved, simulatePlaza, type LaneMode } from '../core/plaza';
 import { completeMission, defaultSave, loadSave, serializeSave, type SaveData } from '../core/save';
@@ -144,8 +144,8 @@ test('river: the best plans beat the usual way, and some legal plans do worse', 
 
 /* ---- The depot's dispatch ---- */
 
-test('depot dispatch: built from the chosen upgrades, so every plan carries exactly those', () => {
-  const run: MissionRun = { ...newRun(ECO_MISSION.id, 'r'), flags: ['up:noIdle', 'up:solar'] };
+test('depot dispatch: a run from before the simplification is still scored on its own dispatch', () => {
+  const run: MissionRun = { ...newRun(ECO_MISSION.id, 'r'), flags: ['up:noIdle', 'up:solar'], plan: { fleetId: 'separate', routeId: 'nlex', departureId: 'early' } };
   assert.deepEqual(chosenUpgrades(run), ['solar', 'noIdle']);
   const problem = missionTransport(ECO_MISSION, run);
   assert.ok(problem !== null);
@@ -158,6 +158,18 @@ test('depot dispatch: built from the chosen upgrades, so every plan carries exac
     }
   }
   assert.ok(evaluatePlan(problem as NonNullable<typeof problem>, (problem as NonNullable<typeof problem>).baseline).feasible, 'the usual way is legal');
+});
+
+test('depot: the simplified mission credits the solar roof and nothing it did not do', () => {
+  let run: MissionRun = newRun(ECO_MISSION.id, 'r');
+  for (const step of ECO_MISSION.steps) {
+    for (const f of step.needs) {
+      run = setFlag(ECO_MISSION, run, f);
+    }
+  }
+  assert.deepEqual(chosenUpgrades(run), ['solar']);
+  assert.deepEqual(depotRepairs(run), [], 'no repairs were made, so none are counted');
+  assert.equal(missionTransport(ECO_MISSION, run), null, 'and there is no dispatch to score');
 });
 
 test('depot dispatch: with no cargo, no empty truck is sent', () => {
@@ -189,7 +201,7 @@ test('missions: every one can be finished, and each has its own id', () => {
     assert.equal(run.step, m.steps.length, m.id);
     assert.ok(m.fiction.length > 20, `${m.id} says what is made up`);
   }
-  assert.equal(RIVER_MISSION.steps.find((s) => s.id === 'collect')?.needs.length, RIVER_ITEMS.length);
+  assert.equal(RIVER_MISSION.steps.find((s) => s.id === 'collect')?.needs.length, CREEK_LITTER.length);
 });
 
 test('missions: NLEX missions involve no species and claim no animal', () => {
@@ -219,13 +231,17 @@ test('save: a version 1 save loads, with nothing lost', () => {
   assert.equal(save.nicknames['hornbill-male-1'], 'Kalaw');
 });
 
-test('save: a version 1 save in the middle of the hornbill mission resumes after the new call', () => {
+test('save: a mission left half-way under the old, longer steps starts afresh, and finished ones stay finished', () => {
   const active = { missionId: 'hornbill-homecoming', runId: 'old', step: 4, flags: ['reachedBank', 'birdScanned', 'rangerAsked', 'planChosen'], plan: { fleetId: 'shared-van', routeId: 'greenway', departureId: 'mid' } };
-  const { save } = loadSave(JSON.stringify({ version: 1, active }));
-  assert.ok(save.active !== null);
-  assert.equal(save.active?.step, 0, 'waits at the call');
-  const after = setFlag(HORNBILL_MISSION, save.active as MissionRun, 'callTaken');
-  assert.equal(HORNBILL_MISSION.steps[after.step].id, 'log', 'then jumps straight back to where it was');
+  const missions = { 'nlex-gridlock': { completedAt: 'c', plays: 1, bestPlan: null, bestChoice: 'cash,cash,cash,closed,tag,tag', bestParts: [], bestPlanKg: 14, baselineKg: 864, bestSavedKg: 850, calculationVersion: 'wildway-transport-1' } };
+  const { save } = loadSave(JSON.stringify({ version: 3, active, missions }));
+  assert.equal(save.active, null, 'not resumed in a muddle');
+  assert.equal(save.missions['nlex-gridlock'].bestSavedKg, 850, 'the finished mission keeps its record');
+  /* A run started now resumes exactly. */
+  let run = setFlag(HORNBILL_MISSION, newRun(HORNBILL_MISSION.id, 'new'), 'birdScanned');
+  run = setFlag(HORNBILL_MISSION, run, 'logCleared');
+  const back = loadSave(JSON.stringify({ version: 3, active: run }));
+  assert.deepEqual(back.save.active, run);
 });
 
 const outcome = (base: number, plan: number) => ({ baselineKg: base, planKg: plan, savings: savings(base, plan), choice: GOOD.join(','), parts: [{ id: 'plaza', label: 'Toll plaza', baselineKg: base, planKg: plan }] });
@@ -253,7 +269,18 @@ test('completion: replaying NLEX missions inflates nothing, and the dashboard co
   assert.equal(p.animals, 0);
 });
 
-test('completion: a transport mission still needs its plan', () => {
-  const r = completeMission(defaultSave(), RIVER_MISSION, finish(RIVER_MISSION, 'r1', null), outcome(20, 5));
+test('completion: the delivery still needs its plan; the creek has none to need', () => {
+  const r = completeMission(defaultSave(), DELIVERY_MISSION, finish(DELIVERY_MISSION, 'd1', null), outcome(20, 5));
   assert.equal(r.report.duplicate, true);
+  const creek = completeMission(defaultSave(), RIVER_MISSION, finish(RIVER_MISSION, 'r1', null), { baselineKg: 0, planKg: 0, savings: savings(0, 0), choice: null, parts: [] });
+  assert.equal(creek.report.duplicate, false);
+  assert.deepEqual(creek.save.environmentObjectives, ['creek-clean']);
+});
+
+test('completion: a replay with nothing measured never wipes out a measured best', () => {
+  const old = { ...defaultSave(), missions: { [RIVER_MISSION.id]: { completedAt: 'c', plays: 1, bestPlan: { fleetId: 'three-bin-truck', routeId: 'main', departureId: 'early' }, bestChoice: null, bestParts: [], bestPlanKg: 1.6, baselineKg: 20.3, bestSavedKg: 18.7, calculationVersion: 'wildway-transport-1' } } };
+  const replay = completeMission(old, RIVER_MISSION, finish(RIVER_MISSION, 'r2', null), { baselineKg: 0, planKg: 0, savings: savings(0, 0), choice: null, parts: [] });
+  assert.equal(replay.save.missions[RIVER_MISSION.id].bestSavedKg, 18.7);
+  assert.equal(replay.save.missions[RIVER_MISSION.id].plays, 2);
+  assert.equal(replay.report.newBest, false);
 });

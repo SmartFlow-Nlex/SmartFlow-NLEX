@@ -1,8 +1,9 @@
 import { HUB_LINES as H } from '../core/content';
-import { decorationsFor } from '../core/progression';
+import { decorationsFor, SIDE_QUESTS, sideQuestDone } from '../core/progression';
 import type { SaveData } from '../core/save';
 import type { Actor } from './anim';
 import { angleTo, ease } from './gl/math';
+import type { Agent } from './fauna';
 import type { HeroAction, Interaction, Prop } from './game';
 import { addExtras, anyHero, type MissionContext } from './missions/base';
 import type { HeroId } from './models';
@@ -46,6 +47,9 @@ const LITTER: readonly { n: number; mesh: string }[] = [
   { n: 4, mesh: 'can' },
 ];
 
+/** Where the hidden fantail sings, for Find the Bird. */
+const BIRD_BUSH: [number, number] = [-25, 13];
+
 const PARKED: readonly { kind: 'truck' | 'pickup'; x: number; z: number; yaw: number }[] = [
   { kind: 'truck', x: -6.5, z: -33.5, yaw: 0.2 },
   { kind: 'pickup', x: 6.5, z: -33.5, yaw: -0.2 },
@@ -58,6 +62,10 @@ export class HubScript {
   private anemometer: Prop | null = null;
   private extrasTick: ((dt: number) => void) | null = null;
   private t = 0;
+  /** The butterflies of Butterfly Watch, and their buttons, which follow them. */
+  private watch: { a: Agent; it: Interaction }[] = [];
+  private bush: Prop | null = null;
+  private song = 0;
 
   constructor(
     private readonly ctx: MissionContext,
@@ -108,8 +116,8 @@ export class HubScript {
       { id: 'tower', x: s.tower[0], z: s.tower[1], radius: 3.6, when: () => this.done('hornbill-homecoming'), by: all('Watch the habitat feed', open('feed')) },
       { id: 'map', x: s.map[0], z: s.map[1], radius: 3, when: () => true, by: all('World map', open('map')) },
       { id: 'notice', x: s.notice[0], z: s.notice[1], radius: 2.8, when: () => true, by: all('Notice board', open('notice')) },
-      { id: 'care', x: s.care[0], z: s.care[1], radius: 3.6, when: () => true, by: all('Talk to Dr. Mayumi', talk('Dr. Mayumi', 'vet', () => 'This care unit is only ever a stop on the way. The goal for every animal here is going home.')) },
-      { id: 'briefing', x: s.briefing[0], z: s.briefing[1], radius: 3.6, when: () => true, by: all('Talk to Ranger Ligaya', talk('Ranger Ligaya', 'ranger', () => 'More field reports are coming in from partner stations. We will need you again when those chapters open.')) },
+      { id: 'care', x: s.care[0], z: s.care[1], radius: 3.6, when: () => true, by: all('Talk to Dr. Mayumi', talk('Dr. Mayumi', 'vet', () => H.vet)) },
+      { id: 'briefing', x: s.briefing[0], z: s.briefing[1], radius: 3.6, when: () => true, by: all('Talk to Ranger Ligaya', talk('Ranger Ligaya', 'ranger', () => H.ranger)) },
     ];
     /* People going about their day. Their talk follows them. */
     this.walkers = [
@@ -133,7 +141,91 @@ export class HubScript {
     this.sideQuests(list);
     g.interactions = list;
     this.livingThings();
-    this.extrasTick = addExtras(this.ctx, () => true).tick;
+    this.extrasTick = addExtras(this.ctx, () => true, {
+      /* Wildlife Spotter: three kinds photographed here, even ones already in the field notes. */
+      wants: (kind) => !this.questDone('sq-spotter') && !this.flagOn(`spotted:${kind}`),
+      onPhoto: (kind) => this.spotted(kind),
+    }).tick;
+    this.animalActivities();
+  }
+
+  private questDone(id: string): boolean {
+    const q = SIDE_QUESTS.find((x) => x.id === id);
+    return q !== undefined && sideQuestDone(this.hooks.save().sideFlags, q);
+  }
+
+  /* ---- Short animal activities ---- */
+
+  private spotted(kind: string): void {
+    if (this.questDone('sq-spotter') || this.flagOn(`spotted:${kind}`)) {
+      return;
+    }
+    this.hooks.sideStep(`spotted:${kind}`);
+    const n = this.hooks.save().sideFlags.filter((f) => f.startsWith('spotted:')).length;
+    if (n <= 3) {
+      this.hooks.sideStep(`spotter:${n}`);
+      if (n < 3) {
+        this.ctx.hud.notice(`Wildlife Spotter: ${n}/3`, 2);
+      }
+    }
+  }
+
+  private animalActivities(): void {
+    const g = this.ctx.game;
+    /* Butterfly Watch: each of the garden's three butterflies, watched once. */
+    this.watch = [];
+    g.fauna.agents
+      .filter((a) => a.tag === 'watch')
+      .forEach((a, i) => {
+        const n = i + 1;
+        const it: Interaction = {
+          id: `bfly${n}`,
+          x: a.x,
+          z: a.z,
+          radius: 5.5,
+          when: () => !this.flagOn(`bfly:${n}`) && a.shown,
+          by: anyHero({
+            label: 'Watch the butterfly',
+            hold: 0.6,
+            run: () => {
+              g.fauna.notice(a);
+              g.burst('sparkle', a.x, a.y + 0.3, a.z, 6);
+              g.audio.play('ok');
+              this.ctx.discover('d-butterfly');
+              this.hooks.sideStep(`bfly:${n}`);
+              const seen = [1, 2, 3].filter((k) => this.flagOn(`bfly:${k}`)).length;
+              if (seen < 3) {
+                this.ctx.hud.notice(`Butterfly Watch: ${seen}/3`, 2);
+              }
+            },
+          }),
+        };
+        g.interactions.push(it);
+        this.watch.push({ a, it });
+      });
+    /* Find the Bird: a fantail hidden in a bush, found by its song. */
+    const [bx, bz] = BIRD_BUSH;
+    this.bush = this.prop('hideBush', bx, bz, () => true);
+    g.fauna.spawn({ kind: 'fantail', n: 1, at: BIRD_BUSH, r: 2.2, when: () => this.flagOn('bird:found'), tag: 'hidden' });
+    g.interactions.push({
+      id: 'bush',
+      x: bx,
+      z: bz,
+      radius: 3.4,
+      when: () => !this.flagOn('bird:found'),
+      by: anyHero({
+        label: 'Look in the bush',
+        hold: 0.5,
+        run: () => {
+          g.audio.play('chirp', 1);
+          g.burst('leaf', bx, 1.2, bz, 12);
+          this.hooks.sideStep('bird:found');
+          this.ctx.discover('d-fantail');
+          this.ctx.hud.notice(H.birdFound, 2.6);
+        },
+      }),
+    });
+    g.dynamicColliders = ((before) => () => [...before(), { x: bx, z: bz, r: 1 }])(g.dynamicColliders);
   }
 
   /* ---- Side quests ---- */
@@ -315,6 +407,24 @@ export class HubScript {
       this.walk(g.npcs[w.id], w, dt);
     }
     this.extrasTick?.(dt);
+    for (const { a, it } of this.watch) {
+      it.x = a.x;
+      it.z = a.z;
+    }
+    /* The hidden bird sings now and then: louder the closer the team is, and the bush rustles. */
+    if (this.bush !== null && !this.flagOn('bird:found')) {
+      this.song -= dt;
+      const d = Math.hypot(h.x - BIRD_BUSH[0], h.z - BIRD_BUSH[1]);
+      if (this.song <= 0) {
+        this.song = 2.4 + Math.random();
+        if (d < 34 && !g.busy) {
+          g.audio.play('chirp', (1 - d / 34) ** 2);
+        }
+      }
+      this.bush.scale = 1 + (this.song > 2.1 ? Math.sin(this.t * 40) * 0.04 : 0);
+    } else if (this.bush !== null) {
+      this.bush.scale = 1;
+    }
     g.guide = null;
   }
 

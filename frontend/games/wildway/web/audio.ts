@@ -4,7 +4,7 @@
  * interaction sounds. Created on the first tap, suspended when paused or hidden.
  */
 
-export type Sfx = 'tap' | 'switch' | 'ok' | 'deny' | 'step' | 'done' | 'scan' | 'pickup' | 'drop' | 'stretch' | 'note1' | 'note2' | 'note3' | 'flag' | 'hornbill' | 'star' | 'whoosh' | 'hum';
+export type Sfx = 'tap' | 'switch' | 'ok' | 'deny' | 'step' | 'done' | 'scan' | 'pickup' | 'drop' | 'stretch' | 'note1' | 'note2' | 'note3' | 'flag' | 'hornbill' | 'star' | 'whoosh' | 'hum' | 'snap' | 'chirp' | 'croak';
 
 export class GameAudio {
   private ctx: AudioContext | null = null;
@@ -148,12 +148,33 @@ export class GameAudio {
     }
   }
 
-  play(name: Sfx): void {
+  /** `volume` scales the louder sounds, so a bird far off sings quietly. */
+  play(name: Sfx, volume = 1): void {
     const ctx = this.ctx;
     if (ctx === null || ctx.state !== 'running') {
       return;
     }
     const t = ctx.currentTime;
+    const v = Math.max(0.0002, Math.min(1, volume));
+    switch (name) {
+      case 'snap':
+        this.tone(2400, t, 0.03, 0.09, 'square', 1200);
+        this.tone(900, t + 0.035, 0.06, 0.07, 'triangle', 600);
+        return;
+      case 'chirp':
+        /* A little fantail-like song: a few bright notes, rising and falling. */
+        for (let i = 0; i < 4; i += 1) {
+          const f = [2600, 3100, 2800, 3400][i];
+          this.tone(f, t + i * 0.11, 0.08, 0.05 * v, 'sine', f * (i % 2 === 0 ? 1.18 : 0.86));
+        }
+        return;
+      case 'croak':
+        this.tone(140, t, 0.16, 0.08 * v, 'sawtooth', 110);
+        this.tone(150, t + 0.2, 0.14, 0.07 * v, 'sawtooth', 115);
+        return;
+      default:
+        break;
+    }
     switch (name) {
       case 'tap':
         this.tone(640, t, 0.05, 0.1, 'triangle');
