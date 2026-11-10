@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { env } from "../config/env.js";
 import { deviceTrustValid, trustRevokedAt } from "../lib/device-trust.js";
+import { resolveRole, PENDING_ROLE } from "../lib/user-roles.js";
 
 /*
  * Session verification and role authorization.
@@ -175,8 +176,17 @@ export async function authenticateToken(req: AuthenticatedRequest, res: Response
       });
     }
 
+    // The role is the server's decision (lib/user-roles.ts), never the user-editable user_metadata (9 Nov 2026).
+    const role = await resolveRole(user);
+    if (role === PENDING_ROLE) {
+      return res.status(403).json({
+        success: false,
+        code: "role_pending",
+        message: "Your account is waiting for an administrator to assign a role",
+      });
+    }
     req.user = user;
-    req.userRole = user.user_metadata?.role || FALLBACK_ROLE;
+    req.userRole = role;
     const until = Math.min(Date.now() + ACCEPTED_TTL_MS, expiryOf(token));
     if (until > Date.now()) {
       if (accepted.size > 500) accepted.clear(); // bounded: a burst of new tokens simply starts over
@@ -209,10 +219,10 @@ export async function verifiedUser(token: string | undefined, deviceTrust?: stri
   const key = `${token}|${deviceTrust ?? ""}`;
   const hit = verified.get(key);
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.user;
-  const lookup = supabase.auth.getUser(token).then(({ data, error }) =>
+  const lookup = supabase.auth.getUser(token).then(async ({ data, error }) =>
     error || !data.user || !signedInEnough(token, data.user, deviceTrust)
       ? null
-      : { email: data.user.email ?? data.user.id, role: data.user.user_metadata?.role || FALLBACK_ROLE });
+      : { email: data.user.email ?? data.user.id, role: await resolveRole(data.user) });
   const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 4_000));
   const user = await Promise.race([lookup.catch(() => null), timeout]);
   if (verified.size > 500) verified.clear();

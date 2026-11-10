@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const db = new Pool({
-  connectionString: "postgres://postgres:REMOVED@smartflow.cn4wwa2i4cux.ap-southeast-1.rds.amazonaws.com:5432/nlex_capstone",
+  connectionString: "postgres://postgres:REMOVED@<RDS_HOST>:5432/nlex_capstone",
   ssl: { rejectUnauthorized: false },
 });
 

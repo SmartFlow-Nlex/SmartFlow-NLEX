@@ -765,6 +765,12 @@ for name, fn in MODELS.items():
 # ─────────────────────────────────────────────────────
 # 6. WRITE BACK — PAST context | PRESENT scored | FUTURE projected
 # ─────────────────────────────────────────────────────
+# --dry-run (6 Nov 2026): everything above (the evaluation, the leaderboard, the future forecast), nothing written.
+if "--dry-run" in sys.argv:
+    banner("DRY RUN: stopping before STEP 6, nothing written")
+    print("  gold.ml_predictive_volume and gold.ml_model_metrics are unchanged.")
+    raise SystemExit(0)
+
 banner("STEP 6: Writing to AWS")
 
 ctx_df = df.iloc[0:eval_start] if CTX <= 0 else df.iloc[max(0, eval_start - CTX):eval_start]

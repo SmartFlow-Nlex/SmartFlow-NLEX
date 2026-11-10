@@ -14,7 +14,9 @@ import { getEventDayProfile } from "../services/sandbox-event.service.js";
  * spending a token to find out.
  */
 export const commandStatus = async (_req: Request, res: Response) => {
-  res.json({ success: true, data: { configured: isGlmConfigured(), ...providerInfo() } });
+  // Only whether it is set up and whether zero retention is enforced; the provider and model are not told to
+  // anonymous callers (security audit #14, 9 Nov 2026).
+  res.json({ success: true, data: { configured: isGlmConfigured(), zdrEnforced: providerInfo().zdrEnforced } });
 };
 
 /**

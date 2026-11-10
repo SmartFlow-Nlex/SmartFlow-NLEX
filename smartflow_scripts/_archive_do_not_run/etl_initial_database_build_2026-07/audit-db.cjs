@@ -1,7 +1,7 @@
 throw new Error("ARCHIVED - do not run. First database build and ingestion (July 2026), before the medallion schema. Writes and truncates tables that have since been rebuilt. Kept only as a record; see smartflow_scripts/README.md.");
 const { Pool } = require('pg');
 const pool = new Pool({
-  host: 'smartflow-db.choym2mcymec.ap-southeast-1.rds.amazonaws.com',
+  host: '<RDS_HOST>',
   port: 5432,
   user: 'postgres',
   password: 'REMOVED',

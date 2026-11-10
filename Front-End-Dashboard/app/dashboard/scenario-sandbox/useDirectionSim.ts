@@ -164,7 +164,13 @@ export type SharedRoadInputs = {
    * plazas and the southbound barrier count all carry the event, and a loaded forecast's inflow is scaled by what
    * that does to the flow entering this stretch.
    */
-  readonly eventDay: { readonly key: string; readonly title: string; readonly ratio: (exit: string, hour: number) => number } | null;
+  /** ratio: what the event does to an exit's entries or exits at an hour, in a direction (1 = nothing). The venue's own
+      exit (CDV) has measured per-movement ratios; other affected exits share one ratio for both movements. */
+  readonly eventDay: {
+    readonly key: string;
+    readonly title: string;
+    readonly ratio: (exit: string, hour: number, movement: "entry" | "exit", direction: "NB" | "SB") => number;
+  } | null;
 };
 
 function buildInterventions(lanes: number, len: number): Partial<Interventions> {
@@ -306,10 +312,12 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     (exitName: string, hour: number) => {
       const f = normalFlowAt(exitName, hour);
       if (!f || !eventDay) return f;
-      const k = eventDay.ratio(String(exitName), Math.max(0, Math.min(23, hour)));
-      return k === 1 ? f : { ...f, entries: f.entries * k, exits: f.exits * k };
+      const h = Math.max(0, Math.min(23, hour));
+      const kIn = eventDay.ratio(String(exitName), h, "entry", direction);
+      const kOut = eventDay.ratio(String(exitName), h, "exit", direction);
+      return kIn === 1 && kOut === 1 ? f : { ...f, entries: f.entries * kIn, exits: f.exits * kOut };
     },
-    [normalFlowAt, eventDay],
+    [normalFlowAt, eventDay, direction],
   );
 
   const mainlineAtKm = useCallback(
@@ -362,7 +370,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
       const f = normalFlowAt(e.exit_name, hr);
       if (!f || f.entries <= 0) continue;
       normal += f.entries;
-      withEvent += f.entries * eventDay.ratio(String(e.exit_name), hr);
+      withEvent += f.entries * eventDay.ratio(String(e.exit_name), hr, "entry", direction);
     }
     return normal > 0 ? withEvent / normal : 1;
   }, [eventDay, plazaFlows, hourOfDay, demand, direction, fromKm, toKm, EXITS, normalFlowAt]);

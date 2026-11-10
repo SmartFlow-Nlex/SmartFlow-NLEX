@@ -26,6 +26,9 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     });
   }
 
-  const message = err instanceof Error ? err.message : "Internal server error";
-  res.status(500).json({ success: false, message });
+  /* The detail goes to the server log, never to the caller (security audit #9, 9 Nov 2026): a raw message could
+     carry the database hostname, a SQL fragment or a file path. The request id lets an operator find the log line. */
+  const requestId = Math.random().toString(36).slice(2, 10);
+  console.error(`[error ${requestId}]`, err);
+  res.status(500).json({ success: false, message: "Internal server error", requestId });
 }

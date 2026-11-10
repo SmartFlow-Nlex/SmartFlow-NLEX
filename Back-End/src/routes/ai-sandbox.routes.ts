@@ -3,6 +3,7 @@ import { asyncHandler } from "../middleware/error.middleware.js";
 import { triggerSimulation, configLanes, getResults } from "../controllers/ai-sandbox.controller.js";
 import { parseSandboxCommand, commandStatus, scenarioContext, demandExits, demandProfile, plazaFlows, hotspots, eventDay } from "../controllers/sandbox-command.controller.js";
 import { authenticateToken, authorizeRoles } from "../middleware/auth.middleware.js";
+import { aiLimiter } from "../middleware/ai-limit.js";
 
 const router = Router();
 
@@ -12,7 +13,7 @@ const router = Router();
  * sandbox now sends one (lib/api.ts apiFetch). The status check stays open: it says only whether the parser is set up.
  */
 router.get("/command/status", asyncHandler(commandStatus));
-router.post("/command", authenticateToken, authorizeRoles(["data-analyst", "tcc-operator"]), asyncHandler(parseSandboxCommand));
+router.post("/command", authenticateToken, authorizeRoles(["data-analyst", "tcc-operator"]), aiLimiter, asyncHandler(parseSandboxCommand));
 router.get("/scenario", asyncHandler(scenarioContext));
 
 /* Observed demand. Public for the same reason as the routes above: the

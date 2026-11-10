@@ -251,8 +251,19 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
         //
         // Events falling on a holiday are flagged, since their deviation is
         // really a holiday effect.
+        //
+        // Weather (8 Nov 2026, user): with Wet or Dry chosen, only events on a rainy (or dry) DAY are shown, each
+        // against baseline days of the same day-weather, so rain and the event effect are not mixed. A rainy day
+        // is the meteorological "rain day": at least 1.0 mm of corridor rain over the Manila day (the weather points
+        // averaged each hour, summed over the day). Whole days, not the hourly Wet rule the volume views use: this is
+        // a whole-day comparison. Holidays stay unfiltered: too few fall on rainy days (about 5 of 21) to say anything.
         db.query(
-          `WITH pv AS (
+          `WITH dayw AS (
+             SELECT d, SUM(r) >= 1.0 AS wet FROM (
+               SELECT (timestamp_utc + interval '8 hours')::date AS d, timestamp_utc, AVG(rainfall) AS r
+               FROM hourly_weather GROUP BY 1, 2) x
+             GROUP BY d
+           ), pv AS (
              SELECT t.toll_plaza, t.date, SUM(${DAY_TOTAL})::bigint AS v
              FROM nlex_traffic_volume t
              WHERE t.type = 'Entries' AND t.vehicle_class = 'Total'
@@ -261,6 +272,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
              SELECT p.* FROM pv p
              WHERE NOT EXISTS (SELECT 1 FROM philippine_arena_events x WHERE x.start_date = p.date)
                AND NOT EXISTS (SELECT 1 FROM ph_holidays h WHERE h.date_day = p.date)
+               ${wet === null ? "" : "AND EXISTS (SELECT 1 FROM dayw w WHERE w.d = p.date AND w.wet = $1)"}
            ), ev_rows AS (
              -- Case-only duplicates exist in the source ("SEVENTEEN - BE THE
              -- SUN World Tour" vs "Seventeen - Be The Sun World Tour" on
@@ -295,6 +307,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
                   ROUND(((p.v - b.bv) / b.bv * 100)::numeric, 1)::float AS deviation_pct
            FROM ev e
            JOIN pv p ON p.date = e.start_date AND p.toll_plaza = e.plaza
+           ${wet === null ? "" : "JOIN dayw w ON w.d = e.start_date AND w.wet = $1"}
            CROSS JOIN LATERAL (
              SELECT AVG(cb.v) AS bv, COUNT(*) AS bn
              FROM clean cb
@@ -305,7 +318,8 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
            -- Drop occurrences whose baseline rests on too few days to mean
            -- anything; the previous query allowed a sample of zero.
            WHERE b.bn >= 4 AND b.bv > 0
-           ORDER BY e.start_date DESC LIMIT 200`
+           ORDER BY e.start_date DESC LIMIT 200`,
+          wet === null ? [] : [wet],
         ),
         // Holidays vs same-weekday non-holiday baseline (obeys plaza/direction/class filters)
         db.query(
@@ -520,6 +534,8 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
       hourDow: hourDow.rows,
       plazaHourProfile: plazaHour.rows.map((r) => ({ plaza: r.plaza, hour: Number(r.hour), v: Number(r.v) })),
       speedByHour: speedByHour.rows,
+      // Which days the event list is drawn from when Wet or Dry is chosen (see the event query); null = every day.
+      eventWeather: wet === null ? null : { day: wet ? "rainy" : "dry", rule: "a rainy day has at least 1.0 mm of corridor rain; each event is compared with same-weekday days of the same weather within 45 days" },
       eventImpact: eventImpact.rows.map((r) => ({
         label: r.label,
         date: r.date,
@@ -712,6 +728,49 @@ export const DEFAULT_SPLIT: SplitLabel = "80_20";
 
 export type ForecastWindow = { months?: "3" | "12" | "all"; from?: string; to?: string; split?: SplitLabel };
 
+/**
+ * The rain and temperature RECORDED on each day, corridor-wide: the weather points averaged each hour (one per
+ * coordinate: three points carry two spellings from 21 to 31 Oct 2026), rain summed and temperature averaged over the
+ * Manila day. The incident chart's bars are computed the same way, so the two charts show the same rain for the same
+ * day (5 Nov 2026). Before, the traffic chart drew the stored weather_rainfall, which on future rows was day-of-year
+ * climatology (the normal rain for the date), while the incident chart drew what fell.
+ */
+async function recordedDailyWeather(from: string, to: string): Promise<Map<string, { rain: number; temp: number | null }>> {
+  const out = new Map<string, { rain: number; temp: number | null }>();
+  if (!db) return out;
+  const { rows } = await db.query(
+    `WITH pts AS (
+       SELECT timestamp_utc, round(latitude::numeric, 3) la, round(longitude::numeric, 3) lo,
+              AVG(rainfall) r, AVG(temperature) t
+       FROM public.hourly_weather
+       WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1::date AND $2::date
+       GROUP BY 1, 2, 3),
+     hourly AS (SELECT timestamp_utc, AVG(r) r, AVG(t) t FROM pts GROUP BY 1)
+     SELECT (timestamp_utc + interval '8 hours')::date::text AS d, SUM(r)::float AS rain, AVG(t)::float AS temp
+     FROM hourly GROUP BY 1`,
+    [from, to],
+  );
+  for (const r of rows as { d: string; rain: number; temp: number | null }[]) out.set(r.d, { rain: Number(r.rain), temp: r.temp == null ? null : Number(r.temp) });
+  return out;
+}
+
+/** The rows with each day's weather set to what was recorded (see recordedDailyWeather). A future day with nothing
+ *  recorded keeps the stored value, which is a real weather forecast where one covered the day and NULL otherwise. */
+async function withRecordedWeather<T extends { date: unknown; weather_rainfall: unknown; weather_temp: unknown }>(rows: T[]): Promise<T[]> {
+  if (rows.length === 0) return rows;
+  const iso = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
+  try {
+    const rec = await recordedDailyWeather(iso(rows[0].date), iso(rows[rows.length - 1].date));
+    return rows.map((r) => {
+      const w = rec.get(iso(r.date));
+      return w ? { ...r, weather_rainfall: w.rain, weather_temp: w.temp } : r;
+    });
+  } catch (error) {
+    console.error("Failed to read recorded weather for the volume chart:", error);
+    return rows;
+  }
+}
+
 export async function getMLPredictiveVolume(window: ForecastWindow = {}) {
   const split: SplitLabel = window.split ?? DEFAULT_SPLIT;
   if (!db) return null;
@@ -728,7 +787,7 @@ export async function getMLPredictiveVolume(window: ForecastWindow = {}) {
          ORDER BY forecast_date ASC`,
         [window.from, window.to, split]
       );
-      return rows;
+      return withRecordedWeather(rows);
     }
 
     if (window.months && window.months !== "all") {
@@ -751,12 +810,12 @@ export async function getMLPredictiveVolume(window: ForecastWindow = {}) {
          ORDER BY forecast_date ASC`,
         [Number(window.months), split]
       );
-      return rows;
+      return withRecordedWeather(rows);
     }
 
     const { rows } = await db.query(
       `SELECT ${cols} FROM gold.ml_predictive_volume WHERE split_label = $1 ORDER BY forecast_date ASC`, [split]);
-    return rows;
+    return withRecordedWeather(rows);
   } catch (error) {
     console.error("Failed to fetch ML volume:", error);
     return null;

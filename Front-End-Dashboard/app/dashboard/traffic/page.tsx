@@ -24,6 +24,7 @@ import { rangeDays, grainBlockedReason, bestGrainFor, bucketLabelFor, timeAxisLa
 import CountUpValue from "../../../components/dashboard/CountUpValue";
 import ModeTabLabel, { modeIndex } from "../../../components/dashboard/ModeTabLabel";
 import StateNote from "../../../components/stage/StateNote";
+import { useRainEffect, isClear, METHOD_NOTE } from "../../../lib/rain-effect";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -59,6 +60,8 @@ type Analytics = {
     holidayType?: string; minBaselineDays?: number;
   }[];
   holidayYearly: { label: string; year: number; pct: number; volume: number }[];
+  /** Set when Dry or Wet is chosen: events are then kept by the weather of their day (holidays are not filtered). */
+  eventWeather?: { day: "rainy" | "dry"; rule: string } | null;
 };
 
 type Granularity = "hourly" | "daily" | "weekly" | "monthly";
@@ -161,6 +164,9 @@ export default function TrafficPage() {
   const [direction, setDirection] = useState<Direction>("Both");
   const [vClass, setVClass] = useState<VehicleClass>("All");
   const [weather, setWeather] = useState<"all" | "dry" | "wet">("all");
+  // Rain's like-for-like association (9 Nov 2026): loaded only once Dry or Wet is chosen, for the lines that say
+  // what the toggle means beyond "these hours only".
+  const rainEffect = useRainEffect(weather !== "all");
 
   // Chart-local interactivity
   const [plazaSort, setPlazaSort] = useState<"desc" | "asc">("desc");
@@ -1123,6 +1129,13 @@ export default function TrafficPage() {
                 </div>
               </div>
               {/* The answer, on one line under the header, the full width of the card. */}
+              {data?.eventWeather && !error && (
+                <p className="nct-answer-line is-one-line" title={data.eventWeather.rule}>
+                  {impactMode === "Events"
+                    ? <>Only <b>{data.eventWeather.day}</b> event days ({data.eventImpact.length}), each compared with {data.eventWeather.day} normal days</>
+                    : <>Holidays are not split by weather: too few rainy holidays to compare</>}
+                </p>
+              )}
               {furthest && !error && (
                 <p className="nct-answer-line is-one-line nct-answer-row">Furthest from normal: <b>{furthest.event ? furthest.event.label : furthest.holiday ? furthest.holiday.label : furthest.label}</b> <b>{fmtPct(furthest.pct)}</b></p>
               )}
@@ -1139,6 +1152,18 @@ export default function TrafficPage() {
                       Busiest: <b>{DOW_LABELS[DOW_ORDER.indexOf(busiestSlot.dow)]} {fmtHour(busiestSlot.hour)}</b> · {fmtInt(busiestSlot.v)} vehicles/hr on average
                     </p>
                   )}
+                  {weather !== "all" && rainEffect && !error && (() => {
+                    const heavy = rainEffect.volume.find((b) => b.mmTo == null);
+                    const light = rainEffect.volume[0];
+                    if (!heavy || heavy.effectPct == null || !light) return null;
+                    return (
+                      <p className="nct-answer-line" title={METHOD_NOTE}>
+                        Like for like, heavy-rain days ({heavy.mmFrom} mm+) are associated with <b>{Math.abs(heavy.effectPct).toFixed(0)}% {heavy.effectPct < 0 ? "less" : "more"} traffic</b> than
+                        dry days of the same weekday nearby{isClear(heavy.lowPct, heavy.highPct) ? "" : " (not a clear difference)"};
+                        {isClear(light.lowPct, light.highPct) ? ` light rain: ${light.effectPct}%.` : " light rain shows no clear change."}
+                      </p>
+                    );
+                  })()}
                 </div>
               </div>
               <div className={styles.chartBody}>{chartFrame(heatmapOption, "No data for the selected filters", onHeatmapClick, false, (c) => { heatChart.current = c; })}</div>
@@ -1161,6 +1186,25 @@ export default function TrafficPage() {
                   {slowestHour && !error && (
                     <p className="nct-answer-line">Slowest: <b>{fmtHour(slowestHour.hour)}</b> · {slowestHour.speed} km/h inside jams</p>
                   )}
+                  {weather !== "all" && rainEffect && !error && (() => {
+                    const hard = rainEffect.jams.bands.find((b) => b.mmPerHourTo == null);
+                    if (!hard || hard.jamDiffPts == null || hard.delayDiffMin == null) return null;
+                    const clear = isClear(hard.jamLowPts, hard.jamHighPts) || isClear(hard.delayLowMin, hard.delayHighMin);
+                    return (
+                      <p className="nct-answer-line" title={`Live Waze, ${rainEffect.jams.from} to ${rainEffect.jams.to ?? "now"}: each rainy hour at an exit against dry hours at the same exit, hour of day and part of the week. Light rain shows no clear change. Speed inside a jam barely moves with rain; how often jams form and how long they delay does.`}>
+                        Like for like, hours with moderate or heavy rain ({hard.mmPerHourFrom} mm/h+) are associated with jams <b>{hard.jamDiffPts > 0 ? "+" : ""}{hard.jamDiffPts.toFixed(0)} pts more often</b> and <b>{hard.delayDiffMin > 0 ? "+" : ""}{hard.delayDiffMin.toFixed(1)} min</b> more delay{clear ? "" : " (not a clear difference)"}; speed inside a jam barely changes.
+                      </p>
+                    );
+                  })()}
+                  {weather !== "all" && rainEffect && !error && (() => {
+                    const f = rainEffect.jams.flood;
+                    if (!f || f.exitHours === 0 || f.delayMin == null || f.rainyDelayMin == null) return null;
+                    return (
+                      <p className="nct-answer-line" title={`Live Waze since ${rainEffect.jams.from}: each exit-hour with a Waze flood report against rainy hours without one at the same exit, hour of day and part of the week (${f.exitHours} flood hours over ${f.days} days; 95% range of the extra delay ${f.delayLowMin} to ${f.delayHighMin} min). A link, not proof: drivers already stuck may report water more readily. Live flood reports show on the Live Map.`}>
+                        Flood-reported hours are associated with <b>{f.delayMin.toFixed(0)} min</b> of delay against {f.rainyDelayMin.toFixed(0)} min in rainy hours without a flood report, and a jam {f.jamPct?.toFixed(0)}% vs {f.rainyJamPct?.toFixed(0)}% of the time.
+                      </p>
+                    );
+                  })()}
                 </div>
               </div>
               <div className={styles.chartBody}>{chartFrame(speedOption, "No congestion data in the selected range", onSpeedClick, true, (c) => { speedChart.current = c; })}</div>
@@ -1304,8 +1348,8 @@ export default function TrafficPage() {
                 <h3>{impactMode === "Events" ? "Arena Events — Full List" : "Holidays — Full List"}</h3>
                 <p>
                   {impactMode === "Events"
-                    ? `${eventsShown.length} event${eventsShown.length === 1 ? "" : "s"}${yearShown === "all" ? "" : ` in ${yearShown}`} vs same-weekday baseline · click a row for details`
-                    : `${data.holidayImpact.length} holidays · click a row for details`}
+                    ? `${eventsShown.length} event${eventsShown.length === 1 ? "" : "s"}${yearShown === "all" ? "" : ` in ${yearShown}`} vs ${data.eventWeather ? `same-weekday ${data.eventWeather.day} days` : "same-weekday baseline"}${data.eventWeather ? ` · ${data.eventWeather.day} event days only` : ""} · click a row for details`
+                    : `${data.holidayImpact.length} holidays${data.eventWeather ? " · all weather (not split by Dry/Wet)" : ""} · click a row for details`}
                 </p>
               </div>
               <button className={styles.detailClose} onClick={() => setImpactListOpen(false)} aria-label="Close">

@@ -23,7 +23,8 @@ import { cleanData, recordDay, type CleanResult } from "./cleaner.js";
 import { transformData, type TransformResult } from "./transformer.js";
 import { loadData, type LoadResult } from "./loader.js";
 import type { Published } from "./publish.js";
-import type { UploadComparison } from "./compare.js";
+import type { TollProfile, UploadComparison } from "./compare.js";
+import { screenDays, type DayScreen, type DayWindow } from "./day-screen.js";
 import { aggregateTollHourly, loadCutoff, loadTollHourly, type TollHourlyAggregate } from "./toll-hourly.js";
 import { aggregateTir, isTirFile, readLevelAdjustment, type TirStats } from "./toll-tir.js";
 import type { ExtractionResult, SourceType } from "./extractors/types.js";
@@ -54,6 +55,10 @@ export interface PipelineResult {
   published: Published[];
   /** The file against what the warehouse already holds for the same keys ("is this the right file?"). */
   comparison: UploadComparison | null;
+  /** Toll files: every day from the file's first to its last, loaded / held back / missing / outside the window. */
+  dayScreen: DayScreen | null;
+  /** Toll files: the file against the same period a year earlier. */
+  profile: TollProfile | null;
   /** The committed load's undo journal (undo.ts); null for a check or a failed load. */
   undoBatch: number | null;
   rejectedSample: { row: Record<string, any>; reason: string }[];
@@ -74,6 +79,8 @@ export interface PipelineGateLog {
 export interface PipelineOptions {
   /** Run every step, then roll the load back. */
   dryRun?: boolean;
+  /** Load only the days from..to (inclusive, YYYY-MM-DD); either end may be left open. */
+  window?: DayWindow | null;
 }
 
 const n = (v: number) => v.toLocaleString("en-US");
@@ -206,9 +213,15 @@ async function runSharedPipeline(
   if (extraction.source === "file_upload") {
     const cutoff = loadCutoff();
     let late = 0;
+    let outside = 0;
+    const win = opts.window;
     const kept = [];
     for (const row of cleaned.accepted) {
       const day = recordDay(row, classification.type);
+      if (day && win && ((win.from && day < win.from) || (win.to && day > win.to))) {
+        outside++;
+        continue;
+      }
       if (day && day > cutoff.date) {
         late++;
         if (cleaned.rejected.length < 5000) {
@@ -222,6 +235,9 @@ async function runSharedPipeline(
       } else kept.push(row);
     }
     cleaned.accepted = kept;
+    if (outside > 0) {
+      held.push(`${rows(outside)} outside the dates chosen to load (${win?.from ?? "start"} to ${win?.to ?? "end"}) left out`);
+    }
     if (late > 0) {
       held.push(`${rows(late)} dated after ${cutoff.date} held back: ${cutoff.why === "today" ? "that is today" : "the corridor's record ends there"}`);
     }
@@ -286,6 +302,8 @@ async function runSharedPipeline(
     destination: loaded.tableName,
     published: loaded.published,
     comparison: loaded.comparison,
+    dayScreen: null,
+    profile: null,
     undoBatch: loaded.undoBatch,
     rejectedSample: cleaned.rejected.slice(0, 10),
     loadErrors: [...loaded.errors, ...loaded.failures],
@@ -391,6 +409,35 @@ async function finishTollHourly(
     return buildFailResult(extraction.sourceName, format, extraction.source, "toll_hourly", gates, held, start, opts, extraction.rows.length);
   }
 
+  /* Which days may be loaded (day-screen.ts): the chosen dates only, and, for a file that replaces whole days, only
+     complete days. A day left out here is never staged, so it cannot replace anything. */
+  const screen = screenDays(agg, { window: opts.window, completeness: replaceDays });
+  {
+    const heldDays = screen.days.filter((d) => d.status === "held");
+    const missingDays = screen.days.filter((d) => d.status === "missing");
+    const parts: string[] = [];
+    if (screen.window) parts.push(`Dates chosen: ${screen.window.from ?? "the file's start"} to ${screen.window.to ?? "the file's end"}; ${screen.outside} ${screen.outside === 1 ? "day" : "days"} outside them left out`);
+    if (replaceDays) {
+      parts.push(heldDays.length
+        ? `${heldDays.length} incomplete ${heldDays.length === 1 ? "day" : "days"} held back, so they cannot replace a full day of record: ${heldDays.slice(0, 8).map((d) => `${d.date} (${d.reason})`).join("; ")}${heldDays.length > 8 ? `; and ${heldDays.length - 8} more` : ""}`
+        : "Every day is complete: all 24 hours (bar toll-holiday hours), a usual volume for its weekday and the usual plazas");
+    }
+    if (missingDays.length) parts.push(`${missingDays.length} ${missingDays.length === 1 ? "day is" : "days are"} not in the file at all: ${missingDays.slice(0, 10).map((d) => d.date).join(", ")}${missingDays.length > 10 ? ", ..." : ""}`);
+    parts.push(`${screen.loaded} ${screen.loaded === 1 ? "day" : "days"} to load`);
+    gates.push({
+      gate: replaceDays ? "Gate 3b — Day Completeness & Dates Chosen" : "Gate 3b — Dates Chosen",
+      passed: agg.dates.length > 0,
+      details: parts.join(". ") + ".",
+    });
+    if (heldDays.length) held.push(`${heldDays.length} incomplete ${heldDays.length === 1 ? "day" : "days"} held back (${heldDays.map((d) => d.date).join(", ")}): ask for them again rather than load part of a day`);
+    if (missingDays.length) held.push(`${missingDays.length} ${missingDays.length === 1 ? "day" : "days"} missing from the file (${missingDays.map((d) => d.date).join(", ")})`);
+  }
+  if (agg.dates.length === 0) {
+    const r = buildFailResult(extraction.sourceName, format, extraction.source, "toll_hourly", gates, ["No day is left to load: every day is outside the dates chosen or incomplete."], start, opts, extraction.rows.length);
+    r.dayScreen = screen;
+    return r;
+  }
+
   gates.push({
     gate: "Gate 4 — Schema Transformation & Business Rule Enforcement",
     passed: agg.fact.size > 0,
@@ -438,6 +485,8 @@ async function finishTollHourly(
       { table: "gold.fact_emissions_hourly", rows: loaded.emissionRows },
     ],
     comparison: loaded.comparison,
+    dayScreen: screen,
+    profile: loaded.profile,
     undoBatch: loaded.undoBatch,
     rejectedSample: agg.rejectedSample,
     loadErrors: loaded.errors,
@@ -480,6 +529,8 @@ function buildFailResult(
     destination: null,
     published: [],
     comparison: null,
+    dayScreen: null,
+    profile: null,
     undoBatch: null,
     rejectedSample: [],
     loadErrors: [],

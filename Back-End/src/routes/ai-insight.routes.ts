@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../middleware/error.middleware.js";
 import { authenticateToken } from "../middleware/auth.middleware.js";
+import { aiLimiter } from "../middleware/ai-limit.js";
 import {
   modelNarrative,
   congestionNarrative,
@@ -37,6 +38,7 @@ const router = Router();
 router.get("/status", asyncHandler(insightStatus));
 
 router.use(authenticateToken);
+router.use(aiLimiter);
 router.post("/model-narrative", asyncHandler(modelNarrative));
 router.post("/congestion-narrative", asyncHandler(congestionNarrative));
 router.post("/event-surge-narrative", asyncHandler(eventSurgeNarrative));

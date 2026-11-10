@@ -687,7 +687,7 @@ export default function PredictiveIncidentChart({
       if (p.seriesName === VOLUME_FORECAST_NAME && hasRecordedVolume) return;
       const val =
         p.seriesName === "Rainfall"
-          ? `${fmtNum(Number(p.value), 1)} mm`
+          ? `${fmtNum(Number(p.value), 1)} mm recorded`
           : p.seriesName === "Vehicle Volume" || p.seriesName === VOLUME_FORECAST_NAME
             ? `${fmtInt(Number(p.value))} vehicles`
             : fmtInt(Number(p.value));
@@ -1344,7 +1344,7 @@ export default function PredictiveIncidentChart({
             title={
               hasWeatherFreeTwin
                 ? showWeather
-                  ? "Weather ON: forecasts fitted WITH rainfall, overlay shown. Click to switch to the weather-free models."
+                  ? "Weather ON: forecasts fitted WITH rainfall, recorded rain shown. Days past a real weather forecast (16 days) are forecast without weather either way: no forecast is fed guessed rain. Click to switch to the weather-free models."
                   : "Weather OFF: forecasts fitted WITHOUT rainfall. Click to use the weather-aware models and show the overlay."
                 : showWeather
                   ? "Hide the rainfall overlay (this training run stored no weather-free models, so the forecast lines do not change)"

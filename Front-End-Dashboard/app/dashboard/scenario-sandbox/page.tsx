@@ -91,6 +91,12 @@ type EventDayData = {
   addedByHour: number[];
   peakHour: number;
   pastEventDays: number;
+  /** The venue's own exit (CDV/PH Arena), measured per movement on past concert nights (sandbox-event.service.ts). */
+  venue: {
+    exit: string; nights: number; exitNights: number;
+    entries: { typical: number[]; busy: number[] }; exits: { typical: number[]; busy: number[] };
+    normalEntries: number[]; normalExits: number[];
+  } | null;
   method: string;
 };
 
@@ -119,7 +125,7 @@ const CANVAS_PAD = 8;
  *  window takes in the CDV interchange. Module state, like roadView, so every layout call — the renderers, the click
  *  handlers and the canvas sizing — leaves the same room for it. Set by the page on every render. East is down the
  *  screen in Both and northbound views (north is to the right); a southbound-only view has it above, across the median. */
-const venueStrip: { px: number; side: "top" | "bottom"; host: VenueKey | null; title: string | null } = { px: 0, side: "bottom", host: null, title: null };
+const venueStrip: { px: number; side: "top" | "bottom"; host: VenueKey | null; title: string | null; leaving: number } = { px: 0, side: "bottom", host: null, title: null, leaving: 0 };
 
 /** Widest a lane may be drawn while docked.
  *
@@ -1219,6 +1225,8 @@ export default function AiSandboxPage() {
      the date is loaded when the forecast reaches it, and the clock moves to the hour the event adds the most. */
   const [eventDayData, setEventDayData] = useState<EventDayData | null>(null);
   const [eventDate, setEventDate] = useState<string | null>(null);
+  // How big a night at the venue's own exit: the median past event night, or one busier than three in four.
+  const [eventCrowd, setEventCrowd] = useState<"typical" | "busy">("typical");
   useEffect(() => {
     let cancelled = false;
     fetch(`${BACKEND}/api/ai-sandbox/event-day`, { cache: "no-store" })
@@ -1233,6 +1241,10 @@ export default function AiSandboxPage() {
   venueStrip.side = view === "SB" ? "top" : "bottom";
   venueStrip.host = chosenEvent ? venueOf(chosenEvent.venue) : null;
   venueStrip.title = chosenEvent ? chosenEvent.title.split(" - ")[0] : null;
+  // The crowd leaving the venue at this hour, as measured at CDV (southbound entries against a normal hour).
+  venueStrip.leaving = chosenEvent && eventDayData?.venue && hourOfDay != null
+    ? Math.max(0, (eventDayData.venue.entries[eventCrowd][hourOfDay] ?? 1) - 1)
+    : 0;
   const eventDay = useMemo(() => {
     if (!chosenEvent || !eventDayData) return null;
     const norm = (n: string) => n.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -1251,12 +1263,35 @@ export default function AiSandboxPage() {
       memo.set(key, h);
       return h;
     };
+    const venue = eventDayData.venue;
+    const isVenueExit = (exit: string) => venue != null && (norm(exit).includes("cdv") || norm(exit) === norm(venue.exit));
     return {
-      key: chosenEvent.date,
+      key: `${chosenEvent.date}|${eventCrowd}`,
       title: chosenEvent.title.split(" - ")[0],
-      ratio: (exit: string, hour: number) => hourlyOf(exit)?.[hour] ?? 1,
+      ratio: (exit: string, hour: number, movement: "entry" | "exit", dir: "NB" | "SB") => {
+        // The venue's own exit runs on its measured nights: southbound entries are the crowd leaving for Manila,
+        // northbound exits the crowd arriving. Movements the records do not carry stay as on a normal night.
+        if (venue && isVenueExit(exit)) {
+          if (movement === "entry" && dir === "SB") return venue.entries[eventCrowd][hour] ?? 1;
+          if (movement === "exit" && dir === "NB") return venue.exits[eventCrowd][hour] ?? 1;
+          return 1;
+        }
+        return hourlyOf(exit)?.[hour] ?? 1;
+      },
     };
-  }, [chosenEvent, eventDayData]);
+  }, [chosenEvent, eventDayData, eventCrowd]);
+  /** The hour the crowd leaving the venue adds the most cars at its own exit (measured), else the corridor's peak. */
+  const venuePeakHour = (data: EventDayData): number => {
+    const v = data.venue;
+    if (!v) return data.peakHour;
+    let best = data.peakHour;
+    let most = -Infinity;
+    v.entries.typical.forEach((r, h) => {
+      const extra = (r - 1) * (v.normalEntries[h] ?? 0);
+      if (extra > most) { most = extra; best = h; }
+    });
+    return best;
+  };
   const pickEventDay = (d: string | null) => {
     setEventDate(d);
     if (d === null || !eventDayData) return;
@@ -1265,7 +1300,7 @@ export default function AiSandboxPage() {
       setForecastFollowing(true);
     }
     setHourFollowsDay(null);
-    setHourOfDay(eventDayData.peakHour);
+    setHourOfDay(venuePeakHour(eventDayData));
     setClockMinuteOffset(0);
     // Open on the venue's exit: the CDV/PH Arena interchange, its plazas both ways, the Arena and the Stadium beside it.
     frameKmRange(25.6, 26.2);
@@ -3193,10 +3228,32 @@ export default function AiSandboxPage() {
           <p className="sandbox-event-note" role="status">
             <b>{chosenEvent.title.split(" - ")[0]}</b>, {new Date(`${chosenEvent.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
             {chosenEvent.venue && !/arena/i.test(chosenEvent.venue) ? ` at ${chosenEvent.venue}` : ""}.
-            {" "}The Event Prediction adds about <b>+{chosenEvent.extraVehicles.toLocaleString()}</b> vehicles over the day at the {eventDayData.exits.length} exits
-            it finds affected, the most at <b>{hh(eventDayData.peakHour)}</b> (from {eventDayData.pastEventDays} past event days).
-            {" "}Traffic joining this stretch at {hh(hourOfDay ?? eventDayData.peakHour)}: <b>{lift >= 0 ? "+" : ""}{lift.toFixed(1)}%</b>.
-            {inForecast ? " The forecast for the day is loaded under it." : " The day is past the forecast's reach, so the event is put on the recorded traffic for the hour."}
+            {eventDayData.venue && (() => {
+              const v = eventDayData.venue;
+              const h = hourOfDay ?? venuePeakHour(eventDayData);
+              const k = v.entries[eventCrowd][h] ?? 1;
+              const extra = Math.round((k - 1) * (v.normalEntries[h] ?? 0));
+              return (
+                <>
+                  {" "}At the venue&apos;s own exit, past concert nights at the Arena and Stadium ({v.nights} nights) put the crowd
+                  leaving for Manila (southbound entries at CDV) at <b>×{k.toFixed(1)}</b> a normal {hh(h)}
+                  {extra > 0 ? <> (about <b>+{extra.toLocaleString()}</b> cars that hour)</> : null}; arrivals barely change.{" "}
+                  <span className="sandbox-event-crowd" role="group" aria-label="Event night size">
+                    {(["typical", "busy"] as const).map((c) => (
+                      <button key={c} type="button" className={eventCrowd === c ? "active" : ""} aria-pressed={eventCrowd === c} onClick={() => setEventCrowd(c)}
+                        title={c === "typical" ? "The median past event night at each hour" : "A night busier than three in four past event nights (75th percentile)"}>
+                        {c === "typical" ? "Typical night" : "Busy night"}
+                      </button>
+                    ))}
+                  </span>
+                </>
+              );
+            })()}
+            {" "}Elsewhere, the Event Prediction adds about <b>+{chosenEvent.extraVehicles.toLocaleString()}</b> vehicles over the day at the {eventDayData.exits.length} exits
+            it finds affected; traffic joining this stretch at {hh(hourOfDay ?? eventDayData.peakHour)}: <b>{lift >= 0 ? "+" : ""}{lift.toFixed(1)}%</b>.
+            {inForecast
+              ? " The forecast for the day is loaded under it."
+              : ` The forecast does not reach ${new Date(`${chosenEvent.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}, so the event runs on the day shown above at this hour.`}
             {" "}<button type="button" className="sandbox-event-clear" onClick={() => pickEventDay(null)}>Clear</button>
           </p>
         );
@@ -7517,7 +7574,7 @@ function render(
       xOfKm: (km) => (km - marks.fromKm) * 1000 * mToPx, pxPerM: mToPx, cssW,
       top: venueStrip.side === "top" ? 0 : cssH - venueStrip.px, height: venueStrip.px,
       roadSide: venueStrip.side === "top" ? "bottom" : "top",
-      dayFraction, t: animT, host: venueStrip.host, eventTitle: venueStrip.title,
+      dayFraction, t: animT, host: venueStrip.host, eventTitle: venueStrip.title, leaving: venueStrip.leaving,
     });
   }
   /* The corridor keeps a fixed, map-like orientation: the low km post is always
@@ -7636,7 +7693,7 @@ function renderBoth(
     drawVenueStrip(ctx, {
       xOfKm: (km) => (km - marks.fromKm) * 1000 * mToPx, pxPerM: mToPx, cssW,
       top: cssH - venueStrip.px, height: venueStrip.px, roadSide: "top",
-      dayFraction, t: animT, host: venueStrip.host, eventTitle: venueStrip.title,
+      dayFraction, t: animT, host: venueStrip.host, eventTitle: venueStrip.title, leaving: venueStrip.leaving,
     });
   }
 

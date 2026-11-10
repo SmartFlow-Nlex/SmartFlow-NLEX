@@ -873,7 +873,8 @@ export async function getIncidentListFromDb(status: string) {
              f.alert_type      AS type,
              COALESCE(NULLIF(d.severity_level, ''), f.subtype, f.alert_type) AS severity,
              f.street, f.city,
-             f.report_description,
+             -- report_description (the reporter's free text) is not served: this endpoint is public and the text can
+             -- carry anything a driver typed (security audit #6, 9 Nov 2026).
              f.reliability, f.confidence,
              f.is_active,
              f.mttc_minutes    AS clearance_time_mins,
@@ -1051,13 +1052,22 @@ import type { IncidentPredictiveResult } from "../validators/incident.validator.
 // validation window, since this lookup backs both the chart's daily rows and
 // the Range-independent holdout join used by weatherMetrics.
 const DAILY_WET_SQL = `
-  WITH hourly AS (
-    SELECT (timestamp_utc + interval '8 hours')::date AS d,
-           EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
-           AVG(rainfall) AS avg_rain
+  WITH pts AS (
+    -- One reading per weather point: from 21 to 31 Oct 2026 three points are stored under two spellings at the same
+    -- coordinates, which would weight them twice. The same rule as traffic.service.ts recordedDailyWeather, so both
+    -- forecast charts show the same rain for the same day (5 Nov 2026).
+    SELECT timestamp_utc, round(latitude::numeric, 3) AS la, round(longitude::numeric, 3) AS lo,
+           AVG(rainfall) AS rainfall
     FROM hourly_weather
     WHERE (timestamp_utc + interval '8 hours')::date >= $1::date
       AND (timestamp_utc + interval '8 hours')::date <= $2::date
+    GROUP BY 1, 2, 3
+  ),
+  hourly AS (
+    SELECT (timestamp_utc + interval '8 hours')::date AS d,
+           EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
+           AVG(rainfall) AS avg_rain
+    FROM pts
     GROUP BY 1, 2
   )
   SELECT d::text AS date,

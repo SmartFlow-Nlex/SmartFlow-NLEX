@@ -4,11 +4,17 @@ import compression from "compression";
 import express from "express";
 import morgan from "morgan";
 import { rateLimit } from "express-rate-limit";
+import helmet from "helmet";
 import apiRoutes from "./routes/index.js";
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
 
 export const app = express();
+/* Security headers (security audit #12, 9 Nov 2026): no "X-Powered-By: Express" telling a scanner what to try, plus
+   helmet's defaults (nosniff, frame denial, HSTS, a strict CSP on the API's own responses, referrer policy). The
+   dashboard reads this API cross-origin, so the resource policy allows cross-origin reads; CORS still decides who. */
+app.disable("x-powered-by");
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 // Real client addresses behind a hosting proxy (see TRUST_PROXY in config/env.ts). Off unless configured.
 if (env.TRUST_PROXY) app.set("trust proxy", env.TRUST_PROXY);
 

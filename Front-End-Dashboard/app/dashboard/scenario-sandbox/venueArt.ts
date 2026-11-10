@@ -45,7 +45,7 @@ const CDV_ACCESS_KM = 25.726;
 /** The km span the strip is worth adding for: both venues and the CDV plazas, with a little road either side. */
 export const VENUE_SPAN_KM: readonly [number, number] = [25.55, 26.3];
 /** Height of the venue strip, px. */
-export const VENUE_STRIP_PX = 140;
+export const VENUE_STRIP_PX = 156;
 
 /** Which venue an event is at: the stadium when the calendar names it, otherwise the Arena. */
 export function venueOf(venue: string | null | undefined): VenueKey {
@@ -67,6 +67,9 @@ export type VenueStripOpts = {
   /** The venue hosting the chosen event day, and what is on. */
   readonly host: VenueKey | null;
   readonly eventTitle: string | null;
+  /** How strongly the crowd is leaving at this hour: the measured ratio of CDV southbound entries to a normal hour,
+   *  minus one (0 = no exodus). Drives the cars streaming out to the access road; nothing is drawn when it is 0. */
+  readonly leaving?: number;
 };
 
 const mix = (a: number, b: number, f: number) => Math.round(a + (b - a) * f);
@@ -78,172 +81,312 @@ function hash(n: number): number {
   return x - Math.floor(x);
 }
 
+/** A running-track shape: straight sides and round ends, its long axis across the screen's height. */
+function capsule(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, h: number): void {
+  const r = Math.min(w, h) / 2;
+  ctx.beginPath();
+  ctx.moveTo(cx - w / 2, cy - h / 2 + r);
+  ctx.arc(cx, cy - h / 2 + r, r, Math.PI, 0);
+  ctx.lineTo(cx + w / 2, cy + h / 2 - r);
+  ctx.arc(cx, cy + h / 2 - r, r, 0, Math.PI);
+  ctx.closePath();
+}
+
 /**
- * The venue strip: the CDV access road leaving the northbound plazas, a service road along it, and the two venues at
- * their own km, the one hosting the day's event lit and labelled with it, its car park filling.
+ * The venue strip (redrawn 10 Nov 2026 at the user's request: the raw footprints read as a fan and a dark blob).
+ *
+ * Each venue still stands at its TRUE km and keeps its real size along the road and away from it (OpenStreetMap
+ * footprints, sized to the strip). Its plan is drawn the way it reads from above rather than as the raw outline: the
+ * Arena as its dome, the Stadium as stands round a track round a pitch, with floodlights. A car park beside each,
+ * full on its event day. When the crowd is leaving (measured: CDV's southbound entries run above a normal hour), cars
+ * stream from the host venue along the service road and up the access road towards the CDV plazas. Each venue
+ * carries a small card: its name, how far east it really is, and on its event day what is on and what the crowd is
+ * doing.
  */
 export function drawVenueStrip(ctx: CanvasRenderingContext2D, o: VenueStripOpts): void {
   const { xOfKm, top, height: h, cssW, dayFraction: day, t } = o;
   const away = o.roadSide === "top" ? 1 : -1; // screen direction from the road side into the strip (east)
   const roadEdgeY = o.roadSide === "top" ? top : top + h;
   const night = 1 - day;
+  const leaving = Math.max(0, o.leaving ?? 0);
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, top, cssW, h);
   ctx.clip();
 
-  // A soft edge where the strip starts, so it reads as land further off rather than more verge.
-  const fade = ctx.createLinearGradient(0, roadEdgeY, 0, roadEdgeY + away * h);
-  fade.addColorStop(0, "rgba(0,0,0,0)");
-  fade.addColorStop(1, `rgba(0,0,0,${(0.1 + 0.15 * night).toFixed(2)})`);
-  ctx.fillStyle = fade;
+  // The grounds: a gentle land tint, darker away from the road, and a hairline where the verge ends.
+  const ground = ctx.createLinearGradient(0, roadEdgeY, 0, roadEdgeY + away * h);
+  ground.addColorStop(0, rgb([14, 20, 18], [176, 190, 160], day, 0.55));
+  ground.addColorStop(1, rgb([8, 12, 12], [150, 166, 136], day, 0.75));
+  ctx.fillStyle = ground;
   ctx.fillRect(0, top, cssW, h);
-
-  // The service road through the venue grounds, and the access road joining it from the CDV northbound plazas.
-  const serviceY = roadEdgeY + away * 16;
-  const asphalt = rgb([28, 32, 38], [104, 110, 118], day);
-  ctx.strokeStyle = asphalt;
-  ctx.lineCap = "round";
-  ctx.lineWidth = 7;
-  const xs = VENUES.map((v) => xOfKm(v.centreKm));
-  const x0 = Math.min(xOfKm(CDV_ACCESS_KM), ...xs) - 30;
-  const x1 = Math.max(xOfKm(CDV_ACCESS_KM), ...xs) + 30;
+  ctx.strokeStyle = rgb([60, 70, 80], [120, 130, 120], day, 0.6);
+  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(xOfKm(CDV_ACCESS_KM), roadEdgeY);
-  ctx.lineTo(xOfKm(CDV_ACCESS_KM), serviceY);
+  ctx.moveTo(0, roadEdgeY + away * 0.5);
+  ctx.lineTo(cssW, roadEdgeY + away * 0.5);
+  ctx.stroke();
+
+  // The access road off the CDV northbound plazas and the service road running past both venues.
+  const serviceY = roadEdgeY + away * 20;
+  const accessX = xOfKm(CDV_ACCESS_KM);
+  const xs = VENUES.map((v) => xOfKm(v.centreKm));
+  const x0 = Math.min(accessX, ...xs) - 70;
+  const x1 = Math.max(accessX, ...xs) + 70;
+  ctx.lineCap = "round";
+  ctx.strokeStyle = rgb([30, 34, 40], [96, 102, 110], day);
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.moveTo(accessX, roadEdgeY);
+  ctx.lineTo(accessX, serviceY);
   ctx.moveTo(x0, serviceY);
   ctx.lineTo(x1, serviceY);
   ctx.stroke();
-  ctx.strokeStyle = rgb([120, 110, 70], [236, 226, 160], day, 0.8);
+  ctx.strokeStyle = rgb([150, 140, 90], [244, 236, 180], day, 0.75);
   ctx.lineWidth = 1;
-  ctx.setLineDash([5, 6]);
+  ctx.setLineDash([6, 7]);
   ctx.beginPath();
   ctx.moveTo(x0, serviceY);
   ctx.lineTo(x1, serviceY);
+  ctx.moveTo(accessX, roadEdgeY + away * 2);
+  ctx.lineTo(accessX, serviceY);
   ctx.stroke();
   ctx.setLineDash([]);
-  ctx.fillStyle = rgb([150, 160, 175], [70, 78, 90], day);
+  ctx.fillStyle = rgb([160, 170, 182], [60, 68, 80], day, 0.9);
   ctx.font = "600 9px system-ui";
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  ctx.fillText("CDV access road", xOfKm(CDV_ACCESS_KM) + 7, roadEdgeY + away * 7);
-  // How to read the strip, beside the access road's name, clear of the venues and their labels.
-  ctx.fillText("Venues at their true km, footprints from OpenStreetMap · distance east not to scale", xOfKm(CDV_ACCESS_KM) + 100, roadEdgeY + away * 7);
+  ctx.fillText("CDV access road", accessX + 8, roadEdgeY + away * 9);
 
-  // Each venue at its true km. The footprint keeps its real shape at one scale both ways, sized to the strip.
-  const room = h - 30;
+  const room = h - 52; // the venues' height on screen, below the service road and the car park, with a margin
+  type Placed = { v: (typeof VENUES)[number]; cx: number; cy: number; w: number; hgt: number; hosting: boolean };
+  const placed: Placed[] = [];
   for (const v of VENUES) {
     const cx = xOfKm(v.centreKm);
     const extE = Math.max(...v.outline.map((p) => Math.abs(p[1])));
     const extA = Math.max(...v.outline.map((p) => Math.abs(p[0])));
     const k = Math.min(o.pxPerM, room / (2 * extE));
-    if (cx + extA * k < -40 || cx - extA * k > cssW + 40) continue;
-    const cy = serviceY + away * (8 + extE * k);
-    const pt = (p: readonly [number, number], s = 1): [number, number] => [cx + p[0] * k * s, cy + away * p[1] * k * s];
-    const path = (s = 1) => {
-      ctx.beginPath();
-      v.outline.forEach((p, i) => {
-        const [x, y] = pt(p, s);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.closePath();
-    };
-    const hosting = o.host === v.key;
+    const w = 2 * extA * k;
+    const hgt = 2 * extE * k;
+    if (cx + w < -60 || cx - w > cssW + 60) continue;
+    const cy = serviceY + away * (26 + hgt / 2);
+    placed.push({ v, cx, cy, w, hgt, hosting: o.host === v.key });
+  }
 
-    // Its car park, between the service road and the building: full on its event day, a few cars otherwise.
-    const lotW = extA * k * 2.1;
-    const lotY = serviceY + away * 5;
-    ctx.fillStyle = rgb([24, 28, 34], [120, 126, 134], day, 0.75);
-    ctx.fillRect(cx - lotW / 2, Math.min(lotY, lotY + away * 6), lotW, 6);
-    const cars = Math.floor(lotW / 5);
-    for (let i = 0; i < cars; i++) {
-      if (hash(i + v.osmWay) > (hosting ? 0.9 : 0.18)) continue;
-      ctx.fillStyle = ["#d9dde3", "#9aa3ad", "#3b4350", "#b33a3a", "#2f5d9e", "#e8e2d0"][Math.floor(hash(i * 3 + 1) * 6)];
-      ctx.fillRect(cx - lotW / 2 + i * 5 + 1, Math.min(lotY, lotY + away * 6) + 1.2, 3, 3.6);
+  for (const p of placed) {
+    const { v, cx, cy, w, hgt, hosting } = p;
+
+    // The car park between the service road and the venue: two rows of marked stalls, nearly full on its event day.
+    const lotW = Math.max(w * 1.5, 70);
+    const lotH = 16;
+    const ly0 = Math.min(serviceY + away * 6, serviceY + away * (6 + lotH));
+    ctx.fillStyle = rgb([24, 28, 34], [124, 130, 138], day, 0.9);
+    ctx.beginPath();
+    ctx.roundRect(cx - lotW / 2, ly0, lotW, lotH, 3);
+    ctx.fill();
+    ctx.strokeStyle = rgb([70, 78, 88], [196, 200, 206], day, 0.55);
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(cx - lotW / 2 + 3, ly0 + lotH / 2);
+    ctx.lineTo(cx + lotW / 2 - 3, ly0 + lotH / 2);
+    ctx.stroke();
+    const stalls = Math.floor((lotW - 6) / 5);
+    for (let row = 0; row < 2; row++) {
+      for (let i = 0; i < stalls; i++) {
+        if (hash(i + row * 97 + v.osmWay) > (hosting ? 0.9 : 0.18)) continue;
+        ctx.fillStyle = ["#d9dde3", "#9aa3ad", "#3b4350", "#b33a3a", "#2f5d9e", "#e8e2d0"][Math.floor(hash(i * 3 + row + 1) * 6)];
+        ctx.fillRect(cx - lotW / 2 + 3 + i * 5 + 0.8, ly0 + 1.5 + row * (lotH / 2), 3.2, lotH / 2 - 3);
+      }
     }
 
-    // Shadow, then the building.
-    ctx.save();
-    ctx.translate(2, away * 2);
-    path();
-    ctx.fillStyle = `rgba(0,0,0,${(0.25 + 0.15 * day).toFixed(2)})`;
+    // A soft shadow under the building.
+    ctx.fillStyle = `rgba(0,0,0,${(0.22 + 0.14 * day).toFixed(2)})`;
+    ctx.beginPath();
+    ctx.ellipse(cx + 3, cy + away * 3, w / 2, hgt / 2, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.restore();
+
+    // Lit for the show after dark: a pulsing halo round the host venue.
+    if (hosting && night > 0.05) {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const glow = ctx.createRadialGradient(cx, cy, Math.min(w, hgt) * 0.3, cx, cy, Math.max(w, hgt) * 0.85);
+      const a = (0.22 + 0.08 * Math.sin(t * 2.2)) * night;
+      glow.addColorStop(0, `rgba(171,157,255,${a.toFixed(3)})`);
+      glow.addColorStop(1, "rgba(171,157,255,0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(cx - w * 1.2, cy - hgt, w * 2.4, hgt * 2);
+      ctx.restore();
+    }
+
+    const rim = hosting ? `rgba(171,157,255,${(0.8 + 0.2 * Math.sin(t * 2.4)).toFixed(2)})` : rgb([24, 28, 34], [120, 128, 140], day);
     if (v.key === "arena") {
-      // The Arena's roof: a pale shell, ribbed from its flat (northern) side, as it looks from above.
-      path();
-      const roof = ctx.createLinearGradient(cx - extA * k, cy, cx + extA * k, cy);
-      roof.addColorStop(0, rgb([70, 78, 92], [214, 220, 228], day));
-      roof.addColorStop(1, rgb([110, 118, 132], [246, 248, 250], day));
-      ctx.fillStyle = roof;
+      // The Arena from above: a shallow dome lit from the top left, ringed and ribbed like its roof.
+      const dome = ctx.createRadialGradient(cx - w * 0.18, cy - hgt * 0.2, 2, cx, cy, Math.max(w, hgt) / 2);
+      dome.addColorStop(0, rgb([150, 158, 172], [252, 253, 255], day));
+      dome.addColorStop(0.7, rgb([92, 100, 116], [214, 220, 230], day));
+      dome.addColorStop(1, rgb([58, 64, 76], [176, 184, 196], day));
+      ctx.fillStyle = dome;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, w / 2, hgt / 2, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.save();
-      path();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, w / 2, hgt / 2, 0, 0, Math.PI * 2);
       ctx.clip();
-      ctx.strokeStyle = rgb([50, 56, 66], [168, 176, 188], day, 0.9);
-      ctx.lineWidth = 1;
-      const hub = pt([58.6, 0]);
-      for (let i = 0; i < v.outline.length; i += 2) {
-        const [x, y] = pt(v.outline[i]);
+      ctx.strokeStyle = rgb([44, 50, 60], [160, 168, 182], day, 0.7);
+      ctx.lineWidth = 0.8;
+      for (const f of [0.35, 0.62, 0.84]) {
         ctx.beginPath();
-        ctx.moveTo(hub[0], hub[1]);
-        ctx.lineTo(x, y);
+        ctx.ellipse(cx, cy, (w / 2) * f, (hgt / 2) * f, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * (w / 2) * 0.35, cy + Math.sin(a) * (hgt / 2) * 0.35);
+        ctx.lineTo(cx + Math.cos(a) * (w / 2), cy + Math.sin(a) * (hgt / 2));
         ctx.stroke();
       }
       ctx.restore();
-    } else {
-      // The stadium from above: stands round a running track round a pitch.
-      path();
-      ctx.fillStyle = rgb([62, 68, 78], [196, 200, 206], day);
-      ctx.fill();
-      path(0.74);
-      ctx.fillStyle = rgb([92, 46, 36], [190, 92, 66], day);
-      ctx.fill();
-      path(0.6);
-      ctx.fillStyle = rgb([24, 60, 30], [78, 150, 74], day);
-      ctx.fill();
-      ctx.strokeStyle = rgb([200, 210, 200], [240, 246, 240], day, 0.7);
-      ctx.lineWidth = 0.8;
+      ctx.fillStyle = rgb([170, 178, 192], [255, 255, 255], day, 0.9);
       ctx.beginPath();
-      ctx.moveTo(cx, cy - extE * k * 0.6);
-      ctx.lineTo(cx, cy + extE * k * 0.6);
+      ctx.ellipse(cx, cy, (w / 2) * 0.12, (hgt / 2) * 0.12, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = hosting ? 2.2 : 1.2;
+      ctx.strokeStyle = rim;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, w / 2, hgt / 2, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      // The Stadium from above: concrete stands, a red running track, a pitch with its markings, four floodlights.
+      capsule(ctx, cx, cy, w, hgt);
+      ctx.fillStyle = rgb([70, 76, 86], [198, 202, 208], day);
+      ctx.fill();
+      capsule(ctx, cx, cy, w * 0.78, hgt * 0.82);
+      ctx.fillStyle = rgb([118, 52, 40], [196, 96, 70], day);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 0.6;
+      for (const f of [0.71, 0.64]) {
+        capsule(ctx, cx, cy, w * f, hgt * (f + 0.06));
+        ctx.stroke();
+      }
+      const pw = w * 0.42;
+      const ph = hgt * 0.52;
+      const lit = night > 0.05 ? (0.25 + 0.75 * night) * (hosting ? 1 : 0.4) : 0;
+      ctx.fillStyle = rgb([30, 82, 40], [84, 160, 80], Math.max(day, lit * 0.6));
+      ctx.fillRect(cx - pw / 2, cy - ph / 2, pw, ph);
+      ctx.strokeStyle = "rgba(255,255,255,0.75)";
+      ctx.lineWidth = 0.8;
+      ctx.strokeRect(cx - pw / 2, cy - ph / 2, pw, ph);
+      ctx.beginPath();
+      ctx.moveTo(cx - pw / 2, cy);
+      ctx.lineTo(cx + pw / 2, cy);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, Math.min(pw, ph) * 0.16, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeRect(cx - pw * 0.25, cy - ph / 2, pw * 0.5, ph * 0.14);
+      ctx.strokeRect(cx - pw * 0.25, cy + ph / 2 - ph * 0.14, pw * 0.5, ph * 0.14);
+      // Floodlight masts at the four corners of the stands; their pools light the pitch after dark.
+      for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+        const mx = cx + dx * w * 0.44;
+        const my = cy + dy * hgt * 0.4;
+        if (lit > 0) {
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          const g = ctx.createRadialGradient(mx, my, 0, mx, my, w * 0.35);
+          g.addColorStop(0, `rgba(255,248,220,${(0.5 * lit).toFixed(2)})`);
+          g.addColorStop(1, "rgba(255,248,220,0)");
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(mx, my, w * 0.35, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+        ctx.fillStyle = lit > 0 ? "#fff6d8" : rgb([120, 126, 136], [90, 96, 106], day);
+        ctx.beginPath();
+        ctx.arc(mx, my, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.lineWidth = hosting ? 2.2 : 1.2;
+      ctx.strokeStyle = rim;
+      capsule(ctx, cx, cy, w, hgt);
       ctx.stroke();
     }
-    path();
-    ctx.lineWidth = hosting ? 2.2 : 1;
-    ctx.strokeStyle = hosting ? `rgba(171,157,255,${(0.75 + 0.25 * Math.sin(t * 2.4)).toFixed(2)})` : rgb([20, 24, 30], [96, 104, 116], day);
-    ctx.stroke();
-    if (hosting && night > 0.05) {
-      // Lit for the show after dark.
-      ctx.save();
-      ctx.globalCompositeOperation = "lighter";
-      path(1.12);
-      ctx.fillStyle = `rgba(171,157,255,${(0.16 * night).toFixed(2)})`;
-      ctx.fill();
-      ctx.restore();
-    }
+  }
 
-    // The label beside it: the name, how far it really is, and on its day what is on.
-    const lx = cx + extA * k + 8;
-    const ly = cy;
-    const lines = [v.name, `${(v.eastM / 1000).toFixed(1)} km east of NLEX · Km ${v.centreKm.toFixed(2)}`];
-    if (hosting && o.eventTitle) lines.push(`Event day: ${o.eventTitle}`);
-    ctx.font = "700 11px system-ui";
-    const w = Math.max(...lines.map((s, i) => { ctx.font = i === 0 ? "700 11px system-ui" : "500 10px system-ui"; return ctx.measureText(s).width; })) + 12;
-    const bh = lines.length * 13 + 6;
-    ctx.fillStyle = hosting ? "rgba(36,26,84,0.88)" : "rgba(8,13,25,0.72)";
+  // The crowd leaving: cars stream from the host venue's car park along the service road and up the access road to
+  // the CDV plazas. How many follows the measured exodus at this hour.
+  const host = placed.find((p) => p.hosting);
+  if (host && leaving > 0.05) {
+    const n = Math.round(4 + Math.min(1, leaving / 3) * 14);
+    const legA = Math.abs(host.cx - accessX);
+    const legB = Math.abs(serviceY - roadEdgeY);
+    const len = legA + legB;
+    for (let i = 0; i < n; i++) {
+      const s = ((t * 0.09 + i / n) % 1) * len;
+      let x: number;
+      let y: number;
+      if (s < legA) {
+        x = host.cx + Math.sign(accessX - host.cx) * s;
+        y = serviceY + (i % 2 ? 2 : -2);
+      } else {
+        x = accessX + (i % 2 ? 2 : -2);
+        y = serviceY - away * (s - legA);
+      }
+      const vertical = s >= legA;
+      ctx.fillStyle = ["#e8ecf1", "#b9c2cc", "#c0453c", "#3b6fb6", "#8a94a3"][i % 5];
+      if (vertical) ctx.fillRect(x - 2, y - 3, 4, 6);
+      else ctx.fillRect(x - 3, y - 2, 6, 4);
+      if (night > 0.3) {
+        ctx.fillStyle = `rgba(255,236,180,${(0.75 * night).toFixed(2)})`;
+        ctx.beginPath();
+        ctx.arc(x, y, 1.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  // The cards: name, how far east it really is, and on its day what is on and what the crowd is doing.
+  for (const p of placed) {
+    const { v, cx, cy, w, hosting } = p;
+    const lines: { text: string; font: string; color: string }[] = [
+      { text: v.name, font: "700 12px system-ui", color: "#ffffff" },
+      { text: `${(v.eastM / 1000).toFixed(1)} km east of NLEX · Km ${v.centreKm.toFixed(2)}`, font: "500 10px system-ui", color: "rgba(226,232,240,0.82)" },
+    ];
+    if (hosting && o.eventTitle) lines.push({ text: `Tonight: ${o.eventTitle}`, font: "600 10.5px system-ui", color: "#e4ddff" });
+    if (hosting && leaving > 0.05) lines.push({ text: `Crowd leaving · CDV entries ×${(1 + leaving).toFixed(1)} a normal hour`, font: "600 10px system-ui", color: "#ffd38a" });
+    const widths = lines.map((l) => { ctx.font = l.font; return ctx.measureText(l.text).width; });
+    const bw = Math.max(...widths) + 22;
+    const bh = lines.length * 14 + 10;
+    let bx = cx + w / 2 + 12;
+    if (bx + bw > cssW - 6) bx = cx - w / 2 - 12 - bw;
+    const by = Math.max(top + 4, Math.min(top + h - bh - 4, cy - bh / 2));
+    ctx.fillStyle = hosting ? "rgba(34,24,78,0.9)" : "rgba(10,15,28,0.78)";
     ctx.beginPath();
-    ctx.roundRect(lx, ly - bh / 2, w, bh, 4);
+    ctx.roundRect(bx, by, bw, bh, 6);
     ctx.fill();
-    lines.forEach((s, i) => {
-      ctx.font = i === 0 ? "700 11px system-ui" : "500 10px system-ui";
-      ctx.fillStyle = i === 2 ? "#d9d2ff" : i === 0 ? "#ffffff" : "rgba(226,232,240,0.85)";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
-      ctx.fillText(s, lx + 6, ly - bh / 2 + 3 + 13 * i + 6.5);
+    ctx.fillStyle = hosting ? "#ab9dff" : "rgba(148,163,184,0.7)";
+    ctx.beginPath();
+    ctx.roundRect(bx, by, 3, bh, [6, 0, 0, 6]);
+    ctx.fill();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    lines.forEach((l, i) => {
+      ctx.font = l.font;
+      ctx.fillStyle = l.color;
+      ctx.fillText(l.text, bx + 11, by + 5 + 14 * i + 7);
     });
   }
+
+  // How to read the strip, small, in the far corner.
+  ctx.font = "500 9px system-ui";
+  ctx.fillStyle = rgb([130, 140, 152], [70, 78, 90], day, 0.85);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  // Beside the access road's name, on the strip's open top line, clear of both venues and their cards.
+  ctx.fillText("Venues at their true km · sizes from OpenStreetMap · distance east not to scale", accessX + 100, roadEdgeY + away * 9);
 
   ctx.restore();
 }

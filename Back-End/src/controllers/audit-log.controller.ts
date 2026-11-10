@@ -98,7 +98,7 @@ export const getAuditSummary = async (req: Request, res: Response) => {
     res.json({ success: true, source: "database", data });
   } catch (e: any) {
     console.error("[audit] summary failed:", e);
-    res.status(500).json({ success: false, message: `Audit summary failed: ${e.message}` });
+    res.status(500).json({ success: false, message: "Audit summary failed. The server log has the detail." });
   }
 };
 

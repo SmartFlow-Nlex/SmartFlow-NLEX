@@ -5508,6 +5508,24 @@ body {
   font-weight: 600;
   color: var(--text-secondary, #475569);
 }
+/* Flood as the likely cause of a jam (8 Nov 2026): the jam card's line and the flood report's finding. */
+.mjp-flood {
+  font-weight: 600;
+  color: var(--text-primary, #0f172a);
+  padding-top: 6px;
+}
+.mjp-flood::before { content: "8  "; color: #3b82f6; font-weight: 700; }
+.wz-rd-flood {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-left: 3px solid #3b82f6;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.08);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-primary, #0f172a);
+}
+
 .wz-rd-when {
   margin: 6px 0 0;
   font-size: 0.75rem;
@@ -9411,6 +9429,18 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   cursor: pointer;
 }
 .sandbox-event-clear:hover { border-color: var(--text-muted); }
+/* Typical / Busy night (10 Nov 2026): a two-button switch inline in the note. */
+.sandbox-event-crowd { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border-default); border-radius: 7px; vertical-align: middle; }
+.sandbox-event-crowd button {
+  padding: 1px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.sandbox-event-crowd button.active { background: var(--color-purple); color: #fff; }
 
 /* --- the controls stay with you ----------------------------------------
    The left column runs to roughly twice the viewport in Both mode, so without

@@ -49,3 +49,8 @@ __pycache__/
 
 # Hourly weather loader output (smartflow_scripts/1_data_loading/weather)
 smartflow_scripts/1_data_loading/weather/fetch_weather.log*
+
+# Security audit (9 Nov 2026): runtime logs carry the database hostname and error dumps, and release/ holds the
+# 400 MB desktop installer; neither belongs in a public repo.
+smartflow_scripts/_work/logs/
+Front-End-Dashboard/release/

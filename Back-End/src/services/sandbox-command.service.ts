@@ -1,4 +1,5 @@
 import { chat, extractJson, GlmError, isGlmConfigured } from "../lib/glm.client.js";
+import { maskPersonalDetails } from "../lib/pii.js";
 import { kmMeasured, kmPost } from "../lib/km-post.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -1286,10 +1287,12 @@ export function promptFor(ctx: SandboxContext): string {
 }
 
 export async function parseCommand(command: string, ctx: SandboxContext): Promise<CommandPlan> {
+  // Emails, phone numbers and plate codes never reach the AI provider (lib/pii.ts, security audit #15).
+  const safeCommand = maskPersonalDetails(command).text;
   const ask = async () => {
     const content = await chat({
       system: promptFor(ctx),
-      user: command,
+      user: safeCommand,
       json: true,
       // GLM always reasons and the reasoning is billed against this budget; the prompt carries the corridor's
       // places, the operators' words in three languages and the rules for seventeen kinds of action. A truncated

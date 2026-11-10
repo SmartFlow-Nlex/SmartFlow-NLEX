@@ -8,7 +8,7 @@ const SUPABASE_KEY = 'REMOVED';
 
 // AWS RDS target
 const pool = new pg.Pool({
-  host: 'smartflow.cn4wwa2i4cux.ap-southeast-1.rds.amazonaws.com',
+  host: '<RDS_HOST>',
   port: 5432,
   user: 'postgres',
   password: 'REMOVED',

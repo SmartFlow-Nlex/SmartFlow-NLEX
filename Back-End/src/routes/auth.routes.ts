@@ -1,6 +1,6 @@
 import { Router, type Response } from "express";
 import { asyncHandler } from "../middleware/error.middleware.js";
-import { authenticateToken, requestPassedCode, type AuthenticatedRequest } from "../middleware/auth.middleware.js";
+import { authenticateToken, requestPassedCode, verifiedUser, DEVICE_TRUST_HEADER, type AuthenticatedRequest } from "../middleware/auth.middleware.js";
 import { deviceTrustEnabled, issueDeviceTrust, DEVICE_TRUST_DAYS } from "../lib/device-trust.js";
 import { audit } from "../services/audit.js";
 import { mailConfigured, sendPasswordChanged, sendPasswordReset, sendResetRefused } from "../lib/mailer.js";
@@ -17,6 +17,17 @@ const router = Router();
 router.get("/trusted-device/status", (_req, res) => {
   res.json({ success: true, data: { enabled: deviceTrustEnabled(), days: DEVICE_TRUST_DAYS } });
 });
+
+// GET /api/auth/role -- the caller's role as the SERVER decides it (lib/user-roles.ts), including "pending" for an
+// account nobody has assigned a role yet. The dashboard shows pages by this answer, not by the user-editable
+// user_metadata it used to read (security audit, 9 Nov 2026). The backend enforces the same role on every route.
+router.get("/role", asyncHandler(async (req, res) => {
+  res.locals.authRequired = true;
+  const token = req.headers.authorization?.split(" ")[1];
+  const who = await verifiedUser(token, req.header(DEVICE_TRUST_HEADER) ?? undefined);
+  if (!who) return res.status(401).json({ success: false, code: "token_invalid", message: "Sign in to see your role" });
+  res.json({ success: true, data: { role: who.role } });
+}));
 
 // POST /api/auth/trusted-device -- issue a pass. Only a session that has just passed the authenticator code
 // may ask: a pass cannot be renewed with another pass, so trust never extends itself past seven days.

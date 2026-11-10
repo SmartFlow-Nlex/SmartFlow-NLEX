@@ -14,6 +14,7 @@ import { z } from "zod";
 import { getTrafficPrescriptive } from "../services/traffic-prescriptive.service.js";
 import { cached } from "../utils/ttl-cache.js";
 import { getForecast48h } from "../services/forecast-48h.service.js";
+import { getRainEffect } from "../services/rain-effect.service.js";
 
 // GET /api/traffic/analytics — descriptive dashboard aggregates
 export const getTrafficAnalytics = async (req: Request, res: Response) => {
@@ -249,6 +250,17 @@ export const getWeatherEvidence = async (_req: Request, res: Response) => {
   const data = await getWeatherEvidenceFromDb();
   if (!data) {
     return res.status(503).json({ success: false, message: "Weather evidence unavailable: database not reachable" });
+  }
+  res.json({ success: true, source: "database", data });
+};
+
+// GET /api/traffic/rain-effect
+// Rain's association with daily volume, crash rates and live jams, each rainy day or hour compared with dry ones like
+// for like (services/rain-effect.service.ts). Public like /weather-evidence: aggregates only.
+export const getRainEffectHandler = async (_req: Request, res: Response) => {
+  const data = await getRainEffect();
+  if (!data) {
+    return res.status(503).json({ success: false, message: "Rain effect unavailable: database not reachable" });
   }
   res.json({ success: true, source: "database", data });
 };

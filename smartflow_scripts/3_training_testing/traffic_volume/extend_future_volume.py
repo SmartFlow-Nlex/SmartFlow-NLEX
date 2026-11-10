@@ -56,11 +56,50 @@ print(f"\nseries: {len(df):,} days, last actual {df.ds.max().date()}")
 
 future_dates = pd.date_range(df.ds.max() + pd.Timedelta(days=1), periods=FUTURE_DAYS, freq="D")
 future_df = pd.DataFrame({"ds": future_dates})
+
+# FUTURE WEATHER (5 Nov 2026). A day that has not happened can only be given weather that is knowable, which is a
+# weather forecast; Open-Meteo's runs 16 days from today. Days it covers are forecast by the weather-aware models with
+# that forecast. Every other day is forecast by the model's weather-free twin (WEATHER_TWIN), so no served number rests
+# on assumed weather. This replaced day-of-year climatology ("the normal weather for the date"), which assumed the
+# coming season would be average; measured, weather does not improve the daily forecast anyway (Prophet 6.49% vs
+# Prophet_nw 6.54% WMAPE, 80/20). Climatology still fills those days below, but only as a placeholder so the
+# weather-aware models can run; their output for those days is replaced and the stored weather is NULL.
+WEATHER_TWIN = {"Prophet": "Prophet_nw", "SARIMAX": "SARIMAX_nw", "LSTM": "LSTM_nw"}
+
+
+def real_weather_forecast(dates):
+    """{date: {col: value}} for the dates a real Open-Meteo forecast covers, on the stations' scale: hourly values at
+    the corridor's middle, rain summed and the rest averaged per Manila day. Empty when none of `dates` is within the
+    next 16 days (as when the traffic record ends months before today)."""
+    today = pd.Timestamp.now(tz="Asia/Manila").normalize().tz_localize(None)
+    want = [d for d in dates if today <= d <= today + pd.Timedelta(days=15)]
+    if not want:
+        return {}
+    try:
+        import requests
+        r = requests.get("https://api.open-meteo.com/v1/forecast", timeout=15, params={
+            "latitude": 14.75, "longitude": 120.95, "timezone": "Asia/Manila", "forecast_days": 16,
+            "hourly": "temperature_2m,precipitation,wind_speed_10m,relative_humidity_2m"})
+        r.raise_for_status()
+        h = pd.DataFrame(r.json()["hourly"])
+        h["d"] = pd.to_datetime(h.time).dt.normalize()
+        g = h.groupby("d").agg(total_rain=("precipitation", "sum"), avg_temp=("temperature_2m", "mean"),
+                               avg_wind=("wind_speed_10m", "mean"), avg_humidity=("relative_humidity_2m", "mean"))
+        return {d: g.loc[d].to_dict() for d in want if d in g.index}
+    except Exception as exc:
+        print(f"  Open-Meteo forecast unavailable ({str(exc)[:80]}); those days use the weather-free models")
+        return {}
+
+
+REAL_WX = real_weather_forecast(list(future_dates))
 for c in WEATHER_COLS:
-    future_df[c] = [float(HIST_BY_DOY[c].get(d.dayofyear, df[c].mean())) for d in future_dates]
+    future_df[c] = [float(REAL_WX[d][c]) if d in REAL_WX else float(HIST_BY_DOY[c].get(d.dayofyear, df[c].mean()))
+                    for d in future_dates]
+real_mask = np.array([d in REAL_WX for d in future_dates])
 
 print(f"projecting {FUTURE_DAYS} days: {future_dates[0].date()} -> {future_dates[-1].date()}")
-print("weather over this window is day-of-year climatology, not observation\n")
+print(f"a real weather forecast covers {int(real_mask.sum())} of them; the rest are forecast by the weather-free "
+      f"twins ({', '.join(f'{a}->{b}' for a, b in WEATHER_TWIN.items())})\n")
 
 preds = {}
 for name, fn in MODELS.items():
@@ -76,6 +115,11 @@ for name, fn in MODELS.items():
     except Exception as exc:
         preds[name] = np.full(FUTURE_DAYS, np.nan)
         print(f"  {name:<14} FAILED: {str(exc)[:70]}")
+
+# The weather-aware models keep only the days a real weather forecast covers; the rest is their twin's forecast.
+for name, twin in WEATHER_TWIN.items():
+    if name in preds and twin in preds:
+        preds[name] = np.where(real_mask, preds[name], preds[twin])
 
 conn = psycopg2.connect(PG)
 cur = conn.cursor()
@@ -107,7 +151,9 @@ for arm in arms:
             VALUES (%s,NULL,%s,%s,%s,%s,%s,false,true,%s,%s,%s,%s,%s,%s)""",
             (ds.date(), val("LSTM", i), val("Prophet", i), val("HoltWinters", i),
              val("SARIMAX", i), val("Holts_Linear", i),
-             float(future_df.total_rain.iloc[i]), float(future_df.avg_temp.iloc[i]),
+             # The weather actually behind the day's forecast: a real forecast, or none (NULL).
+             float(future_df.total_rain.iloc[i]) if real_mask[i] else None,
+             float(future_df.avg_temp.iloc[i]) if real_mask[i] else None,
              val("Prophet_nw", i), val("SARIMAX_nw", i), val("LSTM_nw", i), arm))
     print(f"  wrote {FUTURE_DAYS} future rows for split_label={arm}")
 
@@ -136,7 +182,14 @@ cur.execute("""SELECT model_name FROM gold.ml_model_metrics
                ORDER BY rank NULLS LAST LIMIT 1""")
 row = cur.fetchone()
 CHAMP = row[0] if row else "Prophet"
-print(f"\nhorizon study: champion = {CHAMP}")
+# HZ_CHAMPION=<model> studies that model instead of the stored champion (6 Nov 2026): a dry run of the retrain
+# writes no new leaderboard, so the stored champion is still last run's; this lets the new one be measured first.
+if __import__("os").environ.get("HZ_CHAMPION"):
+    CHAMP = __import__("os").environ["HZ_CHAMPION"]
+# What is served past a weather forecast is the champion's weather-free twin (above), and no origin of this study
+# had a weather forecast for its 90 days, so the twin is what gets scored.
+STUDIED = WEATHER_TWIN.get(CHAMP, CHAMP)
+print(f"\nhorizon study: champion = {CHAMP}, scored as served past the weather forecast: {STUDIED}")
 
 HZ_H, HZ_STEP, HZ_N, SEASON = 90, 30, 9, 7
 hz_origins = [len(df) - (HZ_N - i) * HZ_STEP - HZ_H for i in range(HZ_N)]
@@ -157,7 +210,7 @@ for oi, cut in enumerate(hz_origins, 1):
         fdf_o[c] = [float(clim_o[c].loc[k]) if k in clim_o.index else fb
                     for k in fut_o.ds.dt.dayofyear]
 
-    yh = np.asarray(forecast_of(MODELS[CHAMP](tr_o, HZ_H, fdf_o)), dtype=float)
+    yh = np.asarray(forecast_of(MODELS[STUDIED](tr_o, HZ_H, fdf_o)), dtype=float)
     lw = tr_o.y.values[-SEASON:]
     doy_o = tr_o.assign(k=tr_o.ds.dt.dayofyear).groupby("k").y.mean()
     for i in range(HZ_H):
@@ -200,8 +253,14 @@ for lo, hi, n, wm, mp, ms, mae, bw, ok, note in STUDY:
     cur.execute("""INSERT INTO gold.ml_horizon_accuracy
         (target, model_name, h_lo, h_hi, n, wmape, mape, mase, mae, baseline_wmape, usable, note)
         VALUES ('Total Traffic',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-        (CHAMP, lo, hi, n, float(wm), float(mp), float(ms), float(mae), float(bw), ok, note))
+        (STUDIED, lo, hi, n, float(wm), float(mp), float(ms), float(mae), float(bw), ok, note))
 
+# --dry-run (6 Nov 2026): every write above is in this one transaction, so a dry run rolls it back instead.
+if "--dry-run" in __import__("sys").argv:
+    conn.rollback()
+    print("DRY RUN: rolled back, gold.ml_predictive_volume and gold.ml_horizon_accuracy are unchanged.")
+    conn.close()
+    raise SystemExit(0)
 conn.commit()
 cur.execute("""SELECT MIN(forecast_date)::text, MAX(forecast_date)::text, COUNT(*)
                FROM gold.ml_predictive_volume WHERE is_future AND split_label='80_20'""")

@@ -1,6 +1,8 @@
 /**
  * Upload Middleware — Multer configuration for file uploads
- * Accepts CSV, JSON, Excel files up to 100MB
+ * Accepts CSV, JSON, Excel files up to 500 MB: the client's yearly toll exports run 240-320 MB (2022-2026 files).
+ * Both the extension and the type the browser declares must be on the lists (security audit #13, 9 Nov 2026);
+ * the parser still checks the content itself. Only signed-in data analysts reach this middleware.
  */
 import multer from "multer";
 import path from "path";
@@ -39,6 +41,13 @@ function fileFilter(
 
   if (!ACCEPTED_EXTENSIONS.includes(ext)) {
     return cb(new Error(`Unsupported file type: ${ext}. Accepted: ${ACCEPTED_EXTENSIONS.join(", ")}`));
+  }
+  if (file.mimetype && !ACCEPTED_MIMES.includes(file.mimetype.toLowerCase())) {
+    return cb(new Error(`Unsupported content type: ${file.mimetype}. Upload a CSV, JSON or Excel file.`));
+  }
+  // A name carrying a path (slashes or "..") or an absurd length is refused outright.
+  if (/[\\/]|\.\./.test(file.originalname) || file.originalname.length > 200) {
+    return cb(new Error("Unsupported file name."));
   }
 
   cb(null, true);

@@ -181,7 +181,6 @@ export const getMapRealtime = async (_req: Request, res: Response) => {
             uuid: alert.uuid,
             street,
             city: alert.city || "",
-            report_description: alert.report_description || "",
             reliability: alert.reliability || 0,
             confidence: alert.confidence || 0,
             type,

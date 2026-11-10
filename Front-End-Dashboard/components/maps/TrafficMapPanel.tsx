@@ -14,7 +14,8 @@ import { makePredictedQueues, shownForecastState } from "../../lib/predicted-que
 import { useChartTheme } from "../../lib/chart-theme";
 import { mapPalette } from "../../lib/map-palette";
 import { isDisputedReport, isReportType, isUnconfirmedReport } from "../../lib/waze-reports";
-import { lookOf } from "../../lib/waze-report-look";
+import { lookOf, isFloodSubtype } from "../../lib/waze-report-look";
+import { useRainEffect } from "../../lib/rain-effect";
 import nlexRamps from "./nlex-ramps.json";
 import { fmtKm } from "../../lib/km-post";
 import { nearExitsText } from "../../lib/exit-lookup";
@@ -321,6 +322,9 @@ export default function TrafficMapPanel({
   // rather than in a Mapbox popup because a popup is anchored to the pin and
   // scrolls off with it; a panel stays put and has room for the full record.
   const [selectedReport, setSelectedReport] = useState<ReportDetail | null>(null);
+  // The flood finding on a flood report's detail, computed live (GET /api/traffic/rain-effect); fetched only once a
+  // flood report is opened.
+  const floodFinding = useRainEffect(isFloodSubtype(selectedReport?.subtype))?.jams.flood ?? null;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -1797,6 +1801,18 @@ export default function TrafficMapPanel({
         return `Starts ${km(metres)} from ${nm(exit)}`;
       };
 
+      /* A flood report on or near the queue, named as its possible cause (8 Nov 2026). The backend links a jam
+         to the nearest undisputed Waze flood report within 1.5 km (map-live.service.ts, linkFloodsToJams). */
+      const floodCause = (p: Record<string, unknown>) => {
+        if (p.flood_m == null) return "";
+        const m = Number(p.flood_m);
+        const at = typeof p.flood_reported_at === "string" ? new Date(p.flood_reported_at) : null;
+        const when = at && !Number.isNaN(at.getTime())
+          ? ` &middot; ${at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
+        const exit = typeof p.flood_exit === "string" && p.flood_exit ? ` near ${esc(plazaLabel(p.flood_exit))}` : "";
+        return `<div class="mjp-where mjp-flood">Possible cause: flood reported${exit}, ${m < 100 ? "on the queue" : `${km(m)} away`}${when}</div>`;
+      };
+
       // The line and its marker carry identical properties, so both open the
       // same card: whichever one the reader happens to find answers them.
       const onJamMove = (e: mapboxgl.MapLayerMouseEvent) => {
@@ -1893,6 +1909,7 @@ export default function TrafficMapPanel({
                <div class="mjp-where">${where ?? esc(p.street ?? p.nearest_exit ?? "NLEX")}</div>
                ${speed != null && speed > 0 ? row("Speed", `${speed} km/h`) : ""}
                ${running != null && running > 0 ? row("Going on for", mins(running * 60)) : ""}
+               ${floodCause(p)}
              </div>`,
         );
       };
@@ -2820,7 +2837,7 @@ export default function TrafficMapPanel({
              ACCIDENT, POLICE and CONSTRUCTION and sent everything else to the
              generic hazard pin, so all 7 live ROAD_CLOSED reports drew as
              hazards. */
-          const look = lookOf(props.type);
+          const look = lookOf(props.type, props.subtype as string | null | undefined);
           const color = look.colour;
           const iconSvg = look.svg;
 
@@ -3247,9 +3264,15 @@ export default function TrafficMapPanel({
           <div className="wz-report-detail" role="dialog" aria-label="Waze report detail">
             <header>
               <div>
-                <span className="wz-rd-type">{selectedReport.type.replace(/_/g, " ")}</span>
-                {selectedReport.subtype && (
-                  <span className="wz-rd-sub">{selectedReport.subtype.replace(/_/g, " ").toLowerCase()}</span>
+                {isFloodSubtype(selectedReport.subtype) ? (
+                  <span className="wz-rd-type">Flood</span>
+                ) : (
+                  <>
+                    <span className="wz-rd-type">{selectedReport.type.replace(/_/g, " ")}</span>
+                    {selectedReport.subtype && (
+                      <span className="wz-rd-sub">{selectedReport.subtype.replace(/_/g, " ").toLowerCase()}</span>
+                    )}
+                  </>
                 )}
               </div>
               <button type="button" onClick={() => setSelectedReport(null)} aria-label="Close report detail">
@@ -3259,6 +3282,13 @@ export default function TrafficMapPanel({
               </button>
             </header>
 
+            {isFloodSubtype(selectedReport.subtype) && floodFinding && floodFinding.delayMin != null && floodFinding.rainyDelayMin != null && (
+              <p className="wz-rd-flood" title="Each exit-hour with a flood report against rainy hours without one at the same exit, hour of day and part of the week. A link, not proof: drivers already stuck may report water more readily.">
+                On NLEX, hours with a flood report averaged about {floodFinding.delayMin.toFixed(0)} min of delay and a jam
+                {" "}{floodFinding.jamPct?.toFixed(0)}% of the time, against {floodFinding.rainyDelayMin.toFixed(0)} min and
+                {" "}{floodFinding.rainyJamPct?.toFixed(0)}% in rainy hours without one ({floodFinding.exitHours} flood hours, live Waze since Aug 2026).
+              </p>
+            )}
             <p className="wz-rd-where">
               {selectedReport.street ?? "NLEX"}
               {selectedReport.city ? ` · ${selectedReport.city}` : ""}

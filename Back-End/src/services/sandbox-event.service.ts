@@ -31,6 +31,31 @@ export type EventExitProfile = {
   hourly: number[];
 };
 
+/**
+ * The venue's own exit on event nights (10 Nov 2026, the user: an event day at CDV "is not getting traffic").
+ *
+ * The Event Prediction counts CDV/PH Arena as not material (daily uplift 1.097, interval 1.00-1.21), so the profile
+ * above left the venue's own plazas untouched. Hour by hour the records say otherwise: after a concert the entries
+ * towards Manila (southbound) at CDV run several times a normal night between 21:00 and midnight, while arrivals
+ * (northbound exits) barely move on a typical night. So CDV gets its own measured ratios, per movement:
+ *   entries = southbound entries (the post-event exodus), exits = northbound exits (arrivals),
+ * from past event nights held AT the Arena or the Stadium (calendar-derived nights such as New Year countdowns and
+ * events elsewhere, such as Clark, are left out), each hour against the median for that hour on non-event,
+ * non-holiday days of the same weekday and month. "typical" is the median night at each hour, "busy" the 75th
+ * percentile: a night busier than three in four past event nights. Both are measured; neither is an assumption.
+ */
+export type VenueExitProfile = {
+  exit: string;
+  /** Past event nights behind the entry (exodus) and exit (arrival) ratios. */
+  nights: number;
+  exitNights: number;
+  entries: { typical: number[]; busy: number[] };
+  exits: { typical: number[]; busy: number[] };
+  /** Normal vehicles per hour at each hour (for the panel's "about N extra cars"). */
+  normalEntries: number[];
+  normalExits: number[];
+};
+
 export type EventDayPayload = {
   events: { date: string; title: string; isDerived: boolean; capacity: number | null; venue: string | null; extraVehicles: number }[];
   exits: EventExitProfile[];
@@ -39,6 +64,7 @@ export type EventDayPayload = {
   /** The hour of the day the event adds the most vehicles. */
   peakHour: number;
   pastEventDays: number;
+  venue: VenueExitProfile | null;
   method: string;
 };
 
@@ -90,6 +116,7 @@ async function build(): Promise<EventDayPayload | null> {
       ),
       getUpcomingEventSurge(),
     ]);
+    const venue = await buildVenueProfile();
 
     const byExit = new Map<string, { r: number[]; base: number[]; n: number }>();
     for (const row of hourly.rows as { exit: string; hour: number; r: number; base: number; n: number }[]) {
@@ -132,6 +159,7 @@ async function build(): Promise<EventDayPayload | null> {
       addedByHour: added,
       peakHour,
       pastEventDays,
+      venue,
       method:
         "Event Prediction (gold.ml_event_surge_forecast): each affected exit's daily uplift on Philippine Arena days. " +
         "Spread over the day by the same exits' hourly ratios on past calendar event days (gold.fact_traffic_hourly, " +
@@ -139,6 +167,65 @@ async function build(): Promise<EventDayPayload | null> {
     };
   } catch (error) {
     console.error("Failed to build the event-day profile:", error);
+    return null;
+  }
+}
+
+const VENUE_EXIT = "CDV/PH Arena";
+
+async function buildVenueProfile(): Promise<VenueExitProfile | null> {
+  try {
+    const { rows } = await db!.query(
+      `WITH ev AS (
+         SELECT DISTINCT start_date AS d FROM public.philippine_arena_events
+          WHERE start_date IS NOT NULL AND NOT COALESCE(is_derived, false)
+            AND (venue ILIKE '%philippine arena%' OR venue ILIKE '%philippine sports%')),
+       anyev AS (SELECT DISTINCT start_date AS d FROM public.philippine_arena_events WHERE start_date IS NOT NULL),
+       hol AS (SELECT DISTINCT date_day::date AS d FROM public.ph_holidays),
+       h AS (
+         SELECT date, hour, direction, role, SUM(total)::float AS v
+           FROM gold.fact_traffic_hourly
+          WHERE exit_canonical = $1 AND total IS NOT NULL
+            AND ((direction = 'SB' AND role = 'Entry') OR (direction = 'NB' AND role = 'Exit'))
+          GROUP BY 1, 2, 3, 4),
+       base AS (
+         SELECT hour, direction, role, EXTRACT(DOW FROM date)::int AS dow, EXTRACT(MONTH FROM date)::int AS m,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY v) AS b
+           FROM h WHERE date NOT IN (SELECT d FROM anyev) AND date NOT IN (SELECT d FROM hol)
+          GROUP BY 1, 2, 3, 4, 5),
+       evh AS (
+         SELECT h.date, h.hour, h.role, h.v / b.b AS r, b.b
+           FROM h JOIN ev ON ev.d = h.date
+           JOIN base b ON b.hour = h.hour AND b.direction = h.direction AND b.role = h.role
+                      AND b.dow = EXTRACT(DOW FROM h.date)::int AND b.m = EXTRACT(MONTH FROM h.date)::int
+          WHERE h.date NOT IN (SELECT d FROM hol) AND b.b > 0)
+       SELECT role, hour::int,
+              PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r)::float AS typical,
+              PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY r)::float AS busy,
+              AVG(b)::float AS normal, COUNT(DISTINCT date)::int AS nights
+         FROM evh GROUP BY 1, 2`,
+      [VENUE_EXIT],
+    );
+    if (rows.length === 0) return null;
+    const blank = () => Array(24).fill(1) as number[];
+    const out: VenueExitProfile = {
+      exit: VENUE_EXIT, nights: 0, exitNights: 0,
+      entries: { typical: blank(), busy: blank() }, exits: { typical: blank(), busy: blank() },
+      normalEntries: Array(24).fill(0), normalExits: Array(24).fill(0),
+    };
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    for (const row of rows as { role: string; hour: number; typical: number; busy: number; normal: number; nights: number }[]) {
+      if (row.hour < 0 || row.hour > 23) continue;
+      const side = row.role === "Entry" ? out.entries : out.exits;
+      side.typical[row.hour] = r2(Number(row.typical));
+      side.busy[row.hour] = r2(Number(row.busy));
+      (row.role === "Entry" ? out.normalEntries : out.normalExits)[row.hour] = Math.round(Number(row.normal));
+      if (row.role === "Entry") out.nights = Math.max(out.nights, Number(row.nights));
+      else out.exitNights = Math.max(out.exitNights, Number(row.nights));
+    }
+    return out;
+  } catch (error) {
+    console.error("Failed to build the venue exit profile:", error);
     return null;
   }
 }

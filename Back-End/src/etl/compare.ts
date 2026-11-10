@@ -88,3 +88,93 @@ export async function compareRecords(c: PoolClient, table: string, key: string, 
     return null;
   }
 }
+
+/**
+ * The staged toll file (temp table th_fact) against the same period a year earlier in gold.fact_traffic_hourly
+ * (6 Nov 2026). The comparison above measures the file against what is loaded for the SAME days, which for a new
+ * period is often a synthetic or earlier version of it; a year earlier is the real yardstick for "is this plausible":
+ * trips per day by month, each plaza's trips per day, and the class mix. Read-only, in a savepoint, so a failure only
+ * leaves the profile out.
+ */
+export type TollProfile = {
+  months: { month: string; days: number; perDay: number; priorDays: number; priorPerDay: number | null; ratio: number | null }[];
+  plazas: { plaza: string; perDay: number; priorPerDay: number | null; ratio: number | null; flagged: boolean }[];
+  /** Class 1 / 2 / 3 shares of trips, %, in the file and the year before. */
+  classShare: { file: [number, number, number]; prior: [number, number, number] | null };
+  /** A plaza is flagged when it moves more than `threshold` from a year earlier and carries at least `minVolume` a day. */
+  threshold: number;
+  minVolume: number;
+  flagged: number;
+};
+
+export const PROFILE_THRESHOLD = 0.2;
+const PROFILE_MIN_VOLUME = 300;
+
+export async function profileToll(c: PoolClient): Promise<TollProfile | null> {
+  await c.query("SAVEPOINT profile");
+  try {
+    const months = await c.query(`
+      WITH f AS (SELECT to_char(date, 'YYYY-MM') AS m, COUNT(DISTINCT date)::int AS days, SUM(total)::float8 AS trips
+                   FROM th_fact GROUP BY 1),
+           lim AS (SELECT date_trunc('month', MIN(date)) - interval '1 year' AS a,
+                          date_trunc('month', MAX(date)) + interval '1 month' - interval '1 year' AS b FROM th_fact),
+           p AS (SELECT to_char(t.date + interval '1 year', 'YYYY-MM') AS m, COUNT(DISTINCT t.date)::int AS days,
+                        SUM(t.total)::float8 AS trips
+                   FROM gold.fact_traffic_hourly t, lim WHERE t.date >= lim.a AND t.date < lim.b GROUP BY 1)
+      SELECT f.m AS month, f.days, f.trips / f.days AS per_day, COALESCE(p.days, 0) AS prior_days,
+             CASE WHEN p.days > 0 THEN p.trips / p.days END AS prior_per_day
+        FROM f LEFT JOIN p USING (m) ORDER BY f.m`);
+    const plazas = await c.query(`
+      WITH rng AS (SELECT MIN(date) AS a, MAX(date) AS b, COUNT(DISTINCT date)::float8 AS n FROM th_fact),
+           f AS (SELECT exit_canonical AS plaza, SUM(total)::float8 AS trips FROM th_fact GROUP BY 1),
+           pr AS (SELECT t.exit_canonical AS plaza, SUM(t.total)::float8 AS trips
+                    FROM gold.fact_traffic_hourly t, rng
+                   WHERE t.date BETWEEN (rng.a - interval '1 year')::date AND (rng.b - interval '1 year')::date GROUP BY 1),
+           pn AS (SELECT COUNT(DISTINCT t.date)::float8 AS n FROM gold.fact_traffic_hourly t, rng
+                   WHERE t.date BETWEEN (rng.a - interval '1 year')::date AND (rng.b - interval '1 year')::date)
+      SELECT COALESCE(f.plaza, pr.plaza) AS plaza, COALESCE(f.trips, 0) / rng.n AS per_day,
+             CASE WHEN pn.n > 0 THEN COALESCE(pr.trips, 0) / pn.n END AS prior_per_day
+        FROM f FULL JOIN pr USING (plaza) CROSS JOIN rng CROSS JOIN pn`);
+    const cls = await c.query(`
+      WITH rng AS (SELECT MIN(date) AS a, MAX(date) AS b FROM th_fact)
+      SELECT 'file' AS k, SUM(class_1)::float8 AS c1, SUM(class_2)::float8 AS c2, SUM(class_3)::float8 AS c3 FROM th_fact
+      UNION ALL
+      SELECT 'prior', SUM(t.class_1)::float8, SUM(t.class_2)::float8, SUM(t.class_3)::float8
+        FROM gold.fact_traffic_hourly t, rng
+       WHERE t.date BETWEEN (rng.a - interval '1 year')::date AND (rng.b - interval '1 year')::date`);
+    await c.query("RELEASE SAVEPOINT profile");
+
+    const ratio = (a: number, b: number | null) => (b && b > 0 ? a / b : null);
+    const share = (r: { c1: number; c2: number; c3: number } | undefined): [number, number, number] | null => {
+      if (!r) return null;
+      const t = (r.c1 ?? 0) + (r.c2 ?? 0) + (r.c3 ?? 0);
+      return t > 0 ? [r.c1 / t * 100, r.c2 / t * 100, r.c3 / t * 100] : null;
+    };
+    const pl = (plazas.rows as { plaza: string; per_day: number; prior_per_day: number | null }[]).map((r) => {
+      const rt = ratio(r.per_day, r.prior_per_day);
+      const big = Math.max(r.per_day, r.prior_per_day ?? 0) >= PROFILE_MIN_VOLUME;
+      return {
+        plaza: r.plaza,
+        perDay: Math.round(r.per_day),
+        priorPerDay: r.prior_per_day == null ? null : Math.round(r.prior_per_day),
+        ratio: rt,
+        flagged: big && r.prior_per_day != null && (rt === null || Math.abs(rt - 1) > PROFILE_THRESHOLD),
+      };
+    }).sort((a, b) => b.perDay - a.perDay);
+    const byK = new Map((cls.rows as { k: string; c1: number; c2: number; c3: number }[]).map((r) => [r.k, r]));
+    return {
+      months: (months.rows as { month: string; days: number; per_day: number; prior_days: number; prior_per_day: number | null }[]).map((r) => ({
+        month: r.month, days: r.days, perDay: Math.round(r.per_day), priorDays: r.prior_days,
+        priorPerDay: r.prior_per_day == null ? null : Math.round(r.prior_per_day), ratio: ratio(r.per_day, r.prior_per_day),
+      })),
+      plazas: pl,
+      classShare: { file: share(byK.get("file")) ?? [0, 0, 0], prior: share(byK.get("prior")) },
+      threshold: PROFILE_THRESHOLD,
+      minVolume: PROFILE_MIN_VOLUME,
+      flagged: pl.filter((p) => p.flagged).length,
+    };
+  } catch {
+    await c.query("ROLLBACK TO SAVEPOINT profile");
+    return null;
+  }
+}

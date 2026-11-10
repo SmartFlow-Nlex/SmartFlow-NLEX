@@ -115,7 +115,7 @@ export default function FeatureBriefing({
 
       {busy && !data ? (
         <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--text-muted)", fontStyle: "italic" }}>
-          Asking the model to read the current figures… this can take up to a minute on the free tier.
+          Asking the model to read the current figures… this can take up to a minute when the AI provider is busy.
         </p>
       ) : failed && !data ? (
         <p style={{ margin: 0, fontSize: "0.82rem", lineHeight: 1.55, color: "#b54708", background: "#fffaeb", borderLeft: "3px solid #f79009", borderRadius: 8, padding: "9px 11px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>

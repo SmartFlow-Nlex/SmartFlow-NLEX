@@ -471,7 +471,14 @@ def fingerprint(cur, key: str) -> dict:
     if not exists(cur, table):
         return {"table": table, "missing": True}
     total = f"round(sum({sum_col})::numeric, 3)::text" if sum_col else "NULL"
-    cur.execute(f"SELECT count(*), max({date_col})::text, {total} FROM {table}")
+    where = ""
+    if key == "weather":
+        # The live weather feed adds rows every hour, so counted whole it made every weather-using group "changed"
+        # each Sunday with no new traffic or incident records (8 Nov 2026). The models train on weather only for
+        # days the traffic record covers, so only those days count as new weather data.
+        where = (" WHERE (timestamp_utc + interval '8 hours')::date <= "
+                 "(SELECT max(date) FROM gold.daily_traffic_volume_corrected)")
+    cur.execute(f"SELECT count(*), max({date_col})::text, {total} FROM {table}{where}")
     rows, latest, s = cur.fetchone()
     return {"table": table, "rows": int(rows), "latest": latest, "total": s}
 

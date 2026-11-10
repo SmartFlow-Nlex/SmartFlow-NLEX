@@ -28,6 +28,7 @@ import DateRangePicker from "../traffic/components/DateRangePicker";
 import { rangeDays, grainBlockedReason, bestGrainFor, bucketLabelFor, timeAxisLabels } from "../../../lib/granularity";
 import styles from "../traffic/traffic.module.css";
 import CountUpValue from "../../../components/dashboard/CountUpValue";
+import { useRainEffect, isClear, METHOD_NOTE } from "../../../lib/rain-effect";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -194,6 +195,8 @@ export default function IncidentPage() {
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [weather, setWeather] = useState<WeatherFilter>("all");
+  // Rain's like-for-like association with crash rates (9 Nov 2026), shown once Dry or Wet is chosen.
+  const rainEffect = useRainEffect(weather !== "all");
   const [source, setSource] = useState<SourceFilter>("all");
 
   // Chart-local interactivity
@@ -1141,6 +1144,21 @@ export default function IncidentPage() {
                 <button type="button" className="btn-muted inc-retry" onClick={() => setReloadKey((k) => k + 1)}>Try again</button>
               </div>
             )}
+            {weather !== "all" && rainEffect && (() => {
+              const acc = rainEffect.accidents.anyRain;
+              const all = rainEffect.allIncidents.anyRain;
+              if (acc.effectPct == null) return null;
+              const span = (lo: number | null, hi: number | null) =>
+                lo == null || hi == null ? "" : ` (95% range ${lo > 0 ? "+" : ""}${lo.toFixed(0)}% to ${hi > 0 ? "+" : ""}${hi.toFixed(0)}%, ${acc.days} rainy days)`;
+              return (
+                <p className="nct-answer-line" title={METHOD_NOTE} style={{ margin: "0 0 10px" }}>
+                  Like for like, rainy days ({rainEffect.method.dryDayMm} mm+) are associated with{" "}
+                  <b>{Math.abs(acc.effectPct).toFixed(0)}% {acc.effectPct > 0 ? "more" : "fewer"} crashes per million vehicles</b> than dry days of the
+                  same weekday nearby{isClear(acc.lowPct, acc.highPct) ? span(acc.lowPct, acc.highPct) : " (not a clear difference)"};
+                  {all.effectPct != null && !isClear(all.lowPct, all.highPct) ? " with breakdowns included there is no clear change." : all.effectPct != null ? ` all incidents: ${all.effectPct > 0 ? "+" : ""}${all.effectPct}%.` : ""}
+                </p>
+              );
+            })()}
             <div className={`${styles.kpiRow} ds-rise`}>
               <article className={styles.kpiTile}>
                 <span className={styles.kpiIcon} aria-hidden="true"><AlertTriangle size={15} /></span>
