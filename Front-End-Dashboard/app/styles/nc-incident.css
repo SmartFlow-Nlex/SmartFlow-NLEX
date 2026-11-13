@@ -990,17 +990,7 @@ html:root .viz-incident.viz-incident { --kpi-1: var(--page-accent); }
 .inc-mix-hint { font-size: 13px; color: var(--text-muted); }
 .inc-mix-clear { padding: 3px 12px; font-size: 13px; }
 
-/* --- Selected state for the module's segmented pills -------------------------
-   Range, Weather, Granularity and the card toggles mark the chosen pill with a
-   plain class="active". traffic.module.css styles `.active`, but CSS Modules hash
-   that name, so the plain class never matched and no selection was ever shown.
-   Matched here by the module's own (hashed-prefix) class names instead. */
-.viz-incident [class*="segmented"] > button.active {
-  background: color-mix(in srgb, var(--page-accent) 16%, transparent);
-  border-color: var(--page-accent);
-  color: var(--text-primary);
-  box-shadow: none;
-}
+/* The selected state of the segmented pills now lives in nlex-daylight.css, for every tab. */
 
 /* ── Incident prescriptive UI (2 Nov 2026) ────────────────────────────────────
    The source badge beside each action's verdict pill, the corridor strip of the

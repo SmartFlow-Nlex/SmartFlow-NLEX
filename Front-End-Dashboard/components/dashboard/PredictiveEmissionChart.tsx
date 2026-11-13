@@ -29,12 +29,13 @@
 
 import type { EChartsOption } from "echarts";
 import { useEffect, useMemo, useState } from "react";
-import { Diameter, Star, TriangleAlert } from "lucide-react";
+import { Leaf, ShieldCheck, Star, TriangleAlert } from "lucide-react";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
 import ChartSkeleton from "./ChartSkeleton";
 import StateNote from "../stage/StateNote";
 import ModelNarrative, { type MetricRow, type NarrativeVocab } from "./ModelNarrative";
+import { GenerateReportButton } from "./NarrativePanel";
 import { aggregateSeries, type Granularity } from "./aggregateSeries";
 import { useThemeTokens, zoneTints } from "./useThemeTokens";
 import { useChartTheme } from "../../lib/chart-theme";
@@ -176,6 +177,9 @@ export default function PredictiveEmissionChart() {
   // Starts on the champion the API reports, so a retrain that changes the winner
   // changes this panel with no code edit.
   const [selected, setSelected] = useState<ModelKey[]>([]);
+  // The validation evidence opens from the summary column; the report from the foot line.
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   // Bumping this refetches. The panel used to fetch exactly once, so a single
   // slow handshake on the shared RDS instance left it dead until a full page
@@ -306,8 +310,6 @@ export default function PredictiveEmissionChart() {
         };
   }, [data, granularity, pastDays, futureDays]);
 
-  const isAggregated = !!view?.aggregated;
-  const bucketNoun = granularity === "Weekly" ? "week" : granularity === "Monthly" ? "month" : "year";
   const meanLabel =
     granularity === "Weekly" ? "7-day mean"
     : granularity === "Monthly" ? "monthly mean"
@@ -759,47 +761,6 @@ export default function PredictiveEmissionChart() {
     </div>
   );
 
-  /* The model trust strip: champion, how it was tested, the horizon it was
-     checked at, and its accuracy against the seasonal-naive baseline. Every
-     figure is the stored metric; the full table follows directly beneath, and
-     "Show All Metrics" opens its remaining columns. (No live track record is
-     stored for the CO2 forecast, so the strip claims none.) */
-  const trustPills = (
-    <>
-      {tied.length > 1 ? (
-        <span className="pill purple">Co-champions · {tiedLabels.join(" = ")}</span>
-      ) : championKey ? (
-        <span className="pill purple">
-          <Star size={11} strokeWidth={0} fill="currentColor" aria-hidden="true" />
-          Champion · {LABEL[championKey]}
-        </span>
-      ) : (
-        <span className="pill">No champion</span>
-      )}
-      <span className="pill">
-        Tested · {data.split.holdoutDays.toLocaleString()} held-out days
-        {data.split.holdoutStart && data.split.holdoutEnd
-          ? ` · ${shortDate(data.split.holdoutStart)} – ${shortDate(data.split.holdoutEnd)}`
-          : ""}
-      </span>
-      <span className="pill">Horizon · {data.horizonDays} days</span>
-      {champMetric?.mase != null && (
-        <span
-          className={`pill ${champMetric.mase < 1 ? "green" : "red"}`}
-          title="Error relative to a seasonal-naive forecast. Below 1.0 beats it; above 1.0 does not."
-        >
-          MASE {champMetric.mase.toFixed(3)} · {champMetric.mase < 1 ? "beats" : "loses to"} seasonal-naive
-        </span>
-      )}
-      {champMetric?.wmape != null && <span className="pill">WMAPE {champMetric.wmape.toFixed(2)}%</span>}
-    </>
-  );
-  const trustStrip = (
-    <div className="nc-em-trust" role="group" aria-label="Model trust">
-      {trustPills}
-    </div>
-  );
-
   const metricsTable = (
     <section className="nc-em-validation" aria-label="Real-World ML Validation Metrics">
       <div className="nc-em-validation-head">
@@ -808,7 +769,6 @@ export default function PredictiveEmissionChart() {
           {showAllMetrics ? "Show Less" : "Show All Metrics"}
         </button>
       </div>
-      {trustStrip}
       <div className="nc-em-table-wrap">
         <table className="nc-em-table" style={{ minWidth: showAllMetrics ? "820px" : "600px" }}>
           <thead>
@@ -892,291 +852,271 @@ export default function PredictiveEmissionChart() {
     </section>
   );
 
+  /* The summary column's second figure: the typical error at the range drawn, from the rolling-origin
+     horizon study (gold.ml_horizon_accuracy), falling back to the held-out WMAPE when no bucket covers it. */
+  const rangeBucket = (data.horizonAccuracy ?? []).find((b) => b.hLo <= futureDays && futureDays <= b.hHi);
+  const rangeErr =
+    rangeBucket?.wmape != null ? `${rangeBucket.wmape.toFixed(1)}%`
+    : champMetric?.wmape != null ? `${champMetric.wmape.toFixed(1)}%`
+    : "—";
+
+  /* Layout (5 Nov 2026, same as the Traffic Volume Forecast card): the graph on the left with every
+     control in one panel above it and the report button on its foot line; the answer and its validation
+     evidence in a summary column on the right. The graph itself is unchanged. */
   return (
-    <article className="chart-card wide nc-em-fc">
-      <header className="nc-em-fc-top">
-        <div className="nc-em-fc-head">{titleRow}</div>
-      </header>
+    <article className="chart-card wide nct-card nct-forecast nc-em-fc fc2">
+      <div className="fc2-grid">
+        {/* ---------- The graph, with its controls above and the report button below ---------- */}
+        <div className="fc2-main">
+          <header className="fc2-head">
+            <h3 className="nct-title">
+              Corridor <Term t="CO₂" /> Walk-Forward Forecast
+              <InfoTooltip text="Modeled daily CO₂ (carbon dioxide) for the corridor: the model's past fit, its held-out test period, and the forecast ahead. Pick a model below." />
+            </h3>
+          </header>
 
-      {/* The answer: the champion's mean over the forecast window on screen,
-          with its window, model, last measured day and scope as context. */}
-      {(champFuture.length > 0 || data.split.holdoutEnd) && (
-        <div className="fc-answer">
-          {championKey && champFuture.length > 0 && (
-            <span className="fc-answer-label">Next {champFuture.length} days · average</span>
-          )}
-          {championKey && champMean != null && champFuture.length > 0 && (
-            <span className="fc-answer-value">
-              {fmt(champMean, 0)} t
-              <span className="fc-answer-unit">CO₂ per day</span>
-            </span>
-          )}
-          <span className="fc-answer-context">
-            {championKey && champFuture.length > 0 && (
-              <><b>{shortDate(champFuture[0].date)} – {shortDate(champFuture[champFuture.length - 1].date)}</b> · </>
-            )}
-            {championKey && <>model <b>{LABEL[championKey]}</b> · </>}
-            {data.split.holdoutEnd && <>measured to <b>{shortDate(data.split.holdoutEnd)}</b> · </>}
-            whole corridor, t CO₂ / day
-          </span>
-        </div>
-      )}
-
-      {/* Which forecasts are drawn. */}
-      <div className="fc-row fc-models">{modelToolbar}</div>
-
-      {/* Controls, then the key: the order every forecast card uses. View
-          (grain), History (how much context), Ahead (how far to draw). */}
-      <div className="fc-row fc-controls" role="group" aria-label="Forecast view">
-        <div className="fc-group">
-          <span className="fc-label">View</span>
-          <div className="nc-em-seg">
-            {/* Hourly is greyed out: CO2 is stored hourly but forecast daily, so
-                there is no hourly prediction to drill into. */}
-            <span
-              className="nc-em-seg-off"
-              aria-disabled="true"
-              title="The CO₂ models forecast daily totals — there is no hourly prediction to drill into"
-            >
-              Hourly
-            </span>
-            {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
-              <button
-                key={g}
-                type="button"
-                className={granularity === g ? "is-on" : ""}
-                aria-pressed={granularity === g}
-                onClick={() => {
-                  setGranularity(g);
-                  // Daily stays zoomed because 1,400 raw points is unreadable;
-                  // the aggregated views bucket the data so they can show it all.
-                  setPastDays(g === "Daily" ? 90 : ALL_PAST);
-                }}
-                title={
-                  g === "Daily"
-                    ? "One point per day — the resolution the models actually forecast"
-                    : `Averaged per ${g.replace("ly", "").toLowerCase()} — a viewing aid, not a separate forecast`
-                }
-              >
-                {g}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* HISTORY window. The forecast is 7 days against up to 1,433 of
-            history, so without this it is a sliver at the right edge no
-            matter which granularity is chosen. */}
-        <div className="fc-group">
-          <span className="fc-label">History</span>
-          <div className="nc-em-seg">
-            {WINDOWS.map((wd) => (
-              <button
-                key={wd.label}
-                type="button"
-                className={pastDays === wd.days ? "is-on" : ""}
-                aria-pressed={pastDays === wd.days}
-                onClick={() => setPastDays(wd.days)}
-                title={
-                  wd.days >= ALL_PAST
-                    ? "All context back to 2022 — the 7-day forecast will be a sliver"
-                    : `Show the last ${wd.label} of context before the scored window, so the forecast is legible`
-                }
-              >
-                {wd.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="fc-group">
-          <span className="fc-label">Ahead</span>
-          {/* Only the horizons the published forecast can back (17 Oct 2026, testers EM-9: "the week option
-              cannot be clicked"; "the forecast only covers 7 days but other day options are offered"). Every
-              longer step used to be drawn as a disabled button, and with the current run all of them were,
-              so the strip was one live button and four dead ones. A step is now offered only if the run
-              stores that many days AND some stretch it adds beat the baseline in gold.ml_horizon_accuracy.
-              With one horizon left there is nothing to choose, so it is stated rather than drawn as a
-              control, and why the rest are missing is on the note. A retrain that passes brings them back
-              with no code change. */}
-          {horizons.offered.length > 1 ? (
-            <div className="nc-em-seg">
-              {horizons.offered.map((it) => (
-                <button
-                  key={it.label}
-                  type="button"
-                  className={futureDays === it.d ? "is-on" : ""}
-                  aria-pressed={futureDays === it.d}
-                  onClick={() => setFutureDays(it.d)}
-                >
-                  {it.label}
-                </button>
-              ))}
+          <div className="fc2-controls" role="group" aria-label="Forecast view">
+            <div className="fc2-row">
+              {modelToolbar}
+              <span className="fc2-sep" aria-hidden="true" />
+              {/* HISTORY window. The forecast is 7 days against up to 1,433 of
+                  history, so without this it is a sliver at the right edge no
+                  matter which granularity is chosen. */}
+              <div className="fc-group">
+                <span className="fc-label">History</span>
+                <div className="nc-em-seg">
+                  {WINDOWS.map((wd) => (
+                    <button
+                      key={wd.label}
+                      type="button"
+                      className={pastDays === wd.days ? "is-on" : ""}
+                      aria-pressed={pastDays === wd.days}
+                      onClick={() => setPastDays(wd.days)}
+                      title={
+                        wd.days >= ALL_PAST
+                          ? "All context back to 2022 — the 7-day forecast will be a sliver"
+                          : `Show the last ${wd.label} of context before the scored window, so the forecast is legible`
+                      }
+                    >
+                      {wd.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-          ) : (
-            <span className="nc-em-seg">
-              <span className="nc-em-seg-fixed">{horizons.offered[0]?.label ?? `${data.horizonDays} d`}</span>
-            </span>
-          )}
-          <span className="fc-note nc-em-hz-note" title={horizons.why ?? undefined}>
-            validated at {data.horizonDays}d{horizons.hidden ? ` · ${horizons.hidden}` : ""}
-          </span>
-        </div>
-      </div>
-
-      {/* What the chart is currently showing: the three zones with their
-          split counts, and the averaging notice when points are means. */}
-      <div className="fc-legend">
-        <span className="nc-em-zone fc-legend-item">
-          <i className="is-past" aria-hidden="true" />
-          <b>Past</b>
-          {/* Without this the band reads as "the 80%", when the selected range
-              may be drawing only its final weeks. State both numbers. */}
-          {/* Wording deliberately identical to the volume panel: same three
-              facts in the same order, so a reader moving between the two
-              modules is not re-learning the layout. */}
-          <span>
-            {data.split.trainDays.toLocaleString()}d trained
-            {data.split.trainPct != null ? ` · ${data.split.trainPct}%` : ""}
-            {pastDays < ALL_PAST && pastDays < data.split.trainDays && (
-              <span className="nc-em-warn-ink">
-                {" · "}showing last {pastDays.toLocaleString()}d
-              </span>
-            )}
-          </span>
-        </span>
-        <span className="nc-em-zone fc-legend-item">
-          <i className="is-present" aria-hidden="true" />
-          <b>Present</b>
-          <span>
-            {data.split.holdoutDays.toLocaleString()}d scored
-            {data.split.holdoutPct != null ? ` · ${data.split.holdoutPct}%` : ""} · fixed by evaluation
-          </span>
-        </span>
-        <span className="nc-em-zone fc-legend-item">
-          <i className="is-future" aria-hidden="true" />
-          <b>Future</b>
-          <span>{Math.min(futureDays, data.split.futureDays)}d projected</span>
-        </span>
-        {/* Aggregation notice — shown only when the values ARE aggregated, so it
-            never becomes furniture the eye learns to ignore. */}
-        {isAggregated && (
-          <span
-            className="nc-em-agg fc-push"
-            title={`Each plotted point is the arithmetic mean of the days in its ${bucketNoun} — for the actual series and for every model line. Totals are never plotted: a sum would make a short ${bucketNoun} look like a dip.`}
-          >
-            <Diameter size={13} strokeWidth={2} aria-hidden="true" />
-            Each point = {meanLabel}
-            <span>averaged, not totalled</span>
-          </span>
-        )}
-      </div>
-
-      {/* Past the validated range the reader needs to know what they are looking
-          at. Figures come from gold.ml_horizon_accuracy, measured by rolling
-          origin out to 90 days - not extrapolated from the 7-day headline. */}
-      {futureDays > VALIDATED_HORIZON && data.horizonAccuracy?.length > 0 && (() => {
-        const shown = data.horizonAccuracy.filter((b) => b.hLo <= futureDays);
-        const weak = shown.filter((b) => !b.usable);
-        const maxWmape = Math.max(...shown.map((b) => b.wmape ?? 0), 0.0001);
-        return (
-          <div className="nc-em-banner">
-            <TriangleAlert size={15} strokeWidth={2} aria-hidden="true" />
-            <span>
-              {/* Headline + the weak stretch + a per-bucket error bar visible;
-                  the plain-words explanation of why forecasts drift (verbatim)
-                  behind Details. Same facts, same figures. */}
-              <b>Only the first {VALIDATED_HORIZON} days were checked against what actually happened.</b>
-              {weak.length > 0 && (
-                <span className="nc-em-banner-line">
-                  <b
-                    className="nc-em-warn-ink"
-                    title={`MASE ${weak[0].mase?.toFixed(3)} — above 1.0 means it loses to a seasonal-naive benchmark (copy the same weekday from last week)`}
+            <div className="fc2-row">
+              <div className="fc-group">
+                <span className="fc-label">View</span>
+                <div className="nc-em-seg">
+                  {/* Hourly is greyed out: CO2 is stored hourly but forecast daily, so
+                      there is no hourly prediction to drill into. */}
+                  <span
+                    className="nc-em-seg-off"
+                    aria-disabled="true"
+                    title="The CO₂ models forecast daily totals — there is no hourly prediction to drill into"
                   >
-                    Days {weak[0].hLo}–{weak[0].hHi} are the least reliable — in that stretch you would do
-                    better just repeating last week
-                  </b>
-                  . It steadies again after day {weak[0].hHi + 1}.
-                </span>
-              )}
-              <span
-                className="nc-em-hz"
-                title="WMAPE — total absolute error as a share of total actual CO₂, measured by rolling-origin over 9 origins"
-              >
-                <span className="nc-em-hz-label">Typical error</span>
-                {shown.map((b) => (
-                  <span key={b.hLo} className={`nc-em-hz-row${b.usable ? "" : " is-weak"}`}>
-                    <span>days {b.hLo}–{b.hHi}</span>
-                    <span className="nc-em-inline-bar" aria-hidden="true">
-                      <i style={{ width: `${Math.max(2, ((b.wmape ?? 0) / maxWmape) * 100)}%` }} />
-                    </span>
-                    <b>{b.wmape?.toFixed(0)}% off</b>
+                    Hourly
                   </span>
-                ))}
-              </span>
-              <details className="nc-details">
-                <summary>Details</summary>
-                <p>
-                  Only the first <b>{VALIDATED_HORIZON} days</b> were
-                  checked against what actually happened. To predict a day, the model reads the days just before
-                  it — and past day {VALIDATED_HORIZON} those days are themselves still in the future, so it
-                  reads its own earlier forecasts instead of measurements. Nothing is invented: the measured
-                  history stays exactly as recorded, and no actual value is ever filled in for a future date.
-                  But forecasts built on forecasts drift, so from here the line describes the usual shape for
-                  that time of year rather than any particular day.
-                </p>
-              </details>
-            </span>
+                  {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      className={granularity === g ? "is-on" : ""}
+                      aria-pressed={granularity === g}
+                      onClick={() => {
+                        setGranularity(g);
+                        // Daily stays zoomed because 1,400 raw points is unreadable;
+                        // the aggregated views bucket the data so they can show it all.
+                        setPastDays(g === "Daily" ? 90 : ALL_PAST);
+                      }}
+                      title={
+                        g === "Daily"
+                          ? "One point per day — the resolution the models actually forecast"
+                          : `Averaged per ${g.replace("ly", "").toLowerCase()} — a viewing aid, not a separate forecast`
+                      }
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <span className="fc2-sep" aria-hidden="true" />
+              <div className="fc-group">
+                <span className="fc-label">Ahead</span>
+                {/* Only the horizons the published forecast can back (17 Oct 2026, testers EM-9). A step is
+                    offered only if the run stores that many days AND some stretch it adds beat the baseline in
+                    gold.ml_horizon_accuracy. With one horizon left there is nothing to choose, so it is stated
+                    rather than drawn as a control, and why the rest are missing is on the note. */}
+                {horizons.offered.length > 1 ? (
+                  <div className="nc-em-seg">
+                    {horizons.offered.map((it) => (
+                      <button
+                        key={it.label}
+                        type="button"
+                        className={futureDays === it.d ? "is-on" : ""}
+                        aria-pressed={futureDays === it.d}
+                        onClick={() => setFutureDays(it.d)}
+                      >
+                        {it.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="nc-em-seg">
+                    <span className="nc-em-seg-fixed">{horizons.offered[0]?.label ?? `${data.horizonDays} d`}</span>
+                  </span>
+                )}
+                <span className="fc-note nc-em-hz-note" title={horizons.why ?? undefined}>
+                  validated at {data.horizonDays}d{horizons.hidden ? ` · ${horizons.hidden}` : ""}
+                </span>
+              </div>
+            </div>
           </div>
-        );
-      })()}
 
-      <div style={{ height: `${CHART_H}px`, width: "100%" }}>
-        <DashboardChart option={option} height={CHART_H} />
+          {/* Past the validated range the reader needs to know what they are looking
+              at. Figures come from gold.ml_horizon_accuracy, measured by rolling
+              origin out to 90 days - not extrapolated from the 7-day headline. */}
+          {futureDays > VALIDATED_HORIZON && data.horizonAccuracy?.length > 0 && (() => {
+            const shown = data.horizonAccuracy.filter((b) => b.hLo <= futureDays);
+            const weak = shown.filter((b) => !b.usable);
+            const maxWmape = Math.max(...shown.map((b) => b.wmape ?? 0), 0.0001);
+            return (
+              <div className="nc-em-banner">
+                <TriangleAlert size={15} strokeWidth={2} aria-hidden="true" />
+                <span>
+                  <b>Only the first {VALIDATED_HORIZON} days were checked against what actually happened.</b>
+                  {weak.length > 0 && (
+                    <span className="nc-em-banner-line">
+                      <b
+                        className="nc-em-warn-ink"
+                        title={`MASE ${weak[0].mase?.toFixed(3)} — above 1.0 means it loses to a seasonal-naive benchmark (copy the same weekday from last week)`}
+                      >
+                        Days {weak[0].hLo}–{weak[0].hHi} are the least reliable — in that stretch you would do
+                        better just repeating last week
+                      </b>
+                      . It steadies again after day {weak[0].hHi + 1}.
+                    </span>
+                  )}
+                  <span
+                    className="nc-em-hz"
+                    title="WMAPE — total absolute error as a share of total actual CO₂, measured by rolling-origin over 9 origins"
+                  >
+                    <span className="nc-em-hz-label">Typical error</span>
+                    {shown.map((b) => (
+                      <span key={b.hLo} className={`nc-em-hz-row${b.usable ? "" : " is-weak"}`}>
+                        <span>days {b.hLo}–{b.hHi}</span>
+                        <span className="nc-em-inline-bar" aria-hidden="true">
+                          <i style={{ width: `${Math.max(2, ((b.wmape ?? 0) / maxWmape) * 100)}%` }} />
+                        </span>
+                        <b>{b.wmape?.toFixed(0)}% off</b>
+                      </span>
+                    ))}
+                  </span>
+                  <details className="nc-details">
+                    <summary>Details</summary>
+                    <p>
+                      Only the first <b>{VALIDATED_HORIZON} days</b> were
+                      checked against what actually happened. To predict a day, the model reads the days just before
+                      it — and past day {VALIDATED_HORIZON} those days are themselves still in the future, so it
+                      reads its own earlier forecasts instead of measurements. Nothing is invented: the measured
+                      history stays exactly as recorded, and no actual value is ever filled in for a future date.
+                      But forecasts built on forecasts drift, so from here the line describes the usual shape for
+                      that time of year rather than any particular day.
+                    </p>
+                  </details>
+                </span>
+              </div>
+            );
+          })()}
+
+          <div style={{ height: `${CHART_H}px`, width: "100%" }}>
+            <DashboardChart option={option} height={CHART_H} />
+          </div>
+
+          <div className="fc2-foot">
+            {/* The report opens under the card; its button sits on the foot line, left. */}
+            {!reportOpen && <GenerateReportButton onClick={() => setReportOpen(true)} />}
+          </div>
+        </div>
+
+        {/* ---------- The summary beside it: the answer, then the evidence for it ---------- */}
+        <aside className="fc2-side" aria-label="Forecast summary">
+          <div className="fc2-side-head">
+            <span className="fc2-side-icon" aria-hidden="true"><Leaf size={18} /></span>
+            <h4>Forecast Summary</h4>
+          </div>
+          {championKey && champMean != null && champFuture.length > 0 && (
+            <div className="fc2-answer">
+              <span className="fc2-answer-label">Forecast daily average · next {champFuture.length} days</span>
+              <span className="fc2-answer-value">{fmt(champMean, 0)}</span>
+              <span className="fc2-answer-unit">
+                t CO₂/day · whole corridor · {shortDate(champFuture[0].date)} – {shortDate(champFuture[champFuture.length - 1].date)}
+              </span>
+            </div>
+          )}
+          <div className="fc2-pair">
+            <div>
+              <span className="fc2-k">{futureDays}-day typical error</span>
+              <span className="fc2-v">{rangeErr}</span>
+            </div>
+            <div>
+              <span className="fc2-k">{tied.length > 1 ? "Co-champions" : "Forecast model"}</span>
+              {tied.length > 1 ? (
+                <span className="fc2-v fc2-v-sm">{tiedLabels.join(" = ")}</span>
+              ) : championKey ? (
+                <span className="fc2-v fc2-model"><i style={{ background: COLOR[championKey] }} />{LABEL[championKey]}</span>
+              ) : (
+                <span className="fc2-v fc2-v-sm">None</span>
+              )}
+            </div>
+          </div>
+          {champMetric && !champMetric.accepted && <p className="fc2-note-warn">This model failed acceptance; it is shown for comparison.</p>}
+
+          <div className="fc2-evidence">
+            <div className="fc2-ev-head"><ShieldCheck size={17} aria-hidden="true" /><h5>Validation Evidence</h5></div>
+            <dl>
+              <div><dt>WMAPE</dt><dd>{champMetric?.wmape != null ? `${champMetric.wmape.toFixed(2)}%` : "—"}</dd></div>
+              <div title="Error relative to a seasonal-naive forecast. Below 1.0 beats it; above 1.0 does not.">
+                <dt>MASE</dt>
+                <dd>
+                  {champMetric?.mase != null ? champMetric.mase.toFixed(3) : "—"}
+                  {champMetric?.mase != null && (
+                    <span className={champMetric.mase < 1 ? "nct-ok" : "nct-bad"}>
+                      {champMetric.mase < 1 ? " · beats seasonal-naive" : " · loses to seasonal-naive"}
+                    </span>
+                  )}
+                </dd>
+              </div>
+              <div><dt>Scored days</dt><dd>{data.split.holdoutDays.toLocaleString()}</dd></div>
+              <div><dt>Horizon</dt><dd>{data.horizonDays} days</dd></div>
+              <div>
+                <dt>{tied.length > 1 ? "Co-champions" : "Champion"}</dt>
+                <dd>{tied.length > 1 ? tiedLabels.join(" = ") : championKey ? LABEL[championKey] : "none"}</dd>
+              </div>
+            </dl>
+            {data.split.holdoutStart && data.split.holdoutEnd && (
+              <p className="fc2-period">
+                Period: {shortDate(data.split.holdoutStart)} – {shortDate(data.split.holdoutEnd)}
+              </p>
+            )}
+            <button type="button" className="fc2-ev-btn" onClick={() => setEvidenceOpen(true)}>View validation details</button>
+          </div>
+        </aside>
       </div>
 
-      {/* The validation evidence opens in a modal; its strip carries the headline figures. */}
+      {/* The full evidence (every table and figure) opens from the summary's button. */}
       <EvidenceModal
         className="nc-em-ev"
         scopeClass="viz-emissions"
         subtitle="CO₂ forecast: every model's scores on held-out days, and how it was tested."
-        strip={<>
-          <span className="nct-trust-pill">
-            <span className="nct-trust-k">{tied.length > 1 ? "Co-champions" : "Champion"}</span>
-            {tied.length > 1 ? tiedLabels.join(" = ") : championKey ? LABEL[championKey] : "none"}
-          </span>
-          <span className="nct-trust-pill">
-            <span className="nct-trust-k">Tested on</span>
-            {data.split.holdoutDays.toLocaleString()} held-out days
-            {data.split.holdoutStart && data.split.holdoutEnd
-              ? ` · ${shortDate(data.split.holdoutStart)} – ${shortDate(data.split.holdoutEnd)}`
-              : ""}
-          </span>
-          <span className="nct-trust-pill">
-            <span className="nct-trust-k">Horizon</span>
-            {data.horizonDays} days
-          </span>
-          {(champMetric?.mase != null || champMetric?.wmape != null) && (
-            <span className="nct-trust-pill" title="MASE: error relative to a seasonal-naive forecast. Below 1.0 beats it; above 1.0 does not.">
-              <span className="nct-trust-k">Accuracy</span>
-              {champMetric?.wmape != null && <>WMAPE {champMetric.wmape.toFixed(2)}%</>}
-              {champMetric?.wmape != null && champMetric?.mase != null && " · "}
-              {champMetric?.mase != null && (
-                <>
-                  MASE {champMetric.mase.toFixed(3)}
-                  <span className={champMetric.mase < 1 ? "nct-ok" : "nct-bad"}>
-                    {champMetric.mase < 1 ? " · beats seasonal-naive" : " · loses to seasonal-naive"}
-                  </span>
-                </>
-              )}
-            </span>
-          )}
-        </>}
+        hideTrigger
+        open={evidenceOpen}
+        onOpenChange={setEvidenceOpen}
       >
         {metricsTable}
       </EvidenceModal>
 
-      {/* Narrative is composed from the same rows that feed the table above, so the
+      {/* Narrative is composed from the same rows that feed the table, so the
           prose can never drift away from the numbers beside it. */}
       <ModelNarrative
         selected={ORDER.filter((k) => selected.includes(k))}
@@ -1193,6 +1133,9 @@ export default function PredictiveEmissionChart() {
           "The factors are European fleet figures, not measured on NLEX, so an error in them shifts every tonnage without changing any accuracy figure. " +
           "Weather over the forecast window is day-of-year climatology in both scoring and projection, never observation."
         }
+        compact
+        open={reportOpen}
+        onOpenChange={setReportOpen}
       />
     </article>
   );

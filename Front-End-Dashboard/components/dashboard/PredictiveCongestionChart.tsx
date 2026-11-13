@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { EChartsOption } from "echarts";
 import DashboardChart from "./DashboardChart";
@@ -15,6 +15,8 @@ import { useTrafficPalette, type TrafficPalette } from "./trafficPalette";
 import SignalGlyph from "./SignalGlyph";
 import StateNote from "../stage/StateNote";
 import EvidenceModal from "./EvidenceModal";
+import { GenerateReportButton } from "./NarrativePanel";
+import { ArrowRight, ChevronRight, ShieldCheck, Siren } from "lucide-react";
 
 type State = "Low" | "Med" | "High";
 
@@ -587,6 +589,10 @@ export default function PredictiveCongestionChart() {
   const [raw, setRaw] = useState<RawRow[] | null>(null);
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   const [alertsOpen, setAlertsOpen] = useState(false);
+  /** The grid's box, so its tooltip can be placed inside the visible window (see placeTip). */
+  const gridBoxRef = useRef<HTMLDivElement>(null);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   // Show the southern end first — 20 rows is a lot to land on. Expanding is one
   // click, and the SUMMARY above the grid always covers all 20 regardless, so
   // the collapsed view never changes what the panel reports.
@@ -1080,7 +1086,7 @@ export default function PredictiveCongestionChart() {
   // text - only colour - so their height buys nothing above the point where the
   // row label is comfortably readable, which is around 22px.
   const ROW_H = 22;
-  const heatTop = 44;
+  const heatTop = 50; // room for the two-line hour header at a 17 px line
   // Display slice only: `segments` is reversed for ECharts (index 0 draws at
   // the bottom), so the first exits by km-post are the tail of the array.
   const defaultShown = segments.slice(-COLLAPSED_EXITS);
@@ -1130,7 +1136,7 @@ export default function PredictiveCongestionChart() {
   // as a mystery total rather than a count per hour.
   const stripTop = heatTop + heatHeight + 34;
   const stripHeight = 52;
-  const chartHeight = stripTop + stripHeight + 50;
+  const chartHeight = stripTop + stripHeight + 72; // two-line hour labels, then the axis title below them
 
   const isWeek = range === "week";
 
@@ -1138,6 +1144,25 @@ export default function PredictiveCongestionChart() {
   // per DAY would double-count the same exit across its hours — so it ends at
   // the grid.
   const weekChartHeight = heatTop + heatHeight + 14;
+
+  /* Where the cell tooltip goes (10 Nov 2026). It is drawn on <body>, so nothing on the card covers it, and placed
+     against the visible window: right of the cursor, flipped left near the right edge, and slid up or down so the
+     whole panel fits between the top and bottom of the window. ECharts' own `confine` measured <body>, which is
+     taller than the window, so a panel near the bottom of the screen still ran off it. */
+  const placeTip = (point: number[], _params: unknown, _dom: unknown, _rect: unknown, size: { contentSize: number[] }) => {
+    const box = gridBoxRef.current?.getBoundingClientRect();
+    const [w, h] = size.contentSize;
+    if (!box) return [point[0] + 16, point[1] + 16];
+    const pad = 8;
+    const vx = box.left + point[0];
+    const vy = box.top + point[1];
+    let x = vx + 18;
+    if (x + w > window.innerWidth - pad) x = vx - w - 18;
+    x = Math.max(pad, Math.min(x, window.innerWidth - w - pad));
+    let y = vy - h / 2;
+    y = Math.max(pad, Math.min(y, window.innerHeight - h - pad));
+    return [x - box.left, y - box.top];
+  };
 
   const weekOption: EChartsOption = {
     visualMap: {
@@ -1152,10 +1177,11 @@ export default function PredictiveCongestionChart() {
       borderColor: P.tooltipBorder,
       borderWidth: 1,
       textStyle: { color: P.tooltipText },
-      // Kept inside the chart box. Hovering a cell in the first few columns
-      // otherwise threw the panel off the left edge of the card and under the
-      // sidebar, where half of it could not be read.
-      confine: true,
+      // Drawn on <body> and kept inside the viewport (10 Nov 2026). Confined to the chart box, the panel is taller
+      // than the grid, so its lower half ran over the card's foot line and was painted under it. Confinement still
+      // stops a first-column cell throwing the panel off the left edge and under the sidebar.
+      appendTo: "body",
+      position: placeTip,
       extraCssText: P.tooltipCss,
       formatter: (params: unknown) => {
         const p = params as { data: DayCell; dataIndex: number };
@@ -1192,8 +1218,8 @@ export default function PredictiveCongestionChart() {
       axisLine: { show: false },
       axisLabel: {
         interval: 0,
-        color: K.ink2, fontWeight: 600, fontSize: 11, lineHeight: 13,
-        rich: { a: { fontSize: 11, color: K.muted, fontWeight: 500 } },
+        color: K.ink2, fontWeight: 600, fontSize: 11, lineHeight: 17,
+        rich: { a: { fontSize: 11, color: K.muted, fontWeight: 500, lineHeight: 17 } },
         formatter: (v: string) => {
           const [dow, date] = v.split("\n");
           return date ? `${dow}\n{a|${date}}` : dow;
@@ -1249,10 +1275,11 @@ export default function PredictiveCongestionChart() {
       borderColor: P.tooltipBorder,
       borderWidth: 1,
       textStyle: { color: P.tooltipText },
-      // Kept inside the chart box. Hovering a cell in the first few columns
-      // otherwise threw the panel off the left edge of the card and under the
-      // sidebar, where half of it could not be read.
-      confine: true,
+      // Drawn on <body> and kept inside the viewport (10 Nov 2026). Confined to the chart box, the panel is taller
+      // than the grid, so its lower half ran over the card's foot line and was painted under it. Confinement still
+      // stops a first-column cell throwing the panel off the left edge and under the sidebar.
+      appendTo: "body",
+      position: placeTip,
       extraCssText: P.tooltipCss,
       formatter: (params: unknown) => {
         const p = params as { seriesIndex: number; data: CellItem | number; dataIndex: number };
@@ -1349,17 +1376,17 @@ export default function PredictiveCongestionChart() {
              per hour and the tooltip names each one. */
           interval: frameHours > 20 ? 2 : frameHours > 14 ? 1 : 0,
           // 11 px, the floor for chart text (A11Y-1); hideOverlap drops a label rather than smear two.
-          color: K.ink2, fontWeight: 600, fontSize: 11, lineHeight: 13, hideOverlap: true,
+          color: K.ink2, fontWeight: 600, fontSize: 11, lineHeight: 17, hideOverlap: true,
           // Second line is the clock time, deliberately quieter than the horizon.
           // An elapsed column printed "10AM" in the same weight as a future
           // one, which is what let a stale forecast read as upcoming. Past
           // hours are greyed so the boundary between done and due is visible.
           rich: {
-            a: { fontSize: 11, color: K.muted, fontWeight: 500 },
+            a: { fontSize: 11, color: K.muted, fontWeight: 500, lineHeight: 17 },
             /* Elapsed hours: muted italic. The 24% neutral they used was 2:1 on the card, below any
                reading floor; italic and the lighter ink still set them apart from the hours to come. */
-            past: { fontSize: 11, color: K.muted, fontWeight: 500, fontStyle: "italic" },
-            pastc: { fontSize: 11, color: K.muted, fontWeight: 400, fontStyle: "italic" },
+            past: { fontSize: 11, color: K.muted, fontWeight: 500, fontStyle: "italic", lineHeight: 17 },
+            pastc: { fontSize: 11, color: K.muted, fontWeight: 400, fontStyle: "italic", lineHeight: 17 },
           },
           formatter: (v: string, idx: number) => {
             const [hz, clock] = v.split("\n");
@@ -1380,21 +1407,21 @@ export default function PredictiveCongestionChart() {
         // so the title says "at each hour ahead" rather than just "total".
         name: `Exits congested at each hour ahead, of ${segments.length}`,
         nameLocation: "middle",
-        nameGap: 38,
+        nameGap: 58,
         nameTextStyle: { color: K.ink2, fontSize: 11, fontWeight: 600 },
         // Was dropping the clock line to save height, which left the bars
         // labelled only by horizon while the grid above showed the hour.
         // Same two-line format in both, so a column reads the same
         // wherever the eye lands.
         axisLabel: {
-          show: true, color: K.ink2, fontSize: 11, fontWeight: 600, lineHeight: 13, hideOverlap: true,
+          show: true, color: K.ink2, fontSize: 11, fontWeight: 600, lineHeight: 17, hideOverlap: true,
           // An elapsed column printed "10AM" in the same weight as a future
           // one, which is what let a stale forecast read as upcoming. Past
           // hours are greyed so the boundary between done and due is visible.
           rich: {
-            a: { fontSize: 11, color: K.muted, fontWeight: 500 },
-            past: { fontSize: 11, color: K.muted, fontWeight: 500, fontStyle: "italic" },
-            pastc: { fontSize: 11, color: K.muted, fontWeight: 400, fontStyle: "italic" },
+            a: { fontSize: 11, color: K.muted, fontWeight: 500, lineHeight: 17 },
+            past: { fontSize: 11, color: K.muted, fontWeight: 500, fontStyle: "italic", lineHeight: 17 },
+            pastc: { fontSize: 11, color: K.muted, fontWeight: 400, fontStyle: "italic", lineHeight: 17 },
           },
           formatter: (v: string, idx: number) => {
             const [hz, clock] = v.split("\n");
@@ -1475,9 +1502,6 @@ export default function PredictiveCongestionChart() {
     ],
   };
 
-  const VISIBLE_ALERTS = 4;
-  const shown = alerts.slice(0, VISIBLE_ALERTS);
-
   // Grouped by location for the full list — scanning "what happens at Bocaue"
   // beats scrolling 29 loose cards.
   const bySegment = segments
@@ -1531,407 +1555,289 @@ export default function PredictiveCongestionChart() {
     );
   };
 
-  // A one-sentence read of the whole card, for stakeholders who will not
-  // decode a 108-cell grid. The shape of the problem - one unbroken stretch of
-  // road, bad for the whole window - is the thing to say.
-  const nCongested = model.congestedSegments.length;
   const nSevere = model.severeSegments.length;
-  const kmSpan =
-    model.kmFrom != null && model.kmTo != null ? Math.round(model.kmTo - model.kmFrom) : null;
-
-  const spH = model.perHour as number[];
-  const firstCount = spH[0] ?? 0;
-  const peakCount = Math.max(...spH);
-  const peakAt = spH.indexOf(peakCount) + 1;
-  const clear = segments.filter((sg) => !model.congestedSegments.includes(sg));
-
-  const whoText =
-    nCongested === segments.length
-      ? `every exit on the corridor`
-      : nCongested > segments.length * 0.6
-      ? `all but ${clear.length} exit${clear.length === 1 ? "" : "s"} (${clear.join(", ")} keep${clear.length === 1 ? "s" : ""} moving)`
-      : model.contiguous && kmSpan != null
-      ? `${nCongested} neighbouring exits over about ${kmSpan} km, km ${fmtKm(model.kmFrom)} (${model.kmFromExit}) to km ${fmtKm(model.kmTo)} (${model.kmToExit})`
-      : `${nCongested} of ${segments.length} exits (${model.congestedSegments.join(", ")})`;
-
-  /* Presentation of the same "who": the variant is picked by exactly the
-     conditions above; only the exit list moves out of the sentence into a
-     labelled chip row under it. */
-  const whoShort =
-    nCongested === segments.length
-      ? `every exit on the corridor`
-      : nCongested > segments.length * 0.6
-      ? `all but ${clear.length} exit${clear.length === 1 ? "" : "s"}`
-      : model.contiguous && kmSpan != null
-      ? whoText
-      : `${nCongested} of ${segments.length} exits`;
-  const whoList: { label: string; exits: string[] } | null =
-    nCongested === segments.length
-      ? null
-      : nCongested > segments.length * 0.6
-      ? { label: clear.length === 1 ? "Keeps moving" : "Keep moving", exits: clear }
-      : model.contiguous && kmSpan != null
-      ? null
-      : { label: "Congested", exits: model.congestedSegments };
-
-  // The grade to name: severe if any hour crawls, otherwise heavy.
-  const worstWord = nSevere > 0 ? "severe" : "heavy";
-
-  const headline = !model.firstAlert
-    ? `Traffic is forecast to keep moving at every exit for the next ${hourLabels.length} hours.`
-    : firstCount < peakCount
-    ? `Congestion builds: ${firstCount} of ${segments.length} exit${firstCount === 1 ? "" : "s"} congested at +1h, rising to ${peakCount} by +${peakAt}h. By the peak it is ${whoShort}${nSevere > 0 ? `, with ${nSevere} crawling under 10 km/h` : ""}.`
-    : `${whoShort.charAt(0).toUpperCase()}${whoShort.slice(1)} — congested from the first hour${model.allHours ? ` and holding for the whole ${model.maxHour}-hour window` : ""}${nSevere > 0 ? `, ${nSevere} of them crawling under 10 km/h at some point` : ", none of it severe"}.`;
-
-  /* The worst episode, said the way the live map says a real jam: which
-     plaza, how long a queue, how many minutes. Alerts are already ranked
-     severe-first, then longest, then surest, so the first with a profile is
-     the one to name. */
-  const lead = alerts.find((a) => a.jam) ?? null;
-  const leadText = (() => {
-    if (!lead?.jam) return null;
-    const n = model.relHours[lead.from - 1];
-    const clock = hourClock(model.baseTs, model.skippedHours + lead.from);
-    const when = n != null && n <= 0 ? "from now" : clock ? `from ${clock}` : `from +${n ?? lead.from}h`;
-    return `${lead.state === "High" ? "Worst" : "Heaviest"}: ${lead.segment} ${when}, typically a ${jamSummary(lead.segment, lead.jam)}.`;
-  })();
-  // The same lead, as a labelled row: the label, then where and when, then the jam.
-  const leadRow = (() => {
-    if (!lead?.jam || !leadText) return null;
-    const label = lead.state === "High" ? "Worst" : "Heaviest";
-    const rest = leadText.slice(label.length + 2);
-    const cut = rest.indexOf(", typically a ");
-    return cut < 0
-      ? { label, where: rest, jam: null as string | null }
-      : { label, where: rest.slice(0, cut), jam: rest.slice(cut + 2) };
-  })();
-
-  const stat = (value: string, label: string, tone?: string, title?: string) => (
-    <div title={title} className="nct-stat">
-      <span className="nct-stat-value" style={tone ? { color: tone } : undefined}>{value}</span>
-      <span className="nct-stat-label">{label}</span>
-    </div>
-  );
 
   const pct = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(0)}%`);
   const hzFirst = hzAcc[0];
   const hzLast = hzAcc[hzAcc.length - 1];
-  const beatsFrom = hzAcc.find(
-    (a) => a.accuracy != null && a.persistenceAccuracy != null && a.accuracy > a.persistenceAccuracy);
   const hiddenSorted = [...hiddenSegments].sort((a, b) => (firstSevere(a) ?? 99) - (firstSevere(b) ?? 99));
 
-  /* Layout, top to bottom: what am I looking at -> the finding -> four numbers
-     -> the grid, with its own legend directly above it -> what to act on ->
-     everything a reviewer wants behind one disclosure. The previous card put
-     the accuracy strip between the title and the finding, the legend in the
-     header far from the grid it explains, fifteen chips of exit names, and
-     four three-line cards that each restated a heatmap row. */
+  /* The episode to act on first. Alerts are ranked severe-first, then longest, then surest, so it is the first. */
+  const priority = alerts[0] ?? null;
+  const priorityWhen = (() => {
+    if (!priority) return null;
+    const at = (col: number) => model.skippedHours + col;
+    const fromStamp = hourStamp(model.baseTs, at(priority.from));
+    const toStamp = hourStamp(model.baseTs, at(priority.to));
+    if (!fromStamp || !toStamp) return null;
+    // "Tue, Nov 10, 5 AM": the day is everything before the last comma, the clock after it.
+    const cut = (t: string) => { const i = t.lastIndexOf(", "); return i < 0 ? [t, ""] : [t.slice(0, i), t.slice(i + 2)]; };
+    const [fromDay, fromClock] = cut(fromStamp);
+    const [toDay, toClock] = cut(toStamp);
+    if (priority.from === priority.to) return `${fromDay}, ${fromClock}`;
+    return fromDay === toDay ? `${fromDay}, ${fromClock} – ${toClock}` : `${fromStamp} – ${toStamp}`;
+  })();
+
+  /* Layout by reference (9 Nov 2026): title and provenance, the range, then the grid on the left with the episode to act
+     on beside it, and the evidence and the read-out as two strips beneath. The grid itself is unchanged. */
   return (
-    <article className="chart-card wide nct-card">
-      {/* Row 1: title left, provenance right, anchor time beneath. */}
-      <div>
-        <div className="nct-card-head-split">
+    <article className="chart-card wide nct-card cg-card">
+      <header className="cg-head">
+        <div>
           <h3 className="nct-title">
             Predictive Congestion State Map
-            <InfoTooltip text="Predicted jam state at each exit for the hours the forecast covers (up to 168 hours ahead; choose the range above), from Waze jam reports. Red = crawling under 10 km/h, amber = heavy at 10-20 km/h, blue = moving freely or no jam reported. The cuts are this corridor's own: a generic 30 km/h threshold put every reported jam in one class. Hover a cell for the typical queue length, its distance from the toll plaza and the delay, from four years of Waze jam history at that exit and hour." />
+            <InfoTooltip text="Predicted jam state at each exit for the hours the forecast covers (up to 168 hours ahead; choose the range below), from Waze jam reports. Red = crawling under 10 km/h, amber = heavy at 10-20 km/h, blue = moving freely or no jam reported. The cuts are this corridor's own: a generic 30 km/h threshold put every reported jam in one class. Hover a cell for the typical queue length, its distance from the toll plaza and the delay, from four years of Waze jam history at that exit and hour." />
           </h3>
-          <div className="nct-pill-row">
+          <p className="cg-issued">
+            {expired
+              ? <>No hours left in this forecast · last covered {baseLabel(model.baseTs) ?? "the last reading"}</>
+              /* The base hour is the latest complete hour of Waze traffic the run used, not when it was published:
+                 the run at 10 PM uses 9–10 PM and forecasts from 10 PM. "Issued 9 PM" read as a stale publish time. */
+              : <><span title="Each hourly run uses the latest complete hour of Waze traffic and forecasts from the hour after it. The next run replaces this at the top of the hour.">
+                  {/* The end of the base hour: a base of 9 PM covers traffic up to 10 PM. */}
+                  Based on traffic up to {hourStamp(model.baseTs, 1) ?? "the last reading"}
+                  {" "}· updated every hour</span>
+                  {!isWeek && frameHours > hourLabels.length && (
+                    <span className="nct-warn"> · {frameHours - hourLabels.length} hour{frameHours - hourLabels.length === 1 ? "" : "s"} not yet forecast</span>
+                  )}</>}
+          </p>
+        </div>
+        <div className="nct-pill-row cg-badges">
+          <span
+            title={modelInfo && !modelInfo.accepted && modelInfo.rejectedReason ? modelInfo.rejectedReason : undefined}
+            className={`pill${modelInfo?.accepted ? " green" : ""}`}
+          >
+            {modelInfo?.model ?? "—"}{modelInfo?.accuracy != null && ` · ${(modelInfo.accuracy * 100).toFixed(1)}%`}{modelInfo && !modelInfo.accepted && " · not accepted"}
+          </span>
+          {/* Age counts from the base hour (the last complete Waze hour), which is already ~1 h old when a run
+              publishes and reaches ~2 h 10 min just before the next run lands (each run takes ~10 min). Over 3 h
+              means at least one hourly run did not publish. A 2 h cut flagged every healthy forecast for the
+              first ~10 minutes of each hour (10 Nov 2026). */}
+          {!expired && ageHours != null && ageHours > 3 && (
             <span
-              title={modelInfo && !modelInfo.accepted && modelInfo.rejectedReason ? modelInfo.rejectedReason : undefined}
-              className={`pill${modelInfo?.accepted ? " green" : ""}`}
+              title={`The hourly refresh has not published since ${model.baseTs}. Check the Scheduled Task "SmartFlow congestion refresh" and All_Scripts/Predictive_Modeling/refresh_congestion.log.`}
+              className="pill amber"
+              style={{ cursor: "help" }}
             >
-              {modelInfo?.model ?? "—"}{modelInfo?.accuracy != null && ` · ${(modelInfo.accuracy * 100).toFixed(1)}%`}{modelInfo && !modelInfo.accepted && " · not accepted"}
+              {`⚠ Refresh overdue · ${Math.round(ageHours)}h old`}
             </span>
-            {!expired && ageHours != null && ageHours > 2 && (
-              <span
-                title={`The hourly refresh has not published since ${model.baseTs}. Check the Scheduled Task "SmartFlow congestion refresh" and All_Scripts/Predictive_Modeling/refresh_congestion.log.`}
-                className="pill amber"
-                style={{ cursor: "help" }}
-              >
-                {`⚠ refresh overdue · ${Math.round(ageHours)}h old`}
-              </span>
-            )}
-            {expired && (
-              <span
-                title={`This forecast was generated from data ending ${model.baseTs} and its whole ${model.storedHours}-hour window has now passed. The hourly refresh task should replace it; see All_Scripts/Predictive_Modeling/README_congestion.md.`}
-                className="pill red"
-                style={{ cursor: "help" }}
-              >
-                {`⚠ expired · ${Math.round(ageHours ?? 0)}h old`}
-              </span>
-            )}
-          </div>
-        </div>
-        <p className="nct-sub">
-          {expired
-            ? <>No hours left in this forecast · last covered <b>{baseLabel(model.baseTs) ?? "the last reading"}</b></>
-            : <>Forecast made <b>{baseLabel(model.baseTs) ?? "at the last reading"}</b>,
-                {isWeek ? <> next {model.dayCount} days</> : <> next {frameHours} hours</>}
-                {" "}· renews every hour
-                {!isWeek && frameHours > hourLabels.length && (
-                  <span className="nct-warn"> · {frameHours - hourLabels.length} hour{frameHours - hourLabels.length === 1 ? "" : "s"} not yet forecast</span>
-                )}</>}
-          <span style={{ cursor: "help" }} title="Rows are exits ordered north-bound by km-post. Hover any cell for the model's confidence. The base time is the last complete hour of Waze ingestion."></span>
-        </p>
-      </div>
-
-      {/* How far ahead this whole card describes. It governs the finding and
-          the four numbers below it, so it sits above them rather than under
-          the grid -- and it lands where the event card beside this one puts
-          its own SHOWING control, so the two read in the same order. The exit
-          picker stays with the grid, which is the only thing it changes. */}
-      <div className="nct-toolbar">
-        <div className="nct-group">
-          <span className="nct-group-label">Range</span>
-          <div role="group" aria-label="Forecast range" className="nct-pills">
-            {RANGES.map((r) => (
-              <button
-                key={r.key}
-                onClick={() => setRange(r.key)}
-                title={r.help}
-                aria-pressed={range === r.key}
-                className={`nct-pill-btn${range === r.key ? " is-on" : ""}`}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Row 2: the finding. */}
-      {/* The answer: the corridor's state in one sentence, with the road's own
-          signal beside it, then the worst episode. */}
-      <div className="nct-finding" data-tone={nSevere > 0 ? "congested" : model.firstAlert ? "slow" : "clear"}>
-        <SignalGlyph state={nSevere > 0 ? "congested" : model.firstAlert ? "slow" : "clear"} size={26} />
-        <div className="nct-finding-text">
-          <p>{headline}</p>
-          {whoList && whoList.exits.length > 0 && (
-            <div className="nct-finding-chips">
-              <span className="nct-kv-k">{whoList.label}</span>
-              {whoList.exits.map((x) => <span key={x} className="nct-tiny-chip">{x}</span>)}
-            </div>
           )}
-          {leadRow && !isWeek && (
-            <div className="nct-finding-kv">
-              <span className="nct-kv-k">{leadRow.label}</span>
-              <span><b>{leadRow.where}</b>{leadRow.jam && <span className="nct-soft"> · {leadRow.jam}</span>}</span>
-            </div>
+          {expired && (
+            <span
+              title={`This forecast was generated from data ending ${model.baseTs} and its whole ${model.storedHours}-hour window has now passed. The hourly refresh task should replace it; see All_Scripts/Predictive_Modeling/README_congestion.md.`}
+              className="pill red"
+              style={{ cursor: "help" }}
+            >
+              {`⚠ Expired · ${Math.round(ageHours ?? 0)}h old`}
+            </span>
           )}
         </div>
+      </header>
+
+      <div className="cg-range nct-pills" role="group" aria-label="Forecast range">
+        {RANGES.map((r) => (
+          <button
+            key={r.key}
+            onClick={() => setRange(r.key)}
+            title={r.help}
+            aria-pressed={range === r.key}
+            className={`nct-pill-btn${range === r.key ? " is-on" : ""}`}
+          >
+            {r.label}
+          </button>
+        ))}
       </div>
 
-      {/* Row 3: how many, where, how long, how sure — once each.
-          Two by two, matching the event card beside it. Four across fitted in a
-          half-width card but gave the two panels stat blocks of different
-          heights, so everything below them — the charts, the Generate report
-          button, the evidence header — sat at a different level on each. */}
-      <div className="nct-stats">
-        {stat(`${nCongested} of ${segments.length}`, nCongested > 0 ? "exits with a jam" : "all moving",
-              nCongested > 0 ? (nSevere > 0 ? "var(--color-danger)" : "var(--color-warning)") : "var(--color-success)",
-              nCongested > 0 ? `${nCongested} of ${segments.length} exits are expected to carry a jam somewhere in this window` : undefined)}
-        {stat(kmSpan != null ? `km ${fmtKm(model.kmFrom)}–${fmtKm(model.kmTo)}` : "—",
-              // The exits at either end beside the posts, so the span is a place and not only two numbers.
-              kmSpan != null
-                ? model.kmFromExit === model.kmToExit ? `${model.kmFromExit} only` : `${model.kmFromExit} to ${model.kmToExit}, ${kmSpan} km`
-                : "none predicted", undefined,
-              kmSpan != null ? (model.contiguous ? "One continuous stretch" : "Not contiguous — clear exits sit between the affected ones") : undefined)}
-        {isWeek
-          ? (() => {
-              // Expected hours per day at the exit with the most of them. The
-              // label count saturates over a week ("168 of 168h"); the summed
-              // chances do not.
-              const perExit = new Map<number, number>();
-              model.dayCells.forEach((c) => perExit.set(c.value[1], (perExit.get(c.value[1]) ?? 0) + c.exact));
-              const worstY = [...perExit.entries()].sort((a, b) => b[1] - a[1])[0];
-              const days = Math.max(model.dayCount, 1);
-              return stat(worstY ? `${(worstY[1] / days).toFixed(0)} h/day` : "—",
-                          "at the worst exit",
-                          worstY && worstY[1] / days >= 12 ? "var(--color-danger)" : undefined,
-                          worstY ? `${segments[worstY[0]]} — the most congested hours per day of any exit` : undefined);
-            })()
-          : stat(model.allHours ? `all ${model.maxHour}h` : model.worstSegment ? `${model.worstSegmentCount} of ${hourLabels.length}h` : "—", model.flatHours ? "same every hour" : "at the worst exit")}
-        {(() => {
-          const pc = cells.filter((c) => c.state !== "Pending" && c.pCong != null).map((c) => c.pCong as number);
-          if (pc.length) {
-            const mean = pc.reduce((a, b) => a + b, 0) / pc.length;
-            return stat(`${Math.round(mean * 100)}%`, "average jam chance", mean >= 0.5 ? "var(--color-danger)" : undefined,
-                        "The mean chance of heavy or severe traffic across every cell on the grid");
-          }
-          return stat(model.confLo != null && model.confHi != null ? `${Math.round(model.confLo * 100)}–${Math.round(model.confHi * 100)}%` : "—",
-              model.confLo != null && model.confLo < LOW_CONF ? "confidence · some cells under 80%" : "confidence across congested cells",
-              model.confLo != null && model.confLo < LOW_CONF ? "var(--color-warning)" : undefined);
-        })()}
-      </div>
+      <div className="cg-grid">
+        {/* ---------- The grid, with its exit picker and its key ---------- */}
+        <div className="cg-main">
+          <div className="cg-main-head">
+            <h4>Congestion by exit and {isWeek ? "day" : "hour"}</h4>
+            {/* Which exits are drawn: one dropdown. Hidden exits list soonest-severe first. */}
+            <select
+              value=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "__all") setExtraExits(hiddenSegments);
+                else if (v === "__reset") setExtraExits([]);
+                else if (v) setExtraExits((cur) => [...cur, v]);
+              }}
+              title={urgentHidden ? "Some hidden exits turn severe sooner than any shown" : "Add an exit to the grid"}
+              aria-label="Exits shown"
+              className={`nct-select cg-exit-select${urgentHidden ? " is-warn" : ""}`}
+            >
+              <option value="">{urgentHidden ? "⚠ " : ""}{shownSegments.length} of {segments.length} exits shown</option>
+              {hiddenCount > 0 && <option value="__all">Show all {segments.length}</option>}
+              {extraExits.length > 0 && <option value="__reset">Back to the default {shownSegments.length - extraExits.length}</option>}
+              {hiddenSorted.map((sg) => {
+                const f = firstSevere(sg);
+                return <option key={sg} value={sg}>Add {sg}{f != null ? ` — severe at +${f}h` : " — stays clear"}</option>;
+              })}
+            </select>
+          </div>
 
-      {/* Rows 4 and 5 side by side on a wide card: the grid on the left, what to act on beside it. */}
-      <div className="nct-split">
-      {/* Row 4: the grid, with its legend and its exit picker attached to it. */}
-      <div>
-        <div className="nct-grid-bar">
-          {/* Which exits are drawn. A select instead of fifteen chips: the
-              reader pulls in the two or three they are responsible for. */}
-          <div className="nct-exit-picker">
-            <span><b>{shownSegments.length}</b> of {segments.length} exits</span>
-            {hiddenCount > 0 && (
-              <select
-                value=""
-                onChange={(e) => { if (e.target.value) setExtraExits((cur) => [...cur, e.target.value]); }}
-                title={urgentHidden ? "Some hidden exits turn severe sooner than any shown" : undefined}
-                aria-label="Add exit"
-                className={`nct-select${urgentHidden ? " is-warn" : ""}`}
-              >
-                <option value="">{urgentHidden ? "⚠ Add exit…" : "Add exit…"}</option>
-                {hiddenSorted.map((sg) => {
-                  const f = firstSevere(sg);
-                  return <option key={sg} value={sg}>{sg}{f != null ? ` — severe at +${f}h` : " — stays clear"}</option>;
+          <div className="nct-key nct-grid-key">
+            {isWeek ? (
+              <>
+                {WEEK_BANDS.map((b) => (
+                  <span key={b.label} className="nct-key-item">
+                    <i style={{ background: b.color }} />
+                    {b.label}
+                  </span>
+                ))}
+                <span className="nct-key-dim">expected congested hours per day</span>
+              </>
+            ) : (
+              <>
+                {(["Low", "Med", "High"] as State[]).map((st) => {
+                  const absent = st === "Med" && !model.everHeavy;
+                  return (
+                    <span key={st}
+                          title={absent ? "No exit-hour in this forecast falls in the 10-20 km/h band" : STATE_META[st].speed}
+                          className={`nct-key-item${absent ? " is-absent" : ""}`}>
+                      <i style={{ background: STATE_META[st].color }} />
+                      <b>{STATE_META[st].label}</b>
+                      <span className="nct-key-dim">{STATE_META[st].brief} km/h</span>
+                    </span>
+                  );
                 })}
-              </select>
+                {shownSegments.some((sg) => KMI.get(sg)?.est) && (
+                  <span className="nct-key-dim" style={{ whiteSpace: "nowrap" }}
+                        title="No surveyed km-post for this exit; the distance is interpolated from its neighbours.">
+                    <b>*</b> est. km
+                  </span>
+                )}
+              </>
             )}
-            {hiddenCount > 0 && (
-              <button type="button" onClick={() => setExtraExits(hiddenSegments)} className="nct-pill-btn">
-                All {segments.length}
-              </button>
-            )}
-            {extraExits.length > 0 && (
-              <button type="button" onClick={() => setExtraExits([])} className="nct-link-btn">
-                reset
+          </div>
+
+          <div ref={gridBoxRef} style={{ width: "100%", height: `${isWeek ? weekChartHeight : chartHeight}px` }}>
+            <DashboardChart key={range} option={isWeek ? weekOption : option} height={isWeek ? weekChartHeight : chartHeight} />
+          </div>
+
+          {/* The foot line under the graph, as on the Volume Forecast: Generate report on the left; the report opens below the card. */}
+          <div className="fc2-foot cg-foot">
+            {!reportOpen && modelInfo && <GenerateReportButton onClick={() => setReportOpen(true)} />}
+            {/* Validation evidence beside it (10 Nov 2026): the headline holds/fades line, opening the full evidence. */}
+            {hzAcc.length > 1 && hzFirst && hzLast && (
+              <button type="button" className="cg-ev-btn" aria-haspopup="dialog" onClick={() => setEvidenceOpen(true)}>
+                <ShieldCheck size={16} aria-hidden="true" className="cg-ev-icon" />
+                <span className="cg-ev-title">View validation details</span>
+                <ChevronRight size={16} aria-hidden="true" className="cg-ev-chev" />
               </button>
             )}
           </div>
         </div>
 
-        {/* The legend belongs to the grid, not to the controls: sitting in the
-            control row it wrapped onto a line of its own and read as a third
-            bank of settings. Speeds are abbreviated here and spelled out on
-            hover, so the whole key fits one line at this card width. */}
-        <div className="nct-key nct-grid-key">
-          {isWeek ? (
+        {/* ---------- The episode to act on first ---------- */}
+        <aside className="fc2-side cg-side" aria-label="Priority episode">
+          <div className="fc2-side-head">
+            <span className="fc2-side-icon" aria-hidden="true"><Siren size={18} /></span>
+            <h4>Priority episode</h4>
+          </div>
+          {priority ? (
             <>
-              {WEEK_BANDS.map((b) => (
-                <span key={b.label} className="nct-key-item">
-                  <i style={{ background: b.color }} />
-                  {b.label}
+              <div className="cg-pri">
+                <span className={`pill ${priority.state === "High" ? "red" : "amber"} cg-pri-tag`}>
+                  <SignalGlyph state={priority.state === "High" ? "congested" : "slow"} size={16} plate={false} title="" />
+                  {priority.state === "High" ? "Severe" : "Heavy"}
                 </span>
-              ))}
-              <span className="nct-key-dim">expected congested hours per day</span>
+                <span className="cg-pri-name">{priority.segment}</span>
+                <span className="cg-pri-when">
+                  {priorityWhen ?? `+${priority.from}h`} · km {kmLabel(KMI.get(priority.segment))}
+                </span>
+              </div>
+              <div className="fc2-evidence">
+                <dl>
+                  {priority.jam && (
+                    <>
+                      <div title={`${jamSummary(priority.segment, priority.jam)}. Typical for this exit at this hour, from four years of Waze jam history.`}>
+                        <dt>Estimated queue</dt><dd>~{fmtM(priority.jam.queueM)}</dd>
+                      </div>
+                      <div><dt>Estimated delay</dt><dd>~{fmtDelay(priority.jam.delayS)}</dd></div>
+                    </>
+                  )}
+                  <div><dt>Lasts</dt><dd>{priority.to - priority.from + 1} h</dd></div>
+                  <div title="The model's certainty in this classification at the episode's surest hour">
+                    <dt>Confidence</dt>
+                    <dd className={priority.conf < LOW_CONF ? "nct-warn" : undefined}>{(priority.conf * 100).toFixed(0)}%</dd>
+                  </div>
+                  {priority.volRel != null && (
+                    <div><dt>Traffic that hour</dt>
+                      <dd className={priority.volRel < 0.7 ? "nct-warn" : undefined}>
+                        {priority.volRel < 0.7 ? "quiet · check for incidents" : `${priority.volRel.toFixed(1)}× usual`}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+              </div>
+              <div className="cg-side-foot">
+                <p className="fc2-period">
+                  {alerts.length} episode{alerts.length === 1 ? "" : "s"} in this window
+                  {(model.severeCount > 0 || model.heavyCount > 0) && <> · {[model.severeCount > 0 ? `${model.severeCount} severe` : null,
+                    model.heavyCount > 0 ? `${model.heavyCount} heavy` : null].filter(Boolean).join(", ")}</>}
+                </p>
+                {alerts.length > 1 && (
+                  <button type="button" className="cg-all" onClick={() => setAlertsOpen(true)}>
+                    View all {alerts.length} episodes <ArrowRight size={15} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
             </>
           ) : (
-            <>
-              {(["Low", "Med", "High"] as State[]).map((st) => {
-                const absent = st === "Med" && !model.everHeavy;
-                return (
-                  <span key={st}
-                        title={absent ? "No exit-hour in this forecast falls in the 10-20 km/h band" : STATE_META[st].speed}
-                        className={`nct-key-item${absent ? " is-absent" : ""}`}>
-                    <i style={{ background: STATE_META[st].color }} />
-                    <b>{STATE_META[st].label}</b>
-                    <span className="nct-key-dim">{STATE_META[st].brief}</span>
-                  </span>
-                );
-              })}
-              <span className="nct-key-dim">km/h</span>
-              {/* Two different asterisks used to share this card: one on cells
-                  for low confidence, one on row labels for an estimated
-                  km-post. The cell one is gone with the cell text, so this is
-                  the only one left and it finally gets named. */}
-              {shownSegments.some((sg) => KMI.get(sg)?.est) && (
-                <span className="nct-key-dim" style={{ whiteSpace: "nowrap" }}
-                      title="No surveyed km-post for this exit; the distance is interpolated from its neighbours.">
-                  <b>*</b> est. km
-                </span>
-              )}
-            </>
-          )}
-        </div>
-
-        <div style={{ width: "100%", height: `${isWeek ? weekChartHeight : chartHeight}px` }}>
-          <DashboardChart key={range} option={isWeek ? weekOption : option} height={isWeek ? weekChartHeight : chartHeight} />
-        </div>
-      </div>
-
-      {/* Row 5: what to act on. Four rows; the rest in the dialog. */}
-      <div>
-        <div className="nct-subhead-row">
-          <h4 className="nct-subhead">
-            What to act on <span className="nct-subhead-dim">
-              · {alerts.length} episode{alerts.length === 1 ? "" : "s"}
-              {(model.severeCount > 0 || model.heavyCount > 0) && <>
-                {" · "}
-                {[model.severeCount > 0 ? `${model.severeCount} severe` : null,
-                  model.heavyCount > 0 ? `${model.heavyCount} heavy` : null].filter(Boolean).join(", ")}
-              </>}
-            </span>
-          </h4>
-          {alerts.length > VISIBLE_ALERTS && (
-            <button type="button" onClick={() => setAlertsOpen(true)} className="btn-muted">
-              View all {alerts.length}
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </button>
-          )}
-        </div>
-        <div className="nct-episodes">
-          {alerts.length === 0 ? (
             <div className="nct-finding" data-tone="clear">
               <SignalGlyph state="clear" size={22} />
               <p className="nct-finding-text">No heavy or severe congestion predicted in the next {hourLabels.length} hours.</p>
             </div>
-          ) : (
-            shown.map((a, i) => alertRow(a, `${a.segment}-${a.from}-${i}`))
           )}
-        </div>
-      </div>
+        </aside>
       </div>
 
-      {/* Row 6: the model's own read-out, in the open. The control that asks
-          for it has to be visible, and the panel is the same one the forecast
-          cards carry so the tab reads as one system. */}
-      <CongestionNarrative
-        modelInfo={
-          modelInfo
-            ? {
-                model: modelInfo.model,
-                accuracy: modelInfo.accuracy ?? null,
-                accepted: Boolean(modelInfo.accepted),
-                rejectedReason: modelInfo.rejectedReason ?? null,
-                baseline: modelInfo.baseline ?? null,
-              }
-            : null
-        }
-        /* Only the hours ahead this view shows (TR-9, 19 Oct 2026): sending all 48 measured rows to +168h
-           had the 12-hour view described with week-ahead figures. The first row is kept if nothing fits. */
-        horizons={(() => {
-          const reach = model.skippedHours + model.maxHour;
-          const inView = hzAcc.filter((a) => a.horizon <= reach);
-          return (inView.length ? inView : hzAcc.slice(0, 1)).map((a) => ({
-            horizon: a.horizon,
-            accuracy: a.accuracy,
-            persistenceAccuracy: a.persistenceAccuracy,
-          }));
-        })()}
-        severeBelowKmh={evalInfo?.thresholds_kmh?.severe_below ?? null}
-        heavyBelowKmh={evalInfo?.thresholds_kmh?.heavy_below ?? null}
-        exitsTotal={segments.length}
-        exitsSevere={nSevere}
-        hoursCovered={hourLabels.length}
-        neverPredictsHeavy={!model.everHeavy}
-        windowStart={hourStamp(model.baseTs, model.skippedHours + 1)}
-        windowEnd={hourStamp(model.baseTs, model.skippedHours + model.maxHour + 1)}
-      />
+      {/* ---------- The evidence and the read-out, as two strips ---------- */}
+      <div className="cg-strips">
+        <CongestionNarrative
+          compact
+          open={reportOpen}
+          onOpenChange={setReportOpen}
+          modelInfo={
+            modelInfo
+              ? {
+                  model: modelInfo.model,
+                  accuracy: modelInfo.accuracy ?? null,
+                  accepted: Boolean(modelInfo.accepted),
+                  rejectedReason: modelInfo.rejectedReason ?? null,
+                  baseline: modelInfo.baseline ?? null,
+                }
+              : null
+          }
+          /* Only the hours ahead this view shows (TR-9, 19 Oct 2026): sending all 48 measured rows to +168h
+             had the 12-hour view described with week-ahead figures. The first row is kept if nothing fits. */
+          horizons={(() => {
+            const reach = model.skippedHours + model.maxHour;
+            const inView = hzAcc.filter((a) => a.horizon <= reach);
+            return (inView.length ? inView : hzAcc.slice(0, 1)).map((a) => ({
+              horizon: a.horizon,
+              accuracy: a.accuracy,
+              persistenceAccuracy: a.persistenceAccuracy,
+            }));
+          })()}
+          severeBelowKmh={evalInfo?.thresholds_kmh?.severe_below ?? null}
+          heavyBelowKmh={evalInfo?.thresholds_kmh?.heavy_below ?? null}
+          exitsTotal={segments.length}
+          exitsSevere={nSevere}
+          hoursCovered={hourLabels.length}
+          neverPredictsHeavy={!model.everHeavy}
+          windowStart={hourStamp(model.baseTs, model.skippedHours + 1)}
+          windowEnd={hourStamp(model.baseTs, model.skippedHours + model.maxHour + 1)}
+        />
+      </div>
 
-      {/* Row 7: model evidence, one strip that opens it in a modal. */}
       {hzAcc.length > 1 && hzFirst && hzLast && (
         <EvidenceModal
           subtitle="Congestion forecast: how it was tested, how far ahead it holds, and how it compares with no-change."
-          strip={
-            <span className="nct-trust-pill" style={{ order: 4 }}>
-              {(() => {
-                const a0 = hzFirst.accuracy ?? 0; const a1 = hzLast.accuracy ?? 0;
-                return a1 < a0 - 0.03 ? "fades" : a1 > a0 + 0.03 ? "improves" : "holds";
-              })()}: {pct(hzFirst.accuracy)} at +1h → {pct(hzLast.accuracy)} at +{hzLast.horizon}h
-              {" · "}{beatsFrom ? "beats no-change" : "no better than no-change"}
-            </span>
-          }
+          hideTrigger
+          open={evidenceOpen}
+          onOpenChange={setEvidenceOpen}
         >
 
           <div className="nct-evidence nct-ev-blocks">

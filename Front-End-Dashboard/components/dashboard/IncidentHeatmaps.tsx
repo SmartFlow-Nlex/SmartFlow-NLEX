@@ -63,6 +63,8 @@ function HeatKey({
 }
 
 const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/** Full day names, for tooltips, pop-up titles and sentences; the grid's axis keeps the short ones. */
+const DOW_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
 /** A cell of the hour x day grid: dow as the API numbers it (0 = Sunday), hour 0-23. */
@@ -168,8 +170,8 @@ function HourDayHeatmapGrid({
         const { value, seriesIndex } = p as { value: [number, number, number]; seriesIndex: number };
         const [h, row] = value;
         const dow = DOW_ORDER[row];
-        const title = `${DOW_LABELS[row]} · ${fmtHour(h)} – ${fmtHour((h + 1) % 24)}`;
-        if (seriesIndex === 1) return heatTipEmpty(title, `no ${DOW_LABELS[row]} in this Range`);
+        const title = `${DOW_FULL[row]} • ${fmtHour(h)} – ${fmtHour((h + 1) % 24)}`;
+        if (seriesIndex === 1) return heatTipEmpty(title, `no ${DOW_FULL[row]} in this Range`);
         // The type split rides in the muted lines, so the value line keeps Traffic's shape (testers IN-8).
         return heatTip({
           title,
@@ -178,7 +180,7 @@ function HourDayHeatmapGrid({
             ...(hasSplit
               ? [`Accidents ${fmt1(accTotals[dow][h] / dowCount[dow])} · Breakdowns ${fmt1(brkTotals[dow][h] / dowCount[dow])} per day`]
               : []),
-            `${fmtInt(totals[dow][h])} total across ${fmtInt(dowCount[dow])} ${DOW_LABELS[row]}s · click to keep it below`,
+            `${fmtInt(totals[dow][h])} total across ${fmtInt(dowCount[dow])} ${DOW_FULL[row]}s · click to keep it below`,
           ],
         });
       },
@@ -202,16 +204,7 @@ function HourDayHeatmapGrid({
 
   return (
     <>
-      {best && (
-        <div className="inc-answer inc-chart-answer">
-          <span className="inc-answer-value">
-            {DOW_LABELS[best.row]} {fmtHour(best.hour)}
-          </span>
-          <span className="inc-answer-label">
-            busiest hour of the week · <b>{fmt1(best.avg)}</b> incidents per {DOW_LABELS[best.row]} on average
-          </span>
-        </div>
-      )}
+      {/* The busiest cell is the card's quick insight now (app/dashboard/incident/page.tsx). */}
       <DashboardChart
         option={option}
         height={248}
@@ -322,15 +315,9 @@ export function HourSourceHeatmap({
 
   return (
     <>
-      {lead ? (
-        <div className="inc-answer inc-chart-answer">
-          <span className="inc-answer-value">{fmtInt(sums[lead.key])}</span>
-          <span className="inc-answer-label">
-            <b>{lead.label}</b>, the largest source in view
-          </span>
-        </div>
-      ) : (
-        <p className="inc-context" style={{ margin: "-4px 0 12px" }}>
+      {/* The largest source is the card's quick insight now (incident/hourly/page.tsx); only the no-data note stays. */}
+      {!lead && (
+        <p className="inc-context" style={{ margin: "-4px 0 12px", paddingLeft: "calc(44px + 14px)" }}>
           {hasIncidentLog ? "Neither source is logged this far" : "No incident log covers this date"}, so every cell is greyed out as no data.
         </p>
       )}

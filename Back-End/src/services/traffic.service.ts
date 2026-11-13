@@ -2,6 +2,7 @@ import { db } from "../config/db.js";
 import { exitKmValuesSql, kmKeySql } from "../lib/km-post.js";
 import { forecastTable } from "./forecast-source.js";
 import { FACT_HOURLY_JAMS_LOCAL } from "../utils/waze-jams-local.js";
+import { buildArtistCanon, standardizeEventTitle, type ArtistCanon } from "../utils/event-names.js";
 import { jamProfileAvailable, jamProfileSql, volumeProfileSql } from "./jam-profile.js";
 
 // Hourly columns of nlex_traffic_volume (h00..h23)
@@ -22,6 +23,22 @@ export type AnalyticsFilters = {
 };
 
 type CacheEntry = { at: number; data: unknown };
+
+/* One spelling per event name, built from every title in the event list (utils/event-names.ts). Rebuilt every ten
+   minutes, so newly scraped events are standardized against the whole list without a restart. */
+let eventCanon: { at: number; canon: ArtistCanon } | null = null;
+async function getEventCanon(): Promise<ArtistCanon> {
+  if (eventCanon && Date.now() - eventCanon.at < 10 * 60 * 1000) return eventCanon.canon;
+  const { rows } = await db!.query(`SELECT DISTINCT btrim(title) AS t FROM philippine_arena_events WHERE title IS NOT NULL`);
+  eventCanon = { at: Date.now(), canon: buildArtistCanon(rows.map((r) => r.t as string)) };
+  return eventCanon.canon;
+}
+
+/* The Philippine Arena's own exit, and the other exits people take to and from it (all within about 3 km). */
+const ARENA_VENUE = "CDV/PH Arena";
+const ARENA_EXITS = [ARENA_VENUE, "Bocaue Interchange", "Tambubong", "Marilao"];
+const ARENA_EXITS_SQL = ARENA_EXITS.map((x) => `'${x}'`).join(", ");
+const ARENA_ALT_VIEWS_SQL = [...ARENA_EXITS.slice(1), "All arena exits"].map((x) => `('${x}')`).join(", ");
 const analyticsCache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
@@ -251,12 +268,24 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
         //
         // Events falling on a holiday are flagged, since their deviation is
         // really a holiday effect.
+        //
+        // Other exits people use for the Philippine Arena (4 Nov 2026, user request): each arena event is also
+        // measured at Bocaue Interchange, Tambubong and Marilao, and at all four arena exits together, with the
+        // same baseline rules. Each row says which view it belongs to (`view`): "venue" is the event's own exit.
+        // Bocaue Barrier is left out on purpose: it is the mainline barrier, so its entries are through traffic.
         db.query(
-          `WITH pv AS (
+          `WITH pv0 AS (
              SELECT t.toll_plaza, t.date, SUM(${DAY_TOTAL})::bigint AS v
              FROM nlex_traffic_volume t
-             WHERE t.type = 'Entries' AND t.vehicle_class = 'Total'
+             -- The page's Class filter applies here too (5 Nov 2026); 'Total' when no class is picked.
+             WHERE t.type = 'Entries' AND t.vehicle_class = $1
              GROUP BY 1, 2
+           ), pv AS (
+             SELECT * FROM pv0
+             UNION ALL
+             SELECT 'All arena exits', date, SUM(v)::bigint
+             FROM pv0 WHERE toll_plaza IN (${ARENA_EXITS_SQL})
+             GROUP BY date HAVING COUNT(*) = ${ARENA_EXITS.length}
            ), clean AS (
              SELECT p.* FROM pv p
              WHERE NOT EXISTS (SELECT 1 FROM philippine_arena_events x WHERE x.start_date = p.date)
@@ -286,26 +315,34 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
                     bool_or(EXISTS (SELECT 1 FROM ph_holidays h WHERE h.date_day = e.start_date)) AS on_holiday
              FROM ev_rows e
              GROUP BY 1, 2
+           ), targets AS (
+             SELECT e.*, 'venue'::text AS view, e.plaza AS measure FROM ev e
+             UNION ALL
+             SELECT e.*, m.measure, m.measure
+             FROM ev e
+             CROSS JOIN (VALUES ${ARENA_ALT_VIEWS_SQL}) m(measure)
+             WHERE e.plaza = '${ARENA_VENUE}'
            )
-           SELECT e.title AS label, e.start_date::text AS date, e.plaza, e.venue_exit,
+           SELECT e.title AS label, e.start_date::text AS date, e.measure AS plaza, e.venue_exit, e.view,
                   e.event_count, e.attendance, e.on_holiday,
                   p.v::bigint AS day_volume,
                   ROUND(b.bv)::bigint AS baseline,
                   b.bn::int AS baseline_n,
                   ROUND(((p.v - b.bv) / b.bv * 100)::numeric, 1)::float AS deviation_pct
-           FROM ev e
-           JOIN pv p ON p.date = e.start_date AND p.toll_plaza = e.plaza
+           FROM targets e
+           JOIN pv p ON p.date = e.start_date AND p.toll_plaza = e.measure
            CROSS JOIN LATERAL (
              SELECT AVG(cb.v) AS bv, COUNT(*) AS bn
              FROM clean cb
-             WHERE cb.toll_plaza = e.plaza
+             WHERE cb.toll_plaza = e.measure
                AND EXTRACT(dow FROM cb.date) = EXTRACT(dow FROM e.start_date)
                AND cb.date BETWEEN e.start_date - 45 AND e.start_date + 45
            ) b
            -- Drop occurrences whose baseline rests on too few days to mean
            -- anything; the previous query allowed a sample of zero.
            WHERE b.bn >= 4 AND b.bv > 0
-           ORDER BY e.start_date DESC LIMIT 200`
+           ORDER BY e.start_date DESC LIMIT 1200`,
+          [filters.vehicleClass ?? "Total"]
         ),
         // Holidays vs same-weekday non-holiday baseline (obeys plaza/direction/class filters)
         db.query(
@@ -494,6 +531,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
       }
     }
 
+    const canon = await getEventCanon();
     const data = {
       range: { from: lo, to: hi },
       meta: { plazas: plazaList.rows.map((r) => r.plaza), minDate, maxDate, jamTo },
@@ -521,7 +559,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
       plazaHourProfile: plazaHour.rows.map((r) => ({ plaza: r.plaza, hour: Number(r.hour), v: Number(r.v) })),
       speedByHour: speedByHour.rows,
       eventImpact: eventImpact.rows.map((r) => ({
-        label: r.label,
+        label: standardizeEventTitle(r.label, canon),
         date: r.date,
         dayVolume: Number(r.day_volume),
         baseline: Number(r.baseline),
@@ -532,6 +570,8 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
         plaza: r.plaza,
         /** The venue's own interchange, which may differ from the metering plaza. */
         venueExit: r.venue_exit,
+        /** "venue" (measured at the event's own exit), or the arena exit / "All arena exits" it was measured at. */
+        view: r.view,
         /** How many distinct events shared this date. */
         eventCount: r.event_count,
         /** Reported attendance, parsed from free text; null when not published. */
@@ -1059,10 +1099,11 @@ export async function getUpcomingEventSurge(limit = 60): Promise<UpcomingEvent[]
       [limit],
     );
 
+    const canon = await getEventCanon();
     const byDate = new Map<string, UpcomingEvent>();
     for (const r of rows) {
       const ev: UpcomingEvent = byDate.get(r.date) ?? {
-        date: r.date, title: r.title, isDerived: !!r.isDerived,
+        date: r.date, title: standardizeEventTitle(r.title, canon), isDerived: !!r.isDerived,
         capacity: r.capacity == null ? null : Number(r.capacity), venue: r.venue ?? null, exits: [],
       };
       ev.exits.push({

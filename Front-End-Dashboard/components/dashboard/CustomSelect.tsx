@@ -16,6 +16,7 @@ export default function CustomSelect({
   onChange,
   disabled = false,
   title,
+  prefix,
 }: {
   value: string;
   options: { label: string; value: string }[];
@@ -24,6 +25,8 @@ export default function CustomSelect({
   disabled?: boolean;
   /** Shown on hover; use it to say why a disabled control is disabled. */
   title?: string;
+  /** A muted label inside the trigger, before the choice ("Measured at: Venue exit"). */
+  prefix?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -48,6 +51,7 @@ export default function CustomSelect({
         disabled={disabled}
         title={title}
       >
+        {prefix ? <span className="cs-prefix">{prefix}:</span> : null}
         {selectedLabel}
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>

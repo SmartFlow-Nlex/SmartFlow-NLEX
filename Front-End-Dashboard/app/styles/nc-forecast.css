@@ -121,3 +121,298 @@
 .fc-legend-item > i,
 .inc-zone-swatch,
 .viz-emissions .nc-em-zone > i { width: 12px; height: 10px; border-radius: 3px; }
+
+/* ===========================================================================
+   Traffic Volume Forecast card, laid out by reference (5 Nov 2026): the graph on the left with its controls in a
+   tinted panel above it and its key below it; a summary column on the right with the answer and its evidence.
+   =========================================================================== */
+.fc2 { padding: 22px 24px; }
+.fc2-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 22px; align-items: stretch; }
+.fc2-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.fc2-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 20px; }
+.fc2-head .nct-title { margin: 0; font-size: 22px; font-weight: 700; }
+.fc2-key { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; font-weight: 500; color: var(--text-secondary); }
+.fc2-key span { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.fc2-key i { width: 18px; height: 4px; border-radius: 3px; display: inline-block; }
+
+.fc2-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 5%, transparent);
+}
+.fc2-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; min-width: 0; }
+.fc2-row .nct-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0; }
+.fc2-controls .nct-group-label,
+.fc2-controls .fc-label { min-width: 64px; }
+.fc2-sep { width: 1px; height: 24px; background: var(--border-strong); }
+
+.fc2-switch { display: inline-flex; align-items: center; gap: 12px; cursor: pointer; }
+.fc2-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.fc2-switch-track {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+  transition: background-color 0.18s ease;
+}
+.fc2-switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(10, 30, 70, 0.35);
+  transition: transform 0.18s ease;
+}
+.fc2-switch input:checked + .fc2-switch-track { background: var(--page-accent, var(--nlex-blue)); }
+.fc2-switch input:checked + .fc2-switch-track .fc2-switch-thumb { transform: translateX(18px); }
+.fc2-switch input:focus-visible + .fc2-switch-track { outline: 2px solid var(--page-accent, var(--nlex-blue)); outline-offset: 2px; }
+
+.fc2-note-warn {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-warning, #b45309) 12%, transparent);
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.fc2-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 20px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-default);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.fc2-rain-key { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.fc2-rain-title { font-weight: 700; color: var(--text-primary); }
+.fc2-rain-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.fc2-rain-item i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+/* The summary column */
+.fc2-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-raised, #fff) 70%, transparent);
+}
+.fc2-side-head { display: flex; align-items: center; gap: 12px; }
+.fc2-side-head h4 { margin: 0; font-size: 18px; font-weight: 700; color: var(--text-primary); }
+.fc2-side-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 12%, transparent);
+  color: var(--page-accent, var(--nlex-blue));
+}
+.fc2-answer { display: flex; flex-direction: column; gap: 2px; padding-bottom: 14px; border-bottom: 1px solid var(--border-default); }
+.fc2-answer-label { font-size: 13px; color: var(--text-secondary); }
+.fc2-answer-value { font-size: 40px; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.fc2-answer-unit { font-size: 13.5px; color: var(--text-secondary); }
+.fc2-pair { display: grid; grid-template-columns: 1fr 1fr; padding-bottom: 14px; border-bottom: 1px solid var(--border-default); }
+.fc2-pair > div { display: flex; flex-direction: column; gap: 4px; }
+.fc2-pair > div + div { padding-left: 14px; border-left: 1px solid var(--border-default); }
+.fc2-k { font-size: 12.5px; color: var(--text-secondary); }
+.fc2-v { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+/* A long model name ("Neg. Binomial GLM", "Gradient Boosting") wraps under itself, the dot held level with its first line. */
+.fc2-model { display: inline-flex; align-items: flex-start; gap: 8px; font-size: 16px; line-height: 1.3; }
+.fc2-model i { flex: none; width: 10px; height: 10px; margin-top: 0.4em; border-radius: 50%; display: inline-block; }
+
+.fc2-evidence { display: flex; flex-direction: column; gap: 8px; }
+.fc2-ev-head { display: flex; align-items: center; gap: 8px; color: var(--page-accent, var(--nlex-blue)); }
+.fc2-ev-head h5 { margin: 0; font-size: 15.5px; font-weight: 700; color: var(--text-primary); }
+.fc2-evidence dl { margin: 0; display: flex; flex-direction: column; }
+.fc2-evidence dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border-default); font-size: 14px; }
+.fc2-evidence dt { color: var(--text-secondary); }
+.fc2-evidence dd { margin: 0; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.fc2-evidence dd .nct-ok, .fc2-evidence dd .nct-bad { font-size: 12px; font-weight: 600; }
+.fc2-period { margin: 2px 0 0; font-size: 12.5px; color: var(--text-muted); }
+.fc2-ev-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  min-height: 34px;
+  padding: 0 16px;
+  border: 1px solid var(--page-accent, var(--nlex-blue));
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--page-accent, var(--nlex-blue));
+  cursor: pointer;
+}
+.fc2-ev-btn:hover { background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 10%, transparent); }
+.fc2-h48 {
+  display: flex;
+  gap: 12px;
+  margin-top: auto;
+  padding: 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 7%, transparent);
+}
+.fc2-h48 > div { display: flex; flex-direction: column; gap: 2px; }
+.fc2-h48-name { font-size: 17px; font-weight: 800; color: var(--text-primary); }
+.fc2-h48-err { font-size: 13px; color: var(--text-secondary); }
+
+@media (max-width: 1180px) {
+  .fc2-grid { grid-template-columns: minmax(0, 1fr); }
+  .fc2-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .fc2-side-head { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  .fc2 { padding: 16px; }
+  .fc2-sep { display: none; }
+}
+.fc2-v-sm { font-size: 17px; }
+.fc2-evidence dt { display: inline-flex; align-items: center; gap: 8px; }
+.fc2-head .btn-muted { margin-left: auto; }
+/* The title, its (i) and its day pills on one line with even spacing (Hourly Breakdown, 5 Nov 2026). */
+.fc2-head .nct-title { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
+.fc2-head .nct-title .pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 12px;
+  margin: 0;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.fc2-head .nct-title .pill:first-of-type { margin-left: 4px; }
+/* With only the rainfall key left in it, the foot keeps the key on the right. */
+.fc2-foot { justify-content: space-between; }
+.fc2-foot:empty { display: none; }
+.fc2-foot .fc2-rain-key { margin-left: auto; }
+
+/* ===========================================================================
+   Predictive Congestion State Map, laid out by reference (9 Nov 2026): title and provenance, the range, the grid with
+   the priority episode beside it, then Validation evidence and Narrative Explanation as two strips. The grid is unchanged.
+   =========================================================================== */
+.cg-card { padding: 22px 24px; gap: 16px; }
+.cg-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px 20px; }
+.cg-head .nct-title { margin: 0; font-size: 22px; font-weight: 700; }
+.cg-issued { margin: 4px 0 0; font-size: 14px; color: var(--text-secondary); }
+.cg-badges { flex-wrap: wrap; justify-content: flex-end; }
+.cg-range { padding-bottom: 16px; border-bottom: 1px solid var(--border-default); }
+
+.cg-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 22px; align-items: stretch; }
+.cg-main { display: flex; flex-direction: column; min-width: 0; }
+.cg-main-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; }
+.cg-main-head h4 { margin: 0; font-size: 18px; font-weight: 700; color: var(--text-primary); }
+.ds-main select.cg-exit-select, select.cg-exit-select { min-width: 220px; max-width: 280px; }
+.cg-main .nct-grid-key { border-top: 0; padding-top: 0; margin: 12px 0 4px; }
+
+/* The priority episode, in the same summary column as the forecast cards. */
+.cg-pri { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--border-default); }
+.cg-pri-tag { display: inline-flex; align-items: center; gap: 6px; text-transform: uppercase; }
+.cg-pri-name { font-size: 22px; font-weight: 800; line-height: 1.2; color: var(--text-primary); }
+.cg-pri-when { font-size: 14px; color: var(--text-secondary); }
+.cg-side .fc2-evidence dd.nct-warn { color: var(--color-warning); }
+.cg-side-foot { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
+.cg-all {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--page-accent, var(--nlex-blue));
+  cursor: pointer;
+}
+.cg-all:hover { text-decoration: underline; text-underline-offset: 3px; }
+.cg-all svg { transition: transform 0.15s ease; }
+.cg-all:hover svg { transform: translateX(3px); }
+
+/* The two strips under the grid. */
+.cg-strips { display: flex; flex-direction: column; gap: 10px; }
+.cg-strips .ev-trust.is-bare:empty { display: none; }
+.cg-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 18px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  font: inherit;
+  text-align: left;
+  color: var(--text-primary);
+}
+.cg-strip-ev { background: color-mix(in srgb, var(--nlex-blue, #1f5fbf) 7%, transparent); cursor: pointer; }
+.cg-strip-ev:hover { background: color-mix(in srgb, var(--nlex-blue, #1f5fbf) 12%, transparent); }
+.cg-strip-ev:focus-visible { outline: 2px solid var(--page-accent, var(--nlex-blue)); outline-offset: 2px; }
+.cg-strip-nar { background: color-mix(in srgb, #6d4ad8 7%, transparent); }
+.cg-strip-chev { color: var(--text-secondary); transition: transform 0.15s ease; }
+.cg-strip-ev:hover .cg-strip-chev { transform: translateX(2px); }
+.cg-strip-icon { color: var(--page-accent, var(--nlex-blue)); flex: none; }
+.cg-strip-nar .cg-strip-icon { color: #6d4ad8; }
+.cg-strip-title { font-size: 16px; font-weight: 700; }
+.cg-strip-text { font-size: 14px; color: var(--text-secondary); }
+.cg-strip-nar .ds-narrative-cta { margin: 0 0 0 auto; }
+
+@media (max-width: 1180px) {
+  .cg-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .cg-card { padding: 16px; }
+  .ds-main select.cg-exit-select, select.cg-exit-select { min-width: 0; max-width: 100%; }
+}
+/* Generate report on the grid's foot line, as on the Volume Forecast (10 Nov 2026); it sits level with the episode panel's foot. */
+.cg-main .cg-foot { margin-top: auto; }
+.cg-foot .ds-narrative-cta { margin: 0; }
+/* Validation evidence beside Generate report on the grid's foot line (10 Nov 2026). */
+.cg-foot { justify-content: flex-start; gap: 10px 12px; }
+.cg-ev-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 0 14px 0 16px;
+  border: 1px solid color-mix(in srgb, var(--nlex-blue, #1f5fbf) 30%, var(--border-default));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--nlex-blue, #1f5fbf) 7%, transparent);
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.cg-ev-btn:hover { background: color-mix(in srgb, var(--nlex-blue, #1f5fbf) 13%, transparent); }
+.cg-ev-btn:focus-visible { outline: 2px solid var(--page-accent, var(--nlex-blue)); outline-offset: 2px; }
+.cg-ev-icon { flex: none; color: var(--page-accent, var(--nlex-blue)); }
+.cg-ev-title { font-weight: 700; white-space: nowrap; }
+.cg-ev-text { min-width: 0; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cg-ev-chev { flex: none; color: var(--text-secondary); transition: transform 0.15s ease; }
+.cg-ev-btn:hover .cg-ev-chev { transform: translateX(2px); }
+/* Nothing left to show beneath the grid until the report is opened. */
+.cg-strips:empty, .cg-card > .ev-trust.is-bare { display: none; }
+@media (max-width: 640px) { .cg-ev-text { display: none; } }

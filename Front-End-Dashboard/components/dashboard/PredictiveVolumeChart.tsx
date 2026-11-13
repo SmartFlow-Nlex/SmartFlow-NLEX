@@ -5,10 +5,11 @@ import type { EChartsOption } from "echarts";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
 import ModelNarrative, { type MetricRow } from "./ModelNarrative";
+import { GenerateReportButton } from "./NarrativePanel";
 import { aggregateSeries } from "./aggregateSeries";
 import { useThemeTokens, zoneTints } from "./useThemeTokens";
 import WeatherEvidencePanel, { EvidenceHeading } from "./WeatherEvidencePanel";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, Car, CloudRain, Layers, ShieldCheck } from "lucide-react";
 import { useChartTheme } from "../../lib/chart-theme";
 import { areaFade, forecastLineStyle, nowMarkLine } from "../../lib/chart-kit";
 import { useTrafficPalette } from "./trafficPalette";
@@ -211,9 +212,11 @@ type Props = {
   from?: string;
   to?: string;
   weather?: "all" | "dry" | "wet";
+  /** When given, the card shows its own Range control (it is the only chart on the tab the Range affects). */
+  onMonthsChange?: (m: "3" | "12" | "all") => void;
 };
 
-export default function PredictiveVolumeChart({ months = "all", from, to, weather = "all" }: Props) {
+export default function PredictiveVolumeChart({ months = "all", from, to, weather = "all", onMonthsChange }: Props) {
   /* Several models can be on screen at once; the list never empties so the
      chart always has something to compare the ground truth against.
 
@@ -247,6 +250,10 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   // extrapolated from the h=14 headline figure.
   const [horizonAcc, setHorizonAcc] = useState<HorizonBucket[]>([]);
   const [showAllMetrics, setShowAllMetrics] = useState(false);
+  // The 48-hour table has its own switch: each "Show secondary metrics" opens only its own table.
+  const [showAll48, setShowAll48] = useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [showWeather, setShowWeather] = useState(true);
 
   // How much of each zone to display, in days. These trim the view only — the
@@ -272,6 +279,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const P = useTrafficPalette();
   const modelColor = (k: string) => (T.isDark ? MODEL_DARK : MODEL_LIGHT)[k] ?? "#2a78d6";
   const ZONE = zoneTints(T.isDark);
+  const CHART_H = 450; // the chart's own height, unchanged
 
   const [pastDays, setPastDays] = useState<number>(ALL_PAST);
   const [futureDays, setFutureDays] = useState<number>(14);
@@ -889,8 +897,6 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
     return idx === isoDates.length - 1 && todayIso >= toIsoDate(last.toISOString()) ? -1 : idx;
   })();
   const nowMark = nowMarkLine(chartTheme, "");
-  const lastForecastIso = chartData.isoDates[chartData.isoDates.length - 1] ?? null;
-  const forecastEndsBeforeToday = lastForecastIso != null && lastForecastIso < todayIso;
 
   const h48Name = `48-hour model (${next48?.run.modelLabel ?? "Stacked LSTM"})`;
   // Its own hue: the five daily models take blue / magenta / teal / violet / pink (violet is SARIMAX, and the two
@@ -1319,46 +1325,38 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
     : null;
 
   if (drillDate) {
+    // The same layout as the daily card (5 Nov 2026): the graph on the left with its controls in a panel above it,
+    // the day's answer in a summary column on the right. The graph itself is unchanged.
+    const lead = visibleModels[0];
+    const leadH = lead ? hourlyByModel[lead] : undefined;
+    const leadPct = leadH?.dayPredicted != null && anyHourly?.dayActual ? ((leadH.dayPredicted - anyHourly.dayActual) / anyHourly.dayActual) * 100 : null;
     return (
-      <article className="chart-card wide nct-card">
-        <div className="nct-card-head nct-card-head-split">
-          <div className="nct-head-text">
-            <h3 className="nct-title">
-              Hourly Breakdown — {drillLabel}
-              <InfoTooltip text="The line is the vehicles counted at the toll plazas in each hour of this day. Each model line is that model's daily prediction spread across the day in the shape of a typical same-weekday, so you can see where the day ran above or below expectation." />
-              {anyHourly && <span className="pill">{anyHourly.weekday}</span>}
-              {anyHourly?.isFuture && <span className="pill purple">Forecast</span>}
-            </h3>
-            {anyHourly && (() => {
-              const k = visibleModels[0];
-              const h = k ? hourlyByModel[k] : undefined;
-              const pct = h?.dayPredicted != null && anyHourly.dayActual ? ((h.dayPredicted - anyHourly.dayActual) / anyHourly.dayActual) * 100 : null;
-              return (
-                /* The day in pills, not a sentence. Peak and quietest hour are
-                   the stat tiles under the chart, so they are not repeated here. */
-                <div className="nct-chip-row nct-day-pills">
-                  {anyHourly.profileSource === "weekday-profile"
-                    ? <span className="nct-sub" style={{ margin: 0 }}>Forecast day: each model&apos;s daily total spread over a typical {anyHourly.weekday}.</span>
-                    : k && h?.dayPredicted != null && pct != null && (
-                        <span className="nct-mini-chip">
-                          {metricsMeta[k].label} was <b className={Math.abs(pct) <= 5 ? "nct-ok" : "nct-warn"}>{Math.abs(pct).toFixed(1)}% {pct < 0 ? "under" : "over"}</b> the day&apos;s actual
-                        </span>
-                      )}
-                  {weatherSummary && (
-                    <>
-                      <span className="nct-mini-chip">
-                        {weatherSummary.totalRain > 0.05
-                          ? <>Rain <b className="nct-rain">{weatherSummary.totalRain.toFixed(1)} mm</b>{weatherSummary.wettestLabel && <> · heaviest {weatherSummary.wettestLabel}</>}</>
-                          : <>No rain recorded</>}
-                      </span>
-                      {weatherSummary.tMin != null && weatherSummary.tMax != null && (
-                        <span className="nct-mini-chip"><b>{weatherSummary.tMin.toFixed(0)}&ndash;{weatherSummary.tMax.toFixed(0)}&deg;C</b></span>
-                      )}
-                    </>
-                  )}
-                </div>
-              );
-            })()}
+      <article className="chart-card wide nct-card nct-forecast fc2">
+        <div className="fc2-grid">
+          <div className="fc2-main">
+            <header className="fc2-head">
+              <h3 className="nct-title">
+                Hourly Breakdown — {drillLabel}
+                <InfoTooltip text="The line is the vehicles counted at the toll plazas in each hour of this day. Each model line is that model's daily prediction spread across the day in the shape of a typical same-weekday, so you can see where the day ran above or below expectation." />
+                {anyHourly && <span className="pill">{anyHourly.weekday}</span>}
+                {anyHourly?.isFuture && <span className="pill purple">Forecast</span>}
+              </h3>
+              <button type="button" onClick={closeDrill} className="btn-muted">
+                ← Back to daily
+              </button>
+            </header>
+
+            <div className="fc2-controls">
+              <div className="fc2-row">
+                {modelToolbar}
+                <span className="fc2-sep" aria-hidden="true" />
+                <label className="fc2-switch" title={showWeather ? "Showing this day's rainfall" : "Rainfall hidden"}>
+                  <span className="fc-label">Weather</span>
+                  <input type="checkbox" checked={showWeather} onChange={() => setShowWeather(!showWeather)} />
+                  <span className="fc2-switch-track" aria-hidden="true"><span className="fc2-switch-thumb" /></span>
+                </label>
+              </div>
+            </div>
             {weather !== "all" && (
               <p className={`nct-sub nct-sub-note${anyHourly && anyHourly.observedHours === 0 ? " nct-warn" : ""}`}>
                 {anyHourly && anyHourly.observedHours === 0
@@ -1366,34 +1364,6 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                   : `Showing ${weather} hours only (${anyHourly?.observedHours ?? 0} of 24). The models carry no weather dimension, so their curves are unfiltered.`}
               </p>
             )}
-          </div>
-          <button type="button" onClick={closeDrill} className="btn-muted">
-            ← Back to daily
-          </button>
-        </div>
-
-        <div className="nct-toolbar">
-          {modelToolbar}
-          <button
-            type="button"
-            onClick={() => setShowWeather(!showWeather)}
-            aria-pressed={showWeather}
-            className={`nct-pill-btn${showWeather ? " is-on" : ""}`}
-          >
-            {showWeather ? (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 2v2m0 16v2M4 12H2m20 0h-2m-2.93-7.07l-1.41 1.41m-9.32 9.32l-1.41 1.41m0-12.14l1.41 1.41m9.32 9.32l1.41 1.41M17 12a5 5 0 11-10 0 5 5 0 0110 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            ) : (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 2v2m0 16v2M4 12H2m20 0h-2" stroke="currentColor" strokeWidth="2" />
-                <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="2" />
-              </svg>
-            )}
-            Weather
-          </button>
-        </div>
-
         {hourlyLoading && !anyHourly ? (
           <div className="nct-chart-slot" style={{ height: 420 }}>
             <StateNote kind="loading">Loading hourly breakdown…</StateNote>
@@ -1407,7 +1377,6 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             <DashboardChart option={hourlyOption} height={420} />
           </div>
         ) : null}
-
         {anyHourly?.isFuture && !showH48Hours && h48ByDay && h48ByDay.size > 0 && (() => {
           const days = [...h48ByDay.keys()].sort();
           const fmt = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -1418,61 +1387,86 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             </p>
           );
         })()}
-        {anyHourly && (
-          <div className="nct-stats nct-stats-auto">
-            <div className="nct-stat">
-              <span className="nct-stat-label">Day Actual</span>
-              <span className="nct-stat-value">{anyHourly.dayActual != null ? fmtVeh(anyHourly.dayActual) : "—"}</span>
-            </div>
-            {visibleModels.map((k) => {
-              const h = hourlyByModel[k];
-              return (
-                <div key={k} className="nct-stat">
-                  <span className="nct-stat-label">
-                    <span className="nct-swatch" style={{ background: modelColor(k) }} />
-                    {metricsMeta[k].label} Predicted
-                  </span>
-                  <span className="nct-stat-value">
-                    {h?.dayPredicted != null ? fmtVeh(h.dayPredicted) : "—"}
-                    {h?.dayPredicted != null && anyHourly.dayActual ? (
-                      <span className="nct-stat-aside">
-                        {(((h.dayPredicted - anyHourly.dayActual) / anyHourly.dayActual) * 100).toFixed(1)}% vs actual
-                      </span>
-                    ) : null}
-                  </span>
-                </div>
-              );
-            })}
-            {showH48Hours && h48Hours && h48Hours.every((v) => v != null) && (() => {
-              // The 48-hour model's own hours for this day, added up (it covers the whole day).
-              const day = h48Hours.reduce<number>((a, v) => a + (v ?? 0), 0);
-              return (
-                <div className="nct-stat">
-                  <span className="nct-stat-label">
-                    <span className="nct-swatch" style={{ background: h48Color }} />
-                    {h48Name} Predicted
-                  </span>
-                  <span className="nct-stat-value">
-                    {fmtVeh(day)}
-                    {anyHourly.dayActual ? (
-                      <span className="nct-stat-aside">
-                        {(((day - anyHourly.dayActual) / anyHourly.dayActual) * 100).toFixed(1)}% vs actual
-                      </span>
-                    ) : null}
-                  </span>
-                </div>
-              );
-            })()}
-            <div className="nct-stat">
-              <span className="nct-stat-label">Peak Hour</span>
-              <span className="nct-stat-value">{extremeLabel(anyHourly.hours, "max")}</span>
-            </div>
-            <div className="nct-stat">
-              <span className="nct-stat-label">Quietest Hour</span>
-              <span className="nct-stat-value">{extremeLabel(anyHourly.hours, "min")}</span>
-            </div>
           </div>
-        )}
+
+          {anyHourly && (
+            <aside className="fc2-side" aria-label="Day summary">
+              <div className="fc2-side-head">
+                <span className="fc2-side-icon" aria-hidden="true"><Car size={18} /></span>
+                <h4>Day Summary</h4>
+              </div>
+              <div className="fc2-answer">
+                <span className="fc2-answer-label">{anyHourly.isFuture ? "Forecast for the day" : "Vehicles counted that day"}</span>
+                <span className="fc2-answer-value">
+                  {anyHourly.dayActual != null ? fmtVeh(anyHourly.dayActual) : lead && leadH?.dayPredicted != null ? fmtVeh(leadH.dayPredicted) : "—"}
+                </span>
+                <span className="fc2-answer-unit">
+                  vehicles{anyHourly.dayActual == null && lead ? ` · ${metricsMeta[lead].label} forecast` : ""}
+                </span>
+              </div>
+              <div className="fc2-pair">
+                <div>
+                  <span className="fc2-k">Peak hour</span>
+                  <span className="fc2-v fc2-v-sm">{extremeLabel(anyHourly.hours, "max")}</span>
+                </div>
+                <div>
+                  <span className="fc2-k">Quietest hour</span>
+                  <span className="fc2-v fc2-v-sm">{extremeLabel(anyHourly.hours, "min")}</span>
+                </div>
+              </div>
+
+              <div className="fc2-evidence">
+                <div className="fc2-ev-head"><ShieldCheck size={17} aria-hidden="true" /><h5>Predicted vs Actual</h5></div>
+                <dl>
+                  {visibleModels.map((k) => {
+                    const h = hourlyByModel[k];
+                    const pct = h?.dayPredicted != null && anyHourly.dayActual ? ((h.dayPredicted - anyHourly.dayActual) / anyHourly.dayActual) * 100 : null;
+                    return (
+                      <div key={k}>
+                        <dt><span className="nct-swatch" style={{ background: modelColor(k) }} /> {metricsMeta[k].label}</dt>
+                        <dd>
+                          {h?.dayPredicted != null ? fmtVeh(h.dayPredicted) : "—"}
+                          {pct != null && <span className={Math.abs(pct) <= 5 ? "nct-ok" : "nct-warn"}> {pct >= 0 ? "+" : ""}{pct.toFixed(1)}%</span>}
+                        </dd>
+                      </div>
+                    );
+                  })}
+                  {showH48Hours && h48Hours && h48Hours.every((v) => v != null) && (() => {
+                    const day = h48Hours.reduce<number>((acc, v) => acc + (v ?? 0), 0);
+                    const pct = anyHourly.dayActual ? ((day - anyHourly.dayActual) / anyHourly.dayActual) * 100 : null;
+                    return (
+                      <div>
+                        <dt><span className="nct-swatch" style={{ background: h48Color }} /> 48-hour model</dt>
+                        <dd>{fmtVeh(day)}{pct != null && <span className={Math.abs(pct) <= 5 ? "nct-ok" : "nct-warn"}> {pct >= 0 ? "+" : ""}{pct.toFixed(1)}%</span>}</dd>
+                      </div>
+                    );
+                  })()}
+                </dl>
+                {anyHourly.profileSource === "weekday-profile" ? (
+                  <p className="fc2-period">Forecast day: each model&apos;s daily total spread over a typical {anyHourly.weekday}.</p>
+                ) : lead && leadPct != null ? (
+                  <p className="fc2-period">{metricsMeta[lead].label} was {Math.abs(leadPct).toFixed(1)}% {leadPct < 0 ? "under" : "over"} the day&apos;s actual.</p>
+                ) : null}
+              </div>
+
+              {weatherSummary && (
+                <div className="fc2-h48">
+                  <span className="fc2-side-icon" aria-hidden="true"><CloudRain size={17} /></span>
+                  <div>
+                    <span className="fc2-k">Weather that day</span>
+                    <span className="fc2-h48-name">
+                      {weatherSummary.totalRain > 0.05 ? `${weatherSummary.totalRain.toFixed(1)} mm rain` : "No rain recorded"}
+                    </span>
+                    <span className="fc2-h48-err">
+                      {weatherSummary.wettestLabel && weatherSummary.totalRain > 0.05 ? `Heaviest at ${weatherSummary.wettestLabel}` : ""}
+                      {weatherSummary.tMin != null && weatherSummary.tMax != null ? `${weatherSummary.wettestLabel && weatherSummary.totalRain > 0.05 ? " · " : ""}${weatherSummary.tMin.toFixed(0)}–${weatherSummary.tMax.toFixed(0)}°C` : ""}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </aside>
+          )}
+        </div>
       </article>
     );
   }
@@ -1517,179 +1511,168 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
      attached -> the chart -> the trust strip, which opens the full validation
      evidence -> the narrative report. */
   return (
-    <article className="chart-card wide nct-card nct-forecast">
-      <header className="nct-card-head">
-        <h3 className="nct-title">
-          Traffic Volume Walk-Forward Forecast
-          <InfoTooltip text="Daily corridor volume: the model's past fit, its held-out test period against real counts, and the forecast ahead. Pick a model above; the champion is preselected." />
-        </h3>
-      </header>
+    <article className="chart-card wide nct-card nct-forecast fc2">
+      <div className="fc2-grid">
+        {/* ---------- The graph, with its controls above and its key below (layout by reference, 5 Nov 2026) ---------- */}
+        <div className="fc2-main">
+          <header className="fc2-head">
+            <h3 className="nct-title">
+              Volume Forecast
+              <InfoTooltip text="Daily corridor volume: the model's fit on the training period, its held-out validation period against real counts, and the stored forecast ahead. Pick a model below; the champion is preselected." />
+            </h3>
+          </header>
 
-      {/* The answer. */}
-      {futAvg != null && (
-        <div className="fc-answer">
-          <span className="fc-answer-label">Next {futureDays} days · average</span>
-          <span className="fc-answer-value">
-            {fmtVeh(futAvg)}
-            <span className="fc-answer-unit">vehicles/day</span>
-          </span>
-          <span className="fc-answer-context">
-            {futPeak && <>peak {isAggregated ? bucketNoun : "day"} <b>{dates[futPeak.idx]}</b> ({fmtVeh(futPeak.v)}) · </>}
-            typical error <b>{rangeErr}</b>
-            {primaryMeta.accepted ? "" : <span className="nct-bad"> · failed acceptance, shown for comparison</span>}
-          </span>
-        </div>
-      )}
-
-      {/* Which forecasts are drawn; the overlay toggle at the end of the row. */}
-      <div className="fc-row fc-models">
-        {modelToolbar}
-        <button
-          type="button"
-          onClick={() => setShowWeather(!showWeather)}
-          title={showWeather ? "Showing the weather-aware forecasts and rainfall bars" : "Showing the weather-free forecasts"}
-          aria-pressed={showWeather}
-          className={`nct-pill-btn fc-push${showWeather ? " is-on" : ""}`}
-        >
-          Weather {showWeather ? "on" : "off"}
-        </button>
-      </div>
-
-      {/* Controls, then the key: the order every forecast card uses. */}
-      <div className="fc-row fc-controls">
-        <div className="fc-group">
-          <span className="fc-label">View</span>
-          <div className="nct-pills" role="group" aria-label="View">
-            {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
-              <button key={g}
-                onClick={() => {
-                  setGranularity(g);
-                  setPastDays(g === "Daily" ? 90 : ALL_PAST);
-                  // A monthly point averages a whole month; a 14-day horizon
-                  // would be half of one, so Monthly starts at one month ahead.
-                  if (g === "Monthly" && futureDays < 28) setFutureDays(28);
-                }}
-                title={g === "Daily" ? "One point per day — the resolution the models actually forecast" : `Averaged per ${g.replace("ly", "").toLowerCase()} — a viewing aid, not a separate forecast`}
-                aria-pressed={granularity === g}
-                className={`nct-pill-btn${granularity === g ? " is-on" : ""}`}>
-                {g}
-              </button>
-            ))}
+          <div className="fc2-controls">
+            <div className="fc2-row">
+              {modelToolbar}
+              {onMonthsChange && (
+                <>
+                  <span className="fc2-sep" aria-hidden="true" />
+                  <div className="fc-group">
+                    <span className="fc-label">Range</span>
+                    <div className="nct-pills" role="group" aria-label="Range">
+                      {([["3", "3 mo"], ["12", "12 mo"], ["all", "All"]] as const).map(([m, label]) => (
+                        <button key={m} onClick={() => onMonthsChange(m)} aria-pressed={months === m}
+                          title="How much history the chart shows before the validation period"
+                          className={`nct-pill-btn${months === m ? " is-on" : ""}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="fc2-row">
+              <div className="fc-group">
+                <span className="fc-label">View</span>
+                <div className="nct-pills" role="group" aria-label="View">
+                  {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
+                    <button key={g}
+                      onClick={() => {
+                        setGranularity(g);
+                        setPastDays(g === "Daily" ? 90 : ALL_PAST);
+                        // A monthly point averages a whole month; a 14-day horizon
+                        // would be half of one, so Monthly starts at one month ahead.
+                        if (g === "Monthly" && futureDays < 28) setFutureDays(28);
+                      }}
+                      title={g === "Daily" ? "One point per day — the resolution the models actually forecast" : `Averaged per ${g.replace("ly", "").toLowerCase()} — a viewing aid, not a separate forecast`}
+                      aria-pressed={granularity === g}
+                      className={`nct-pill-btn${granularity === g ? " is-on" : ""}`}>
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <span className="fc2-sep" aria-hidden="true" />
+              <div className="fc-group">
+                <span className="fc-label">Horizon</span>
+                <div className="nct-pills" role="group" aria-label="Horizon">
+                  {[{ label: "2 wk", d: 14 }, { label: "1 mo", d: 28 }, { label: "2 mo", d: 60 }, { label: "3 mo", d: 90 }].map((item) => {
+                    const tooShort = granularity === "Monthly" && item.d < 28;
+                    const off = item.d > futureAvailable || tooShort;
+                    return (
+                      <button key={item.label} onClick={() => setFutureDays(item.d)} disabled={off}
+                        title={tooShort ? "Monthly view needs at least one month ahead" : off ? "Beyond the stored forecast" : undefined}
+                        aria-pressed={futureDays === item.d}
+                        className={`nct-pill-btn${futureDays === item.d ? " is-on" : ""}`}>
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <span className="fc2-sep" aria-hidden="true" />
+              <label className="fc2-switch" title={showWeather ? "Showing the weather-aware forecasts and the rainfall band" : "Showing the weather-free forecasts"}>
+                <span className="fc-label">Weather</span>
+                <input type="checkbox" checked={showWeather} onChange={() => setShowWeather(!showWeather)} />
+                <span className="fc2-switch-track" aria-hidden="true"><span className="fc2-switch-thumb" /></span>
+              </label>
+            </div>
           </div>
-        </div>
-        <div className="fc-group">
-          <span className="fc-label">Ahead</span>
-          <div className="nct-pills" role="group" aria-label="Ahead">
-            {[{ label: "2 wk", d: 14 }, { label: "1 mo", d: 28 }, { label: "2 mo", d: 60 }, { label: "3 mo", d: 90 }].map((item) => {
-              const tooShort = granularity === "Monthly" && item.d < 28;
-              const off = item.d > futureAvailable || tooShort;
-              return (
-                <button key={item.label} onClick={() => setFutureDays(item.d)} disabled={off}
-                  title={tooShort ? "Monthly view needs at least one month ahead" : off ? "Beyond the stored forecast" : undefined}
-                  aria-pressed={futureDays === item.d}
-                  className={`nct-pill-btn${futureDays === item.d ? " is-on" : ""}`}>
-                  {item.label}
-                </button>
-              );
-            })}
+
+          {/* The evidence: history solid, forecast dashed, rainfall in its own band beneath. */}
+          <div style={{ height: `${CHART_H}px`, width: "100%", cursor: isAggregated ? "default" : "pointer" }}>
+            <DashboardChart option={dailyOption} height={CHART_H} onEvents={{ click: onChartClick as (p: never) => void }} />
           </div>
-        </div>
-      </div>
 
-      {/* The key: what each band of the chart is. */}
-      <div className="fc-legend">
-        <span className="fc-legend-item">
-          <i style={{ background: ZONE.past }} />
-          <b>Past</b>
-          trained · {chartData.holdoutStart.toLocaleString()}d shown
-        </span>
-        <span className="fc-legend-item">
-          <i style={{ background: ZONE.present }} />
-          <b>Present</b>
-          tested on real counts · {(chartData.futureStart - chartData.holdoutStart).toLocaleString()}d
-        </span>
-        <span className="fc-legend-item">
-          <i style={{ background: ZONE.future }} />
-          <b>Future</b>
-          forecast · {Math.min(futureDays, futureAvailable)}d
-          {(() => {
-            const last = chartData.isoDates[chartData.futureStart + Math.min(futureDays, futureAvailable) - 1];
-            if (!last) return null;
-            const d = new Date(`${last}T00:00:00`);
-            const period = granularity === "Monthly" ? "months" : "weeks";
-            return (
-              <>
-                {" "}· to {d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                {/* The chart drops a final part-period rather than plotting a
-                    two-day "month" beside 31-day ones, so the horizon can end
-                    after the last point drawn. */}
-                {agg && agg.trimmedTail > 0 && <> · whole {period} shown</>}
-              </>
-            );
-          })()}
-        </span>
-        {forecastEndsBeforeToday && lastForecastIso && (
-          <span className="pill amber fc-push">
-            Stored forecast ends {new Date(`${lastForecastIso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}, before today
-          </span>
-        )}
-      </div>
-
-      {/* The evidence: history solid, forecast dashed. */}
-      <div style={{ height: "450px", width: "100%", cursor: isAggregated ? "default" : "pointer" }}>
-        <DashboardChart option={dailyOption} height={450} onEvents={{ click: onChartClick as (p: never) => void }} />
-      </div>
-
-      {/* Rainfall key, one muted line under the bars it explains. */}
-      {showWeather && (
-        <div className="nct-key">
-          <span className="nct-key-title" title={isAggregated ? `Bar height is the ${bucketNoun}'s mean rainfall; bar colour is its wettest single day.` : "Taller bar = wetter day."}>Rainfall</span>
-          {RAIN_BANDS.map((b, i) => (
-            <span key={b.label} className="nct-key-item">
-              <i style={{ background: b.color }} />
-              {b.label} <span className="nct-key-dim">{i === 0 ? `< ${b.max} mm` : b.max === Infinity ? `≥ ${RAIN_BANDS[i - 1].max} mm` : `${RAIN_BANDS[i - 1].max}–${b.max} mm`}</span>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* The model trust strip. Its pills state the validation figures; the
-          strip itself opens the full evidence (every table and figure) in a modal. */}
-      <EvidenceModal
-        subtitle="Daily volume forecast: every model's scores on days it never saw."
-        strip={<>
-          {champLabel && (
-            <span className="nct-trust-pill">
-              <span className="nct-trust-k">Champion</span>
-              {champLabel}
-            </span>
-          )}
-          {testFrom && testTo && (
-            <span className="nct-trust-pill">
-              <span className="nct-trust-k">Tested on</span>
-              {scoredDays.toLocaleString()} unseen days · {testFrom} to {testTo}
-            </span>
-          )}
-          <span className="nct-trust-pill" title={maseVsNaive}>
-            <span className="nct-trust-k">Accuracy</span>
-            {primaryMeta.label} · WMAPE {primaryMeta.wmape} · MASE {primaryMeta.mase ?? "—"}
-            {maseNum != null && (
-              <span className={maseNum < maseBar ? "nct-ok" : "nct-bad"}>
-                {maseNum < maseBar ? " · beats repeating last week" : " · no better than repeating last week"}
+          <div className="fc2-foot">
+            {/* The report opens under the card; its button sits on the foot line, left, beside the rainfall key. */}
+            {!reportOpen && <GenerateReportButton onClick={() => setReportOpen(true)} />}
+            {showWeather && (
+              <span className="fc2-rain-key">
+                <span className="fc2-rain-title" title={isAggregated ? `Bar height is the ${bucketNoun}'s mean rainfall; bar colour is its wettest single day.` : "Taller bar = wetter day."}>Rainfall</span>
+                {RAIN_BANDS.map((b, i) => (
+                  <span key={b.label} className="fc2-rain-item">
+                    <i style={{ background: b.color }} />
+                    {b.label} <span className="nct-key-dim">{i === 0 ? `< ${b.max} mm` : b.max === Infinity ? `≥ ${RAIN_BANDS[i - 1].max} mm` : `${RAIN_BANDS[i - 1].max}–${b.max} mm`}</span>
+                  </span>
+                ))}
               </span>
             )}
-          </span>
-          <span className="nct-trust-pill">
-            <span className="nct-trust-k">At {futureDays}d ahead</span>
-            typical error {rangeErr}
-          </span>
-          {next48?.run.backtest?.seriesWape != null && (
-            <span className="nct-trust-pill">
-              <span className="nct-trust-k">48-hour model</span>
-              {next48.run.modelLabel} · {next48.run.backtest.seriesWape.toFixed(1)}% error per plaza-hour
-            </span>
+          </div>
+        </div>
+
+        {/* ---------- The summary beside it: the answer, then the evidence for it ---------- */}
+        <aside className="fc2-side" aria-label="Forecast summary">
+          <div className="fc2-side-head">
+            <span className="fc2-side-icon" aria-hidden="true"><Car size={18} /></span>
+            <h4>Forecast Summary</h4>
+          </div>
+          {futAvg != null && (
+            <div className="fc2-answer">
+              <span className="fc2-answer-label">Forecast daily average · next {Math.min(futureDays, futureAvailable)} days</span>
+              <span className="fc2-answer-value">{fmtVeh(futAvg)}</span>
+              <span className="fc2-answer-unit">vehicles/day{futPeak && <> · peak {isAggregated ? bucketNoun : "day"} {dates[futPeak.idx]}</>}</span>
+            </div>
           )}
-        </>}
+          <div className="fc2-pair">
+            <div>
+              <span className="fc2-k">{futureDays}-day typical error</span>
+              <span className="fc2-v">{rangeErr}</span>
+            </div>
+            <div>
+              <span className="fc2-k">Selected model</span>
+              <span className="fc2-v fc2-model"><i style={{ background: modelColor(primary) }} />{primaryMeta.label}</span>
+            </div>
+          </div>
+          {!primaryMeta.accepted && <p className="fc2-note-warn">This model failed acceptance; it is shown for comparison.</p>}
+
+          <div className="fc2-evidence">
+            <div className="fc2-ev-head"><ShieldCheck size={17} aria-hidden="true" /><h5>Validation Evidence</h5></div>
+            <dl>
+              <div><dt>WMAPE</dt><dd>{primaryMeta.wmape}</dd></div>
+              <div title={maseVsNaive}><dt>MASE</dt><dd>{primaryMeta.mase ?? "—"}{maseNum != null && <span className={maseNum < maseBar ? "nct-ok" : "nct-bad"}> {maseNum < maseBar ? "· beats last week" : "· no better than last week"}</span>}</dd></div>
+              <div><dt>Scored days</dt><dd>{scoredDays.toLocaleString()}</dd></div>
+              {champLabel && <div><dt>Champion</dt><dd>{champLabel}</dd></div>}
+            </dl>
+            {testFrom && testTo && (
+              <p className="fc2-period">
+                Period: {new Date(`${testFrom}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} – {new Date(`${testTo}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              </p>
+            )}
+            <button type="button" className="fc2-ev-btn" onClick={() => setEvidenceOpen(true)}>View validation details</button>
+          </div>
+
+          {next48?.run.backtest?.seriesWape != null && (
+            <div className="fc2-h48">
+              <span className="fc2-side-icon" aria-hidden="true"><Layers size={17} /></span>
+              <div>
+                <span className="fc2-k">Separate 48-hour model</span>
+                <span className="fc2-h48-name">{next48.run.modelLabel}</span>
+                <span className="fc2-h48-err">{next48.run.backtest.seriesWape.toFixed(1)}% error per plaza-hour</span>
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
+
+      {/* The full evidence (every table and figure) opens from the summary's button. */}
+      <EvidenceModal
+        subtitle="Daily volume forecast: every model's scores on days it never saw."
+        hideTrigger
+        open={evidenceOpen}
+        onOpenChange={setEvidenceOpen}
       >
         <div className="nct-evidence">
           {metricsTable}
@@ -1712,7 +1695,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               { head: "Holidays", title: "WMAPE on forecast hours that fall on public holidays", pick: (c) => c.byCondition["holiday"], fmt: (v) => `${v.toFixed(1)}%`, more: true },
               { head: "Heavy rain", title: "WMAPE on forecast hours with heavy rain along the corridor", pick: (c) => c.byCondition["heavy rain"], fmt: (v) => `${v.toFixed(1)}%`, more: true },
             ];
-            const shown = cols.filter((c) => showAllMetrics || !c.more);
+            const shown = cols.filter((c) => showAll48 || !c.more);
             const best = (c: (typeof cols)[number]) => {
               const vals = bt.comparison.map((m) => c.pick(m)).filter((v): v is number => v != null);
               return vals.length ? (c.higher ? Math.max(...vals) : Math.min(...vals)) : null;
@@ -1723,12 +1706,12 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                   <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.2} />} tint="var(--page-accent)" title="48-hour model: tested on 2025">
                     <InfoTooltip text={`Hourly forecasts of the real ${bt.window ? `${bt.window.first.slice(0, 10)} to ${bt.window.last.slice(0, 10)}` : "2025"} record, which no model trained on (trained on 2022-2024). Scored per plaza, direction and vehicle class, hour by hour; the best in each column is bold. Show secondary metrics adds the corridor total, hours ahead, holidays and heavy rain.`} />
                   </EvidenceHeading>
-                  <button type="button" className="nct-link-btn" onClick={() => setShowAllMetrics(!showAllMetrics)}>
-                    {showAllMetrics ? "Hide secondary metrics" : "Show secondary metrics"}
+                  <button type="button" className="nct-link-btn" onClick={() => setShowAll48(!showAll48)}>
+                    {showAll48 ? "Hide secondary metrics" : "Show secondary metrics"}
                   </button>
                 </div>
                 <div className="nct-table-wrap">
-                  <table className="nct-table" style={{ minWidth: showAllMetrics ? 1100 : 0 }}>
+                  <table className="nct-table" style={{ minWidth: showAll48 ? 1100 : 0 }}>
                     <thead>
                       <tr>
                         <th className="nct-sticky">Model</th>
@@ -1774,6 +1757,9 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         windowEnd={chartData ? chartData.isoDates[chartData.futureStart - 1] ?? null : null}
         horizonDays={VALIDATED_HORIZON}
         naiveMase={naiveMase}
+        compact
+        open={reportOpen}
+        onOpenChange={setReportOpen}
       />
     </article>
   );

@@ -4,11 +4,12 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import type { EChartsOption } from "echarts";
-import { AlertTriangle, Info, X } from "lucide-react";
+import { AlertTriangle, Clock, Info, Layers, X } from "lucide-react";
 import DashboardChart from "../../../../components/dashboard/DashboardChart";
 import PageHeader from "../../../../components/dashboard/PageHeader";
 import StateNote from "../../../../components/stage/StateNote";
 import { HourSourceHeatmap } from "../../../../components/dashboard/IncidentHeatmaps";
+import { CardIcon, CardInsight } from "../../../../components/dashboard/CardBits";
 import styles from "../../traffic/traffic.module.css";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
@@ -183,6 +184,61 @@ function HourlyIncidentContent() {
       return prev.filter((k) => k !== key);
     });
   }, []);
+
+  /* Quick insights, one per chart card, each computed from what that card draws: the bars and model curves
+     for the current Weather slice and model selection, and the hour x source cells. Declared before the
+     invalid-date return so the hooks run in the same order every render; the slice rule here is the same
+     one `passes` applies below. With no data they return null and nothing renders. */
+  const shapeInsight = useMemo(() => {
+    if (!data) return null;
+    const inView = (h: HourPoint) => (weather === "all" ? true : h.isWet === (weather === "wet"));
+    const bars = data.hours.map((h) => (inView(h) ? h.total : 0));
+    const total = bars.reduce((s, v) => s + v, 0);
+    // The first model on the chart, in the chip order, among those with a prediction for this day.
+    const key = MODELS.map((m) => m.key).find((k) => selected.includes(k) && data.models.some((m) => m.key === k && m.dayPredicted != null));
+    const curve = key ? data.models.find((m) => m.key === key)?.hours ?? [] : [];
+    let mPeak = -1;
+    for (let i = 0; i < curve.length; i++) {
+      const v = curve[i];
+      if (v != null && (mPeak < 0 || v > (curve[mPeak] as number))) mPeak = i;
+    }
+    const model = key && mPeak >= 0 ? { label: META[key].label, hour: data.hours[mPeak]?.hour ?? mPeak, value: curve[mPeak] as number } : null;
+    if (total > 0 && data.hours.length >= 3) {
+      let best = 0;
+      for (let i = 1; i + 2 < bars.length; i++) if (bars[i] + bars[i + 1] + bars[i + 2] > bars[best] + bars[best + 1] + bars[best + 2]) best = i;
+      const windowSum = bars[best] + bars[best + 1] + bars[best + 2];
+      const aPeakIdx = bars.reduce((a, v, i) => (v > bars[a] ? i : a), 0);
+      return {
+        kind: "actual" as const,
+        start: data.hours[best].hour,
+        end: (data.hours[best + 2].hour + 1) % 24,
+        pct: (windowSum / total) * 100,
+        windowSum,
+        total,
+        model,
+        aPeakHour: data.hours[aPeakIdx].hour,
+        aPeakN: bars[aPeakIdx],
+      };
+    }
+    return model ? { kind: "model" as const, model } : null;
+  }, [data, weather, selected]);
+  const sourceInsight = useMemo(() => {
+    if (!data || !data.hasIncidentLog) return null;
+    const inView = (h: HourPoint) => (weather === "all" ? true : h.isWet === (weather === "wet"));
+    const hrs = data.hours.filter(inView);
+    const keys = (["accident", "breakdown"] as const).filter((k) => data.sourceCoverage[k].covered);
+    const sum = (k: SourceKey) => hrs.reduce((s, h) => s + h[k], 0);
+    const total = keys.reduce((s, k) => s + sum(k), 0);
+    if (keys.length === 0 || total <= 0) return null;
+    const peakOf = (k: SourceKey) => hrs.reduce((a, h) => (h[k] > a[k] ? h : a), hrs[0]);
+    const daytime = hrs.filter((h) => h.hour >= 6 && h.hour < 18).reduce((s, h) => s + keys.reduce((t, k) => t + h[k], 0), 0);
+    return {
+      shares: keys.map((k) => ({ key: k, n: sum(k), pct: (sum(k) / total) * 100 })).sort((a, b) => b.n - a.n),
+      peaks: keys.filter((k) => sum(k) > 0).map((k) => ({ key: k, hour: peakOf(k).hour, n: peakOf(k)[k] })),
+      total,
+      dayPct: (daytime / total) * 100,
+    };
+  }, [data, weather]);
 
   // Prominent rather than the shared ghost .secondaryButton: this is the one
   // way off a page with no other nav, and the ghost style (transparent
@@ -489,8 +545,11 @@ function HourlyIncidentContent() {
       <div className={styles.spanFull}>
         <article className={styles.chartCard}>
           <div className={styles.chartHead}>
-            <div className={styles.headText}>
-              <h3>Hourly Incidents and Model Shape</h3>
+            <div className="nc-head-main">
+              <CardIcon icon={Clock} />
+              <div className={styles.headText}>
+                <h3>Hourly Incidents and Model Shape</h3>
+              </div>
             </div>
           </div>
           {/* Model chips + overlay toggle, mirroring the daily chart's toolbar */}
@@ -609,6 +668,22 @@ function HourlyIncidentContent() {
               {profileNote && <p style={{ margin: "8px 0 0" }}>{profileNote}</p>}
             </details>
           )}
+
+          {shapeInsight && !error && (
+            shapeInsight.kind === "actual" ? (
+              <CardInsight lead={`Busiest hour: ${fmtHour(shapeInsight.aPeakHour)}, ${shapeInsight.aPeakN} of the ${shapeInsight.total} incidents in view; the busiest three-hour stretch, ${fmtHour(shapeInsight.start)} – ${fmtHour(shapeInsight.end)}, holds ${shapeInsight.pct.toFixed(0)}%.`}>
+                {shapeInsight.model
+                  ? shapeInsight.model.hour === shapeInsight.aPeakHour
+                    ? `${shapeInsight.model.label}'s curve peaks at ${fmtHour(shapeInsight.model.hour)}, the same hour as the actual peak.`
+                    : `${shapeInsight.model.label}'s curve peaks at ${fmtHour(shapeInsight.model.hour)}; the actual peak was ${fmtHour(shapeInsight.aPeakHour)}.`
+                  : null}
+              </CardInsight>
+            ) : (
+              <CardInsight lead={`Busiest hour on ${shapeInsight.model.label}'s curve: ${fmtHour(shapeInsight.model.hour)}, about ${shapeInsight.model.value.toFixed(2)} incidents.`}>
+                No incidents are in view to compare it against.
+              </CardInsight>
+            )
+          )}
         </article>
       </div>
 
@@ -619,8 +694,11 @@ function HourlyIncidentContent() {
         <div className={styles.spanFull}>
           <article className={styles.chartCard}>
             <div className={styles.chartHead}>
-              <div className={styles.headText}>
-                <h3>Incidents by Hour and Source</h3>
+              <div className="nc-head-main">
+                <CardIcon icon={Layers} />
+                <div className={styles.headText}>
+                  <h3>Incidents by Hour and Source</h3>
+                </div>
               </div>
             </div>
             <HourSourceHeatmap
@@ -633,6 +711,17 @@ function HourlyIncidentContent() {
               }}
               sliceLabel={weather === "all" ? null : weather}
             />
+            {sourceInsight && !error && (
+              <CardInsight
+                lead={
+                  sourceInsight.shares.length > 1
+                    ? `Largest source: ${SOURCE_LABEL[sourceInsight.shares[0].key]}, ${sourceInsight.shares[0].n} of the ${sourceInsight.total} incidents in view (${sourceInsight.shares[0].pct.toFixed(0)}%).`
+                    : `${sourceInsight.dayPct.toFixed(0)}% of the ${sourceInsight.total} incidents in view fall between 6 AM and 6 PM.`
+                }
+              >
+                {sourceInsight.peaks.map((p) => `${SOURCE_LABEL[p.key]} peak at ${fmtHour(p.hour)} (${p.n}).`).join(" ")}
+              </CardInsight>
+            )}
           </article>
         </div>
       )}

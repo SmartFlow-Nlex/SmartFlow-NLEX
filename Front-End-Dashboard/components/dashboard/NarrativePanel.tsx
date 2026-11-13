@@ -29,7 +29,15 @@ export default function NarrativePanel({
   buildBody,
   horizonDays = 1,
   labelFor,
+  open: openProp,
+  onOpenChange,
+  compact = false,
 }: {
+  /** Controlled open state: the card draws its own Generate report control and this renders nothing while closed. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Drop the context line, as the forecast cards' compact read-outs do. */
+  compact?: boolean;
   /** Kept for callers; the collapsed state is now a button with no room for it. */
   subtitle?: string;
   /** The headline verdict, visible before anyone opens the panel. */
@@ -43,10 +51,16 @@ export default function NarrativePanel({
   horizonDays?: number;
   labelFor?: (modelName: string) => string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const setOpen = (v: boolean) => {
+    if (!controlled) setOpenState(v);
+    onOpenChange?.(v);
+  };
 
-  // Nothing but the button until it is pressed.
-  if (!open) return <GenerateReportButton onClick={() => setOpen(true)} />;
+  // Nothing but the button until it is pressed (nothing at all when the card draws the button).
+  if (!open) return controlled ? null : <GenerateReportButton onClick={() => setOpen(true)} />;
 
   return (
     <section className="nc-narrative">
@@ -56,14 +70,14 @@ export default function NarrativePanel({
         </span>
         <h4>Narrative Explanation</h4>
 
-        <button type="button" className="btn-muted nc-narrative-hide" onClick={() => setOpen((v) => !v)}>
+        <button type="button" className="btn-muted nc-narrative-hide" onClick={() => setOpen(false)}>
           Hide report
         </button>
       </div>
 
       <div className="nc-narrative-body">
         {chips && <div className="nc-narrative-chips">{chips}</div>}
-        {contextLine && <p className="nc-narrative-context">{contextLine}</p>}
+        {contextLine && !compact && <p className="nc-narrative-context">{contextLine}</p>}
         <AiModelInsight
           quantity="volume"
           metrics={metrics}
