@@ -10,7 +10,7 @@ def audit_database():
     print("Connecting to AWS RDS database...")
     try:
         conn = psycopg2.connect(
-            host="smartflow.cn4wwa2i4cux.ap-southeast-1.rds.amazonaws.com",
+            host="<RDS_HOST>",
             port=5432,
             user="postgres",
             password="REMOVED",

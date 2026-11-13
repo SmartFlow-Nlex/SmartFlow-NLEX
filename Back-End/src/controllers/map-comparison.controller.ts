@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { getLiveCorridorOverview, getLiveMapGeoJson, getFeedFreshness } from "../services/map-live.service.js";
 import { cached } from "../utils/ttl-cache.js";
+import { getLiveRain } from "../services/live-rain.service.js";
 import { z } from "zod";
 import { searchExitsInDb, getForecastCongestionFromDb, getForecastDailyPeaksFromDb, getForecastModelInfo } from "../services/map-comparison.service.js";
 import { ExitSearchSchema } from "../validators/map-comparison.validator.js";
@@ -181,7 +182,6 @@ export const getMapRealtime = async (_req: Request, res: Response) => {
             uuid: alert.uuid,
             street,
             city: alert.city || "",
-            report_description: alert.report_description || "",
             reliability: alert.reliability || 0,
             confidence: alert.confidence || 0,
             type,
@@ -300,6 +300,15 @@ export async function getMapLiveOverview(_req: Request, res: Response) {
   const data = await getLiveCorridorOverview();
   if (!data) {
     return res.status(503).json({ success: false, message: "Database is not configured" });
+  }
+  res.json({ success: true, data });
+}
+
+// GET /api/map-comparison/live-rain — rain falling at each exit now (services/live-rain.service.ts).
+export async function getMapLiveRain(_req: Request, res: Response) {
+  const data = await getLiveRain();
+  if (!data) {
+    return res.status(503).json({ success: false, message: "No current rain reading available" });
   }
   res.json({ success: true, data });
 }

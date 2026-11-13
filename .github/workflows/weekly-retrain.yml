@@ -120,6 +120,8 @@ jobs:
         with: { path: "${{ env.ML_STATE_PATHS }}", key: "ml-state-${{ github.run_id }}-2", restore-keys: "ml-state-" }
       - name: Weekly batch (part 3 of 3)
         working-directory: smartflow_scripts/3_training_testing/weekly_retrain
+        env:
+          CONGESTION_PUBLISHER: "1"
         run: python weekly_retrain.py --scheduled --only volume_48h,congestion ${{ inputs.force && '--force' || '' }}
       - uses: actions/cache/save@v4
         if: always()

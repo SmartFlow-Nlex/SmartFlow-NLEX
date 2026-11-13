@@ -37,13 +37,29 @@ type Row = {
   shareOfSurge: number;
 };
 
-// One upcoming Arena event DAY with its dated per-exit forecast, as served on
+// One upcoming event NIGHT with its dated per-exit forecast, as served on
 // /api/traffic/forecast.upcomingEvents (see getUpcomingEventSurge). Baseline is
-// that exit's median volume on the same weekday in the same month, times the
-// measured uplift -- the same construction the observed rows use, applied to a
-// real date.
+// that exit's normal day (same weekday, last 8 real weeks, holiday-adjusted),
+// times the tested multiplier (EVALUATION_PROTOCOL.md section 9).
 type UpcomingExit = { exit: string; baseline: number; surge: number; surgeLo: number; surgeHi: number; uplift: number; nEvents: number };
-type UpcomingEvent = { date: string; title: string; isDerived: boolean; capacity: number | null; venue: string | null; exits: UpcomingExit[] };
+type UpcomingEvent = {
+  date: string; title: string; isDerived: boolean; capacity: number | null; venue: string | null;
+  /** In the verified calendar (a public source confirms the night); false = a new scraped listing not yet checked. */
+  verified?: boolean; sourceUrl?: string | null;
+  exits: UpcomingExit[];
+};
+type GroupStat = { n: number; median: number; ci: [number, number] };
+/** What the forecast stands on (train_event_effect.py): the verified calendar, what event types did, the
+ *  attendance link and the normal-day test. */
+type EventBasis = {
+  protocol: string;
+  calendar_counts: { held_nights_at_venues: number; scored_nights: number; nights_with_attendance: number; first: string; last: string };
+  sources: string;
+  by_venue?: Record<string, GroupStat>; by_origin?: Record<string, GroupStat>; by_format?: Record<string, GroupStat>;
+  per_1000_attendees?: { nights: number; per_1000: number; ci: [number, number]; nights_below_normal?: number } | null;
+  attendance_test?: { nights: number; significant: boolean; wmape_class_model: number; wmape_with_attendance: number } | null;
+  far_normal?: Record<string, number>; far_normal_choice?: string | null;
+};
 
 // The uplift was measured on Philippine Arena days. Events elsewhere in the
 // same complex reach the same exit but not at the same scale, so the card
@@ -81,6 +97,7 @@ type EventSurgeEval = {
   material_exits: number; total_exits: number;
   holiday_factor?: number; holiday_event_days?: number;
   method: string;
+  basis?: EventBasis;
 };
 
 /** Held-out event days as a dumbbell plot: for each event the model never saw,
@@ -188,6 +205,8 @@ export default function PredictiveEventChart() {
   // shows the forecast for that specific day.
   const [upcoming, setUpcoming] = useState<UpcomingEvent[]>([]);
   const [selUpcoming, setSelUpcoming] = useState<number | null>(null);
+  // Which year's events the list offers (mock defense, 3 Nov 2026: by year, so the years do not run together).
+  const [eventYear, setEventYear] = useState<string>("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -209,6 +228,7 @@ export default function PredictiveEventChart() {
   }, []);
 
   const chosen = selUpcoming != null ? upcoming[selUpcoming] ?? null : null;
+  const upcomingYears = useMemo(() => [...new Set(upcoming.map((u) => u.date.slice(0, 4)))].sort(), [upcoming]);
 
   /* When an upcoming day is chosen, its dated rows take the place of the
      observed ones and everything below -- bars, share, KPIs, banner -- follows
@@ -360,9 +380,18 @@ export default function PredictiveEventChart() {
   const chosenDate = chosen ? new Date(`${chosen.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "";
   const chosenDateLong = chosen ? new Date(`${chosen.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : "";
   const chosenLead = chosen ? Math.round((new Date(`${chosen.date}T00:00:00`).getTime() - Date.now()) / 86400000) : null;
-  const champ = val.find((v) => !/baseline/i.test(v.model)) ?? null;
-  const noAdj = val.find((v) => /no event/i.test(v.model)) ?? null;
-  const others = val.filter((v) => !/baseline/i.test(v.model) && v.model !== champ?.model);
+  // The leaderboard comes in rank order with the served method first (it may be a baseline: the protocol serves the
+  // better baseline when no candidate beats both).
+  const champ = val[0] ?? null;
+  const noAdj = val.find((v) => /no (event )?adjustment/i.test(v.model)) ?? null;
+  const others = val.filter((v) => v.model !== champ?.model && v.model !== noAdj?.model);
+  const basis = evalInfo?.basis ?? null;
+  const pctUp = (r: number) => `${r >= 1 ? "+" : "−"}${Math.abs((r - 1) * 100).toFixed(0)}%`;
+  const GROUP_LABEL: Record<string, string> = {
+    arena: "Philippine Arena (CDV exit)", stadium: "Philippine Sports Stadium (CDV exit)", clark: "Clark Global City (Dau exit)",
+    international: "International acts", filipino: "Filipino acts", mixed: "Mixed lineups",
+    solo_concert: "Solo concerts", festival: "Festivals", multi_artist_showcase: "Multi-artist showcases", sports: "Sports",
+  };
   const impactHeight = Math.max(rows.length * 56 + 62, 220);
   const VISIBLE_OTHERS = 8;
   const shownOthers = showAllOthers ? otherExits : otherExits.slice(0, VISIBLE_OTHERS);
@@ -418,6 +447,27 @@ export default function PredictiveEventChart() {
       {/* Row 2: what is shown. A select, not seven pills -- the pills wrapped to
           three lines and pushed the finding below the fold. */}
       <div className="nct-toolbar">
+        {upcomingYears.length > 1 && (
+          <label className="nct-group">
+            <span className="nct-group-label">Year</span>
+            <select
+              value={eventYear}
+              onChange={(e) => {
+                const y = e.target.value;
+                setEventYear(y);
+                // A day from another year is no longer in the list: back to the past-events view.
+                if (y !== "all" && selUpcoming != null && !upcoming[selUpcoming]?.date.startsWith(y)) setSelUpcoming(null);
+              }}
+              className="nct-select"
+              aria-label="Filter upcoming events by year"
+            >
+              <option value="all">All years</option>
+              {upcomingYears.map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="nct-group">
           <span className="nct-group-label">Showing</span>
           <select
@@ -427,7 +477,11 @@ export default function PredictiveEventChart() {
             style={{ maxWidth: 360 }}
           >
             <option value="">Past events — what {eventName === "the upcoming event" ? "event" : eventName} days did</option>
+            {/* One group per year, each headed by its year, so 2026's nights and 2027's are not one long run. */}
+            {upcomingYears.filter((y) => eventYear === "all" || y === eventYear).map((year) => (
+            <optgroup key={year} label={`${year} events`}>
             {upcoming.map((u, i) => {
+              if (!u.date.startsWith(year)) return null;
               // Group nights by the act, not the full title: the source spells
               // BTS's three nights two different ways ("BTS - Arirang World
               // Tour", "BTS - BTS WORLD TOUR 'ARIRANG'"), which by full title
@@ -438,16 +492,18 @@ export default function PredictiveEventChart() {
               const d = new Date(`${u.date}T00:00:00`);
               return (
                 <option key={u.date} value={String(i)}>
-                  {d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })} — {shortTitle(u.title)}{multi ? ` (day ${nth})` : ""}{isArena(u.venue) ? "" : ` · ${u.venue}`}
+                  {d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} — {shortTitle(u.title)}{multi ? ` (day ${nth})` : ""}{isArena(u.venue) ? "" : ` · ${u.venue}`}{u.verified === false ? " · unverified" : ""}
                 </option>
               );
             })}
+            </optgroup>
+            ))}
           </select>
         </label>
         <InfoTooltip
-          text={`Baseline is the same weekday and month on non-event days, so events cannot inflate their own baseline.${
-            meta?.firstEvent && meta?.lastEvent ? ` Events span ${meta.firstEvent} to ${meta.lastEvent}.` : ""
-          }`}
+          text={`Normal day = each exit's median on the same weekday over the last 8 weeks of real toll data (to 24 May 2026), counting only days with no event and no holiday, so events cannot inflate their own baseline; on a public holiday it is scaled by the exit's holiday factor. The event effect is measured on verified show nights only${
+            meta?.firstEvent && meta?.lastEvent ? `, ${meta.firstEvent} to ${meta.lastEvent}` : ""
+          }.`}
         />
       </div>
 
@@ -457,7 +513,19 @@ export default function PredictiveEventChart() {
           /* An upcoming day, as the answer then two labelled rows. */
           <>
             Expect <b>+{fmtVeh(totalAdded)}</b> extra vehicles during <b>{shortTitle(chosen.title)}</b>
-            {chosen.isDerived && <span title="A recurring event the ETL inferred from prior years, not an announced date." className="nct-soft"> (inferred)</span>}.
+            {chosen.isDerived && <span title="A recurring event the ETL inferred from prior years, not an announced date." className="nct-soft"> (inferred)</span>}
+            {chosen.verified === false && <span title="A new listing from the scraped calendar that has not been checked against a public source yet." className="nct-soft"> (unverified listing)</span>}.
+            {chosen.sourceUrl && (
+              <span className="nct-finding-kv">
+                <span className="nct-kv-k">Source</span>
+                <span>
+                  <a href={chosen.sourceUrl} target="_blank" rel="noopener noreferrer">
+                    {(() => { try { return new URL(chosen.sourceUrl).hostname.replace(/^www\./, ""); } catch { return "source"; } })()}
+                  </a>
+                  <span className="nct-soft"> · verified date and venue</span>
+                </span>
+              </span>
+            )}
             <span className="nct-finding-kv">
               <span className="nct-kv-k">When</span>
               <span>
@@ -589,16 +657,79 @@ export default function PredictiveEventChart() {
                 </div>
               )}
               <p style={{ margin: "7px 0 0", fontSize: "var(--fs-label)", lineHeight: 1.5, color: "var(--text-muted)" }}>
-                {evalInfo.events_total} Philippine Arena dates · attendance is not in the calendar, the largest
-                remaining source of error
+                {evalInfo.events_total} verified show nights (Philippine Arena, Philippine Sports Stadium, Clark) ·
+                each confirmed by a public source
                 <InfoTooltip
-                  text={`Event days are read from the Philippine Arena calendar, never inferred from how busy the road was, so the model cannot credit itself with a jam it did not predict.${
-                    evalInfo.holiday_event_days
-                      ? ` ${evalInfo.holiday_event_days} of them fall on a public holiday, which is measured separately — a holiday runs about ${Math.round((evalInfo.holiday_factor ?? 1) * 100)}% of an ordinary day, so the event effect is read on top of that rather than being credited with it.`
-                      : ""
-                  } Attendance is not recorded, so a sold-out concert and a small exhibition get the same prediction.`}
+                  text="Event nights come from the verified calendar: every night is confirmed by an official venue, promoter, artist or ticketing page, Billboard, or an established Philippine news outlet, never inferred from how busy the road was. Holidays are measured separately, so a holiday is not credited to the event."
                 />
               </p>
+            </div>
+          )}
+
+          {basis && (
+            <div>
+              <div className="nct-ev-title">What the forecast is based on</div>
+              <p style={{ margin: "0 0 6px", fontSize: "var(--fs-body)", lineHeight: 1.55, color: "var(--text-secondary)" }}>
+                <b>{basis.calendar_counts.held_nights_at_venues} verified show nights</b>{" "}
+                ({basis.calendar_counts.first} to {basis.calendar_counts.last}), {basis.calendar_counts.scored_nights} of them on
+                real toll days. Sources: {basis.sources}.
+              </p>
+              {[["By venue", basis.by_venue], ["By act", basis.by_origin], ["By format", basis.by_format]].map(([label, groups]) => {
+                const g = groups as Record<string, GroupStat> | undefined;
+                const list = g ? Object.entries(g).filter(([, v]) => v.n >= 3).sort((a, b) => b[1].median - a[1].median) : [];
+                if (list.length === 0) return null;
+                return (
+                  <table key={label as string} className="nct-table" style={{ marginTop: 4 }}>
+                    <thead>
+                      <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--border-default)" }}>
+                        <th style={{ padding: "4px 6px", fontWeight: 600 }}>{label as string}: past nights at the venue exit</th>
+                        <th style={{ padding: "4px 6px", fontWeight: 600, textAlign: "right" }}>Nights</th>
+                        <th style={{ padding: "4px 6px", fontWeight: 600, textAlign: "right" }}>Typical rise (95% range)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {list.map(([k, v]) => (
+                        <tr key={k} style={{ borderBottom: "1px solid var(--border-default)" }}>
+                          <td style={{ padding: "4px 6px" }}>{GROUP_LABEL[k] ?? k}</td>
+                          <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{v.n}</td>
+                          <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                            <b>{pctUp(v.median)}</b>{" "}
+                            <span style={{ color: "var(--text-muted)" }}>({pctUp(v.ci[0])} to {pctUp(v.ci[1])})</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              })}
+              <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: "var(--fs-label)", lineHeight: 1.55, color: "var(--text-secondary)" }}>
+                {basis.per_1000_attendees && (
+                  <li>
+                    Reported attendance exists for only {basis.per_1000_attendees.nights} nights, too few to forecast with, and ticket
+                    sales are not published before an event, so attendance is not used.
+                  </li>
+                )}
+                {basis.attendance_test && !basis.attendance_test.significant && (
+                  <li>
+                    Tested as a forecast input on the {basis.attendance_test.nights} held-out nights that have it, attendance did not
+                    improve the forecast; it is re-tested every week as more nights are recorded.
+                  </li>
+                )}
+                {basis.far_normal && basis.far_normal_choice && (
+                  <li>
+                    Normal day for future dates: {Object.entries(basis.far_normal).map(([k, v]) => `${k} ${v.toFixed(1)}% error`).join(" vs ")} on
+                    ordinary days 90–300 days ahead; the <b>{basis.far_normal_choice}</b> is used.
+                  </li>
+                )}
+                <li>
+                  {/(gradient boosting|random forest)/i.test(evalInfo?.model ?? "")
+                    ? <>The forecast is made by <b>{evalInfo?.model}</b>, which learned from these nights how the rise at each exit
+                      depends on the venue, weekday or weekend, act (Filipino or international), format and run of nights. It won the
+                      test below: on later nights it never saw, it beat both ignoring the event and a flat uplift.</>
+                    : <>The differences above are what past nights did. A rule that uses them is served only once it beats ignoring
+                      the event and a flat uplift on later nights it never saw (table below).</>}
+                </li>
+              </ul>
             </div>
           )}
 
@@ -633,8 +764,10 @@ export default function PredictiveEventChart() {
               <p style={{ margin: "6px 0 0", lineHeight: 1.5, color: "var(--text-muted)" }}>
                 Fitted on earlier events, scored on later ones it never saw{champ.diagnosis ? ` (${champ.diagnosis})` : ""}.{" "}
                 {chosen
-                  ? <>The day shown applies each exit&apos;s uplift to its normal same-weekday, same-month volume; the uplift does not yet vary with the act or its capacity.
-                      {!isArena(chosen.venue) && <> It was measured on Philippine Arena days; this event is at the {chosen.venue}, a smaller venue in the same complex, so treat the figures as an upper bound.</>}</>
+                  ? <>The day shown is each nearby exit&apos;s normal day (same weekday, last 8 real weeks){" "}
+                      {/(gradient boosting|random forest)/i.test(evalInfo?.model ?? "")
+                        ? <>times {evalInfo?.model}&apos;s forecast for this event, from its venue, day, act and format{chosen.verified === false ? " (an unverified listing gets the typical multiplier, since its act and format are not checked yet)" : ""}.</>
+                        : <>times the tested multiplier.</>}</>
                   : <>Choose an upcoming date above to see the forecast for it.</>}
               </p>
             </div>

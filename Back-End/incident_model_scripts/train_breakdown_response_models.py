@@ -34,6 +34,19 @@ fit_severity_models uses:
      through a survival likelihood.
 Champion = whichever holds up better (lower MAE) on a chronological holdout.
 
+How it is tested (10 Nov 2026, EVALUATION_PROTOCOL.md applied to a duration):
+  * Baselines are scored on the same holdout rows: a constant training median, the per-service training median,
+    and the per-(cause x service) training median (falling back to the service, then the overall median, below
+    20 training dispatches). The Cox model's MAE (16.712) had been no better than a per-service lookup (16.708).
+    A model is served only if it beats the BEST baseline; otherwise that baseline is served, and the report says so.
+  * XGBoost was trained on squared error (it predicts a mean) but judged on absolute error, which a median
+    minimises; it now trains on absolute error (reg:absoluteerror), the objective it is judged on.
+  * The Cox concordance is computed on the test rows (it was the training c-index).
+  * Volume is the mean of the 7 days BEFORE the dispatch (known at the time; it was the day's own total), real
+    volume only, so the data used here ends at REAL_END_VOLUME (2026-05-24).
+  * 95% moving-block bootstrap intervals (over days) for the champion's lead over the best baseline and the
+    runner-up; a lead whose interval includes 0 goes to the simpler model.
+
 No weather covariate: unlike accident_data, breakdown_data carries no
 weather_condition column at all (verified against
 scripts/medallion/10-bronze-accident-breakdown.sql's silver.
@@ -41,7 +54,8 @@ nlex_breakdown_events_clean projection) — there's nothing to include even if
 weather turned out to matter here the way it does for accident clearance.
 
 Usage:
-    python train_breakdown_response_models.py                  # train + report only
+    python train_breakdown_response_models.py                  # train + report only (writes the report .txt)
+    python train_breakdown_response_models.py --dry-run         # train + report, writes NOTHING (no file, read-only DB session)
     python train_breakdown_response_models.py --write-db        # + write to gold.*
     python train_breakdown_response_models.py --dry-write        # rehearse the write, then roll back
 """
@@ -66,7 +80,19 @@ from lifelines import CoxPHFitter
 from sklearn.metrics import mean_absolute_error, r2_score
 from xgboost import XGBRegressor
 
+from honest_eval import REAL_END_VOLUME, concordance_on, fmt_ci, json_safe as _json_safe_np, median_lookup, pick_champion
+
 SEED = 42
+BOOT_BLOCK_DAYS = 7
+MIN_GROUP_N = 20
+BASELINE_LEVELS = {
+    "Constant training median (baseline)": [],
+    "Per-service median (baseline)": [["service"]],
+    "Per cause x service median (baseline)": [["main_cause", "service"], ["service"]],
+}
+# Lower = simpler; the simpler model wins a lead that is not significant.
+COMPLEXITY = {"Constant training median (baseline)": 0, "Per-service median (baseline)": 1,
+              "Per cause x service median (baseline)": 2, "CoxPH": 3, "XGBoost": 4}
 # Same chronological "score on the most recent slice" protocol as
 # train_incident_severity_models.py's default.
 HOLDOUT_FRACTION = 0.2
@@ -95,21 +121,17 @@ def json_safe(obj):
     coefficient does. Walks the whole metadata tree and nulls only the
     non-finite values, rather than dropping the coefficient row or column
     entirely."""
-    if isinstance(obj, float):
-        return obj if np.isfinite(obj) else None
-    if isinstance(obj, dict):
-        return {k: json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [json_safe(v) for v in obj]
-    return obj
+    # Delegates to honest_eval.json_safe, which also turns numpy scalars into plain values (10 Nov 2026).
+    return _json_safe_np(obj)
 
 
 set_all_seeds()
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
-def get_conn():
-    """Mirrors train_incident_severity_models.py's get_conn() — kept in sync by hand."""
+def get_conn(readonly: bool = False):
+    """Mirrors train_incident_severity_models.py's get_conn() — kept in sync by hand. readonly=True (--dry-run)
+    makes the server refuse any write on this session."""
     dsn = os.environ.get("PGURL") or os.environ.get("POSTGRES_URL")
     if not dsn:
         host = os.environ.get("PG_HOST")
@@ -120,7 +142,10 @@ def get_conn():
             f"dbname={os.environ.get('PG_DATABASE')} user={os.environ.get('PG_USER')} "
             f"password={os.environ.get('PG_PASSWORD')}"
         )
-    return psycopg2.connect(dsn, sslmode="require")
+    conn = psycopg2.connect(dsn, sslmode="require")
+    if readonly:
+        conn.set_session(readonly=True)
+    return conn
 
 
 # ---------------------------------------------------------------------------
@@ -171,9 +196,16 @@ DAILY_VOLUME_SQL = """
 
 
 def load_daily_volume(conn) -> pd.DataFrame:
+    """The volume a dispatcher could know: the mean daily total over the 7 days BEFORE the dispatch day, real
+    volume only (to REAL_END_VOLUME). It was the dispatch day's own total, which is not complete until the day
+    ends (10 Nov 2026). Same construction as train_incident_severity_models.py's load_daily_volume."""
     df = pd.read_sql(DAILY_VOLUME_SQL, conn)
     df["d"] = pd.to_datetime(df["d"])
-    return df
+    s = df.groupby("d")["volume"].mean()
+    s = s[s.index <= REAL_END_VOLUME]
+    full = pd.date_range(s.index.min(), REAL_END_VOLUME + pd.Timedelta(days=1), freq="D")
+    prev7 = s.reindex(full).rolling(7, min_periods=7).mean().shift(1)
+    return pd.DataFrame({"d": prev7.index, "volume": prev7.values})
 
 
 # ---------------------------------------------------------------------------
@@ -280,9 +312,13 @@ def fit_cox_ph(train: pd.DataFrame, holdout: pd.DataFrame) -> dict:
         holdout["duration_min"].values[finite_mask], pred_median.values[finite_mask]
     )) if finite_mask.any() else None
     cox_n = int(len(train_covered)) + int(len(holdout_covered))
+    # Concordance on the TEST rows (it was cph.concordance_index_, the training figure): ranked by -partial hazard.
+    hazard = np.asarray(cph.predict_partial_hazard(X_holdout_covered)).ravel()
+    c_test = concordance_on(holdout_covered["duration_min"].values, -hazard)
 
     return {
-        "concordance_index": float(cph.concordance_index_),
+        "concordance_index": c_test,
+        "concordance_index_train": float(cph.concordance_index_),
         "mae_minutes": mae,
         "n": int(len(holdout)),
         "cox_n": cox_n,
@@ -298,14 +334,18 @@ def fit_xgb_regressor(train: pd.DataFrame, holdout: pd.DataFrame) -> dict:
     restriction (XGBoost has no trouble with the full column set; log_volume
     simply carries NaN for the pre-2022 rows and the tree splits around it),
     predicting duration_min directly rather than through a survival
-    likelihood."""
+    likelihood.
+
+    Objective = absolute error (10 Nov 2026): it is judged on MAE, which a conditional MEDIAN minimises; squared
+    error fits the conditional mean, which on this right-skewed duration sits well above the median and so loses
+    on MAE by construction, not for lack of signal."""
     X_train = build_design_matrix(train)
     X_holdout = build_design_matrix(holdout, dummy_columns=list(X_train.columns))
     y_train, y_holdout = train["duration_min"].values, holdout["duration_min"].values
 
     model = XGBRegressor(
         n_estimators=300, max_depth=4, learning_rate=0.05, subsample=0.9,
-        colsample_bytree=0.9, objective="reg:squarederror", random_state=SEED,
+        colsample_bytree=0.9, objective="reg:absoluteerror", random_state=SEED, n_jobs=3,
     )
     model.fit(X_train, y_train)
     pred = model.predict(X_holdout)
@@ -313,9 +353,32 @@ def fit_xgb_regressor(train: pd.DataFrame, holdout: pd.DataFrame) -> dict:
     return {
         "mae_minutes": float(mean_absolute_error(y_holdout, pred)),
         "r2": float(r2_score(y_holdout, pred)),
+        "concordance_index": concordance_on(y_holdout, pred),
+        "objective": "reg:absoluteerror",
         "n": int(len(holdout)),
         "pred": pd.Series(pred, index=holdout.index),
     }
+
+
+def evaluate_and_select(train: pd.DataFrame, holdout: pd.DataFrame, cox_out: dict, xgb_out: dict) -> dict:
+    """Both models and the three lookup baselines on exactly the same holdout rows, and the champion rule fixed
+    before results (honest_eval.pick_champion): a model is served only if it beats the best baseline; a lead
+    whose 95% interval includes 0 goes to the simpler one; if no model beats the best baseline, it is served."""
+    y = holdout["duration_min"].values.astype(float)
+    preds = {"CoxPH": cox_out["pred_median"].reindex(holdout.index).values.astype(float),
+             "XGBoost": xgb_out["pred"].reindex(holdout.index).values.astype(float)}
+    for name, levels in BASELINE_LEVELS.items():
+        preds[name] = median_lookup(train, holdout, "duration_min", levels, MIN_GROUP_N)
+    ok = np.all([np.isfinite(p) for p in preds.values()], axis=0)
+    losses = {k: np.abs(p[ok] - y[ok]) for k, p in preds.items()}
+    scores = {k: float(v.mean()) for k, v in losses.items()}
+    sel = pick_champion(scores, list(BASELINE_LEVELS), holdout["d"].values[ok], losses, COMPLEXITY, block=BOOT_BLOCK_DAYS)
+    concord = {k: concordance_on(y[ok], p[ok]) for k, p in preds.items() if k != "CoxPH"}
+    concord["CoxPH"] = cox_out["concordance_index"]
+    champion = sel["champion"]
+    return {**sel, "scores": scores, "concordance_test": concord, "n_scored": int(ok.sum()),
+            "champion_pred": pd.Series(preds[champion], index=holdout.index),
+            "scored_window": [str(holdout["d"].min().date()), str(holdout["d"].max().date())]}
 
 
 def group_actual_vs_predicted(holdout: pd.DataFrame, pred_median: pd.Series, group_col: str, top_n: int) -> list[dict]:
@@ -441,11 +504,14 @@ def ensure_schema(conn, commit: bool = True) -> None:
 
 def write_to_db(conn, holdout: pd.DataFrame, champion: str, cox_out: dict, xgb_out: dict,
                  group_by_cause: list[dict], group_by_service: list[dict], curves: list[dict],
-                 metadata: dict, dry: bool = False) -> None:
+                 metadata: dict, dry: bool = False, champion_pred: pd.Series | None = None) -> None:
     ensure_schema(conn, commit=not dry)
 
     holdout = holdout.reset_index(drop=True)
-    champion_pred = (cox_out["pred_median"] if champion == "CoxPH" else xgb_out["pred"]).reset_index(drop=True)
+    # The served prediction: a model's, or a lookup baseline's when no model beats the best baseline (10 Nov 2026).
+    if champion_pred is None:
+        champion_pred = cox_out["pred_median"] if champion == "CoxPH" else xgb_out["pred"]
+    champion_pred = champion_pred.reset_index(drop=True)
     # Mean-based figure alongside the median-based one only exists for Cox PH
     # (predict_expectation vs predict_median, same duality
     # train_incident_severity_models.py's clearance columns use) — XGBoost's
@@ -512,32 +578,51 @@ def write_to_db(conn, holdout: pd.DataFrame, champion: str, cox_out: dict, xgb_o
         conn.commit()
 
 
-def print_report(champion: str, cox_out: dict, xgb_out: dict, group_by_cause: list[dict], group_by_service: list[dict]) -> str:
+def print_report(champion: str, cox_out: dict, xgb_out: dict, group_by_cause: list[dict], group_by_service: list[dict],
+                 sel: dict | None = None) -> str:
     L = []
     L.append("=" * 80)
     L.append("  BREAKDOWN DISPATCH RESPONSE-TIME MODEL (per-deployment)")
     L.append("=" * 80)
     L.append("")
+    if sel is not None:
+        L.append(f"  Holdout: {sel['n_scored']} dispatches {sel['scored_window'][0]}..{sel['scored_window'][1]} "
+                 f"(every model and baseline on the same rows)")
+        L.append(f"    {'model':<40}{'MAE min':>9}{'test c-index':>14}")
+        for name, s in sorted(sel["scores"].items(), key=lambda kv: kv[1]):
+            c = sel["concordance_test"].get(name)
+            tag = "  [SERVED]" if name == champion else ""
+            L.append(f"    {name:<40}{s:>9.3f}{(f'{c:.3f}' if c is not None else 'n/a'):>14}{tag}")
+        L.append(f"    best baseline: {sel['best_baseline']};  models that beat it: {', '.join(sel['eligible']) or 'none'}")
+        if "vs_baseline_ci" in sel:
+            L.append(f"    champion - best baseline, MAE: 95% interval {fmt_ci(sel['vs_baseline_ci'])}")
+        if "vs_runner_up_ci" in sel:
+            L.append(f"    champion - runner-up ({sel['runner_up']}), MAE: 95% interval {fmt_ci(sel['vs_runner_up_ci'])}")
+        if sel.get("note"):
+            L.append(f"    note: {sel['note']}")
+        L.append("")
     L.append("  Cox PH — response-time survival")
-    L.append(f"    concordance index = {cox_out['concordance_index']:.3f}")
+    L.append(f"    concordance index (test) = {cox_out['concordance_index']:.3f}   (training: {cox_out['concordance_index_train']:.3f})")
     L.append(f"    MAE (minutes)     = {cox_out['mae_minutes']:.2f}" if cox_out["mae_minutes"] is not None else "    MAE (minutes)     = n/a")
     L.append(f"    n (holdout)       = {cox_out['n']}")
-    L.append(f"    trained+scored on = {cox_out['cox_n']} deployments with known daily volume ({cox_out['cox_coverage_pct']:.1f}%)")
+    L.append(f"    trained+scored on = {cox_out['cox_n']} deployments with a real previous-week volume ({cox_out['cox_coverage_pct']:.1f}%)")
     L.append(f"    {'[SELECTED]' if champion == 'CoxPH' else ''}")
     L.append("")
-    L.append("  XGBoost regression — response-time")
+    L.append("  XGBoost regression (absolute-error objective) — response-time")
     L.append(f"    MAE (minutes) = {xgb_out['mae_minutes']:.2f}")
     L.append(f"    R^2           = {xgb_out['r2']:.3f}")
     L.append(f"    n (holdout)   = {xgb_out['n']}")
     L.append(f"    {'[SELECTED]' if champion == 'XGBoost' else ''}")
     L.append("")
+    L.append(f"  Served: {champion}")
+    L.append("")
     L.append("  Actual vs Predicted median response (min), by cause")
     for r in group_by_cause:
-        L.append(f"    {r['group']:<28} actual={r['actual_median_min']}  predicted={r['predicted_median_min']}  n={r['n']}")
+        L.append(f"    {r['group']:<28} actual={r['actual_median_min']}  predicted={(round(r['predicted_median_min'], 1) if r['predicted_median_min'] is not None else None)}  n={r['n']}")
     L.append("")
     L.append("  Actual vs Predicted median response (min), by service")
     for r in group_by_service:
-        L.append(f"    {r['group']:<28} actual={r['actual_median_min']}  predicted={r['predicted_median_min']}  n={r['n']}")
+        L.append(f"    {r['group']:<28} actual={r['actual_median_min']}  predicted={(round(r['predicted_median_min'], 1) if r['predicted_median_min'] is not None else None)}  n={r['n']}")
     L.append("=" * 80)
     return "\n".join(L)
 
@@ -546,9 +631,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write-db", action="store_true")
     parser.add_argument("--dry-write", action="store_true")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="train and report only; write nothing (no report file, read-only DB session)")
     args = parser.parse_args()
+    if args.dry_run and (args.write_db or args.dry_write):
+        sys.exit("--dry-run writes nothing; it cannot be combined with --write-db or --dry-write")
 
-    conn = get_conn()
+    conn = get_conn(readonly=args.dry_run)
     try:
         print("Loading breakdown deployments...")
         raw = load_deployments(conn)
@@ -557,8 +646,13 @@ def main() -> None:
         volume = load_daily_volume(conn)
         raw = raw.merge(volume, on="d", how="left")
         covered = int(raw["volume"].notna().sum())
-        print(f"  {covered} of {len(raw)} deployments ({covered / len(raw) * 100:.1f}%) fall on a date with known "
-              f"traffic volume (tracking starts {volume['d'].min().date()})")
+        print(f"  {covered} of {len(raw)} deployments ({covered / len(raw) * 100:.1f}%) have a real previous-week "
+              f"traffic volume (real volume ends {REAL_END_VOLUME.date()})")
+        # Every candidate uses that volume, and every candidate and baseline is scored on the same rows, so the
+        # dispatches without it (the first week of 2022, and everything after the real volume ends) are left out
+        # of training and testing alike.
+        raw = raw[raw["volume"].notna()].reset_index(drop=True)
+        print(f"  using {len(raw)} deployments, {raw['d'].min().date()}..{raw['d'].max().date()}")
 
         holidays = load_holidays(conn)
         feat = build_features(raw, holidays)
@@ -573,16 +667,20 @@ def main() -> None:
         print("Fitting XGBoost regressor...")
         xgb_out = fit_xgb_regressor(train, holdout)
 
-        cox_mae = cox_out["mae_minutes"] if cox_out["mae_minutes"] is not None else float("inf")
-        champion = "CoxPH" if cox_mae <= xgb_out["mae_minutes"] else "XGBoost"
-        champion_pred = cox_out["pred_median"] if champion == "CoxPH" else xgb_out["pred"]
+        print("Scoring both against the lookup baselines...")
+        sel = evaluate_and_select(train, holdout, cox_out, xgb_out)
+        champion = sel["champion"]
+        champion_pred = sel["champion_pred"]
 
         group_by_cause = group_actual_vs_predicted(holdout, champion_pred, "main_cause", TOP_N_GROUPS)
         group_by_service = group_actual_vs_predicted(holdout, champion_pred, "service", TOP_N_GROUPS)
         curves = build_curves(train, TOP_N_GROUPS)
 
-        report = print_report(champion, cox_out, xgb_out, group_by_cause, group_by_service)
+        report = print_report(champion, cox_out, xgb_out, group_by_cause, group_by_service, sel)
         print("\n" + report)
+        if args.dry_run:
+            print("\n--dry-run: nothing written (no report file, no database rows).")
+            return
         report_path = Path(__file__).resolve().parent / "model_results_breakdown_response.txt"
         report_path.write_text(report, encoding="utf-8")
         print(f"\nFull report written to {report_path}")
@@ -593,17 +691,28 @@ def main() -> None:
 
         metadata = {
             "champion": champion,
-            "cox_ph": {"concordance_index": cox_out["concordance_index"], "mae_minutes": cox_out["mae_minutes"],
+            "champion_is_baseline": sel["champion_is_baseline"],
+            "cox_ph": {"concordance_index": cox_out["concordance_index"],
+                       "concordance_index_train": cox_out["concordance_index_train"],
+                       "mae_minutes": cox_out["mae_minutes"],
                        "n": cox_out["n"], "cox_n": cox_out["cox_n"], "cox_coverage_pct": cox_out["cox_coverage_pct"],
                        "coefficients": cox_out["coefficients"]},
-            "xgboost": {"mae_minutes": xgb_out["mae_minutes"], "r2": xgb_out["r2"], "n": xgb_out["n"]},
+            "xgboost": {"mae_minutes": xgb_out["mae_minutes"], "r2": xgb_out["r2"], "n": xgb_out["n"],
+                        "concordance_index": xgb_out["concordance_index"], "objective": xgb_out["objective"]},
+            "baselines": {k: {"mae_minutes": v, "concordance_index": sel["concordance_test"].get(k)}
+                          for k, v in sel["scores"].items() if k in BASELINE_LEVELS},
+            "selection": {k: sel[k] for k in ("best_baseline", "eligible", "champion", "champion_is_baseline",
+                                              "vs_baseline_ci", "vs_baseline_significant", "runner_up",
+                                              "vs_runner_up_ci", "vs_runner_up_significant", "note",
+                                              "n_scored", "scored_window") if k in sel},
+            "volume_input": f"mean daily volume of the 7 days before the dispatch, real volume only (to {REAL_END_VOLUME.date()})",
             "top_n_groups": TOP_N_GROUPS,
             "holdout_fraction": HOLDOUT_FRACTION,
             "trained_at": pd.Timestamp.utcnow().isoformat(),
         }
         print("\nWriting gold.ml_breakdown_response_predictions / _curve / _group_stats / _metadata...")
         write_to_db(conn, holdout, champion, cox_out, xgb_out, group_by_cause, group_by_service, curves,
-                    metadata, dry=args.dry_write and not args.write_db)
+                    metadata, dry=args.dry_write and not args.write_db, champion_pred=champion_pred)
         print("Rolled back (dry write)." if (args.dry_write and not args.write_db) else "Committed.")
     except Exception:
         conn.rollback()

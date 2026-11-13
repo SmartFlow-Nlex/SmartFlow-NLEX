@@ -1942,7 +1942,47 @@ select.nct-select.is-warn { color: var(--color-warning); border-color: var(--col
 
 .nct-split.is-event { grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); align-items: stretch; }
 
-.nct-split.is-event > .nct-stats { align-content: start; }
+/* The event card's four figures, as cards that fill the column (3 Nov 2026,
+   user request). They were a 2x2 grid pinned to the top of a stretched column
+   (align-content: start) beside a tall bar chart, so the bottom two thirds of
+   that column was blank and the numbers read as small print next to it. The
+   rows now share the height and each figure sits on its own surface, which is
+   what the space was always for. Scoped to .is-event: the same .nct-stats grid
+   is used in narrower cards elsewhere, where tall tiles would look wrong. */
+.nct-split.is-event > .nct-stats {
+  /* Stretched to the column, which is the point: the blank third of this
+     card was the complaint. A taller tile needs a bigger number to carry it,
+     hence the type scale below. */
+  align-content: stretch;
+  gap: 12px;
+  padding: 0;
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.nct-split.is-event > .nct-stats .nct-stat {
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--bg-surface-muted, var(--bg-surface));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md, 10px);
+}
+.nct-split.is-event > .nct-stats .nct-stat-value {
+  font-size: clamp(1.6rem, 2.6vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.nct-split.is-event > .nct-stats .nct-stat-label {
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+@media (max-width: 1100px) {
+  /* Stacked under the chart there is no spare height to fill, so the tiles go
+     back to their natural size rather than stretching into slabs. */
+  .nct-split.is-event > .nct-stats { align-content: start; }
+  .nct-split.is-event > .nct-stats .nct-stat { padding: 12px 14px; }
+}
 
 @media (max-width: 1100px) {
 

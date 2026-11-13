@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, AlertTriangle, Ban, CarFront, Cone, ShieldAlert } from "lucide-react";
+import { AlertCircle, AlertTriangle, Ban, CarFront, Cone, ShieldAlert, Waves } from "lucide-react";
 
 /**
  * How each Waze report type looks, in one place.
@@ -74,8 +74,18 @@ export const ALERT_LOOK: Record<string, ReportLook> = {
 
 const FALLBACK: ReportLook = ALERT_LOOK.HAZARD;
 
-/** Look for a type, falling back to the hazard mark with the raw name. */
-export function lookOf(type: string | null | undefined): ReportLook {
+/* A flood is filed by Waze as a HAZARD with subtype HAZARD_WEATHER_FLOOD, so it drew as a generic hazard and the
+   detail read "hazard weather flood". Named and marked as a flood since 9 Nov 2026: it is the one hazard the dashboard
+   links to congestion (the jam card's possible cause). Same tone as other hazards, its own wave mark. */
+const FLOOD_LOOK: ReportLook = {
+  icon: Waves, tone: "yellow", colour: "#eab308", label: "Flood",
+  svg: S('<path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/>'),
+};
+export const isFloodSubtype = (subtype: string | null | undefined) => String(subtype ?? "").toUpperCase() === "HAZARD_WEATHER_FLOOD";
+
+/** Look for a type, falling back to the hazard mark with the raw name. A flood subtype gets its own look. */
+export function lookOf(type: string | null | undefined, subtype?: string | null): ReportLook {
+  if (isFloodSubtype(subtype)) return FLOOD_LOOK;
   const key = String(type ?? "").toUpperCase();
   return ALERT_LOOK[key] ?? { ...FALLBACK, label: key.replace(/_/g, " ").toLowerCase() || "Report" };
 }

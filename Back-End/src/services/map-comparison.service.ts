@@ -27,7 +27,7 @@ export async function getRealtimeMapDataFromDb() {
       ),
       db.query(
         `SELECT incident_log_id, alert_type, subtype, street, city,
-                report_description, reliability, confidence, is_active,
+                reliability, confidence, is_active, -- no report_description: free text, public endpoint (audit #6)
                 first_seen_at, last_seen_at, mttc_minutes,
                 ST_X(geom::geometry) AS longitude,
                 ST_Y(geom::geometry) AS latitude

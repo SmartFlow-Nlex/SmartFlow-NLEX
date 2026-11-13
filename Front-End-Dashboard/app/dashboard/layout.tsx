@@ -77,6 +77,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
    * resolved a tick later. The redirect worked; it just arrived after the content.
    */
   const [authState, setAuthState] = useState<"checking" | "authed" | "anon">("checking");
+  // Set when the server says this account has no role yet (GET /api/auth/role, 9 Nov 2026).
+  const [rolePending, setRolePending] = useState(false);
 
   // User States. Null until a session is read -- no placeholder identity.
   const [userRole, setUserRole] = useState<Role | null>(null);
@@ -104,7 +106,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       if (session?.user) {
         setUserEmail(session.user.email || "");
         const metadata = session.user.user_metadata;
+        // Shown at once from the account's own metadata, then replaced by the server's answer: the role users can
+        // edit themselves is never trusted for access (the backend enforces the server role on every route anyway).
         setUserRole(isRole(metadata?.role) ? metadata.role : FALLBACK_ROLE);
+        const token = session.access_token;
+        fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"}/api/auth/role`, { headers: { authorization: `Bearer ${token}` } })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j) => {
+            const role = j?.data?.role;
+            if (role === "pending") setRolePending(true);
+            else if (isRole(role)) { setRolePending(false); setUserRole(role); }
+          })
+          .catch(() => {/* the backend refuses any route the role may not use, so a missed answer only affects the menu */});
         setUserFullName(displayNameOf(metadata, session.user.email));
         setIdleMinutes(idleMinutesOf(metadata));
         setAuthState("authed");
@@ -360,6 +373,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
    * enough to screenshot. Returning early means the component tree that would
    * render it is never constructed.
    */
+  if (authState === "authed" && rolePending) {
+    return (
+      <>
+        <NlexEnvironment scene="page" />
+        <NightCorridorStage variant="dashboard" />
+        <LoadingGate
+          title="Waiting for access"
+          detail="You are signed in, but no role has been assigned to this account yet. Ask an administrator to assign one, then sign in again."
+          tone="warn"
+          action={{ label: "Sign out", onClick: () => { void supabase.auth.signOut(); } }}
+        />
+      </>
+    );
+  }
   if (authState !== "authed" || !userRole || !canAccess(userRole, pathname)) {
     /* Only a refused page gets the notice card. The session check and the sign-in redirect show the bare
        scenery (19 Oct 2026, user request: the loading card was unnecessary). */

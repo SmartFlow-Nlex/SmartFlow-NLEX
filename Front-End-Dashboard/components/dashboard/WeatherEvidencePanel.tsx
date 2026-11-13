@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import InfoTooltip from "./InfoTooltip";
 import { CloudRain } from "lucide-react";
+import { useRainEffect, fmtEffect, isClear, bandLabel, METHOD_NOTE } from "../../lib/rain-effect";
 
 /**
  * Weather as a predictor, as one flat block inside the Validation evidence
@@ -55,6 +56,7 @@ export default function WeatherEvidencePanel({ plotted = "total_rain", selectedM
   const [corr, setCorr] = useState<Correlation[]>([]);
   const [models, setModels] = useState<ModelComparison[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const rain = useRainEffect();
 
   useEffect(() => {
     let cancelled = false;
@@ -171,6 +173,46 @@ export default function WeatherEvidencePanel({ plotted = "total_rain", selectedM
         </div>
       </div>
       </div>
+
+      {/* Rain's association like for like (9 Nov 2026). The chips above are raw correlations, which mix rain with
+          the season it falls in; here each rainy day is compared with dry days of the same weekday nearby. */}
+      {rain && (
+        <div className="nct-weather-signals">
+          <span className="nct-weather-signals-title">
+            Rain on the day, like for like
+            <InfoTooltip text={METHOD_NOTE} />
+          </span>
+          <div className="nct-table-wrap">
+            <table className="nct-table">
+              <thead>
+                <tr><th>Rain on the day</th><th>Traffic volume</th><th>Crashes per million vehicles</th><th>Days</th></tr>
+              </thead>
+              <tbody>
+                {rain.volume.map((v, i) => {
+                  const a = rain.accidents.bands[i];
+                  const cell = (e: typeof v) => (
+                    <td style={{ fontWeight: isClear(e.lowPct, e.highPct) ? 600 : 400, color: isClear(e.lowPct, e.highPct) ? "var(--text-primary)" : "var(--text-muted)" }}>
+                      {fmtEffect(e)}
+                    </td>
+                  );
+                  return (
+                    <tr key={v.band}>
+                      <td>{bandLabel(v)}</td>
+                      {cell(v)}
+                      {a ? cell(a) : <td>—</td>}
+                      <td>{v.days.toLocaleString()}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="nct-caption">
+            Change against dry days of the same weekday within six weeks, with the 95% range; bold = the range leaves
+            out zero. Traffic cannot cause rain, so this is not reverse causation, but it is an association, not proof.
+          </div>
+        </div>
+      )}
     </section>
   );
 }

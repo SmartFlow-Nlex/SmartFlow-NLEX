@@ -55,13 +55,14 @@ export interface Actor {
   verified: boolean;
 }
 
-/** Who made the request: the bearer token's user if Supabase accepts it, else the name the page sent, else anonymous. */
+/** Who made the request: the bearer token's user if Supabase accepts it, else anonymous. */
 export async function actorOf(req: Request): Promise<Actor> {
   const token = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : undefined;
   const user = await verifiedUser(token, req.header("x-device-trust") ?? undefined);
   if (user) return { user: user.email, role: user.role, verified: true };
-  const claimed = req.header("x-user");
-  return { user: claimed || "anonymous", role: null, verified: false };
+  // A name the page merely claims is not recorded (security audit #10, 9 Nov 2026): anyone could post an entry
+  // under a teammate's email. Without a token Supabase accepts, the entry is "anonymous".
+  return { user: "anonymous", role: null, verified: false };
 }
 
 let schemaReady: Promise<void> | null = null;

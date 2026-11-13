@@ -3,7 +3,7 @@ raise SystemExit(
 
 import psycopg2
 
-conn_string = "host='smartflow.cn4wwa2i4cux.ap-southeast-1.rds.amazonaws.com' port=5432 user='postgres' password='REMOVED' dbname='nlex_capstone' sslmode='require'"
+conn_string = "host='<RDS_HOST>' port=5432 user='postgres' password='REMOVED' dbname='nlex_capstone' sslmode='require'"
 
 conn = psycopg2.connect(conn_string)
 cur = conn.cursor()

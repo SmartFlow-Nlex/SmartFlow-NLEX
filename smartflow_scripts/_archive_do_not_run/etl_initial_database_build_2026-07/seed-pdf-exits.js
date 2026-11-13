@@ -2,7 +2,7 @@ throw new Error("ARCHIVED - do not run. First database build and ingestion (July
 import pg from 'pg';
 
 const AWS_PG = {
-  host: 'smartflow.cn4wwa2i4cux.ap-southeast-1.rds.amazonaws.com',
+  host: '<RDS_HOST>',
   port: 5432,
   user: 'postgres',
   password: 'REMOVED',

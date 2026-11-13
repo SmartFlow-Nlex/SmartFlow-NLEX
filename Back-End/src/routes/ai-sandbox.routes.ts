@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { asyncHandler } from "../middleware/error.middleware.js";
 import { triggerSimulation, configLanes, getResults } from "../controllers/ai-sandbox.controller.js";
-import { parseSandboxCommand, commandStatus, scenarioContext, demandExits, demandProfile, plazaFlows, hotspots } from "../controllers/sandbox-command.controller.js";
+import { parseSandboxCommand, commandStatus, scenarioContext, demandExits, demandProfile, plazaFlows, hotspots, eventDay } from "../controllers/sandbox-command.controller.js";
 import { authenticateToken, authorizeRoles } from "../middleware/auth.middleware.js";
+import { aiLimiter } from "../middleware/ai-limit.js";
 
 const router = Router();
 
@@ -12,7 +13,7 @@ const router = Router();
  * sandbox now sends one (lib/api.ts apiFetch). The status check stays open: it says only whether the parser is set up.
  */
 router.get("/command/status", asyncHandler(commandStatus));
-router.post("/command", authenticateToken, authorizeRoles(["data-analyst", "tcc-operator"]), asyncHandler(parseSandboxCommand));
+router.post("/command", authenticateToken, authorizeRoles(["data-analyst", "tcc-operator"]), aiLimiter, asyncHandler(parseSandboxCommand));
 router.get("/scenario", asyncHandler(scenarioContext));
 
 /* Observed demand. Public for the same reason as the routes above: the
@@ -23,6 +24,8 @@ router.get("/demand-profile", asyncHandler(demandProfile));
 router.get("/plaza-flows", asyncHandler(plazaFlows));
 // Where incidents of a kind are recorded — the published logs, aggregated; no per-user content.
 router.get("/hotspots", asyncHandler(hotspots));
+// Upcoming Arena event days and their hourly effect per exit, from the Event Prediction; no per-user content.
+router.get("/event-day", asyncHandler(eventDay));
 
 // Apply auth middleware to the remaining ai-sandbox endpoints
 router.use(authenticateToken);

@@ -26,6 +26,7 @@ import { rangeDays, grainBlockedReason, bestGrainFor, bucketLabelFor, timeAxisLa
 import CountUpValue from "../../../components/dashboard/CountUpValue";
 import ModeTabLabel, { modeIndex } from "../../../components/dashboard/ModeTabLabel";
 import StateNote from "../../../components/stage/StateNote";
+import { useRainEffect, isClear, METHOD_NOTE } from "../../../lib/rain-effect";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -63,6 +64,8 @@ type Analytics = {
     holidayType?: string; minBaselineDays?: number;
   }[];
   holidayYearly: { label: string; year: number; pct: number; volume: number }[];
+  /** Set when Dry or Wet is chosen: events are then kept by the weather of their day (holidays are not filtered). */
+  eventWeather?: { day: "rainy" | "dry"; rule: string } | null;
 };
 
 /* Where arena events are measured (backend: traffic.service eventImpact `view`). Bocaue Barrier is not offered:
@@ -177,6 +180,9 @@ export default function TrafficPage() {
   const [direction, setDirection] = useState<Direction>("Both");
   const [vClass, setVClass] = useState<VehicleClass>("All");
   const [weather, setWeather] = useState<"all" | "dry" | "wet">("all");
+  // Rain's like-for-like association (Hans, 9 Nov 2026): loaded only once Dry or Wet is chosen, for the lines that say
+  // what the toggle means beyond "these hours only".
+  const rainEffect = useRainEffect(weather !== "all");
 
   // Chart-local interactivity
   const [plazaSort, setPlazaSort] = useState<"desc" | "asc">("desc");
@@ -1302,6 +1308,13 @@ export default function TrafficPage() {
                   {impactInsight.above} of {impactInsight.n} {impactMode === "Events" ? "event days" : "holidays"} ran above normal; the average change was {fmtPct(impactInsight.avg)}.
                 </CardInsight>
               )}
+              {data?.eventWeather && !error && (
+                <CardInsight lead={impactMode === "Events" ? `Only ${data.eventWeather.day} event days (${data.eventImpact.length}).` : "Holidays are not split by weather."}>
+                  {impactMode === "Events"
+                    ? <>Each is compared with {data.eventWeather.day} normal days.<InfoTooltip text={`${data.eventWeather.rule.charAt(0).toUpperCase()}${data.eventWeather.rule.slice(1)}.`} /></>
+                    : <>Too few rainy holidays to compare.</>}
+                </CardInsight>
+              )}
             </article>
 
             {/* By hour: the hour × day heatmap, then jam speed by hour. */}
@@ -1330,6 +1343,18 @@ export default function TrafficPage() {
                   Quietest: {DOW_FULL[DOW_ORDER.indexOf(heatInsight.quiet.dow)]} • {fmtHour(heatInsight.quiet.hour)} ({fmtInt(heatInsight.quiet.v)}). Weekdays average {fmtInt(heatInsight.wd)} vehicles/hr, weekends {fmtInt(heatInsight.we)}.
                 </CardInsight>
               )}
+              {weather !== "all" && rainEffect && !error && (() => {
+                const heavy = rainEffect.volume.find((b) => b.mmTo == null);
+                const light = rainEffect.volume[0];
+                if (!heavy || heavy.effectPct == null || !light) return null;
+                return (
+                  <CardInsight lead={`Heavy-rain days (${heavy.mmFrom} mm+): ${Math.abs(heavy.effectPct).toFixed(0)}% ${heavy.effectPct < 0 ? "less" : "more"} traffic.`}>
+                    Like for like, against dry days of the same weekday nearby{isClear(heavy.lowPct, heavy.highPct) ? "" : " (not a clear difference)"};
+                    {isClear(light.lowPct, light.highPct) ? ` light rain: ${light.effectPct}%.` : " light rain shows no clear change."}
+                    <InfoTooltip text={METHOD_NOTE} />
+                  </CardInsight>
+                );
+              })()}
             </article>
 
             <article className={`${styles.chartCard} nct-span-speed`}>
@@ -1359,6 +1384,27 @@ export default function TrafficPage() {
                   That is {speedInsight.gapPct.toFixed(0)}% slower than at {fmtHour(speedInsight.fast.hour)}, the fastest hour ({speedInsight.fast.speed} km/h).
                 </CardInsight>
               )}
+              {weather !== "all" && rainEffect && !error && (() => {
+                const hard = rainEffect.jams.bands.find((b) => b.mmPerHourTo == null);
+                if (!hard || hard.jamDiffPts == null || hard.delayDiffMin == null) return null;
+                const clear = isClear(hard.jamLowPts, hard.jamHighPts) || isClear(hard.delayLowMin, hard.delayHighMin);
+                return (
+                  <CardInsight lead={`Moderate or heavy rain (${hard.mmPerHourFrom} mm/h+): jams ${hard.jamDiffPts > 0 ? "+" : ""}${hard.jamDiffPts.toFixed(0)} pts more often, ${hard.delayDiffMin > 0 ? "+" : ""}${hard.delayDiffMin.toFixed(1)} min more delay.`}>
+                    Like for like{clear ? "" : " (not a clear difference)"}; speed inside a jam barely changes.
+                    <InfoTooltip text={`Live Waze, ${rainEffect.jams.from} to ${rainEffect.jams.to ?? "now"}: each rainy hour at an exit against dry hours at the same exit, hour of day and part of the week. Light rain shows no clear change. Speed inside a jam barely moves with rain; how often jams form and how long they delay does.`} />
+                  </CardInsight>
+                );
+              })()}
+              {weather !== "all" && rainEffect && !error && (() => {
+                const f = rainEffect.jams.flood;
+                if (!f || f.exitHours === 0 || f.delayMin == null || f.rainyDelayMin == null) return null;
+                return (
+                  <CardInsight lead={`Flood-reported hours: ${f.delayMin.toFixed(0)} min of delay.`}>
+                    Against {f.rainyDelayMin.toFixed(0)} min in rainy hours without a flood report, and a jam {f.jamPct?.toFixed(0)}% vs {f.rainyJamPct?.toFixed(0)}% of the time.
+                    <InfoTooltip text={`Live Waze since ${rainEffect.jams.from}: each exit-hour with a Waze flood report against rainy hours without one at the same exit, hour of day and part of the week (${f.exitHours} flood hours over ${f.days} days; 95% range of the extra delay ${f.delayLowMin} to ${f.delayHighMin} min). A link, not proof: drivers already stuck may report water more readily. Live flood reports show on the Live Map.`} />
+                  </CardInsight>
+                );
+              })()}
             </article>
           </>
         )}
@@ -1483,8 +1529,8 @@ export default function TrafficPage() {
                 <h3>{impactMode === "Events" ? "Arena Events — Full List" : "Holidays — Full List"}</h3>
                 <p>
                   {impactMode === "Events"
-                    ? `${eventsShown.length} event${eventsShown.length === 1 ? "" : "s"}${yearShown === "all" ? "" : ` in ${yearShown}`} · measured at ${EVENT_EXIT_VIEWS.find((v) => v.value === eventExit)?.label ?? "the venue exit"} · ${eventSorted.sort.key === "dist" ? "furthest from normal first" : "click a column to sort"}, a row for details`
-                    : `${data.holidayImpact.length} holidays · ${holidaySorted.sort.key === "dist" ? "furthest from normal first" : "click a column to sort"}, a row for details`}
+                    ? `${eventsShown.length} event${eventsShown.length === 1 ? "" : "s"}${yearShown === "all" ? "" : ` in ${yearShown}`} · measured at ${EVENT_EXIT_VIEWS.find((v) => v.value === eventExit)?.label ?? "the venue exit"}${data.eventWeather ? ` · ${data.eventWeather.day} event days only, vs same-weekday ${data.eventWeather.day} days` : ""} · ${eventSorted.sort.key === "dist" ? "furthest from normal first" : "click a column to sort"}, a row for details`
+                    : `${data.holidayImpact.length} holidays${data.eventWeather ? " · all weather (not split by Dry/Wet)" : ""} · ${holidaySorted.sort.key === "dist" ? "furthest from normal first" : "click a column to sort"}, a row for details`}
                 </p>
               </div>
               <button className={styles.detailClose} onClick={() => setImpactListOpen(false)} aria-label="Close">

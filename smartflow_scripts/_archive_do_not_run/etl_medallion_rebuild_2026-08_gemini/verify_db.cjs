@@ -1,7 +1,7 @@
 throw new Error("ARCHIVED - do not run. Medallion rebuild and metrics-table setup from a Gemini session (Jul 27 - Aug 1 2026); already applied. Kept only as a record; see smartflow_scripts/README.md.");
 const { Pool } = require('pg');
 const db = new Pool({
-  host: 'smartflow-db.choym2mcymec.ap-southeast-1.rds.amazonaws.com',
+  host: '<RDS_HOST>',
   port: 5432, database: 'nlex_capstone', user: 'postgres',
   password: 'REMOVED', ssl: { rejectUnauthorized: false }
 });

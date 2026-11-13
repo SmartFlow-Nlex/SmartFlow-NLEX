@@ -749,8 +749,13 @@ export function EventInterventionPanel() {
     <label className="nct-pick">
       <span className="nct-kv-k">Plan for</span>
       <select className="nct-select" value={chosenDate} onChange={(e) => setPick(e.target.value)} aria-label="Event to plan for">
-        {upcoming.map((e) => (
-          <option key={e.date} value={e.date}>{shortDay(e.date)} · {e.title.split(" - ")[0]}{e.isDerived ? " (inferred)" : ""}</option>
+        {/* Grouped by year, as on the Predictive tab (mock defense, 3 Nov 2026). */}
+        {[...new Set(upcoming.map((e) => e.date.slice(0, 4)))].map((year) => (
+          <optgroup key={year} label={`${year} events`}>
+            {upcoming.filter((e) => e.date.startsWith(year)).map((e) => (
+              <option key={e.date} value={e.date}>{shortDay(e.date)} · {e.title.split(" - ")[0]}{e.isDerived ? " (inferred)" : ""}</option>
+            ))}
+          </optgroup>
         ))}
         <option value="">A typical event day</option>
       </select>
@@ -830,7 +835,7 @@ export function EventInterventionPanel() {
         <summary>How this is measured</summary>
         <div>
           <Foot>
-            Extra vehicles = the exit&apos;s normal-day baseline {chosen ? "for that weekday and month" : ""} times (uplift − 1). The rank
+            Extra vehicles = the exit&apos;s normal day {chosen ? "for that weekday (last 8 weeks of real data)" : ""} times (uplift − 1). The rank
             uses the lower end of the uplift&apos;s 95% interval, so an exit with a loose estimate ranks on what it is sure to add.
             Exits whose interval reaches 1 are left out. The per-exit forecast for each date is also on the Predictive tab&apos;s Event
             Surge card.

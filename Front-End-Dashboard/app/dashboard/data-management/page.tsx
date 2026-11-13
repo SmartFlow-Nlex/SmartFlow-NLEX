@@ -28,6 +28,8 @@ type EtlResult = {
   destination: string | null;
   published: { table: string; rows: number }[];
   comparison?: Comparison | null;
+  day_screen?: DayScreen | null;
+  profile?: TollProfile | null;
   can_undo?: boolean;
   stats: {
     total_rows_parsed: number;
@@ -112,6 +114,30 @@ type Comparison =
       examples: { date: string; plaza: string; loaded: number; file: number }[];
     }
   | { kind: "records"; matched: number; changed: number };
+
+/** Every day of a toll file, and whether it was loaded (Back-End/src/etl/day-screen.ts). */
+type ScreenedDay = { date: string; status: "loaded" | "held" | "missing" | "outside"; trips: number; hours: number; plazas: number; reason?: string };
+type DayScreen = {
+  window: { from?: string; to?: string } | null;
+  completeness: boolean;
+  days: ScreenedDay[];
+  loaded: number;
+  held: number;
+  missing: number;
+  outside: number;
+  rowsLeftOut: number;
+  thresholds: { minShareOfWeekday: number; minShareOfPlazas: number };
+};
+
+/** A toll file against the same period a year earlier (Back-End/src/etl/compare.ts profileToll). */
+type TollProfile = {
+  months: { month: string; days: number; perDay: number; priorDays: number; priorPerDay: number | null; ratio: number | null }[];
+  plazas: { plaza: string; perDay: number; priorPerDay: number | null; ratio: number | null; flagged: boolean }[];
+  classShare: { file: number[]; prior: number[] | null };
+  threshold: number;
+  minVolume: number;
+  flagged: number;
+};
 
 /** What undoing an upload removes and puts back (Back-End/src/etl/undo.ts). */
 type UndoResult = {
@@ -240,6 +266,174 @@ function ComparisonPanel({ c, check }: { c: Comparison; check: boolean }) {
   );
 }
 
+const DAY_STATUS: Record<ScreenedDay["status"], { label: string; color: string }> = {
+  loaded: { label: "Loaded", color: "var(--color-success)" },
+  held: { label: "Held back: incomplete", color: "var(--color-warning)" },
+  missing: { label: "Not in the file", color: "var(--color-danger)" },
+  outside: { label: "Outside the dates chosen", color: "var(--border-default)" },
+};
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthLabel = (ym: string) => `${MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
+
+/** Every day of a toll file, a month to a row: loaded, held back as incomplete, missing, or outside the dates chosen. */
+function CoveragePanel({ d, check }: { d: DayScreen; check: boolean }) {
+  const byMonth = new Map<string, ScreenedDay[]>();
+  for (const x of d.days) {
+    const k = x.date.slice(0, 7);
+    if (!byMonth.has(k)) byMonth.set(k, []);
+    byMonth.get(k)!.push(x);
+  }
+  const notes = d.days.filter((x) => x.status === "held" || x.status === "missing");
+  return (
+    <section className="panel" style={{ marginTop: 16, borderColor: d.held || d.missing ? "var(--color-warning-border)" : undefined }}>
+      <h3 style={{ margin: 0 }}>Days in this file</h3>
+      <p className="muted" style={{ margin: "6px 0 10px" }}>
+        {n(d.loaded)} {d.loaded === 1 ? "day" : "days"} {check ? "would load" : "loaded"}
+        {d.held > 0 && <> · <span style={{ color: "var(--color-warning)", fontWeight: 600 }}>{n(d.held)} held back as incomplete</span></>}
+        {d.missing > 0 && <> · <span style={{ color: "var(--color-danger)", fontWeight: 600 }}>{n(d.missing)} not in the file</span></>}
+        {d.outside > 0 && <> · {n(d.outside)} outside the dates chosen</>}
+        {d.window && <> · dates chosen: {d.window.from ? day(d.window.from) : "file start"} to {d.window.to ? day(d.window.to) : "file end"}</>}
+      </p>
+      {d.completeness && (
+        <p className="muted" style={{ margin: "0 0 10px", fontSize: "0.82rem" }}>
+          This file replaces each day it holds whole, so a day only loads if it is complete: all 24 hours (apart from toll-holiday
+          hours), at least {Math.round(d.thresholds.minShareOfWeekday * 100)}% of a usual day for its weekday, and at least{" "}
+          {Math.round(d.thresholds.minShareOfPlazas * 100)}% of the usual plazas. Real low days, such as typhoons and Good Friday, stay above that.
+        </p>
+      )}
+      <div style={{ display: "grid", gap: 6 }}>
+        {[...byMonth.entries()].map(([ym, list]) => (
+          <div key={ym} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ width: 72, flex: "none", fontSize: "0.8rem", color: "var(--text-secondary)" }}>{monthLabel(ym)}</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+              {list.map((x) => (
+                <span
+                  key={x.date}
+                  title={`${day(x.date)}: ${DAY_STATUS[x.status].label}${x.status !== "missing" ? ` · ${n(x.trips)} trips, ${x.hours} h, ${x.plazas} plazas` : ""}${x.reason ? ` · ${x.reason}` : ""}`}
+                  aria-label={`${x.date} ${DAY_STATUS[x.status].label}`}
+                  style={{ width: 13, height: 13, borderRadius: 3, background: DAY_STATUS[x.status].color, display: "inline-block" }}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="muted" style={{ margin: "10px 0 0", fontSize: "0.78rem", display: "flex", gap: 14, flexWrap: "wrap" }}>
+        {(Object.keys(DAY_STATUS) as ScreenedDay["status"][]).map((k) => (
+          <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: DAY_STATUS[k].color, display: "inline-block" }} />
+            {DAY_STATUS[k].label}
+          </span>
+        ))}
+      </p>
+      {notes.length > 0 && (
+        <div className="table-scroll" style={{ marginTop: 10 }}>
+          <table>
+            <thead>
+              <tr>
+                <th>DATE</th>
+                <th>STATUS</th>
+                <th>WHY</th>
+              </tr>
+            </thead>
+            <tbody>
+              {notes.map((x) => (
+                <tr key={x.date}>
+                  <td style={{ whiteSpace: "nowrap" }}>{day(x.date)}</td>
+                  <td style={{ whiteSpace: "nowrap", color: DAY_STATUS[x.status].color, fontWeight: 600 }}>{DAY_STATUS[x.status].label}</td>
+                  <td style={{ whiteSpace: "normal" }}>{x.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="muted" style={{ margin: "6px 0 0", fontSize: "0.8rem" }}>
+            These days {check ? "would be" : "were"} left alone in the warehouse. Ask the source for them again rather than load part of a day.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** A toll file against the same period a year earlier: is it plausible? */
+function ProfilePanel({ p }: { p: TollProfile }) {
+  const [all, setAll] = useState(false);
+  const change = (r: number | null) => (r == null ? "—" : `${r >= 1 ? "+" : ""}${((r - 1) * 100).toFixed(1)}%`);
+  const shown = all ? p.plazas : p.plazas.filter((x) => x.flagged);
+  const num = { textAlign: "right" as const, fontVariantNumeric: "tabular-nums" as const };
+  return (
+    <section className="panel" style={{ marginTop: 16, borderColor: p.flagged ? "var(--color-warning-border)" : undefined }}>
+      <h3 style={{ margin: 0 }}>Compared with the same period last year</h3>
+      <p className="muted" style={{ margin: "6px 0 10px" }}>
+        The real yardstick for a new period: the same months a year earlier, as already loaded.
+        {p.classShare.prior && (
+          <> Class mix {p.classShare.file.map((v) => `${v.toFixed(1)}%`).join(" / ")}, a year earlier {p.classShare.prior.map((v) => `${v.toFixed(1)}%`).join(" / ")}.</>
+        )}
+      </p>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>MONTH</th>
+              <th style={num}>DAYS</th>
+              <th style={num}>TRIPS / DAY</th>
+              <th style={num}>A YEAR EARLIER</th>
+              <th style={num}>CHANGE</th>
+            </tr>
+          </thead>
+          <tbody>
+            {p.months.map((m) => (
+              <tr key={m.month}>
+                <td>{monthLabel(m.month)}</td>
+                <td style={num}>{m.days}</td>
+                <td style={num}>{n(m.perDay)}</td>
+                <td style={num}>{m.priorPerDay == null ? "—" : n(m.priorPerDay)}</td>
+                <td style={{ ...num, color: m.ratio != null && Math.abs(m.ratio - 1) > p.threshold ? "var(--color-warning)" : undefined }}>{change(m.ratio)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ margin: "12px 0 6px", fontWeight: 600, color: p.flagged ? "var(--color-warning)" : "var(--text-primary)" }}>
+        {p.flagged
+          ? `${n(p.flagged)} ${p.flagged === 1 ? "plaza moves" : "plazas move"} more than ${Math.round(p.threshold * 100)}% from a year earlier.`
+          : `No plaza moves more than ${Math.round(p.threshold * 100)}% from a year earlier.`}{" "}
+        <button type="button" className="btn-muted" style={{ marginLeft: 6, padding: "2px 10px" }} onClick={() => setAll(!all)}>
+          {all ? "Show only the flagged" : `Show all ${p.plazas.length} plazas`}
+        </button>
+      </p>
+      {shown.length > 0 && (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>PLAZA</th>
+                <th style={num}>TRIPS / DAY</th>
+                <th style={num}>A YEAR EARLIER</th>
+                <th style={num}>CHANGE</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((x) => (
+                <tr key={x.plaza}>
+                  <td>{x.plaza}</td>
+                  <td style={num}>{n(x.perDay)}</td>
+                  <td style={num}>{x.priorPerDay == null ? "—" : n(x.priorPerDay)}</td>
+                  <td style={{ ...num, color: x.flagged ? "var(--color-warning)" : undefined, fontWeight: x.flagged ? 600 : undefined }}>{change(x.ratio)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="muted" style={{ margin: "6px 0 0", fontSize: "0.8rem" }}>
+        Flagged when a plaza carrying at least {n(p.minVolume)} trips a day moves more than {Math.round(p.threshold * 100)}%. A flag asks for a
+        look, not a rejection: a new interchange or a lasting shift moves a plaza too.
+      </p>
+    </section>
+  );
+}
+
 /** A rejected row, shortened to its first few filled fields so the table stays readable. */
 function rowPreview(row: Record<string, unknown>): string {
   return Object.entries(row)
@@ -256,6 +450,8 @@ export default function DataManagementPage() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<EtlResult | null>(null);
   const [success, setSuccess] = useState<boolean | null>(null);
+  // Optional: load only these dates (both toll layouts and every dated record upload honour it).
+  const [win, setWin] = useState<{ from: string; to: string }>({ from: "", to: "" });
   // A picked file waits here, unsent, until the operator chooses what to do with it. Loading writes to the warehouse
   // and this page has no undo, so choosing a file must not be the same act as sending it.
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -398,7 +594,11 @@ export default function DataManagementPage() {
       // and replays the upload once. The endpoint now requires the data-analyst
       // role (see Back-End/src/routes/upload.routes.ts), so an unauthenticated
       // post would otherwise be refused here.
-      const response = await apiFetch(`${BACKEND}/api/upload/file${mode === "check" ? "?mode=check" : ""}`, {
+      const qs = new URLSearchParams();
+      if (mode === "check") qs.set("mode", "check");
+      if (win.from) qs.set("from", win.from);
+      if (win.to) qs.set("to", win.to);
+      const response = await apiFetch(`${BACKEND}/api/upload/file${qs.toString() ? `?${qs}` : ""}`, {
         method: "POST",
         body: formData, // fetch will automatically set the correct multipart boundary headers
       });
@@ -527,9 +727,30 @@ export default function DataManagementPage() {
               </p>
               <p className="ds-modal-note">
                 <b>Check only</b> runs every step against the warehouse, then undoes it: you see what would load, what would be skipped
-                and why, and nothing is written. <b>Upload &amp; load</b> writes it. This page cannot undo a load, though uploading the
-                same file again never doubles it.
+                and why, and nothing is written. <b>Upload &amp; load</b> writes it. A load can be undone from Recent uploads, and
+                uploading the same file again never doubles it.
               </p>
+              <fieldset style={{ border: "1px solid var(--border-default)", borderRadius: 8, padding: "8px 12px", margin: "10px 0 0" }}>
+                <legend style={{ fontSize: "0.8rem", padding: "0 4px", color: "var(--text-secondary)" }}>Load only these dates (optional)</legend>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <label style={{ fontSize: "0.82rem", display: "inline-flex", gap: 6, alignItems: "center" }}>
+                    From
+                    <input type="date" value={win.from} max={win.to || undefined} onChange={(e) => setWin({ ...win, from: e.target.value })} />
+                  </label>
+                  <label style={{ fontSize: "0.82rem", display: "inline-flex", gap: 6, alignItems: "center" }}>
+                    To
+                    <input type="date" value={win.to} min={win.from || undefined} onChange={(e) => setWin({ ...win, to: e.target.value })} />
+                  </label>
+                  {(win.from || win.to) && (
+                    <button type="button" className="btn-muted" style={{ padding: "2px 10px" }} onClick={() => setWin({ from: "", to: "" })}>
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <p className="muted" style={{ margin: "6px 0 0", fontSize: "0.78rem" }}>
+                  Leave empty to load every day the file holds. Days outside are left out and reported.
+                </p>
+              </fieldset>
             </div>
             <footer className="ds-modal-foot">
               <button type="button" className="btn-muted" onClick={() => setPendingFile(null)}>
@@ -652,6 +873,8 @@ export default function DataManagementPage() {
             )}
           </section>
 
+          {result.day_screen && <CoveragePanel d={result.day_screen} check={result.dry_run} />}
+          {result.profile && <ProfilePanel p={result.profile} />}
           {result.comparison && <ComparisonPanel c={result.comparison} check={result.dry_run} />}
 
           <div className="mini-stats-grid" style={{ marginTop: 16 }}>

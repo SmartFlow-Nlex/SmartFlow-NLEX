@@ -84,6 +84,15 @@ export default function MapLegend({ variant = "live" }: { variant?: "live" | "fo
           </div>
         );
       })}
+
+      {/* Live rain: the cyan wash and falling drops TrafficMapPanel draws over
+          the stretch around each exit where rain is falling now, in the same
+          colour the map paints it. */}
+      <h4 className="wz-legend-gap">Weather</h4>
+      <div className="wz-legend-row">
+        <span className="wz-rain-swatch" style={{ background: palette.rain }} aria-hidden="true" />
+        Rain falling now (darker = heavier)
+      </div>
     </div>
   );
 }

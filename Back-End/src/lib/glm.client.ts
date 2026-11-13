@@ -200,7 +200,7 @@ export async function chat(opts: ChatOptions): Promise<string> {
       const aborted = err instanceof Error && err.name === "AbortError";
       throw new GlmError(
         aborted
-          ? "The model took too long to respond. The free tier queues under load — try again."
+          ? "The model took too long to respond. The AI provider is busy right now — try again."
           : "Could not reach the GLM API.",
         "upstream_error",
       );
@@ -251,7 +251,7 @@ export async function chat(opts: ChatOptions): Promise<string> {
     // operator can act on, so they get their own messages.
     if (code === "1113") {
       throw new GlmError(
-        "The GLM account has no remaining balance. Switch GLM_MODEL to a free model (glm-4.5-flash) or top up at z.ai.",
+        "The AI account has no remaining balance. Top up the account that GLM_API_KEY belongs to.",
         "insufficient_balance",
       );
     }

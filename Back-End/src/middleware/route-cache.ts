@@ -55,7 +55,8 @@ function isProtected(url: string): boolean {
   return PROTECTED_PREFIXES.some((p) => url.startsWith(p));
 }
 
-const LIVE_PREFIXES = ["/api/map-comparison/real-time", "/api/map-comparison/live-overview", "/api/traffic/realtime", "/api/dashboard/corridor-status"];
+const LIVE_PREFIXES = ["/api/map-comparison/real-time", "/api/map-comparison/live-overview", "/api/map-comparison/live-rain",
+  "/api/traffic/realtime", "/api/dashboard/corridor-status"];
 const SHORT_PREFIXES = ["/api/maintenance", "/api/audit-log", "/api/health"];
 /* Rewritten by the congestion pipeline every hour, and each response carries
    the base_ts it was computed from. Ten minutes of that is a forecast map
@@ -68,6 +69,8 @@ const FORECAST_PREFIXES = ["/api/map-comparison/forecast"];
    the warmer re-run every heavy query six times an hour for answers that had not changed. On the micro RDS
    instance that drained its CPU and disk burst credits to zero and throttled the whole database. */
 const RECORD_TTL_MS = 3 * 60 * 60_000;
+/** At most this many cached answers (and read timestamps); the dashboard itself uses a few hundred URLs. */
+const MAX_ENTRIES = 1500;
 
 export function ttlFor(url: string): number {
   if (LIVE_PREFIXES.some((p) => url.startsWith(p))) return 30_000;
@@ -170,13 +173,19 @@ export function routeCache(req: Request, res: Response, next: NextFunction): voi
     return next();
   }
 
+  /* A CORS preflight or a HEAD changes nothing. An anonymous OPTIONS used to clear a whole group's cache, so a
+     stranger could force the slow queries to rerun at will (security audit #7, 9 Nov 2026). */
+  if (req.method === "OPTIONS" || req.method === "HEAD") return next();
+
   if (req.method !== "GET") {
     // A write under a prefix makes every cached read under it suspect. Not the
     // page-view beacon: every page opened posts to /audit-log/activity, so the
     // audit log's entries were cleared on each navigation and never served.
     // Audited actions clear them instead (writeAudit, services/audit.ts).
     if (!url.startsWith("/api/audit-log/activity")) {
-      res.on("finish", () => { if (res.statusCode < 400) invalidatePrefix(prefixOf(url)); });
+      // Only a write that signed in (authenticateToken marks it) can change shared data; an anonymous POST that
+      // happened to succeed does not get to empty the cache.
+      res.on("finish", () => { if (res.statusCode < 400 && res.locals.authRequired) invalidatePrefix(prefixOf(url)); });
     }
     // A published upload or an undo changes the record every module reads (a ?mode=check dry run does not).
     if (/^\/api\/upload\/(file|[^/]+\/undo)/.test(url) && !/[?&]mode=check/.test(url)) {
@@ -189,7 +198,10 @@ export function routeCache(req: Request, res: Response, next: NextFunction): voi
   // stranger force every heavy query to rerun on the shared database at will (2 Nov 2026), so it is ignored.
   const fromHere = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress ?? "");
   const bypass = req.headers["x-cache-bypass"] === "1" && fromHere;
-  if (!bypass) lastRead.set(url, Date.now());
+  if (!bypass) {
+    if (lastRead.size >= MAX_ENTRIES && !lastRead.has(url)) lastRead.delete(lastRead.keys().next().value as string);
+    lastRead.set(url, Date.now());
+  }
   const ttl = ttlFor(url);
   const hit = store.get(url);
   const fresh = hit != null && Date.now() - hit.at < ttl;
@@ -242,6 +254,9 @@ function runHandler(res: Response, next: NextFunction, url: string, bypass: bool
     // startedUnder: a write to this group since the handler began makes this answer stale.
     // noStore: the route answered, but with something incomplete it does not want kept (17 Oct 2026).
     if (res.statusCode === 200 && !res.locals.authRequired && !res.locals.noStore && generationOf(url) === startedUnder) {
+      // Bounded: every new query string used to add a 3-hour entry with no limit (security audit #7). The oldest
+      // entry goes first; Map keeps insertion order.
+      if (store.size >= MAX_ENTRIES && !store.has(url)) store.delete(store.keys().next().value as string);
       store.set(url, { at: Date.now(), status: 200, body });
     }
     res.setHeader("X-Cache", bypass ? "REFRESH" : "MISS");

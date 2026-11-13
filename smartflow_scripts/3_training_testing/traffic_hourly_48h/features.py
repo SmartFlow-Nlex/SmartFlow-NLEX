@@ -12,12 +12,97 @@ origin = index of the first forecast hour; every input is read from hours before
   future  [48, 22]  the 48 forecast hours: 16 calendar features + the same hour 1 and 2 weeks earlier (3 classes each)
   series  [1]       series index (learned embedding)
 """
+import json
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
 H, SHORT, LONG_D = 48, 72, 56
 SHORT_CAL = [0, 1, 2, 3, 13, 15]          # hod sin/cos, dow sin/cos, holiday, event_day (build_dataset.cal_names)
 MIN_FIT_DAYS = 60
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[1] / "config"))
+sys.path.insert(0, str(HERE.parent))
+from db import WORK  # noqa: E402
+from common.rolling_eval import REAL_END_VOLUME  # noqa: E402  (protocol section 1: the last day of REAL traffic data)
+
+LIVE_CACHE = Path(WORK) / "cache" / "traffic_hourly_48h"
+LEARNED = ["lstm1", "stacked", "dualpath", "hybrid"]          # simplest first: a non-significant tie goes left
+BASELINES = ["snaive", "profile"]
+COMPLEXITY = {"snaive": 0, "profile": 0, "lstm1": 1, "stacked": 2, "dualpath": 3, "hybrid": 4}
+LABEL = {"snaive": "Seasonal naive (same hour last week)", "profile": "Current method (daily x hourly profile)",
+         "lstm1": "Single-layer LSTM", "stacked": "Stacked LSTM", "dualpath": "Dual-Path LSTM",
+         "hybrid": "Dual-Path LSTM + XGBoost"}
+BUCKETS = [(1, 6), (7, 24), (25, 48)]                          # hours ahead; the score weighs each bucket equally
+BLOCK_DAYS = 7                                                 # bootstrap block: a week of daily origins
+
+# The 2025 backtest fits of 24 Oct / 2 Nov 2026 (models/<kind>.keras, hybrid_xgb.json): fitted on origins
+# 2022-02-28 .. 2024-09-30, early-stopped on 2024-10-08 .. 2024-12-29, scaler on hours before 2024-10-03 (a series
+# short of 60 active days there took its first 60 active days before 2025-01-01). They saw nothing after 2024-12-31,
+# so they are legitimate VALIDATION forecasters for any window that starts later. Recorded here because those files
+# predate the per-fit records (models/<name>.fit.json) every new fit writes.
+LEGACY_VAL_FIT = {"fit": ["2022-02-28 00:00", "2024-09-30 00:00"], "es": ["2024-10-08 00:00", "2024-12-29 00:00"],
+                  "scaler_until": "2024-10-03 00:00", "fallback_until": "2025-01-01 00:00", "step": 7,
+                  "source": "2025 backtest fits of 24 Oct / 2 Nov 2026 (before per-fit records)"}
+
+
+def cache_dir(dry_run):
+    """Where a run reads and writes its files. A --dry-run works in a folder of its own, so nothing the weekly batch
+    or forecast_48h.py --write-db reads (dataset, models, production.json, bands) is touched."""
+    d = LIVE_CACHE / "dryrun" if dry_run else LIVE_CACHE
+    (d / "models").mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def windows(real_end, test_weeks=20, val_weeks=52, es_weeks=12, step=7, fit_start="2022-02-28"):
+    """Every window, derived from the last real day R (nothing hard-coded, so each weekly run moves with the data).
+
+    Origins are the hour a forecast starts. A served forecast starts at 00:00 the day after the last uploaded day, so
+    VALIDATION and TEST origins are every day at 00:00 (all weekdays alike), and a 48-hour forecast is used only if all
+    of its hours are on or before the window's end:
+      test        T0 = R - 7*test_weeks + 1 day .. R - 1 day             never used for any choice
+      validation  V0 = T0 - val_weeks weeks   .. T0 - 2 days             model choice and the band's calibration
+    A model whose first scored origin is X is fitted on origins every `step` hours from fit_start to X - es_weeks - 2
+    days, early-stopped on origins X - es_weeks .. X - 2 days, with its scaler on hours before X - es_weeks:
+      validation fit  X = V0;  test fit  X = T0;  production fit  X = R + 1 day (all real data, served)."""
+    R = pd.Timestamp(real_end).normalize()
+    day = pd.Timedelta(days=1)
+    T0 = R - pd.Timedelta(days=7 * test_weeks) + day
+    V0 = T0 - pd.Timedelta(weeks=val_weeks)
+
+    def fit(X):
+        es0 = X - pd.Timedelta(weeks=es_weeks)
+        return {"fit": [str(pd.Timestamp(fit_start)), str(es0 - 2 * day)], "es": [str(es0), str(X - 2 * day)],
+                "scaler_until": str(es0), "fallback_until": str(X), "step": step, "first_scored_origin": str(X)}
+    return {"real_end": str(R.date()), "test": [str(T0), str(R - day)], "validation": [str(V0), str(T0 - 2 * day)],
+            "val_fit": fit(V0), "test_fit": fit(T0), "prod_fit": fit(R + day),
+            "params": {"test_weeks": test_weeks, "val_weeks": val_weeks, "es_weeks": es_weeks, "step": step}}
+
+
+def daily_origins(TS, a, b):
+    """Row index of every 00:00 from a to b inclusive."""
+    hour_of = pd.Index(TS)
+    return hour_of.get_indexer(pd.date_range(pd.Timestamp(a), pd.Timestamp(b), freq="D"))
+
+
+def step_origins(TS, gap, a, b, step):
+    """Every `step` hours from a to b; windows touching a corridor-empty hour (toll holiday, broken day) dropped."""
+    hour_of = pd.Index(TS)
+    o = np.arange(hour_of.get_loc(pd.Timestamp(a)), hour_of.get_loc(pd.Timestamp(b)) + 1, step)
+    return o[[not gap[i:i + H].any() for i in o]]
+
+
+def fit_record(path):
+    """The windows a saved model was fitted on (models/<name>.fit.json), or None."""
+    p = Path(str(path).replace(".keras", "").replace(".json", "") + ".fit.json")
+    return json.loads(p.read_text()) if p.exists() else None
+
+
+def save_fit_record(path, rec):
+    Path(str(path).replace(".keras", "").replace(".json", "") + ".fit.json").write_text(json.dumps(rec, indent=1))
 
 
 class Features:
@@ -101,6 +186,22 @@ class Features:
             d = day - 7 * w
             shares += self.Y[d * 24 + hod, s[:, None]] / np.maximum(self.DAILY[d, s[:, None]], 1)
         return total * shares / 4
+
+    def snaive(self, o, s):
+        """Seasonal naive: the same hour one week earlier (always before the origin for a 48-hour forecast)."""
+        tf_ = o[:, None] + np.arange(H)
+        return self.Y[tf_ - 168, s[:, None]].astype(np.float64)
+
+    def truth(self, o, s):
+        tf_ = o[:, None] + np.arange(H)
+        return self.Y[tf_, s[:, None]]
+
+    def pairs(self, orig, only_complete=True):
+        """(origin, series) for every series at each origin; only those whose inputs and targets are complete."""
+        o = np.repeat(orig, self.S); s = np.tile(np.arange(self.S), len(orig))
+        if only_complete:
+            k = self.complete(o, s); o, s = o[k], s[k]
+        return o, s
 
     def predict(self, m, o, s, chunk=4096):
         return np.concatenate([m.predict(self.batch(o[i:i + chunk], s[i:i + chunk])[0], batch_size=1024, verbose=0)

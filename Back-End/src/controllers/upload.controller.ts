@@ -21,12 +21,22 @@ export const handleFileUpload = async (req: Request, res: Response) => {
     });
   }
   const dryRun = String(req.query.mode ?? "") === "check";
+  // Optional: load only the days from..to (YYYY-MM-DD, inclusive; either end may be open). Toll files and every
+  // dated record upload honour it (etl/day-screen.ts, and the record-end gate for the others).
+  const isoDay = /^\d{4}-\d{2}-\d{2}$/;
+  const from = typeof req.query.from === "string" && req.query.from ? req.query.from : undefined;
+  const to = typeof req.query.to === "string" && req.query.to ? req.query.to : undefined;
+  if ((from && !isoDay.test(from)) || (to && !isoDay.test(to)) || (from && to && from > to)) {
+    fs.promises.unlink(file.path).catch(() => {});
+    return res.status(400).json({ success: false, error: "The dates to load must be YYYY-MM-DD, with the first on or before the last." });
+  }
+  const window = from || to ? { from, to } : null;
 
   try {
     console.log(`[ETL] ${dryRun ? "Checking" : "Processing"} upload: ${file.originalname} (${(file.size / 1024).toFixed(1)} KB)`);
 
     // Run the full ETL pipeline: Parse → Classify → Clean → Transform → Load → Publish
-    const result = await runPipeline(file.path, file.originalname, { dryRun });
+    const result = await runPipeline(file.path, file.originalname, { dryRun, window });
 
     // A check changes nothing, so it is not recorded as an upload.
     const dbRecord = dryRun
@@ -67,6 +77,8 @@ export const handleFileUpload = async (req: Request, res: Response) => {
         rows_updated: result.rowsUpdated,
         rows_set_aside: result.rowsRejected,
         rows_refused: result.rowsFailed,
+        ...(window ? { dates_chosen: window } : {}),
+        ...(result.dayScreen ? { days_loaded: result.dayScreen.loaded, days_held_back: result.dayScreen.held, days_missing: result.dayScreen.missing } : {}),
         ...(flagged !== undefined ? { plaza_days_flagged: flagged } : {}),
         ...(result.success ? {} : { reason: (result.parseErrors[0] ?? result.loadErrors[0] ?? result.classification.reason ?? "").slice(0, 300) }),
       },
@@ -91,6 +103,8 @@ export const handleFileUpload = async (req: Request, res: Response) => {
         destination: result.destination,
         published: result.published,
         comparison: result.comparison,
+        day_screen: result.dayScreen,
+        profile: result.profile,
         can_undo: Boolean(dbRecord && result.undoBatch),
         stats: {
           total_rows_parsed: result.totalRowsParsed,
@@ -113,7 +127,8 @@ export const handleFileUpload = async (req: Request, res: Response) => {
     console.error("[ETL] Pipeline error:", err);
     return res.status(500).json({
       success: false,
-      error: `ETL pipeline failed: ${err.message}`,
+      // The message helps the analyst fix the file; the database address is never part of it (security audit #9).
+      error: `ETL pipeline failed: ${String(err?.message ?? err).replace(/[a-z0-9.-]+\.rds\.amazonaws\.com(:\d+)?/gi, "<database>")}`,
     });
   } finally {
     // The temp file goes whatever happened, not only on success.

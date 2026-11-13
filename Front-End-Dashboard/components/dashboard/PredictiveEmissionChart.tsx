@@ -146,6 +146,19 @@ const NARRATIVE_VOCAB: NarrativeVocab = {
 };
 
 const ALL_PAST = 100000;
+/* The forecast panel: a fixed slice of the card's width, in pixels, that the
+   forecast always gets however long the history is. Seven days against 1,433
+   is 0.49% of a uniform axis — five pixels — which is why padding and marker
+   sizes could never fix it. GUTTER is the visible break between the two time
+   scales. */
+const PANEL_W = 186;
+/* Wide enough that the two sets of date labels cannot be read as one axis. */
+const GUTTER = 38;
+const PAD_L = 66;
+/* Room for the forecast's value callout, which sits above the last point and
+   is centred on it — at the old 18px half of "2,301 t" fell off the card. */
+const PAD_R = 46;
+
 const CHART_H = 450;
 
 const fmt = (v: number | null, d = 1) =>
@@ -285,6 +298,10 @@ export default function PredictiveEmissionChart() {
       rainfall: win.map(() => null),
       holdoutStart,
       futureStart,
+      /* Ahead offers 7 d and 2 wk only, so at Monthly the forecast is always
+         shorter than half a month. Without this the whole future block is
+         trimmed and Monthly shows no forecast whatsoever. */
+      keepLastFutureBucket: true,
     });
 
     return agg
@@ -297,6 +314,7 @@ export default function PredictiveEmissionChart() {
           holdoutStart: agg.holdoutStart,
           futureStart: agg.futureStart,
           bucketDays: agg.bucketDays,
+          tailIsPartial: agg.tailIsPartial,
           aggregated: true,
         }
       : {
@@ -306,6 +324,7 @@ export default function PredictiveEmissionChart() {
           holdoutStart,
           futureStart,
           bucketDays: isoDates.map(() => 1),
+          tailIsPartial: false,
           aggregated: false,
         };
   }, [data, granularity, pastDays, futureDays]);
@@ -315,6 +334,7 @@ export default function PredictiveEmissionChart() {
     : granularity === "Monthly" ? "monthly mean"
     : granularity === "Yearly" ? "yearly mean"
     : "";
+
 
   // Which calendar dates fall in a horizon bucket the study marked unusable.
   // Read from gold.ml_horizon_accuracy, so if a retrain moves the weak stretch
@@ -389,15 +409,45 @@ export default function PredictiveEmissionChart() {
   const option: EChartsOption | null = useMemo(() => {
     if (!view) return null;
     const { holdoutStart, futureStart } = view;
-    /* Room for the future block. Weekly over all history puts the 7-day forecast on ONE point at the very right
-       edge, where its band had no width and the point sat on the frame. A few empty slots after it (about 5% of
-       the axis) give the Future band a visible width and its value label somewhere to sit. They carry no data
-       and no axis label. */
     const realN = view.dates.length;
     const futureCount = Math.max(0, realN - futureStart);
-    const pad = futureCount > 0 ? Math.max(0, Math.ceil(realN * 0.05) - futureCount) : 0;
-    const dates = [...view.dates, ...Array.from({ length: pad }, (_, i) => `pad-${i}`)];
-    const padded = (arr: (number | null)[]) => (pad ? [...arr, ...Array<null>(pad).fill(null)] : arr);
+
+    /* The split. The main grid holds everything up to the forecast; the panel
+       holds the forecast, preceded by the last measured point so the dashed
+       line starts from where the solid one stopped instead of floating free.
+       No panel when there is no forecast to put in it. */
+    const hasPanel = futureCount > 0 && futureStart > 0;
+    const anchor = futureStart - 1;
+    const panelDates = hasPanel ? view.isoDates.slice(anchor, realN) : [];
+    const panelOf = (arr: (number | null)[]) => arr.slice(anchor, realN);
+
+    // `dates`/`padded` now mean the MAIN grid's, so the zones, dividers and
+    // history series below are unchanged by the split.
+    const dates = view.dates.slice(0, futureStart);
+    const padded = (arr: (number | null)[]) => arr.slice(0, futureStart);
+
+    /* ONE y scale across both grids, or the panel would lie about the level:
+       scaled to its own seven points, a 50 t drift reads as a crash. Computed
+       over everything drawn — history and forecast — and set explicitly on
+       both axes, because two axes left to scale themselves will not agree. */
+    const yVals: number[] = [];
+    const take = (arr: (number | null)[]) => {
+      for (const v of arr) if (v != null && isFinite(v)) yVals.push(v);
+    };
+    take(padded(view.models.actual));
+    for (const k of ORDER) {
+      if (!selected.includes(k)) continue;
+      take(padded(view.models[k]));
+      if (hasPanel) take(panelOf(view.models[k]));
+    }
+    if (hasPanel) take(panelOf(view.models.actual));
+    const lo = yVals.length ? Math.min(...yVals) : 0;
+    const hi = yVals.length ? Math.max(...yVals) : 1;
+    // Round out to a readable step so explicit bounds still give round labels.
+    const headroom = (hi - lo || Math.abs(hi) || 1) * 0.08;
+    const step = Math.max(1, Math.pow(10, Math.floor(Math.log10(Math.max(1, hi - lo)))) / 2);
+    const yMin = Math.floor((lo - headroom) / step) * step;
+    const yMax = Math.ceil((hi + headroom) / step) * step;
     // History is the measured line: solid, in primary ink.
     const actualColor = T.textPrimary;
 
@@ -439,23 +489,36 @@ export default function PredictiveEmissionChart() {
     // vouch for. Assembled here so the whole thing carries one cast rather than
     // fighting ECharts' markArea typing inline.
     type AreaPair = [Record<string, unknown>, Record<string, unknown>];
+    /* Each band runs to the START of the next, not to one slot short of it:
+       the markArea spans point to point, so `to: next - 1` left an unshaded
+       slot at every boundary — a white gap before the forecast. Future is not
+       here any more; it fills the panel, which is the whole point of the
+       split. */
     const zonePairs: AreaPair[] = ([
-      { name: "Past", from: 0, to: holdoutStart - 1, color: ZONE.past },
-      { name: "Present", from: holdoutStart, to: futureStart - 1, color: ZONE.present },
-      { name: "Future", from: futureStart, to: dates.length - 1, color: ZONE.future },
-      // (dates.length includes the empty slots, so the band reaches the frame.)
+      { name: "Past", from: 0, to: holdoutStart, color: ZONE.past },
+      { name: "Present", from: holdoutStart, to: dates.length - 1, color: ZONE.present },
     ] as { name: string; from: number; to: number; color: string }[])
       .filter((z) => z.from <= z.to && dates[z.from] != null && dates[z.to] != null)
       .map((z) => [
-        {
-          xAxis: dates[z.from],
-          itemStyle: { color: z.color },
-          // The Future band is often a sliver at the right edge; its chip sits
-          // just above the plot so it can never land on top of "Present".
-          label: z.name === "Future" ? { ...zoneLabel(z.name), position: "top" as const, distance: 4 } : zoneLabel(z.name),
-        },
+        { xAxis: dates[z.from], itemStyle: { color: z.color }, label: zoneLabel(z.name) },
         { xAxis: dates[z.to] },
       ] as AreaPair);
+
+    /* The Future band fills the whole panel, hand-off point to last forecast
+       point. Not from the FIRST forecast point: at Weekly and Monthly the
+       forecast is a single bucket, so the panel holds two points and a band
+       between them would be zero pixels wide (a fractional category index is
+       snapped, not interpolated, so there is no half-slot to start from).
+       Spanning the hand-off is accurate anyway — the forecast period does
+       begin there, and the anchor is drawn in the measured line's own ink so
+       it cannot be mistaken for a prediction. */
+    const panelZone: AreaPair[] =
+      hasPanel && panelDates.length > 1
+        ? [[
+            { xAxis: panelDates[0], itemStyle: { color: ZONE.future }, label: zoneLabel("Future") },
+            { xAxis: panelDates[panelDates.length - 1] },
+          ] as AreaPair]
+        : [];
 
     // Saying in prose that "some days are weak" leaves the reader to work out
     // which. Shading them means a value read off the line carries its own
@@ -463,12 +526,13 @@ export default function PredictiveEmissionChart() {
     // retrain and disappears entirely if no bucket fails. Drawn with the chart
     // kit's hatch, labelled in the warning ink.
     const weakPairs: AreaPair[] = (weakDates ?? []).flatMap((w) => {
-      const hit = view.isoDates
+      // Horizon buckets describe forecast days, so these land on the panel.
+      const hit = panelDates
         .map((iso, i) => ({ i, t: new Date(iso + "T00:00:00").getTime() }))
         .filter((x) => x.t >= w.from.getTime() && x.t <= w.to.getTime());
       if (!hit.length) return [] as AreaPair[];
-      const a = dates[hit[0].i];
-      const b = dates[hit[hit.length - 1].i];
+      const a = panelDates[hit[0].i];
+      const b = panelDates[hit[hit.length - 1].i];
       if (a == null || b == null) return [] as AreaPair[];
       const hatch = gapMarkArea(CT, [[a, b]], `⚠ ${w.label}`);
       return [[
@@ -481,7 +545,8 @@ export default function PredictiveEmissionChart() {
       ] as AreaPair];
     });
 
-    const markAreaData = [...zonePairs, ...weakPairs] as never[];
+    const markAreaData = zonePairs as never[];
+    const panelAreaData = [...panelZone, ...weakPairs] as never[];
 
     /* Where "now" falls, if the axis reaches today. The forecast's own origin
        is marked either way; the NOW line is drawn only when today is actually
@@ -503,24 +568,30 @@ export default function PredictiveEmissionChart() {
       ...(dates[holdoutStart] != null
         ? [{ xAxis: dates[holdoutStart], lineStyle: { type: "dashed" as const, color: ZONE.divider, width: 1 }, label: { show: false } }]
         : []),
-      ...(dates[futureStart] != null
-        ? [{
-            xAxis: dates[futureStart],
-            lineStyle: { type: "dashed" as const, color: T.textPrimary, width: 1, opacity: 0.85 },
-            label: { show: true, formatter: "forecast →", position: "insideStartTop" as const, color: T.textPrimary, fontSize: 11, fontWeight: 600 as const, fontFamily: CT.fontFamily },
-          }]
-        : []),
       ...(nowLine ? [{ xAxis: dates[nowIdx as number], lineStyle: nowLine.lineStyle, label: nowLine.label }] : []),
     ];
 
     return {
-      grid: { left: 66, right: 64, top: 34, bottom: 78 },
+      /* Two plots, one card. The panel's width is fixed in pixels rather than
+         a percentage so the forecast stays the same readable size whether the
+         history is 60 days or four years. */
+      grid: hasPanel
+        ? [
+            { left: PAD_L, right: PANEL_W + GUTTER + PAD_R, top: 34, bottom: 78 },
+            { right: PAD_R, width: PANEL_W, top: 34, bottom: 78 },
+          ]
+        : [{ left: PAD_L, right: 64, top: 34, bottom: 78 }],
       tooltip: {
         trigger: "axis",
         formatter: (params: unknown) => {
-          const ps = params as { dataIndex: number; seriesName: string; value: number | null; color: string }[];
+          const ps = params as {
+            dataIndex: number; seriesName: string; value: number | null; color: string; axisIndex?: number;
+          }[];
           if (!ps.length) return "";
-          const i = ps[0].dataIndex;
+          /* The panel is its own axis, so its dataIndex counts from the
+             hand-off point. Everything below works in whole-series indices. */
+          const onPanel = ps[0].axisIndex === 1;
+          const i = onPanel ? anchor + ps[0].dataIndex : ps[0].dataIndex;
           if (i >= realN) return "";
           const zoneText =
             i >= futureStart ? "Future — no actual to compare"
@@ -567,10 +638,15 @@ export default function PredictiveEmissionChart() {
         itemHeight: 4,
         formatter: (name: string) => (meanLabel ? `${name}  ·  ${meanLabel}` : name),
       },
+      /* Bound to the history axis alone. Zooming the context can no longer
+         shrink the forecast, because the forecast is not on that axis. */
       dataZoom: [
-        { type: "inside", throttle: 60 },
+        { type: "inside", xAxisIndex: 0, throttle: 60 },
         {
           type: "slider",
+          xAxisIndex: 0,
+          left: PAD_L,
+          right: hasPanel ? PANEL_W + GUTTER + PAD_R : 64,
           height: 16,
           bottom: 6,
           borderColor: T.border,
@@ -583,27 +659,54 @@ export default function PredictiveEmissionChart() {
           textStyle: { color: T.textMuted, fontSize: 11, fontFamily: CT.fontFamily },
         },
       ],
-      xAxis: {
-        type: "category",
-        data: dates,
-        boundaryGap: false,
-        axisLabel: { hideOverlap: true, formatter: (v: string) => (v.startsWith("pad-") ? "" : label(v)) },
-        axisTick: { show: false },
-      },
-      yAxis: {
-        type: "value",
-        // Not zero-based: the corridor never emits near zero, and anchoring at 0
-        // flattens the series into the top of the plot.
-        scale: true,
-        name: meanLabel ? `tonnes CO₂ / day (${meanLabel})` : "tonnes CO₂ / day",
-        nameLocation: "middle",
-        nameGap: 50,
-        axisLabel: { formatter: fmtAxis() },
-      },
+      xAxis: [
+        {
+          gridIndex: 0,
+          type: "category",
+          data: dates,
+          boundaryGap: false,
+          axisLabel: { hideOverlap: true, formatter: label },
+          axisTick: { show: false },
+        },
+        ...(hasPanel
+          ? [{
+              gridIndex: 1,
+              type: "category" as const,
+              data: panelDates,
+              boundaryGap: false,
+              axisLabel: { hideOverlap: true, fontSize: 10, formatter: label },
+              axisTick: { show: false },
+            }]
+          : []),
+      ],
+      yAxis: [
+        {
+          gridIndex: 0,
+          type: "value",
+          /* Explicit rather than `scale: true`, because the panel has to be
+             held to exactly the same bounds — see the yMin/yMax note above.
+             Still not zero-based: the corridor never emits near zero, and
+             anchoring at 0 flattens the series into the top of the plot. */
+          min: yMin,
+          max: yMax,
+          name: meanLabel ? `tonnes CO₂ / day (${meanLabel})` : "tonnes CO₂ / day",
+          nameLocation: "middle",
+          nameGap: 50,
+          axisLabel: { formatter: fmtAxis() },
+        },
+        // The panel borrows the main axis's numbers; repeating them would only
+        // suggest the two plots are on different scales, which is the thing
+        // this is most careful not to do.
+        ...(hasPanel
+          ? [{ gridIndex: 1, type: "value" as const, min: yMin, max: yMax, show: false }]
+          : []),
+      ],
       series: [
         {
           name: "Actual CO₂",
           type: "line",
+          xAxisIndex: 0,
+          yAxisIndex: 0,
           data: padded(view.models.actual),
           smooth: true,
           connectNulls: false,
@@ -620,52 +723,118 @@ export default function PredictiveEmissionChart() {
             data: boundaryLines as never[],
           },
         },
+        /* The models' FIT, over the history grid. Their forecast is not here —
+           it is on the panel below, which is the whole point of the split. */
         ...ORDER.filter((k) => selected.includes(k)).map((k) => {
           const champ = k === championKey;
-          const lastFuture = view.models[k][realN - 1];
           return {
             name: LABEL[k],
             type: "line" as const,
-            data: padded(view.models[k]),
+            xAxisIndex: 0,
+            yAxisIndex: 0,
+            data: padded(view.models[k]) as never[],
             smooth: true,
             connectNulls: false,
             symbol: "circle" as const,
-            // Points are drawn ONLY over the future block. Everywhere else the
-            // series is dense enough that markers would just smear the line.
-            // The champion's are larger: it is the forecast the headline quotes.
-            symbolSize: (_v: unknown, params: { dataIndex: number }) =>
-              params.dataIndex >= futureStart && params.dataIndex < realN ? (champ ? 10 : 7) : 0,
+            // No markers: over the fit the series is dense enough that they
+            // would only smear the line. The forecast's markers are on the panel.
+            symbolSize: 0,
             z: champ ? 5 : 4,
             // Model output is dashed, so it can never pass for the measured line.
             lineStyle: { width: champ ? 2.4 : 2, color: COLOR[k], type: "dashed" as const },
             itemStyle: { color: COLOR[k], borderColor: T.tooltipBg, borderWidth: 2 },
-            // The forecast's own value, written beside its last point, so the future reads at a glance instead
-            // of being a dot to hover. Champion only: one number, the one the headline is about.
-            ...(champ && futureCount > 0 && lastFuture != null && isFinite(lastFuture)
-              ? {
-                  markPoint: {
-                    silent: true,
-                    symbol: "circle",
-                    symbolSize: 0,
-                    data: [{ coord: [dates[realN - 1], lastFuture], value: lastFuture }],
-                    label: {
-                      show: true,
-                      position: "right" as const,
-                      distance: 10,
-                      formatter: `${fmt(lastFuture, 0)} t`,
-                      color: ZONE_INK.Future,
-                      backgroundColor: ZONE_CHIP.Future,
-                      borderRadius: 6,
-                      padding: [3, 7, 3, 7] as [number, number, number, number],
-                      fontSize: 12,
-                      fontWeight: 700 as const,
-                      fontFamily: CT.fontFamily,
-                    },
-                  } as never,
-                }
-              : {}),
           };
         }),
+
+        /* ── the forecast panel ──
+           One series per selected model, each starting at the last MEASURED
+           value so the forecast is read from where the actual line stopped
+           rather than floating at its own level. The anchor is why the panel
+           can share the main grid's y bounds and still be worth looking at. */
+        ...(hasPanel
+          ? ORDER.filter((k) => selected.includes(k)).map((k, idx) => {
+              const champ = k === championKey;
+              const vals = panelOf(view.models[k]);
+              const anchorVal = view.models.actual[anchor];
+              // Datum 0 is the measured hand-off, not a prediction.
+              const data: unknown[] = [anchorVal ?? vals[0], ...vals.slice(1)];
+              /* At Weekly and Monthly the final bucket can cover fewer days
+                 than its neighbours — a 7-day July against full months — so it
+                 is drawn hollow rather than as a like-for-like peer. */
+              const lastIdx = data.length - 1;
+              if (view.tailIsPartial && data[lastIdx] != null) {
+                data[lastIdx] = {
+                  value: data[lastIdx],
+                  itemStyle: { color: T.tooltipBg, borderColor: COLOR[k], borderWidth: 2.5 },
+                };
+              }
+              const lastFuture = vals[vals.length - 1];
+              return {
+                name: LABEL[k],
+                type: "line" as const,
+                xAxisIndex: 1,
+                yAxisIndex: 1,
+                data: data as never[],
+                smooth: true,
+                connectNulls: false,
+                symbol: "circle" as const,
+                symbolSize: champ ? 9 : 6,
+                z: champ ? 5 : 4,
+                lineStyle: { width: champ ? 2.4 : 2, color: COLOR[k], type: "dashed" as const },
+                itemStyle: { color: COLOR[k], borderColor: T.tooltipBg, borderWidth: 2 },
+                // The band belongs to the panel, so it rides on whichever
+                // series happens to be drawn first rather than on the champion,
+                // which the reader can switch off.
+                ...(idx === 0 ? { markArea: { silent: true, data: panelAreaData } } : {}),
+                ...(champ
+                  ? {
+                      /* Above the point, not beside it: the panel's right edge
+                         is the card's right edge, and "beside" was clipped. */
+                      ...(lastFuture != null && isFinite(lastFuture)
+                        ? {
+                            markPoint: {
+                              silent: true,
+                              symbol: "circle",
+                              symbolSize: 0,
+                              data: [{ coord: [panelDates[panelDates.length - 1], lastFuture], value: lastFuture }],
+                              label: {
+                                show: true,
+                                position: "top" as const,
+                                distance: 8,
+                                formatter: `${fmt(lastFuture, 0)} t`,
+                                color: ZONE_INK.Future,
+                                backgroundColor: ZONE_CHIP.Future,
+                                borderRadius: 6,
+                                padding: [3, 7, 3, 7] as [number, number, number, number],
+                                fontSize: 12,
+                                fontWeight: 700 as const,
+                                fontFamily: CT.fontFamily,
+                              },
+                            } as never,
+                          }
+                        : {}),
+                    }
+                  : {}),
+              };
+            })
+          : []),
+
+        /* The hand-off point itself, in the measured line's own ink, so the
+           panel visibly begins at an observation rather than a prediction. */
+        ...(hasPanel && view.models.actual[anchor] != null
+          ? [{
+              name: "Actual CO₂",
+              type: "line" as const,
+              xAxisIndex: 1,
+              yAxisIndex: 1,
+              data: [view.models.actual[anchor], ...panelDates.slice(1).map(() => null)] as never[],
+              symbol: "circle" as const,
+              symbolSize: 6,
+              z: 6,
+              lineStyle: { width: 0 },
+              itemStyle: { color: actualColor },
+            }]
+          : []),
       ],
     };
   }, [view, selected, granularity, meanLabel, T, CT, ZONE, weakDates, championKey]);
@@ -1036,6 +1205,11 @@ export default function PredictiveEmissionChart() {
           <div className="fc2-foot">
             {/* The report opens under the card; its button sits on the foot line, left. */}
             {!reportOpen && <GenerateReportButton onClick={() => setReportOpen(true)} />}
+            {/* Hans, 9 Nov 2026: at Weekly or Monthly the last forecast bucket can be a few days, not a whole
+                week or month, so it is drawn hollow; this says why. */}
+            {view?.tailIsPartial && (
+              <span className="nct-caption">Hollow last point: part of a {granularity === "Weekly" ? "week" : granularity === "Monthly" ? "month" : "year"} of forecast, not a whole one.</span>
+            )}
           </div>
         </div>
 

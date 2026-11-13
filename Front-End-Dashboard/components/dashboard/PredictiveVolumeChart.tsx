@@ -15,6 +15,7 @@ import { areaFade, forecastLineStyle, nowMarkLine } from "../../lib/chart-kit";
 import { useTrafficPalette } from "./trafficPalette";
 import StateNote from "../stage/StateNote";
 import EvidenceModal from "./EvidenceModal";
+import { useRainEffect, isClear, type DayEffect } from "../../lib/rain-effect";
 import { fetchJsonWithRetry } from "./prescriptiveTraffic.shared";
 
 type ModelType = "LSTM" | "Prophet" | "HoltWinters" | "SARIMAX" | "HoltsLinear";
@@ -255,6 +256,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [showWeather, setShowWeather] = useState(true);
+  const rainEffect = useRainEffect();
 
   // How much of each zone to display, in days. These trim the view only — the
   // scored window and the forecast horizon are fixed by the model run, so
@@ -943,8 +945,8 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                 // so the tooltip can never contradict the bar it describes.
                 const pk = rainfallPeak[(p as { dataIndex?: number }).dataIndex ?? -1];
                 tip += isAggregated && pk != null
-                  ? `${p.marker} Rainfall: <b>${mm.toFixed(1)} mm/day</b> mean, wettest day <b>${pk.toFixed(1)} mm</b> - ${rainBand(pk).label}<br/>`
-                  : `${p.marker} Rainfall: <b>${mm.toFixed(1)} mm</b> \u00B7 ${rainBand(mm).label}<br/>`;
+                  ? `${p.marker} Rainfall (recorded): <b>${mm.toFixed(1)} mm/day</b> mean, wettest day <b>${pk.toFixed(1)} mm</b> - ${rainBand(pk).label}<br/>`
+                  : `${p.marker} Rainfall (recorded): <b>${mm.toFixed(1)} mm</b> \u00B7 ${rainBand(mm).label}<br/>`;
               }
             } else {
               tip += `${p.marker} ${p.seriesName}: <b>${fmtVeh(Number(p.value))}</b> vehicles<br/>`;
@@ -1583,7 +1585,9 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                 </div>
               </div>
               <span className="fc2-sep" aria-hidden="true" />
-              <label className="fc2-switch" title={showWeather ? "Showing the weather-aware forecasts and the rainfall band" : "Showing the weather-free forecasts"}>
+              <label className="fc2-switch" title={showWeather
+                ? "Showing the weather-aware forecasts and the rain recorded each day. Days past a real weather forecast (16 days) are forecast without weather either way: no forecast is fed guessed weather."
+                : "Showing the weather-free forecasts"}>
                 <span className="fc-label">Weather</span>
                 <input type="checkbox" checked={showWeather} onChange={() => setShowWeather(!showWeather)} />
                 <span className="fc2-switch-track" aria-hidden="true"><span className="fc2-switch-thumb" /></span>
@@ -1611,6 +1615,23 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               </span>
             )}
           </div>
+          {/* Rain's association with traffic, like for like (Hans, 9 Nov 2026): always in view while the rain bars are, so the
+              reader is told what the bars mean for traffic without opening the evidence. Full table in the evidence. */}
+          {showWeather && rainEffect && (() => {
+            const vol = rainEffect.volume;
+            const heavy = vol.find((b) => b.mmTo == null);
+            const light = vol[0];
+            if (!heavy || heavy.effectPct == null || !light) return null;
+            const pct = (b: DayEffect) => `${Math.abs(b.effectPct ?? 0).toFixed(0)}%`;
+            const heavyWord = (heavy.effectPct ?? 0) < 0 ? "less" : "more";
+            return (
+              <p className="nct-caption" style={{ margin: "4px 0 0" }}>
+                Like for like, heavy-rain days ({heavy.mmFrom} mm+) are associated with about {pct(heavy)} {heavyWord} traffic than dry
+                days of the same weekday nearby{isClear(heavy.lowPct, heavy.highPct) ? ` (95% range ${Math.min(Math.abs(heavy.lowPct ?? 0), Math.abs(heavy.highPct ?? 0)).toFixed(0)}–${Math.max(Math.abs(heavy.lowPct ?? 0), Math.abs(heavy.highPct ?? 0)).toFixed(0)}%, ${heavy.days} days)` : " (not a clear difference)"};
+                {isClear(light.lowPct, light.highPct) ? ` light rain: ${light.effectPct}%.` : " light rain shows no clear change."} Details in the evidence.
+              </p>
+            );
+          })()}
         </div>
 
         {/* ---------- The summary beside it: the answer, then the evidence for it ---------- */}

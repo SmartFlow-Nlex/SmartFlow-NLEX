@@ -49,6 +49,12 @@ export type SceneGeometry = {
   /** Ground past the road edge that rain falls on too: the toll plazas' and service areas' footprints, screen px
    *  (UAT 16 Oct 2026, SB-13: "Rain renders on the road but not at toll gates"). None: the road only, as before. */
   readonly wetAreas?: readonly { readonly x: number; readonly y: number; readonly w: number; readonly h: number }[];
+  /** The whole part of the picture this carriageway's sky covers, screen px: rain falls on all of it — the verge and
+   *  its trees, the median, the ramps and the plazas as well as the road (mock defense, 3 Nov 2026: "the rain only on
+   *  the ROAD? make it where it includes everything"). Both mode gives each carriageway its own half, split at the
+   *  median, so no part of the canvas is rained on twice. x0..x1 is the part on screen (the road can be zoomed wider
+   *  than the window), so drops are not drawn where nobody can see them. None: the road and wetAreas only. */
+  readonly skyBand?: { readonly top: number; readonly bottom: number; readonly x0: number; readonly x1: number };
 };
 
 /* ── small helpers ─────────────────────────────────────────────────────────── */
@@ -480,22 +486,42 @@ export function drawRain(g: SceneGeometry, intensity: RainIntensity | number): v
   const cfg = rainLook(typeof intensity === "number" ? intensity : RAIN_LEVEL_OF[intensity]);
   const c = g.ctx;
   const wet = g.wetAreas ?? [];
-  // The band the drops fall through: the road, stretched to take in any plaza beside it. Clipped to exactly the road
-  // and those footprints, so nothing falls on the verge or the median between them.
-  const y0 = Math.min(g.roadTop, ...wet.map((r) => r.y));
-  const w = g.cssW;
-  const h = Math.max(g.roadTop + g.roadH, ...wet.map((r) => r.y + r.h)) - y0;
+  const sky = g.skyBand;
+  // The hard surfaces that shine when wet and show rings where drops land: the road and the plazas beside it.
+  const paved = [{ x: 0, y: g.roadTop, w: g.cssW, h: g.roadH }, ...wet];
+  // The band the drops fall through. With a sky: all of it, verge, trees, median and ramps included. Without one
+  // (the old picture, kept for callers that pass none): the road stretched to take in any plaza beside it, clipped
+  // to exactly the road and those footprints.
+  const y0 = sky ? sky.top : Math.min(g.roadTop, ...wet.map((r) => r.y));
+  const h = (sky ? sky.bottom : Math.max(g.roadTop + g.roadH, ...wet.map((r) => r.y + r.h))) - y0;
+  const x0 = sky ? Math.max(0, sky.x0) : 0;
+  const w = (sky ? Math.min(g.cssW, sky.x1) : g.cssW) - x0;
+  if (w <= 0 || h <= 0) return;
   c.save();
   c.beginPath();
-  c.rect(0, g.roadTop, w, g.roadH);
-  for (const r of wet) c.rect(r.x, r.y, r.w, r.h);
+  if (sky) c.rect(x0, y0, w, h);
+  else for (const r of paved) c.rect(r.x, r.y, r.w, r.h);
   c.clip();
 
-  const sheen = c.createLinearGradient(0, y0, 0, y0 + h);
-  sheen.addColorStop(0, `rgba(30,64,120,${cfg.tint * 0.55})`);
-  sheen.addColorStop(1, `rgba(30,64,120,${cfg.tint})`);
-  c.fillStyle = sheen;
-  c.fillRect(0, y0, w, h);
+  if (sky) {
+    // Rain darkens the whole scene, not just the tarmac: a cool overcast over the band, and the paved surfaces,
+    // wet, a shade darker and bluer again below it.
+    c.fillStyle = `rgba(22,34,56,${cfg.tint * 0.7})`;
+    c.fillRect(x0, y0, w, h);
+    for (const r of paved) {
+      const s = c.createLinearGradient(0, r.y, 0, r.y + r.h);
+      s.addColorStop(0, `rgba(30,64,120,${cfg.tint * 0.4})`);
+      s.addColorStop(1, `rgba(30,64,120,${cfg.tint * 0.75})`);
+      c.fillStyle = s;
+      c.fillRect(r.x, r.y, r.w, r.h);
+    }
+  } else {
+    const sheen = c.createLinearGradient(0, y0, 0, y0 + h);
+    sheen.addColorStop(0, `rgba(30,64,120,${cfg.tint * 0.55})`);
+    sheen.addColorStop(1, `rgba(30,64,120,${cfg.tint})`);
+    c.fillStyle = sheen;
+    c.fillRect(0, y0, w, h);
+  }
 
   const slant = 0.2;
   const total = Math.round(w * h * cfg.density);
@@ -510,7 +536,7 @@ export function drawRain(g: SceneGeometry, intensity: RainIntensity | number): v
     for (let i = 0; i < n; i++) {
       const seed = i + layer * 7919;
       const y = wrap(hash(seed + 0.5) * h + g.t * speed, h + len);
-      const x = wrap(hash(seed) * w + y * slant, w);
+      const x = x0 + wrap(hash(seed) * w + y * slant, w);
       c.moveTo(x, y0 + y - len);
       c.lineTo(x + len * slant, y0 + y);
     }
@@ -518,13 +544,39 @@ export function drawRain(g: SceneGeometry, intensity: RainIntensity | number): v
   }
 
   c.lineWidth = 1;
-  for (let r = 0; r < cfg.ripples; r++) {
-    const cycle = wrap(g.t * 0.85 + hash(r * 5) * 3, 1);
-    const px = hash(r * 3 + 1) * w;
-    const py = g.roadTop + hash(r * 3 + 2) * g.roadH;
-    c.strokeStyle = `rgba(${DROP_NEAR_RGB},${(1 - cycle) * 0.7})`;
+  // Rings where drops land on the road; with a sky, on the plazas too, in proportion to their size.
+  const ringAreas = sky ? paved : paved.slice(0, 1);
+  const pavedPx = ringAreas.reduce((s, r) => s + r.w * r.h, 0);
+  let seed = 0;
+  for (const a of ringAreas) {
+    const rings = a === paved[0] ? cfg.ripples : Math.round((cfg.ripples * a.w * a.h) / Math.max(1, pavedPx));
+    for (let r = 0; r < rings; r++, seed++) {
+      const cycle = wrap(g.t * 0.85 + hash(seed * 5) * 3, 1);
+      const px = a.x + hash(seed * 3 + 1) * a.w;
+      const py = a.y + hash(seed * 3 + 2) * a.h;
+      c.strokeStyle = `rgba(${DROP_NEAR_RGB},${(1 - cycle) * 0.7})`;
+      c.beginPath();
+      c.ellipse(px, py, 1.5 + cycle * 8, 0.7 + cycle * 3.4, 0, 0, Math.PI * 2);
+      c.stroke();
+    }
+  }
+  if (sky) {
+    // Splashes on open ground: small short-lived crowns where drops hit the verge and the median.
+    const splashes = Math.round(cfg.ripples * 1.5);
+    c.strokeStyle = `rgba(${DROP_FAR_RGB},${cfg.alpha * 0.55})`;
     c.beginPath();
-    c.ellipse(px, py, 1.5 + cycle * 8, 0.7 + cycle * 3.4, 0, 0, Math.PI * 2);
+    for (let s = 0; s < splashes; s++) {
+      const cycle = wrap(g.t * 1.6 + hash(s * 11 + 3) * 5, 1);
+      if (cycle > 0.5) continue; // each crown lasts half its cycle
+      const px = x0 + hash(s * 7 + 1) * w;
+      const py = y0 + hash(s * 7 + 2) * h;
+      if (paved.some((r) => px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h)) continue;
+      const k = 1.5 + cycle * 4;
+      c.moveTo(px - k, py);
+      c.lineTo(px - k * 0.5, py - k * 0.7);
+      c.moveTo(px + k, py);
+      c.lineTo(px + k * 0.5, py - k * 0.7);
+    }
     c.stroke();
   }
   c.restore();
@@ -1219,14 +1271,24 @@ export function drawScenes(g: SceneGeometry, marks: readonly SceneMark[], actors
 }
 
 /** Weather sits over the traffic and the scenes, under the labels. */
-export function drawWeather(g: SceneGeometry, marks: readonly SceneMark[]): void {
+/** How hard it is raining over these marks, 0 (dry) to 3 (heavy): the heaviest rain or flood rain falling. The page
+ *  reads it too, to turn headlights on and kick up spray behind the traffic. */
+export function rainLevelOf(marks: readonly SceneMark[]): number {
   let level = 0;
+  for (const m of marks) {
+    if (m.state !== "active" || (m.family !== "rain" && m.family !== "flood") || m.intensity === null) continue;
+    const l = m.rainLevel ?? RAIN_LEVEL_OF[m.intensity];
+    if (l > level) level = l;
+  }
+  return level;
+}
+
+export function drawWeather(g: SceneGeometry, marks: readonly SceneMark[]): void {
+  // The heaviest rain falling wins; the sign shows the strictest cap in force.
+  const level = rainLevelOf(marks);
   let cap: number | null = null;
   for (const m of marks) {
     if (m.state !== "active" || (m.family !== "rain" && m.family !== "flood") || m.intensity === null) continue;
-    // The heaviest rain falling wins; the sign shows the strictest cap in force.
-    const l = m.rainLevel ?? RAIN_LEVEL_OF[m.intensity];
-    if (l > level) level = l;
     if (m.capKmh !== null && (cap === null || m.capKmh < cap)) cap = m.capKmh;
   }
   if (level > 0.02) drawRain(g, level);

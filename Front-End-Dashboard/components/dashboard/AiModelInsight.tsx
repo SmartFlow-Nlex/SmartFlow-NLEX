@@ -132,7 +132,7 @@ export default function AiModelInsight(props: Props) {
         if (mine !== attempt.current) return;
         setError(
           e instanceof DOMException && e.name === "AbortError"
-            ? "The model took too long to answer. The free tier queues under load -- try again."
+            ? "The model took too long to answer. The AI provider is busy right now -- try again."
             : "Could not reach the explanation service.",
         );
       })
@@ -163,7 +163,7 @@ export default function AiModelInsight(props: Props) {
     }
     if (r.includes("too long") || r.includes("timeout") || r.includes("abort")) {
       return {
-        text: "The model did not answer in time. The free tier queues under load, so a second attempt usually gets through.",
+        text: "The model did not answer in time. The AI provider was busy, so a second attempt usually gets through.",
         retryable: true,
       };
     }
@@ -183,7 +183,7 @@ export default function AiModelInsight(props: Props) {
         <span>
           Reading the metrics
           {elapsed >= 8 && (
-            <em> — {elapsed}s so far; the free tier can take up to a minute</em>
+            <em> — {elapsed}s so far; a busy AI provider can take up to a minute</em>
           )}
         </span>
       </div>

@@ -8,7 +8,7 @@ throw new Error("ARCHIVED - do not run. Medallion rebuild and metrics-table setu
 const { Pool } = require('pg');
 
 const db = new Pool({
-  host: 'smartflow-db.choym2mcymec.ap-southeast-1.rds.amazonaws.com',
+  host: '<RDS_HOST>',
   port: 5432,
   database: 'nlex_capstone',
   user: 'postgres',

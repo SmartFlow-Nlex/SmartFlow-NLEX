@@ -157,6 +157,20 @@ export type SharedRoadInputs = {
   readonly forecastMix: ClassShares | null;
   /** The lane reallocation in force (Both mode), or null: the carriageway it lends lanes to runs them as its own innermost lanes. */
   readonly reallocation: ZipperState | null;
+  /**
+   * A Philippine Arena event day the operator chose (the Event day control), or null. `ratio` is what the Event
+   * Prediction says that day does to an exit at an hour (1 = a normal day; exits it does not count as affected are
+   * 1), from GET /api/ai-sandbox/event-day. Every plaza's entries and exits are scaled by it, so the mainline, the
+   * plazas and the southbound barrier count all carry the event, and a loaded forecast's inflow is scaled by what
+   * that does to the flow entering this stretch.
+   */
+  /** ratio: what the event does to an exit's entries or exits at an hour, in a direction (1 = nothing). The venue's own
+      exit (CDV) has measured per-movement ratios; other affected exits share one ratio for both movements. */
+  readonly eventDay: {
+    readonly key: string;
+    readonly title: string;
+    readonly ratio: (exit: string, hour: number, movement: "entry" | "exit", direction: "NB" | "SB") => number;
+  } | null;
 };
 
 function buildInterventions(lanes: number, len: number): Partial<Interventions> {
@@ -174,7 +188,7 @@ function buildInterventions(lanes: number, len: number): Partial<Interventions> 
 const SEED_BY_DIRECTION: Readonly<Record<Direction, number>> = { NB: 12345, SB: 12345 + 7919 };
 
 export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) {
-  const { BACKEND, fromKm, toKm, segLengthM, EXITS, nearestExit, segmentLanes, hourOfDay, proposeHourOfDay, classProfile, resetSimAccumulator, forecastInflow, forecastIncidents, forecastMix, reallocation } = shared;
+  const { BACKEND, fromKm, toKm, segLengthM, EXITS, nearestExit, segmentLanes, hourOfDay, proposeHourOfDay, classProfile, resetSimAccumulator, forecastInflow: forecastInflowBase, forecastIncidents, forecastMix, reallocation, eventDay } = shared;
   const lentLanes = borrowedLanes(reallocation, direction);
 
   const simRef = useRef<TrafficSim | null>(null);
@@ -275,7 +289,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     return () => { cancelled = true; };
   }, [direction, BACKEND]);
 
-  const flowAt = useCallback(
+  const normalFlowAt = useCallback(
     (exitName: string, hour: number) => {
       if (!plazaFlows) return null;
       const key = String(exitName).toLowerCase().trim();
@@ -290,6 +304,20 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
       return { entries: f.entriesByHour[h] ?? 0, exits: f.exitsByHour[h] ?? 0, entriesSource: f.entriesSource, exitsSource: f.exitsSource };
     },
     [plazaFlows],
+  );
+  /* On an event day each plaza's traffic at the hour is the normal day's times what the Event Prediction says the
+     event does to that exit then (SharedRoadInputs.eventDay). Everything built on flowAt follows: the mainline, the
+     southbound barrier count, the plazas' arrivals. */
+  const flowAt = useCallback(
+    (exitName: string, hour: number) => {
+      const f = normalFlowAt(exitName, hour);
+      if (!f || !eventDay) return f;
+      const h = Math.max(0, Math.min(23, hour));
+      const kIn = eventDay.ratio(String(exitName), h, "entry", direction);
+      const kOut = eventDay.ratio(String(exitName), h, "exit", direction);
+      return kIn === 1 && kOut === 1 ? f : { ...f, entries: f.entries * kIn, exits: f.exits * kOut };
+    },
+    [normalFlowAt, eventDay, direction],
   );
 
   const mainlineAtKm = useCallback(
@@ -328,6 +356,28 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     [plazaFlows, EXITS, direction, flowAt],
   );
 
+  /* What the event day does to the traffic entering this stretch at the hour: the plazas upstream of it, each
+     weighted by the traffic it normally sends onto the expressway then, times the Event Prediction's ratio for that
+     exit and hour. 1 with no event, and 1 when no plaza upstream is one the event touches. */
+  const eventLift = useMemo(() => {
+    if (!eventDay || !plazaFlows) return 1;
+    const hr = hourOfDay ?? demand?.peakHour ?? 8;
+    const entryKm = direction === "NB" ? fromKm : toKm;
+    let normal = 0;
+    let withEvent = 0;
+    for (const e of EXITS) {
+      if (!(direction === "NB" ? movementKm(e.exit_name, "entry", direction, e.km) <= entryKm + 1e-6 : movementKm(e.exit_name, "entry", direction, e.km) >= entryKm - 1e-6)) continue;
+      const f = normalFlowAt(e.exit_name, hr);
+      if (!f || f.entries <= 0) continue;
+      normal += f.entries;
+      withEvent += f.entries * eventDay.ratio(String(e.exit_name), hr, "entry", direction);
+    }
+    return normal > 0 ? withEvent / normal : 1;
+  }, [eventDay, plazaFlows, hourOfDay, demand, direction, fromKm, toKm, EXITS, normalFlowAt]);
+  // A loaded forecast is a normal day's prediction (the volume model has no event input), so on an event day it is
+  // scaled by what the event does to the flow entering here.
+  const forecastInflow = forecastInflowBase == null ? null : Math.round(forecastInflowBase * eventLift);
+
   const [plazaVol, setPlazaVol] = useState<Record<string, number> | null>(null);
   const [volDays, setVolDays] = useState(365);
   useEffect(() => {
@@ -363,7 +413,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     return Math.max(600, Math.min(ceiling, peakHourly));
   }, [hourOfDay, demand, laneCount, direction, fromKm, toKm, mainlineAtKm, activeHour, plazaVol, nearestExit, volDays, forecastInflow]);
 
-  const inflowBasis = useMemo(() => {
+  const normalInflowBasis = useMemo(() => {
     if (forecastInflow != null) {
       return "Inflow from the forecast for the chosen day and hour: the Traffic tab's hourly volume forecast at this segment's share of corridor volume — a prediction, not observed flow.";
     }
@@ -390,6 +440,11 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     const more = feeders.length > 3 ? ` +${feeders.length - 3} more` : "";
     return `Mainline flow at Km ${fmtKm(entryKm, 2)}: ${mainline.toLocaleString()} veh/h — entries minus exits upstream (${names}${more}).`;
   }, [hourOfDay, demand, direction, fromKm, toKm, mainlineAtKm, EXITS, flowAt, activeHour, nearestExit, forecastInflow]);
+  const inflowBasis = useMemo(() => {
+    if (!eventDay || normalInflowBasis == null) return normalInflowBasis;
+    const pct = (eventLift - 1) * 100;
+    return `${normalInflowBasis} Event day (${eventDay.title}): the Event Prediction puts the traffic joining upstream at ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}% at this hour, and every plaza here carries its own exit's event-day rise.`;
+  }, [normalInflowBasis, eventDay, eventLift]);
 
   useEffect(() => {
     if (dataAnchor != null) setInflow(dataAnchor);
@@ -944,6 +999,8 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     scenarioBinding,
     laneCount, setLaneCount,
     inflow, setInflow, dataAnchor, inflowBasis, inflowFrom,
+    /** What the chosen event day does to the traffic entering this stretch at the hour (1 = no change). */
+    eventLift,
     demand, hourOfDay, activeHour,
     closedLanes, setClosedLanes, toggleLane, lockedLanes,
     closedBooths, setClosedBooths,

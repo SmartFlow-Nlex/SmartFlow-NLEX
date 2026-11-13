@@ -35,6 +35,7 @@ import {
   type NewEventSpec,
   type KmStretch,
   MIN_EVENT_STRETCH_M,
+  phaseAt,
 } from "./scenarios/adapter";
 import ScenarioPanel, { TimeField, type DirectionScenarioData, type SkipPlan } from "./components/ScenarioPanel";
 import TrendCharts from "./components/TrendCharts";
@@ -46,7 +47,8 @@ import { expectedOnStretch, ON_CARRIAGEWAY_SHARE } from "./scenarios/forecastInc
 import { engineIndexToOperatorLane, operatorLaneToEngineIndex } from "./scenarios/assumptions";
 import DirectionPill, { DIRECTION_NAME } from "./components/DirectionPill";
 import { combineBaselines, combineMetrics } from "./bothMetrics";
-import { drawBorrowedLanes, drawSceneGround, drawScenes, drawWater, drawWeather, hasSceneArt, type SceneActor, type SceneGeometry } from "./sceneArt";
+import { drawVenueStrip, VENUE_SPAN_KM, VENUE_STRIP_PX, venueOf, type VenueKey } from "./venueArt";
+import { drawBorrowedLanes, drawSceneGround, drawScenes, drawWater, drawWeather, hasSceneArt, rainLevelOf, type SceneActor, type SceneGeometry } from "./sceneArt";
 import { ASSUMPTIONS } from "./scenarios/assumptions";
 import { borrowedLanes, crossoverM, defaultStretch, planStretch, planZipper, REALLOCATION_NAME, zipperHolds, type ZipperState } from "./zipper";
 import { PAINT_WHITE, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint } from "./vehiclePaint";
@@ -75,9 +77,28 @@ import {
   type SpriteFn,
 } from "./facilityArt";
 import { DRAW_W_FRAC, FAC_LANE, specDepth } from "./facilities";
+import { buildRunCsv, downloadCsv, runFilename, type ExportDirection, type ExportEvent } from "./exportRun";
 import type { CorridorPlace } from "./facilityLayout";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
+
+/** GET /api/ai-sandbox/event-day (Back-End services/sandbox-event.service.ts): the upcoming Philippine Arena event
+ *  days, and what one does to each affected exit at each hour — the Event Prediction's daily uplift, spread over the
+ *  day the way past calendar event days spread it. */
+type EventDayData = {
+  events: { date: string; title: string; isDerived: boolean; capacity: number | null; venue: string | null; extraVehicles: number }[];
+  exits: { exit: string; uplift: number; upliftLo: number | null; upliftHi: number | null; nEvents: number; hourly: number[] }[];
+  addedByHour: number[];
+  peakHour: number;
+  pastEventDays: number;
+  /** The venue's own exit (CDV/PH Arena), measured per movement on past concert nights (sandbox-event.service.ts). */
+  venue: {
+    exit: string; nights: number; exitNights: number;
+    entries: { typical: number[]; busy: number[] }; exits: { typical: number[]; busy: number[] };
+    normalEntries: number[]; normalExits: number[];
+  } | null;
+  method: string;
+};
 
 
 /**
@@ -100,6 +121,11 @@ const MIN_SEG_M = 100;
  *  Must match the values render() uses, or the canvas and the road disagree. */
 const LANE_PX = 88;
 const CANVAS_PAD = 8;
+/** The event venues' strip (venueArt.ts), reserved on the expressway's east side while an Event day is chosen and the
+ *  window takes in the CDV interchange. Module state, like roadView, so every layout call — the renderers, the click
+ *  handlers and the canvas sizing — leaves the same room for it. Set by the page on every render. East is down the
+ *  screen in Both and northbound views (north is to the right); a southbound-only view has it above, across the median. */
+const venueStrip: { px: number; side: "top" | "bottom"; host: VenueKey | null; title: string | null; leaving: number } = { px: 0, side: "bottom", host: null, title: null, leaving: 0 };
 
 /** Widest a lane may be drawn while docked.
  *
@@ -212,14 +238,15 @@ function roadLayout(opts: {
   /* Lanes fill whatever is left once the ramp gutter and the km scale have
    * taken theirs. Subtracting AXIS_H here is the part worth noticing: the
    * scale used to be printed inside the bottom lane, over the traffic. */
-  const laneH = solveLaneH(cssH - CANVAS_PAD * 2 - fixed - AXIS_H, maxLaneH, (lh) => lh * lanes + depth * gutterLanePx(lh, barrier));
+  const strip = venueStrip.px;
+  const laneH = solveLaneH(cssH - CANVAS_PAD * 2 - fixed - AXIS_H - strip, maxLaneH, (lh) => lh * lanes + depth * gutterLanePx(lh, barrier));
   const gutterPx = gutterLanePx(laneH, barrier);
   const rampGutter = Math.max(fixed + depth * gutterPx, exitCount > 0 ? RAMP_GUTTER_PX : 0);
   const roadH = laneH * lanes;
   // Ramp gutter on the ramp side, km scale on the other; the road centres in
   // whatever is left over and encroaches on neither.
-  const spaceAbove = CANVAS_PAD + (rampsAbove ? rampGutter : AXIS_H);
-  const spaceBelow = CANVAS_PAD + (rampsAbove ? AXIS_H : rampGutter);
+  const spaceAbove = CANVAS_PAD + (rampsAbove ? rampGutter : AXIS_H) + (venueStrip.side === "top" ? strip : 0);
+  const spaceBelow = CANVAS_PAD + (rampsAbove ? AXIS_H : rampGutter) + (venueStrip.side === "bottom" ? strip : 0);
   const roadTop =
     spaceAbove + Math.max(0, (cssH - spaceAbove - spaceBelow - roadH) / 2);
   return { rampGutter, gutterPx, laneH, roadH, roadTop, mToPx };
@@ -280,8 +307,10 @@ function dualRoadLayout(opts: {
   const fixedOf = (d: number) => (d > 0 ? FACILITY_LABEL_PX : exitCount > 0 ? RAMP_GUTTER_PX : 0);
   const mToPx = segLenM > 0 ? cssW / segLenM : 1;
   const totalLanes = Math.max(1, lanesNB + lanesSB);
+  // The venue strip, when there is one, sits below the northbound carriageway (east): the road block keeps the rest.
+  const strip = venueStrip.px;
   const laneH = solveLaneH(
-    cssH - CANVAS_PAD * 2 - fixedOf(dNB) - fixedOf(dSB) - MEDIAN_GUTTER_PX,
+    cssH - strip - CANVAS_PAD * 2 - fixedOf(dNB) - fixedOf(dSB) - MEDIAN_GUTTER_PX,
     maxLaneH,
     (lh) => lh * totalLanes + dNB * gutterLanePx(lh, bNB) + dSB * gutterLanePx(lh, bSB),
   );
@@ -294,7 +323,7 @@ function dualRoadLayout(opts: {
   // Centre the whole block (ramp gutters, both roads, median) when lanes hit maxLaneH before
   // the canvas is used up — the single-carriageway roadLayout() does the same.
   const usedH = gutterNB + gutterSB + sbRoadH + MEDIAN_GUTTER_PX + nbRoadH;
-  const sbRoadTop = CANVAS_PAD + gutterSB + Math.max(0, (cssH - CANVAS_PAD * 2 - usedH) / 2);
+  const sbRoadTop = CANVAS_PAD + gutterSB + Math.max(0, (cssH - strip - CANVAS_PAD * 2 - usedH) / 2);
   const medianTop = sbRoadTop + sbRoadH;
   const nbRoadTop = medianTop + MEDIAN_GUTTER_PX;
   const rampGutter = Math.max(gutterNB, gutterSB);
@@ -1176,6 +1205,8 @@ export default function AiSandboxPage() {
   const pickForecastDay = (d: string) => {
     setHourFollowsDay(d);
     forecast.selectDay(d);
+    // An event day belongs to its own date: another day is not that event.
+    setEventDate((cur) => (cur !== null && cur !== d ? null : cur));
   };
   useEffect(() => {
     if (hourFollowsDay === null || forecast.busy || forecast.data?.date !== hourFollowsDay) return;
@@ -1186,6 +1217,94 @@ export default function AiSandboxPage() {
     }
     setHourFollowsDay(null);
   }, [hourFollowsDay, forecast.busy, forecast.data]);
+
+  /* ── Event day (mock defense, 3 Nov 2026: "add what will happen if there is an event, base it on the Event
+     Prediction"). Choosing an upcoming Philippine Arena event day runs the road as the Event Prediction says that
+     day runs: every plaza's traffic at the hour is scaled by its exit's event-day ratio (useDirectionSim's
+     flowAt), and a loaded forecast's inflow by what that does to the traffic entering the stretch. The forecast for
+     the date is loaded when the forecast reaches it, and the clock moves to the hour the event adds the most. */
+  const [eventDayData, setEventDayData] = useState<EventDayData | null>(null);
+  const [eventDate, setEventDate] = useState<string | null>(null);
+  // How big a night at the venue's own exit: the median past event night, or one busier than three in four.
+  const [eventCrowd, setEventCrowd] = useState<"typical" | "busy">("typical");
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${BACKEND}/api/ai-sandbox/event-day`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (!cancelled && j?.success) setEventDayData(j.data as EventDayData); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  const chosenEvent = eventDate !== null ? eventDayData?.events.find((e) => e.date === eventDate) ?? null : null;
+  // The venues' strip (venueArt.ts): on an event day, whenever the window takes in the CDV interchange.
+  venueStrip.px = chosenEvent && fromKm < VENUE_SPAN_KM[1] && toKm > VENUE_SPAN_KM[0] ? VENUE_STRIP_PX : 0;
+  venueStrip.side = view === "SB" ? "top" : "bottom";
+  venueStrip.host = chosenEvent ? venueOf(chosenEvent.venue) : null;
+  venueStrip.title = chosenEvent ? chosenEvent.title.split(" - ")[0] : null;
+  // The crowd leaving the venue at this hour, as measured at CDV (southbound entries against a normal hour).
+  venueStrip.leaving = chosenEvent && eventDayData?.venue && hourOfDay != null
+    ? Math.max(0, (eventDayData.venue.entries[eventCrowd][hourOfDay] ?? 1) - 1)
+    : 0;
+  const eventDay = useMemo(() => {
+    if (!chosenEvent || !eventDayData) return null;
+    const norm = (n: string) => n.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const byExit = new Map(eventDayData.exits.map((x) => [norm(x.exit), x.hourly]));
+    const memo = new Map<string, number[] | null>();
+    const hourlyOf = (exit: string): number[] | null => {
+      const key = norm(exit);
+      if (memo.has(key)) return memo.get(key) ?? null;
+      // The exact name first; a looser match only when it names one exit, so "Bocaue" is never taken for both
+      // the Bocaue Barrier and the Bocaue Interchange.
+      let h = byExit.get(key) ?? null;
+      if (!h) {
+        const loose = [...byExit.entries()].filter(([k]) => k.includes(key) || key.includes(k));
+        h = loose.length === 1 ? loose[0][1] : null;
+      }
+      memo.set(key, h);
+      return h;
+    };
+    const venue = eventDayData.venue;
+    const isVenueExit = (exit: string) => venue != null && (norm(exit).includes("cdv") || norm(exit) === norm(venue.exit));
+    return {
+      key: `${chosenEvent.date}|${eventCrowd}`,
+      title: chosenEvent.title.split(" - ")[0],
+      ratio: (exit: string, hour: number, movement: "entry" | "exit", dir: "NB" | "SB") => {
+        // The venue's own exit runs on its measured nights: southbound entries are the crowd leaving for Manila,
+        // northbound exits the crowd arriving. Movements the records do not carry stay as on a normal night.
+        if (venue && isVenueExit(exit)) {
+          if (movement === "entry" && dir === "SB") return venue.entries[eventCrowd][hour] ?? 1;
+          if (movement === "exit" && dir === "NB") return venue.exits[eventCrowd][hour] ?? 1;
+          return 1;
+        }
+        return hourlyOf(exit)?.[hour] ?? 1;
+      },
+    };
+  }, [chosenEvent, eventDayData, eventCrowd]);
+  /** The hour the crowd leaving the venue adds the most cars at its own exit (measured), else the corridor's peak. */
+  const venuePeakHour = (data: EventDayData): number => {
+    const v = data.venue;
+    if (!v) return data.peakHour;
+    let best = data.peakHour;
+    let most = -Infinity;
+    v.entries.typical.forEach((r, h) => {
+      const extra = (r - 1) * (v.normalEntries[h] ?? 0);
+      if (extra > most) { most = extra; best = h; }
+    });
+    return best;
+  };
+  const pickEventDay = (d: string | null) => {
+    setEventDate(d);
+    if (d === null || !eventDayData) return;
+    if ((forecast.data?.availableDates ?? []).includes(d)) {
+      forecast.selectDay(d);
+      setForecastFollowing(true);
+    }
+    setHourFollowsDay(null);
+    setHourOfDay(venuePeakHour(eventDayData));
+    setClockMinuteOffset(0);
+    // Open on the venue's exit: the CDV/PH Arena interchange, its plazas both ways, the Arena and the Stadium beside it.
+    frameKmRange(25.6, 26.2);
+  };
   // What the road runs once a forecast is loaded: the chosen day at the chosen hour. Until then nothing is
   // overridden and the observed hourly profile drives it as before.
   const loadedForecast = forecastFollowing ? forecast.data : null;
@@ -1215,6 +1334,7 @@ export default function AiSandboxPage() {
     forecastIncidents,
     forecastMix,
     reallocation: zipper,
+    eventDay,
   };
   // Called unconditionally, twice, regardless of `view` — an inactive direction's sim just is not
   // stepped or rendered below. Hooks cannot be called conditionally, and there is no need to: the
@@ -1371,6 +1491,7 @@ export default function AiSandboxPage() {
    * running one road and letting the operator think it covered both. */
   const [repRuns, setRepRuns] = useState(10);
   const [repResult, setRepResult] = useState<ReplicationResult | null>(null);
+
   const [repProgress, setRepProgress] = useState<number | null>(null);
   const repCancel = useRef(false);
   /* Which carriageway and set-up a result was run on, and whether a run was cut short by an event (17 Oct 2026,
@@ -2870,6 +2991,71 @@ export default function AiSandboxPage() {
   clockStartMinRef.current = clockStartMin;
   const liveDateText = live && forecast.date ? liveDateLabel(forecast.date, liveDayOffset(liveMin)) : null;
 
+  /* hh:mm:ss of the simulated clock, the same reading the Simulation time
+   * field shows. Declared here because it needs liveMin, which is not known
+   * until the clock above has been worked out. */
+  const clockText = (min: number) => {
+    const t = Math.max(0, Math.round(min * 60));
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${p(Math.floor(t / 3600) % 24)}:${p(Math.floor(t / 60) % 60)}:${p(t % 60)}`;
+  };
+  /* The run as a CSV. Every number the sandbox produces lived only on screen,
+   * so putting one in the report meant reading it off and retyping it. Reads
+   * the same state the panels render — nothing is recomputed here, so the file
+   * cannot disagree with the screen. */
+  const exportRun = useCallback(() => {
+    const directions: ExportDirection[] = activeDirections.map((dir) => {
+      const d = byDirection[dir];
+      const nowS = d.scenarioNowS;
+      const events: ExportEvent[] = d.scenarioEvents.map((e) => {
+        const ph = phaseAt(e, nowS);
+        return {
+          direction: dir,
+          name: e.name,
+          family: e.variant.family,
+          phase: ph ? ph.id : null,
+          positionKm: e.positionKm,
+          stretchKm: e.stretchKm ?? null,
+          lane: e.lane,
+          extraLanes: e.extraLanes,
+          startS: e.startS,
+          durationS: e.phases.reduce((t, q) => Math.max(t, q.offsetS + q.durationS), 0),
+        };
+      });
+      return {
+        direction: dir,
+        laneCount: d.laneCount,
+        inflowVehPerHour: d.inflow,
+        inflowFrom: d.inflowFrom,
+        dataAnchor: d.dataAnchor ?? null,
+        metrics: d.metrics,
+        peakUnmetVehPerHour: d.peakUnmetVehPerHour,
+        closedLanes: d.closedLanes,
+        speedLimitKmh: d.speedLimit,
+        incidentCount: d.incidentCount,
+        baselineAvgSpeedKmh: d.baseline ? d.baseline.avgSpeedKmh : null,
+        events,
+      };
+    });
+    const at = new Date();
+    const csv = buildRunCsv({
+      exportedAt: at,
+      simDate: liveDateText || null,
+      simTime: live ? clockText(liveMin) : null,
+      forecastDay,
+      origin: originExit ? displayExitName(originExit.exit_name) : "?",
+      destination: destExit ? displayExitName(destExit.exit_name) : "?",
+      fromKm,
+      toKm,
+      view,
+      simSpeed,
+      directions,
+      replication: repResult ? { direction: focusDirection, result: repResult } : null,
+    });
+    downloadCsv(runFilename(at), csv);
+  }, [activeDirections, byDirection, liveDateText, live, liveMin, forecastDay, originExit, destExit,
+      fromKm, toKm, view, simSpeed, repResult, focusDirection]);
+
   // The metric tiles, once, so full screen can put the same ones inside the card (the row above the grid is
   // covered by it) and the page draws them in their usual place otherwise.
   const metricTiles = (
@@ -3008,7 +3194,70 @@ export default function AiSandboxPage() {
             disabled={!forecast.data}
           />
         </div>
+        {eventDayData && eventDayData.events.length > 0 && (
+          <div className={filterStyles.filterGroup}>
+            <span className={filterStyles.filterLabel}>Event day</span>
+            {/* Grouped by year (mock defense, 3 Nov 2026), so 2026 and 2027 do not run together in one list. */}
+            <select
+              className="nct-select sandbox-event-select"
+              value={eventDate ?? ""}
+              onChange={(e) => pickEventDay(e.target.value === "" ? null : e.target.value)}
+              aria-label="Run a Philippine Arena event day"
+              title="Run the road as the Event Prediction says an upcoming Philippine Arena event day runs."
+            >
+              <option value="">No event (a normal day)</option>
+              {[...new Set(eventDayData.events.map((ev) => ev.date.slice(0, 4)))].map((year) => (
+                <optgroup key={year} label={year}>
+                  {eventDayData.events.filter((ev) => ev.date.startsWith(year)).map((ev) => (
+                    <option key={ev.date} value={ev.date}>
+                      {new Date(`${ev.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} — {ev.title.split(" - ")[0]}
+                      {ev.isDerived ? " (inferred)" : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
+      {chosenEvent && eventDayData && (() => {
+        const lift = (focused.eventLift - 1) * 100;
+        const inForecast = (forecast.data?.availableDates ?? []).includes(chosenEvent.date);
+        const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
+        return (
+          <p className="sandbox-event-note" role="status">
+            <b>{chosenEvent.title.split(" - ")[0]}</b>, {new Date(`${chosenEvent.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+            {chosenEvent.venue && !/arena/i.test(chosenEvent.venue) ? ` at ${chosenEvent.venue}` : ""}.
+            {eventDayData.venue && (() => {
+              const v = eventDayData.venue;
+              const h = hourOfDay ?? venuePeakHour(eventDayData);
+              const k = v.entries[eventCrowd][h] ?? 1;
+              const extra = Math.round((k - 1) * (v.normalEntries[h] ?? 0));
+              return (
+                <>
+                  {" "}At the venue&apos;s own exit, past concert nights at the Arena and Stadium ({v.nights} nights) put the crowd
+                  leaving for Manila (southbound entries at CDV) at <b>×{k.toFixed(1)}</b> a normal {hh(h)}
+                  {extra > 0 ? <> (about <b>+{extra.toLocaleString()}</b> cars that hour)</> : null}; arrivals barely change.{" "}
+                  <span className="sandbox-event-crowd" role="group" aria-label="Event night size">
+                    {(["typical", "busy"] as const).map((c) => (
+                      <button key={c} type="button" className={eventCrowd === c ? "active" : ""} aria-pressed={eventCrowd === c} onClick={() => setEventCrowd(c)}
+                        title={c === "typical" ? "The median past event night at each hour" : "A night busier than three in four past event nights (75th percentile)"}>
+                        {c === "typical" ? "Typical night" : "Busy night"}
+                      </button>
+                    ))}
+                  </span>
+                </>
+              );
+            })()}
+            {" "}Elsewhere, the Event Prediction adds about <b>+{chosenEvent.extraVehicles.toLocaleString()}</b> vehicles over the day at the {eventDayData.exits.length} exits
+            it finds affected; traffic joining this stretch at {hh(hourOfDay ?? eventDayData.peakHour)}: <b>{lift >= 0 ? "+" : ""}{lift.toFixed(1)}%</b>.
+            {inForecast
+              ? " The forecast for the day is loaded under it."
+              : ` The forecast does not reach ${new Date(`${chosenEvent.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}, so the event runs on the day shown above at this hour.`}
+            {" "}<button type="button" className="sandbox-event-clear" onClick={() => pickEventDay(null)}>Clear</button>
+          </p>
+        );
+      })()}
 
       {/* The prescriptive seam: the three forecasts choose the conditions this
           scenario starts from. */}
@@ -3168,6 +3417,14 @@ export default function AiSandboxPage() {
                   {replayHasEvent ? "⟲ Replay incident" : "⟲ Replay"}
                 </button>
               )}
+              <button
+                className="btn-muted"
+                onClick={exportRun}
+                title="Download this run as a CSV: the stretch and demand, each carriageway's readings, the interventions and events in force, and the confidence run if one was done"
+                data-short="CSV"
+              >
+                Export
+              </button>
               <button className="btn-muted" onClick={resetEverything} title="Back to a clean start: scenarios, closures, speed limits, incidents, baselines and any lane reallocation are all cleared">
                 Reset
               </button>
@@ -3369,10 +3626,10 @@ export default function AiSandboxPage() {
                           MEDIAN_GUTTER_PX +
                           gutterFloorPx(facDepthNB, exitsRef.current.length > 0, facBarrierOf("NB")) +
                           gutterFloorPx(facDepthSB, exitsRef.current.length > 0, facBarrierOf("SB")) +
-                          CANVAS_PAD * 2
+                          CANVAS_PAD * 2 + venueStrip.px
                         : focused.laneCount * LANE_PX +
                           (facDepthOf(focusDirection) > 0 ? gutterFloorPx(facDepthOf(focusDirection), false, facBarrierOf(focusDirection)) : 0) +
-                          CANVAS_PAD * 2,
+                          CANVAS_PAD * 2 + venueStrip.px,
                   }
             }
             onClick={handleCanvasClick}
@@ -5980,12 +6237,15 @@ function drawCarriageway(
     gutterPx: number;
     /** Pre-mixed asphalt colour for this moment — see daylightAsphalt(). Computed once per frame at the call site (not per carriageway) so Both mode's two roads never fall a step out of sync with each other. */
     asphaltColor: string;
+    /** The part of the canvas this carriageway's rain falls on (SceneGeometry.skyBand): the whole canvas in a single
+     *  view, this carriageway's side of the median in Both. */
+    skyBand?: { top: number; bottom: number; x0: number; x1: number };
   },
 ) {
   const {
     cssW, cssH, roadTop, laneH, roadH, rampGutter, rampsAbove, reverseLanes,
     mToPx, sb, xPx, wPx, fromKm, toKm, overlay, drawAxis, alphaS, flowLabel, location, animT, borrowed, borrowedLabel, dayFraction, asphaltColor,
-    facView, highlightFacility, gutterPx,
+    facView, highlightFacility, gutterPx, skyBand,
   } = opts;
   const asphalt = asphaltColor;
   const lanes = sim.cfg.laneCount;
@@ -6145,6 +6405,13 @@ function drawCarriageway(
 
   // What each scenario event looks like this frame (family, phase, the lanes and stretch it actually holds).
   const scenes: readonly SceneMark[] = overlay ? sceneMarks(overlay.events, roadOf(sim, overlay.frame), sim.time, overlay.owners) : [];
+  // The weather of both carriageways: they share a sky (ScenarioOverlay.sky).
+  const skyMarks: readonly SceneMark[] = overlay?.sky
+    ? sceneMarks(overlay.sky.events, roadOf(sim, overlay.sky.frame), sim.time, NO_OWNERS).filter((m) => m.family === "rain" || m.family === "flood")
+    : [];
+  const weatherMarks = skyMarks.length ? [...scenes, ...skyMarks] : scenes;
+  /** How hard it is raining here, 0 (dry) to 3 (heavy): headlights come on and the traffic throws up spray. */
+  const rainNow = rainLevelOf(weatherMarks);
   // Set once the traffic's own scale is known (below); the water, scenes and weather share it.
   const laneCenterY = (engineLane: number): number => slotTop(engineLane) + laneH / 2;
 
@@ -6755,6 +7022,8 @@ function drawCarriageway(
     t: animT,
     // The plazas and service areas beside this carriageway: rain falls on them as on the road.
     wetAreas: facGeom && facView ? facilityWetAreas(facGeom, facView.list) : undefined,
+    // ...and so does everything else on this carriageway's side of the picture: the verge, the median, the ramps.
+    skyBand,
   };
   /* Each scene's own vehicles as they are drawn this frame — its wrecks and its responders, by event — so the people,
      cones and marks of a scene go round the vehicles that are really there, not at fixed offsets from its point. */
@@ -6775,11 +7044,14 @@ function drawCarriageway(
   drawSceneGround(sceneGeom, scenes, actors);
 
   /* Night: each vehicle's headlights throw a beam ahead of it along its lane. Drawn before the sprites, so
-     the light falls on the road and the vehicles sit on top of it. Wrecks are dark. */
-  if (lights) {
+     the light falls on the road and the vehicles sit on top of it. Wrecks are dark. In rain drivers switch their
+     lights on by day as well, so the beams show then too, fainter than at night and more the harder it rains. */
+  const beamStrength = Math.max(night, Math.min(1, rainNow / 3) * 0.5);
+  const beamLights = beamStrength > 0.02 ? lights ?? getLightSprites() : null;
+  if (beamLights) {
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
-    ctx.globalAlpha = 0.42 * night;
+    ctx.globalAlpha = 0.42 * beamStrength;
     const beamLen = Math.min(laneH * 1.6, Math.max(18, drawnCarLen * 3.2));
     const beamW = laneH * 0.78;
     for (const v of sim.vehicles) {
@@ -6794,7 +7066,7 @@ function drawCarriageway(
       ctx.save();
       ctx.translate(x, y);
       ctx.scale(fwd, 1);
-      ctx.drawImage(lights.beam, 0, -beamW / 2, reach, beamW);
+      ctx.drawImage(beamLights.beam, 0, -beamW / 2, reach, beamW);
       ctx.restore();
     }
     ctx.restore();
@@ -6929,6 +7201,32 @@ function drawCarriageway(
     ctx.restore();
   }
 
+  // Rain: the spray each moving vehicle throws up off the wet road behind it — longer and thicker the faster it
+  // goes and the harder it rains; trucks and buses throw more. Drawing only: the engine's rain is its speed cap.
+  if (rainNow > 0.05) {
+    ctx.save();
+    ctx.fillStyle = "rgba(214,228,240,1)";
+    const wetK = Math.min(1, rainNow / 3);
+    for (const v of everyone) {
+      if (v.role !== "traffic" || v.v < 3) continue;
+      const sp = spriteOf(v);
+      const tailX = xPx(sp.xm) - fwd * sp.len;
+      if (tailX < -sp.len * 2 || tailX > cssW + sp.len * 2) continue;
+      const speedK = Math.min(1, v.v / 27);
+      const big = v.vClass === 1 ? 1 : 1.45;
+      const plume = sp.len * (0.25 + 0.55 * speedK) * big * (0.6 + 0.4 * wetK);
+      ctx.globalAlpha = 0.1 + 0.22 * speedK * wetK;
+      ctx.beginPath();
+      ctx.ellipse(tailX - fwd * plume * 0.45, sp.y, plume * 0.6, sp.wid * (0.45 + 0.2 * speedK) * big, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha *= 0.55;
+      ctx.beginPath();
+      ctx.ellipse(tailX - fwd * plume * 1.0, sp.y, plume * 0.55, sp.wid * 0.7 * big, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   /* Vehicles in the plazas and service areas: the same sprites at the same
    * scale, turned to face along the lane they are on. */
   const facSprite: SpriteFn = (a, len, wid, braking) => {
@@ -6994,11 +7292,7 @@ function drawCarriageway(
   // Scenario events as scenes, round their own vehicles (drawn above with the traffic): the people, the cones, the
   // work zone — then the weather over everything, then each event's label (phase and time left) on top.
   drawScenes(sceneGeom, scenes, actors);
-  // The weather of both carriageways: they share a sky (ScenarioOverlay.sky).
-  const skyMarks: readonly SceneMark[] = overlay?.sky
-    ? sceneMarks(overlay.sky.events, roadOf(sim, overlay.sky.frame), sim.time, NO_OWNERS).filter((m) => m.family === "rain" || m.family === "flood")
-    : [];
-  drawWeather(sceneGeom, skyMarks.length ? [...scenes, ...skyMarks] : scenes);
+  drawWeather(sceneGeom, weatherMarks);
   if (overlay) {
     /* The label says who is there. "Awaiting response" is the phase's name, and it is true only until somebody
        arrives: with a patrol car parked behind the wreck it read as a mistake. Asked of the engine (a recording
@@ -7275,6 +7569,14 @@ function render(
     { top: 0, bottom: roadTop - AXIS_H - 6 },
     { top: roadTop + roadH + shoulderPx(laneH), bottom: cssH },
   ]);
+  if (venueStrip.px > 0) {
+    drawVenueStrip(ctx, {
+      xOfKm: (km) => (km - marks.fromKm) * 1000 * mToPx, pxPerM: mToPx, cssW,
+      top: venueStrip.side === "top" ? 0 : cssH - venueStrip.px, height: venueStrip.px,
+      roadSide: venueStrip.side === "top" ? "bottom" : "top",
+      dayFraction, t: animT, host: venueStrip.host, eventTitle: venueStrip.title, leaving: venueStrip.leaving,
+    });
+  }
   /* The corridor keeps a fixed, map-like orientation: the low km post is always
    * on the left. Southbound traffic therefore runs right to left, which is what
    * an operator expects to see — reversing the km axis instead made the road
@@ -7315,6 +7617,7 @@ function render(
     facView,
     highlightFacility,
     gutterPx,
+    skyBand: { top: 0, bottom: cssH, x0: roadView.pan, x1: roadView.pan + viewW },
   });
 }
 
@@ -7385,6 +7688,14 @@ function renderBoth(
     { top: 0, bottom: sbRoadTop - sh },
     { top: nbRoadTop + built.NB * laneH + sh, bottom: cssH },
   ]);
+  // The event venues, east of the road: below the northbound carriageway.
+  if (venueStrip.px > 0) {
+    drawVenueStrip(ctx, {
+      xOfKm: (km) => (km - marks.fromKm) * 1000 * mToPx, pxPerM: mToPx, cssW,
+      top: cssH - venueStrip.px, height: venueStrip.px, roadSide: "top",
+      dayFraction, t: animT, host: venueStrip.host, eventTitle: venueStrip.title, leaving: venueStrip.leaving,
+    });
+  }
 
   const xPxNB = (x: number) => x * mToPx; // NB: left to right, unmirrored
   const xPxSB = (x: number) => cssW - x * mToPx; // SB: right to left, mirrored
@@ -7448,6 +7759,8 @@ function renderBoth(
     facView: facViewNB,
     highlightFacility,
     gutterPx: gutterPxNB,
+    // NB sits below the median: its rain falls from the median's middle line down.
+    skyBand: { top: gapY, bottom: cssH, x0: roadView.pan, x1: roadView.pan + viewW },
   });
   const drawSB = () => drawCarriageway(ctx, simSB, {
     cssW,
@@ -7479,6 +7792,8 @@ function renderBoth(
     facView: facViewSB,
     highlightFacility,
     gutterPx: gutterPxSB,
+    // SB sits above the median: its rain falls from the top of the canvas to the median's middle line.
+    skyBand: { top: 0, bottom: gapY, x0: roadView.pan, x1: roadView.pan + viewW },
   });
   // The carriageway that gave lanes first: the one that took them draws its cones and traffic over that road.
   if (zipper !== null && zipper.toward === "NB") {

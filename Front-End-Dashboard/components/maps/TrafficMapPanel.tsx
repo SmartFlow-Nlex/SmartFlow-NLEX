@@ -4,6 +4,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import mapboxgl, { GeoJSONSource } from "mapbox-gl";
 import type { Point } from "geojson";
 import { useEffect, useRef, useState } from "react";
+import { CloudLightning, CloudRain } from "lucide-react";
 import nlexGeometry from "./nlex-geometry.json";
 import {
   corridorGuard, directionFromStreet, directionLabel, sliceCorridor, type LngLat,
@@ -14,7 +15,8 @@ import { makePredictedQueues, shownForecastState } from "../../lib/predicted-que
 import { useChartTheme } from "../../lib/chart-theme";
 import { mapPalette } from "../../lib/map-palette";
 import { isDisputedReport, isReportType, isUnconfirmedReport } from "../../lib/waze-reports";
-import { lookOf } from "../../lib/waze-report-look";
+import { lookOf, isFloodSubtype } from "../../lib/waze-report-look";
+import { useRainEffect } from "../../lib/rain-effect";
 import nlexRamps from "./nlex-ramps.json";
 import { fmtKm } from "../../lib/km-post";
 import { nearExitsText } from "../../lib/exit-lookup";
@@ -24,6 +26,19 @@ import {
   FLOW_BANDS, STATIC_DASH, addNightCorridorImages, buildSnapshot, carriagewayShift, createJamCallouts,
   dashAt, dashPhase, type CorridorSnapshot, type StripAlert,
 } from "./livemap-graphics";
+
+/* GET /api/map-comparison/live-rain (Back-End/src/services/live-rain.service.ts). */
+type LiveRainPoint = {
+  name: string; lat: number; lon: number; mm: number; mmPerHour: number; raining: boolean;
+  intensity: "none" | "light" | "moderate" | "heavy" | "intense"; thunder: boolean; code: number | null;
+};
+type LiveRainData = {
+  asOf: string; source: string; intervalMin: number; points: LiveRainPoint[]; rainingCount: number;
+  /** Development preview only (?rainPreview=1). */
+  preview?: boolean;
+};
+type RainNow = { asOf: string; preview: boolean; exits: { name: string; intensity: string; thunder: boolean }[] };
+const RAIN_RANK: Record<string, number> = { light: 1, moderate: 2, heavy: 3, intense: 4 };
 
 type Props = {
   title: string;
@@ -321,6 +336,11 @@ export default function TrafficMapPanel({
   // rather than in a Mapbox popup because a popup is anchored to the pin and
   // scrolls off with it; a panel stays put and has room for the full record.
   const [selectedReport, setSelectedReport] = useState<ReportDetail | null>(null);
+  // The flood finding on a flood report's detail, computed live (GET /api/traffic/rain-effect); fetched only once a
+  // flood report is opened.
+  const floodFinding = useRainEffect(isFloodSubtype(selectedReport?.subtype))?.jams.flood ?? null;
+  // Exits with rain falling now (live map only), for the "Raining at" tag over the map.
+  const [rainNow, setRainNow] = useState<RainNow | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -604,6 +624,7 @@ export default function TrafficMapPanel({
        same six layers, which is what made the flow stutter and jump. */
     let disposed = false;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let rainTimer: ReturnType<typeof setInterval> | null = null;
     /* Set once the Night Corridor graphics exist; tears them down with the map. */
     let cleanupGraphics: (() => void) | null = null;
 
@@ -1797,6 +1818,18 @@ export default function TrafficMapPanel({
         return `Starts ${km(metres)} from ${nm(exit)}`;
       };
 
+      /* A flood report on or near the queue, named as its possible cause (8 Nov 2026). The backend links a jam
+         to the nearest undisputed Waze flood report within 1.5 km (map-live.service.ts, linkFloodsToJams). */
+      const floodCause = (p: Record<string, unknown>) => {
+        if (p.flood_m == null) return "";
+        const m = Number(p.flood_m);
+        const at = typeof p.flood_reported_at === "string" ? new Date(p.flood_reported_at) : null;
+        const when = at && !Number.isNaN(at.getTime())
+          ? ` &middot; ${at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
+        const exit = typeof p.flood_exit === "string" && p.flood_exit ? ` near ${esc(plazaLabel(p.flood_exit))}` : "";
+        return `<div class="mjp-where mjp-flood">Possible cause: flood reported${exit}, ${m < 100 ? "on the queue" : `${km(m)} away`}${when}</div>`;
+      };
+
       // The line and its marker carry identical properties, so both open the
       // same card: whichever one the reader happens to find answers them.
       const onJamMove = (e: mapboxgl.MapLayerMouseEvent) => {
@@ -1893,6 +1926,7 @@ export default function TrafficMapPanel({
                <div class="mjp-where">${where ?? esc(p.street ?? p.nearest_exit ?? "NLEX")}</div>
                ${speed != null && speed > 0 ? row("Speed", `${speed} km/h`) : ""}
                ${running != null && running > 0 ? row("Going on for", mins(running * 60)) : ""}
+               ${floodCause(p)}
              </div>`,
         );
       };
@@ -2820,7 +2854,7 @@ export default function TrafficMapPanel({
              ACCIDENT, POLICE and CONSTRUCTION and sent everything else to the
              generic hazard pin, so all 7 live ROAD_CLOSED reports drew as
              hazards. */
-          const look = lookOf(props.type);
+          const look = lookOf(props.type, props.subtype as string | null | undefined);
           const color = look.colour;
           const iconSvg = look.svg;
 
@@ -3012,10 +3046,14 @@ export default function TrafficMapPanel({
         });
       };
       noteMotion(data);
+      /* Live rain (set up further down): while any exit has rain, the drops
+         fall on the same frame clock, even when no queue is moving. */
+      let rainOn = false;
+      let stepRain: ((now: number) => void) | null = null;
       let animRaf = 0;
       let lastFrame = 0;
       const shouldRun = () =>
-        !disposed && hasMotion && !reducedRef.current && visibleRef.current && !pausedRef.current && !document.hidden;
+        !disposed && (hasMotion || rainOn) && !reducedRef.current && visibleRef.current && !pausedRef.current && !document.hidden;
       const frame = (now: number) => {
         animRaf = 0;
         if (!shouldRun()) return;
@@ -3029,6 +3067,7 @@ export default function TrafficMapPanel({
             }
           }
           map.setPaintProperty("lm-jam-pulse", "line-opacity", 0.14 + 0.26 * (0.5 + 0.5 * Math.sin((now / 2400) * Math.PI * 2)));
+          if (rainOn) stepRain?.(now);
         }
         animRaf = requestAnimationFrame(frame);
       };
@@ -3042,6 +3081,238 @@ export default function TrafficMapPanel({
         if (reducedRef.current) map.setPaintProperty("lm-jam-pulse", "line-opacity", 0.28);
       };
       kickRef.current();
+
+      /* LIVE RAIN (11 Nov 2026, user request): where rain is falling NOW, on
+         the stretch of corridor around each exit it is falling at. Live map
+         only. GET /api/map-comparison/live-rain gives the last 15 minutes' rain
+         at the twenty exit points (Open-Meteo's nowcast, the weather table as
+         its fallback); each exit owns the corridor halfway to its neighbours,
+         so a raining exit tints exactly that stretch. Two things are drawn: a
+         soft cyan wash under the road, stronger with heavier rain (PAGASA's
+         light / moderate / heavy / intense bands), and drops falling over it,
+         denser and larger with heavier rain. Hovering the wash gives the
+         reading. Nothing is drawn while it is dry. */
+      if (isRealtime) {
+        const RANK: Record<string, number> = { light: 1, moderate: 2, heavy: 3, intense: 4 };
+        const drops = (() => {
+          const c = document.createElement("canvas");
+          c.width = 36; c.height = 46;
+          const ctx = c.getContext("2d");
+          if (!ctx) return null;
+          const [r, g, b] = PALETTE.rainDrop;
+          ctx.strokeStyle = `rgba(${r},${g},${b},0.95)`;
+          ctx.lineCap = "round";
+          ctx.lineWidth = 2.6;
+          // Four short slanted streaks, staggered so a row of icons reads as rain, not as a pattern.
+          for (const [x, y, len] of [[9, 3, 14], [27, 8, 15], [17, 21, 14], [32, 28, 13]] as const) {
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x - len * 0.32, y + len);
+            ctx.stroke();
+          }
+          return ctx.getImageData(0, 0, c.width, c.height);
+        })();
+        if (drops && !map.hasImage("lm-rain-drops")) map.addImage("lm-rain-drops", drops, { pixelRatio: 2 });
+
+        map.addSource("lm-rain", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        const intensityOpacity = [
+          "match", ["get", "intensity"], "light", 0.34, "moderate", 0.48, "heavy", 0.6, 0.7,
+        ] as unknown as mapboxgl.ExpressionSpecification;
+        map.addLayer({
+          id: "lm-rain-veil",
+          type: "line",
+          source: "lm-rain",
+          filter: ["==", ["get", "kind"], "zone"],
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": PALETTE.rain,
+            // Wider than the road and its glow, so the wash shows either side of the corridor at every zoom.
+            "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 8, 56, 12, 120, 16, 240],
+            "line-blur": ["interpolate", ["linear"], ["zoom"], 8, 18, 12, 40, 16, 80],
+            "line-opacity": ["*", PALETTE.rainOpacity, intensityOpacity] as unknown as mapboxgl.ExpressionSpecification,
+          },
+        }, map.getLayer("lm-road-edge") ? "lm-road-edge" : undefined);
+
+        const dropOpacity = [
+          "match", ["get", "intensity"], "light", 0.7, "moderate", 0.82, "heavy", 0.92, 1,
+        ];
+        const dropLayer = (id: string, minRank: number, offset: [number, number], spacing: number) =>
+          map.addLayer({
+            id,
+            type: "symbol",
+            source: "lm-rain",
+            filter: ["all", ["==", ["get", "kind"], "run"], [">=", ["get", "rank"], minRank]],
+            layout: {
+              "symbol-placement": "line",
+              "symbol-spacing": spacing,
+              "icon-image": "lm-rain-drops",
+              "icon-size": ["interpolate", ["linear"], ["zoom"],
+                8, ["*", 0.75, ["get", "dropScale"]], 12, ["*", 0.95, ["get", "dropScale"]], 16, ["*", 1.25, ["get", "dropScale"]]],
+              "icon-offset": offset,
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+              "icon-rotation-alignment": "viewport",
+              "icon-pitch-alignment": "viewport",
+            } as mapboxgl.SymbolLayerSpecification["layout"],
+            paint: { "icon-opacity": dropOpacity as unknown as mapboxgl.ExpressionSpecification },
+          });
+        /* Files of drops either side of the road and over it, offset across the
+           corridor in screen pixels so the rain covers a band about as wide as
+           the wash at every zoom. Light rain: two files; moderate: three;
+           heavy and intense: four. */
+        const DROP_FILES: { id: string; minRank: number; offset: [number, number]; spacing: number; phase: number }[] = [
+          { id: "lm-rain-drops-a", minRank: 1, offset: [-30, 0], spacing: 24, phase: 0 },
+          { id: "lm-rain-drops-b", minRank: 1, offset: [26, -12], spacing: 28, phase: 0.5 },
+          { id: "lm-rain-drops-c", minRank: 2, offset: [-4, -22], spacing: 32, phase: 0.25 },
+          { id: "lm-rain-drops-d", minRank: 3, offset: [48, 10], spacing: 36, phase: 0.75 },
+        ];
+        for (const f of DROP_FILES) dropLayer(f.id, f.minRank, f.offset, f.spacing);
+
+        /* The fall: each file slides down a few pixels and fades in and out on
+           a 0.7 s cycle, the files out of step with one another. Paint
+           properties only, so nothing is re-laid out per frame. */
+        const fall = (id: string, p: number) => {
+          const fade = Math.sin(Math.PI * p);
+          map.setPaintProperty(id, "icon-translate", [2.4 - 4.8 * p, -8 + 16 * p]);
+          map.setPaintProperty(id, "icon-opacity", ["*", fade, dropOpacity] as unknown as mapboxgl.ExpressionSpecification);
+        };
+        stepRain = (now: number) => {
+          const p = (now % 700) / 700;
+          for (const f of DROP_FILES) fall(f.id, (p + f.phase) % 1);
+        };
+        const staticRain = () => {
+          for (const { id } of DROP_FILES) {
+            map.setPaintProperty(id, "icon-translate", [0, 0]);
+            map.setPaintProperty(id, "icon-opacity", dropOpacity as unknown as mapboxgl.ExpressionSpecification);
+          }
+        };
+
+        const rainWord = (k: string) =>
+          ({ light: "Light rain", moderate: "Moderate rain", heavy: "Heavy rain", intense: "Intense rain" } as Record<string, string>)[k] ?? "Rain";
+        const clock = (iso: string) => {
+          const d = new Date(iso);
+          return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+        };
+        let rainAsOf = "";
+        let rainInterval = 15;
+
+        const applyRain = (d: LiveRainData | null) => {
+          if (disposed) return;
+          const located = (d?.points ?? [])
+            .map((p) => {
+              const loc = K.locate([p.lon, p.lat]);
+              return { ...p, km: loc.km, off: loc.metresOff };
+            })
+            .filter((p) => p.off < 3000)
+            .sort((a, b) => a.km - b.km);
+          const lo = (i: number) => (i === 0 ? K.kmStart : (located[i - 1].km + located[i].km) / 2);
+          const hi = (i: number) => (i === located.length - 1 ? K.kmEnd : (located[i].km + located[i + 1].km) / 2);
+          const scale = (k: string) => ({ light: 0.85, moderate: 1, heavy: 1.15, intense: 1.3 } as Record<string, number>)[k] ?? 1;
+          const features: GeoJSON.Feature[] = [];
+          let run: { from: number; to: number; rank: number; intensity: string } | null = null;
+          const closeRun = () => {
+            if (run && Math.abs(run.to - run.from) > 0.05) {
+              features.push({
+                type: "Feature",
+                properties: { kind: "run", rank: run.rank, intensity: run.intensity, dropScale: scale(run.intensity) },
+                geometry: { type: "LineString", coordinates: K.sliceKm(run.from, run.to) },
+              });
+            }
+            run = null;
+          };
+          located.forEach((p, i) => {
+            if (!p.raining) { closeRun(); return; }
+            const a = lo(i), b = hi(i);
+            if (Math.abs(b - a) > 0.05) {
+              features.push({
+                type: "Feature",
+                properties: {
+                  kind: "zone", name: p.name, intensity: p.intensity, rank: RANK[p.intensity] ?? 1,
+                  mm: p.mm, mmPerHour: p.mmPerHour, thunder: p.thunder, fromKm: a, toKm: b,
+                },
+                geometry: { type: "LineString", coordinates: K.sliceKm(a, b) },
+              });
+            }
+            const r = RANK[p.intensity] ?? 1;
+            if (run) { run.to = b; if (r > run.rank) { run.rank = r; run.intensity = p.intensity; } }
+            else run = { from: a, to: b, rank: r, intensity: p.intensity };
+          });
+          closeRun();
+          (map.getSource("lm-rain") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features });
+          rainAsOf = d?.asOf ?? "";
+          rainInterval = d?.intervalMin ?? 15;
+          rainOn = features.length > 0;
+          setRainNow(d && d.rainingCount > 0
+            ? { asOf: d.asOf, preview: Boolean(d.preview), exits: located.filter((p) => p.raining).map((p) => ({ name: p.name, intensity: p.intensity, thunder: p.thunder })) }
+            : null);
+          if (reducedRef.current) staticRain();
+          kickRef.current?.();
+          map.triggerRepaint();
+        };
+
+        /* Development only: ?rainPreview=1 on the page paints a fixed pattern
+           (four exits, one per band) over the real reading, to check the look
+           on a dry day. Never in a production build. */
+        const rainPreview = process.env.NODE_ENV !== "production"
+          && new URLSearchParams(window.location.search).has("rainPreview");
+        const previewOf = (d: LiveRainData | null): LiveRainData | null => {
+          if (!d) return d;
+          const set: Record<string, { intensity: LiveRainPoint["intensity"]; mmPerHour: number; thunder?: boolean }> = {
+            Marilao: { intensity: "light", mmPerHour: 1.2 },
+            "Bocaue Interchange": { intensity: "moderate", mmPerHour: 4.8 },
+            Tambubong: { intensity: "moderate", mmPerHour: 3.6 },
+            "San Fernando": { intensity: "heavy", mmPerHour: 10.4 },
+            Angeles: { intensity: "intense", mmPerHour: 21.6, thunder: true },
+          };
+          const points = d.points.map((p) => {
+            const s = set[p.name];
+            return s ? { ...p, raining: true, intensity: s.intensity, mmPerHour: s.mmPerHour, mm: s.mmPerHour / 4, thunder: Boolean(s.thunder) } : p;
+          });
+          return { ...d, points, rainingCount: points.filter((p) => p.raining).length, preview: true };
+        };
+
+        const rainUrl = endpoint.replace(/\/real-time.*$/, "/live-rain");
+        const loadRain = async () => {
+          if (disposed) return;
+          try {
+            const r = await fetch(rainUrl, { cache: "no-store" });
+            const j = r.ok ? ((await r.json()) as { data?: LiveRainData }) : null;
+            const d = j?.data ?? null;
+            applyRain(rainPreview ? previewOf(d) : d);
+          } catch {
+            /* Offline for a moment: the last reading stays up until the next poll. */
+          }
+        };
+        void loadRain();
+        // Open-Meteo's nowcast moves every 15 minutes; the backend caches it for 10.
+        rainTimer = setInterval(loadRain, 5 * 60_000);
+
+        const rainCard = sideCard("mjp-pop");
+        map.on("mousemove", "lm-rain-veil", (e: mapboxgl.MapLayerMouseEvent) => {
+          // On the road itself the queue and exit cards answer; the wash answers either side of it.
+          if (map.getLayer("lm-roadbed") && map.queryRenderedFeatures(e.point, { layers: ["lm-roadbed"] }).length) {
+            rainCard.remove();
+            return;
+          }
+          const f = e.features?.find((x) => (x.properties as { kind?: string } | null)?.kind === "zone");
+          if (!f) return;
+          const p = (f.properties ?? {}) as Record<string, unknown>;
+          const r = (label: string, value: string) => `<div class="mjp-row"><span>${label}</span><b>${value}</b></div>`;
+          const rate = Number(p.mmPerHour);
+          rainCard.show(
+            e.lngLat,
+            `<div class="mjp">
+               <div class="mjp-head is-rain is-${esc(p.intensity)}">${esc(rainWord(String(p.intensity)))} <span>${esc(clock(rainAsOf))}</span></div>
+               <div class="mjp-where">${esc(displayExitName(String(p.name)))} &middot; km ${fmtKm(Number(p.fromKm))}–${fmtKm(Number(p.toKm))}</div>
+               ${r("Rate", rate > 0 ? `${rate.toFixed(1)} mm/h` : "under 0.4 mm/h")}
+               ${r(`Last ${rainInterval} min`, `${Number(p.mm).toFixed(1)} mm`)}
+               ${p.thunder === true || p.thunder === "true" ? r("Thunderstorm", "Yes") : ""}
+               <p class="mjp-note">Rain falling at this exit now; the stretch runs halfway to the next exit each way. Updated every ${rainInterval} minutes.</p>
+             </div>`,
+          );
+        });
+        map.on("mouseleave", "lm-rain-veil", () => rainCard.remove());
+      }
 
       /* Optional 3D: tilt to about 50 degrees, and extrude buildings only if
          the basemap has a building layer to extrude. 2D north-up otherwise. */
@@ -3170,6 +3441,11 @@ export default function TrafficMapPanel({
         clearInterval(pollTimer);
         pollTimer = null;
       }
+      if (rainTimer != null) {
+        clearInterval(rainTimer);
+        rainTimer = null;
+      }
+      setRainNow(null);
       resizeObserver.disconnect();
       if (flowFrameRef.current != null) {
         cancelAnimationFrame(flowFrameRef.current);
@@ -3240,6 +3516,33 @@ export default function TrafficMapPanel({
         )}
         {children}
 
+        {/* Live rain: which exits have rain falling now. Only while it rains;
+            the stretches themselves are drawn on the map. */}
+        {rainNow && rainNow.exits.length > 0 && (() => {
+          const worst = rainNow.exits.reduce((a, b) =>
+            (RAIN_RANK[b.intensity] ?? 0) > (RAIN_RANK[a.intensity] ?? 0) ? b : a);
+          const thunder = rainNow.exits.some((x) => x.thunder);
+          const Icon = thunder ? CloudLightning : CloudRain;
+          const names = rainNow.exits.map((x) => displayExitName(x.name));
+          const at = new Date(rainNow.asOf);
+          return (
+            <div
+              className={`lm-rain-pill is-${worst.intensity}`}
+              role="status"
+              title={rainNow.exits.map((x) => `${displayExitName(x.name)}: ${x.intensity}${x.thunder ? ", thunderstorm" : ""}`).join("\n")}
+            >
+              <Icon size={15} strokeWidth={2.2} aria-hidden="true" />
+              <span>
+                <b>{rainNow.preview ? "Preview: rain" : "Raining"}</b>{" "}
+                {names.length <= 2 ? `at ${names.join(" and ")}` : `at ${names.length} exits`}
+              </span>
+              {!Number.isNaN(at.getTime()) && (
+                <small>{at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</small>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Report detail. Anchored inside the map container so it sits over the
             canvas without leaving the panel, and every row is omitted rather
             than zero-filled when Waze did not report that field. */}
@@ -3247,9 +3550,15 @@ export default function TrafficMapPanel({
           <div className="wz-report-detail" role="dialog" aria-label="Waze report detail">
             <header>
               <div>
-                <span className="wz-rd-type">{selectedReport.type.replace(/_/g, " ")}</span>
-                {selectedReport.subtype && (
-                  <span className="wz-rd-sub">{selectedReport.subtype.replace(/_/g, " ").toLowerCase()}</span>
+                {isFloodSubtype(selectedReport.subtype) ? (
+                  <span className="wz-rd-type">Flood</span>
+                ) : (
+                  <>
+                    <span className="wz-rd-type">{selectedReport.type.replace(/_/g, " ")}</span>
+                    {selectedReport.subtype && (
+                      <span className="wz-rd-sub">{selectedReport.subtype.replace(/_/g, " ").toLowerCase()}</span>
+                    )}
+                  </>
                 )}
               </div>
               <button type="button" onClick={() => setSelectedReport(null)} aria-label="Close report detail">
@@ -3259,6 +3568,13 @@ export default function TrafficMapPanel({
               </button>
             </header>
 
+            {isFloodSubtype(selectedReport.subtype) && floodFinding && floodFinding.delayMin != null && floodFinding.rainyDelayMin != null && (
+              <p className="wz-rd-flood" title="Each exit-hour with a flood report against rainy hours without one at the same exit, hour of day and part of the week. A link, not proof: drivers already stuck may report water more readily.">
+                On NLEX, hours with a flood report averaged about {floodFinding.delayMin.toFixed(0)} min of delay and a jam
+                {" "}{floodFinding.jamPct?.toFixed(0)}% of the time, against {floodFinding.rainyDelayMin.toFixed(0)} min and
+                {" "}{floodFinding.rainyJamPct?.toFixed(0)}% in rainy hours without one ({floodFinding.exitHours} flood hours, live Waze since Aug 2026).
+              </p>
+            )}
             <p className="wz-rd-where">
               {selectedReport.street ?? "NLEX"}
               {selectedReport.city ? ` · ${selectedReport.city}` : ""}

@@ -49,9 +49,15 @@ _name = setting("DB_NAME", "nlex_capstone")
 _user = setting("DB_USER", "postgres")
 _pw = setting("DB_PASSWORD", required=True)
 _ssl = setting("DB_SSLMODE", "require")
+# "require" encrypts but does not check who answered. With DB_SSLMODE=verify-full and DB_SSLROOTCERT pointing at the
+# AWS RDS CA bundle (Back-End/certs/rds-ap-southeast-1-bundle.pem), the server's certificate and hostname are checked
+# too, so an impostor cannot collect the password (security audit #4, 9 Nov 2026).
+_root = setting("DB_SSLROOTCERT", "")
+_rootarg = f" sslrootcert={_root}" if _root else ""
 
-PG = f"host={_host} port={_port} dbname={_name} user={_user} password={_pw} sslmode={_ssl}"
-POSTGRES_URL = f"postgresql://{quote(_user)}:{quote(_pw, safe='')}@{_host}:{_port}/{_name}?sslmode={_ssl}"
+PG = f"host={_host} port={_port} dbname={_name} user={_user} password={_pw} sslmode={_ssl}{_rootarg}"
+POSTGRES_URL = (f"postgresql://{quote(_user)}:{quote(_pw, safe='')}@{_host}:{_port}/{_name}?sslmode={_ssl}"
+                + (f"&sslrootcert={quote(_root, safe='/:')}" if _root else ""))
 
 WORK = ROOT / "_work"
 for _d in ("cache", "outputs", "logs"):

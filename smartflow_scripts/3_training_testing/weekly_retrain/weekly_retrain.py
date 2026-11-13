@@ -104,6 +104,8 @@ INPUTS = {
     "stalled": ("public.nlex_stalled_vehicles", "date", None),
     "waze_jams": ("silver.fact_waze_jams", "date_day", "speed_kmh"),
     "arena_events": ("silver.philippine_arena_events_clean", "event_date", None),
+    # The verified calendar (11 Nov 2026): one row per real show night with a public source.
+    "verified_events": ("silver.arena_events_verified", "show_date", "reported_attendance"),
 }
 CONGESTION = ROOT.parent / "All_Scripts" / "Predictive_Modeling"
 HOURLY_48H = WORK / "cache" / "traffic_hourly_48h"
@@ -188,8 +190,9 @@ GROUPS = [
              "WHERE run_id = (SELECT max(run_id) FROM gold.ml_forecast_48h_runs) GROUP BY series_key) x"),
             ("no negative forecast",
              "SELECT NOT EXISTS (SELECT 1 FROM gold.ml_forecast_hourly_48h WHERE LEAST(class_1, class_2, class_3) < 0)"),
-            ("the forecast starts the hour after the latest upload",
-             "SELECT origin_ts = (SELECT max(date) + 1 FROM gold.fact_traffic_hourly WHERE status = 'nlex')::timestamp "
+            # Served from the last REAL day (evaluation protocol, 11 Nov 2026): days after it are not treated as known.
+            ("the forecast starts the hour after the last real day",
+             "SELECT origin_ts = ((info->>'real_end')::date + 1)::timestamp "
              "FROM gold.ml_forecast_48h_runs ORDER BY run_id DESC LIMIT 1"),
             ("the corridor row is the sum of the plaza series",
              "SELECT bool_and(abs(c.total - s.total) <= 1 + 1e-4 * c.total) FROM "
@@ -197,9 +200,9 @@ GROUPS = [
              " AND run_id = (SELECT max(run_id) FROM gold.ml_forecast_48h_runs)) c JOIN "
              "(SELECT forecast_ts, sum(total) total FROM gold.ml_forecast_hourly_48h WHERE series_key <> 'corridor' "
              " AND run_id = (SELECT max(run_id) FROM gold.ml_forecast_48h_runs) GROUP BY 1) s USING (forecast_ts)"),
-            ("the served model beats the previous method on the 2025 backtest",
-             "SELECT model = 'profile' OR (info->'backtest'->'series'->'all'->>'WAPE')::float "
-             "< (info->'current_method_backtest'->'series'->>'WAPE')::float "
+            ("the served model beats the previous method on the out-of-sample test",
+             "SELECT model = 'profile' OR (info->'backtest'->'buckets'->>'score')::float "
+             "< (info->'current_method_backtest'->'buckets'->>'score')::float "
              "FROM gold.ml_forecast_48h_runs ORDER BY run_id DESC LIMIT 1"),
             ("backtest WAPE not more than 25% above the previous run's",
              "SELECT coalesce(bool_and(a.w <= 1.25 * b.w), true) FROM "
@@ -256,9 +259,14 @@ GROUPS = [
         # This ran smartflow_scripts/.../event_surge/ until 2 Nov 2026: the old build and eval pick "event days" as days
         # the CDV exit ran 1.45x its norm, which selects busy days and inflated the uplift (1.15x became 1.59x); the
         # 1 Nov cloud batch overwrote the table with it.
-        inputs=["traffic_hourly", "arena_events"],
-        steps=[Step(CONGESTION, ["build_event_surge.py"])],
-        tables=[("gold.ml_event_surge_forecast", None),
+        # 11 Nov 2026: replaced by events/train_event_effect.py (EVALUATION_PROTOCOL.md section 9): verified show
+        # nights only (the scraped calendar was mostly false dates), leave-future-out test, the protocol's champion.
+        inputs=["traffic_hourly", "verified_events"],
+        # First, the list of scraped dates nobody has verified yet (read-only report), then the test and publish.
+        steps=[Step(ROOT / "1_data_loading" / "events", ["list_events_to_verify.py"]),
+               Step(TT / "events", ["train_event_effect.py"])],
+        tables=[("gold.ml_event_surge_forecast", None), ("gold.ml_event_normal", None),
+                ("gold.ml_event_surge_eval", None),
                 ("gold.ml_model_metrics", "target = 'Event Surge'")],
         evaluation="domain = 'Event surge'",
         needs=["prophet", "sklearn", "statsmodels", "xgboost"],
@@ -347,8 +355,11 @@ GROUPS = [
              "FROM gold.ml_congestion_forecast GROUP BY 1) x"),
             ("states are Low, Med or High only",
              "SELECT NOT EXISTS (SELECT 1 FROM gold.ml_congestion_forecast WHERE congestion_state NOT IN ('Low','Med','High'))"),
-            ("the served model is accepted (beats the exit-hour profile)",
-             "SELECT accepted FROM gold.ml_model_metrics WHERE target = 'Congestion' AND rank = 1"),
+            # The corrected baseline is keyed on the TARGET hour; rank 0 = the best baseline, served when no model
+            # beats it (evaluation protocol, 11 Nov 2026).
+            ("the map serves the protocol champion: an accepted model, or the best baseline when none beats it",
+             "SELECT coalesce(bool_or(rank = 1 AND accepted) OR bool_or(rank = 0), false) "
+             "FROM gold.ml_model_metrics WHERE target = 'Congestion'"),
             ("the dual-path family was refitted in this run",
              "SELECT (payload->'dualpath'->>'trained_at')::timestamp > now() - interval '12 hours' "
              "FROM gold.ml_congestion_eval WHERE id = 1"),
@@ -471,7 +482,14 @@ def fingerprint(cur, key: str) -> dict:
     if not exists(cur, table):
         return {"table": table, "missing": True}
     total = f"round(sum({sum_col})::numeric, 3)::text" if sum_col else "NULL"
-    cur.execute(f"SELECT count(*), max({date_col})::text, {total} FROM {table}")
+    where = ""
+    if key == "weather":
+        # The live weather feed adds rows every hour, so counted whole it made every weather-using group "changed"
+        # each Sunday with no new traffic or incident records (8 Nov 2026). The models train on weather only for
+        # days the traffic record covers, so only those days count as new weather data.
+        where = (" WHERE (timestamp_utc + interval '8 hours')::date <= "
+                 "(SELECT max(date) FROM gold.daily_traffic_volume_corrected)")
+    cur.execute(f"SELECT count(*), max({date_col})::text, {total} FROM {table}{where}")
     rows, latest, s = cur.fetchone()
     return {"table": table, "rows": int(rows), "latest": latest, "total": s}
 
@@ -1015,6 +1033,11 @@ def batch(args, log_path: Path) -> int:
         say(f"■ {g.title}")
         if args.only and g.key not in args.only:
             entry["status"], entry["reason"] = "not selected", "left out of this run (--only)"
+            say(f"  {entry['reason']}")
+            continue
+        # One publisher for the congestion map (11 Nov 2026): three machines were overwriting each other hourly.
+        if g.key == "congestion" and os.environ.get("CONGESTION_PUBLISHER", "").strip().lower() not in ("1", "true", "yes"):
+            entry["status"], entry["reason"] = "not selected", "not the congestion publisher (CONGESTION_PUBLISHER unset)"
             say(f"  {entry['reason']}")
             continue
         entry["changes"] = changes(g, fp, marks)

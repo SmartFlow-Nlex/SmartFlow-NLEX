@@ -304,25 +304,25 @@ base AS (
   ) AS b(name, role, mae)
 
   UNION ALL
-  /* 7. The weather pipeline. Its source's speed and volume columns are synthetic, and every row says so. */
+  /* 7. The weather pipeline: Waze jam speed (real since 21 Oct 2026), tested from rolling origins with known inputs only (10 Nov 2026). */
   SELECT 'Congestion', 'Daily corridor speed under weather', k.key, 'model', NULL::int, NULL::boolean,
     k.key = (w.meta->'speed'->>'champion'),
     'MAE', (k.value->>'MAE')::float8, false,
     (k.value->>'MAE')::float8, (k.value->>'RMSE')::float8, NULL::float8, NULL::float8, (k.value->>'R2')::float8,
     NULL::float8, NULL::float8, NULL::float8,
-    'km/h (the warehouse''s speed metric)', (k.value->>'n')::int, h.lo, h.hi,
-    'chronological: the last ' || (w.meta->>'holdout_days') || ' days',
-    'scored on bronze.nlex_traffic_volume, whose speed column is synthetic capstone data (train_incident_weather_speed_models.py)',
+    'km/h (Waze jam speed)', (k.value->>'n')::int, h.lo, h.hi,
+    'rolling origins over the last 52 weeks, ' || (w.meta->>'holdout_days') || '-day horizon',
+    'Waze jam speed; inputs known at each origin only (train_incident_weather_speed_models.py)',
     'gold.ml_weather_speed_metadata', (w.meta->>'trained_at')::timestamptz
   FROM ws w CROSS JOIN ws_h h CROSS JOIN LATERAL jsonb_each(w.meta->'speed'->'metrics') k
   UNION ALL
-  SELECT 'Congestion', 'Daily corridor speed under weather', 'Naive (no change)', 'baseline', NULL::int, NULL::boolean, false,
+  SELECT 'Congestion', 'Daily corridor speed under weather', 'Training mean (constant)', 'baseline', NULL::int, NULL::boolean, false,
     'MAE', (w.meta->'speed'->>'naive_mae')::float8, false,
     (w.meta->'speed'->>'naive_mae')::float8, NULL::float8, NULL::float8, NULL::float8, NULL::float8,
     NULL::float8, NULL::float8, NULL::float8,
-    'km/h (the warehouse''s speed metric)', h.n, h.lo, h.hi,
-    'chronological: the last ' || (w.meta->>'holdout_days') || ' days',
-    'scored on bronze.nlex_traffic_volume, whose speed column is synthetic capstone data (train_incident_weather_speed_models.py)',
+    'km/h (Waze jam speed)', h.n, h.lo, h.hi,
+    'rolling origins over the last 52 weeks, ' || (w.meta->>'holdout_days') || '-day horizon',
+    'Waze jam speed; inputs known at each origin only (train_incident_weather_speed_models.py)',
     'gold.ml_weather_speed_metadata', (w.meta->>'trained_at')::timestamptz
   FROM ws w CROSS JOIN ws_h h
   UNION ALL
@@ -330,9 +330,9 @@ base AS (
     'MAE', (w.meta->'contour'->'metrics'->>'MAE')::float8, false,
     (w.meta->'contour'->'metrics'->>'MAE')::float8, NULL::float8, NULL::float8, NULL::float8, (w.meta->'contour'->'metrics'->>'R2')::float8,
     NULL::float8, NULL::float8, NULL::float8,
-    'km/h (the warehouse''s speed metric)', (w.meta->'contour'->'metrics'->>'n')::int, h.lo, h.hi,
-    'chronological: the last ' || (w.meta->>'holdout_days') || ' days, every exit-hour',
-    'scored on bronze.nlex_traffic_volume, whose speed column is synthetic capstone data (train_incident_weather_speed_models.py)',
+    'km/h (Waze jam speed)', (w.meta->'contour'->'metrics'->>'n')::int, h.lo, h.hi,
+    'chronological: the last ' || (w.meta->>'holdout_days') || ' days, every exit-hour (conditional on the hour''s rain and volume)',
+    'Waze jam speed per exit-hour, against each exit-hour''s training mean (train_incident_weather_speed_models.py)',
     'gold.ml_weather_speed_metadata', (w.meta->>'trained_at')::timestamptz
   FROM ws w CROSS JOIN ws_h h
   UNION ALL
@@ -340,9 +340,9 @@ base AS (
     'AUC', x.auc, true,
     NULL::float8, NULL::float8, NULL::float8, NULL::float8, NULL::float8, NULL::float8, x.auc, NULL::float8,
     NULL::text, x.n, h.lo, h.hi,
-    'chronological: the last ' || (w.meta->>'holdout_days') || ' days',
+    'the last 364 days, refitted every 28 days',
     'base rate ' || round(x.base_rate::numeric * 100, 1) || '%; AUC 0.5 is chance; '
-      || 'scored on bronze.nlex_traffic_volume, whose speed and volume columns are synthetic capstone data',
+      || 'conditional on the day''s rain and volume (served as what-if curves)',
     'gold.ml_weather_speed_metadata', (w.meta->>'trained_at')::timestamptz
   FROM ws w CROSS JOIN ws_h h
   CROSS JOIN LATERAL (VALUES
@@ -357,8 +357,8 @@ base AS (
     (w.meta->'volume_metrics'->>'MAE')::float8, (w.meta->'volume_metrics'->>'RMSE')::float8, NULL::float8, NULL::float8,
     (w.meta->'volume_metrics'->>'R2')::float8, NULL::float8, NULL::float8, NULL::float8,
     'vehicles/day', (w.meta->'volume_metrics'->>'n')::int, h.lo, h.hi,
-    'chronological: the last ' || (w.meta->>'holdout_days') || ' days',
-    'NOT comparable with the volume rows above: scored on bronze.nlex_traffic_volume, synthetic capstone data padded past the real record',
+    'rolling origins over the last 52 weeks, ' || (w.meta->>'holdout_days') || '-day horizon',
+    'NOT the traffic module''s volume model: calendar and rain inputs only (its own volume is no longer among its inputs)',
     'gold.ml_weather_speed_metadata', (w.meta->>'trained_at')::timestamptz
   FROM ws w CROSS JOIN ws_h h
 

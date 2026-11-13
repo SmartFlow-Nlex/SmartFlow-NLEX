@@ -1,7 +1,7 @@
 throw new Error("ARCHIVED - do not run. First medallion schema build, Waze aggregation and reference loaders (July 2026); superseded by Back-End/scripts/medallion and the Back-End ETL. Kept only as a record; see smartflow_scripts/README.md.");
 const pg = require('pg');
 const pool = new pg.Pool({
-  host: 'smartflow.cn4wwa2i4cux.ap-southeast-1.rds.amazonaws.com',
+  host: '<RDS_HOST>',
   port: 5432,
   user: 'postgres',
   password: 'REMOVED',

@@ -451,7 +451,17 @@ BASELINES = ("SeasonalNaive", "Climatology")
 # ─────────────────────────────────────────────────────
 banner(f"STEP 2: Rolling-origin evaluation ({N_ORIGINS} origins, h={HORIZON}d)")
 
-origins = [len(df) - (N_ORIGINS - i) * STEP for i in range(N_ORIGINS)]
+# Real record only (user, 11 Nov 2026: every model's dates aligned). 25 May - 30 Jun 2026 hold broken and synthetic toll
+# days, so evaluation, refit and the published actuals end on 24 May and the future starts on 25 May, the same day as
+# the incident, CO2 and fleet-mix forecasts. Cut here, below the head that traffic_study.py and
+# extend_future_volume.py exec, so the saved traffic study keeps matching its data.
+REAL_END = pd.Timestamp("2026-05-24")
+if df.ds.max() > REAL_END:
+    print(f"  record cut to {REAL_END.date()} (was {df.ds.max().date()}): later toll days are broken or synthetic")
+    df = df[df.ds <= REAL_END].reset_index(drop=True)
+    HIST_BY_DOY = df.groupby(df["ds"].dt.dayofyear)[WEATHER_COLS].mean()
+
+origins =[len(df) - (N_ORIGINS - i) * STEP for i in range(N_ORIGINS)]
 print(f"  First origin: {df.ds.iloc[origins[0]].date()}   "
       f"Last: {df.ds.iloc[origins[-1]].date()}")
 print(f"  Every model refits at every origin and forecasts {HORIZON} days blind.\n")
@@ -765,6 +775,12 @@ for name, fn in MODELS.items():
 # ─────────────────────────────────────────────────────
 # 6. WRITE BACK — PAST context | PRESENT scored | FUTURE projected
 # ─────────────────────────────────────────────────────
+# --dry-run (6 Nov 2026): everything above (the evaluation, the leaderboard, the future forecast), nothing written.
+if "--dry-run" in sys.argv:
+    banner("DRY RUN: stopping before STEP 6, nothing written")
+    print("  gold.ml_predictive_volume and gold.ml_model_metrics are unchanged.")
+    raise SystemExit(0)
+
 banner("STEP 6: Writing to AWS")
 
 ctx_df = df.iloc[0:eval_start] if CTX <= 0 else df.iloc[max(0, eval_start - CTX):eval_start]

@@ -276,7 +276,7 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
                 </h4>
                 <ul className="wz-alerts">
                   {corridorAlerts.map((a, i) => {
-                    const look = lookOf(a.type);
+                    const look = lookOf(a.type, a.subtype);
                     const Icon = look.icon;
                     /* A row is a button, not decoration: it points at a real
                        place on the map. The map owns both the camera and the

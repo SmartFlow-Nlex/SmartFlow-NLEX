@@ -1,540 +1,352 @@
 """
-7-day fleet-mix forecast — training and evaluation.
+Daily fleet-mix forecast (Class 1 / 2 / 3 shares): the served model and its published metrics, under
+EVALUATION_PROTOCOL.md (10 Nov 2026).
 
-Candidates follow the modelling diagram's second Emission Forecasting box:
-Dirichlet regression, XGBoost, multivariate LSTM and Prophet, scored on
-Aitchison distance. Protocol matches train_emissions.py so the two are
-comparable: rolling-origin walk-forward, and acceptance only by beating BOTH
-trivial baselines (Aitchison below the better of persistence/climatology, AND a
-skill ratio < 1 against persistence).
+The testing is fleet_mix_study.py; this file publishes what it found. Rewritten 10 Nov 2026 after an audit found the
+previous version tested 7 days but served 30 with no horizon study, scored synthetic days after 2026-05-24, compared
+the models with baselines too weak to be the bar (persistence ignored the weekday; a same-weekday average over 8 weeks
+tied its Dirichlet champion, Aitchison 0.1191 against 0.1190), never stored the metric it chose on (the wmape column
+held the heavy-vehicle WMAPE and mase a persistence ratio, so the dashboard and the weekly gate ranked on something
+else), flagged surges against the mean of the whole series including the days being forecast, and described a
+4-year, 7-day setup that no longer matched it. The previous version is in git.
 
-WHY COMPOSITIONAL METHODS AND NOT THREE SEPARATE REGRESSIONS
+WHY COMPOSITIONS. The target is three shares that must be positive and sum to 1. Every candidate predicts on the
+simplex (Dirichlet) or in centred log-ratio space mapped back through the inverse CLR, so each forecast is a valid
+fleet mix by construction. Aitchison distance (Euclidean distance between CLR coordinates) is the selection metric:
+it treats a proportional miss on the rare Class 3 like the same proportional miss on Class 1, which MAPE does not.
 
-  The target is a composition: three class shares that must be non-negative and
-  sum to 1. Forecasting each share with its own regression ignores that — the
-  three predictions are free to sum to 0.97 or 1.04, which is not a fleet mix.
-  Every candidate here therefore predicts in CLR (centred log-ratio) space and
-  maps back through the inverse CLR, so a prediction is a valid composition by
-  construction rather than by rounding afterwards.
+STEPS
+  1. The study. _work/cache/fleet_mix_study.json is used when its fingerprint (the shares, holidays and code) matches;
+     otherwise the study runs here: 8 candidates and 3 baselines, 26 rolling origins across the last real year,
+     30 days each (buckets 1-7, 8-14, 15-30), nothing after 2026-05-24 scored.
+  2. The champion: the protocol's rule on Aitchison distance (lowest mean over the buckets among the models that beat
+     the best baseline overall AND on days 1-7; a simpler model wins a tie whose lead is not significant). If nothing
+     qualifies, the best baseline is served and published as such.
+  3. The previous champion, re-scored on the same origins, must not be significantly better (protocol section 8).
+  4. The champion is refitted on every day of the record and forecasts 30 days from the day after it ends.
+  5. Writes (not with --dry-run): gold.ml_model_metrics (target 'Fleet Mix'), gold.ml_predictive_fleet_mix (the
+     PRESENT band is every origin's days 1-14, the forecasts the metrics came from; then the 30-day future),
+     gold.ml_horizon_accuracy (target 'Fleet Mix', per bucket: mase = Aitchison over the best baseline's, wmape =
+     heavy-share WMAPE, raw distance in note; no dashboard route reads these rows yet) and
+     fleet_mix_results.json beside this file (with the code version).
 
-  Dirichlet regression is the exception that needs no transform: its likelihood
-  is defined on the simplex, so it models the mix directly.
+COLUMNS (gold.ml_model_metrics; the panel labels them MAE (pp), MAPE, HEAVY WMAPE, HEAVY R2, SKILL)
+  mase   SKILL: the selection score (mean bucket Aitchison distance) divided by the best baseline's. Below 1 beats
+         every baseline; sorting on it is sorting on the selection metric. The raw distance is in diagnosis.
+  wmape  heavy-vehicle (Class 2+3) share WMAPE;  r2 heavy-share R2;  mae / rmse  class-share error in percentage
+         points;  mape  per-class MAPE. All are the mean of the three buckets.
+  rank   1 = the champion, then by score; NULL for baselines.   accepted = eligible under the protocol.
 
-WHY AITCHISON DISTANCE IS THE HEADLINE METRIC, NOT MAPE
+SURGE. A served day is flagged as a heavy-vehicle surge when its forecast Class 2+3 share exceeds the mean of the
+TRAINING days before its forecast origin by 1.5 standard deviations (each PRESENT day against its own origin's
+training data; the future against the whole record).
 
-  The diagram lists "Fleet mix MAPE". MAPE divides by the actual value, and on
-  this corridor Class 3 sits near 7-8% while Class 1 sits near 78%. The same
-  one-point miss scores ~13% on Class 3 and ~1.3% on Class 1, so a MAPE average
-  is dominated by the smallest part and reports a model as bad for being wrong
-  about the rarest class by an amount it got right about the commonest one.
-
-  Aitchison distance is the standard metric for compositional data: it is the
-  Euclidean distance between CLR coordinates, so it treats a proportional error
-  in a small part the same as the same proportional error in a large one. Both
-  are recorded — Aitchison decides acceptance, MAPE is reported alongside
-  because the diagram asks for it.
-
-  Total variation distance is also reported, because it is the one number a
-  reader without a compositional-statistics background can interpret directly:
-  it is the fraction of the fleet assigned to the wrong class.
-
-SOURCE
-  gold.fact_traffic_hourly (class_1/class_2/class_3 counts per exit-hour),
-  aggregated to corridor totals per day. 1,461 days, 2022-01-01 to 2025-12-31.
-
-HORIZON
-  7 days, per the diagram ("7-day fleet mix forecast").
+FLAGS  --dry-run (everything up to the writes; rows rendered, nothing written)   --rerun-study
 """
 import json
-import warnings
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-import psycopg2
-from scipy.optimize import minimize
-from scipy.special import gammaln
 
-warnings.filterwarnings("ignore")
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import fleet_mix_study as S  # noqa: E402
+from common import rolling_eval as RE  # noqa: E402
+from common.rolling_eval import is_baseline  # noqa: E402
 
-import sys as _sys
-from pathlib import Path as _Path
-
-# Connection settings live in smartflow_scripts/config/.env, read by
-# config/db.py, as for every other trainer here. This used to read
-# Back-End/.env two folders up — a path from before the script moved into
-# 3_training_testing/, which now points inside smartflow_scripts and fails.
-_sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "config"))
-from db import PG  # noqa: E402
-
-HORIZON, STEP, N_ORIGINS, SEASON = 7, 7, 42, 7
-FUTURE_DAYS = 30
-PARTS = ["c1", "c2", "c3"]
-
-# Aitchison gap below which two candidates are not meaningfully separated.
-# Same idea as TIE_MARGIN_WMAPE in train_emissions.py: without it the table
-# implies an ordering that re-running the script would reshuffle.
-TIE_MARGIN_AITCH = 0.004
-
-# A day is flagged as a heavy-vehicle surge when the Class 2+3 share exceeds the
-# training mean by this many standard deviations. Reported as the diagram's
-# "heavy vehicle surge prediction" output.
+TARGET = "Fleet Mix"
+FUTURE_DAYS = S.HORIZON
 SURGE_SIGMA = 1.5
-
-DRY_RUN = "--dry-run" in _sys.argv
+ARGS = sys.argv[1:]
+DRY_RUN = "--dry-run" in ARGS
+RERUN = "--rerun-study" in ARGS
+# --smoke-study N: test the publishing path on a smoke study (N origins); dry-run only.
+SMOKE = int(ARGS[ARGS.index("--smoke-study") + 1]) if "--smoke-study" in ARGS else None
+if SMOKE and not DRY_RUN:
+    raise SystemExit("--smoke-study only tests the publishing path: add --dry-run")
 
 
 def banner(t):
-    print("\n" + "=" * 70 + f"\n  {t}\n" + "=" * 70)
+    print("\n" + "=" * 78 + f"\n  {t}\n" + "=" * 78)
 
 
-# ─────────────────────────────────────────────────────────── compositional ──
-def _closure(P):
-    """Force rows onto the simplex, and keep them off its boundary.
+# ── 1. The study ─────────────────────────────────────────────────────────────
+banner("STEP 1: The study (fleet_mix_study.py)")
+ctx = S.load()
+csv_path, json_path = S.outputs("fleet_mix_study" if not SMOKE else f"fleet_mix_study_smoke{SMOKE}")
+study = None
+if json_path.exists() and csv_path.exists() and not RERUN:
+    j = json.loads(json_path.read_text())
+    if j.get("fingerprint") == ctx.fp and bool(j.get("smoke")) == bool(SMOKE):
+        study = j
+        print(f"  using the saved study ({json_path.name}, {j['generated']}, fingerprint {ctx.fp})")
+    else:
+        print(f"  saved study does not match the current data/code (saved {j.get('fingerprint')}, now {ctx.fp})")
+if study is None:
+    print("  running the study now (resumable)")
+    study = S.run(SMOKE)
+res = pd.read_csv(csv_path, parse_dates=["date"])
+n_origins = res.origin.nunique()
+sel = study["selection"]
+table = pd.DataFrame(sel["table"]).T
+CHAMPION = sel["champion"]
+best_base = sel["best_baseline"]
+base_score = float(table.loc[best_base, "score"])
+labs = [f"d{lo}-{hi}" for lo, hi in S.BUCKETS]
 
-    A zero part makes log(0) and takes the whole CLR transform with it. Zeros
-    here are missing observations rather than genuine absences — a day with no
-    Class 3 traffic on a national freight corridor is a reporting gap — so they
-    are replaced with a value an order of magnitude below the smallest real
-    share rather than dropped, which would silently shorten the series.
-    """
-    P = np.asarray(P, dtype=float)
-    P = np.where(P <= 0, 1e-6, P)
-    return P / P.sum(axis=1, keepdims=True)
+# ── 2. The champion ──────────────────────────────────────────────────────────
+banner("STEP 2: The champion (Aitchison distance)")
+S.print_selection(sel)
+if sel.get("champion_is_baseline"):
+    print(f"  NO candidate beats the best baseline; the protocol serves {CHAMPION}")
 
+# ── 3. The previous champion (protocol section 8) ────────────────────────────
+banner("STEP 3: Previous champion")
+import psycopg2  # noqa: E402
+with psycopg2.connect(S.PG) as conn:
+    conn.set_session(readonly=True)
+    cur = conn.cursor()
+    cur.execute("SELECT model_name FROM gold.ml_model_metrics WHERE target = %s AND accepted AND rank IS NOT NULL "
+                "ORDER BY rank LIMIT 1", (TARGET,))
+    row = cur.fetchone()
+prev = row[0] if row else None
+prev_ok, prev_note = True, "no previous champion"
+if prev:
+    if prev not in table.index or prev == CHAMPION:
+        prev_note = f"previous champion {prev}: " + ("the same model" if prev == CHAMPION else "not in this study")
+    else:
+        cells = RE._cells(S.as_error(res, "aitchison"), S.BUCKETS)
+        lo, hi = RE._boot_diff(cells, prev, CHAMPION, S.BUCKETS, "mae", sel["block"])
+        # Only an eligible model (it beats every baseline overall and on days 1-7) can outrank the new champion.
+        better = (prev in sel["eligible"] and float(table.loc[prev, "score"]) < float(table.loc[CHAMPION, "score"])
+                  and hi < 0)
+        prev_ok = not better
+        prev_note = (f"previous champion {prev} re-scored: Aitchison {table.loc[prev, 'score']:.4f} vs {CHAMPION} "
+                     f"{table.loc[CHAMPION, 'score']:.4f} (difference 95% interval {lo:+.4f} to {hi:+.4f}) -> "
+                     + ("significantly better: the new run must NOT replace it" if better else "not better"))
+print("  " + prev_note)
 
-def clr(P):
-    """Centred log-ratio. Maps the simplex to a plane where ordinary
-    regression is meaningful, because differences become log-ratios."""
-    L = np.log(_closure(P))
-    return L - L.mean(axis=1, keepdims=True)
+# ── 4. The served forecast ───────────────────────────────────────────────────
+banner(f"STEP 4: Refit {CHAMPION} on the whole record and forecast {FUTURE_DAYS} days")
+F = ctx.F
+# Real record only (user, 11 Nov 2026: every model's dates aligned): 25 May - 30 Jun 2026 hold broken and synthetic
+# toll days, so the refit ends on 24 May and the forecast starts on 25 May, the same day as traffic and incidents.
+hist = F[F.c1.notna() & (F.ds <= S.REAL_END_VOLUME)].reset_index(drop=True)
+last = hist.ds.max()
+fut_ds = pd.date_range(last + pd.Timedelta(days=1), periods=FUTURE_DAYS, freq="D")
+future = pd.DataFrame({"ds": fut_ds}).merge(F[["ds"] + S.KNOWN], on="ds", how="left")
+MODELS = S.build_models()
+publish_problems = [] if prev_ok else [prev_note]
+try:
+    P = np.asarray(MODELS[CHAMPION](hist.copy(), future.copy()), dtype=float)
+    if P.shape != (FUTURE_DAYS, 3) or not np.isfinite(P).all() or (P <= 0).any():
+        raise ValueError("not a valid composition")
+    print(f"  {fut_ds[0].date()} .. {fut_ds[-1].date()}  mean mix C1 {P[:, 0].mean() * 100:.2f}%  "
+          f"C2 {P[:, 1].mean() * 100:.2f}%  C3 {P[:, 2].mean() * 100:.2f}%")
+except Exception as e:  # noqa: BLE001
+    P = None
+    publish_problems.append(f"the champion's projection failed: {e}")
+    print(f"  projection FAILED: {e}")
 
+# ── 5. Rows ──────────────────────────────────────────────────────────────────
+banner("STEP 5: Rows to publish")
+bm = pd.DataFrame(study["bucket_metrics"])
+bm = bm[bm.bucket.isin(labs)]
+mean_m = bm.groupby("model")[["heavy_wmape", "heavy_r2", "mae_pp", "rmse_pp", "mape", "tvd_pct"]].mean()
+first = labs[0]
+base_models = [m for m in table.index if is_baseline(m)]
+base_first = float(table.loc[base_models, first].min())
+ranked = ([] if is_baseline(CHAMPION) else [CHAMPION]) + [m for m in table.sort_values("score").index
+                                                          if not is_baseline(m) and m != CHAMPION]
+split_label = f"rolling origin {n_origins} x {S.HORIZON} d, step 14, to {S.SCORE_END.date()}"
+ru = sel.get("runner_up")
+metric_rows = []
+for m in table.index:
+    sc = float(table.loc[m, "score"])
+    base = is_baseline(m)
+    accepted = m in sel["eligible"]
+    reason, diag = None, [f"Aitchison {sc:.4f} (mean of {', '.join(labs)})"]
+    if base:
+        reason = "baseline, not a candidate" + (" - SERVED: no candidate beats it" if m == CHAMPION else "")
+    elif not accepted:
+        w = []
+        if sc >= base_score:
+            w.append(f"Aitchison {sc:.4f} does not beat the best baseline ({best_base}) {base_score:.4f}")
+        if float(table.loc[m, first]) >= base_first:
+            w.append(f"days 1-7 Aitchison {table.loc[m, first]:.4f} does not beat the best baseline {base_first:.4f}")
+        reason = "; ".join(w) or "not chosen"
+    if ru and not sel.get("vs_runner_up_significant", True) and m in (CHAMPION, ru):
+        lo, hi = sel["vs_runner_up_ci"]
+        other = ru if m == CHAMPION else CHAMPION
+        diag.append(f"tied with {other} - lead not significant (95% interval {lo:+.4f} to {hi:+.4f})")
+    mm = mean_m.loc[m]
+    metric_rows.append(dict(
+        model_name=m, rmse=float(mm.rmse_pp), mae=float(mm.mae_pp), wmape=float(mm.heavy_wmape),
+        r2=float(mm.heavy_r2), mase=sc / base_score, mape=float(mm.mape),
+        rank=None if base else ranked.index(m) + 1, accepted=bool(accepted), rejected_reason=reason,
+        diagnosis="; ".join(diag), split_label=split_label))
+mt = pd.DataFrame(metric_rows).sort_values("rank", na_position="last")
+print(mt[["model_name", "rank", "accepted", "mase", "wmape", "mae", "r2"]].to_string(
+    index=False, float_format=lambda v: f"{v:,.4f}"))
 
-def inv_clr(Z):
-    """Back to the simplex. This is a softmax, so the result always sums to 1
-    and is always positive — the property that makes every candidate produce a
-    valid composition without post-hoc normalisation."""
-    Z = np.asarray(Z, dtype=float)
-    E = np.exp(Z - Z.max(axis=1, keepdims=True))
-    return E / E.sum(axis=1, keepdims=True)
+# PRESENT band: the champion's days 1-14 from each origin; surges against that origin's training days.
+origins = {int(k): pd.Timestamp(v) for k, v in study["origins"].items()}
+present = res[(res.model == CHAMPION) & (res.h <= 14)]
+served, thr = {}, {}
+heavy_all = hist.set_index("ds").heavy
+for r in present.itertuples():
+    served[r.date] = np.array([r.f1, r.f2, r.f3])
+    o = origins[int(r.origin)]
+    tr = heavy_all[heavy_all.index < o]
+    thr[r.date] = float(tr.mean() + SURGE_SIGMA * tr.std())
+fut_thr = float(heavy_all.mean() + SURGE_SIGMA * heavy_all.std())
+if P is not None:
+    for i, ds in enumerate(fut_ds):
+        served[ds] = P[i]
+        thr[ds] = fut_thr
+ctx_from = min(origins.values())
+actual = hist.set_index("ds")[S.PARTS]
+pred_rows, n_surge, fut_set = [], 0, set(fut_ds)
+for ds in sorted(set(hist[hist.ds >= ctx_from].ds) | set(served)):
+    a = actual.loc[ds].values if ds in actual.index else [None] * 3
+    p = served.get(ds)
+    hp = None if p is None else float(p[1] + p[2])
+    surge = bool(hp is not None and hp > thr[ds])
+    n_surge += surge and ds in fut_set
+    pred_rows.append((ds.date(), *[None if v is None else float(v) for v in a],
+                      *([None] * 3 if p is None else [float(v) for v in p]), hp, surge, CHAMPION,
+                      bool(p is not None and ds in actual.index), bool(ds not in actual.index)))
+print(f"\n  ml_predictive_fleet_mix: {len(pred_rows)} rows from {ctx_from.date()} "
+      f"({sum(r[10] for r in pred_rows)} present, {sum(r[11] for r in pred_rows)} future); "
+      f"future surge threshold {fut_thr * 100:.2f}% heavy share, {n_surge} future day(s) flagged")
 
+# Horizon accuracy for the served model, per bucket.
+hb = bm.set_index(["model", "bucket"])
+hz_rows = []
+for lo, hi in S.BUCKETS:
+    lab = f"d{lo}-{hi}"
+    c = hb.loc[(CHAMPION, lab)]
+    ba = {b: float(table.loc[b, lab]) for b in base_models}
+    bname = min(ba, key=ba.get)
+    bw = float(min(hb.loc[(b, lab)].heavy_wmape for b in base_models))
+    usable = bool(sel.get("usable", {}).get(lab, False)) if not is_baseline(CHAMPION) else False
+    note = (f"Aitchison {float(c.aitchison):.4f} vs best baseline {bname} {ba[bname]:.4f}: "
+            + ("beats every baseline" if usable else "does not beat the best baseline here")
+            + ". Columns: mase = Aitchison over the best baseline's, wmape = heavy-share WMAPE, baseline_wmape = "
+              "the best baseline heavy-share WMAPE, mae = class-share MAE (pp), mape = per-class MAPE")
+    hz_rows.append((CHAMPION, lo, hi, int(c.n), float(c.heavy_wmape), float(c.mape), float(c.aitchison) / ba[bname],
+                    float(c.mae_pp), bw, usable, note))
+print(f"\n  ml_horizon_accuracy ({TARGET}, {CHAMPION}):")
+for r in hz_rows:
+    print(f"    days {r[1]:>2}-{r[2]:<3} n={r[3]:<4} Aitchison x{r[6]:.3f} best baseline  heavy WMAPE "
+          f"{r[4]:.2f}% (best baseline {r[8]:.2f}%)  {'usable' if r[9] else 'NOT usable'}")
 
-def aitchison(P, Q):
-    """Per-row Aitchison distance: Euclidean distance between CLR coordinates."""
-    return np.sqrt(((clr(P) - clr(Q)) ** 2).sum(axis=1))
-
-
-def tvd(P, Q):
-    """Total variation distance: the share of the fleet placed in the wrong
-    class. Reported because it is directly interpretable."""
-    return 0.5 * np.abs(_closure(P) - _closure(Q)).sum(axis=1)
-
-
-# ────────────────────────────────────────────────────────────────── features ──
-def design(ds, t0):
-    """Deterministic features only: trend plus day-of-week.
-
-    No lags, deliberately. A lagged model has to be rolled forward one day at a
-    time to reach day 7, and each step feeds its own error into the next; over
-    a 7-day horizon that compounds into drift that has nothing to do with the
-    model's grasp of the mix. Trend and weekday can be evaluated directly at any
-    future date, so day 7 is predicted as honestly as day 1.
-    """
-    ds = pd.to_datetime(pd.Series(ds).values)
-    trend = ((ds - t0).days.values / 365.25).reshape(-1, 1)
-    dow = pd.get_dummies(pd.Series(ds).dt.dayofweek, prefix="d").reindex(
-        columns=[f"d_{i}" for i in range(7)], fill_value=0).values.astype(float)
-    # Drop one weekday to keep the design matrix full rank.
-    return np.hstack([np.ones((len(ds), 1)), trend, dow[:, 1:]])
-
-
-# ───────────────────────────────────────────────────────────────── candidates ──
-def fit_dirichlet(tr, fut):
-    """Dirichlet regression by maximum likelihood.
-
-    alpha_k(x) = exp(x @ B_k), and the mean composition is alpha / sum(alpha).
-    Because the Dirichlet is defined on the simplex, this is the only candidate
-    that needs no transform — the constraint is in the likelihood rather than
-    bolted on afterwards.
-    """
-    t0 = tr.ds.min()
-    X, Y = design(tr.ds, t0), _closure(tr[PARTS].values)
-    p = X.shape[1]
-
-    logY = np.log(Y)
-
-    def nll(b):
-        A = np.exp(np.clip(X @ b.reshape(p, 3), -6, 6))
-        a0 = A.sum(axis=1)
-        ll = gammaln(a0).sum() - gammaln(A).sum() + ((A - 1.0) * logY).sum()
-        return -ll / len(Y)
-
-    # Start from a fit that already knows the average mix, so the optimiser is
-    # refining a sensible composition rather than searching from nothing.
-    b0 = np.zeros((p, 3))
-    b0[0] = np.log(np.clip(Y.mean(axis=0) * 40, 1e-3, None))
-    r = minimize(nll, b0.ravel(), method="L-BFGS-B",
-                 options={"maxiter": 500, "maxfun": 5000})
-
-    A = np.exp(np.clip(design(fut.ds, t0) @ r.x.reshape(p, 3), -6, 6))
-    return A / A.sum(axis=1, keepdims=True)
-
-
-def fit_xgboost(tr, fut):
-    """One regressor per CLR coordinate, mapped back through the inverse CLR."""
-    from xgboost import XGBRegressor
-    t0 = tr.ds.min()
-    X, Z = design(tr.ds, t0), clr(tr[PARTS].values)
-    Xf = design(fut.ds, t0)
-    out = np.column_stack([
-        XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05,
-                     subsample=0.9, random_state=42, verbosity=0)
-        .fit(X, Z[:, k]).predict(Xf)
-        for k in range(3)
-    ])
-    return inv_clr(out)
-
-
-def fit_lstm(tr, fut):
-    """Multivariate LSTM over the three CLR series jointly.
-
-    Multivariate rather than three univariate runs because the parts move
-    against each other by definition — a point gained by Class 1 is a point
-    lost by 2 or 3 — so the series carry information about one another that
-    separate models cannot use.
-    """
-    import tensorflow as tf
-    from tensorflow.keras import layers, Sequential
-    tf.random.set_seed(42)
-    SEQ = 28
-    Z = clr(tr[PARTS].values).astype("float32")
-    mu, sd = Z.mean(axis=0), np.where(Z.std(axis=0) == 0, 1.0, Z.std(axis=0))
-    z = (Z - mu) / sd
-    X = np.array([z[i - SEQ:i] for i in range(SEQ, len(z))])
-    Y = np.array([z[i] for i in range(SEQ, len(z))])
-    m = Sequential([layers.Input((SEQ, 3)), layers.LSTM(32), layers.Dense(3)])
-    m.compile("adam", "mse")
-    m.fit(X, Y, epochs=30, batch_size=32, verbose=0)
-    win, out = list(z[-SEQ:]), []
-    for _ in range(len(fut)):
-        p = m.predict(np.array(win[-SEQ:])[None, ...], verbose=0)[0]
-        out.append(p)
-        win.append(p)
-    return inv_clr(np.array(out) * sd + mu)
-
-
-def fit_prophet(tr, fut):
-    """Prophet on each CLR coordinate, recombined through the inverse CLR."""
-    from prophet import Prophet
-    t_end = tr.ds.max()
-    Z = clr(tr[PARTS].values)
-    cols = []
-    for k in range(3):
-        m = Prophet(weekly_seasonality=True, yearly_seasonality=True,
-                    daily_seasonality=False)
-        m.fit(pd.DataFrame({"ds": tr.ds, "y": Z[:, k]}))
-        fc = m.predict(pd.DataFrame({"ds": fut.ds}))
-        cols.append(fc.yhat.values)
-    _ = t_end
-    return inv_clr(np.column_stack(cols))
-
-
-MODELS = {
-    "Dirichlet": fit_dirichlet,
-    "XGBoost": fit_xgboost,
-    "LSTM": fit_lstm,
-    "Prophet": fit_prophet,
+results = {
+    "generated": pd.Timestamp.now().isoformat(timespec="seconds"), "code_version": S.code_version(),
+    "protocol": "EVALUATION_PROTOCOL.md (10 Nov 2026)",
+    "study": {"file": json_path.name, "fingerprint": study["fingerprint"], "generated": study["generated"]},
+    "champion": CHAMPION, "champion_is_baseline": bool(sel.get("champion_is_baseline")),
+    "baseline": {"name": best_base, "aitchison": base_score}, "selection": sel,
+    "previous_champion": prev_note, "publish_problems": publish_problems,
+    "models": mt.to_dict("records"), "surge_threshold_future": fut_thr,
+    "horizon_accuracy": [dict(zip(["model", "h_lo", "h_hi", "n", "heavy_wmape", "mape", "aitchison_vs_best_baseline",
+                                   "mae_pp", "baseline_heavy_wmape", "usable", "note"], r)) for r in hz_rows],
 }
 
-# ──────────────────────────────────────────────────────────────────── load ──
-banner("STEP 1: Loading the corridor fleet-mix series")
-conn = psycopg2.connect(PG)
-d = pd.read_sql_query("""
-    SELECT date::date        AS ds,
-           SUM(class_1)::float AS c1,
-           SUM(class_2)::float AS c2,
-           SUM(class_3)::float AS c3
-    FROM gold.fact_traffic_hourly
-    GROUP BY 1
-    HAVING SUM(class_1 + class_2 + class_3) > 0
-    ORDER BY 1
-""", conn)
-d["ds"] = pd.to_datetime(d.ds)
-tot = d[PARTS].sum(axis=1)
-for c in PARTS:
-    d[c] = d[c] / tot
-d["heavy"] = d.c2 + d.c3
-
-print(f"  {len(d):,} days | {d.ds.min().date()} -> {d.ds.max().date()}")
-print(f"  mean mix  C1 {d.c1.mean()*100:.2f}%  C2 {d.c2.mean()*100:.2f}%  C3 {d.c3.mean()*100:.2f}%")
-print(f"  heavy share (C2+C3)  mean {d.heavy.mean()*100:.2f}%  sd {d.heavy.std()*100:.2f}pp")
-
-origins = [len(d) - HORIZON - i * STEP for i in range(N_ORIGINS)][::-1]
-origins = [o for o in origins if o > 120]
-print(f"  {len(origins)} rolling origins, horizon {HORIZON}d")
-
-# ───────────────────────────────────────────────────────────────── evaluate ──
-banner(f"STEP 2: Rolling-origin evaluation ({len(origins)} origins, h={HORIZON}d)")
-
-# Prediction cache, same device train_emissions.py uses and for the same
-# reason: 42 origins x (an LSTM trained for 30 epochs + three Prophet fits) is
-# tens of minutes, and nothing about it changes while the series and the
-# protocol are unchanged. The key covers both, so extending the data or editing
-# the protocol invalidates it automatically rather than silently serving stale
-# predictions.
-import os as _os
-import pickle as _pickle
-CACHE = str(_Path(__file__).with_name("fleet_mix_preds.pkl"))
-CACHE_KEY = ("clr-deterministic-v1", len(d), str(d.ds.max().date()),
-             len(origins), HORIZON, tuple(sorted(MODELS)))
-_cached = None
-if _os.path.exists(CACHE):
-    try:
-        with open(CACHE, "rb") as fh:
-            k, v = _pickle.load(fh)
-        if k == CACHE_KEY:
-            _cached = v
-            print(f"  reusing cached predictions ({CACHE}) - series and protocol unchanged")
-    except Exception:
-        _cached = None
-
-preds = {k: {} for k in MODELS}
-preds["Persistence"] = {}
-preds["Climatology"] = {}
-fails = {k: 0 for k in MODELS}
-errors = {}
-
-if _cached is not None:
-    preds, fails, errors = _cached
-
-for oi, cut in enumerate([] if _cached is not None else origins, 1):
-    tr, fut = d.iloc[:cut], d.iloc[cut:cut + HORIZON]
-    if len(fut) < HORIZON:
-        break
-    for name, fn in MODELS.items():
-        try:
-            P = fn(tr, fut)
-            for ds, row in zip(fut.ds, P):
-                preds[name][ds] = row
-        except Exception as e:
-            fails[name] += 1
-            errors.setdefault(name, str(e)[:90])
-
-    # Baselines. Persistence is a hard one here on purpose: the mix is sticky,
-    # so "assume tomorrow looks like today" is genuinely difficult to beat, and
-    # a candidate that cannot is not adding anything.
-    last = tr[PARTS].values[-1]
-    dow_mean = tr.assign(k=tr.ds.dt.dayofweek).groupby("k")[PARTS].mean()
-    for ds in fut.ds:
-        preds["Persistence"][ds] = last
-        preds["Climatology"][ds] = dow_mean.loc[ds.dayofweek].values
-    if oi % 10 == 0 or oi == 1:
-        print(f"  origin {oi}/{len(origins)}  train={cut}d  "
-              f"predict {fut.ds.iloc[0].date()} -> {fut.ds.iloc[-1].date()}")
-
-if _cached is None:
-    _os.makedirs(_os.path.dirname(CACHE), exist_ok=True)
-    with open(CACHE, "wb") as fh:
-        _pickle.dump((CACHE_KEY, (preds, fails, errors)), fh)
-
-for name, n in fails.items():
-    if n:
-        print(f"  {name}: {n}/{len(origins)} origins failed — {errors.get(name,'')}")
-
-# ────────────────────────────────────────────────────────────────── results ──
-banner("STEP 3: Results")
-truth = d.set_index("ds")[PARTS]
-rows = []
-for name, pm in preds.items():
-    idx = sorted(pm)
-    if not idx:
-        continue
-    A = truth.loc[idx].values
-    F = np.array([pm[i] for i in idx])
-    ad = aitchison(A, F)
-    tv = tvd(A, F)
-    err_pp = np.abs(A - F) * 100
-    heavy_a, heavy_f = A[:, 1] + A[:, 2], F[:, 1] + F[:, 2]
-    rows.append({
-        "model": name, "n": len(idx),
-        "aitchison": float(ad.mean()),
-        "tvd_pct": float(tv.mean() * 100),
-        "mae_pp": float(err_pp.mean()),
-        "rmse_pp": float(np.sqrt(((A - F) ** 2 * 1e4).mean())),
-        "mape": float(np.mean(np.abs(A - F) / np.abs(A)) * 100),
-        "heavy_wmape": float(np.abs(heavy_a - heavy_f).sum() / heavy_a.sum() * 100),
-        "heavy_r2": float(1 - ((heavy_a - heavy_f) ** 2).sum()
-                          / ((heavy_a - heavy_a.mean()) ** 2).sum()),
-    })
-
-res = pd.DataFrame(rows).sort_values("aitchison").reset_index(drop=True)
-print(f"\n  Evaluated on {res.n.iloc[0]:,} forecast-days\n")
-print(res[["model", "aitchison", "tvd_pct", "mae_pp", "mape", "heavy_wmape", "heavy_r2"]]
-      .to_string(index=False, float_format=lambda v: f"{v:,.4f}"))
-
-BASE_NAMES = ["Persistence", "Climatology"]
-bmask = res.model.isin(BASE_NAMES)
-base = res[bmask].aitchison.min()
-base_name = res.loc[res[bmask].aitchison.idxmin(), "model"]
-pers = float(res.loc[res.model == "Persistence", "aitchison"].iloc[0])
-print(f"\n  Baseline to beat: {base:.4f} Aitchison ({base_name})")
-
-res["is_candidate"] = res.model.isin(MODELS)
-# Skill ratio against persistence — the compositional analogue of MASE. Below 1
-# means the model is worth running instead of assuming nothing changes.
-res["skill"] = res.aitchison / pers
-res["accepted"] = res.is_candidate & (res.aitchison < base) & (res.skill < 1.0)
-res["rank"] = np.where(res.is_candidate, res.groupby("is_candidate").cumcount() + 1, None)
-
-_best = res[res.is_candidate].aitchison.min() if res.is_candidate.any() else np.nan
-res["tied"] = res.is_candidate & ((res.aitchison - _best).abs() <= TIE_MARGIN_AITCH)
-TIED = list(res[res.tied].model)
+METRIC_SQL = """INSERT INTO gold.ml_model_metrics
+      (model_name,target,rmse,mae,wmape,r2,mase,mape,rank,accepted,rejected_reason,uses_weather,diagnosis,split_label,
+       updated_at)
+    VALUES (%s,'Fleet Mix',%s,%s,%s,%s,%s,%s,%s,%s,%s,false,%s,%s,now())"""
+PRED_SQL = """INSERT INTO gold.ml_predictive_fleet_mix
+      (forecast_date,actual_c1,actual_c2,actual_c3,pred_c1,pred_c2,pred_c3,heavy_pred,heavy_surge,champion_model,
+       is_holdout,is_future)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+HZ_SQL = """INSERT INTO gold.ml_horizon_accuracy
+      (target, model_name, h_lo, h_hi, n, wmape, mape, mase, mae, baseline_wmape, usable, note)
+    VALUES ('Fleet Mix',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
 
 
-def _diagnosis(r):
-    if not r.is_candidate:
-        return "baseline, not a candidate"
-    if len(TIED) > 1 and r.tied:
-        others = [m for m in TIED if m != r.model]
-        return (f"tied with {', '.join(others)} - within {TIE_MARGIN_AITCH} Aitchison, "
-                "so the ordering between them is not meaningful")
-    return None
+def nn(v):
+    return None if v is None or (isinstance(v, float) and not np.isfinite(v)) else v
 
 
-res["diagnosis"] = res.apply(_diagnosis, axis=1)
-if len(TIED) > 1:
-    print(f"\n  TIE: {', '.join(TIED)} - within {TIE_MARGIN_AITCH} Aitchison. Co-champions.")
+def metric_params(r):
+    return (r["model_name"], nn(r["rmse"]), nn(r["mae"]), nn(r["wmape"]), nn(r["r2"]), nn(r["mase"]), nn(r["mape"]),
+            None if r["rank"] is None or pd.isna(r["rank"]) else int(r["rank"]), r["accepted"], r["rejected_reason"],
+            r["diagnosis"], r["split_label"])
 
-print("\n  VERDICT")
-for r in res[res.is_candidate].itertuples():
-    why = []
-    if not r.aitchison < base:
-        why.append(f"Aitchison {r.aitchison:.4f} does not beat baseline {base:.4f}")
-    if not r.skill < 1.0:
-        why.append(f"skill {r.skill:.3f} >= 1.0 (no better than persistence)")
-    print(f"    {r.model:<12} Aitchison {r.aitchison:7.4f}  TVD {r.tvd_pct:5.2f}%  "
-          f"skill {r.skill:5.3f}  "
-          + ("accepted" if r.accepted else "rejected - " + "; ".join(why)))
-
-champ = res[res.accepted]
-champ_name = champ.model.iloc[0] if len(champ) else None
-print(f"\n  champion: {champ_name or 'none accepted'}")
 
 if DRY_RUN:
-    banner("DONE (dry run) — nothing written")
-    conn.close()
-    _sys.exit(0)
+    banner("DRY RUN: nothing written")
+    with psycopg2.connect(S.PG) as conn:
+        conn.set_session(readonly=True)
+        cur = conn.cursor()
+        for t, cols in (("ml_model_metrics", ["model_name", "target", "rmse", "mae", "wmape", "r2", "mase", "mape",
+                                              "rank", "accepted", "rejected_reason", "uses_weather", "diagnosis",
+                                              "split_label"]),
+                        ("ml_predictive_fleet_mix", ["forecast_date", "actual_c1", "actual_c2", "actual_c3", "pred_c1",
+                                                     "pred_c2", "pred_c3", "heavy_pred", "heavy_surge",
+                                                     "champion_model", "is_holdout", "is_future"]),
+                        ("ml_horizon_accuracy", ["target", "model_name", "h_lo", "h_hi", "n", "wmape", "mape", "mase",
+                                                 "mae", "baseline_wmape", "usable", "note"])):
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='gold' AND table_name=%s",
+                        (t,))
+            have = {x[0] for x in cur.fetchall()}
+            missing = [c for c in cols if c not in have]
+            print(f"  gold.{t}: {'all target columns present' if not missing else 'MISSING ' + ', '.join(missing)}")
+        n_sql = 0
+        for r in mt.to_dict("records"):
+            cur.mogrify(METRIC_SQL, metric_params(r)); n_sql += 1
+        for r in pred_rows:
+            cur.mogrify(PRED_SQL, r); n_sql += 1
+        for r in hz_rows:
+            cur.mogrify(HZ_SQL, r); n_sql += 1
+        print(f"  {n_sql} statements rendered (not executed)")
+    print("  publish: " + ("BLOCKED - " + " | ".join(publish_problems) if publish_problems else "would publish"))
+    print("  gold.ml_model_metrics, gold.ml_predictive_fleet_mix and gold.ml_horizon_accuracy are unchanged.")
+    raise SystemExit(0)
 
-# ──────────────────────────────────────────────────────────────────── write ──
-banner("STEP 4: Writing to AWS")
+if publish_problems:
+    banner("NOT PUBLISHED")
+    for p in publish_problems:
+        print("  " + p)
+    raise SystemExit(2)
+
+banner("STEP 6: Writing (one transaction)")
+conn = psycopg2.connect(S.PG)
 try:
-    conn.cursor().execute("SELECT 1")
-except Exception:
-    print("  connection went idle during training - reconnecting")
-    conn = psycopg2.connect(PG)
-cur = conn.cursor()
-
-cur.execute("DELETE FROM gold.ml_model_metrics WHERE target = 'Fleet Mix'")
-for r in res.itertuples():
-    reason = None
-    if r.is_candidate and not r.accepted:
-        w = []
-        if not r.aitchison < base:
-            w.append(f"Aitchison {r.aitchison:.4f} does not beat baseline {base:.4f}")
-        if not r.skill < 1.0:
-            w.append(f"skill {r.skill:.3f} >= 1.0 (no better than persistence)")
-        reason = "; ".join(w)
-    elif not r.is_candidate:
-        reason = "baseline, not a candidate"
+    cur = conn.cursor()
+    cur.execute("DELETE FROM gold.ml_model_metrics WHERE target = %s", (TARGET,))
+    for r in mt.to_dict("records"):
+        cur.execute(METRIC_SQL, metric_params(r))
     cur.execute("""
-        INSERT INTO gold.ml_model_metrics
-          (model_name,target,rmse,mae,wmape,r2,mase,mape,rank,accepted,
-           rejected_reason,uses_weather,diagnosis,split_label,updated_at)
-        VALUES (%s,'Fleet Mix',%s,%s,%s,%s,%s,%s,%s,%s,%s,false,%s,%s,now())""",
-        (r.model, r.rmse_pp, r.mae_pp, r.heavy_wmape, r.heavy_r2, r.skill, r.mape,
-         int(r.rank) if r.is_candidate else None, bool(r.accepted), reason,
-         r.diagnosis, f"rolling-origin {HORIZON}d x {len(origins)}"))
-print(f"  ml_model_metrics: {len(res)} rows under target='Fleet Mix'")
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS gold.ml_predictive_fleet_mix (
-    id              serial PRIMARY KEY,
-    forecast_date   date NOT NULL,
-    actual_c1       numeric(7,5),
-    actual_c2       numeric(7,5),
-    actual_c3       numeric(7,5),
-    pred_c1         numeric(7,5),
-    pred_c2         numeric(7,5),
-    pred_c3         numeric(7,5),
-    heavy_pred      numeric(7,5),
-    heavy_surge     boolean,
-    champion_model  text,
-    is_holdout      boolean,
-    is_future       boolean,
-    updated_at      timestamptz DEFAULT now()
-)""")
-cur.execute("""COMMENT ON TABLE gold.ml_predictive_fleet_mix IS
-  'Daily Class 1/2/3 share forecast. Shares are fractions summing to 1, not
-   percentages. is_holdout marks days scored in rolling-origin evaluation;
-   is_future marks unscored projection beyond the last observation.'""")
-cur.execute("DELETE FROM gold.ml_predictive_fleet_mix")
-
-if champ_name is None:
-    print("  no model accepted — writing history only, no forecast")
-    served = {}
-    future = pd.DataFrame(columns=["ds"])
-else:
-    served = preds[champ_name]
-    last_ds = d.ds.max()
-    future = pd.DataFrame({"ds": pd.date_range(last_ds + pd.Timedelta(days=1),
-                                               periods=FUTURE_DAYS, freq="D")})
-    P = MODELS[champ_name](d, future)
-    for ds, row in zip(future.ds, P):
-        served[ds] = row
-
-hmu, hsd = d.heavy.mean(), d.heavy.std()
-surge_at = hmu + SURGE_SIGMA * hsd
-CONTEXT_DAYS = 120
-ctx_from = d.ds.max() - pd.Timedelta(days=CONTEXT_DAYS)
-
-n_rows = n_surge = 0
-for ds in sorted(set(d[d.ds >= ctx_from].ds) | set(served)):
-    act = d.loc[d.ds == ds, PARTS]
-    a = act.values[0] if len(act) else [None, None, None]
-    p = served.get(ds)
-    hp = float(p[1] + p[2]) if p is not None else None
-    surge = bool(hp is not None and hp > surge_at)
-    n_surge += surge
+    CREATE TABLE IF NOT EXISTS gold.ml_predictive_fleet_mix (
+        id serial PRIMARY KEY, forecast_date date NOT NULL,
+        actual_c1 numeric(7,5), actual_c2 numeric(7,5), actual_c3 numeric(7,5),
+        pred_c1 numeric(7,5), pred_c2 numeric(7,5), pred_c3 numeric(7,5),
+        heavy_pred numeric(7,5), heavy_surge boolean, champion_model text,
+        is_holdout boolean, is_future boolean, updated_at timestamptz DEFAULT now())""")
+    cur.execute("""COMMENT ON TABLE gold.ml_predictive_fleet_mix IS
+      'Daily Class 1/2/3 share forecast (fractions summing to 1). is_holdout = days 1-14 of each rolling origin
+       (EVALUATION_PROTOCOL.md), the forecasts the published metrics came from; is_future = the 30-day projection
+       refitted on the whole record. Written by train_fleet_mix.py.'""")
+    cur.execute("DELETE FROM gold.ml_predictive_fleet_mix")
+    for r in pred_rows:
+        cur.execute(PRED_SQL, r)
     cur.execute("""
-        INSERT INTO gold.ml_predictive_fleet_mix
-          (forecast_date,actual_c1,actual_c2,actual_c3,pred_c1,pred_c2,pred_c3,
-           heavy_pred,heavy_surge,champion_model,is_holdout,is_future)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-        (ds.date(),
-         None if a[0] is None else float(a[0]),
-         None if a[1] is None else float(a[1]),
-         None if a[2] is None else float(a[2]),
-         None if p is None else float(p[0]),
-         None if p is None else float(p[1]),
-         None if p is None else float(p[2]),
-         hp, surge, champ_name,
-         bool(p is not None and len(act) > 0),
-         bool(len(act) == 0)))
-    n_rows += 1
-
-conn.commit()
-print(f"  ml_predictive_fleet_mix: {n_rows} rows "
-      f"({CONTEXT_DAYS}d context + holdout + {FUTURE_DAYS}d projection)")
-print(f"  heavy-vehicle surge threshold: {surge_at*100:.2f}% "
-      f"(mean {hmu*100:.2f}% + {SURGE_SIGMA}sd), {n_surge} day(s) flagged")
-
-out = _Path(__file__).with_name("fleet_mix_results.json")
-out.write_text(json.dumps({
-    "champion": champ_name,
-    "baseline": {"name": base_name, "aitchison": base},
-    "tied": TIED,
-    "models": res.drop(columns=["tied"]).to_dict("records"),
-    "surge_threshold": float(surge_at),
-}, indent=2, default=str))
-print(f"  {out.name} written")
-
-conn.close()
+      CREATE TABLE IF NOT EXISTS gold.ml_horizon_accuracy (
+        id serial PRIMARY KEY, target text NOT NULL, model_name text NOT NULL, h_lo int NOT NULL, h_hi int NOT NULL,
+        n int, wmape numeric(10,4), mape numeric(10,4), mase numeric(10,4), mae numeric(14,2),
+        baseline_wmape numeric(10,4), usable boolean, note text, updated_at timestamptz DEFAULT now())""")
+    cur.execute("DELETE FROM gold.ml_horizon_accuracy WHERE target = %s", (TARGET,))
+    for r in hz_rows:
+        cur.execute(HZ_SQL, r)
+    conn.commit()
+finally:
+    conn.close()
+out = HERE / "fleet_mix_results.json"
+out.write_text(json.dumps(results, indent=2, default=str))
+print(f"  published {CHAMPION}; {out.name} written")
 banner("DONE")

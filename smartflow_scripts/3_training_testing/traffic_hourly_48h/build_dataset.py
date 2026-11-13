@@ -8,12 +8,17 @@ Series: one per (exit, direction, role, toll system) in gold.fact_traffic_hourly
 with Class 1, 2 and 3 counts. A trip is counted once, where it paid, so the 32 series add up to the corridor exactly and
 a class split adds up to its plaza.
 
-Data provenance (2026-10-24):
+Data provenance:
   - 2022-2024: the client's hourly export, level-scaled to his daily files (gold.toll_level_adjustment v2). Real hourly
     pattern, adjusted level.
-  - 2025: the client's hourly export as delivered (real).
-  - 2026-01..06: SYNTHETIC (made by the project team, not the client). Kept in the tensor only as the latest history a
-    served forecast starts from; never trained on, never scored. `is_synthetic` marks those hours.
+  - 2025 and 2026-01-01 .. 2026-05-24: the client's hourly exports as delivered (real; 2026 loaded 6 Nov 2026).
+  - After 2026-05-24 the warehouse still holds broken, missing and synthetic days (25 May - 30 Jun 2026) until the client
+    re-extracts them. Those days are treated as UNKNOWN: the tensor's history ends at the last real day R
+    (EVALUATION_PROTOCOL.md section 1; common.rolling_eval.REAL_END_VOLUME, or --real-end), and the served forecast
+    starts the hour after R. The run says so (real_end, db_latest_day, unknown_days).
+  - Inside the real period a day whose corridor total is under a quarter of the usual same weekday (median of the 8
+    weeks before; holidays and the year-end week never flagged) is a broken upload: it is zeroed for every series, so
+    it is MISSING (never an input, never a target, never scored) and listed in broken_days.
 Missing plaza-hours (no row) are zero traffic; hours where the whole corridor is empty (toll holidays) are flagged
 `corridor_gap` and excluded from scoring.
 
@@ -25,8 +30,13 @@ weather of the hours it predicts (no archive of issued forecasts exists in the w
 History runs to the latest uploaded day; the tensor then carries 48 more hours (calendar features only) so a
 forecast issued after the latest upload can read the known calendar of the hours it predicts.
 
-Output: _work/cache/traffic_hourly_48h/dataset.npz
+    python build_dataset.py                       # writes _work/cache/traffic_hourly_48h/dataset.npz
+    python build_dataset.py --dry-run             # same, into _work/cache/traffic_hourly_48h/dryrun/ (nothing live)
+    python build_dataset.py --real-end 2026-06-30 # a later last real day, once the client re-extracts June
+
+Output: dataset.npz (read-only on the database).
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -35,22 +45,27 @@ import pandas as pd
 import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "config"))
-from db import POSTGRES_URL, WORK  # noqa: E402
+from db import POSTGRES_URL  # noqa: E402
+from features import REAL_END_VOLUME, cache_dir  # noqa: E402
 
-OUT = Path(WORK) / "cache" / "traffic_hourly_48h"
-OUT.mkdir(parents=True, exist_ok=True)
 START = "2022-01-01"
-# The client's files end 2025-12-31; every later hour in the warehouse is the team's synthetic 2026 (2026-10-24).
-# Move this when real 2026 records are uploaded.
-REAL_END = pd.Timestamp("2025-12-31 23:00")
 H = 48
+BROKEN_SHARE = 0.25          # a day under 25% of its usual same weekday is a broken upload, not a quiet day
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true", help="write into the dryrun/ folder; nothing live is touched")
+    ap.add_argument("--real-end", default=str(REAL_END_VOLUME.date()), help="last day of REAL traffic data")
+    args = ap.parse_args()
+    OUT = cache_dir(args.dry_run)
     conn = psycopg2.connect(POSTGRES_URL)
     cur = conn.cursor()
     cur.execute("SELECT max(date)::text FROM gold.fact_traffic_hourly WHERE status = 'nlex'")
-    END = cur.fetchone()[0]                                   # the latest upload: forecasts start the hour after it
+    DB_END = cur.fetchone()[0]                                # the latest upload (may run past the real record)
+    END = min(pd.Timestamp(DB_END), pd.Timestamp(args.real_end)).strftime("%Y-%m-%d")   # history ends at the last REAL day
+    cur.execute("SELECT count(DISTINCT date) FROM gold.fact_traffic_hourly WHERE status = 'nlex' AND date > %s", (END,))
+    UNKNOWN_DAYS = int(cur.fetchone()[0])
     fact = pd.read_sql(
         f"""SELECT date, hour, exit_canonical, COALESCE(direction,'-') AS direction, COALESCE(role,'-') AS role,
                    COALESCE(toll_system,'-') AS toll_system, class_1, class_2, class_3
@@ -79,13 +94,25 @@ def main():
     for c, col in enumerate(("class_1", "class_2", "class_3")):
         np.add.at(Y[:, :, c], (pos_t, pos_s), fact[col].to_numpy(np.float32))
 
+    hols = set(hol.date_day.dt.normalize())
+    # Broken uploads inside the real period: zeroed for every series, so they are missing everywhere downstream.
+    dtot = pd.Series(Y[:n_hist].sum(axis=(1, 2)).reshape(-1, 24).sum(axis=1), index=idx[:n_hist:24])
+    broken = []
+    for d, v in dtot.items():
+        same = dtot[(dtot.index < d) & (dtot.index >= d - pd.Timedelta(weeks=8)) & (dtot.index.dayofweek == d.dayofweek)]
+        same = same[[x not in hols and x.strftime("%Y-%m-%d") not in broken for x in same.index]]
+        yearend = (d.month == 12 and d.day >= 24) or (d.month == 1 and d.day <= 1)
+        if len(same) >= 4 and v < BROKEN_SHARE * same.median() and d not in hols and not yearend:
+            broken.append(d.strftime("%Y-%m-%d"))
+    for d in broken:
+        i = idx.get_loc(pd.Timestamp(d))
+        Y[i:i + 24] = 0
     corridor = Y.sum(axis=(1, 2))
     corridor_gap = corridor <= 0
     corridor_gap[n_hist:] = False
-    is_synth = idx > REAL_END
+    is_synth = np.zeros(T, dtype=bool)                        # every history hour is real (2022-24 level-adjusted)
     is_future = np.arange(T) >= n_hist
 
-    hols = set(hol.date_day.dt.normalize())
     evs = set(ev.d.dt.normalize())
     day = idx.normalize()
     how = idx.hour.to_numpy()
@@ -108,10 +135,12 @@ def main():
     np.savez_compressed(OUT / "dataset.npz", Y=Y, cal=cal, rain=r, ts=idx.astype("int64").to_numpy(),
                         keys=np.array(keys), cal_names=np.array(cal_names),
                         corridor_gap=corridor_gap, is_synthetic=is_synth, is_future=is_future, n_hist=n_hist,
-                        history_end=str(idx[n_hist - 1]))
-    real = ~is_synth
-    print(f"series {S}, history {idx[0]} -> {idx[n_hist - 1]} (real {real.sum()} h, synthetic {(is_synth & ~is_future).sum()} h), "
-          f"+{H} forecast hours")
+                        history_end=str(idx[n_hist - 1]), real_end=END, db_latest_day=DB_END,
+                        unknown_days=UNKNOWN_DAYS, broken_days=np.array(broken, dtype=str))
+    real = ~is_synth & ~is_future
+    print(f"series {S}, history {idx[0]} -> {idx[n_hist - 1]} (real {real.sum()} h), +{H} forecast hours")
+    print(f"last real day {END}; the warehouse runs to {DB_END}: {UNKNOWN_DAYS} later day(s) treated as unknown "
+          f"(broken/synthetic until re-extracted); broken days inside the real period: {broken or 'none'}")
     print(f"rain: hours matched {rain.ts.isin(idx).sum()}/{T}, wet hours {(r > 0).mean():.1%}, mean {r.mean():.3f} mm/h")
     print(f"corridor-empty hours: {corridor_gap[real].sum()}; mean trips/day 2025: "
           f"{Y[(idx.year == 2025)].sum() / 365:,.0f}")

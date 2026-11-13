@@ -4,7 +4,7 @@ import { createReadStream } from 'fs';
 import { createInterface } from 'readline';
 
 const AWS_PG = {
-  host: 'smartflow-db.choym2mcymec.ap-southeast-1.rds.amazonaws.com',
+  host: '<RDS_HOST>',
   port: 5432,
   user: 'postgres',
   password: 'REMOVED',

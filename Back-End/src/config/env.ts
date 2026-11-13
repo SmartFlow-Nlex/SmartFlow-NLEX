@@ -27,8 +27,9 @@ const envSchema = z.object({
   // schema costs latency and tokens without improving the result. "enabled"
   // restores it for a model that needs it or rejects the parameter.
   GLM_THINKING: z.enum(["disabled", "enabled"]).default("disabled"),
-  // Z.ai's free tier queues requests for 10-40s under load; the paid tier
-  // answers in 1-2s. The ceiling has to clear the slow case.
+  // Most answers take 5-30 s, but a busy provider can take over a minute (measured on OpenRouter's
+  // z-ai/glm-5.3-flash, Sep-Oct 2026). The ceiling has to clear the slow case. (The old comment blamed
+  // a "free tier": SmartFlow uses the paid model through OpenRouter, not a free one.)
   GLM_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(180_000).default(90_000),
 
   // Zero Data Retention. Only meaningful when GLM_BASE_URL points at

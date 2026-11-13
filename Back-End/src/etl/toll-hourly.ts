@@ -42,7 +42,7 @@ import type { PoolClient } from "pg";
 import { db } from "../config/db.js";
 import { resolvePlaza, type ResolvedPlaza } from "./canonical-exit.js";
 import type { RawRow } from "./parser.js";
-import { compareToll, type UploadComparison } from "./compare.js";
+import { compareToll, profileToll, type TollProfile, type UploadComparison } from "./compare.js";
 import { UndoJournal, type UndoKey } from "./undo.js";
 import { tripKm } from "./trip-km.js";
 
@@ -69,6 +69,8 @@ export interface TollHourlyAggregate {
   vkm: Map<string, Vkm>;
   dates: string[];
   rowsAccepted: number;
+  /** Accepted rows per day, so a day left out by the day screen (day-screen.ts) can say how many rows it held. */
+  rowsByDate?: Map<string, number>;
   rowsRejected: number;
   /** Rows by why they were held back. */
   heldBack: { late: number; offCorridorExit: number; malformed: number };
@@ -146,6 +148,7 @@ export function aggregateTollHourly(rows: Iterable<RawRow>, cutoff: Cutoff = loa
   };
   let accepted = 0;
   let unplacedOrigins = 0;
+  const rowsByDate = new Map<string, number>();
 
   for (const row of rows) {
     const date = String(row.date ?? "");
@@ -182,6 +185,7 @@ export function aggregateTollHourly(rows: Iterable<RawRow>, cutoff: Cutoff = loa
 
     accepted++;
     dates.add(date);
+    rowsByDate.set(date, (rowsByDate.get(date) ?? 0) + 1);
     // Keyed on the transaction plaza: OS collects at entry, CS at exit, so this
     // column is where the trip was counted, once. (build_fact.mjs)
     const fk = `${date}\t${hour}\t${ex.canonical}\t${ex.direction ?? ""}\t${ex.role ?? ""}\t${ex.system ?? ""}\t${ex.status}`;
@@ -228,6 +232,7 @@ export function aggregateTollHourly(rows: Iterable<RawRow>, cutoff: Cutoff = loa
     vkm,
     dates: [...dates].sort(),
     rowsAccepted: accepted,
+    rowsByDate,
     rowsRejected: heldBack.late + heldBack.offCorridorExit + heldBack.malformed,
     heldBack,
     unplacedOrigins,
@@ -247,6 +252,8 @@ export interface TollHourlyLoad {
   viewRefreshed: boolean;
   /** The file against what is already loaded for the same plaza-hours. */
   comparison: UploadComparison | null;
+  /** The file against the same period a year earlier (compare.ts profileToll). */
+  profile: TollProfile | null;
   /** The committed load's undo journal (undo.ts). */
   undoBatch: number | null;
   committed: boolean;
@@ -356,7 +363,7 @@ export async function loadTollHourly(agg: TollHourlyAggregate, opts: { dryRun?: 
   const t0 = Date.now();
   const out: TollHourlyLoad = {
     days: agg.dates.length, factRows: 0, originRows: 0, dailyRows: 0, emissionRows: 0,
-    viewRefreshed: false, comparison: null, undoBatch: null, committed: false, errors: [], durationMs: 0,
+    viewRefreshed: false, comparison: null, profile: null, undoBatch: null, committed: false, errors: [], durationMs: 0,
   };
   if (!db) { out.errors.push("No database connection is configured."); return out; }
   if (agg.dates.length === 0) { out.errors.push("Nothing to load: no row passed the gates."); return out; }
@@ -376,6 +383,7 @@ export async function loadTollHourly(agg: TollHourlyAggregate, opts: { dryRun?: 
     // Before anything is replaced: how the file compares with what is loaded,
     // and the undo journal of every row about to change.
     out.comparison = await compareToll(c);
+    out.profile = await profileToll(c);
     const journal = await UndoJournal.open(c, "toll_hourly");
     if (whole) {
       for (const table of ["gold.fact_traffic_hourly", "gold.fact_traffic_hourly_origin", "gold.fact_vkm_hourly"]) {

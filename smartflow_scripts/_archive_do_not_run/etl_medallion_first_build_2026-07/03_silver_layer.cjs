@@ -2,7 +2,7 @@ throw new Error("ARCHIVED - do not run. First medallion schema build, Waze aggre
 const pg = require('pg');
 
 const pool = new pg.Pool({
-  host: 'smartflow.cn4wwa2i4cux.ap-southeast-1.rds.amazonaws.com',
+  host: '<RDS_HOST>',
   port: 5432,
   user: 'postgres',
   password: 'REMOVED',

@@ -25,12 +25,23 @@ early-stopped on targets in [val_start, cal_cut), calibrated (isotonic, per clas
 trainer's calibration rows (targets in [cal_cut, cut)), scored on the trainer's test rows (origins >= cut).
 
     train_all(...)  run by the trainer with --dualpath-train (the weekly batch); saves to dualpath_models/
-    load()          the saved bundle, or None
+    peek()          bundle.json and a consistency check, without loading TensorFlow (the trainer picks its cut from it)
+    load()          the saved bundle, or None (also None when its files do not belong together)
+
+SAVING (10 Nov 2026). The family used to be saved model by model as each finished, so a run that died part-way left
+new weights beside the old run's calibration, profile and bundle.json: on 2 Nov the Sunday batch replaced LSTM-1 and
+the stacked LSTM and was killed during the dual-path fit, and every hourly run after that scored those weights through
+calibrators fitted for the 24 Oct weights. Now everything is written to a .partial folder and swapped in only once the
+whole bundle (weights, calibration fitted on those same weights, profile, record) is complete; bundle.json records each
+file's digest, and a bundle whose files do not match it, or (for bundles saved before this) a model file newer than its
+bundle.json, is refused. bundle.json also records the label rule, the exits and the stacker's input columns.
     proba(...)      probabilities for rows (ts, exit_name, horizon), aligned to the trainer's frames
     serve(...)      [exits, 168, 3] from the newest hour
 """
+import hashlib
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -39,12 +50,47 @@ import numpy as np
 import pandas as pd
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE / "dualpath_models"
+# Where the family is saved and loaded. SMARTFLOW_DUALPATH_DIR (the trainer's --dualpath-dir) points a trial run at
+# a folder of its own, so models trained for comparison never replace the ones the hourly refresh serves.
+OUT = HERE / os.environ.get("SMARTFLOW_DUALPATH_DIR", "dualpath_models")
 H, SHORT, LONG_D = 168, 72, 28
 KINDS = ["LSTM (1 layer)", "Stacked LSTM", "Dual-Path LSTM"]
 FILE = {"LSTM (1 layer)": "lstm1.keras", "Stacked LSTM": "lstm2.keras", "Dual-Path LSTM": "dualpath.keras"}
 MAX_TRAIN_SAMPLES = 120_000
 SPEED_MID, SPEED_SCALE = 40.0, 25.0
+BUNDLE_FILES = [*FILE.values(), "calibration.pkl", "panel_fit.npz"]
+# The trainer's feature columns the stacker was fitted on, for bundles saved before bundle.json recorded them.
+LEGACY_STACK_FEATS = ["exit_code", "h", "dow", "is_weekend", "lag24", "lag48", "lag24_jams", "lag1", "lag2", "lag3",
+                      "lag6", "roll6_y", "roll6_jams", "roll24_y", "nb_prev_lag1", "nb_next_lag1", "nb_prev_roll6",
+                      "nb_next_roll6", "prof_mean", "prof_sev", "horizon"]
+
+
+def _digest(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _swap_in(tmp, out):
+    """Replace `out` by the complete folder `tmp` (two renames; a reader in between finds no bundle and skips)."""
+    old = out.parent / f"{out.name}.previous"
+    for attempt in range(5):
+        try:
+            if old.exists():
+                shutil.rmtree(old)
+            if out.exists():
+                os.replace(out, old)
+            os.replace(tmp, out)
+            shutil.rmtree(old, ignore_errors=True)
+            return
+        except OSError as e:                        # a file held open by a concurrent reader (Windows)
+            if old.exists() and not out.exists():
+                os.replace(old, out)                # put the previous bundle back before retrying
+            if attempt == 4:
+                raise RuntimeError(f"could not swap the new bundle in ({e}); it is complete in {tmp}") from e
+            time.sleep(10)
 
 
 # ------------------------------------------------------------------------------------------------- the panel
@@ -266,13 +312,17 @@ def _raw_rows(models, P, rows):
 
 
 # ------------------------------------------------------------------------------------------------- weekly fit
-def train_all(grid, exits, prev, nxt, cut, cal_cut, cal_rows, feats_cal, y_cal, dsn, with_history):
-    """Fits the three recurrent models, the calibrators and the hybrid; saves everything to dualpath_models/."""
+def train_all(grid, exits, prev, nxt, cut, cal_cut, cal_rows, feats_cal, y_cal, dsn, with_history, labels="first_hour"):
+    """Fits the three recurrent models, the calibrators and the hybrid; saves the complete bundle to OUT in one swap.
+    feats_cal: DataFrame of the trainer's feature columns on the calibration rows (the stacker's inputs)."""
     import keras
     import xgboost as xgb
     t_all = time.time()
     hol, ev = _calendar(dsn)
-    P = Panel(grid, exits, prev, nxt, hol, ev)
+    # the jam-count scale from the fitting hours only (it was taken over the whole grid, test hours included)
+    _g = grid[pd.to_datetime(grid.ts) < pd.Timestamp(cal_cut) - pd.Timedelta(days=4)]
+    jam_sd = float(np.nanstd(np.log1p(_g.n_jams.to_numpy(float))))
+    P = Panel(grid, exits, prev, nxt, hol, ev, jam_sd=jam_sd)
     cut_i, cal_i = int(P.index_of([cut])[0]), int(P.index_of([cal_cut])[0])
     val_i = cal_i - 4 * 24
     P.fit_profile(val_i)
@@ -296,7 +346,10 @@ def train_all(grid, exits, prev, nxt, cut, cal_cut, cal_rows, feats_cal, y_cal, 
     wv = (okv_all * cw[yv_all]).astype(np.float32)
     print(f"  dual-path family: fit samples {len(o_f):,} (targets before {P.idx[val_i]}), "
           f"validation {len(o_v):,} (targets {P.idx[val_i]} .. {P.idx[cal_i]}), class weights {np.round(cw, 2).tolist()}")
-    OUT.mkdir(exist_ok=True)
+    tmp = OUT.parent / f"{OUT.name}.partial"
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    tmp.mkdir(parents=True)
     log = {}
     models = {}
     for kind in KINDS:
@@ -306,7 +359,7 @@ def train_all(grid, exits, prev, nxt, cut, cal_cut, cal_rows, feats_cal, y_cal, 
         hist = m.fit(_batches(P, o_f, e_f, val_i, cw), validation_data=(Xv, yv_all, wv), epochs=30, verbose=2,
                      callbacks=[keras.callbacks.EarlyStopping(patience=3, restore_best_weights=True),
                                 keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=1)])
-        m.save(OUT / FILE[kind])
+        m.save(tmp / FILE[kind])
         models[kind] = m
         log[kind] = {"params": int(m.count_params()), "epochs": len(hist.history["loss"]),
                      "best_val_loss": float(min(hist.history["val_loss"])), "train_sec": round(time.time() - t0)}
@@ -315,35 +368,74 @@ def train_all(grid, exits, prev, nxt, cut, cal_cut, cal_rows, feats_cal, y_cal, 
     raw, okc = _raw_rows(models, P, cal_rows)
     cals = {k: IsoCal(raw[k][okc], y_cal[okc]) for k in KINDS}
     import pickle
-    stack_X = np.column_stack([feats_cal, raw["Dual-Path LSTM"]])
+    stack_feats = list(feats_cal.columns)
+    stack_X = np.column_stack([feats_cal.to_numpy(float), raw["Dual-Path LSTM"]])
     stacker = xgb.XGBClassifier(n_estimators=250, max_depth=4, learning_rate=0.06, subsample=0.9, colsample_bytree=0.9,
                                 objective="multi:softprob", num_class=3, eval_metric="mlogloss", random_state=42, n_jobs=4)
     stacker.fit(stack_X[okc], y_cal[okc])
-    with open(OUT / "calibration.pkl", "wb") as fh:
+    with open(tmp / "calibration.pkl", "wb") as fh:
         pickle.dump({"cals": cals, "stacker": stacker}, fh)
-    np.savez(OUT / "panel_fit.npz", prof=P.prof, jam_sd=P.jam_sd, exits=np.array(exits))
+    np.savez(tmp / "panel_fit.npz", prof=P.prof, jam_sd=P.jam_sd, exits=np.array(exits))
     meta = {"trained_at": pd.Timestamp.now().isoformat(timespec="seconds"), "cut": str(cut), "cal_cut": str(cal_cut),
             "val_start": str(P.idx[val_i]), "with_history": bool(with_history), "train_from": str(P.idx[0]),
+            "labels": labels, "exits": list(map(str, exits)), "stack_feats": stack_feats,
             "fit_samples": int(len(o_f)), "class_weights": cw.tolist(), "models": log,
-            "minutes": round((time.time() - t_all) / 60, 1)}
-    (OUT / "bundle.json").write_text(json.dumps(meta, indent=1))
-    print(f"  dual-path family saved to {OUT} ({meta['minutes']} min)")
+            "minutes": round((time.time() - t_all) / 60, 1),
+            "files": {n: _digest(tmp / n) for n in BUNDLE_FILES}}
+    (tmp / "bundle.json").write_text(json.dumps(meta, indent=1))
+    _swap_in(tmp, OUT)
+    print(f"  dual-path family saved to {OUT} in one swap ({meta['minutes']} min)")
     return meta
 
 
 # ------------------------------------------------------------------------------------------------- hourly use
-def load():
-    """The saved bundle, or None when it was never trained here or a file is missing/unreadable."""
+def peek():
+    """(bundle.json, None) when the saved files belong together, else (None, why). Loads no TensorFlow."""
     try:
         meta = json.loads((OUT / "bundle.json").read_text())
+    except Exception as e:                               # noqa: BLE001
+        return None, f"no bundle in {OUT.name}/ ({type(e).__name__})"
+    missing = [n for n in BUNDLE_FILES if not (OUT / n).exists()]
+    if missing:
+        return None, f"bundle in {OUT.name}/ is incomplete (missing {missing})"
+    if "files" in meta:
+        bad = [n for n in BUNDLE_FILES if _digest(OUT / n) != meta["files"].get(n)]
+        if bad:
+            return None, f"files in {OUT.name}/ changed after the bundle was saved: {bad}"
+    else:
+        # Saved before 10 Nov 2026, so no digests: the files were written in sequence and bundle.json last, so none
+        # may be newer than it. One that is came from a run that died before finishing.
+        bt = (OUT / "bundle.json").stat().st_mtime
+        newer = [n for n in BUNDLE_FILES if (OUT / n).stat().st_mtime > bt + 60]
+        if newer:
+            return None, (f"mixed bundle in {OUT.name}/: {newer} are newer than its bundle.json "
+                          f"({meta.get('trained_at')}), left by a run that never finished, so the calibration and "
+                          f"profile beside them belong to other weights")
+    if "exits" not in meta:
+        with np.load(OUT / "panel_fit.npz", allow_pickle=True) as fp:
+            meta["exits"] = [str(x) for x in fp["exits"]]
+    meta.setdefault("labels", "first_hour")              # every bundle before 10 Nov 2026 used first-hour labels
+    meta.setdefault("stack_feats", LEGACY_STACK_FEATS)
+    return meta, None
+
+
+def load():
+    """The saved bundle, or None when it was never trained here, a file is missing/unreadable, or the files do not
+    belong together (peek)."""
+    meta, why = peek()
+    if meta is None:
+        print(f"  dual-path family not loaded: {why}")
+        return None
+    try:
         import keras
         import pickle
         models = {k: keras.models.load_model(OUT / FILE[k], safe_mode=False) for k in KINDS}
         with open(OUT / "calibration.pkl", "rb") as fh:
             cal = pickle.load(fh)
-        fitp = np.load(OUT / "panel_fit.npz", allow_pickle=True)
+        with np.load(OUT / "panel_fit.npz", allow_pickle=True) as fitp:     # closed: an open file blocks the swap
+            prof, jam_sd, ex = fitp["prof"], float(fitp["jam_sd"]), list(fitp["exits"])
         return {"meta": meta, "models": models, "cals": cal["cals"], "stacker": cal["stacker"],
-                "prof": fitp["prof"], "jam_sd": float(fitp["jam_sd"]), "exits": list(fitp["exits"])}
+                "prof": prof, "jam_sd": jam_sd, "exits": [str(x) for x in ex]}
     except Exception as e:                               # noqa: BLE001 - absent or broken bundle: no candidates
         print(f"  dual-path family not loaded ({type(e).__name__}: {str(e)[:120]})")
         return None
@@ -354,11 +446,20 @@ def panel_for(bundle, grid, exits, prev, nxt, dsn):
     return Panel(grid, exits, prev, nxt, hol, ev, jam_sd=bundle["jam_sd"], prof=bundle["prof"])
 
 
-def proba(bundle, P, rows, feats):
-    """Calibrated probabilities per candidate for the trainer's rows; rows whose inputs are incomplete get 1/3."""
+def _stack(bundle, feat_df, raw_dp, chunk=200_000):
+    cols = bundle["meta"].get("stack_feats", LEGACY_STACK_FEATS)
+    X = feat_df[cols].to_numpy(float)
+    return np.vstack([bundle["stacker"].predict_proba(np.column_stack([X[i:i + chunk], raw_dp[i:i + chunk]]))
+                      for i in range(0, len(X), chunk)])
+
+
+def proba(bundle, P, rows, feat_df):
+    """Calibrated probabilities per candidate for the trainer's rows; rows whose inputs are incomplete get 1/3.
+    feat_df: the trainer's feature columns for the same rows (the stacker reads the columns it was fitted on)."""
     raw, ok = _raw_rows(bundle["models"], P, rows)
-    out = {k: np.where(ok[:, None], bundle["cals"][k](raw[k]), 1 / 3) for k in KINDS}
-    out["Dual-Path LSTM + XGBoost"] = np.where(ok[:, None], bundle["stacker"].predict_proba(np.column_stack([feats, raw["Dual-Path LSTM"]])), 1 / 3)
+    out = {k: np.where(ok[:, None], bundle["cals"][k](raw[k]), 1 / 3).astype(np.float32) for k in KINDS}
+    out["Dual-Path LSTM + XGBoost"] = np.where(ok[:, None], _stack(bundle, feat_df, raw["Dual-Path LSTM"]),
+                                               1 / 3).astype(np.float32)
     return out, ok
 
 
@@ -371,7 +472,7 @@ def serve(bundle, P, kind, feats_by_h=None):
     if kind == "Dual-Path LSTM + XGBoost":
         out = np.zeros_like(raw)
         for h in range(H):
-            out[:, h] = bundle["stacker"].predict_proba(np.column_stack([feats_by_h(h + 1), raw[:, h]]))
+            out[:, h] = _stack(bundle, feats_by_h(h + 1), raw[:, h])
         return out
     cal = bundle["cals"][kind]
     return cal(raw.reshape(-1, 3)).reshape(E, H, 3)

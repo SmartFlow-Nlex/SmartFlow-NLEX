@@ -546,7 +546,55 @@ export async function getLiveMapGeoJson() {
     })),
   ];
 
+  linkFloodsToJams(features);
   return { type: "FeatureCollection" as const, features };
+}
+
+/**
+ * A flood report as the likely cause of a live jam (8 Nov 2026, the adviser's question).
+ *
+ * Measured on the live Waze record, 4 Aug - 6 Nov 2026: at the same exit, hour of day and rainfall, hours with a
+ * flood report had a jam 95.6% of the time against 82.3% without one, and about 39 min of delay against 7. So a
+ * jam with an undisputed flood report on or near it names that report as its possible cause. It is a link drawn
+ * from the reports, not proof: drivers may also report water more readily once they are already stopped.
+ */
+export const FLOOD_LINK_M = 1500;
+
+export function linkFloodsToJams(features: { geometry: any; properties: Record<string, unknown> }[]) {
+  const floods = features.filter((f) => {
+    const p = f.properties;
+    if (p.feature_type !== "alert" || p.subtype !== "HAZARD_WEATHER_FLOOD") return false;
+    const rel = p.reliability == null ? NaN : Number(p.reliability);
+    const conf = p.confidence == null ? NaN : Number(p.confidence);
+    return !(Number.isFinite(conf) && conf <= -1) && !(Number.isFinite(rel) && rel < 5);
+  });
+  if (floods.length === 0) return;
+  const metres = (a: number[], b: number[]) => {
+    const R = 6371000, rad = Math.PI / 180;
+    const dLat = (b[1] - a[1]) * rad, dLon = (b[0] - a[0]) * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[1] * rad) * Math.cos(b[1] * rad) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  };
+  const points = (g: any): number[][] =>
+    g?.type === "LineString" ? g.coordinates : g?.type === "MultiLineString" ? g.coordinates.flat() : g?.type === "Point" ? [g.coordinates] : [];
+  for (const j of features) {
+    if (j.properties.feature_type !== "jam") continue;
+    const pts = points(j.geometry);
+    let best: { m: number; p: Record<string, unknown> } | null = null;
+    for (const f of floods) {
+      const at = f.geometry.coordinates as number[];
+      for (const q of pts) {
+        const m = metres(q, at);
+        if (m <= FLOOD_LINK_M && (!best || m < best.m)) best = { m, p: f.properties };
+      }
+    }
+    if (best) {
+      // Flat properties: Mapbox stringifies nested objects on the way to a layer.
+      j.properties.flood_m = Math.round(best.m);
+      j.properties.flood_reported_at = best.p.reported_at ?? null;
+      j.properties.flood_exit = best.p.nearest_exit ?? null;
+    }
+  }
 }
 
 
