@@ -41,6 +41,9 @@ ns = {"__name__": "prep", "__file__": SRC}
 exec(compile(head, "prep", "exec"), ns)
 
 df, MODELS = ns["df"], ns["MODELS"]
+# Real record only (user, 11 Nov 2026), as in retrain_honest.py STEP 2: the future starts on 25 May.
+REAL_END = pd.Timestamp("2026-05-24")
+df = df[df.ds <= REAL_END].reset_index(drop=True)
 
 
 def forecast_of(out):

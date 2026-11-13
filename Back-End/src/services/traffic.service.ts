@@ -270,7 +270,9 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
              GROUP BY 1, 2
            ), clean AS (
              SELECT p.* FROM pv p
-             WHERE NOT EXISTS (SELECT 1 FROM philippine_arena_events x WHERE x.start_date = p.date)
+             -- Verified show nights only (silver.arena_events_verified, 12 Nov 2026): the scraped list held many dates
+             -- that were not shows, which wrongly left ordinary days out of the baseline.
+             WHERE NOT EXISTS (SELECT 1 FROM silver.arena_events_verified x WHERE x.show_date = p.date AND x.status = 'held')
                AND NOT EXISTS (SELECT 1 FROM ph_holidays h WHERE h.date_day = p.date)
                ${wet === null ? "" : "AND EXISTS (SELECT 1 FROM dayw w WHERE w.d = p.date AND w.wet = $1)"}
            ), ev_rows AS (
@@ -278,13 +280,17 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
              -- SUN World Tour" vs "Seventeen - Be The Sun World Tour" on
              -- 2022-12-17), so titles are de-duplicated case-insensitively and
              -- one spelling is kept as the representative.
-             SELECT e.start_date, x.exit_name AS plaza,
+             -- One row per VERIFIED show night (12 Nov 2026), measured at the venue's own exit: CDV/PH Arena for the
+             -- Philippine Arena and Philippine Sports Stadium, Dau for Clark Global City. Attendance is the sourced
+             -- figure (a run total split by the verifier is not applied here: the first number is shown as reported).
+             SELECT e.show_date AS start_date, x.exit_name AS plaza,
                     MIN(x.exit_name) AS venue_exit,
-                    MIN(e.title) AS title,
-                    MAX(NULLIF(replace((regexp_match(e.attendance, '[0-9][0-9,]*'))[1], ',', ''), '')::bigint) AS attendance
-             FROM philippine_arena_events e
-             JOIN nlex_exits x ON x.exit_id = e.nlex_exit_id
-             GROUP BY e.start_date, x.exit_name, lower(btrim(e.title))
+                    MIN(COALESCE(NULLIF(e.event_title, ''), e.act)) AS title,
+                    MAX(e.reported_attendance)::bigint AS attendance
+             FROM silver.arena_events_verified e
+             JOIN nlex_exits x ON x.exit_name = CASE WHEN e.venue = 'Clark Global City' THEN 'Dau' ELSE 'CDV/PH Arena' END
+             WHERE e.status = 'held' AND e.venue IN ('Philippine Arena', 'Philippine Sports Stadium', 'Clark Global City')
+             GROUP BY e.show_date, x.exit_name, lower(btrim(COALESCE(NULLIF(e.event_title, ''), e.act)))
            ), ev AS (
              SELECT e.start_date,
                     e.plaza,
@@ -333,7 +339,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
              -- Days eligible as baseline: neither a holiday nor an event day.
              SELECT d.* FROM daily d
              WHERE NOT EXISTS (SELECT 1 FROM ph_holidays p WHERE p.date_day = d.date)
-               AND NOT EXISTS (SELECT 1 FROM philippine_arena_events e WHERE e.start_date = d.date)
+               AND NOT EXISTS (SELECT 1 FROM silver.arena_events_verified e WHERE e.show_date = d.date AND e.status = 'held')
            ), occ AS (
              -- One row per holiday occurrence, each compared against a LOCAL
              -- baseline: same weekday, within +/-45 days of that occurrence.
@@ -376,7 +382,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
            ), clean AS (
              SELECT d.* FROM daily d
              WHERE NOT EXISTS (SELECT 1 FROM ph_holidays p WHERE p.date_day = d.date)
-               AND NOT EXISTS (SELECT 1 FROM philippine_arena_events e WHERE e.start_date = d.date)
+               AND NOT EXISTS (SELECT 1 FROM silver.arena_events_verified e WHERE e.show_date = d.date AND e.status = 'held')
            )
            -- Same local-baseline rule as the summary above, kept identical so
            -- the drill-down always reconciles with the headline figure.
@@ -926,86 +932,53 @@ export async function getCongestionModel() {
 export async function getMLEventSurge(eventDate?: string) {
   if (!db) return null;
   try {
-    // With a target date this becomes a FORECAST: the measured uplift is applied
-    // to the baseline for that specific weekday and month. Without one it stays
-    // a description of what past events did — which is all it could ever be,
-    // since nothing in the warehouse knows when the next event is.
+    // Event forecast, 11 Nov 2026 (EVALUATION_PROTOCOL.md section 9; published by
+    // smartflow_scripts/3_training_testing/events/train_event_effect.py from verified show nights only):
+    //   event day = normal day x the tested multiplier, at the exits near the venue.
+    // Normal day = the exit's median on the same weekday over the last 8 REAL weeks (to 24 May 2026; non-event,
+    // non-holiday days), times its holiday factor on a public holiday (gold.ml_event_normal). This replaced the
+    // 2022-2026 weekday x month median, which the far-date test scored 13.3% against 9.0% for the trailing normal.
+    // The venue decides which exits: Arena / Stadium nights the Bulacan group (km 20-39), Clark nights Dau's.
     if (eventDate) {
       const { rows } = await db.query(`
         WITH target AS (
-          SELECT $1::date AS d,
-                 EXTRACT(DOW FROM $1::date)::int AS dow,
-                 EXTRACT(MONTH FROM $1::date)::int AS mon
-        ),
-        -- Same construction as the training baseline (All_Scripts/Predictive_Modeling/build_event_surge.py): median
-        -- for that weekday and month, excluding Arena event days and holidays so they cannot inflate it. The comment
-        -- said so before, but the SQL took every day (fix list A1, 2 Nov 2026).
-        norm AS (
-          SELECT t.exit_canonical AS plaza,
-                 PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY t.v)::int AS baseline
-          FROM (SELECT date, exit_canonical, SUM(total) AS v
-                FROM gold.fact_traffic_hourly GROUP BY 1, 2) t, target g
-          WHERE EXTRACT(DOW FROM t.date) = g.dow
-            AND EXTRACT(MONTH FROM t.date) = g.mon
-            AND t.date NOT IN (SELECT event_date::date FROM silver.philippine_arena_events_clean WHERE event_date IS NOT NULL)
-            AND t.date NOT IN (SELECT date_day::date FROM public.ph_holidays)
-          GROUP BY 1
+          SELECT $1::date AS d, EXTRACT(DOW FROM $1::date)::int AS dow,
+                 EXISTS (SELECT 1 FROM public.ph_holidays WHERE date_day::date = $1::date) AS is_hol,
+                 CASE WHEN (SELECT venue FROM silver.arena_events_verified WHERE show_date = $1::date
+                            AND status IN ('held', 'scheduled') ORDER BY venue LIMIT 1) = 'Clark Global City'
+                      THEN 'clark' ELSE 'bulacan' END AS grp
         )
-        SELECT n.plaza AS "exit", f.event_name AS "event", n.baseline,
-               CASE WHEN f.uplift IS NOT NULL
-                    THEN ROUND(n.baseline * f.uplift)::int ELSE NULL END AS "surge",
-               ROUND(f.uplift, 4) AS "uplift",
-               ROUND(f.uplift_lo, 4) AS "upliftLo", ROUND(f.uplift_hi, 4) AS "upliftHi",
-               f.n_events AS "nEvents", f.material, f.method,
-               f.anchor_exit AS "anchorExit",
-               f.first_event::text AS "firstEvent", f.last_event::text AS "lastEvent",
-               (SELECT d::text FROM target) AS "targetDate",
-               f.baseline_volume AS "modelBaseline", f.surge_volume AS "modelSurge"
-        FROM norm n
-        LEFT JOIN gold.ml_event_surge_forecast f ON f.exit_name = n.plaza
-        ORDER BY n.baseline DESC`, [eventDate]);
+        SELECT f.exit_name AS "exit", f.event_name AS "event",
+               ROUND(n.normal * CASE WHEN t.is_hol THEN COALESCE(f.holiday_factor, 1) ELSE 1 END)::int AS baseline,
+               ROUND(n.normal * CASE WHEN t.is_hol THEN COALESCE(f.holiday_factor, 1) ELSE 1 END
+                     * COALESCE(dd.multiplier, f.uplift))::int AS surge,
+               ROUND(COALESCE(dd.multiplier, f.uplift), 4) AS "uplift",
+               ROUND(COALESCE(dd.mult_lo, f.uplift_lo), 4) AS "upliftLo",
+               ROUND(COALESCE(dd.mult_hi, f.uplift_hi), 4) AS "upliftHi",
+               f.n_events AS "nEvents", f.material, f.method, f.anchor_exit AS "anchorExit",
+               f.first_event::text AS "firstEvent", f.last_event::text AS "lastEvent", t.d::text AS "targetDate",
+               f.baseline_volume AS "modelBaseline", f.surge_volume AS "modelSurge", t.grp AS "venueGroup"
+        FROM target t
+        JOIN gold.ml_event_surge_forecast f ON f.venue_group = t.grp
+        JOIN gold.ml_event_normal n ON n.exit_name = f.exit_name AND n.dow = t.dow
+        -- The champion's own forecast for this verified night, when it has one (a tree model forecasts each night).
+        LEFT JOIN gold.ml_event_forecast_dated dd
+               ON dd.event_date = t.d AND dd.exit_name = f.exit_name AND dd.venue_group = t.grp
+        ORDER BY n.normal DESC`, [eventDate]);
       return rows;
     }
 
-    // gold.ml_event_surge_forecast now holds MEASURED event-day uplift per exit
-    // (build_event_surge.py), keyed by canonical exit name. It previously held
-    // three hand-typed rows under free-text names like "Bocaue Exit", which is
-    // why this query used to carry an alias table to map them onto real plazas.
-    // Both the aliases and the invented ratios are gone.
+    // Without a date: what an Arena / Stadium night does on a typical day (the exit's normal averaged over the
+    // weekdays), with the same tested multiplier.
     const { rows } = await db.query(`
-      -- An ordinary day of the last 90: the MEDIAN of days that were neither an Arena event nor a holiday, the same
-      -- exclusions as the training baseline. It was the plain mean of every day, events included (fix list A1).
-      WITH observed AS (
-        SELECT exit_canonical AS plaza, (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY v))::int AS baseline
-        FROM (SELECT date, exit_canonical, SUM(total) AS v
-              FROM gold.fact_traffic_hourly
-              WHERE date >= (SELECT MAX(date) FROM gold.fact_traffic_hourly) - interval '90 days'
-                AND date NOT IN (SELECT event_date::date FROM silver.philippine_arena_events_clean WHERE event_date IS NOT NULL)
-                AND date NOT IN (SELECT date_day::date FROM public.ph_holidays)
-              GROUP BY 1, 2) t
-        GROUP BY 1
-        HAVING PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY v) > 0
-      )
-      SELECT o.plaza AS "exit",
-             f.event_name AS "event",
-             o.baseline AS "baseline",
-             CASE WHEN f.uplift IS NOT NULL
-                  THEN ROUND(o.baseline * f.uplift)::int ELSE NULL END AS "surge",
-             ROUND(f.uplift, 4) AS "uplift",
-             ROUND(f.uplift_lo, 4) AS "upliftLo",
-             ROUND(f.uplift_hi, 4) AS "upliftHi",
-             f.n_events AS "nEvents",
-             f.material AS "material",
-             f.method AS "method",
-             f.anchor_exit AS "anchorExit",
-             f.first_event::text AS "firstEvent",
-             f.last_event::text AS "lastEvent",
-             f.baseline_volume AS "modelBaseline",
-             f.surge_volume AS "modelSurge"
-      FROM observed o
-      LEFT JOIN gold.ml_event_surge_forecast f ON f.exit_name = o.plaza
-      ORDER BY o.baseline DESC
-    `);
+      SELECT f.exit_name AS "exit", f.event_name AS "event", f.baseline_volume AS "baseline",
+             f.surge_volume AS "surge", ROUND(f.uplift, 4) AS "uplift", ROUND(f.uplift_lo, 4) AS "upliftLo",
+             ROUND(f.uplift_hi, 4) AS "upliftHi", f.n_events AS "nEvents", f.material, f.method,
+             f.anchor_exit AS "anchorExit", f.first_event::text AS "firstEvent", f.last_event::text AS "lastEvent",
+             f.baseline_volume AS "modelBaseline", f.surge_volume AS "modelSurge", f.venue_group AS "venueGroup"
+      FROM gold.ml_event_surge_forecast f
+      WHERE f.venue_group = 'bulacan' AND f.baseline_volume > 0
+      ORDER BY f.baseline_volume DESC`);
     return rows;
   } catch (error) {
     console.error("Failed to fetch ML event surge:", error);
@@ -1037,92 +1010,77 @@ export type UpcomingEventExit = {
 };
 export type UpcomingEvent = {
   date: string; title: string; isDerived: boolean; capacity: number | null;
-  // Where it is. Three BTS nights are at the Philippine Sports Stadium --
-  // same complex, same exit, a third of the Arena's capacity -- and the
-  // uplift was measured on Arena days, so the card must be able to say so.
   venue: string | null;
+  /** True when the night is in the verified calendar (a public source confirms it); false for a newly scraped
+   *  listing nobody has checked yet. */
+  verified: boolean;
+  sourceUrl: string | null;
   exits: UpcomingEventExit[];
 };
 
-// Every scheduled day, not the next six. An audit found 13 distinct upcoming
-// days with the cap at 6, which silently dropped everything from March 2027.
-// A dropdown holds thirteen entries comfortably; the cap only guards runaway.
+// Upcoming event nights (11 Nov 2026): the verified calendar's scheduled nights (silver.arena_events_verified, each
+// with a public source), plus any newly scraped future listing the verified calendar does not cover yet, marked
+// unverified. A scraped date the verified calendar has checked and found postponed, cancelled or not real is left
+// out. The scraped table's inferred recurring rows (is_derived) are never listed: checking them found most were
+// wrong. Each night: normal day (gold.ml_event_normal, holiday-adjusted) x the tested multiplier of its venue group.
 export async function getUpcomingEventSurge(limit = 60): Promise<UpcomingEvent[] | null> {
   if (!db) return null;
   try {
     const { rows } = await db.query(
-      `WITH today AS (
-         -- Event days are Manila days; the server clock is UTC and is a day
-         -- behind for eight hours of every night.
-         SELECT (now() AT TIME ZONE 'Asia/Manila')::date AS d
+      `WITH today AS (SELECT (now() AT TIME ZONE 'Asia/Manila')::date AS d),
+       checked AS (SELECT DISTINCT show_date AS d FROM silver.arena_events_verified WHERE show_date IS NOT NULL),
+       ver AS (
+         SELECT v.show_date AS d,
+                (array_agg(COALESCE(NULLIF(v.event_title, ''), v.act) ORDER BY v.act))[1] AS title,
+                (array_agg(v.venue ORDER BY v.venue))[1] AS venue,
+                (array_agg(v.date_source_url ORDER BY v.venue))[1] AS source_url,
+                true AS verified
+         FROM silver.arena_events_verified v, today
+         WHERE v.status = 'scheduled' AND v.show_date >= today.d
+         GROUP BY v.show_date
        ),
-       src AS (
-         SELECT e.start_date, e.title, e.is_derived, e.capacity, e.venue, e.date_raw
+       scraped AS (
+         SELECT e.start_date AS d, (array_agg(e.title ORDER BY length(e.title), e.title))[1] AS title,
+                (array_agg(e.venue ORDER BY e.venue NULLS LAST))[1] AS venue, NULL::text AS source_url,
+                false AS verified
          FROM philippine_arena_events e, today
-         WHERE e.start_date >= today.d
-       ),
-       -- Multi-day runs come from the source as a range row ("May 15–16, 2027")
-       -- and, sometimes, one row per day. LANY's range was split into days;
-       -- Bruno Mars' was not, so its second night was missing from the
-       -- schedule. Same-month ranges are expanded here to the days the range
-       -- names; days that already have their own row are left alone by the
-       -- GROUP BY below.
-       expanded AS (
-         SELECT start_date, title, is_derived, capacity, venue FROM src
-         UNION ALL
-         SELECT (start_date + g)::date, title, is_derived, capacity, venue
-         FROM (
-           SELECT *,
-                  (regexp_match(date_raw, '^[A-Za-z]+\\s+(\\d{1,2})\\s*[–-]\\s*(\\d{1,2}),?\\s*(\\d{4})$'))[2]::int AS end_day
-           FROM src
-         ) r,
-         LATERAL generate_series(1, GREATEST(0, r.end_day - EXTRACT(DAY FROM r.start_date)::int)) AS g
-         WHERE r.end_day IS NOT NULL
+         WHERE e.start_date >= today.d AND NOT COALESCE(e.is_derived, false)
+           AND e.start_date NOT IN (SELECT d FROM checked)
+         GROUP BY e.start_date
        ),
        up AS (
-         SELECT start_date AS d,
-                (array_agg(title ORDER BY length(title), title))[1] AS title,
-                bool_and(is_derived) AS is_derived,
-                MAX(NULLIF(replace((regexp_match(capacity, '[0-9][0-9,]*'))[1], ',', ''), '')::int) AS capacity,
-                (array_agg(venue ORDER BY venue NULLS LAST))[1] AS venue
-         FROM expanded
-         GROUP BY start_date
-         ORDER BY start_date
-         LIMIT $1
-       ),
-       -- Ordinary days only: no Arena event, no holiday, as in the single-date path and the training baseline (A1).
-       daily AS (
-         SELECT date, exit_canonical AS plaza, SUM(total) AS v
-         FROM gold.fact_traffic_hourly
-         WHERE date NOT IN (SELECT event_date::date FROM silver.philippine_arena_events_clean WHERE event_date IS NOT NULL)
-           AND date NOT IN (SELECT date_day::date FROM public.ph_holidays)
-         GROUP BY 1, 2
-       ),
-       norm AS (
-         SELECT u.d, t.plaza, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY t.v)::int AS baseline
-         FROM up u
-         JOIN daily t ON EXTRACT(DOW FROM t.date) = EXTRACT(DOW FROM u.d)
-                     AND EXTRACT(MONTH FROM t.date) = EXTRACT(MONTH FROM u.d)
-         GROUP BY 1, 2
+         SELECT *, CASE WHEN venue = 'Clark Global City' THEN 'clark' ELSE 'bulacan' END AS grp,
+                EXTRACT(DOW FROM d)::int AS dow,
+                EXISTS (SELECT 1 FROM public.ph_holidays h WHERE h.date_day::date = u.d) AS is_hol
+         FROM (SELECT * FROM ver UNION ALL SELECT * FROM scraped) u
+         ORDER BY d LIMIT $1
        )
-       SELECT u.d::text AS date, u.title, u.is_derived AS "isDerived", u.capacity, u.venue,
-              n.plaza AS exit, n.baseline,
-              ROUND(n.baseline * f.uplift)::int    AS surge,
-              ROUND(n.baseline * f.uplift_lo)::int AS "surgeLo",
-              ROUND(n.baseline * f.uplift_hi)::int AS "surgeHi",
-              ROUND(f.uplift, 4)::float AS uplift, f.n_events AS "nEvents"
+       SELECT u.d::text AS date, u.title, u.venue, u.verified, u.source_url AS "sourceUrl",
+              f.exit_name AS exit,
+              ROUND(n.normal * CASE WHEN u.is_hol THEN COALESCE(f.holiday_factor, 1) ELSE 1 END)::int AS baseline,
+              ROUND(n.normal * CASE WHEN u.is_hol THEN COALESCE(f.holiday_factor, 1) ELSE 1 END
+                    * COALESCE(dd.multiplier, f.uplift))::int AS surge,
+              ROUND(n.normal * CASE WHEN u.is_hol THEN COALESCE(f.holiday_factor, 1) ELSE 1 END
+                    * COALESCE(dd.mult_lo, f.uplift_lo))::int AS "surgeLo",
+              ROUND(n.normal * CASE WHEN u.is_hol THEN COALESCE(f.holiday_factor, 1) ELSE 1 END
+                    * COALESCE(dd.mult_hi, f.uplift_hi))::int AS "surgeHi",
+              ROUND(COALESCE(dd.multiplier, f.uplift), 4)::float AS uplift, f.n_events AS "nEvents"
        FROM up u
-       JOIN norm n ON n.d = u.d
-       JOIN gold.ml_event_surge_forecast f ON f.exit_name = n.plaza AND f.material
-       ORDER BY u.d, (n.baseline * (f.uplift - 1)) DESC`,
+       JOIN gold.ml_event_surge_forecast f ON f.venue_group = u.grp AND f.material
+       JOIN gold.ml_event_normal n ON n.exit_name = f.exit_name AND n.dow = u.dow
+       -- The champion's own forecast for this verified night (tree models forecast each night from its venue, day,
+       -- act and format); an unverified listing has none and takes the exit's typical multiplier.
+       LEFT JOIN gold.ml_event_forecast_dated dd
+              ON dd.event_date = u.d AND dd.exit_name = f.exit_name AND dd.venue_group = u.grp
+       ORDER BY u.d, (n.normal * (COALESCE(dd.multiplier, f.uplift) - 1)) DESC`,
       [limit],
     );
 
     const byDate = new Map<string, UpcomingEvent>();
     for (const r of rows) {
       const ev: UpcomingEvent = byDate.get(r.date) ?? {
-        date: r.date, title: r.title, isDerived: !!r.isDerived,
-        capacity: r.capacity == null ? null : Number(r.capacity), venue: r.venue ?? null, exits: [],
+        date: r.date, title: r.title, isDerived: false, capacity: null, venue: r.venue ?? null,
+        verified: !!r.verified, sourceUrl: r.sourceUrl ?? null, exits: [],
       };
       ev.exits.push({
         exit: r.exit, baseline: Number(r.baseline), surge: Number(r.surge),

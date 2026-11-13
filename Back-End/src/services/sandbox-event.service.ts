@@ -86,16 +86,17 @@ async function build(): Promise<EventDayPayload | null> {
     const [model, hourly, upcoming] = await Promise.all([
       db!.query(
         `SELECT exit_name AS exit, uplift::float, uplift_lo::float AS lo, uplift_hi::float AS hi, n_events::int AS n
-           FROM gold.ml_event_surge_forecast WHERE material`,
+           FROM gold.ml_event_surge_forecast WHERE material AND COALESCE(venue_group, 'bulacan') = 'bulacan'`,
       ),
       db!.query(
-        `WITH ev AS (SELECT DISTINCT event_date::date AS d FROM silver.philippine_arena_events_clean WHERE event_date IS NOT NULL),
+        `WITH ev AS (SELECT DISTINCT show_date AS d FROM silver.arena_events_verified WHERE status = 'held' AND show_date IS NOT NULL),
               hol AS (SELECT DISTINCT date_day::date AS d FROM public.ph_holidays),
               h AS (
                 SELECT date, exit_canonical AS ex, hour, SUM(total)::float AS v
                   FROM gold.fact_traffic_hourly
                  WHERE total IS NOT NULL
-                   AND exit_canonical IN (SELECT exit_name FROM gold.ml_event_surge_forecast WHERE material)
+                   AND exit_canonical IN (SELECT exit_name FROM gold.ml_event_surge_forecast
+                                          WHERE material AND COALESCE(venue_group, 'bulacan') = 'bulacan')
                  GROUP BY 1, 2, 3),
               base AS (
                 SELECT ex, hour, EXTRACT(DOW FROM date)::int AS dow, EXTRACT(MONTH FROM date)::int AS m,
@@ -177,10 +178,12 @@ async function buildVenueProfile(): Promise<VenueExitProfile | null> {
   try {
     const { rows } = await db!.query(
       `WITH ev AS (
-         SELECT DISTINCT start_date AS d FROM public.philippine_arena_events
-          WHERE start_date IS NOT NULL AND NOT COALESCE(is_derived, false)
-            AND (venue ILIKE '%philippine arena%' OR venue ILIKE '%philippine sports%')),
-       anyev AS (SELECT DISTINCT start_date AS d FROM public.philippine_arena_events WHERE start_date IS NOT NULL),
+         -- Verified show nights only (silver.arena_events_verified, 12 Nov 2026), Arena and Stadium.
+         SELECT DISTINCT show_date AS d FROM silver.arena_events_verified
+          WHERE status = 'held' AND show_date IS NOT NULL
+            AND venue IN ('Philippine Arena', 'Philippine Sports Stadium')),
+       anyev AS (SELECT DISTINCT show_date AS d FROM silver.arena_events_verified
+                  WHERE status = 'held' AND show_date IS NOT NULL),
        hol AS (SELECT DISTINCT date_day::date AS d FROM public.ph_holidays),
        h AS (
          SELECT date, hour, direction, role, SUM(total)::float AS v

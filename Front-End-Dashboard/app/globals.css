@@ -9072,6 +9072,47 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 /* An exit is not a traffic state, so it takes the plaza colour rather than one
    of the three. Same card, same header, different subject. */
 .mjp-head.is-exit { background: #0e7490; }
+/* Live rain (11 Nov 2026): cyan, deepening with PAGASA's intensity bands. */
+.mjp-head.is-rain { background: #0891b2; }
+.mjp-head.is-rain.is-moderate { background: #0369a1; }
+.mjp-head.is-rain.is-heavy { background: #1e40af; }
+.mjp-head.is-rain.is-intense { background: #4c1d95; }
+
+/* "Raining at ..." over the live map, top left; only while rain is falling. */
+.lm-rain-pill {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: calc(100% - 80px);
+  padding: 6px 11px 6px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.2;
+  color: #fff;
+  background: #0891b2;
+  box-shadow: 0 4px 14px rgba(3, 6, 13, 0.28);
+  pointer-events: auto;
+  cursor: default;
+}
+.lm-rain-pill span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lm-rain-pill b { font-weight: 650; }
+.lm-rain-pill small { opacity: 0.8; font-size: 11px; font-variant-numeric: tabular-nums; }
+.lm-rain-pill.is-moderate { background: #0369a1; }
+.lm-rain-pill.is-heavy { background: #1e40af; }
+.lm-rain-pill.is-intense { background: #4c1d95; }
+.wz-rain-swatch {
+  width: 22px;
+  height: 10px;
+  border-radius: 5px;
+  flex: none;
+  opacity: 0.75;
+  background-image: repeating-linear-gradient(110deg, rgba(255, 255, 255, 0.85) 0 1.5px, transparent 1.5px 5px) !important;
+  background-blend-mode: normal;
+}
 
 /* Only shown where the description says something the name and the town do
    not, so it is a footnote rather than a third restatement. */

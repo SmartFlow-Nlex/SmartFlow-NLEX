@@ -1,8 +1,10 @@
 """
 Checks for the 48-hour forecast. Run from this folder:  python test_traffic_48h.py   (or python -m pytest -q)
 (needs dataset.npz from build_dataset.py; the serving checks also need production.json from train_production.py)
+SMARTFLOW_48H_DRYRUN=1 checks the dryrun/ folder instead of the live one.
 """
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -27,10 +29,9 @@ except ImportError:                                    # plain `python test_traf
             return lambda f: f
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "config"))
-from db import WORK  # noqa: E402
-from features import H, LONG_D, SHORT, Features  # noqa: E402
+from features import H, LONG_D, SHORT, Features, cache_dir, daily_origins, windows  # noqa: E402
 
-CACHE = Path(WORK) / "cache" / "traffic_hourly_48h"
+CACHE = cache_dir(os.environ.get("SMARTFLOW_48H_DRYRUN") == "1")
 D0 = dict(np.load(CACHE / "dataset.npz", allow_pickle=True))
 TS = pd.to_datetime(D0["ts"])
 HOUR = {t: i for i, t in enumerate(TS)}
@@ -113,9 +114,37 @@ def test_future_hours_flagged_and_calendar_present():
     assert TS[n] == TS[n - 1] + pd.Timedelta(hours=1)
 
 
+def test_windows_are_time_ordered_and_end_at_the_real_record():
+    """Fits end before what they are scored on; validation ends before the test; the test ends at the last real day;
+    every validation/test origin is 00:00 (as served) and inside the history."""
+    real_end = str(D0["real_end"]) if "real_end" in D0 else str(TS[int(D0["n_hist"]) - 1].date())
+    W = windows(real_end)
+    ts = lambda x: pd.Timestamp(x)                     # noqa: E731
+    assert ts(W["test"][1]) + pd.Timedelta(hours=47) <= ts(real_end) + pd.Timedelta(hours=23)
+    assert ts(W["validation"][1]) + pd.Timedelta(hours=47) < ts(W["test"][0])
+    for f, first in (("val_fit", W["validation"][0]), ("test_fit", W["test"][0])):
+        assert ts(W[f]["fit"][1]) + pd.Timedelta(hours=47) < ts(W[f]["es"][0])
+        assert ts(W[f]["es"][1]) + pd.Timedelta(hours=47) < ts(first)
+        assert ts(W[f]["scaler_until"]) <= ts(W[f]["es"][0])
+    assert ts(W["prod_fit"]["es"][1]) + pd.Timedelta(hours=47) <= ts(real_end) + pd.Timedelta(hours=23)
+    for a, b in (W["validation"], W["test"]):
+        o = daily_origins(TS, a, b)
+        assert (o >= 0).all() and (TS[o].hour == 0).all() and o.max() + H <= int(D0["n_hist"])
+
+
+def test_history_ends_at_the_last_real_day():
+    """The forecast starts the hour after the last real day: nothing after it is in the tensor's history."""
+    if "real_end" not in D0:
+        return
+    n = int(D0["n_hist"])
+    assert TS[n - 1] == pd.Timestamp(str(D0["real_end"])) + pd.Timedelta(hours=23)
+
+
 @pytest.mark.skipif(not (CACHE / "production.json").exists(), reason="train_production.py not run yet")
 def test_served_forecast_is_complete_and_consistent():
-    from forecast_48h import build
+    import forecast_48h
+    forecast_48h.CACHE = CACHE
+    build = forecast_48h.build
     prod = json.loads((CACHE / "production.json").read_text())
     run, rows = build(dict(D0), prod)
     df = pd.DataFrame(rows)

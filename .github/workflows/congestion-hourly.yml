@@ -21,6 +21,8 @@ permissions:
 
 env:
   PYTHONUNBUFFERED: "1"
+  # The only machine allowed to publish the congestion map (11 Nov 2026).
+  CONGESTION_PUBLISHER: "1"
   TF_CPP_MIN_LOG_LEVEL: "3"
 
 jobs:

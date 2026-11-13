@@ -194,7 +194,7 @@ async function compute(): Promise<RainEffect | null> {
      LEFT JOIN brk ON brk.d = v.date
      WHERE v.total_volume > 0 AND v.date <= $1::date AND rain.hours >= 20
        AND NOT EXISTS (SELECT 1 FROM public.ph_holidays h WHERE h.date_day BETWEEN v.date - 1 AND v.date + 1)
-       AND NOT EXISTS (SELECT 1 FROM philippine_arena_events e WHERE e.start_date = v.date)
+       AND NOT EXISTS (SELECT 1 FROM silver.arena_events_verified e WHERE e.show_date = v.date AND e.status = 'held')
        AND NOT (to_char(v.date, 'MM-DD') >= '12-24' OR to_char(v.date, 'MM-DD') <= '01-02')
      ORDER BY 1`,
     [RECORD_REAL_THROUGH],

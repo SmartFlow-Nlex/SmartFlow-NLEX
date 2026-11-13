@@ -50,8 +50,27 @@ incident-severity.service.ts). corridor_km is a plain numeric column on the
 client tables, already on the exit list's scale, so this needed no regex
 and has no unresolved-location case any more.
 
+How it is tested (10 Nov 2026, EVALUATION_PROTOCOL.md):
+  * Spatial LSTM, tested the way it is SERVED: from rolling origins every 14 days across the last 52 weeks of
+    real data, a 28-day recursive rollout with rain set to 0 and volume held at each exit's last-week level (the
+    served assumptions), re-fitted on the data before each origin. It used to be scored one day ahead on actual
+    history over a single 60-day holdout, and early stopping picked its epoch ON that holdout. Early stopping now
+    uses a 60-day validation slice cut from the end of the training data, before the test.
+  * Baselines on the same origins, days and exits: the protocol's three (last week, weekday average of the last 8
+    weeks, same day last year scaled), each exit's trailing-365-day mean (it scored 2.150 against the LSTM's 2.166
+    on the old holdout), each exit's same-weekday mean over the trailing 52 weeks, each exit's whole-history
+    mean (the old baseline; ~25% level drift since 2022 makes it weak), and zero. Champion rule fixed before
+    results (common/rolling_eval.select_champion): it must beat the best baseline overall AND in days 1-7, with a
+    moving-block bootstrap interval; if nothing does, the best baseline's forecast is what gets written.
+  * Volume is an input, so scored days end at REAL_END_VOLUME (2026-05-24); after it the panel's volume is each
+    exit's last real level carried forward (25 May - 30 Jun hold broken/synthetic toll days).
+  * GWR: the bandwidth is now chosen INSIDE each leave-one-exit-out fold (it was chosen once on all 20 exits and
+    reused, so the held-out exit had helped pick it). Scored against the mean of the other exits, the mean of the
+    two nearest exits, and a global (non-local) Poisson GLM on the same three covariates.
+
 Usage:
-    python train_incident_spatial_models.py                 # train + report only
+    python train_incident_spatial_models.py                 # train + report only (writes the report .txt)
+    python train_incident_spatial_models.py --dry-run       # train + report, writes NOTHING (no file, read-only DB session)
     python train_incident_spatial_models.py --write-db       # + write to gold.*
     python train_incident_spatial_models.py --dry-write       # rehearse the write, then roll back
 """
@@ -79,7 +98,22 @@ from mgwr.gwr import GWR
 from mgwr.gwr import Poisson as GWRPoisson
 from mgwr.sel_bw import Sel_BW
 
+from honest_eval import REAL_END_VOLUME, block_bootstrap_ci, json_safe
+
+# The shared rolling-origin harness (scoring, champion rule, bootstrap); read-only, nothing in it writes.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "smartflow_scripts" / "3_training_testing"))
+from common.rolling_eval import BASELINES as PROTOCOL_BASELINES  # noqa: E402
+from common.rolling_eval import report as protocol_report  # noqa: E402
+from common.rolling_eval import select_champion, yearly_origins  # noqa: E402
+
 SEED = 42
+# Rolling-origin test (protocol section 2): an origin every 14 days over the last 52 weeks of real data, each a
+# 28-day recursive rollout, scored in these horizon buckets.
+ORIGIN_STEP_DAYS = 14
+TEST_WEEKS = 52
+SPATIAL_BUCKETS = [(1, 7), (8, 14), (15, 28)]
+# Early-stopping validation slice: the last 60 days before the data a model is fitted on ends.
+EARLY_STOP_DAYS = 60
 # Shorter than train_incident_models.py's 90-day VALIDATION_DAYS: this panel
 # is 20x sparser per unit time (one exit's daily count, not the whole
 # corridor's), so a 90-day-wide per-exit holdout would leave many exits with
@@ -114,8 +148,9 @@ set_all_seeds()
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
-def get_conn():
-    """Mirrors train_incident_models.py's get_conn() — kept in sync by hand."""
+def get_conn(readonly: bool = False):
+    """Mirrors train_incident_models.py's get_conn() — kept in sync by hand. readonly=True (--dry-run) makes the
+    server refuse any write on this session."""
     dsn = os.environ.get("PGURL") or os.environ.get("POSTGRES_URL")
     if not dsn:
         host = os.environ.get("PG_HOST")
@@ -129,7 +164,10 @@ def get_conn():
     # TCP keep-alives: on this RDS link a connection can die mid-query without either side being told, and the
     # script then waited on it forever (2026-10-15: idle 40 min after the server had finished). With these a dead
     # link raises within about a minute and the run fails visibly instead of hanging.
-    return psycopg2.connect(dsn, sslmode="require", keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
+    conn = psycopg2.connect(dsn, sslmode="require", keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
+    if readonly:
+        conn.set_session(readonly=True)
+    return conn
 
 
 # ---------------------------------------------------------------------------
@@ -191,9 +229,21 @@ INCIDENT_LOCATIONS_SQL = """
 # Mirrors train_incident_models.py's DAILY_RAIN_SQL — one corridor-wide
 # reading (NLEX_LAT/LON), so this is a temporal control shared by every exit
 # rather than a spatially-varying covariate.
+# Corridor rain per Manila day: the weather points averaged each hour (once per coordinate), then summed over the
+# day. It was SUM over every (point, hour) row, i.e. the 20 points ADDED: about 20x the real rain (5 Nov 2026; the
+# same fix as train_incident_models.py's DAILY_RAIN_SQL and retrain_honest.py's note 1).
 DAILY_RAIN_SQL = """
-    SELECT (timestamp_utc + interval '8 hours')::date AS d, SUM(rainfall)::float AS rain_mm
-    FROM hourly_weather
+    WITH pts AS (
+        SELECT timestamp_utc, round(latitude::numeric, 3) AS la, round(longitude::numeric, 3) AS lo,
+               AVG(rainfall) AS rainfall
+        FROM hourly_weather
+        GROUP BY 1, 2, 3
+    ),
+    hourly AS (
+        SELECT timestamp_utc, AVG(rainfall) AS rain FROM pts GROUP BY 1
+    )
+    SELECT (timestamp_utc + interval '8 hours')::date AS d, SUM(rain)::float AS rain_mm
+    FROM hourly
     GROUP BY 1
     ORDER BY 1
 """
@@ -300,6 +350,13 @@ def build_panel(conn, exits_df: pd.DataFrame) -> pd.DataFrame:
     """The full per-(exit, day) feature panel every model below reads from."""
     print("Loading incidents and resolving each to an exit...")
     panel = load_incident_exit_counts(conn, exits_df)
+    # Incidents run to 30 Jun 2026 but traffic volume is real only to REAL_END_VOLUME (user, 11 Nov 2026): the panel
+    # ends there too, so the served rollout starts on 25 May like the traffic and daily incident forecasts.
+    record_last = panel["d"].max()
+    panel = panel[panel["d"] <= REAL_END_VOLUME].reset_index(drop=True)
+    if record_last > REAL_END_VOLUME:
+        print(f"  incident panel cut to {REAL_END_VOLUME.date()} (record runs to {record_last.date()}) "
+              "to match the real traffic record")
 
     rain = load_daily_rain(conn)
     panel = panel.merge(rain, on="d", how="left")
@@ -307,14 +364,22 @@ def build_panel(conn, exits_df: pd.DataFrame) -> pd.DataFrame:
 
     print("Loading per-exit daily volume (gold.fact_traffic_hourly by exit)...")
     vol = load_exit_volume(conn)
+    # Real volume only (10 Nov 2026): 25 May - 30 Jun 2026 still hold broken and synthetic toll days. After
+    # REAL_END_VOLUME each exit's volume is its own mean over its last 28 real days carried forward — the same
+    # "hold the recent level flat" the served rollout uses for the future.
+    vol = vol[vol["d"] <= REAL_END_VOLUME]
+    last_level = vol[vol["d"] > REAL_END_VOLUME - pd.Timedelta(days=28)].groupby("exit_id")["volume"].mean()
     panel = panel.merge(vol, on=["d", "exit_id"], how="left")
+    after = panel["d"] > REAL_END_VOLUME
+    panel.loc[after, "volume"] = panel.loc[after, "exit_id"].map(last_level)
     # One exit's typical day, not the corridor's: the fallback is for a single
     # exit, and the corridor total (what .sum() gave) credited an exit without
     # its own series with every exit's traffic at once.
     typical_exit_volume = vol.groupby("d")["volume"].mean().mean()
-    covered = panel["volume"].notna().mean()
-    print(f"  {covered * 100:.0f}% of exit-days have their own volume reading; "
-          f"the rest fall back to the typical exit's daily volume ({typical_exit_volume:,.0f})")
+    covered = panel.loc[~after, "volume"].notna().mean()
+    print(f"  {covered * 100:.0f}% of exit-days to {REAL_END_VOLUME.date()} have their own volume reading; "
+          f"the rest fall back to the typical exit's daily volume ({typical_exit_volume:,.0f}); after "
+          f"{REAL_END_VOLUME.date()} each exit's last 28 real days' level is carried forward")
     panel["volume"] = panel["volume"].fillna(typical_exit_volume)
     panel["log_volume"] = np.log(panel["volume"].clip(lower=1.0))
 
@@ -395,10 +460,11 @@ def fit_gwr(exits_df: pd.DataFrame, panel: pd.DataFrame) -> dict:
     coefficient map, not a validated forecast.
     """
     n_days = panel["d"].nunique()
-    totals = panel.groupby("exit_id").agg(
-        total_count=("count", "sum"),
-        mean_log_volume=("log_volume", "mean"),
-    ).reset_index()
+    totals = panel.groupby("exit_id").agg(total_count=("count", "sum")).reset_index()
+    # Typical volume from REAL days only (the carried-forward tail after REAL_END_VOLUME is not a reading).
+    real = panel[panel["d"] <= REAL_END_VOLUME]
+    totals = totals.merge(real.groupby("exit_id")["log_volume"].mean().rename("mean_log_volume").reset_index(),
+                          on="exit_id", how="left")
     totals["daily_rate"] = totals["total_count"] / n_days
     cross = exits_df.merge(totals, on="exit_id")
 
@@ -442,31 +508,62 @@ def fit_gwr(exits_df: pd.DataFrame, panel: pd.DataFrame) -> dict:
     # in-sample fit above. N=20 is too thin for a fixed train/test split (the
     # reasoning in this function's own docstring for why one isn't used), but
     # LOOCV needs no such split — every exit gets its turn as the held-out
-    # point, refit on the other 19 at the SAME bandwidth already selected
-    # (re-running Sel_BW's search 20x would be needlessly expensive for a
-    # bandwidth on this small a grid). GWR.predict()'s own `.predictions`
+    # point, refit on the other 19. GWR.predict()'s own `.predictions`
     # attribute turned out NOT to be on the response scale for a Poisson
     # family (verified directly: produced negative values for a count-rate
     # target, which is impossible) — `.mu`, the GLM mean response, is the
     # correct field; found by comparing both against a known in-sample point.
-    loo_actual, loo_pred = [], []
+    #
+    # The bandwidth is chosen INSIDE each fold, on the 19 training exits only (10 Nov 2026). It used to be the
+    # one chosen on all 20, so the held-out exit had helped choose the kernel it was then predicted with.
+    # Scored next to, on the same folds: the mean of the other exits (baseline), the mean of the two nearest exits
+    # by km (a spatial baseline), and a global Poisson GLM on the same three covariates (the non-local version of
+    # GWR, so the report shows whether letting the coefficients vary along the corridor adds anything).
+    import statsmodels.api as sm
+    km_arr = cross["km"].values.astype(float)
+    loo = {"GWR": [], "Global Poisson GLM": [], "Mean of the other exits (baseline)": [],
+           "Mean of the 2 nearest exits (baseline)": []}
+    loo_actual, fold_bw, failed = [], [], 0
     for i in range(len(cross)):
         mask = np.ones(len(cross), dtype=bool)
         mask[i] = False
+        tr_coords = [coords[j] for j in range(len(coords)) if mask[j]]
         try:
-            fold_model = GWR(
-                [coords[j] for j in range(len(coords)) if mask[j]],
-                y[mask], X[mask], bw, family=GWRPoisson(), fixed=True,
-            )
-            fold_result = fold_model.predict(np.array([coords[i]]), X[[i]])
-            loo_actual.append(float(y[i, 0]))
-            loo_pred.append(float(np.asarray(fold_result.mu).flatten()[0]))
+            fold_bw_min = float(np.median(pdist(np.array(tr_coords))))
+            b = Sel_BW(tr_coords, y[mask], X[mask], family=GWRPoisson(), fixed=True).search(bw_min=fold_bw_min)
+            fold_result = GWR(tr_coords, y[mask], X[mask], b, family=GWRPoisson(), fixed=True).predict(
+                np.array([coords[i]]), X[[i]])
+            gwr_pred = float(np.asarray(fold_result.mu).flatten()[0])
+            glm = sm.GLM(y[mask].ravel(), sm.add_constant(X[mask], has_constant="add"),
+                         family=sm.families.Poisson()).fit()
+            glm_pred = float(np.asarray(glm.predict(sm.add_constant(X[[i]], has_constant="add"))).ravel()[0])
         except Exception:
-            pass  # a single fold's numerical failure shouldn't drop the whole LOOCV figure
-    metrics["loocv_mae"] = (
-        mae_of(np.array(loo_actual), np.array(loo_pred)) if loo_pred else None
-    )
-    metrics["loocv_n"] = len(loo_pred)
+            failed += 1  # a fold that fails is dropped for EVERY method below, so all are scored on the same folds
+            continue
+        others = y[mask].ravel()
+        near = np.argsort(np.abs(km_arr[mask] - km_arr[i]))[:2]
+        loo["GWR"].append(gwr_pred)
+        loo["Global Poisson GLM"].append(glm_pred)
+        loo["Mean of the other exits (baseline)"].append(float(others.mean()))
+        loo["Mean of the 2 nearest exits (baseline)"].append(float(others[near].mean()))
+        loo_actual.append(float(y[i, 0]))
+        fold_bw.append(float(b))
+    a = np.array(loo_actual)
+    metrics["loocv_mae"] = mae_of(a, np.array(loo["GWR"])) if loo_actual else None
+    metrics["loocv_n"] = len(loo_actual)
+    metrics["loocv_failed_folds"] = failed
+    metrics["loocv_bandwidth_range"] = [min(fold_bw), max(fold_bw)] if fold_bw else None
+    metrics["loocv_comparison"] = {k: mae_of(a, np.array(v)) for k, v in loo.items()} if loo_actual else {}
+    if loo_actual:
+        err = {k: np.abs(a - np.array(v)) for k, v in loo.items()}
+        best_b = min((k for k in loo if k.endswith("(baseline)")), key=lambda k: err[k].mean())
+        metrics["loocv_best_baseline"] = best_b
+        metrics["loocv_beats_best_baseline"] = bool(err["GWR"].mean() < err[best_b].mean())
+        # Paired bootstrap over exits (each fold is one exit; block = 1).
+        metrics["loocv_gwr_minus_best_baseline_ci"] = list(block_bootstrap_ci(
+            np.arange(len(a)), lambda ix: float(err["GWR"][ix].mean() - err[best_b][ix].mean()), block=1))
+        metrics["loocv_gwr_minus_glm_ci"] = list(block_bootstrap_ci(
+            np.arange(len(a)), lambda ix: float(err["GWR"][ix].mean() - err["Global Poisson GLM"][ix].mean()), block=1))
 
     # results.params columns are [const, km, access_count, mean_log_volume] —
     # constant=True (mgwr's default) prepends the intercept itself.
@@ -521,17 +618,18 @@ class SpatialLSTM(nn.Module):
         return self.head(combined).squeeze(-1)
 
 
-def _build_sequences(panel: pd.DataFrame, exits_df: pd.DataFrame, seq_mean, seq_std):
+def _build_sequences(panel: pd.DataFrame, exits_df: pd.DataFrame, seq_mean, seq_std, seq_features=None):
     """One example per (exit, day) whose trailing SEQ_LEN days are all
     present (no NaN lag/rolling warm-up). Returns tensors plus the exit_id
     and date each row came from, so callers can split by date or look up
     "the most recent window per exit" for inference."""
+    seq_features = seq_features or SEQ_FEATURES
     seq_arr, static_arr, y_arr, meta = [], [], [], []
     static_km_mean, static_km_std = exits_df["km"].mean(), exits_df["km"].std() or 1.0
 
     for eid, g in panel.groupby("exit_id"):
         g = g.sort_values("d").reset_index(drop=True)
-        feats = g[SEQ_FEATURES].values.astype("float32")
+        feats = g[seq_features].values.astype("float32")
         feats = (feats - seq_mean) / seq_std
         static_row = g[STATIC_FEATURES].iloc[0]
         static_vec = np.array([
@@ -540,7 +638,7 @@ def _build_sequences(panel: pd.DataFrame, exits_df: pd.DataFrame, seq_mean, seq_
         ], dtype="float32")
 
         counts = g["count"].values.astype("float32")
-        valid = g[SEQ_FEATURES].notna().all(axis=1).values
+        valid = g[seq_features].notna().all(axis=1).values
         for i in range(SEQ_LEN, len(g)):
             if not valid[i - SEQ_LEN : i + 1].all():
                 continue
@@ -557,27 +655,21 @@ def _build_sequences(panel: pd.DataFrame, exits_df: pd.DataFrame, seq_mean, seq_
     )
 
 
-def fit_spatial_lstm(panel: pd.DataFrame, exits_df: pd.DataFrame, holdout_days: int) -> dict:
+# Variants offered the same history: the served LSTM (rain and volume as inputs, served with rain = 0 and volume
+# held flat), and its twin without the rain input (no rainfall forecast reaches the rollout, so a model that never
+# learned to lean on rain is the fair comparison: protocol section 2's weather-free twin).
+LSTM_VARIANTS = {
+    "Spatial LSTM": ["count", "neighbor_lag_1", "log_volume", "rain_mm"],
+    "Spatial LSTM (no rain input)": ["count", "neighbor_lag_1", "log_volume"],
+}
+BATCH_SIZE = 512
+
+
+def _train_epochs(seq_tr, static_tr, y_tr, n_features: int, epochs: int, val=None):
+    """Mini-batch Adam with a Poisson loss. With `val` = (seq, static, y) it early-stops on that slice (patience
+    PATIENCE) and returns (model, best_epoch); without it, it trains exactly `epochs` epochs."""
     set_all_seeds()
-    cutoff = panel["d"].max() - pd.Timedelta(days=holdout_days)
-
-    # Standardize the sequence features on TRAIN rows only (pre-cutoff), the
-    # same leakage guard train_incident_models.py's MinMaxScaler applies —
-    # fit on train, applied to everything.
-    train_rows = panel[panel["d"] < cutoff]
-    seq_mean = train_rows[SEQ_FEATURES].mean().values.astype("float32")
-    seq_std = train_rows[SEQ_FEATURES].std().replace(0, 1.0).values.astype("float32")
-
-    seq, static, y, meta = _build_sequences(panel, exits_df, seq_mean, seq_std)
-    dates = np.array([m[1] for m in meta])
-    is_val = dates >= np.datetime64(cutoff)
-
-    seq_tr, static_tr, y_tr = seq[~is_val], static[~is_val], y[~is_val]
-    seq_val, static_val, y_val = seq[is_val], static[is_val], y[is_val]
-    print(f"  Spatial LSTM: {len(y_tr)} train examples, {len(y_val)} holdout examples "
-          f"(cutoff {cutoff.date()})")
-
-    model = SpatialLSTM(seq_features=len(SEQ_FEATURES), static_features=len(STATIC_FEATURES))
+    model = SpatialLSTM(seq_features=n_features, static_features=len(STATIC_FEATURES))
     # Head bias starts at log(mean training count) rather than 0. The output
     # is a log-rate, so a zero start means "predict 1 incident per exit-day"
     # — fine when this panel's mean was ~1.3 (the old three-table source),
@@ -585,21 +677,11 @@ def fit_spatial_lstm(panel: pd.DataFrame, exits_df: pd.DataFrame, holdout_days: 
     with torch.no_grad():
         model.head.bias.fill_(float(np.log(max(y_tr.mean().item(), 1e-3))))
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    # PoissonNLLLoss(log_input=True): model outputs log(lambda); this is the
-    # loss the diagram's "Poisson deviance" KPI is directly reporting.
+    # PoissonNLLLoss(log_input=True): model outputs log(lambda).
     loss_fn = nn.PoissonNLLLoss(log_input=True)
-
-    # Mini-batch, not full-batch. This used to take ONE gradient step per
-    # epoch (60 steps total at lr 1e-3, never early-stopping) — on the full
-    # population that left the model badly under-trained: holdout MAE 5.36
-    # against 6.46 for predicting zero and 2.23 for a plain per-exit
-    # historical mean, mean prediction 1.4 against a true 6.5. Mini-batches
-    # give it ~60 steps PER epoch, and it now beats both baselines (see
-    # metrics["baseline_mae_per_exit_mean"]).
-    BATCH_SIZE = 512
     n_train = len(y_tr)
-    best_val_loss, best_state, patience_left = float("inf"), None, PATIENCE
-    for epoch in range(EPOCHS):
+    best_val, best_state, best_epoch, patience_left = float("inf"), None, epochs, PATIENCE
+    for epoch in range(epochs):
         model.train()
         perm = torch.randperm(n_train)
         for start in range(0, n_train, BATCH_SIZE):
@@ -607,78 +689,189 @@ def fit_spatial_lstm(panel: pd.DataFrame, exits_df: pd.DataFrame, holdout_days: 
             optimizer.zero_grad()
             loss_fn(model(seq_tr[b], static_tr[b]), y_tr[b]).backward()
             optimizer.step()
-
+        if val is None:
+            continue
         model.eval()
         with torch.no_grad():
-            val_pred = model(seq_val, static_val)
-            val_loss = loss_fn(val_pred, y_val).item()
-        if val_loss < best_val_loss - 1e-4:
-            best_val_loss, best_state, patience_left = val_loss, {k: v.clone() for k, v in model.state_dict().items()}, PATIENCE
+            v = loss_fn(model(val[0], val[1]), val[2]).item()
+        if v < best_val - 1e-4:
+            best_val, best_epoch, patience_left = v, epoch + 1, PATIENCE
+            best_state = {k: t.clone() for k, t in model.state_dict().items()}
         else:
             patience_left -= 1
             if patience_left <= 0:
                 break
-
-    if best_state is not None:
+    if val is not None and best_state is not None:
         model.load_state_dict(best_state)
     model.eval()
-    with torch.no_grad():
-        val_pred_count = torch.exp(model(seq_val, static_val)).numpy()
-    y_val_np = y_val.numpy()
+    return model, best_epoch
 
-    # Naive reference on the SAME holdout rows: each exit's mean training
-    # count. A model that can't beat this isn't adding anything over "this
-    # exit is usually busy".
-    train_meta = [m_ for m_, v in zip(meta, is_val) if not v]
-    train_mean_by_exit = pd.Series(y_tr.numpy()).groupby([e for e, _ in train_meta]).mean()
-    val_exit_ids = [m_[0] for m_, v in zip(meta, is_val) if v]
-    baseline_pred = np.array([train_mean_by_exit.get(e, float(y_tr.mean())) for e in val_exit_ids])
 
-    # Score only exits that have EVER had an incident. An exit with no history
-    # (until 2026-09-21 SCTEX and Sta. Ines: etl/cleaner.ts's NLEX_KM_MAX = 84 rejected
-    # every row beyond km-post 84.0 at load, although the client's CSVs held some — a
-    # loader gap, not an absence of incidents; the cap is now 89 and every exit has
-    # history, so nothing is excluded today) has an all-zero series that any model —
-    # including the per-exit-mean baseline
-    # — "predicts" perfectly, so counting its exit-days pads n and pulls both MAE
-    # figures down without saying anything about how well real exits are forecast
-    # (2 of 20 exits = 10% of exit-days, ~11% too-low MAE). Same definition as the
-    # dashboard's No-data marking (incident-spatial.service.ts): zero events over the
-    # whole panel. Training is untouched — these exits still feed the network as
-    # before; only the SCORING skips them. The all-exit figures are kept under
-    # "all_exits" so the change is auditable against earlier runs.
+def fit_lstm_before(panel: pd.DataFrame, exits_df: pd.DataFrame, end: pd.Timestamp, seq_features: list[str]):
+    """Fit one LSTM on every example whose target day is before `end` (nothing on or after it is seen).
+
+    1. Early stopping: train on targets before end - EARLY_STOP_DAYS, stop on the last EARLY_STOP_DAYS days before
+       `end` (a validation slice; it used to stop on the test days themselves).
+    2. Refit from the same start on ALL targets before `end` for the chosen number of epochs, so the most recent
+       60 days also shape the weights."""
+    hist = panel[panel["d"] < end]
+    seq_mean = hist[seq_features].mean().values.astype("float32")
+    seq_std = hist[seq_features].std().replace(0, 1.0).values.astype("float32")
+    seq, static, y, meta = _build_sequences(hist, exits_df, seq_mean, seq_std, seq_features)
+    dates = np.array([m[1] for m in meta], dtype="datetime64[ns]")
+    val_start = np.datetime64(end - pd.Timedelta(days=EARLY_STOP_DAYS))
+    tr = torch.tensor(dates < val_start)
+    _, best_epoch = _train_epochs(seq[tr], static[tr], y[tr], len(seq_features), EPOCHS,
+                                  val=(seq[~tr], static[~tr], y[~tr]))
+    model, _ = _train_epochs(seq, static, y, len(seq_features), best_epoch)
+    return model, seq_mean, seq_std, {"best_epoch": int(best_epoch), "train_examples": int(len(y)),
+                                      "val_start": str(pd.Timestamp(val_start).date())}
+
+
+def _baseline_forecasts(hist: pd.DataFrame, dates: pd.DatetimeIndex) -> dict[str, dict[int, np.ndarray]]:
+    """Per-exit baseline forecasts for `dates`, from `hist` (days before the origin) only."""
+    out: dict[str, dict[int, np.ndarray]] = {}
+    future = pd.DataFrame({"ds": dates})
+    proto = PROTOCOL_BASELINES("count")
+    origin = dates[0]
+    for eid, g in hist.groupby("exit_id"):
+        s = g.sort_values("d")
+        tr = pd.DataFrame({"ds": s["d"].values, "count": s["count"].values.astype(float)})
+        for name, fn in proto.items():
+            out.setdefault(name, {})[eid] = np.asarray(fn(tr, future), dtype=float)
+        last365 = s[s["d"] >= origin - pd.Timedelta(days=365)]
+        out.setdefault("Baseline: trailing 365-day mean", {})[eid] = np.full(len(dates), float(last365["count"].mean()))
+        wk = last365.groupby(last365["d"].dt.dayofweek)["count"].mean()
+        out.setdefault("Baseline: same weekday, trailing 52 weeks", {})[eid] = np.array(
+            [float(wk.get(d.dayofweek, last365["count"].mean())) for d in dates])
+        out.setdefault("Baseline: whole-history mean", {})[eid] = np.full(len(dates), float(s["count"].mean()))
+        out.setdefault("Baseline: zero", {})[eid] = np.zeros(len(dates))
+    return out
+
+
+def rolling_test(panel: pd.DataFrame, exits_df: pd.DataFrame, variants: dict[str, list[str]], log=print,
+                 refit_every: int = 4) -> dict:
+    """Protocol section 2 for the hotspot forecast: origins every ORIGIN_STEP_DAYS over the last TEST_WEEKS weeks
+    of REAL data (volume is an input, so scored days end at REAL_END_VOLUME); from every origin each LSTM variant is
+    rolled out HORIZON_DAYS days exactly as served (rain 0, volume flat, its own predictions fed back) from the
+    actual history before that origin; the baselines are computed from the same days. Then
+    rolling_eval.select_champion.
+
+    Re-fitting: one LSTM fit (validation fit + refit) takes 1.5-3 minutes on this PC, so the weights are re-fitted
+    at every `refit_every`-th origin (default 4 = every 8 weeks) and reused for the origins up to the next refit.
+    Every forecast still uses only data before its own origin (the weights come from data before an earlier or the
+    same origin); `refit_every=1` is the protocol's literal refit-at-every-origin."""
+    import time
+    days = pd.Series(np.sort(panel["d"].unique()))
+    origins = yearly_origins(days, REAL_END_VOLUME, step=ORIGIN_STEP_DAYS, weeks=TEST_WEEKS)
     ids_with_history = set(panel.groupby("exit_id")["count"].sum().loc[lambda s: s > 0].index)
-    keep = np.array([e in ids_with_history for e in val_exit_ids], dtype=bool)
-    excluded_names = (
-        exits_df[~exits_df["exit_id"].isin(ids_with_history)].sort_values("km")["exit_name"].tolist()
-    )
+    actual = panel.set_index(["d", "exit_id"])["count"]
+    rows, fit_info = [], []
+    fitted: dict[str, tuple] = {}
+    for oi, pos in enumerate(origins, 1):
+        t0 = time.time()
+        origin = pd.Timestamp(days.iloc[pos])
+        dates = pd.date_range(origin, periods=HORIZON_DAYS, freq="D")
+        hist = panel[panel["d"] < origin]
+        fc: dict[str, dict[int, np.ndarray]] = _baseline_forecasts(hist, dates)
+        for name, feats in variants.items():
+            if (oi - 1) % max(1, refit_every) == 0 or name not in fitted:
+                model, mu, sd, info = fit_lstm_before(panel, exits_df, origin, feats)
+                info.update(origin=str(origin.date()), model=name)
+                fit_info.append(info)
+                fitted[name] = (model, mu, sd)
+            model, mu, sd = fitted[name]
+            roll = rollout_spatial_lstm(model, hist, exits_df, mu, sd, HORIZON_DAYS, seq_features=feats)
+            fc[name] = {}
+            for r in roll:
+                fc[name].setdefault(r["exit_id"], np.zeros(HORIZON_DAYS))[r["horizon_day"] - 1] = r["predicted_incidents"]
+        for name, per_exit in fc.items():
+            for eid, yh in per_exit.items():
+                if eid not in ids_with_history:
+                    continue
+                for h, d in enumerate(dates, 1):
+                    if d > REAL_END_VOLUME or (d, eid) not in actual.index:
+                        continue
+                    rows.append([oi, name, h, str(d.date()), int(eid), float(actual[(d, eid)]), float(yh[h - 1])])
+        log(f"  origin {oi}/{len(origins)} from {origin.date()} ({time.time() - t0:.0f}s)", flush=True)
+    res = pd.DataFrame(rows, columns=["origin", "model", "h", "date", "exit_id", "actual", "forecast"])
+    # Lower = simpler: fewer inputs first; a lead that is not significant goes to the simpler model.
+    complexity = {name: 1 + i for i, name in enumerate(sorted(variants, key=lambda n: len(variants[n])))}
+    sel = select_champion(res, buckets=SPATIAL_BUCKETS, metric="mae", complexity=complexity)
+    return {"results": res, "selection": sel, "origins": [str(pd.Timestamp(days.iloc[p]).date()) for p in origins],
+            "fit_info": fit_info, "n_exits": len(ids_with_history)}
 
+
+def fit_spatial_lstm(panel: pd.DataFrame, exits_df: pd.DataFrame, variants: dict[str, list[str]],
+                     refit_every: int = 4) -> dict:
+    """Rolling test, then the FINAL forecast from the champion, fitted on all the data (protocol section 7).
+    If no LSTM beats the best baseline, the best baseline's 28-day forecast is what gets written."""
+    print(f"  rolling test: origins every {ORIGIN_STEP_DAYS} days over the last {TEST_WEEKS} weeks to "
+          f"{REAL_END_VOLUME.date()}, {HORIZON_DAYS}-day served rollout, weights refitted every {refit_every} origin(s)", flush=True)
+    test = rolling_test(panel, exits_df, variants, refit_every=refit_every)
+    sel = test["selection"]
+    table = pd.DataFrame(sel["table"]).T
+    res = test["results"]
+    champion = sel["champion"]
+
+    end = panel["d"].max() + pd.Timedelta(days=1)
+    dates = pd.date_range(end, periods=HORIZON_DAYS, freq="D")
+    final_info = None
+    if champion in variants:
+        feats = variants[champion]
+        model, mu, sd, final_info = fit_lstm_before(panel, exits_df, end, feats)
+        forecasts = rollout_spatial_lstm(model, panel, exits_df, mu, sd, HORIZON_DAYS, seq_features=feats)
+    else:
+        per_exit = _baseline_forecasts(panel, dates)[champion]
+        last_obs = panel.sort_values("d").groupby("exit_id")["count"].last()
+        forecasts = []
+        for h, d in enumerate(dates, 1):
+            day = [{"exit_id": int(e), "forecast_date": d.date(), "horizon_day": h,
+                    "predicted_incidents": float(max(v[h - 1], 0.0)),
+                    "last_observed_count": float(last_obs.get(e, np.nan)) if h == 1 else None}
+                   for e, v in per_exit.items()]
+            day.sort(key=lambda r: r["predicted_incidents"], reverse=True)
+            for rank, r in enumerate(day, 1):
+                r["rank"] = rank
+            forecasts.extend(day)
+
+    def score(name):
+        return float(table.loc[name, "score"]) if name in table.index else None
+
+    lstm_name = "Spatial LSTM"
+    sub = res[res["model"] == lstm_name]
+    with_history = set(panel.groupby("exit_id")["count"].sum().loc[lambda s: s > 0].index)
     metrics = {
-        "MAE": mae_of(y_val_np[keep], val_pred_count[keep]),
-        "Poisson_Deviance": poisson_deviance_of(y_val_np[keep], val_pred_count[keep]),
-        "baseline_mae_per_exit_mean": mae_of(y_val_np[keep], baseline_pred[keep]),
-        "baseline_mae_zero": mae_of(y_val_np[keep], np.zeros_like(y_val_np[keep])),
-        "n": int(keep.sum()),
-        "n_exits": len(ids_with_history & set(val_exit_ids)),
-        "excluded_exits": excluded_names,
-        "all_exits": {
-            "MAE": mae_of(y_val_np, val_pred_count),
-            "Poisson_Deviance": poisson_deviance_of(y_val_np, val_pred_count),
-            "baseline_mae_per_exit_mean": mae_of(y_val_np, baseline_pred),
-            "baseline_mae_zero": mae_of(y_val_np, np.zeros_like(y_val_np)),
-            "n": int(len(y_val_np)),
-        },
-        "epochs_trained": epoch + 1,
+        # MAE = the protocol score: mean of the horizon-bucket MAEs (days 1-7, 8-14, 15-28) over the rolling origins.
+        "MAE": score(lstm_name),
+        "Poisson_Deviance": poisson_deviance_of(sub["actual"].values, sub["forecast"].values) if len(sub) else None,
+        "baseline_mae_per_exit_mean": score("Baseline: whole-history mean"),
+        "baseline_mae_zero": score("Baseline: zero"),
+        "baseline_mae_trailing_365": score("Baseline: trailing 365-day mean"),
+        "baseline_mae_same_weekday_52w": score("Baseline: same weekday, trailing 52 weeks"),
+        "by_model": {m: {k: float(v) for k, v in table.loc[m].items()} for m in table.index},
+        "champion": champion,
+        "champion_is_baseline": bool(sel.get("champion_is_baseline", False)),
+        "selection": {k: v for k, v in sel.items() if k != "table"},
+        "n": int(len(sub)),
+        "n_exits": test["n_exits"],
+        "origins": test["origins"],
+        "test_window": [str(res["date"].min()), str(res["date"].max())],
+        "excluded_exits": exits_df[~exits_df["exit_id"].isin(with_history)]["exit_name"].tolist(),
+        "epochs_trained": final_info["best_epoch"] if final_info else None,
+        "protocol": ("rolling origins every 14 days over the last 52 weeks of real volume, each a 28-day recursive "
+                     f"rollout as served (rain 0, volume held at the last week's level); weights refitted every {refit_every} "
+                     "origin(s) on data before that origin, early stopping on the 60 days before it"),
+        "refit_every_origins": refit_every,
+        "fits": test["fit_info"],
     }
-
-    forecasts = rollout_spatial_lstm(model, panel, exits_df, seq_mean, seq_std, HORIZON_DAYS)
-
-    return {"metrics": metrics, "forecasts": forecasts}
+    return {"metrics": metrics, "forecasts": forecasts, "results": res, "selection": sel}
 
 
 def rollout_spatial_lstm(model: "SpatialLSTM", panel: pd.DataFrame, exits_df: pd.DataFrame,
-                          seq_mean: np.ndarray, seq_std: np.ndarray, horizon_days: int) -> list[dict]:
-    """Recursive HORIZON_DAYS-ahead forecast, jointly across all exits.
+                          seq_mean: np.ndarray, seq_std: np.ndarray, horizon_days: int,
+                          seq_features: list[str] | None = None) -> list[dict]:
+    """Recursive HORIZON_DAYS-ahead forecast, jointly across all exits, from the day after `panel` ends.
 
     The model itself only ever took one step (see the SpatialLSTM/
     _build_sequences docstrings above) — day h+1 is produced the same way a
@@ -687,13 +880,15 @@ def rollout_spatial_lstm(model: "SpatialLSTM", panel: pd.DataFrame, exits_df: pd
     it, and so on for `horizon_days`. This is the same walk-forward idea
     train_incident_models.py's own multi-day models already use for the main
     Forecast chart's Future zone, applied per-exit here instead of
-    corridor-wide.
+    corridor-wide. The rolling test (rolling_test) calls this same function, so
+    what is scored is exactly what is served.
 
-    Two of the four SEQ_FEATURES have no real future value to feed in:
-      - neighbor_lag_1 is NOT a problem — it is rebuilt each rollout day from
-        THIS SAME day's own predictions for the neighbouring exits (every
-        exit is rolled forward in lockstep, one day at a time, precisely so
-        this coupling keeps working past day 1).
+    Inputs with no real future value:
+      - neighbor_lag_1 is rebuilt each rollout day from the neighbouring exits'
+        counts of the PREVIOUS day (observed for the first step, this rollout's
+        own predictions after that). It used to take the neighbours' SAME-day
+        predictions, one day off from how the feature is built in training
+        (lag 1); corrected 10 Nov 2026.
       - log_volume and rain_mm have no per-exit, multi-day forecast of their
         own anywhere in this warehouse. Held flat for the whole rollout
         instead of guessed fresh each day: log_volume at that exit's own
@@ -710,6 +905,7 @@ def rollout_spatial_lstm(model: "SpatialLSTM", panel: pd.DataFrame, exits_df: pd
     (non-null) on horizon_day 1; later days have no corresponding observation
     to report.
     """
+    seq_features = seq_features or SEQ_FEATURES
     static_km_mean, static_km_std = exits_df["km"].mean(), exits_df["km"].std() or 1.0
     km_by_exit = exits_df.set_index("exit_id")["km"]
     neighbors_by_exit: dict[int, list[int]] = {}
@@ -718,16 +914,16 @@ def rollout_spatial_lstm(model: "SpatialLSTM", panel: pd.DataFrame, exits_df: pd
         neighbors_by_exit[eid] = dists.nsmallest(N_NEIGHBORS).index.tolist()
 
     static_vec_by_exit: dict[int, np.ndarray] = {}
-    windows: dict[int, list[list[float]]] = {}
+    windows: dict[int, np.ndarray] = {}
     last_date_by_exit: dict[int, pd.Timestamp] = {}
     last_observed_by_exit: dict[int, float] = {}
     typical_log_volume: dict[int, float] = {}
 
     for eid, g in panel.groupby("exit_id"):
         g = g.sort_values("d").reset_index(drop=True)
-        if len(g) < SEQ_LEN or g[SEQ_FEATURES].tail(SEQ_LEN).isna().any().any():
+        if len(g) < SEQ_LEN or g[seq_features].tail(SEQ_LEN).isna().any().any():
             continue
-        windows[eid] = g[SEQ_FEATURES].tail(SEQ_LEN).values.astype("float64").tolist()
+        windows[eid] = g[seq_features].tail(SEQ_LEN).values.astype("float64")
         last_date_by_exit[eid] = g["d"].iloc[-1]
         last_observed_by_exit[eid] = float(g["count"].iloc[-1])
         typical_log_volume[eid] = float(g["log_volume"].tail(7).mean())
@@ -739,16 +935,17 @@ def rollout_spatial_lstm(model: "SpatialLSTM", panel: pd.DataFrame, exits_df: pd
 
     usable_exits = list(windows.keys())
     forecasts: list[dict] = []
+    if not usable_exits:
+        return forecasts
+    static_t = torch.tensor(np.stack([static_vec_by_exit[e] for e in usable_exits]))
+    prev_counts = dict(last_observed_by_exit)  # each exit's count on the day before the next appended row
 
     for h in range(1, horizon_days + 1):
-        preds_this_day: dict[int, float] = {}
+        # One batched step for every exit (it used to be one forward pass per exit).
+        batch = np.stack([windows[e] for e in usable_exits]).astype("float32")
         with torch.no_grad():
-            for eid in usable_exits:
-                feats = (np.array(windows[eid], dtype="float32") - seq_mean) / seq_std
-                seq_t = torch.tensor(feats).unsqueeze(0)
-                static_t = torch.tensor(static_vec_by_exit[eid]).unsqueeze(0)
-                pred = float(torch.exp(model(seq_t, static_t)).item())
-                preds_this_day[eid] = max(pred, 0.0)
+            out = torch.exp(model(torch.tensor((batch - seq_mean) / seq_std), static_t)).numpy()
+        preds_this_day = {e: max(float(v), 0.0) for e, v in zip(usable_exits, out)}
 
         day_rows = [
             {
@@ -767,16 +964,16 @@ def rollout_spatial_lstm(model: "SpatialLSTM", panel: pd.DataFrame, exits_df: pd
 
         if h == horizon_days:
             break
-        # Slide every exit's window forward one day using THIS day's
-        # predictions — including for neighbor_lag_1, which is why this
-        # whole rollout runs one day at a time across ALL exits rather than
-        # per-exit to the full horizon: day h+1's neighbor feature for exit
-        # E depends on day h's prediction for E's neighbours.
+        # Slide every exit's window forward one day. The appended row is day h: its count is this day's
+        # prediction and its neighbour lag is the neighbours' count on day h-1 (the feature is a lag-1).
         for eid in usable_exits:
-            neighbor_vals = [preds_this_day[n] for n in neighbors_by_exit.get(eid, []) if n in preds_this_day]
-            neighbor_lag = float(np.mean(neighbor_vals)) if neighbor_vals else 0.0
-            new_row = [preds_this_day[eid], neighbor_lag, typical_log_volume[eid], 0.0]
-            windows[eid] = windows[eid][1:] + [new_row]
+            neighbor_vals = [prev_counts[n] for n in neighbors_by_exit.get(eid, []) if n in prev_counts]
+            values = {"count": preds_this_day[eid],
+                      "neighbor_lag_1": float(np.mean(neighbor_vals)) if neighbor_vals else 0.0,
+                      "log_volume": typical_log_volume[eid], "rain_mm": 0.0}
+            new_row = np.array([[values[f] for f in seq_features]])
+            windows[eid] = np.vstack([windows[eid][1:], new_row])
+        prev_counts = dict(preds_this_day)
 
     return forecasts
 
@@ -784,6 +981,8 @@ def rollout_spatial_lstm(model: "SpatialLSTM", panel: pd.DataFrame, exits_df: pd
 # ---------------------------------------------------------------------------
 # DB write
 # ---------------------------------------------------------------------------
+
+
 def ensure_schema(conn, commit: bool = True) -> None:
     with conn.cursor() as cur:
         cur.execute(
@@ -903,45 +1102,47 @@ def print_report(gwr_out: dict, lstm_out: dict) -> str:
     L.append("  INCIDENT SPATIAL MODELS (per-exit)")
     L.append("=" * 80)
     L.append("")
-    L.append("  GWR — cross-section over 20 exits, IN-SAMPLE fit (see fit_gwr docstring)")
-    L.append(f"    bandwidth (fixed, degrees) = {gwr_out['bw']:.4f}")
-    L.append(f"    MAE              = {gwr_out['metrics']['MAE']:.3f}")
-    L.append(f"    Poisson_Deviance = {gwr_out['metrics']['Poisson_Deviance']:.3f}")
-    L.append(f"    n                = {gwr_out['metrics']['n']}")
-    loocv_mae = gwr_out["metrics"].get("loocv_mae")
-    L.append(
-        f"    Leave-one-exit-out MAE = {loocv_mae:.3f}  (n={gwr_out['metrics']['loocv_n']} folds) "
-        f"— the honest generalization estimate; compare against the in-sample MAE above"
-        if loocv_mae is not None else "    Leave-one-exit-out MAE = n/a (every fold failed)"
-    )
-    L.append("")
+    gm = gwr_out["metrics"]
+    L.append("  GWR — cross-section over 20 exits (explanatory: the coefficient map)")
+    L.append(f"    bandwidth (fixed, degrees) = {gwr_out['bw']:.4f}  (full fit; in-sample MAE {gm['MAE']:.3f}, "
+             f"deviance {gm['Poisson_Deviance']:.3f}, n {gm['n']})")
+    if gm.get("loocv_mae") is not None:
+        rng = gm.get("loocv_bandwidth_range") or [float("nan")] * 2
+        L.append(f"    Leave-one-exit-out ({gm['loocv_n']} folds, {gm.get('loocv_failed_folds', 0)} failed; bandwidth "
+                 f"re-chosen in every fold, {rng[0]:.3f}-{rng[1]:.3f}), mean daily incidents per exit:")
+        for name, v in sorted(gm["loocv_comparison"].items(), key=lambda kv: kv[1]):
+            L.append(f"      {name:<42} MAE = {v:.3f}")
+        lo, hi = gm["loocv_gwr_minus_best_baseline_ci"]
+        L.append(f"    GWR {'beats' if gm['loocv_beats_best_baseline'] else 'does NOT beat'} the best baseline "
+                 f"({gm['loocv_best_baseline']}); GWR - baseline 95% interval [{lo:+.3f}, {hi:+.3f}]")
+        lo, hi = gm["loocv_gwr_minus_glm_ci"]
+        L.append(f"    GWR - global Poisson GLM 95% interval [{lo:+.3f}, {hi:+.3f}] (does letting coefficients vary help?)")
+    else:
+        L.append("    Leave-one-exit-out MAE = n/a (every fold failed)")
     sig = [c for c in gwr_out["coefficients"] if c["variable"] != "intercept" and c["significant"]]
     L.append(f"    {len(sig)} of {len([c for c in gwr_out['coefficients'] if c['variable'] != 'intercept'])} "
-              f"non-intercept (exit, variable) coefficients are locally significant (|t| > 1.96)")
+             f"non-intercept (exit, variable) coefficients are locally significant (|t| > 1.96)")
     L.append("")
-    L.append("  Spatial LSTM — pooled across exits, genuine temporal holdout")
-    L.append(f"    MAE              = {lstm_out['metrics']['MAE']:.3f}")
-    L.append(f"    Poisson_Deviance = {lstm_out['metrics']['Poisson_Deviance']:.3f}")
-    L.append(f"    baseline MAE     = {lstm_out['metrics']['baseline_mae_per_exit_mean']:.3f} (per-exit train mean)  "
-             f"{lstm_out['metrics']['baseline_mae_zero']:.3f} (predict zero)")
-    L.append(f"    holdout n        = {lstm_out['metrics']['n']} exit-days across {lstm_out['metrics']['n_exits']} exits")
-    if lstm_out["metrics"]["excluded_exits"]:
-        allx = lstm_out["metrics"]["all_exits"]
-        L.append(f"    not scored       : {', '.join(lstm_out['metrics']['excluded_exits'])} (no incident history)")
-        L.append(f"    (all-exit figures: MAE {allx['MAE']:.3f}, baseline {allx['baseline_mae_per_exit_mean']:.3f}, n {allx['n']})")
-    L.append(f"    epochs trained   = {lstm_out['metrics']['epochs_trained']}")
+    m = lstm_out["metrics"]
+    L.append("  Daily incidents per exit — tested as served")
+    L.append(f"    {m['protocol']}")
+    L.append(f"    {len(m['origins'])} origins {m['origins'][0]}..{m['origins'][-1]}; scored days {m['test_window'][0]}.."
+             f"{m['test_window'][1]}; {m['n_exits']} exits")
+    protocol_report(lstm_out["selection"], log=L.append)
+    L.append(f"    served: {m['champion']}" + ("  (a baseline: no LSTM beat the best baseline)" if m["champion_is_baseline"] else ""))
+    if m["excluded_exits"]:
+        L.append(f"    not scored: {', '.join(m['excluded_exits'])} (no incident history)")
+    if m.get("epochs_trained"):
+        L.append(f"    final model epochs = {m['epochs_trained']} (chosen on the last {EARLY_STOP_DAYS} days before the data end)")
     L.append("")
-    L.append(f"  Next-24h high-risk segments (top 5 of {HORIZON_DAYS}-day rollout, day 1):")
+    L.append(f"  Next-24h high-risk segments (top 5 of the {HORIZON_DAYS}-day forecast written, day 1):")
     for f in lstm_out["forecasts"]:
-        if f["horizon_day"] != 1:
-            continue
-        if f["rank"] > 5:
+        if f["horizon_day"] != 1 or f["rank"] > 5:
             continue
         L.append(f"    #{f['rank']:<2} exit_id={f['exit_id']:<3} "
-                  f"predicted={f['predicted_incidents']:.3f}  last_observed={f['last_observed_count']:.0f}")
-    day7_top = min((f for f in lstm_out["forecasts"] if f["horizon_day"] == HORIZON_DAYS), key=lambda f: f["rank"])
-    L.append(f"  Day {HORIZON_DAYS} top exit: exit_id={day7_top['exit_id']} predicted={day7_top['predicted_incidents']:.3f} "
-              f"(recursive rollout -- compounded, treat with less confidence than day 1)")
+                 f"predicted={f['predicted_incidents']:.3f}  last_observed={f['last_observed_count']:.0f}")
+    day_last = min((f for f in lstm_out["forecasts"] if f["horizon_day"] == HORIZON_DAYS), key=lambda f: f["rank"])
+    L.append(f"  Day {HORIZON_DAYS} top exit: exit_id={day_last['exit_id']} predicted={day_last['predicted_incidents']:.3f}")
     L.append("=" * 80)
     return "\n".join(L)
 
@@ -950,10 +1151,21 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write-db", action="store_true")
     parser.add_argument("--dry-write", action="store_true")
-    parser.add_argument("--holdout-days", type=int, default=VALIDATION_DAYS)
+    parser.add_argument("--dry-run", action="store_true",
+                        help="train and report only; write nothing (no report file, read-only DB session)")
+    # Kept so existing callers do not break; the single holdout it sized is replaced by the rolling test.
+    parser.add_argument("--holdout-days", type=int, default=VALIDATION_DAYS,
+                        help="ignored since 10 Nov 2026 (the rolling-origin test replaced the single holdout)")
+    parser.add_argument("--refit-every", type=int, default=4,
+                        help="re-fit the LSTM weights every N rolling origins (1 = every origin; default 4 = 8 weeks)")
+    parser.add_argument("--no-twin", action="store_true",
+                        help="test only the served LSTM, not also its no-rain twin (halves the run time)")
     args = parser.parse_args()
+    if args.dry_run and (args.write_db or args.dry_write):
+        sys.exit("--dry-run writes nothing; it cannot be combined with --write-db or --dry-write")
+    variants = {k: v for k, v in LSTM_VARIANTS.items() if not (args.no_twin and k != "Spatial LSTM")}
 
-    conn = get_conn()
+    conn = get_conn(readonly=args.dry_run)
     try:
         print("Loading exit reference (nlex_exits x dim_location, km-derived)...")
         exits_df = load_exit_reference(conn)
@@ -968,10 +1180,13 @@ def main() -> None:
         gwr_out = fit_gwr(exits_df, panel)
 
         print("\nFitting Spatial LSTM...")
-        lstm_out = fit_spatial_lstm(panel, exits_df, args.holdout_days)
+        lstm_out = fit_spatial_lstm(panel, exits_df, variants, refit_every=args.refit_every)
 
         report = print_report(gwr_out, lstm_out)
         print("\n" + report)
+        if args.dry_run:
+            print("\n--dry-run: nothing written (no report file, no database rows).")
+            return
         report_path = Path(__file__).resolve().parent / "model_results_spatial.txt"
         report_path.write_text(report, encoding="utf-8")
         print(f"\nFull report written to {report_path}")
@@ -980,13 +1195,17 @@ def main() -> None:
             print("\nTraining complete. Re-run with --write-db once you've reviewed the report above.")
             return
 
+        champ = lstm_out["metrics"]["champion"]
         metadata = {
             "data_source": "silver.nlex_accident_events_clean + silver.nlex_breakdown_events_clean",
             "gwr": {"bandwidth": gwr_out["bw"], "metrics": gwr_out["metrics"], "variables": GWR_VARIABLES},
             "spatial_lstm": {
                 "metrics": lstm_out["metrics"], "seq_len": SEQ_LEN, "n_neighbors": N_NEIGHBORS,
-                "seq_features": SEQ_FEATURES, "static_features": STATIC_FEATURES,
+                "seq_features": variants.get(champ, SEQ_FEATURES), "static_features": STATIC_FEATURES,
                 "horizon_days": HORIZON_DAYS,
+                # Which forecast gold.ml_incident_segment_risk holds: an LSTM's, or the best baseline's when no
+                # LSTM beat it in the rolling test.
+                "served_model": champ,
                 # Only day 1 is a direct model output; days 2-HORIZON_DAYS are
                 # a recursive rollout (see rollout_spatial_lstm's own doc
                 # comment) that also holds two inputs flat for the whole
@@ -999,7 +1218,7 @@ def main() -> None:
             "trained_at": pd.Timestamp.utcnow().isoformat(),
         }
         print("\nWriting gold.ml_incident_spatial_coefficients / ml_incident_segment_risk / ml_incident_spatial_metadata...")
-        write_to_db(conn, gwr_out, lstm_out, metadata, dry=args.dry_write and not args.write_db)
+        write_to_db(conn, gwr_out, lstm_out, json_safe(metadata), dry=args.dry_write and not args.write_db)
         print("Rolled back (dry write)." if (args.dry_write and not args.write_db) else "Committed.")
     except Exception:
         conn.rollback()

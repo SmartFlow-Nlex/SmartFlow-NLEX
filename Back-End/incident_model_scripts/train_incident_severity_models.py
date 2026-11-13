@@ -52,8 +52,22 @@ per-service dispatch/response records (`deployments`) feed a separate,
 purely descriptive analysis (getEventBreakdownFromDb / /api/incident/event-breakdown)
 rather than this trained-model pipeline.
 
+How it is tested (10 Nov 2026, EVALUATION_PROTOCOL.md applied to classes and durations):
+  * Severity: plain accuracy was the selection metric and it equalled the share of the commonest class (0.9005 vs
+    0.9003): "always Property Damage Only" scored the same. Candidates are now chosen on macro-F1 and must ALSO beat
+    the class prior on log-loss; balanced accuracy, Brier skill and per-class recall are reported, and the class
+    prior is scored on the same rows. Plain argmax almost never names a rare class, so each classifier's decision
+    weights are tuned for macro-F1 on a validation slice cut from the END of the training period (never the test).
+  * Clearance: the Cox model's concordance used to be its TRAINING c-index; it is now computed on the test rows.
+    Its MAE is reported next to a constant training median and a per-(type x cause) training-median lookup, and
+    the served clearance figure is the Cox model only if it beats the better of the two (else that baseline).
+  * Volume enters as the mean of the 7 days BEFORE the incident (known at the time), not the incident day's own
+    total, and only real volume (to REAL_END_VOLUME) is used: clearance is scored on incidents up to that day.
+  * Every "A beats B" carries a 95% moving-block bootstrap interval over days.
+
 Usage:
-    python train_incident_severity_models.py                 # train + report only
+    python train_incident_severity_models.py                 # train + report only (writes the report .txt)
+    python train_incident_severity_models.py --dry-run       # train + report, writes NOTHING (no file, read-only DB session)
     python train_incident_severity_models.py --write-db       # + write to gold.*
     python train_incident_severity_models.py --dry-write       # rehearse the write, then roll back
 """
@@ -76,15 +90,26 @@ import psycopg2.extras
 import statsmodels.api as sm
 from dotenv import load_dotenv
 from lifelines import CoxPHFitter
-from sklearn.metrics import accuracy_score, mean_absolute_error, roc_auc_score
+from sklearn.metrics import mean_absolute_error
 from statsmodels.miscmodels.ordinal_model import OrderedModel
 from xgboost import XGBClassifier
+
+from honest_eval import (REAL_END_VOLUME, binary_report, block_bootstrap_ci, concordance_on, fmt_ci, json_safe,
+                         log_loss_rows, macro_f1_from, median_lookup, multiclass_report, pick_champion,
+                         tune_class_weights)
 
 SEED = 42
 # Chronological holdout, same "score on the most recent slice" protocol as
 # train_incident_models.py's default (protocol="holdout") — trains on the
 # older ~80%, scores on the most recent ~20% of incidents by report time.
 HOLDOUT_FRACTION = 0.2
+# The last 15% of the TRAINING incidents (by time) is the validation slice the severity decision weights are tuned
+# on; the classifiers are then refitted on the whole training period. The test rows are never used for tuning.
+VALIDATION_FRACTION = 0.15
+# Moving-block bootstrap block, in days, for every interval below.
+BOOT_BLOCK_DAYS = 7
+# A per-group clearance median needs this many training incidents, else it falls back to the coarser group.
+MIN_GROUP_N = 20
 # How close two incidents' km-posts have to be to count as "nearby" for the
 # secondary-incident label. NLEX's 20 exits average ~4km apart, so 2km is
 # roughly "the same immediate stretch of corridor", not the whole highway.
@@ -104,8 +129,9 @@ set_all_seeds()
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
-def get_conn():
-    """Mirrors train_incident_models.py's get_conn() — kept in sync by hand."""
+def get_conn(readonly: bool = False):
+    """Mirrors train_incident_models.py's get_conn() — kept in sync by hand. readonly=True (--dry-run) makes the
+    server refuse any INSERT/UPDATE/DELETE/DDL on this session, so a dry run cannot write even by mistake."""
     dsn = os.environ.get("PGURL") or os.environ.get("POSTGRES_URL")
     if not dsn:
         host = os.environ.get("PG_HOST")
@@ -116,7 +142,10 @@ def get_conn():
             f"dbname={os.environ.get('PG_DATABASE')} user={os.environ.get('PG_USER')} "
             f"password={os.environ.get('PG_PASSWORD')}"
         )
-    return psycopg2.connect(dsn, sslmode="require")
+    conn = psycopg2.connect(dsn, sslmode="require")
+    if readonly:
+        conn.set_session(readonly=True)
+    return conn
 
 
 # ---------------------------------------------------------------------------
@@ -169,10 +198,21 @@ def load_daily_volume(conn) -> pd.DataFrame:
     over with an imputed value. Rows outside coverage carry volume=NaN and
     are excluded from any grouping that needs it, the same way a handful of
     null predicted_clearance_min rows already get excluded from that average
-    elsewhere in this pipeline rather than filled in."""
+    elsewhere in this pipeline rather than filled in.
+
+    Returned as the volume an incident's dispatcher could know: the mean daily total over the 7 days BEFORE the
+    incident day (10 Nov 2026). It was the incident day's own total, which is not complete until the day ends.
+    Only real volume counts: days after REAL_END_VOLUME (25 May - 30 Jun 2026 still hold broken and synthetic
+    days) are blank, so an incident whose previous week touches them has no volume and is not scored by a model
+    that needs it."""
     df = pd.read_sql(DAILY_VOLUME_SQL, conn)
     df["d"] = pd.to_datetime(df["d"])
-    return df
+    s = df.groupby("d")["volume"].mean()
+    s = s[s.index <= REAL_END_VOLUME]
+    full = pd.date_range(s.index.min(), REAL_END_VOLUME + pd.Timedelta(days=1), freq="D")
+    s = s.reindex(full)
+    prev7 = s.rolling(7, min_periods=7).mean().shift(1)
+    return pd.DataFrame({"d": prev7.index, "volume": prev7.values})
 
 
 # ---------------------------------------------------------------------------
@@ -194,9 +234,10 @@ def build_features(df: pd.DataFrame, holidays: set) -> pd.DataFrame:
     out["hour_of_day"] = out["event_start_date"].dt.hour
 
     # Log-transformed to match train_incident_models.py's own log_volume
-    # feature (same corridor-wide daily total, same reasoning: incident
-    # counts/response times relate to volume multiplicatively, not linearly).
-    # NaN on any incident date that predates volume tracking (2022-01-01) —
+    # feature (same reasoning: incident counts/response times relate to
+    # volume multiplicatively, not linearly). `volume` is the mean of the 7
+    # days BEFORE the incident (load_daily_volume), so it is known when the
+    # incident is reported. NaN where that week is not fully real volume —
     # left as NaN rather than filled, since fit_cox_ph filters on it directly
     # rather than silently training on a guessed value.
     out["log_volume"] = np.log1p(out["volume"])
@@ -320,46 +361,127 @@ SEVERITY_LABELS = {0: "Property Damage Only", 1: "Injury", 2: "Fatal"}
 DAMAGE_LABELS = {"NO": "No Property Damage", "YES": "Property Damage"}
 
 
-def fit_severity_models(train: pd.DataFrame, holdout: pd.DataFrame) -> dict:
-    X_train = build_design_matrix(train)
-    X_holdout = build_design_matrix(holdout, dummy_columns=list(X_train.columns))
-    y_train, y_holdout = train["severity_code"].values, holdout["severity_code"].values
+N_CLASSES = 3
+SEVERITY_BASELINE = "Class prior (baseline)"
+# Lower = simpler; the simpler model wins a lead that is not significant (protocol section 6.4).
+SEVERITY_COMPLEXITY = {SEVERITY_BASELINE: 0, "OrdinalLogistic": 1, "XGBoost": 2}
 
-    ordinal = OrderedModel(y_train, X_train, distr="logit")
-    ordinal_res = ordinal.fit(method="bfgs", disp=False, maxiter=200)
-    ordinal_proba = np.asarray(ordinal_res.predict(X_holdout))
-    ordinal_pred = ordinal_proba.argmax(axis=1)
 
+def _fit_predict_ordinal(X_fit: pd.DataFrame, y_fit: np.ndarray, X_pred: pd.DataFrame) -> np.ndarray:
+    # Numeric columns standardised on the fitting rows (the one-hot columns are already 0/1): BFGS stopped at its
+    # iteration cap on the raw scales (km 0-90 next to 0/1 dummies), so the fit was not converged.
+    num = [c for c in NUMERIC_COLS if c in X_fit.columns]
+    mu, sd = X_fit[num].mean(), X_fit[num].std().replace(0, 1.0)
+    Xf, Xp = X_fit.copy(), X_pred.copy()
+    Xf[num] = (Xf[num] - mu) / sd
+    Xp[num] = (Xp[num] - mu) / sd
+    # A one-hot column that is all zero in the fitting rows has no information and makes the design rank-deficient.
+    keep = [c for c in Xf.columns if c in num or Xf[c].abs().sum() > 0]
+    res = OrderedModel(y_fit, Xf[keep], distr="logit").fit(method="bfgs", disp=False, maxiter=1000)
+    return np.asarray(res.predict(Xp[keep]))
+
+
+def _fit_predict_xgb(X_fit: pd.DataFrame, y_fit: np.ndarray, X_pred: pd.DataFrame) -> np.ndarray:
     xgb = XGBClassifier(
         n_estimators=200, max_depth=4, learning_rate=0.05, subsample=0.9,
-        colsample_bytree=0.9, objective="multi:softprob", num_class=3, random_state=SEED,
+        colsample_bytree=0.9, objective="multi:softprob", num_class=N_CLASSES, random_state=SEED, n_jobs=3,
     )
-    xgb.fit(X_train, y_train)
-    xgb_pred = xgb.predict(X_holdout)
+    xgb.fit(X_fit, y_fit)
+    return np.asarray(xgb.predict_proba(X_pred))
 
-    def metrics_for(pred: np.ndarray) -> dict:
-        return {
-            "accuracy": float(accuracy_score(y_holdout, pred)),
-            # Ordinal codes are a real ordering (PDO < Injury < Fatal), so a
-            # miss of one class away from the truth is a smaller error than
-            # a miss of two — MAE on the code captures that; plain accuracy
-            # would score both misses identically.
-            "MAE_ordinal": float(mean_absolute_error(y_holdout, pred)),
-            "n": int(len(y_holdout)),
-        }
 
-    ordinal_metrics = metrics_for(ordinal_pred)
-    xgb_metrics = metrics_for(xgb_pred)
-    champion = "OrdinalLogistic" if ordinal_metrics["accuracy"] >= xgb_metrics["accuracy"] else "XGBoost"
+def fit_severity_models(train: pd.DataFrame, holdout: pd.DataFrame) -> dict:
+    """Ordinal logistic vs XGBoost vs the class prior, on the same holdout rows.
+
+    1. Validation: fit each classifier on the first 85% of the training period, predict the last 15%, and choose
+       its decision weights (pred = argmax(proba * w)) for macro-F1 there.
+    2. Refit on the whole training period, predict the holdout, apply those weights.
+    3. Champion (rule fixed before results): eligible = beats the class prior on BOTH macro-F1 and log-loss; the
+       champion is the highest macro-F1 among the eligible; a lead over the runner-up whose 95% interval includes 0
+       goes to the simpler model. None eligible -> the class prior ("always the commonest class") is served.
+    """
+    X_train = build_design_matrix(train)
+    X_holdout = build_design_matrix(holdout, dummy_columns=list(X_train.columns))
+    y_train, y_holdout = train["severity_code"].values.astype(int), holdout["severity_code"].values.astype(int)
+
+    n_fit = int(len(train) * (1 - VALIDATION_FRACTION))
+    X_fit, X_val = X_train.iloc[:n_fit], X_train.iloc[n_fit:]
+    y_fit, y_val = y_train[:n_fit], y_train[n_fit:]
+
+    prior = np.bincount(y_train, minlength=N_CLASSES) / len(y_train)
+    prior_proba = np.tile(prior, (len(y_holdout), 1))
+
+    fitters = {"OrdinalLogistic": _fit_predict_ordinal, "XGBoost": _fit_predict_xgb}
+    proba, pred, weights = {}, {}, {}
+    for name, fn in fitters.items():
+        w = tune_class_weights(y_val, fn(X_fit, y_fit, X_val), N_CLASSES)
+        p = fn(X_train, y_train, X_holdout)
+        proba[name], weights[name] = p, w
+        pred[name] = (p * w).argmax(axis=1)
+    proba[SEVERITY_BASELINE] = prior_proba
+    pred[SEVERITY_BASELINE] = np.full(len(y_holdout), int(prior.argmax()))
+    weights[SEVERITY_BASELINE] = np.ones(N_CLASSES)
+
+    metrics = {}
+    for name in pred:
+        m = multiclass_report(y_holdout, proba[name], pred[name], N_CLASSES, prior_proba)
+        # Ordinal codes are a real ordering (PDO < Injury < Fatal), so a miss of one class away from the truth is
+        # a smaller error than a miss of two; kept as a secondary figure.
+        m["MAE_ordinal"] = float(mean_absolute_error(y_holdout, pred[name]))
+        m["decision_weights"] = [float(x) for x in weights[name]]
+        metrics[name] = m
+
+    # Champion rule (fixed before results; see the docstring).
+    days = holdout["d"].values
+    base = metrics[SEVERITY_BASELINE]
+    eligible = sorted(
+        [m for m in fitters if metrics[m]["macro_f1"] > base["macro_f1"] and metrics[m]["log_loss"] < base["log_loss"]],
+        key=lambda m: -metrics[m]["macro_f1"],
+    )
+
+    def f1_diff(a: str, b: str):
+        pa, pb = pred[a], pred[b]
+        return block_bootstrap_ci(
+            days, lambda i: macro_f1_from(y_holdout[i], pa[i], N_CLASSES) - macro_f1_from(y_holdout[i], pb[i], N_CLASSES),
+            block=BOOT_BLOCK_DAYS)
+
+    def ll_diff(a: str, b: str):
+        la, lb = log_loss_rows(y_holdout, proba[a]), log_loss_rows(y_holdout, proba[b])
+        return block_bootstrap_ci(days, lambda i: float(la[i].mean() - lb[i].mean()), block=BOOT_BLOCK_DAYS)
+
+    selection: dict = {"rule": "eligible = beats the class prior on macro-F1 AND log-loss; champion = highest "
+                               "macro-F1; a non-significant lead goes to the simpler model",
+                       "eligible": eligible}
+    if not eligible:
+        champion = SEVERITY_BASELINE
+        selection["note"] = "no classifier beats the class prior on both macro-F1 and log-loss; the prior is served"
+    else:
+        champion = eligible[0]
+        if len(eligible) > 1:
+            runner = eligible[1]
+            ci = f1_diff(champion, runner)
+            selection.update(runner_up=runner, macro_f1_vs_runner_up_ci=list(ci),
+                             macro_f1_vs_runner_up_significant=bool(ci[0] > 0))
+            if ci[0] <= 0 and SEVERITY_COMPLEXITY[runner] < SEVERITY_COMPLEXITY[champion]:
+                selection["note"] = f"{champion} led {runner} on macro-F1 without a significant margin; the simpler {runner} wins"
+                champion, selection["runner_up"] = runner, champion
+        selection["macro_f1_vs_prior_ci"] = list(f1_diff(champion, SEVERITY_BASELINE))
+        selection["log_loss_vs_prior_ci"] = list(ll_diff(champion, SEVERITY_BASELINE))
+    selection["champion"] = champion
 
     holdout_predictions = holdout[["d", "event_start_date", "km_value", "source", "severity_code"]].copy()
-    holdout_predictions["pred_ordinal"] = ordinal_pred
-    holdout_predictions["pred_xgboost"] = xgb_pred
-    holdout_predictions["pred_champion"] = ordinal_pred if champion == "OrdinalLogistic" else xgb_pred
+    holdout_predictions["pred_ordinal"] = pred["OrdinalLogistic"]
+    holdout_predictions["pred_xgboost"] = pred["XGBoost"]
+    holdout_predictions["pred_champion"] = pred[champion]
 
     return {
         "champion": champion,
-        "metrics": {"OrdinalLogistic": ordinal_metrics, "XGBoost": xgb_metrics},
+        # Candidates only under "metrics" (gold.model_evaluation lists every key there as a model); the class prior
+        # is reported under "baseline" next to them.
+        "metrics": {k: v for k, v in metrics.items() if k != SEVERITY_BASELINE},
+        "baseline": {SEVERITY_BASELINE: metrics[SEVERITY_BASELINE]},
+        "selection": selection,
+        "class_prior": [float(x) for x in prior],
         "holdout_predictions": holdout_predictions,
         "feature_columns": list(X_train.columns),
     }
@@ -433,12 +555,57 @@ def fit_cox_ph(train: pd.DataFrame, holdout: pd.DataFrame) -> dict:
     # pred_clearance is, so both land on the full holdout, covered rows or not.
     pred_mean_clearance = pred_expectation_covered.reindex(holdout.index)
 
+    # ---- Scoring: the Cox model against two baselines on exactly the same holdout rows (10 Nov 2026) ----------
+    # Scored rows = holdout incidents with a real duration and a real previous-week volume (to REAL_END_VOLUME).
+    y_sc = holdout_covered["duration_min"].values.astype(float)
+    cox_sc = pred_clearance_covered.reindex(holdout_covered.index).values.astype(float)
+    levels = [["type_of_event", "main_cause"], ["type_of_event"]]
+    preds_sc = {
+        "CoxPH": cox_sc,
+        "Constant training median (baseline)": np.full(len(y_sc), float(train_covered["duration_min"].median())),
+        "Per type x cause median (baseline)": median_lookup(train_covered, holdout_covered, "duration_min", levels, MIN_GROUP_N),
+    }
+    means_sc = {
+        "Constant training median (baseline)": np.full(len(y_sc), float(train_covered["duration_min"].mean())),
+        "Per type x cause median (baseline)": median_lookup(train_covered, holdout_covered, "duration_min", levels,
+                                                             MIN_GROUP_N, agg="mean"),
+    }
+    ok = np.isfinite(cox_sc)
+    losses = {k: np.abs(v[ok] - y_sc[ok]) for k, v in preds_sc.items()}
+    scores = {k: float(l.mean()) for k, l in losses.items()}
+    baselines = [k for k in preds_sc if k.endswith("(baseline)")]
+    sel = pick_champion(scores, baselines, holdout_covered["d"].values[ok], losses,
+                        complexity={baselines[0]: 0, baselines[1]: 1, "CoxPH": 2}, block=BOOT_BLOCK_DAYS)
+    # Test-set concordance (it was the TRAINING c-index): higher predicted duration should go with longer clearance.
+    # The Cox model ranks by -partial hazard (no ties); baselines by their own lookups (ties count half).
+    hazard = np.asarray(cph.predict_partial_hazard(X_holdout_covered)).ravel()
+    concord = {"CoxPH": concordance_on(y_sc, -hazard)}
+    for b in baselines:
+        concord[b] = concordance_on(y_sc, preds_sc[b])
+    clearance_eval = {
+        "metric": "MAE (minutes)", "scores": scores, "concordance_test": concord, "n_scored": int(ok.sum()),
+        "scored_window": [str(holdout_covered["d"].min().date()), str(holdout_covered["d"].max().date())],
+        "volume_input": "mean daily volume of the 7 days before the incident, real volume only (to "
+                        f"{REAL_END_VOLUME.date()})",
+        **sel,
+    }
+
+    # What is served is the champion: the Cox prediction if it beats both baselines, else the better baseline
+    # (median for predicted_clearance_min, the same group's training mean for predicted_clearance_mean_min).
+    if not sel["champion_is_baseline"]:
+        served = pred_clearance
+        served_mean = pred_mean_clearance
+    else:
+        b = sel["champion"]
+        served = pd.Series(preds_sc[b], index=holdout_covered.index).reindex(holdout.index)
+        served_mean = pd.Series(means_sc[b], index=holdout_covered.index).reindex(holdout.index)
+
     finite_mask = np.isfinite(pred_clearance.values)
     mae = float(mean_absolute_error(
         holdout["duration_min"].values[finite_mask], pred_clearance.values[finite_mask]
     )) if finite_mask.any() else None
-    mean_finite_mask = np.isfinite(pred_mean_clearance.values)
-    mean_clearance_minutes = float(np.mean(pred_mean_clearance.values[mean_finite_mask])) if mean_finite_mask.any() else None
+    mean_finite_mask = np.isfinite(served_mean.values)
+    mean_clearance_minutes = float(np.mean(served_mean.values[mean_finite_mask])) if mean_finite_mask.any() else None
     cox_n = int(len(train_covered)) + int(len(holdout_covered))
 
     # Representative survival curves for the clearance-survival-curve
@@ -564,9 +731,15 @@ def fit_cox_ph(train: pd.DataFrame, holdout: pd.DataFrame) -> dict:
             curves.append(c)
 
     return {
-        "concordance_index": float(cph.concordance_index_),
+        # On the TEST rows (it was cph.concordance_index_, the training-set figure, until 10 Nov 2026).
+        "concordance_index": concord["CoxPH"],
+        "concordance_index_train": float(cph.concordance_index_),
         "mae_minutes": mae,
-        "n": int(len(holdout)),
+        "clearance_eval": clearance_eval,
+        "served_model": sel["champion"],
+        "served_pred": served,
+        "served_mean": served_mean,
+        "n": int(ok.sum()),
         # The model now trains and scores on the volume-covered subset only
         # (see the doc comment at the top of this function) — cox_n/
         # cox_coverage_pct report that real, smaller sample honestly rather
@@ -585,6 +758,12 @@ def fit_cox_ph(train: pd.DataFrame, holdout: pd.DataFrame) -> dict:
 # Model 3: Secondary incident risk — small logistic regression
 # ---------------------------------------------------------------------------
 def fit_secondary_risk(train: pd.DataFrame, holdout: pd.DataFrame) -> dict:
+    # Purge: a training incident whose label window (its clearance + buffer) runs past the first holdout incident
+    # was labelled with incidents from the test period. Those few rows are left out of the fit (10 Nov 2026).
+    cut_time = holdout["event_start_date"].min()
+    window_end = train["event_start_date"] + pd.to_timedelta(train["duration_min"].fillna(0) + SECONDARY_BUFFER_MIN, unit="m")
+    purged = int((window_end >= cut_time).sum())
+    train = train[window_end < cut_time]
     X_train = build_design_matrix(train)
     X_holdout = build_design_matrix(holdout, dummy_columns=list(X_train.columns))
     y_train, y_holdout = train["had_secondary"].astype(int).values, holdout["had_secondary"].astype(int).values
@@ -606,10 +785,18 @@ def fit_secondary_risk(train: pd.DataFrame, holdout: pd.DataFrame) -> dict:
     )
     proba = np.asarray(model.predict(Xho_c))
 
-    auc = float(roc_auc_score(y_holdout, proba)) if len(np.unique(y_holdout)) > 1 else None
+    # AUC with a 95% interval, plus log-loss and Brier skill against the training base rate (the class prior,
+    # which scores AUC 0.5 by construction) on the same holdout rows.
+    rep = binary_report(y_holdout, proba, prior=float(y_train.mean()), clusters=holdout["d"].values, block=BOOT_BLOCK_DAYS)
 
     return {
-        "auc": auc,
+        "auc": rep["auc"],
+        "auc_ci": rep["auc_ci"],
+        "log_loss_skill": rep["log_loss_skill"],
+        "brier_skill": rep["brier_skill"],
+        "positives": rep["positives"],
+        "baseline": "training base rate (AUC 0.5)",
+        "purged_train_rows": purged,
         "base_rate": float(y_holdout.mean()),
         "n": int(len(y_holdout)),
         "holdout_scores": proba,
@@ -701,8 +888,9 @@ def write_to_db(conn, holdout: pd.DataFrame, severity_out: dict, cox_out: dict,
     ensure_schema(conn, commit=not dry)
 
     preds = severity_out["holdout_predictions"].reset_index(drop=True)
-    clearance = cox_out["pred_clearance"].reset_index(drop=True)
-    mean_clearance = cox_out["pred_mean_clearance"].reset_index(drop=True)
+    # The SERVED clearance: the Cox model's when it beats both baselines, else the better baseline's (fit_cox_ph).
+    clearance = cox_out["served_pred"].reset_index(drop=True)
+    mean_clearance = cox_out["served_mean"].reset_index(drop=True)
     secondary_scores = secondary_out["holdout_scores"]
     actual_secondary = holdout["had_secondary"].reset_index(drop=True)
 
@@ -743,7 +931,7 @@ def write_to_db(conn, holdout: pd.DataFrame, severity_out: dict, cox_out: dict,
 
         cur.execute("DELETE FROM gold.ml_incident_severity_metadata")
         cur.execute("INSERT INTO gold.ml_incident_severity_metadata (metadata_json) VALUES (%s)",
-                    [json.dumps(metadata, default=str)])
+                    [json.dumps(json_safe(metadata), default=str)])
 
     if dry:
         conn.rollback()
@@ -758,26 +946,62 @@ def print_report(severity_out: dict, cox_out: dict, secondary_out: dict) -> str:
     L.append("  INCIDENT SEVERITY / CLEARANCE MODELS (per-incident)")
     L.append("=" * 80)
     L.append("")
-    L.append("  Severity — chronological holdout")
-    for name, m in severity_out["metrics"].items():
-        tag = "[SELECTED]" if name == severity_out["champion"] else ""
-        L.append(f"    {name:<16} accuracy={m['accuracy']:.3f}  MAE_ordinal={m['MAE_ordinal']:.3f}  n={m['n']}  {tag}")
+    L.append("  Severity — chronological holdout (selection on macro-F1; must also beat the class prior on log-loss)")
+    rows = {**severity_out["metrics"], **severity_out["baseline"]}
+    L.append(f"    {'model':<24}{'macroF1':>8}{'balAcc':>8}{'logloss':>9}{'LLskill':>9}{'Brier sk':>9}{'acc':>7}"
+             f"   recall PDO/Inj/Fatal   predicted PDO/Inj/Fatal")
+    for name, m in rows.items():
+        tag = "  [SELECTED]" if name == severity_out["champion"] else ""
+        pc = m["per_class"]
+        rec = "/".join(f"{pc[c]['recall']:.2f}" for c in range(N_CLASSES))
+        prd = "/".join(str(pc[c]["predicted"]) for c in range(N_CLASSES))
+        L.append(f"    {name:<24}{m['macro_f1']:>8.3f}{m['balanced_accuracy']:>8.3f}{m['log_loss']:>9.4f}"
+                 f"{m['log_loss_skill']:>9.4f}{m['brier_skill']:>9.4f}{m['accuracy']:>7.3f}   {rec:<22} {prd}{tag}")
+    any_m = next(iter(rows.values()))
+    sup = "/".join(str(any_m["per_class"][c]["support"]) for c in range(N_CLASSES))
+    L.append(f"    holdout classes PDO/Injury/Fatal = {sup} (n={any_m['n']})")
+    sel = severity_out["selection"]
+    L.append(f"    eligible: {', '.join(sel['eligible']) or 'none'}")
+    if "macro_f1_vs_prior_ci" in sel:
+        lo, hi = sel["macro_f1_vs_prior_ci"]
+        L.append(f"    champion - prior, macro-F1: 95% interval [{lo:+.3f}, {hi:+.3f}]")
+        lo, hi = sel["log_loss_vs_prior_ci"]
+        L.append(f"    champion - prior, log-loss: 95% interval [{lo:+.4f}, {hi:+.4f}] (negative = champion better)")
+    if "macro_f1_vs_runner_up_ci" in sel:
+        lo, hi = sel["macro_f1_vs_runner_up_ci"]
+        L.append(f"    champion vs runner-up ({sel['runner_up']}), macro-F1: 95% interval [{lo:+.3f}, {hi:+.3f}]")
+    if sel.get("note"):
+        L.append(f"    note: {sel['note']}")
     L.append("")
-    L.append("  Cox PH — clearance-time survival (site_cleared - event_start_date; see module docstring)")
-    L.append(f"    concordance index = {cox_out['concordance_index']:.3f}")
-    L.append(f"    MAE (minutes)     = {cox_out['mae_minutes']:.2f}" if cox_out["mae_minutes"] is not None else "    MAE (minutes)     = n/a")
-    L.append(f"    median-based avg  = {np.nanmean(cox_out['pred_clearance'].values):.2f} min (mean of per-row predict_median)")
-    L.append(f"    mean-based avg    = {cox_out['mean_clearance_minutes']:.2f} min (mean of per-row predict_expectation)"
-              if cox_out["mean_clearance_minutes"] is not None else "    mean-based avg    = n/a")
-    L.append(f"    n (holdout)       = {cox_out['n']}")
-    L.append(f"    trained+scored on = {cox_out['cox_n']} incidents with known daily volume "
-              f"({cox_out['cox_coverage_pct']:.1f}% of all incidents — volume now a real covariate, "
-              f"alongside weather, cause, type, and corridor position)")
+    ce = cox_out["clearance_eval"]
+    L.append("  Clearance time (site_cleared - event_start_date) — Cox PH vs baselines, same holdout rows")
+    L.append(f"    scored: {ce['n_scored']} incidents {ce['scored_window'][0]}..{ce['scored_window'][1]} "
+             f"(volume input = {ce['volume_input']})")
+    for name, s in sorted(ce["scores"].items(), key=lambda kv: kv[1]):
+        c = ce["concordance_test"].get(name)
+        tag = "  [SERVED]" if name == ce["champion"] else ""
+        L.append(f"    {name:<38} MAE={s:7.2f} min   test c-index={c:.3f}{tag}" if c is not None
+                 else f"    {name:<38} MAE={s:7.2f} min{tag}")
+    L.append(f"    best baseline: {ce['best_baseline']};  Cox vs best baseline MAE difference: {fmt_ci(ce.get('vs_baseline_ci'))}"
+             if not ce["champion_is_baseline"] else
+             f"    best baseline: {ce['best_baseline']} — the Cox model does not beat it, so the baseline is served")
+    L.append(f"    Cox training c-index (for reference only) = {cox_out['concordance_index_train']:.3f}")
+    L.append(f"    served mean-based avg = {cox_out['mean_clearance_minutes']:.2f} min"
+             if cox_out["mean_clearance_minutes"] is not None else "    served mean-based avg = n/a")
+    L.append(f"    trained+scored on = {cox_out['cox_n']} incidents with a real previous-week volume "
+             f"({cox_out['cox_coverage_pct']:.1f}% of all incidents)")
     L.append("")
-    L.append("  Secondary incident risk — logistic regression")
-    L.append(f"    AUC       = {secondary_out['auc']:.3f}" if secondary_out["auc"] is not None else "    AUC       = n/a")
-    L.append(f"    base rate = {secondary_out['base_rate'] * 100:.1f}% of holdout incidents had a secondary incident follow")
-    L.append(f"    n         = {secondary_out['n']}")
+    L.append("  Secondary incident risk — logistic regression (baseline: the training base rate, AUC 0.5)")
+    if secondary_out["auc"] is not None:
+        ci = secondary_out["auc_ci"]
+        L.append(f"    AUC       = {secondary_out['auc']:.3f}  95% interval [{ci[0]:.3f}, {ci[1]:.3f}]" if ci
+                 else f"    AUC       = {secondary_out['auc']:.3f}")
+    else:
+        L.append("    AUC       = n/a")
+    L.append(f"    log-loss skill = {secondary_out['log_loss_skill']:+.4f}   Brier skill = {secondary_out['brier_skill']:+.4f}  (vs the base rate)")
+    L.append(f"    base rate = {secondary_out['base_rate'] * 100:.1f}% of holdout incidents had a secondary incident follow "
+             f"({secondary_out['positives']} of {secondary_out['n']})")
+    L.append(f"    {secondary_out['purged_train_rows']} training rows purged (their label window ran into the holdout)")
     L.append("=" * 80)
     return "\n".join(L)
 
@@ -786,9 +1010,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write-db", action="store_true")
     parser.add_argument("--dry-write", action="store_true")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="train and report only; write nothing (no report file, read-only DB session)")
     args = parser.parse_args()
+    if args.dry_run and (args.write_db or args.dry_write):
+        sys.exit("--dry-run writes nothing; it cannot be combined with --write-db or --dry-write")
 
-    conn = get_conn()
+    conn = get_conn(readonly=args.dry_run)
     try:
         print("Loading accident events...")
         raw = load_incidents(conn)
@@ -797,8 +1025,8 @@ def main() -> None:
         volume = load_daily_volume(conn)
         raw = raw.merge(volume, on="d", how="left")
         covered = int(raw["volume"].notna().sum())
-        print(f"  {covered} of {len(raw)} incidents ({covered / len(raw) * 100:.1f}%) fall on a date with known "
-              f"traffic volume (tracking starts {volume['d'].min().date()}) and can feed volume into the Cox PH "
+        print(f"  {covered} of {len(raw)} incidents ({covered / len(raw) * 100:.1f}%) have a real previous-week "
+              f"traffic volume (real volume ends {REAL_END_VOLUME.date()}) and can feed it into the Cox PH "
               f"clearance model below; the rest are excluded from that fit rather than backfilled with a guess")
 
         holidays = load_holidays(conn)
@@ -825,6 +1053,9 @@ def main() -> None:
 
         report = print_report(severity_out, cox_out, secondary_out)
         print("\n" + report)
+        if args.dry_run:
+            print("\n--dry-run: nothing written (no report file, no database rows).")
+            return
         report_path = Path(__file__).resolve().parent / "model_results_severity.txt"
         report_path.write_text(report, encoding="utf-8")
         print(f"\nFull report written to {report_path}")
@@ -835,12 +1066,19 @@ def main() -> None:
 
         metadata = {
             "severity": {"champion": severity_out["champion"], "metrics": severity_out["metrics"],
+                         "baseline": severity_out["baseline"], "selection": severity_out["selection"],
+                         "class_prior": severity_out["class_prior"],
                          "feature_columns": severity_out["feature_columns"]},
-            "cox_ph": {"concordance_index": cox_out["concordance_index"], "mae_minutes": cox_out["mae_minutes"],
+            "cox_ph": {"concordance_index": cox_out["concordance_index"],
+                       "concordance_index_train": cox_out["concordance_index_train"],
+                       "mae_minutes": cox_out["mae_minutes"],
                        "mean_clearance_minutes": cox_out["mean_clearance_minutes"],
+                       "served_model": cox_out["served_model"], "clearance_eval": cox_out["clearance_eval"],
                        "n": cox_out["n"], "cox_n": cox_out["cox_n"], "cox_coverage_pct": cox_out["cox_coverage_pct"],
                        "coefficients": cox_out["coefficients"]},
-            "secondary_risk": {"auc": secondary_out["auc"], "base_rate": secondary_out["base_rate"], "n": secondary_out["n"]},
+            "secondary_risk": {k: secondary_out[k] for k in ("auc", "auc_ci", "log_loss_skill", "brier_skill",
+                                                             "positives", "baseline", "purged_train_rows",
+                                                             "base_rate", "n")},
             "secondary_km_radius": SECONDARY_KM_RADIUS,
             "secondary_buffer_min": SECONDARY_BUFFER_MIN,
             "holdout_fraction": HOLDOUT_FRACTION,

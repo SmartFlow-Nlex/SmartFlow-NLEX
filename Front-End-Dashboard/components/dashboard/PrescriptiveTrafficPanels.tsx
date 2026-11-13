@@ -835,7 +835,7 @@ export function EventInterventionPanel() {
         <summary>How this is measured</summary>
         <div>
           <Foot>
-            Extra vehicles = the exit&apos;s normal-day baseline {chosen ? "for that weekday and month" : ""} times (uplift − 1). The rank
+            Extra vehicles = the exit&apos;s normal day {chosen ? "for that weekday (last 8 weeks of real data)" : ""} times (uplift − 1). The rank
             uses the lower end of the uplift&apos;s 95% interval, so an exit with a loose estimate ranks on what it is sure to add.
             Exits whose interval reaches 1 are left out. The per-exit forecast for each date is also on the Predictive tab&apos;s Event
             Surge card.

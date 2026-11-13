@@ -55,7 +55,8 @@ function isProtected(url: string): boolean {
   return PROTECTED_PREFIXES.some((p) => url.startsWith(p));
 }
 
-const LIVE_PREFIXES = ["/api/map-comparison/real-time", "/api/map-comparison/live-overview", "/api/traffic/realtime", "/api/dashboard/corridor-status"];
+const LIVE_PREFIXES = ["/api/map-comparison/real-time", "/api/map-comparison/live-overview", "/api/map-comparison/live-rain",
+  "/api/traffic/realtime", "/api/dashboard/corridor-status"];
 const SHORT_PREFIXES = ["/api/maintenance", "/api/audit-log", "/api/health"];
 /* Rewritten by the congestion pipeline every hour, and each response carries
    the base_ts it was computed from. Ten minutes of that is a forecast map

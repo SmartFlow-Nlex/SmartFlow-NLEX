@@ -92,6 +92,12 @@ export function mapPalette(isDark: boolean) {
        ribbons, white stripes over the deeper light-theme ones. */
     hatch: isDark ? [3, 6, 13] as const : [255, 255, 255] as const,
     hatchAlpha: isDark ? 0.38 : 0.42,
+    /* Live rain (11 Nov 2026): a sky-cyan wash over the stretch where rain is
+       falling, and the falling drops drawn over it. Cyan rather than the
+       corridor's own expressway blue, so the wash cannot be read as the glow. */
+    rain: isDark ? "#4cc3ff" : "#0b8bd9",
+    rainOpacity: isDark ? 1 : 0.8,
+    rainDrop: isDark ? [214, 240, 255] as const : [8, 104, 182] as const,
     /* Congestion levels, banded to match how the rest of the app CLASSIFIES
        them: 0 is clear, 1-2 are slow, 3-5 are congested.
 

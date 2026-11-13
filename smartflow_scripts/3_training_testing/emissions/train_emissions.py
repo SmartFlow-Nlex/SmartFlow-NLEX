@@ -1,750 +1,412 @@
 """
-7-day corridor CO2 forecast — training and evaluation.
+Daily corridor CO2 forecast: the served model and its published metrics, under EVALUATION_PROTOCOL.md (10 Nov 2026).
 
-Candidates follow the modelling diagram's Emission Forecasting box: Gradient
-Boosting Regressor, LSTM and Polynomial regression, scored on Forecast MAPE.
-Protocol is the one the volume module uses, so the two are comparable:
-rolling-origin walk-forward, chronological 80/20, and acceptance only by beating
-BOTH trivial baselines (WMAPE below the better of seasonal-naive/climatology,
-AND MASE < 1 against a seasonal naive).
+The testing is emissions_study.py; this file publishes what it found. Rewritten 10 Nov 2026 after an audit found the
+previous version picked its champion on days 1-7 but served 90 days, studied the horizon for the champion alone, gated
+on MASE < 1 (out of reach at long horizons, and unlike the volume module's relative rule), scored 26 synthetic days
+after 2026-05-24, fed a trend 28 days off to every forecast (t counted rows before the lag warm-up was dropped in
+training, after it in project()), gave holidays to GBR only, scored a model that failed at an origin on fewer days than
+the rest, and reused cached predictions keyed only on the row count and last date. The previous version is in git.
 
-SOURCE
-  gold.fact_emissions_hourly, vehicle-km per trip (gold.fact_vkm_hourly) x the
-  EMEP/EEA per-class factors. It reconciles with the
-  volume series to within 0.5 vehicles/day, so the CO2 panel cannot contradict
-  the volume panel.
+STEPS
+  1. The study. _work/cache/emissions_study.json is used when its fingerprint (the CO2 series, holidays, the traffic
+     series behind Derived, the volume model and the code) matches the current data; otherwise the study is run here.
+     Every candidate, the three baselines and every horizon (days 1-14, 15-30, 31-60, 61-90) on 26 rolling origins
+     across the last real year, the forecast served the way it is drawn. Nothing after 2026-05-24 is scored.
+  2. The champion: the protocol's rule (lowest mean bucket WMAPE among the models that beat the best baseline overall
+     AND on days 1-14; a simpler model wins a tie whose lead is not significant), among the models that can be served.
+     A weather model is served only while a real weather forecast exists; the window served here starts the day after
+     the record ends, which no weather forecast covers, so weather models are reported (as an upper bound) but never
+     served, and Derived is served through the weather-free volume model.
+  3. The previous champion, re-scored on the same origins, must not be significantly better (protocol section 8).
+  4. Each family the dashboard draws (GBR, Polynomial, LSTM, Derived; one column each in gold.ml_predictive_emissions)
+     is refitted on every day of the record and forecasts 90 days from the day after it ends. The family's line is its
+     best-scoring servable variant, or the champion where the champion belongs to it.
+  5. Writes (not with --dry-run): gold.ml_model_metrics (target 'Corridor CO2'), gold.ml_predictive_emissions (the
+     record; the PRESENT band is every origin's days 1-14, the forecasts the metrics were computed from; then the
+     90-day future), gold.ml_horizon_accuracy (target 'Corridor CO2', the champion per bucket) and
+     _work/outputs/emissions_results.json (with the code version).
 
-  bronze.nlex_theoretical_emissions is NOT used: its daily volume disagrees with
-  the forecast series (ratios 1.13-1.70 on consecutive days) and it covers 10 of
-  20 exits.
+COLUMNS (gold.ml_model_metrics, as the dashboard reads them)
+  wmape  the protocol score: mean of the four bucket WMAPEs (%)
+  mase   that score divided by the best baseline's: below 1 beats every baseline on the days it was tested.
+         (Not the in-sample-scaled MASE, which exceeds 1 at long horizons for any model and is no gate.)
+  mae, rmse, mape, r2   the mean of the same four buckets
+  rank   1 = the champion, then by score; NULL for baselines.   accepted = eligible under the protocol.
 
-CANDIDATES
-  GBR, Polynomial and LSTM (the diagram's box), and Derived: the volume
-  champion's forecast (Prophet, fitted exactly as retrain_honest.py fits it) x
-  the corridor's CO2 per vehicle on that weekday over the 8 weeks before the
-  origin. CO2 here is exactly vehicles x km x a fixed factor per class, so a
-  forecast built through the volume forecast cannot disagree with the volume
-  panel. All four are scored on the same origins and days.
-
-SCORING IS THE SERVED PROCEDURE (fixed 2026-10-02)
-  Every window is now forecast by project(), the same day-by-day procedure that
-  draws the served line: day 2's lag-1 is day 1's FORECAST. Before, the GBR and
-  Polynomial were handed each window's actual lags, rolling means and heavy
-  share - CO2 that does not exist yet seven days out - so their published
-  holdout (GBR 6.93%) was really a next-day score; the horizon study, which did
-  roll forward, measured the same GBR at 10.0% for days 1-7.
-
-HORIZON
-  7 days, per the diagram ("7-day CO2 corridor forecast"). The volume module uses
-  14; metrics from the two are therefore NOT directly comparable, which is stated
-  in the report rather than left implicit.
+FLAGS
+  --dry-run            everything up to the writes; the rows are rendered (and the target columns checked read-only)
+                       but nothing is written
+  --rerun-study        run the study even if a matching one is saved
+  --volume-model NAME  the traffic model behind Derived (default: traffic_study.json's champion)
+  --no-weather, --extra-candidates   accepted for older callers; no effect (weather models are never served, and
+                                     MSTL and the stacked LSTM are always candidates now)
 """
 import json
-import warnings
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-import psycopg2
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.linear_model import Ridge
-from sklearn.preprocessing import PolynomialFeatures
 
-warnings.filterwarnings("ignore")
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import emissions_study as S  # noqa: E402
+from common import rolling_eval as RE  # noqa: E402
+from common.rolling_eval import DAILY_BUCKETS, is_baseline, select_champion  # noqa: E402
 
-# Connection settings live in smartflow_scripts/config/.env, read by config/db.py.
-# They used to be hardcoded in this file and in ~80 others.
-import sys as _sys
-from pathlib import Path as _Path
-_sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "config"))
-from db import PG, POSTGRES_URL, WORK, setting  # noqa: E402,F401
-
-HORIZON, STEP, N_ORIGINS, SEASON = 7, 7, 42, 7
-# The diagram specifies a 7-day forecast and 7 days is what is VALIDATED, but a
-# horizon study (co2_horizon_study.py) scored the champion out to 90 days and
-# found it still clears both gates from d15 onward. The SERVED projection is
-# therefore 90 days, with measured per-horizon accuracy stored alongside so the
-# panel can state what each stretch is worth rather than implying the 7-day
-# figure holds throughout.
-FUTURE_DAYS = 90
-LAGS = [1, 2, 3, 7, 14, 28]
+TARGET = "Corridor CO2"
+FUTURE_DAYS = S.HORIZON
+FAMILIES = ["GBR", "Polynomial", "LSTM", "Derived"]
+COLUMN = {"GBR": "pred_gbr", "Polynomial": "pred_polynomial", "LSTM": "pred_lstm", "Derived": "pred_derived"}
+ARGS = sys.argv[1:]
+DRY_RUN = "--dry-run" in ARGS
+RERUN = "--rerun-study" in ARGS
+# --smoke-study N: test the publishing path on a smoke study (N origins); dry-run only.
+SMOKE = int(ARGS[ARGS.index("--smoke-study") + 1]) if "--smoke-study" in ARGS else None
+if SMOKE and not DRY_RUN:
+    raise SystemExit("--smoke-study only tests the publishing path: add --dry-run")
+VOL = ARGS[ARGS.index("--volume-model") + 1] if "--volume-model" in ARGS else None
 
 
 def banner(t):
-    print("\n" + "=" * 70 + f"\n  {t}\n" + "=" * 70)
+    print("\n" + "=" * 78 + f"\n  {t}\n" + "=" * 78)
 
 
-banner("STEP 1: Loading the corridor CO2 series")
-conn = psycopg2.connect(PG)
-df = pd.read_sql_query("""
-    SELECT date AS ds, SUM(co2_tonnes)::float AS y, SUM(total)::float AS veh,
-           SUM(class_3)::float AS heavy
-    FROM gold.fact_emissions_hourly GROUP BY date ORDER BY date
-""", conn)
-df["ds"] = pd.to_datetime(df.ds)
-print(f"  {len(df):,} days  {df.ds.min().date()} -> {df.ds.max().date()}")
-print(f"  CO2/day: mean {df.y.mean():.1f} t   min {df.y.min():.1f}   max {df.y.max():.1f}")
+for flag in ("--no-weather", "--extra-candidates"):
+    if flag in ARGS:
+        print(f"  {flag}: no effect now (see the docstring)")
 
-wx = pd.read_sql_query("""
-    WITH h AS (SELECT (timestamp_utc + interval '8 hours')::date d, timestamp_utc hr,
-                      AVG(rainfall) r, AVG(temperature) t
-               FROM public.hourly_weather GROUP BY 1,2)
-    SELECT d AS ds, SUM(r)::float AS rain, AVG(t)::float AS temp FROM h GROUP BY d ORDER BY d
-""", conn)
-wx["ds"] = pd.to_datetime(wx.ds)
-df = df.merge(wx, on="ds", how="left")
-df[["rain", "temp"]] = df[["rain", "temp"]].ffill().bfill()
+# ── 1. The study ─────────────────────────────────────────────────────────────
+banner("STEP 1: The study (emissions_study.py)")
+ctx = S.load(VOL)
+csv_path, json_path = S.outputs("emissions_study" if not SMOKE else f"emissions_study_smoke{SMOKE}")
+study = None
+if json_path.exists() and csv_path.exists() and not RERUN:
+    j = json.loads(json_path.read_text())
+    if j.get("fingerprint") == ctx.fp and bool(j.get("smoke")) == bool(SMOKE) and not j.get("interim"):
+        study = j
+        print(f"  using the saved study ({json_path.name}, {j['generated']}, fingerprint {ctx.fp})")
+    else:
+        print(f"  saved study does not match the current data/code (saved {j.get('fingerprint')}, now {ctx.fp})")
+if study is None:
+    print("  running the study now (about an hour; resumable)")
+    study = S.run(SMOKE, VOL)
+res = pd.read_csv(csv_path, parse_dates=["date"])
+n_origins = res.origin.nunique()
 
-# Holidays (public.ph_holidays): known in advance, so they are a legitimate input
-# for any day being forecast. Added 2026-10-11. Without them the model met every
-# holiday as an ordinary day: its error on holidays was 32.5% against 6.1% on
-# other days (42 origins x 7 days), and a holiday dip in the lags was read as a
-# fall in the level.
-_hol = pd.read_sql_query("SELECT date_day FROM public.ph_holidays", conn)
-HOLIDAYS = set(pd.to_datetime(_hol.date_day).dt.normalize())
+# ── 2. The champion among the servable models ────────────────────────────────
+banner("STEP 2: The champion")
+weather_models = [m for m in res.model.unique() if S.uses_weather(m)]
+servable = res[~res.model.isin(weather_models)]
+sel = S.settle_tie(select_champion(servable, DAILY_BUCKETS, "wmape", complexity=S.COMPLEXITY), servable)
+RE.report(sel)
+table = pd.DataFrame(sel["table"]).T
+table_all = pd.DataFrame(study["selection_all_candidates"]["table"]).T
+CHAMPION = sel["champion"]
+best_base = sel["best_baseline"]
+base_score = float(table.loc[best_base, "score"])
+if study["selection"]["champion"] != CHAMPION:
+    print(f"  note: with weather models allowed the study's champion is {study['selection']['champion']}; no weather "
+          f"forecast covers the served window, so {CHAMPION} is served")
+if sel.get("champion_is_baseline"):
+    print(f"  NO candidate beats the best baseline; the protocol serves {CHAMPION}")
 
+# ── 3. The previous champion, re-scored on the same origins (protocol section 8) ──
+banner("STEP 3: Previous champion")
+import psycopg2  # noqa: E402
+with psycopg2.connect(S.PG) as conn:
+    conn.set_session(readonly=True)
+    cur = conn.cursor()
+    cur.execute("SELECT model_name, diagnosis FROM gold.ml_model_metrics WHERE target = %s AND accepted "
+                "AND rank IS NOT NULL ORDER BY rank LIMIT 1", (TARGET,))
+    row = cur.fetchone()
+prev = row[0] if row else None
+prev_ok, prev_note = True, "no previous champion"
+if prev:
+    # A family's served variant is stored under the family name, with "study model: X" in its diagnosis.
+    named = [p.split("study model: ", 1)[1].strip() for p in str(row[1] or "").split("; ") if "study model: " in p]
+    prev_study = named[0] if named and named[0] in table.index else (prev if prev in table.index else None)
+    if prev_study is None or prev_study == CHAMPION:
+        prev_note = f"previous champion {prev}: " + ("the same model" if prev_study == CHAMPION else "not in this study")
+    else:
+        cells = RE._cells(servable, DAILY_BUCKETS)
+        lo, hi = RE._boot_diff(cells, prev_study, CHAMPION, DAILY_BUCKETS, "wmape", sel["block"])
+        # Only an eligible model (it beats every baseline overall and on days 1-14) can outrank the new champion.
+        better = (prev_study in sel["eligible"] and float(table.loc[prev_study, "score"]) < float(
+            table.loc[CHAMPION, "score"]) and hi < 0)
+        prev_ok = not better
+        prev_note = (f"previous champion {prev} re-scored: {table.loc[prev_study, 'score']:.2f}% vs {CHAMPION} "
+                     f"{table.loc[CHAMPION, 'score']:.2f}% (difference 95% interval {lo:+.2f} to {hi:+.2f}) -> "
+                     + ("significantly better: the new run must NOT replace it" if better else "not better"))
+print("  " + prev_note)
 
-def _is_hol(x):
-    return int(pd.Timestamp(x).normalize() in HOLIDAYS)
-
-
-def special_day(x):
-    """Not an ordinary day's traffic: a holiday, or the year-end week (23 Dec - 2 Jan)."""
-    x = pd.Timestamp(x).normalize()
-    return x in HOLIDAYS or (x.month == 12 and x.day >= 23) or (x.month == 1 and x.day <= 2)
-
-
-def hol_feats(ds):
-    """Calendar facts about `ds`: the day itself, its eve and the day after, and
-    whether the days its lags and rolling mean are read from were holidays (so a
-    dip fed in through them is recognised as one), and whether one is coming."""
-    one = pd.Timedelta(days=1)
-    return {
-        "is_hol": _is_hol(ds), "hol_eve": _is_hol(ds + one), "hol_after": _is_hol(ds - one),
-        "hol_lag7": _is_hol(ds - 7 * one),
-        "hol_in_last7": sum(_is_hol(ds - k * one) for k in range(1, 8)),
-        "hol_in_next3": sum(_is_hol(ds + k * one) for k in range(0, 4)),
-    }
-
-
-HOL_FEATS = ["is_hol", "hol_eve", "hol_after", "hol_lag7", "hol_in_last7", "hol_in_next3"]
-print(f"  {len(HOLIDAYS)} holiday dates loaded from public.ph_holidays")
-
-# ── features ─────────────────────────────────────────────────────────────────
-banner("STEP 2: Features")
-d = df.copy()
-d["dow"] = d.ds.dt.dayofweek
-d["is_weekend"] = (d.dow >= 5).astype(int)
-d["month"] = d.ds.dt.month
-d["t"] = np.arange(len(d))
-for L in LAGS:
-    d[f"lag{L}"] = d.y.shift(L)
-d["roll7"] = d.y.shift(1).rolling(7).mean()
-d["roll28"] = d.y.shift(1).rolling(28).mean()
-d["heavy_share"] = (d.heavy / d.veh).shift(1)
-_hf = pd.DataFrame([hol_feats(x) for x in d.ds], index=d.index)
-for _c in HOL_FEATS:
-    d[_c] = _hf[_c].values
-FEATS = ["dow", "is_weekend", "month", "t", "rain", "temp", "roll7", "roll28",
-         "heavy_share"] + [f"lag{L}" for L in LAGS] + HOL_FEATS
-d = d.dropna().reset_index(drop=True)
-print(f"  usable rows after lags: {len(d):,}   features: {len(FEATS)}")
-
-origins = [len(d) - (N_ORIGINS - i) * STEP for i in range(N_ORIGINS)]
-print(f"  {N_ORIGINS} origins, h={HORIZON}d  ->  {N_ORIGINS*HORIZON} scored days "
-      f"({N_ORIGINS*HORIZON/len(d)*100:.1f}%)")
-print(f"  first origin {d.ds.iloc[origins[0]].date()}   last {d.ds.iloc[origins[-1]].date()}")
-
-# ── models ───────────────────────────────────────────────────────────────────
-def fit_gbr(tr, fut):
-    m = GradientBoostingRegressor(n_estimators=300, max_depth=3, learning_rate=0.05,
-                                  subsample=0.9, random_state=42)
-    m.fit(tr[FEATS], tr.y)
-    return m.predict(fut[FEATS])
-
-
-def fit_poly(tr, fut):
-    # Degree 2 on a compact subset: the full feature set at degree 2 is ~190
-    # terms and overfits badly on ~1,100 rows.
-    cols = ["t", "roll7", "roll28", "lag1", "lag7", "dow", "rain"]
-    pf = PolynomialFeatures(degree=2, include_bias=False)
-    X = pf.fit_transform(tr[cols])
-    m = Ridge(alpha=1.0).fit(X, tr.y)
-    return m.predict(pf.transform(fut[cols]))
-
-
-def fit_lstm(tr, fut):
-    import tensorflow as tf
-    from tensorflow.keras import layers, Sequential
-    tf.random.set_seed(42)
-    SEQ = 28
-    s = tr.y.values.astype("float32")
-    mu, sd = s.mean(), s.std() or 1.0
-    z = (s - mu) / sd
-    X = np.array([z[i - SEQ:i] for i in range(SEQ, len(z))])[..., None]
-    Y = np.array([z[i] for i in range(SEQ, len(z))])
-    m = Sequential([layers.Input((SEQ, 1)), layers.LSTM(32), layers.Dense(1)])
-    m.compile("adam", "mse")
-    m.fit(X, Y, epochs=30, batch_size=32, verbose=0)
-    # Recursive multi-step: each prediction feeds the next, as in deployment.
-    win, out = list(z[-SEQ:]), []
-    for _ in range(len(fut)):
-        p = float(m.predict(np.array(win[-SEQ:])[None, :, None], verbose=0)[0, 0])
-        out.append(p); win.append(p)
-    return np.array(out) * sd + mu
-
-
-MODELS = {"GBR": fit_gbr, "Polynomial": fit_poly, "LSTM": fit_lstm}
-
-
-# -- Extra candidates (--extra-candidates, 5 Nov 2026) ---------------------------------------------------------------
-# The client asked for multiple-seasonality models and the adviser for a deeper LSTM (23 Oct 2026); the congestion
-# module has both, and the user asked for them here. Scored by the same served procedure as every candidate (each
-# 7-day window forecast from its origin with nothing after it), on the same origins, against the same two baselines.
-# With --dry-run the run stops after the results, so nothing is written and the served forecast cannot change.
-EXTRA = "--extra-candidates" in _sys.argv
-DRY_RUN = "--dry-run" in _sys.argv
-if EXTRA and not DRY_RUN:
-    raise SystemExit("--extra-candidates is evaluation only: add --dry-run (the served table has no columns for them yet).")
-STACK_SEQ = 56   # eight weeks per window (23 Oct pilot: a longer window and calendar inputs helped, depth alone did not)
-STACK_OUT = 7    # forecast a week at a time, directly, rather than feeding one day's guess into the next
-
-
-def fit_mstl(tr, fut):
-    """MSTL: weekly and yearly seasonality separated out (Bandara, Hyndman & Bergmeir's multiple-seasonal STL), the
-    remainder plus trend forecast with ARIMA(1,1,1), and the two seasonal shapes carried forward: each future day takes
-    the weekly value 7k days and the yearly value 365 days before it."""
-    from statsmodels.tsa.arima.model import ARIMA
-    from statsmodels.tsa.seasonal import MSTL
-    y = tr.y.values.astype(float)
-    n, h = len(y), len(fut)
-    seas = np.asarray(MSTL(y, periods=(7, 365)).fit().seasonal)
-    weekly = [seas[n + i - 7 * ((i // 7) + 1), 0] for i in range(h)]
-    yearly = [seas[n + i - 365, 1] if n + i - 365 < n else seas[n + i - 730, 1] for i in range(h)]
-    rest = y - seas.sum(axis=1)
-    fc = np.asarray(ARIMA(rest, order=(1, 1, 1)).fit().forecast(h))
-    return fc + np.asarray(weekly) + np.asarray(yearly)
-
-
-def fit_stacked_lstm(tr, fut):
-    """Two stacked LSTM layers (64 -> 32) over the last eight weeks of CO2 with each day's holiday and weekday, plus
-    what is known about the week being forecast (its holidays, weekdays and the same days a year earlier), predicting
-    the whole week at once. Longer windows are covered a week at a time, each week's forecast extending the history."""
-    import tensorflow as tf
-    from tensorflow.keras import Model, layers
-    from tensorflow.keras.callbacks import EarlyStopping
-    tf.random.set_seed(42)
-    y = tr.y.values.astype("float32")
-    # The calendar runs a week past the window, so the last (partial) week's inputs are as wide as every other's.
-    _end = pd.to_datetime(fut.ds).max()
-    ds_all = list(tr.ds) + list(pd.to_datetime(fut.ds)) + [_end + pd.Timedelta(days=k) for k in range(1, STACK_OUT + 1)]
-    lo, hi = float(y.min()), float(y.max())
-    span = max(hi - lo, 1e-6)
-
-    def day_feats(x):
-        x = pd.Timestamp(x)
-        return [_is_hol(x), np.sin(2 * np.pi * x.dayofweek / 7), np.cos(2 * np.pi * x.dayofweek / 7)]
-
-    cal = np.array([day_feats(x) for x in ds_all], dtype="float32")
-    z = np.concatenate([(y - lo) / span, np.zeros(len(fut) + STACK_OUT, dtype="float32")])
-    n = len(y)
-
-    def sample(t):                 # window ends at t-1, forecasts t .. t+STACK_OUT-1
-        seq = np.column_stack([z[t - STACK_SEQ:t], cal[t - STACK_SEQ:t]])
-        nxt = np.concatenate([cal[t:t + STACK_OUT].ravel(), z[t - 364:t - 364 + STACK_OUT]])
-        return seq, nxt
-
-    ts = [t for t in range(max(STACK_SEQ, 364), n - STACK_OUT + 1)]
-    Xs, Xn, Y = zip(*[(*sample(t), z[t:t + STACK_OUT]) for t in ts])
-    Xs, Xn, Y = np.stack(Xs), np.stack(Xn), np.stack(Y)
-    a = layers.Input(Xs.shape[1:])
-    b = layers.Input(Xn.shape[1:])
-    h = layers.LSTM(64, return_sequences=True)(a)
-    h = layers.Dropout(0.2)(h)
-    h = layers.LSTM(32)(h)
-    h = layers.Concatenate()([h, b])
-    h = layers.Dense(32, activation="relu")(h)
-    m = Model([a, b], layers.Dense(STACK_OUT)(h))
-    m.compile("adam", "mse")
-    m.fit([Xs, Xn], Y, epochs=60, batch_size=32, verbose=0, validation_split=0.1,
-          callbacks=[EarlyStopping(patience=6, restore_best_weights=True)])
-    t = n
-    while t < n + len(fut):
-        seq, nxt = sample(t)
-        p = m.predict([seq[None], nxt[None]], verbose=0)[0]
-        k = min(STACK_OUT, n + len(fut) - t)
-        z[t:t + k] = p[:k]
-        t += k
-    return z[n:n + len(fut)] * span + lo
-
-
-EXTRA_MODELS = {"MSTL": fit_mstl, "Stacked_LSTM": fit_stacked_lstm} if EXTRA else {}
-
-# Models that read weather. LSTM is univariate (it sees only y), so the previous
-# blanket uses_weather=true was simply wrong for it.
-USES_WEATHER = {"GBR": True, "Polynomial": True, "LSTM": False, "Derived": True, "MSTL": False, "Stacked_LSTM": False}
-
-# ── the derived candidate ────────────────────────────────────────────────────
-# The volume series and its Prophet exactly as the volume trainer builds them
-# (the same trick extend_future_volume.py uses: run retrain_honest.py up to its
-# evaluation step, which only loads and defines).
-import io as _io
-_VSRC = _Path(__file__).resolve().parents[1] / "traffic_volume" / "retrain_honest.py"
-_vns = {"__name__": "prep", "__file__": str(_VSRC)}
-exec(compile(_io.open(_VSRC, encoding="utf-8").read().split('banner(f"STEP 2: Rolling-origin evaluation')[0],
-             "prep", "exec"), _vns)
-VOL, VOL_WX = _vns["df"], _vns["WEATHER_COLS"]
-_vol_prophet = _vns["MODELS"]["Prophet"]
-CPV_DAYS = 56      # CO2 per vehicle by weekday, over the 8 weeks before the origin
-
-
-def co2_per_vehicle(hist):
-    last = hist.tail(CPV_DAYS)
-    g = last.assign(dow=last.ds.dt.dayofweek).groupby("dow")
-    return (g.y.sum() / g.veh.sum()).to_dict()
-
-
-def derived(hist, window):
-    """CO2 for the dates in `window`, from nothing after window[0]: the volume
-    Prophet's forecast x CO2 per vehicle for that weekday. Future weather is
-    day-of-year climatology from the training years, as in the volume trainer."""
-    start = pd.Timestamp(window[0])
-    vtr = VOL[VOL.ds < start]
-    fdf = pd.DataFrame({"ds": pd.to_datetime(list(window))})
-    clim_v = vtr.assign(k=vtr.ds.dt.dayofyear).groupby("k")[VOL_WX].mean()
-    for c in VOL_WX:
-        fdf[c] = [float(clim_v[c].get(x.dayofyear, vtr[c].mean())) for x in fdf.ds]
-    out = _vol_prophet(vtr, len(fdf), fdf)
-    vol = np.asarray(out[0] if isinstance(out, tuple) else out, dtype=float)
-    cpv = co2_per_vehicle(hist[hist.ds < start])
-    return [float(v * cpv[x.dayofweek]) for v, x in zip(vol, fdf.ds)]
-
-
-CANDIDATES = list(MODELS) + ["Derived"]
-BASE_CANDIDATES = list(CANDIDATES)          # what the prediction cache is keyed on
-CANDIDATES += list(EXTRA_MODELS)
-
-# WMAPE gap below which two models are NOT meaningfully separated. GBR is not
-# bit-reproducible across processes (floating-point summation order in the split
-# search moves it ~0.1pp between identical runs), so ranking on a smaller gap
-# than this is false precision.
-TIE_MARGIN_WMAPE = 0.15
-
-
-def project(mname, mfn, hist0=None, horizon_ds=None, clim_tbl=None):
-    """Roll one model forward past the end of `hist0` (default: all data).
-
-    Also used by the horizon study below, so the accuracy that gets published is
-    measured on the exact procedure that produces the served line.
-
-    Every candidate is projected, not just the leader. Storing a future for the
-    champion alone left the panel with no forecast line whenever the reader
-    selected another model - and with Polynomial and GBR tied, "the champion"
-    is not even a well-defined single model any more.
-
-    LSTM is recursive by construction (it feeds its own output back inside
-    fit_lstm), so it is called once for the whole window. The feature-based
-    models need the loop: day 2's lag-1 IS day 1's prediction.
-    """
-    base = d if hist0 is None else hist0
-    window = fut_ds if horizon_ds is None else horizon_ds
-    ctab = clim if clim_tbl is None else clim_tbl
-
-    if mname in ("LSTM", "MSTL", "Stacked_LSTM"):        # whole-window models: they roll forward internally
-        return [float(v) for v in mfn(base, pd.DataFrame({"ds": list(window)}))]
-
-    # The heavy-vehicle share each future day is given. It used to be the share of
-    # the single LAST recorded day, held for the whole projection - and when that
-    # day was a holiday (1 Nov, 1 Jan: almost no trucks) every one of the next 90
-    # days was forecast as if trucks had left the road, about a third too low.
-    # That, not the lags, was why two horizon origins failed (2026-10-11). Now:
-    # what that weekday has lately been, over the ordinary days of the last eight
-    # weeks. (heavy_share is YESTERDAY's share, hence the weekday of ds - 1.)
-    _recent = base.tail(56)
-    _recent = _recent[[not special_day(x) for x in _recent.ds]]
-    _share = _recent.heavy / _recent.veh
-    share_by_dow = _share.groupby(_recent.ds.dt.dayofweek).median().to_dict()
-    share_all = float(_share.median()) if len(_share) else float(base.heavy.iloc[-1] / base.veh.iloc[-1])
-
-    hist, out = base.copy(), []
-    for ds in window:
-        k = ds.dayofyear
-        r = ctab.loc[k] if k in ctab.index else base[["rain", "temp"]].mean()
-        ys = hist.y.values
-        row = {
-            "ds": ds, "dow": ds.dayofweek, "is_weekend": int(ds.dayofweek >= 5),
-            "month": ds.month, "t": len(hist),
-            "rain": float(r["rain"]), "temp": float(r["temp"]),
-            "heavy_share": float(share_by_dow.get((ds - pd.Timedelta(days=1)).dayofweek, share_all)),
-            "roll7": float(ys[-7:].mean()), "roll28": float(ys[-28:].mean()),
-            **hol_feats(ds),
-        }
-        for L in LAGS:
-            row[f"lag{L}"] = float(ys[-L])
-        yhat = float(mfn(hist, pd.DataFrame([row]))[0])
-        out.append(yhat)
-        row["y"] = yhat                       # feeds the next day's lags
-        hist = pd.concat(
-            [hist, pd.DataFrame([{**row, "veh": hist.veh.iloc[-1],
-                                  "heavy": hist.heavy.iloc[-1]}])],
-            ignore_index=True)
-    return out
-
-
-banner(f"STEP 3: Rolling-origin evaluation ({N_ORIGINS} origins, h={HORIZON}d)")
-import os, pickle
-CACHE = str(WORK / "cache" / "emissions_preds.pkl")
-CACHE_KEY = ("served-procedure-derived-v4-holidays", len(d), str(d.ds.max().date()), N_ORIGINS, HORIZON, tuple(BASE_CANDIDATES))
-_cached = None
-if os.path.exists(CACHE):
-    with open(CACHE, "rb") as fh:
-        k, v = pickle.load(fh)
-    if k == CACHE_KEY:
-        _cached = v
-        print(f"  reusing cached predictions ({CACHE}) - series and protocol unchanged")
-
-preds = {k: {} for k in BASE_CANDIDATES}
-preds["SeasonalNaive"] = {}
-preds["Climatology"] = {}
-fails = {k: 0 for k in BASE_CANDIDATES}
-
-if _cached is not None:
-    preds, fails = _cached
-for oi, cut in enumerate([] if _cached is not None else origins, 1):
-    tr, fut = d.iloc[:cut], d.iloc[cut:cut + HORIZON]
-    if len(fut) < HORIZON:
-        break
-    # Forecast the window the way the served line is made: day by day from the
-    # origin, each day's lags from the forecast so far, weather from training-year
-    # climatology. Nothing from inside the window is handed to any model.
-    clim_tr = tr.assign(k=tr.ds.dt.dayofyear).groupby("k")[["rain", "temp"]].mean()
-    for name, fn in MODELS.items():
-        try:
-            yh = project(name, fn, hist0=tr, horizon_ds=list(fut.ds), clim_tbl=clim_tr)
-            for ds, v in zip(fut.ds, yh):
-                preds[name][ds] = float(v)
-        except Exception:
-            fails[name] += 1
+# ── 4. Each family's served line, refitted on the whole record ───────────────
+banner(f"STEP 4: Refit on the whole record and forecast {FUTURE_DAYS} days")
+cands = [m for m in table.index if not is_baseline(m)]
+served_variant = {}
+for fam in FAMILIES:
+    members = [m for m in cands if S.FAMILY.get(m) == fam]
+    if CHAMPION in members:
+        served_variant[fam] = CHAMPION
+    elif members:
+        served_variant[fam] = min(members, key=lambda m: float(table.loc[m, "score"]))
+champ_family = S.FAMILY.get(CHAMPION) if not S.uses_weather(CHAMPION) else None
+F = ctx.F
+# Real record only (user, 11 Nov 2026: every model's dates aligned): 25 May - 30 Jun 2026 hold broken and synthetic
+# toll days, so the refit ends on 24 May and the forecast starts on 25 May, the same day as traffic and incidents.
+hist = F[F.y.notna() & (F.ds <= S.REAL_END_VOLUME)].reset_index(drop=True)
+last = hist.ds.max()
+fut_ds = pd.date_range(last + pd.Timedelta(days=1), periods=FUTURE_DAYS, freq="D")
+future = pd.DataFrame({"ds": fut_ds}).merge(F[["ds"] + S.KNOWN], on="ds", how="left")
+for c in ctx.WX_ALL:
+    future[c] = np.nan                         # weather after the origin is not known
+MODELS = S.build_models()
+fut_pred, fut_note = {}, {}
+mean_y = float(hist.y.mean())
+to_fit = dict(served_variant)
+if champ_family is None:
+    to_fit["champion"] = CHAMPION
+for fam, name in to_fit.items():
     try:
-        for ds, v in zip(fut.ds, derived(tr, list(fut.ds))):
-            preds["Derived"][ds] = float(v)
-    except Exception:
-        fails["Derived"] += 1
-    if oi % 10 == 0 or oi == 1:
-        print(f"  origin {oi}/{N_ORIGINS}  train={cut}d  predict {fut.ds.iloc[0].date()} -> {fut.ds.iloc[-1].date()}")
+        yh = np.asarray(MODELS[name](hist.copy(), future.copy()), dtype=float)
+        if yh.shape != (FUTURE_DAYS,) or not np.isfinite(yh).all():
+            raise ValueError("non-finite forecast")
+        lo_, hi_ = float(yh.min()), float(yh.max())
+        if lo_ < mean_y / 3 or hi_ > 3 * mean_y:
+            raise ValueError(f"left the plausible range ({lo_:.0f} to {hi_:.0f} t/day against a mean of {mean_y:.0f})")
+        fut_pred[fam] = yh
+        print(f"  {fam:<11} {name:<28} {fut_ds[0].date()} .. {fut_ds[-1].date()}  mean {yh.mean():7.1f} t/day")
+    except Exception as e:  # noqa: BLE001
+        fut_pred[fam] = None
+        fut_note[fam] = f"90-day projection not drawn: {e}"
+        print(f"  {fam:<11} {name:<28} projection FAILED: {e}")
 
-if _cached is None:
-    with open(CACHE, "wb") as fh:
-        pickle.dump((CACHE_KEY, (preds, fails)), fh)
+publish_problems = []
+if not prev_ok:
+    publish_problems.append(prev_note)
+if champ_family is None:
+    publish_problems.append(f"the champion {CHAMPION} has no forecast column in gold.ml_predictive_emissions (the "
+                            f"dashboard draws GBR, Polynomial, LSTM and Derived only); serving it needs a Back-End change")
+elif fut_pred.get(champ_family) is None:
+    publish_problems.append(f"the champion's projection failed: {fut_note.get(champ_family)}")
 
-# The extra candidates, on the same origins and by the same procedure. Not cached with the others, so the cache the
-# served run reads is never keyed on them.
-for name in EXTRA_MODELS:
-    preds[name], fails[name] = {}, 0
-for oi, cut in enumerate(origins if EXTRA_MODELS else [], 1):
-    tr, fut = d.iloc[:cut], d.iloc[cut:cut + HORIZON]
-    if len(fut) < HORIZON:
-        break
-    for name, fn in EXTRA_MODELS.items():
-        try:
-            for ds, v in zip(fut.ds, project(name, fn, hist0=tr, horizon_ds=list(fut.ds))):
-                preds[name][ds] = float(v)
-        except Exception as e:
-            fails[name] += 1
-            if fails[name] == 1:
-                print(f"  {name} failed at origin {oi}: {type(e).__name__}: {str(e)[:160]}")
-    if oi % 10 == 0 or oi == 1:
-        print(f"  extra candidates: origin {oi}/{N_ORIGINS}")
-
-# Baselines the models must beat: cheap, so computed fresh every run rather
-# than read back from the cache. Seasonal naive is the same weekday last week,
-# day by day, as in the volume trainer (retrain_honest.m_seasonal_naive). Until
-# 2026-10-03 it was tr.y.iloc[-SEASON] for EVERY day of the window: one day's
-# value for all seven, blind to the weekday/weekend cycle. That scored 15.04%
-# WMAPE against 9.83% done properly, so the gate the candidates had to clear,
-# and the "baseline" the panel printed, were far too easy.
-preds["SeasonalNaive"], preds["Climatology"] = {}, {}
-for cut in origins:
-    tr, fut = d.iloc[:cut], d.iloc[cut:cut + HORIZON]
-    if len(fut) < HORIZON:
-        break
-    last_week = tr.y.values[-SEASON:]
-    doy = tr.assign(k=tr.ds.dt.dayofyear).groupby("k").y.mean()
-    for i, ds in enumerate(fut.ds):
-        preds["SeasonalNaive"][ds] = float(last_week[i % SEASON])
-        preds["Climatology"][ds] = float(doy.get(ds.dayofyear, tr.y.mean()))
-
-banner("STEP 4: Results")
-truth = d.set_index("ds").y
-rows = []
-for name, pm in preds.items():
-    idx = sorted(pm)
-    a = truth.loc[idx].values
-    f_ = np.array([pm[i] for i in idx])
-    err = np.abs(a - f_)
-    ins = d.y.values[:origins[0]]
-    scale = np.mean(np.abs(ins[SEASON:] - ins[:-SEASON]))   # seasonal naive, lag-7
-    rows.append({
-        "model": name, "n": len(idx),
-        "mape": float(np.mean(err / np.abs(a)) * 100),
-        "wmape": float(err.sum() / np.abs(a).sum() * 100),
-        "rmse": float(np.sqrt(np.mean((a - f_) ** 2))),
-        "mae": float(err.mean()),
-        "mase": float(err.mean() / scale),
-        "r2": float(1 - ((a - f_) ** 2).sum() / ((a - a.mean()) ** 2).sum()),
-    })
-res = pd.DataFrame(rows).sort_values("wmape").reset_index(drop=True)
-print(f"\n  Evaluated on {res.n.iloc[0]:,} days\n")
-print(res[["model", "mape", "wmape", "rmse", "mae", "mase", "r2"]].to_string(
-    index=False, float_format=lambda v: f"{v:,.4f}"))
-
-base = res[res.model.isin(["SeasonalNaive", "Climatology"])].wmape.min()
-base_name = res.loc[res[res.model.isin(["SeasonalNaive", "Climatology"])].wmape.idxmin(), "model"]
-print(f"\n  Baseline to beat: {base:.2f}% WMAPE ({base_name})")
-
-res["is_candidate"] = res.model.isin(CANDIDATES)
-res["accepted"] = res.is_candidate & (res.wmape < base) & (res.mase < 1.0)
-res["rank"] = np.where(res.is_candidate, res.groupby("is_candidate").cumcount() + 1, None)
-
-# Which candidates are statistically indistinguishable from the leader?
-_best_wmape = res[res.is_candidate].wmape.min()
-res["tied_with_best"] = res.is_candidate & ((res.wmape - _best_wmape).abs() <= TIE_MARGIN_WMAPE)
-TIED = list(res[res.tied_with_best].model)
+# ── 5. Rows ──────────────────────────────────────────────────────────────────
+banner("STEP 5: Rows to publish")
+bm = pd.DataFrame(study["bucket_metrics"])
+labs = [f"d{lo}-{hi}" for lo, hi in DAILY_BUCKETS]
+bm = bm[bm.bucket.isin(labs)]
+mean_m = bm.groupby("model")[["mae", "rmse", "mape", "r2"]].mean()
+all_models = list(table_all.index)
 
 
-def _diagnosis(r):
-    if not r.is_candidate:
-        return "baseline, not a candidate"
-    if len(TIED) > 1 and r.tied_with_best:
-        others = [m for m in TIED if m != r.model]
-        return (f"tied with {', '.join(others)} - within {TIE_MARGIN_WMAPE}pp WMAPE, "
-                f"the measured run-to-run jitter, so the ordering between them is "
-                f"not meaningful")
-    return None
+def stored_name(m):
+    """The family's served variant carries the family's name (the dashboard looks rows up by it); the others keep
+    their own, renamed only where they would collide with it."""
+    fam = S.FAMILY.get(m)
+    if fam and served_variant.get(fam) == m:
+        return fam
+    if m == "LSTM":
+        return "LSTM (univariate)"
+    if m == "Derived":
+        return "Derived (weekday ratio)"
+    return m
 
 
-res["diagnosis"] = res.apply(_diagnosis, axis=1)
-if len(TIED) > 1:
-    detail = ", ".join(f"{m} {res[res.model == m].wmape.iloc[0]:.4f}%" for m in TIED)
-    print(f"\n  TIE ({detail}) - within {TIE_MARGIN_WMAPE}pp WMAPE.")
-    print("  Ordering between these is not meaningful; they are co-champions.")
+ranked = [CHAMPION] + [m for m in table_all.sort_values("score").index if not is_baseline(m) and m != CHAMPION]
+split_label = f"rolling origin {n_origins} x {S.HORIZON} d, step 14, scored to {S.SCORE_END.date()}"
+first = labs[0]
+base_first = float(table_all.loc[[m for m in table_all.index if is_baseline(m)], first].min())
+ru = sel.get("runner_up")
+metric_rows = []
+for m in all_models:
+    sc = float(table_all.loc[m, "score"])
+    base = is_baseline(m)
+    wx = S.uses_weather(m)
+    accepted = (m in sel["eligible"]) and not wx
+    reason, diag = None, []
+    if base:
+        reason = "baseline, not a candidate"
+    elif not accepted:
+        w = []
+        if wx:
+            v = study["weather_tests"].get(m, {})
+            w.append(f"reads weather: served only while a real weather forecast exists, which no window after the "
+                     f"record end has (days 1-14 with OBSERVED weather {v.get('weather_d1_14', float('nan')):.2f}% vs "
+                     f"its twin {v.get('twin_d1_14', float('nan')):.2f}%, "
+                     f"{'significant' if v.get('significant') else 'not significant'})")
+        if sc >= base_score:
+            w.append(f"mean WMAPE {sc:.2f}% does not beat the best baseline ({best_base}) {base_score:.2f}%")
+        if float(table_all.loc[m, first]) >= base_first:
+            w.append(f"days 1-14 WMAPE {table_all.loc[m, first]:.2f}% does not beat the best baseline {base_first:.2f}%")
+        reason = "; ".join(w) or "not chosen"
+    if m == CHAMPION and ru and not sel.get("vs_runner_up_significant", True):
+        lo, hi = sel["vs_runner_up_ci"]
+        diag.append(f"tied with {stored_name(ru)} - lead not significant (95% interval {lo:+.2f} to {hi:+.2f} pp)")
+    if m == ru and not sel.get("vs_runner_up_significant", True):
+        lo, hi = sel["vs_runner_up_ci"]
+        diag.append(f"tied with {stored_name(CHAMPION)} - lead not significant (95% interval {lo:+.2f} to {hi:+.2f} pp)")
+    if stored_name(m) != m:
+        diag.append(f"study model: {m}")
+    fam = S.FAMILY.get(m)
+    if fam and served_variant.get(fam) == m and fut_note.get(fam):
+        diag.append(fut_note[fam])
+    mm = mean_m.loc[m] if m in mean_m.index else pd.Series(dtype=float)
+    metric_rows.append(dict(
+        model_name=stored_name(m), rmse=float(mm.get("rmse", np.nan)), mae=float(mm.get("mae", np.nan)),
+        wmape=sc, r2=float(mm.get("r2", np.nan)), mase=sc / base_score, mape=float(mm.get("mape", np.nan)),
+        rank=None if base else ranked.index(m) + 1, accepted=bool(accepted), rejected_reason=reason,
+        uses_weather=bool(wx),
+        diagnosis="; ".join(diag) or None, split_label=split_label))
+mt = pd.DataFrame(metric_rows).sort_values("rank", na_position="last")
+print(mt[["model_name", "rank", "accepted", "wmape", "mase", "mae", "r2"]].to_string(
+    index=False, float_format=lambda v: f"{v:,.3f}"))
 
-print("\n  VERDICT")
-for r in res[res.is_candidate].itertuples():
-    why = []
-    if not r.wmape < base: why.append(f"WMAPE {r.wmape:.2f}% does not beat baseline {base:.2f}%")
-    if not r.mase < 1.0: why.append(f"MASE {r.mase:.3f} >= 1.0")
-    print(f"    {r.model:<12} MAPE {r.mape:6.2f}%  WMAPE {r.wmape:6.2f}%  MASE {r.mase:5.3f}  "
-          + ("accepted" if r.accepted else "rejected - " + "; ".join(why)))
-if fails: print(f"\n  failed origins: {fails}")
+# The PRESENT band: every origin's days 1-14 (origins are 14 days apart, so they tile without overlap).
+present = res[res.h <= 14]
+band = {}
+for fam, name in served_variant.items():
+    s = present[present.model == name].set_index("date").forecast
+    band[fam] = s[~s.index.duplicated()].to_dict()
+band_days = set().union(*[set(v) for v in band.values()]) if band else set()
+pred_rows = []
+for r in hist.itertuples():
+    pv = {fam: band.get(fam, {}).get(r.ds) for fam in FAMILIES}
+    pred_rows.append((r.ds.date(), float(r.y), *[pv[f] for f in FAMILIES], champ_family or CHAMPION,
+                      r.ds in band_days, False))
+for i, ds in enumerate(fut_ds):
+    pv = [None if fut_pred.get(f) is None else float(fut_pred[f][i]) for f in FAMILIES]
+    pred_rows.append((ds.date(), None, *pv, champ_family or CHAMPION, False, True))
+print(f"\n  ml_predictive_emissions: {sum(not r[7] and not r[8] for r in pred_rows)} past + "
+      f"{sum(r[7] for r in pred_rows)} present (days 1-14 of {n_origins} origins) + {sum(r[8] for r in pred_rows)} future")
+
+# Horizon accuracy for the champion: what each stretch of the projection is worth.
+hz_rows = []
+hb = bm.set_index(["model", "bucket"])
+base_models = [m for m in table_all.index if is_baseline(m)]
+for lo, hi in DAILY_BUCKETS:
+    lab = f"d{lo}-{hi}"
+    if (CHAMPION, lab) not in hb.index:
+        continue
+    c = hb.loc[(CHAMPION, lab)]
+    bw = {b: float(table_all.loc[b, lab]) for b in base_models}
+    bname = min(bw, key=bw.get)
+    usable = bool(sel.get("usable", {}).get(lab, False))
+    note = (f"beats every baseline (best: {bname} {bw[bname]:.2f}%)" if usable else
+            f"loses to {bname} ({bw[bname]:.2f}%): the baseline is the better guide for these days")
+    hz_rows.append((champ_family or CHAMPION, lo, hi, int(c.n), float(c.wmape), float(c.mape),
+                    float(c.wmape) / bw[bname], float(c.mae), bw[bname], usable, note))
+print(f"\n  ml_horizon_accuracy ({TARGET}, {CHAMPION}):")
+for r in hz_rows:
+    print(f"    days {r[1]:>2}-{r[2]:<3} n={r[3]:<4} WMAPE {r[4]:6.2f}%  best baseline {r[8]:6.2f}%  "
+          f"{'usable' if r[9] else 'NOT usable'}")
+
+results = {
+    "generated": str(pd.Timestamp.now().isoformat(timespec="seconds")), "code_version": S.code_version(),
+    "protocol": "EVALUATION_PROTOCOL.md (10 Nov 2026)", "study": {"file": json_path.name,
+                                                                 "fingerprint": study["fingerprint"],
+                                                                 "generated": study["generated"]},
+    "source": "gold.fact_emissions_hourly", "series": {"days": int(len(hist)), "from": str(hist.ds.min().date()),
+                                                       "to": str(last.date()), "scored_to": str(S.SCORE_END.date())},
+    "origins": n_origins, "horizon": S.HORIZON, "champion": CHAMPION, "champion_column": champ_family,
+    "served_variants": served_variant, "volume_model": study["volume_model"], "best_baseline": best_base,
+    "selection": sel, "weather_tests": study["weather_tests"], "previous_champion": prev_note,
+    "publish_problems": publish_problems, "metrics": mt.to_dict("records"),
+    "horizon_accuracy": [dict(zip(["model", "h_lo", "h_hi", "n", "wmape", "mape", "mase", "mae", "baseline_wmape",
+                                   "usable", "note"], r)) for r in hz_rows],
+}
+
+METRIC_SQL = """INSERT INTO gold.ml_model_metrics
+      (model_name,target,rmse,mae,wmape,r2,mase,mape,rank,accepted,rejected_reason,uses_weather,diagnosis,split_label,
+       updated_at)
+    VALUES (%s,'Corridor CO2',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())"""
+PRED_SQL = """INSERT INTO gold.ml_predictive_emissions
+      (forecast_date, actual_co2, pred_gbr, pred_polynomial, pred_lstm, pred_derived, champion_model, is_holdout, is_future)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+HZ_SQL = """INSERT INTO gold.ml_horizon_accuracy
+      (target, model_name, h_lo, h_hi, n, wmape, mape, mase, mae, baseline_wmape, usable, note)
+    VALUES ('Corridor CO2',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+
+
+def nn(v):
+    return None if v is None or (isinstance(v, float) and not np.isfinite(v)) else v
+
+
+def metric_params(r):
+    return (r["model_name"], nn(r["rmse"]), nn(r["mae"]), nn(r["wmape"]), nn(r["r2"]), nn(r["mase"]), nn(r["mape"]),
+            None if r["rank"] is None or pd.isna(r["rank"]) else int(r["rank"]), r["accepted"], r["rejected_reason"],
+            r["uses_weather"], r["diagnosis"], r["split_label"])
+
 
 if DRY_RUN:
-    banner("DRY RUN: stopping before any write")
-    print("  Nothing written: gold.ml_model_metrics and gold.ml_predictive_emissions are unchanged.")
+    banner("DRY RUN: nothing written")
+    with psycopg2.connect(S.PG) as conn:
+        conn.set_session(readonly=True)
+        cur = conn.cursor()
+        for t, cols in (("ml_model_metrics", ["model_name", "target", "rmse", "mae", "wmape", "r2", "mase", "mape",
+                                              "rank", "accepted", "rejected_reason", "uses_weather", "diagnosis",
+                                              "split_label"]),
+                        ("ml_predictive_emissions", ["forecast_date", "actual_co2", "pred_gbr", "pred_polynomial",
+                                                     "pred_lstm", "pred_derived", "champion_model", "is_holdout",
+                                                     "is_future"]),
+                        ("ml_horizon_accuracy", ["target", "model_name", "h_lo", "h_hi", "n", "wmape", "mape", "mase",
+                                                 "mae", "baseline_wmape", "usable", "note"])):
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='gold' AND table_name=%s",
+                        (t,))
+            have = {x[0] for x in cur.fetchall()}
+            missing = [c for c in cols if c not in have]
+            print(f"  gold.{t}: {'all target columns present' if not missing else 'MISSING ' + ', '.join(missing)}")
+        n_sql = 0
+        for r in mt.to_dict("records"):
+            cur.mogrify(METRIC_SQL, metric_params(r)); n_sql += 1
+        for r in pred_rows:
+            cur.mogrify(PRED_SQL, r); n_sql += 1
+        for r in hz_rows:
+            cur.mogrify(HZ_SQL, r); n_sql += 1
+        print(f"  {n_sql} statements rendered (not executed)")
+    results["dry_run"] = True
+    print("  publish: " + ("BLOCKED - " + " | ".join(publish_problems) if publish_problems else "would publish"))
+    print("  gold.ml_model_metrics, gold.ml_predictive_emissions and gold.ml_horizon_accuracy are unchanged.")
     raise SystemExit(0)
 
-banner("STEP 5: Writing to AWS")
-# The metric rows are prepared here but written with the forecast in STEP 6, in one transaction on a connection
-# checked just before it. Written here, they sat uncommitted while the future projections ran (minutes, the
-# LSTM among them) and on 2026-10-19 the database closed the idle connection before the forecast was written:
-# both retrain attempts failed with "server closed the connection unexpectedly" and nothing was saved.
-metric_rows = []
-for r in res.itertuples():
-    reason = None
-    if r.is_candidate and not r.accepted:
-        w = []
-        if not r.wmape < base: w.append(f"WMAPE {r.wmape:.2f}% does not beat baseline {base:.2f}%")
-        if not r.mase < 1.0: w.append(f"MASE {r.mase:.3f} >= 1.0 (no better than seasonal naive)")
-        reason = "; ".join(w)
-    elif not r.is_candidate:
-        reason = "baseline, not a candidate"
-    metric_rows.append((r.model, r.rmse, r.mae, r.wmape, r.r2, r.mase, r.mape,
-         int(r.rank) if r.is_candidate else None, bool(r.accepted), reason,
-         USES_WEATHER.get(r.model, False), r.diagnosis))
+if publish_problems:
+    banner("NOT PUBLISHED")
+    for p in publish_problems:
+        print("  " + p)
+    raise SystemExit(2)
 
-champ = res[res.accepted]
-champ_name = champ.model.iloc[0] if len(champ) else None
-print(f"  ml_model_metrics: {len(res)} rows under target='Corridor CO2'")
-print(f"  champion: {champ_name or 'none accepted'}")
-
-banner("STEP 6: Writing the served forecast")
-
-# The panel needs the same shape as gold.ml_predictive_volume: a past context
-# stretch, the scored holdout, and an unscored future block.
-_acc = res[res.accepted]
-if _acc.empty:
-    raise SystemExit("no accepted model - refusing to serve a forecast")
-CHAMPION = _acc.iloc[0].model            # res is sorted by WMAPE, so this is rank 1
-print(f"  champion: {CHAMPION}  (WMAPE {_acc.iloc[0].wmape:.2f}%, MASE {_acc.iloc[0].mase:.3f})")
-FUT = FUTURE_DAYS
-last = d.ds.max()
-fut_ds = pd.date_range(last + pd.Timedelta(days=1), periods=FUT, freq="D")
-
-# Future weather is day-of-year climatology, not observation — the same
-# assumption the volume module makes, and stated on the panel.
-# Future weather is day-of-year climatology, not observation - the same
-# assumption the scored window now uses, and stated on the panel.
-clim = d.assign(k=d.ds.dt.dayofyear).groupby("k")[["rain", "temp"]].mean()
-
-
-fut_pred = {}
-for _n, _f in [*MODELS.items(), ("Derived", None)]:
-    try:
-        fut_pred[_n] = derived(d, list(fut_ds)) if _n == "Derived" else project(_n, _f)
-        print(f"  {_n:<12} {fut_ds[0].date()} .. {fut_ds[-1].date()}  "
-              f"mean {np.mean(fut_pred[_n]):.1f} t/day")
-    except Exception as e:
-        fut_pred[_n] = [None] * FUT
-        print(f"  {_n:<12} projection FAILED: {e}")
-
+banner("STEP 6: Writing (one transaction)")
+conn = psycopg2.connect(S.PG)
 try:
-    conn.cursor().execute("SELECT 1")
-except Exception:
-    print("  connection went idle during training - reconnecting")
-    conn = psycopg2.connect(PG)
-cur = conn.cursor()
-cur.execute("DELETE FROM gold.ml_model_metrics WHERE target = 'Corridor CO2'")
-for row in metric_rows:
+    cur = conn.cursor()
+    cur.execute("DELETE FROM gold.ml_model_metrics WHERE target = %s", (TARGET,))
+    for r in mt.to_dict("records"):
+        cur.execute(METRIC_SQL, metric_params(r))
     cur.execute("""
-        INSERT INTO gold.ml_model_metrics
-          (model_name,target,rmse,mae,wmape,r2,mase,mape,rank,accepted,rejected_reason,uses_weather,diagnosis,updated_at)
-        VALUES (%s,'Corridor CO2',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())""", row)
-cur.execute("""
-  CREATE TABLE IF NOT EXISTS gold.ml_predictive_emissions (
-    id serial PRIMARY KEY,
-    forecast_date date NOT NULL,
-    actual_co2 numeric(12,3),
-    pred_gbr numeric(12,3), pred_polynomial numeric(12,3), pred_lstm numeric(12,3),
-    pred_derived numeric(12,3),
-    champion_model text,
-    is_holdout boolean DEFAULT false, is_future boolean DEFAULT false,
-    updated_at timestamptz DEFAULT now())""")
-cur.execute("""COMMENT ON TABLE gold.ml_predictive_emissions IS
-  'Daily corridor CO2 (tonnes) with walk-forward forecasts. Actuals roll up from gold.fact_emissions_hourly, which is derived from the same traffic series the volume forecast uses, so the two panels cannot disagree. Horizon 7d (per the modelling diagram), unlike the volume module''s 14d - metrics are therefore not directly comparable.'""")
-cur.execute("ALTER TABLE gold.ml_predictive_emissions ADD COLUMN IF NOT EXISTS pred_derived numeric(12,3)")
-cur.execute("TRUNCATE gold.ml_predictive_emissions RESTART IDENTITY")
-
-scored = set(preds[CHAMPION])
-for r in d.itertuples():
-    cur.execute("""INSERT INTO gold.ml_predictive_emissions
-        (forecast_date, actual_co2, pred_gbr, pred_polynomial, pred_lstm, pred_derived, champion_model, is_holdout, is_future)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,false)""",
-        (r.ds.date(), float(r.y),
-         preds["GBR"].get(r.ds), preds["Polynomial"].get(r.ds), preds["LSTM"].get(r.ds), preds["Derived"].get(r.ds),
-         CHAMPION, r.ds in scored))
-for i, ds in enumerate(fut_ds):
-    cur.execute("""INSERT INTO gold.ml_predictive_emissions
-        (forecast_date, actual_co2, pred_gbr, pred_polynomial, pred_lstm, pred_derived,
-         champion_model, is_holdout, is_future)
-        VALUES (%s,NULL,%s,%s,%s,%s,%s,false,true)""",
-        (ds.date(), fut_pred["GBR"][i], fut_pred["Polynomial"][i],
-         fut_pred["LSTM"][i], fut_pred["Derived"][i], CHAMPION))
-conn.commit()
-# Per-horizon accuracy, measured by co2_horizon_study.py: rolling origin, 9
-# origins, fit once per origin then rolled forward recursively (each prediction
-# becomes the next day's lag), climatology weather throughout.
-# MEASURED HERE, not transcribed. An earlier version pasted the numbers from a
-# separate study script, which meant the table on the dashboard could silently
-# disagree with the model actually being served after any retrain. The study now
-# runs inline, through the same project() used for the served line.
-banner("Horizon study: how far ahead is the projection worth anything?")
-HZ_H, HZ_STEP, HZ_N = FUTURE_DAYS, 30, 9
-hz_origins = [len(d) - (HZ_N - i) * HZ_STEP - HZ_H for i in range(HZ_N)]
-hz_origins = [o for o in hz_origins if o > 400]
-print(f"  {len(hz_origins)} origins, h={HZ_H}d, champion {CHAMPION}")
-
-hz_rows = []
-for oi, cut in enumerate(hz_origins, 1):
-    tr_o, fut_o = d.iloc[:cut], d.iloc[cut:cut + HZ_H]
-    if len(fut_o) < HZ_H:
-        continue
-    clim_o = tr_o.assign(k=tr_o.ds.dt.dayofyear).groupby("k")[["rain", "temp"]].mean()
-    yh = (derived(tr_o, list(fut_o.ds)) if CHAMPION == "Derived" else
-          project(CHAMPION, MODELS[CHAMPION], hist0=tr_o, horizon_ds=list(fut_o.ds), clim_tbl=clim_o))
-    lw = tr_o.y.values[-SEASON:]
-    doy_o = tr_o.assign(k=tr_o.ds.dt.dayofyear).groupby("k").y.mean()
-    for i in range(HZ_H):
-        a = float(fut_o.y.iloc[i])
-        hz_rows.append({
-            "h": i + 1, "a": a, "f": float(yh[i]),
-            "sn": float(lw[i % SEASON]),
-            "cl": float(doy_o.get(fut_o.ds.iloc[i].dayofyear, tr_o.y.mean())),
-        })
-    print(f"    origin {oi}/{len(hz_origins)}  {fut_o.ds.iloc[0].date()} -> {fut_o.ds.iloc[-1].date()}")
-
-hz = pd.DataFrame(hz_rows)
-_ins = d.y.values[:hz_origins[0]]
-hz_scale = np.mean(np.abs(_ins[SEASON:] - _ins[:-SEASON]))
-BUCKETS = [(1, 7), (8, 14), (15, 30), (31, 60), (61, 90)]
-BUCKETS = [(lo, hi) for lo, hi in BUCKETS if lo <= HZ_H]
-
-print(f"\n  MASE denominator (seasonal naive on {len(_ins)} training days): {hz_scale:.2f} t")
-print(f"  {'range':<10}{'WMAPE%':>9}{'MAPE%':>8}{'MASE':>8}{'MAE t':>9}{'baseline%':>11}   verdict")
-CO2_HORIZON = []
-for lo, hi in BUCKETS:
-    g = hz[(hz.h >= lo) & (hz.h <= hi)]
-    if g.empty:
-        continue
-    e = (g.a - g.f).abs()
-    wm = e.sum() / g.a.sum() * 100
-    mp = (e / g.a).mean() * 100
-    ms = e.mean() / hz_scale
-    base = min((g.a - g.sn).abs().sum() / g.a.sum() * 100,
-               (g.a - g.cl).abs().sum() / g.a.sum() * 100)
-    ok = bool(wm < base and ms < 1.0)
-    # Days 1-7 are what the main evaluation validates, on far more origins
-    # (N_ORIGINS weekly, against this study's handful a month apart), so where
-    # the two disagree the note says so instead of a bare "validated range".
-    note = ("validated range" if hi <= HORIZON and ok else
-            f"validated on {N_ORIGINS} weekly origins; loses on these {len(hz_origins)} wider-spaced ones"
-            if hi <= HORIZON else
-            "loses to the baseline (last week repeated, or the day-of-year average)" if not ok else
-            "beyond the validated range but still clears both gates")
-    CO2_HORIZON.append((lo, hi, wm, mp, ms, e.mean(), base, ok, note))
-    print(f"  {f'd{lo}-{hi}':<10}{wm:>9.2f}{mp:>8.2f}{ms:>8.3f}{e.mean():>9.1f}{base:>11.2f}"
-          f"   {'USABLE' if ok else 'FAILS GATES'}")
-
-# The study above runs for the better part of half an hour while this connection
-# sits idle, and on 2026-10-02 the database had dropped it by the time of the
-# write: the INSERT failed and the old rows (another champion's) stayed. So
-# reconnect if needed, and replace the rows only now, together with their
-# successors.
-try:
-    conn.cursor().execute("SELECT 1")
-except Exception:
-    print("  connection went idle during the horizon study - reconnecting")
-    conn = psycopg2.connect(PG)
-cur = conn.cursor()
-cur.execute("""
-  CREATE TABLE IF NOT EXISTS gold.ml_horizon_accuracy (
-    id serial PRIMARY KEY, target text NOT NULL, model_name text NOT NULL,
-    h_lo int NOT NULL, h_hi int NOT NULL, n int,
-    wmape numeric(10,4), mape numeric(10,4), mase numeric(10,4), mae numeric(14,2),
-    baseline_wmape numeric(10,4), usable boolean, note text,
-    updated_at timestamptz DEFAULT now())""")
-cur.execute("DELETE FROM gold.ml_horizon_accuracy WHERE target='Corridor CO2'")
-for lo, hi, wm, mp, ms, mae_, bw, ok, note in CO2_HORIZON:
-    cur.execute("""INSERT INTO gold.ml_horizon_accuracy
-        (target, model_name, h_lo, h_hi, n, wmape, mape, mase, mae, baseline_wmape, usable, note)
-        VALUES ('Corridor CO2',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-        (CHAMPION, lo, hi, int(((hz.h >= lo) & (hz.h <= hi)).sum()),
-         float(wm), float(mp), float(ms), float(mae_), float(bw), ok, note))
-conn.commit()
-
-cur.execute("SELECT COUNT(*) FILTER (WHERE NOT is_holdout AND NOT is_future), COUNT(*) FILTER (WHERE is_holdout), COUNT(*) FILTER (WHERE is_future) FROM gold.ml_predictive_emissions")
-pa, ho, fu = cur.fetchone()
-print(f"  ml_predictive_emissions: {pa:,} PAST + {ho:,} PRESENT + {fu} FUTURE")
-
-json.dump({
-    "generated": str(pd.Timestamp.now().date()),
-    "source": "gold.fact_emissions_hourly (rebuilt from gold.fact_traffic_hourly)",
-    "series": {"days": int(len(df)), "from": str(df.ds.min().date()), "to": str(df.ds.max().date()),
-               "mean_tonnes_per_day": float(df.y.mean())},
-    "protocol": {"origins": N_ORIGINS, "horizon": HORIZON, "step": STEP, "season": SEASON,
-                 "scored_days": int(res.n.iloc[0])},
-    "baseline": {"name": base_name, "wmape": float(base)},
-    "results": res.drop(columns=["is_candidate"]).to_dict("records"),
-    "champion": champ_name,
-}, open(WORK / "outputs" / "emissions_results.json", "w"), indent=2)
-conn.commit()
-print("  emissions_results.json written")
-conn.close()
+      CREATE TABLE IF NOT EXISTS gold.ml_predictive_emissions (
+        id serial PRIMARY KEY, forecast_date date NOT NULL, actual_co2 numeric(12,3),
+        pred_gbr numeric(12,3), pred_polynomial numeric(12,3), pred_lstm numeric(12,3), pred_derived numeric(12,3),
+        champion_model text, is_holdout boolean DEFAULT false, is_future boolean DEFAULT false,
+        updated_at timestamptz DEFAULT now())""")
+    cur.execute("""COMMENT ON TABLE gold.ml_predictive_emissions IS
+      'Daily corridor CO2 (tonnes). PRESENT (is_holdout) = days 1-14 of each rolling origin (EVALUATION_PROTOCOL.md),
+       the forecasts the published metrics were computed from; FUTURE = 90 days refitted on the whole record.
+       Actuals roll up from gold.fact_emissions_hourly. Written by train_emissions.py.'""")
+    cur.execute("TRUNCATE gold.ml_predictive_emissions RESTART IDENTITY")
+    for r in pred_rows:
+        cur.execute(PRED_SQL, r)
+    cur.execute("""
+      CREATE TABLE IF NOT EXISTS gold.ml_horizon_accuracy (
+        id serial PRIMARY KEY, target text NOT NULL, model_name text NOT NULL, h_lo int NOT NULL, h_hi int NOT NULL,
+        n int, wmape numeric(10,4), mape numeric(10,4), mase numeric(10,4), mae numeric(14,2),
+        baseline_wmape numeric(10,4), usable boolean, note text, updated_at timestamptz DEFAULT now())""")
+    cur.execute("DELETE FROM gold.ml_horizon_accuracy WHERE target = %s", (TARGET,))
+    for r in hz_rows:
+        cur.execute(HZ_SQL, r)
+    conn.commit()
+finally:
+    conn.close()
+out = S.WORK / "outputs" / "emissions_results.json"
+out.write_text(json.dumps(results, indent=2, default=str))
+print(f"  published {CHAMPION} ({champ_family}); {out.name} written")
 banner("DONE")

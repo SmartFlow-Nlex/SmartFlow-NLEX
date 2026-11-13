@@ -4,9 +4,12 @@ SmartFlow NLEX - issue the 48-hour hourly traffic forecast from the latest uploa
     python forecast_48h.py                 # dry run: builds the forecast, prints a summary, writes nothing
     python forecast_48h.py --write-db      # writes gold.ml_forecast_48h_runs + gold.ml_forecast_hourly_48h
     python forecast_48h.py --write-db --if-changed   # skip when the latest run already used this history and model
+    python forecast_48h.py --dry-run       # reads the dryrun/ folder's model and dataset; never writes (refuses --write-db)
 
 Reads dataset.npz (run build_dataset.py first) and production.json (train_production.py). The forecast starts the
-hour after the latest uploaded day. Per series:
+hour after the LAST REAL DAY (10 Nov 2026): the warehouse runs past it with broken, missing and synthetic days
+(25 May - 30 Jun 2026) that are treated as unknown, so a forecast is never built on them. The run's info says so
+(real_end, db_latest_day, unknown_days, served_from). Per series:
   model             the production model (production.json), when the model loads and the series' last 14 days and
                     56-day daily window are complete
   fallback_profile  otherwise the current dashboard method (same weekday last week x the usual hourly shape), which is
@@ -30,7 +33,7 @@ from psycopg2.extras import Json, execute_values  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "config"))
 from db import PG, WORK  # noqa: E402
-from features import H, Features, apply_hybrid  # noqa: E402
+from features import H, Features, apply_hybrid, cache_dir  # noqa: E402
 
 CACHE = Path(WORK) / "cache" / "traffic_hourly_48h"
 KEEP_RUNS = 20
@@ -74,19 +77,27 @@ COMPARED = ["lstm1", "stacked", "dualpath", "hybrid"]          # the learned can
 
 
 def comparison(selected):
-    """Every learned candidate's 2025 backtest (metrics.json from evaluate.py), for the dashboard's evidence table:
-    overall, by hours ahead and by condition, at the plaza-hour level and on the corridor total."""
+    """Every learned candidate on the same VALIDATION origins (metrics.json from evaluate.py; the model was chosen
+    there), for the dashboard's evidence table: overall, by hours ahead and by condition, at the plaza-hour level and
+    on the corridor total. The served model also carries its TEST scores (test_wape), never used for the choice."""
     f = CACHE / "metrics.json"
     if not f.exists():
         return []
-    m = json.loads(f.read_text())["models"]
+    mj = json.loads(f.read_text())
+    m = mj.get("validation_models", mj["models"])
+    win = mj.get("windows", {})
     out = []
     for k in COMPARED:
         if k not in m:
             continue
         r = m[k]
+        t = mj["models"].get(k)
         out.append({
             "model": k, "label": r["label"], "served": k == selected,
+            "period": f"validation {win.get('validation', ['?', '?'])[0][:10]} .. {win.get('validation', ['?', '?'])[1][:10]}",
+            "score": r.get("buckets", {}).get("score"),
+            "test_wape": t["series"]["all"]["WAPE"] if t else None,
+            "test_score": t.get("buckets", {}).get("score") if t else None,
             "wape": r["series"]["all"]["WAPE"], "corridor_wape": r["corridor"]["all"]["WAPE"],
             # the same measures the daily models' table shows, per plaza, direction and class, hour by hour
             "mase": r["series"]["all"].get("MASE"), "mae": r["series"]["all"]["MAE"], "rmse": r["series"]["all"]["RMSE"],
@@ -179,6 +190,17 @@ def build(D, prod):
                      "intervals": prod.get("intervals"), "refit": prod.get("refit"),
                      "test_window": prod.get("test_window"), "trained_through": prod.get("trained_through"),
                      "comparison": comparison(prod.get("model")),
+                     "selection": prod.get("selection"), "test_vs_baselines": prod.get("test_vs_baselines"),
+                     "windows": prod.get("windows"),
+                     # where the forecast starts, and why it is not "the day after the latest upload"
+                     "real_end": str(D.get("real_end", ts[n_hist - 1].date())),
+                     "db_latest_day": str(D.get("db_latest_day", "")),
+                     "unknown_days": int(D.get("unknown_days", 0)),
+                     "broken_days": [str(x) for x in D.get("broken_days", [])],
+                     "served_from": (f"the last real day {D.get('real_end', ts[n_hist - 1].date())}: the "
+                                     f"{int(D.get('unknown_days', 0))} later day(s) in the warehouse (to "
+                                     f"{D.get('db_latest_day', '?')}) are broken, missing or synthetic and are "
+                                     f"treated as unknown until the client re-extracts them"),
                      "fallback_reasons": reasons})
     return run, rows
 
@@ -218,7 +240,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--write-db", action="store_true")
     ap.add_argument("--if-changed", action="store_true")
+    ap.add_argument("--dry-run", action="store_true", help="use the dryrun/ folder; never writes")
     args = ap.parse_args()
+    global CACHE
+    if args.dry_run:
+        if args.write_db:
+            raise SystemExit("--dry-run never writes: drop --write-db, or drop --dry-run to publish the live model")
+        CACHE = cache_dir(True)
     D = dict(np.load(CACHE / "dataset.npz", allow_pickle=True))
     pf = CACHE / "production.json"
     prod = json.loads(pf.read_text()) if pf.exists() else {"model": "profile", "label": "Current method"}
@@ -226,6 +254,7 @@ def main():
     corr = [r for r in rows if r["series_key"] == "corridor"]
     print(f"origin {run['origin_ts']} (history ends {run['history_end']}, synthetic={run['history_synthetic']}); "
           f"model {run['model']} status {run['status']} ({run['series_model']} model / {run['series_fallback']} fallback)")
+    print(f"served from {run['info']['served_from']}")
     print(f"corridor next 24 h: {sum(r['total'] for r in corr[:24]):,.0f} vehicles; next 48 h {sum(r['total'] for r in corr):,.0f}")
     if run["info"]["fallback_reasons"]:
         print("fallback:", json.dumps(run["info"]["fallback_reasons"], indent=1))

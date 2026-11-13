@@ -131,19 +131,24 @@ def is_baseline(name: str) -> bool:
 def run_study(df: pd.DataFrame, target: str, models: dict[str, Callable], horizon: int, origins: list[int],
               known_cols: list[str], score_end: pd.Timestamp, oracle_cols: list[str] | None = None,
               oracle_days: int = 14, exclude_dates: Iterable = (), ckpt: Path | None = None,
-              log: Callable = print) -> pd.DataFrame:
+              log: Callable = print, fingerprint: str = "") -> pd.DataFrame:
     """Every model forecasts `horizon` days from every origin, refitted on the rows before it.
 
     Returns one row per (origin, model, h) for days that are scored (real, <= score_end, not excluded).
     `known_cols` reach the model for every future day; `oracle_cols` (observed weather) only for days 1..oracle_days,
     NaN after (protocol section 2). An origin where any model fails is dropped for all models.
+    `df` must already hold the known columns for every date up to the last origin + horizon (calendar rows past
+    the end of the record, target NaN): they are read from `df`, and a missing one makes the origin fail.
+    `fingerprint` (a hash of the data and code version) is stored with the checkpoint; a checkpoint written under a
+    different fingerprint is not resumed, so stale forecasts are never reused (11 Nov 2026).
     """
     df = df.sort_values("ds").reset_index(drop=True)
     excl = set(pd.to_datetime(list(exclude_dates)))
     rows, done = [], set()
     if ckpt and Path(ckpt).exists():
         ck = json.loads(Path(ckpt).read_text())
-        if ck.get("origins") == origins and ck.get("models") == list(models) and ck.get("horizon") == horizon:
+        if (ck.get("origins") == origins and ck.get("models") == list(models) and ck.get("horizon") == horizon
+                and ck.get("fingerprint", "") == fingerprint):
             rows, done = ck["rows"], set(ck["done"])
             log(f"  resuming: {len(done)} of {len(origins)} origins already done")
     for oi, cut in enumerate(origins, 1):
@@ -180,7 +185,7 @@ def run_study(df: pd.DataFrame, target: str, models: dict[str, Callable], horizo
         done.add(cut)
         if ckpt:
             Path(ckpt).write_text(json.dumps({"origins": origins, "models": list(models), "horizon": horizon,
-                                               "rows": rows, "done": sorted(done)}))
+                                               "fingerprint": fingerprint, "rows": rows, "done": sorted(done)}))
     return pd.DataFrame(rows, columns=["origin", "model", "h", "date", "actual", "forecast"])
 
 
@@ -279,6 +284,11 @@ def select_champion(res: pd.DataFrame, buckets=DAILY_BUCKETS, metric: str = "wma
             out["note"] = f"{champ} led {ru} without a significant margin; the simpler {ru} wins the tie."
             champ, ru = ru, champ
             out["runner_up"] = ru
+            # The intervals must describe the model actually chosen (bug fixed 11 Nov 2026).
+            lo, hi = _boot_diff(cells, champ, best_base, buckets, metric, block)
+            out["vs_baseline_ci"], out["vs_baseline_significant"] = [lo, hi], hi < 0
+            rlo, rhi = _boot_diff(cells, champ, ru, buckets, metric, block)
+            out["vs_runner_up_ci"], out["vs_runner_up_significant"] = [rlo, rhi], rhi < 0
     out["champion"] = champ
     for lo_, hi_ in buckets:
         lab = f"d{lo_}-{hi_}"

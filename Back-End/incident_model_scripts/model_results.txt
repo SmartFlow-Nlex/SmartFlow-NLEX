@@ -1,145 +1,52 @@
-================================================================================
-  INCIDENT FORECASTING CANDIDATES 
-  (target: incident_count)
-================================================================================
+====================================================================================================
+  INCIDENT FORECAST — EVALUATION_PROTOCOL study (blended)
+====================================================================================================
 
   Source        : silver.nlex_accident_events_clean + silver.nlex_breakdown_events_clean
-  Protocol      : holdout (294-day window)
-  Holdout window: 2025-09-10 .. 2026-06-30
-  Train rows    : 982
-  Selected by   : r2
-  Excluded      : 2026-04-19 (observed 0, next-lowest day 38) — suspected data gap, left out of every metric below
-  Scored days   : 293 of 294
+  Origins       : 26 rolling origins, 2025-05-26 .. 2026-05-11, every 14 days, refitted at each
+  Horizon       : 90 days, recursive as served; scored to 2026-05-24
+  Volume input  : {'source': 'traffic_study', 'file': 'traffic_study.csv', 'model': 'Prophet + holidays', 'origins': 26, 'days_filled_after_score_end': 246, 'traffic_champion_is_baseline': False}
+  Weather       : observed rain for days 1-14 (upper bound), weather-free twin after
+  Not scored    : 2026-04-19 (no incident rows: a data gap); everything after 2026-05-24 (traffic volume not real)
+  Study run     : 2026-11-11T02:02:12 (code fd2707a3d88289da487f81956ff7f99cb77e2b48+uncommitted)
+  Note          : incident days 2026-05-25..2026-06-30 left out of training and actuals: traffic volume is real only to 2026-05-24
 
-  [SELECTED] Negative Binomial GLM
-  ------------------------------------------------------------
-    MAE              =      13.3771
-    MSE              =     324.8361
-    RMSE             =      18.0232
-    MAPE             =      11.3360 %
-    sMAPE            =      11.0213 %
-    WMAPE            =      10.5689 %
-    Poisson_Deviance =       2.7338
-    MASE             =       0.6779
-    RMSSE            =       0.6842
-    R2               =       0.3284
-    Adjusted_R2      =       0.2869
-    --- Split R2 (Adviser Diagnostic) ---
-    Train R2         =       0.4791
-    Val R2           =       0.3284
-    Gap              =       0.1507
-    DIAGNOSIS        = OVERFITTING
+  MAE (incidents/day) by horizon bucket; score = mean of buckets; WMAPE score alongside
+  model                                         d1-14   d15-30   d31-60   d61-90    score    WMAPE
+  RandomForest                                  14.64    16.95    16.97    16.99    16.39   13.24% <- champion
+  RandomForest (no weather)                     14.71    16.95    16.97    16.99    16.40   13.25% (eligible)
+  Baseline: weekday average                     15.84    16.49    17.06    17.83    16.80   13.57%
+  XGBoost                                       14.41    16.94    17.48    18.46    16.82   13.58%
+  XGBoost (no weather)                          14.49    16.94    17.48    18.46    16.85   13.60%
+  RandomForest (no volume)                      15.23    17.47    17.68    18.46    17.21   13.90%
+  RandomForest (no volume, no weather)          15.29    17.47    17.68    18.46    17.22   13.91%
+  LSTM                                          15.84    16.69    18.32    19.16    17.50   14.13%
+  Poisson_GLM                                   14.68    16.78    18.62    20.65    17.68   14.27%
+  NegBinomial_GLM                               14.61    16.80    18.65    20.67    17.68   14.27%
+  Poisson_GLM (no weather)                      14.69    16.78    18.62    20.65    17.68   14.27%
+  NegBinomial_GLM (no weather)                  14.63    16.80    18.65    20.67    17.69   14.27%
+  XGBoost (no volume)                           14.63    17.63    19.47    21.27    18.25   14.73%
+  SARIMAX                                       15.01    17.33    19.24    21.61    18.30   14.76%
+  SARIMAX (no weather)                          15.20    17.33    19.24    21.61    18.34   14.80%
+  XGBoost (no volume, no weather)               15.61    17.63    19.47    21.27    18.50   14.93%
+  MSTL_ARIMA + holidays                         17.32    18.59    19.23    19.87    18.75   15.15%
+  NegBinomial_GLM (no volume, no weather)       14.81    17.47    20.17    22.62    18.77   15.14%
+  MSTL_ARIMA                                    17.34    18.62    19.23    19.91    18.78   15.17%
+  NegBinomial_GLM (no volume)                   14.89    17.47    20.17    22.62    18.79   15.16%
+  Poisson_GLM (no volume, no weather)           14.94    17.55    20.31    22.76    18.89   15.24%
+  Poisson_GLM (no volume)                       15.02    17.55    20.31    22.76    18.91   15.26%
+  GRU                                           17.46    18.73    19.37    21.00    19.14   15.46%
+  LSTM + calendar                               16.22    19.86    21.18    23.44    20.18   16.28%
+  Baseline: last year (scaled)                  18.91    19.97    20.32    22.25    20.36   16.44%
+  GRU + calendar                                18.43    21.41    21.20    22.11    20.79   16.79%
+  Baseline: last week                           19.47    21.06    21.02    21.82    20.84   16.84%
+  SARIMAX (no volume)                           21.43    24.00    26.05    26.53    24.50   19.78%
+  SARIMAX (no volume, no weather)               21.98    24.00    26.05    26.53    24.64   19.90%
 
-  [RANK #2] Poisson GLM
-  ------------------------------------------------------------
-    MAE              =      13.3829
-    MSE              =     325.3520
-    RMSE             =      18.0375
-    MAPE             =      11.3354 %
-    sMAPE            =      11.0283 %
-    WMAPE            =      10.5735 %
-    Poisson_Deviance =       2.7397
-    MASE             =       0.6782
-    RMSSE            =       0.6848
-    R2               =       0.3273
-    Adjusted_R2      =       0.2858
-    --- Split R2 (Adviser Diagnostic) ---
-    Train R2         =       0.4797
-    Val R2           =       0.3273
-    Gap              =       0.1523
-    DIAGNOSIS        = OVERFITTING
-
-  [RANK #3] Random Forest
-  ------------------------------------------------------------
-    MAE              =      14.4492
-    MSE              =     367.5893
-    RMSE             =      19.1726
-    MAPE             =      12.1705 %
-    sMAPE            =      11.8940 %
-    WMAPE            =      11.4159 %
-    Poisson_Deviance =       3.0815
-    MASE             =       0.7322
-    RMSSE            =       0.7279
-    R2               =       0.2400
-    Adjusted_R2      =       0.1930
-    --- Split R2 (Adviser Diagnostic) ---
-    Train R2         =       0.8177
-    Val R2           =       0.2400
-    Gap              =       0.5776
-    DIAGNOSIS        = OVERFITTING
-
-  [RANK #4] LSTM
-  ------------------------------------------------------------
-    MAE              =      16.0678
-    MSE              =     466.5343
-    RMSE             =      21.5994
-    MAPE             =      14.1176 %
-    sMAPE            =      13.0652 %
-    WMAPE            =      12.6948 %
-    Poisson_Deviance =       3.8585
-    MASE             =       0.8142
-    RMSSE            =       0.8200
-    R2               =       0.0354
-    Adjusted_R2      =      -0.0131
-    --- Split R2 (Adviser Diagnostic) ---
-    Train R2         =       0.0886
-    Val R2           =       0.0354
-    Gap              =       0.0532
-    DIAGNOSIS        = UNDERFITTING
-
-  [RANK #5] GRU
-  ------------------------------------------------------------
-    MAE              =      16.4188
-    MSE              =     472.1802
-    RMSE             =      21.7297
-    MAPE             =      14.0560 %
-    sMAPE            =      13.3554 %
-    WMAPE            =      12.9721 %
-    Poisson_Deviance =       3.9105
-    MASE             =       0.8320
-    RMSSE            =       0.8250
-    R2               =       0.0238
-    Adjusted_R2      =      -0.0254
-    --- Split R2 (Adviser Diagnostic) ---
-    Train R2         =       0.1731
-    Val R2           =       0.0238
-    Gap              =       0.1493
-    DIAGNOSIS        = UNDERFITTING
-
-  [RANK #6] XGBoost
-  ------------------------------------------------------------
-    MAE              =      17.0916
-    MSE              =     489.9366
-    RMSE             =      22.1345
-    MAPE             =      13.7397 %
-    sMAPE            =      14.1440 %
-    WMAPE            =      13.5037 %
-    Poisson_Deviance =       4.1464
-    MASE             =       0.8661
-    RMSSE            =       0.8403
-    R2               =      -0.0129
-    Adjusted_R2      =      -0.0756
-    --- Split R2 (Adviser Diagnostic) ---
-    Train R2         =       0.8339
-    Val R2           =      -0.0129
-    Gap              =       0.8469
-    DIAGNOSIS        = OVERFITTING
-
-  [RANK #7] SARIMAX
-  ------------------------------------------------------------
-    MAE              =      18.4362
-    MSE              =     552.0461
-    RMSE             =      23.4957
-    MAPE             =      14.8352 %
-    sMAPE            =      15.1379 %
-    WMAPE            =      14.5660 %
-    Poisson_Deviance =       4.5958
-    MASE             =       0.9342
-    RMSSE            =       0.8920
-    R2               =      -0.1413
-    Adjusted_R2      =      -0.2119
-    --- Split R2 (Adviser Diagnostic) ---
-    Train R2         =       0.4127
-    Val R2           =      -0.1413
-    Gap              =       0.5540
-    DIAGNOSIS        = OVERFITTING
+  Best baseline : Baseline: weekday average
+  Eligible      : RandomForest, RandomForest (no weather)
+  Champion vs best baseline: 95% interval -1.05 to +0.48 incidents/day (NOT significant)
+  Champion vs runner-up (RandomForest (no weather)): 95% interval -0.04 to -0.01 (significant)
+  Usable buckets: d1-14 yes, d15-30 NO, d31-60 yes, d61-90 yes
+  CHAMPION      : RandomForest
+  Champion mean forecast vs mean actual: d1-14 117.8 vs 122.0, d15-30 114.8 vs 122.9, d31-60 114.8 vs 124.3, d61-90 115.8 vs 125.8
