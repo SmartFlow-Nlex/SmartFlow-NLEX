@@ -241,6 +241,9 @@ export default function IncidentNarrative({
   scoringCaption,
   weather,
   horizonDays,
+  compact = false,
+  open: openProp,
+  onOpenChange,
 }: {
   selected: ModelKey[];
   metrics: ModelMetric[];
@@ -248,17 +251,29 @@ export default function IncidentNarrative({
   scoringCaption: string;
   weather: "all" | "dry" | "wet";
   horizonDays: number;
+  /** Card layout: no context line and no Details fold, only the headline read-out (as ModelNarrative's compact). */
+  compact?: boolean;
+  /** Controlled open state: the card draws its own Generate report button and this renders only the report. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   // Collapsed by default: the report is a deliberate action, not something that
   // pushes the metrics table off screen every time the page loads.
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const setOpen = (v: boolean | ((o: boolean) => boolean)) => {
+    const next = typeof v === "function" ? v(open) : v;
+    if (controlled) onOpenChange?.(next);
+    else setOpenState(next);
+  };
 
   if (!metrics || metrics.length === 0) return null;
 
   const byModel = new Map(metrics.map((m) => [m.model, m]));
 
-  // Nothing but the button until it is pressed.
-  if (!open) return <GenerateReportButton onClick={() => setOpen(true)} />;
+  // Nothing but the button until it is pressed (and not even that when the card draws it).
+  if (!open) return controlled ? null : <GenerateReportButton onClick={() => setOpen(true)} />;
 
   return (
     <section className="nc-narrative">
@@ -310,14 +325,17 @@ export default function IncidentNarrative({
 
       {open && (
       <div className="nc-narrative-body">
-        <p className="nc-narrative-context">
-          {scoringCaption}
-          {weather !== "all" ? ` · scored on ${weather} days only` : null}
-        </p>
+        {!compact && (
+          <p className="nc-narrative-context">
+            {scoringCaption}
+            {weather !== "all" ? ` · scored on ${weather} days only` : null}
+          </p>
+        )}
 
       {/* The read-out is the language model's alone. The metrics it was given
           are the ones on the card above, so the two cannot disagree. */}
       <AiModelInsight
+        hideDetails={compact}
         quantity="incidents"
         horizonDays={horizonDays}
         weatherMode={weather === "all" ? null : "with"}

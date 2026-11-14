@@ -37,7 +37,14 @@ export default function CongestionNarrative({
   windowEnd,
   severeBelowKmh,
   heavyBelowKmh,
+  open,
+  onOpenChange,
+  compact,
 }: {
+  /** Controlled open state, for a card that draws its own Generate report control. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  compact?: boolean;
   modelInfo: CongestionNarrativeModel | null;
   horizons: CongestionNarrativeHorizon[];
   exitsTotal: number;
@@ -63,6 +70,9 @@ export default function CongestionNarrative({
 
   return (
     <NarrativePanel
+      open={open}
+      onOpenChange={onOpenChange}
+      compact={compact}
       subtitle="Plain-language read-out of how far ahead this map can be trusted"
       metrics={[{ model: modelInfo.model }]}
       horizonDays={hoursCovered}

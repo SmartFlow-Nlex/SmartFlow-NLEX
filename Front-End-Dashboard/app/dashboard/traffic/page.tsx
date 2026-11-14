@@ -4,11 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cachedJson } from "../../../lib/cached-json";
 import { attachCategoryClick } from "../../../lib/chart-click";
 import { useChartTheme, applyChartTheme, heatRamp, seriesRamp, seriesPair } from "../../../lib/chart-theme";
-import { areaFade } from "../../../lib/chart-kit";
 import { heatTip, heatValue, scrubHeatmap } from "../../../lib/heat-tooltip";
 import ReactECharts from "echarts-for-react";
-import type { EChartsOption, LineSeriesOption } from "echarts";
-import { Activity, ArrowDownWideNarrow, ArrowUpNarrowWide, Building2, CalendarClock, Clock, Gauge, TrendingUp, X } from "lucide-react";
+import type { EChartsOption } from "echarts";
+import { Activity, ArrowDownWideNarrow, ArrowUpNarrowWide, Building2, CalendarClock, CalendarDays, Clock, Gauge, Grid3x3, TrendingUp } from "lucide-react";
+import { CardIcon, CardInsight } from "../../../components/dashboard/CardBits";
+import FilterChips, { rangeText, type FilterChip } from "../../../components/dashboard/FilterChips";
+import { SortHead, useSortedRows, type SortCol } from "../../../components/dashboard/SortableTable";
 import { BoothStaffingPanel, CongestionResponsePanel, EventInterventionPanel } from "../../../components/dashboard/PrescriptiveTrafficPanels";
 import ChartSkeleton, { KpiSkeleton } from "../../../components/dashboard/ChartSkeleton";
 import CustomSelect from "../../../components/dashboard/CustomSelect";
@@ -30,6 +32,8 @@ const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
 
 const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/** Full day names, for tooltips, pop-up titles and sentences; the grid's axis keeps the short ones. */
+const DOW_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Postgres dow (0=Sun) -> Mon-first
 
 // ---------- Data contract ----------
@@ -53,7 +57,7 @@ type Analytics = {
   speedByHour: { hour: number; speed: number; jam_level: number }[];
   eventImpact: {
     label: string; date: string; dayVolume: number; baseline: number; deviationPct: number | null;
-    plaza?: string; venueExit?: string; eventCount?: number; attendance?: number | null; onHoliday?: boolean; baselineDays?: number;
+    plaza?: string; venueExit?: string; view?: string; eventCount?: number; attendance?: number | null; onHoliday?: boolean; baselineDays?: number;
   }[];
   holidayImpact: {
     label: string; deviationPct: number; occurrences: number; baseline: number; volume: number;
@@ -63,6 +67,17 @@ type Analytics = {
   /** Set when Dry or Wet is chosen: events are then kept by the weather of their day (holidays are not filtered). */
   eventWeather?: { day: "rainy" | "dry"; rule: string } | null;
 };
+
+/* Where arena events are measured (backend: traffic.service eventImpact `view`). Bocaue Barrier is not offered:
+   it is the mainline barrier, so its entries are through traffic rather than arena trips. */
+const EVENT_EXIT_VIEWS = [
+  { value: "venue", label: "Venue exit (CDV / PH Arena)" },
+  { value: "Bocaue Interchange", label: "Bocaue Interchange" },
+  { value: "Tambubong", label: "Tambubong (Sta. Maria)" },
+  { value: "Marilao", label: "Marilao" },
+  { value: "All arena exits", label: "All arena exits combined" },
+] as const;
+type EventExitView = (typeof EVENT_EXIT_VIEWS)[number]["value"];
 
 type Granularity = "hourly" | "daily" | "weekly" | "monthly";
 type RangeMode = "3" | "12" | "all" | "custom";
@@ -152,8 +167,9 @@ export default function TrafficPage() {
   /* Above/below a baseline (17 Oct 2026, testers TR-5: "reuse the Volume-by-Plaza bar colouring for dark-mode
      visibility"). The pair's outer steps are right by day, but at night the deep step (#2f5fba) sinks into the
      navy card, so night takes the plaza chart's two brighter steps and both directions stay visible. */
-  const ABOVE = chartTheme.isDark ? RAMP[1] : PAIR_B;
-  const BELOW = chartTheme.isDark ? RAMP[0] : PAIR_A;
+  // Above the baseline is the deeper shade in both modes (user request, 4 Nov 2026); the ramp runs lightest to darkest.
+  const ABOVE = chartTheme.isDark ? RAMP[1] : PAIR_A;
+  const BELOW = chartTheme.isDark ? RAMP[0] : PAIR_B;
   const [activeTab, setActiveTab] = useState<"Descriptive" | "Predictive" | "Prescriptive">("Descriptive");
 
   // Global filters (Row A)
@@ -164,7 +180,7 @@ export default function TrafficPage() {
   const [direction, setDirection] = useState<Direction>("Both");
   const [vClass, setVClass] = useState<VehicleClass>("All");
   const [weather, setWeather] = useState<"all" | "dry" | "wet">("all");
-  // Rain's like-for-like association (9 Nov 2026): loaded only once Dry or Wet is chosen, for the lines that say
+  // Rain's like-for-like association (Hans, 9 Nov 2026): loaded only once Dry or Wet is chosen, for the lines that say
   // what the toggle means beyond "these hours only".
   const rainEffect = useRainEffect(weather !== "all");
 
@@ -174,6 +190,8 @@ export default function TrafficPage() {
   const [grain, setGrain] = useState<Granularity>("daily");
   const [splitDirection, setSplitDirection] = useState(false);
   const [impactMode, setImpactMode] = useState<"Events" | "Holidays">("Holidays");
+  // Which exit the arena events are measured at: the venue's own (CDV), another arena exit, or all of them.
+  const [eventExit, setEventExit] = useState<EventExitView>("venue");
   const [allPlazasOpen, setAllPlazasOpen] = useState(false);
   const [impactListOpen, setImpactListOpen] = useState(false);
   // The Arena list runs to dozens of events across several years; a year filter saves the scroll (testers TR-5).
@@ -241,7 +259,7 @@ export default function TrafficPage() {
   // ---------- Derived values ----------
   const derived = useMemo(() => {
     if (!data) return null;
-    const { kpis, dailyTrend, byPlaza, hourDow } = data;
+    const { kpis, byPlaza, hourDow } = data;
 
     const curAdt = kpis.days > 0 ? kpis.totalVolume / kpis.days : 0;
     const prevAdt = kpis.prevDays > 0 ? kpis.prevTotalVolume / kpis.prevDays : 0;
@@ -271,9 +289,8 @@ export default function TrafficPage() {
         ? kpis.congestionIndex - kpis.prevCongestionIndex
         : null;
 
-    const sparkline = dailyTrend.slice(-30).map((r) => r.nb + r.sb + (r.bothdir ?? 0));
 
-    return { curAdt, volumeDeltaPct, peakHour, peakHourVolume, busiest, plazaTotal, congestionDelta, sparkline };
+    return { curAdt, volumeDeltaPct, peakHour, peakHourVolume, busiest, plazaTotal, congestionDelta };
   }, [data]);
 
     // ---------- Chart options ----------
@@ -353,7 +370,7 @@ export default function TrafficPage() {
         formatter: (p) => {
           const v = (p as unknown as { value: [number, number, number] }).value;
           // The shared heatmap tooltip (lib/heat-tooltip), so a Traffic cell and an Incident cell read alike.
-          return heatTip({ title: `${DOW_LABELS[v[1]]} ${fmtHour(v[0])}`, value: heatValue(v[2], "vehicles/hr", 0), detail: ["on average"] });
+          return heatTip({ title: `${DOW_FULL[v[1]]} • ${fmtHour(v[0])}`, value: heatValue(v[2], "vehicles/hr", 0), detail: ["on average"] });
         },
       },
       visualMap: {
@@ -399,16 +416,36 @@ export default function TrafficPage() {
     const rows = display;
     // Scaled against the largest real plaza, not against the Others total.
     const maxV = top[0]?.v ?? 1;
+    const totalV = data.byPlaza.reduce((s, r) => s + r.v, 0);
+    const labelInk = chartTheme.isDark ? "#e6edf9" : "#10213f";
     return {
       rows: display,
       others,
       option: {
-        // Room for the longest plaza name ("Paso de Blas Valenzuela") at the 12 px floor; it overflowed 120.
-        grid: { left: 158, right: 46, top: 8, bottom: 18 },
-        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => fmtCompact(v), fontSize: 12 } },
+        // Room for the longest plaza name ("Paso de Blas Valenzuela"), and for each bar's figure on its right.
+        grid: { left: 162, right: 96, top: 4, bottom: 4 },
+        // Each bar carries its own figure, so the axis is not drawn.
+        xAxis: { type: "value", axisLabel: { show: false }, splitLine: { show: false }, axisLine: { show: false }, axisTick: { show: false } },
         // interval:0 — every plaza name must be readable, that IS the chart
-        yAxis: { type: "category", data: display.map((r) => r.plaza), axisLabel: { interval: 0, fontSize: 12, width: 144, overflow: "truncate" }, axisTick: { show: false } },
-        tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (v) => `${fmtInt(Number(v))} vehicles` },
+        yAxis: {
+          type: "category",
+          data: display.map((r) => r.plaza),
+          axisLine: { show: false },
+          axisTick: { show: false },
+          axisLabel: { interval: 0, fontSize: 12.5, fontWeight: 600, color: labelInk, width: 148, overflow: "truncate", margin: 12 },
+        },
+        // The same layout as the event chart's hover: the name in bold, then plain lines with the figures in bold.
+        tooltip: {
+          trigger: "axis",
+          axisPointer: { type: "shadow" },
+          formatter: (p) => {
+            const i = (Array.isArray(p) ? p[0] : p as { dataIndex: number }).dataIndex;
+            const r = display[i];
+            if (!r) return "";
+            // Name and volume only (user request): the share is already printed on the bar.
+            return `<b>${r.plaza}</b><br/>Volume: <b>${fmtInt(r.v)}</b> vehicles`;
+          },
+        },
         /* No legend. There is one series, so it drew a single chip reading
            "Volume by plaza" beneath a chart whose axis already says that, and
            the bars are shaded on a four-step sequential ramp, so its lone
@@ -427,11 +464,25 @@ export default function TrafficPage() {
                 color: r.isOthers
                   ? NEUTRAL
                   : SEQ[Math.min(3, 1 + Math.floor((r.v / maxV) * 2.99))],
-                borderRadius: [0, 4, 4, 0],
+                borderRadius: [0, 6, 6, 0],
               },
             })),
-            barMaxWidth: 12,
-            barCategoryGap: "25%",
+            barWidth: 14,
+            showBackground: true,
+            backgroundStyle: { color: chartTheme.isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(16, 33, 63, 0.05)", borderRadius: 6 },
+            label: {
+              show: true,
+              position: "right",
+              distance: 8,
+              fontSize: 12,
+              color: chartTheme.text,
+              formatter: (p) => {
+                const v = Number(p.value);
+                return totalV > 0 ? `{v|${fmtCompact(v)}}{p|${((v / totalV) * 100).toFixed(1)}%}` : fmtCompact(v);
+              },
+              // The share gets its own left padding: plain spaces between rich runs are collapsed ("19.1M14.5%").
+              rich: { v: { fontSize: 12.5, fontWeight: 700, color: labelInk }, p: { fontSize: 12, color: chartTheme.text, padding: [0, 0, 0, 6] } },
+            },
           },
         ],
       },
@@ -455,7 +506,7 @@ export default function TrafficPage() {
         formatter: (p) => {
           const item = (p as { dataIndex: number }[])[0];
           const r = data.speedByHour[item.dataIndex];
-          return `${fmtHour(r.hour)}<br/>Avg speed in jams: <b>${r.speed} km/h</b><br/>Avg jam level: ${r.jam_level} / 5`;
+          return `<b>${fmtHour(r.hour)}</b><br/>Avg speed in jams: <b>${r.speed} km/h</b><br/>Avg jam level: <b>${r.jam_level} / 5</b>`;
         },
       },
       visualMap: {
@@ -492,39 +543,114 @@ export default function TrafficPage() {
     holiday?: Analytics["holidayImpact"][number];
   };
 
+  // Rows for the chosen exit. Events at another venue (Dau) only have their own exit, so they show under "venue".
+  const eventRows = useMemo(
+    () => (data ? data.eventImpact.filter((e) => (e.view ?? "venue") === eventExit) : []),
+    [data, eventExit],
+  );
   const eventYears = useMemo(
-    () => (data ? [...new Set(data.eventImpact.map((e) => e.date.slice(0, 4)))].sort().reverse() : []),
-    [data],
+    () => [...new Set(eventRows.map((e) => e.date.slice(0, 4)))].sort().reverse(),
+    [eventRows],
   );
   // A year picked earlier can drop out when the filters reload the list; it then reads as "All years" rather
   // than an empty table under a button that is no longer there.
   const yearShown = eventYears.includes(eventYear) ? eventYear : "all";
   const eventsShown = useMemo(
-    () => (data ? (yearShown === "all" ? data.eventImpact : data.eventImpact.filter((e) => e.date.startsWith(yearShown))) : []),
-    [data, yearShown],
+    () => (yearShown === "all" ? eventRows : eventRows.filter((e) => e.date.startsWith(yearShown))),
+    [eventRows, yearShown],
   );
+
+  /* The "View all" tables sort by any column (click a header; click again to flip). */
+  type PlazaRow = { plaza: string; v: number; rank: number };
+  const plazaRows = useMemo<PlazaRow[]>(() => (data ? data.byPlaza.map((r, i) => ({ ...r, rank: i + 1 })) : []), [data]);
+  const plazaCols = useMemo<SortCol<PlazaRow>[]>(() => [
+    { key: "rank", label: "#", value: (r) => r.rank, num: true, firstDir: "asc" },
+    { key: "plaza", label: "Plaza", value: (r) => r.plaza },
+    { key: "v", label: "Volume", value: (r) => r.v, num: true },
+    { key: "share", label: "Share", value: (r) => r.v, num: true },
+  ], []);
+  const plazaSorted = useSortedRows(plazaRows, plazaCols, { key: "rank", dir: "asc" });
+  type EventRow = (typeof eventsShown)[number];
+  const eventCols = useMemo<SortCol<EventRow>[]>(() => [
+    { key: "date", label: "Date", value: (e) => e.date, firstDir: "desc" },
+    { key: "label", label: "Event", value: (e) => e.label },
+    { key: "vol", label: eventExit === "venue" ? "Venue exit entries" : eventExit === "All arena exits" ? "All arena exits entries" : `${eventExit} entries`, value: (e) => e.dayVolume, num: true },
+    { key: "base", label: "Baseline", value: (e) => e.baseline, num: true },
+    { key: "dev", label: "Deviation", value: (e) => e.deviationPct, num: true },
+    // The opening order: distance from normal (the size of the swing, up or down), the same ranking as the chart.
+    { key: "dist", label: "", value: (e) => (e.deviationPct == null ? null : Math.abs(e.deviationPct)), num: true, hidden: true },
+  ], [eventExit]);
+  const eventSorted = useSortedRows(eventsShown, eventCols, { key: "dist", dir: "desc" });
+  type HolidayRow = Analytics["holidayImpact"][number];
+  const holidayCols = useMemo<SortCol<HolidayRow>[]>(() => [
+    { key: "label", label: "Holiday", value: (h) => h.label },
+    { key: "vol", label: "Avg volume", value: (h) => (h.volume > 0 ? h.volume : null), num: true },
+    { key: "base", label: "Baseline", value: (h) => (h.baseline > 0 ? h.baseline : null), num: true },
+    { key: "dev", label: "Deviation", value: (h) => h.deviationPct, num: true },
+    { key: "n", label: "Days", value: (h) => h.occurrences, num: true },
+    { key: "dist", label: "", value: (h) => Math.abs(h.deviationPct), num: true, hidden: true },
+  ], []);
+  const holidaySorted = useSortedRows(data?.holidayImpact ?? [], holidayCols, { key: "dist", dir: "desc" });
 
   const impactChart = useMemo<{ option: EChartsOption; rows: ImpactRow[] } | null>(() => {
     if (!data) return null;
+    /* Each row is read as two lines: a short name (the artist, the part of an event title before " - "; or the
+       holiday) over its date or occurrences. The full title is in the tooltip and the detail view. */
+    const shortName = (t: string) => {
+      // "Act - Tour", "Event: detail" and "Event (performers)" all lead with the name to show.
+      const first = t.split(" + ")[0].split(" - ")[0].split(/:\s| \(/)[0].trim();
+      return first.length > 20 ? `${first.slice(0, 19)}…` : first;
+    };
+    const longDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
     const rows: ImpactRow[] =
       impactMode === "Events"
-        ? data.eventImpact
+        ? eventRows
           .filter((e) => e.deviationPct != null)
-          .map((e) => ({ label: `${e.label.length > 17 ? `${e.label.slice(0, 17)}…` : e.label} · ${e.date.slice(5)}`, full: `${e.label} (${e.date})`, pct: e.deviationPct as number, event: e, baseline: e.baseline, volume: e.dayVolume }))
-        : data.holidayImpact.map((h) => ({ label: h.label.length > 22 ? `${h.label.slice(0, 22)}…` : h.label, full: `${h.label} · ${h.occurrences} occurrence(s)`, pct: h.deviationPct, holiday: h, baseline: h.baseline, volume: h.volume }));
+          .map((e) => ({ label: `${shortName(e.label)}\n${longDate(e.date)}${e.eventCount && e.eventCount > 1 ? ` · ${e.eventCount} events` : ""}`, full: `${e.label} (${e.date})`, pct: e.deviationPct as number, event: e, baseline: e.baseline, volume: e.dayVolume }))
+        : data.holidayImpact.map((h) => ({ label: `${shortName(h.label)}\n${h.occurrences} occurrence${h.occurrences === 1 ? "" : "s"}`, full: `${h.label} · ${h.occurrences} occurrence(s)`, pct: h.deviationPct, holiday: h, baseline: h.baseline, volume: h.volume }));
     if (rows.length === 0) return null;
-    // Only the most-deviant entries fit legibly in the card; the rest add noise
+    // The eight furthest from normal fit legibly in the card; View all lists the rest.
     const display = [...rows]
       .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
-      .slice(0, 9)
-      .sort((a, b) => (impactSort === "desc" ? a.pct - b.pct : b.pct - a.pct));
+      .slice(0, 8)
+      // Ranked by distance from normal, like the View all list: the biggest swing, up or down, at the top ("desc").
+      // The category axis draws its first row at the bottom, hence the order is reversed here.
+      .sort((a, b) => (impactSort === "desc" ? Math.abs(a.pct) - Math.abs(b.pct) : Math.abs(b.pct) - Math.abs(a.pct)));
+    const hasBelow = display.some((r) => r.pct < 0);
+    const hasAbove = display.some((r) => r.pct >= 0);
+    const labelInk = chartTheme.isDark ? "#e6edf9" : "#10213f";
     return {
       rows: display,
       option: {
-        // Wide enough for a 23-character label at the 12 px floor; anything longer is cut with an ellipsis.
-        grid: { left: 168, right: 42, top: 8, bottom: 46 },
-        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => `${v}%`, fontSize: 12 } },
-        yAxis: { type: "category", data: display.map((r) => r.label), axisLabel: { interval: 0, fontSize: 12, width: 154, overflow: "truncate" }, axisTick: { show: false } },
+        grid: { left: 150, right: hasAbove ? 64 : 16, top: 4, bottom: 22, containLabel: false },
+        // The figure is printed on each bar, so the axis only frames the zero line.
+        /* Head-room past the longest bar on each side, so its printed figure never runs into the labels (the
+           negative side has no grid margin to spare: its figure sits left of the bar, beside the row names). */
+        xAxis: {
+          type: "value", axisLabel: { show: false }, splitLine: { show: false }, axisLine: { show: false }, axisTick: { show: false },
+          min: hasBelow ? Math.min(...display.map((r) => r.pct)) * 1.32 : 0,
+          max: hasAbove ? Math.max(...display.map((r) => r.pct)) * (hasBelow ? 1.18 : 1) : 0,
+        },
+        yAxis: {
+          type: "category",
+          data: display.map((r) => r.label),
+          axisLine: { show: false },
+          axisTick: { show: false },
+          axisLabel: {
+            interval: 0,
+            width: 138,
+            overflow: "truncate",
+            lineHeight: 16,
+            formatter: (v: string) => {
+              const [name, sub] = v.split("\n");
+              return `{n|${name}}\n{d|${sub ?? ""}}`;
+            },
+            rich: {
+              n: { fontSize: 13, fontWeight: 700, color: labelInk, lineHeight: 18, align: "right" },
+              d: { fontSize: 11.5, color: chartTheme.text, lineHeight: 16, align: "right", padding: [1, 0, 0, 0] },
+            },
+          },
+        },
         tooltip: {
           axisPointer: { type: "shadow" },
           formatter: (p) => {
@@ -540,23 +666,16 @@ export default function TrafficPage() {
             return tip;
           },
         },
-        /* Named explicitly, and not clickable.
-           The legend listed every series it could find, so "Deviation" - the
-           series that draws the real bars - sat in the key beside the two
-           colour labels wearing a palette colour that appears on no bar.
-           Clicking made it worse: hiding "Deviation" blanked the chart, while
-           hiding either colour label did nothing at all, since those two
-           series carry no data. This is a key, not a filter, so it names the
-           two colours and ignores clicks. */
+        /* A key, not a filter: it names the two colours and ignores clicks. Always shown (user request), so it does not
+           come and go as the exit or Events/Holidays changes which colours are drawn. */
         legend: {
-          show: true, bottom: 0, left: "center",
+          show: true, bottom: 0, left: "center", // right under the last bar; the gap to the insight is below the chart
           itemGap: 18, padding: 0,
           data: ["Above baseline", "Below baseline"],
           selectedMode: false,
         },
         series: [
-          // Two zero-width entries purely so the legend can name what the two bar
-          // colours mean; the real bars are the third series below.
+          // Two zero-width entries purely so the legend can name what the two bar colours mean.
           { name: "Above baseline", type: "bar", data: [], itemStyle: { color: ABOVE } },
           { name: "Below baseline", type: "bar", data: [], itemStyle: { color: BELOW } },
           {
@@ -564,28 +683,22 @@ export default function TrafficPage() {
             type: "bar",
             data: display.map((r) => ({
               value: r.pct,
-              itemStyle: { color: r.pct >= 0 ? ABOVE : BELOW, borderRadius: r.pct >= 0 ? [0, 4, 4, 0] : [4, 0, 0, 4] },
+              itemStyle: { color: r.pct >= 0 ? ABOVE : BELOW, borderRadius: r.pct >= 0 ? [0, 6, 6, 0] : [6, 0, 0, 6] },
+              label: { position: r.pct >= 0 ? "right" : "left" },
             })),
-            barMaxWidth: 12,
-            markLine: { symbol: "none", silent: true, lineStyle: { color: NEUTRAL, width: 1 }, data: [{ xAxis: 0 }], label: { show: false } },
+            barWidth: 14,
+            showBackground: true,
+            backgroundStyle: { color: chartTheme.isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(16, 33, 63, 0.05)", borderRadius: 6 },
+            label: { show: true, distance: 8, fontSize: 12.5, fontWeight: 700, color: labelInk, formatter: (p) => fmtPct(Number(p.value)) },
+            markLine: { symbol: "none", silent: true, lineStyle: { color: NEUTRAL, width: 1, type: "dashed" }, data: [{ xAxis: 0 }], label: { show: false } },
           },
         ],
       },
     };
     // chartTheme: this memo never listed it, so after a switch to dark the bars kept the DAY colours (TR-5).
-  }, [data, impactMode, impactSort, chartTheme]);
+  }, [data, eventRows, impactMode, impactSort, chartTheme]);
 
   // Separate from `takeaways` because it depends on the Events/Holidays toggle.
-    const sparkOption = useMemo<EChartsOption | null>(() => {
-    if (!derived || derived.sparkline.length === 0) return null;
-    return {
-      grid: { left: 0, right: 0, top: 2, bottom: 2 },
-      xAxis: { type: "category", show: false, data: derived.sparkline.map((_, i) => i) },
-      yAxis: { type: "value", show: false, min: "dataMin" },
-      series: [{ type: "line", data: derived.sparkline, symbol: "none", lineStyle: { width: 2, color: PAIR_A }, areaStyle: areaFade(PAIR_A) as LineSeriesOption["areaStyle"] }],
-    };
-  }, [derived, chartTheme]);
-
   // ---------- Click-to-inspect handlers ----------
   const filtersNote = `Filters: ${plazaSel.length > 0 ? `${plazaSel.length} plaza(s)` : "all plazas"} · ${vClass === "All" ? "all classes" : vClass}${data ? ` · ${data.range.from} to ${data.range.to}` : ""}`;
 
@@ -635,7 +748,7 @@ export default function TrafficPage() {
       [`Weekday avg at ${fmtHour(hour)}`, `${fmtInt(avgOf(wd))} vehicles/hr`],
       [`Weekend avg at ${fmtHour(hour)}`, `${fmtInt(avgOf(we))} vehicles/hr`],
     ];
-    setDetail({ title: `${DOW_LABELS[dowIdx]} · ${fmtHour(hour)}`, subtitle: "Average entry volume for this hour-slot", rows, note: filtersNote });
+    setDetail({ title: `${DOW_FULL[dowIdx]} • ${fmtHour(hour)}`, subtitle: "Average entry volume for this hour-slot", rows, note: filtersNote });
   };
 
   const onPlazaClick = (p: { dataIndex: number }) => {
@@ -679,7 +792,7 @@ export default function TrafficPage() {
     const fastest = data.speedByHour.reduce((a, b) => (b.speed > a.speed ? b : a));
     const slowest = data.speedByHour.reduce((a, b) => (b.speed < a.speed ? b : a));
     setDetail({
-      title: `${fmtHour(r.hour)} — jam conditions`,
+      title: `${fmtHour(r.hour)} — Jam Conditions`,
       subtitle: "Averages across Waze jam reports in the selected range",
       rows: [
         ["Avg speed in jams", `${r.speed} km/h`],
@@ -708,7 +821,9 @@ export default function TrafficPage() {
         e.onHoliday
           ? "This date is also a public holiday, so the deviation reflects the holiday as much as the event. "
           : ""
-      }Baseline = average entries at ${e.plaza ?? "the same exit"} on the same weekday within ±45 days, excluding other event days and holidays. Figures are NLEX entries, so they capture traffic joining the expressway at the venue's own exit rather than arrivals.`,
+      }Baseline = average entries at ${e.plaza ?? "the same exit"} on the same weekday within ±45 days, excluding other event days and holidays. Figures are NLEX entries, so they capture traffic joining the expressway at ${
+        e.plaza === "All arena exits" ? "the four arena exits (CDV/PH Arena, Bocaue Interchange, Tambubong, Marilao)" : e.plaza === e.venueExit || !e.plaza ? "the venue's own exit" : `${e.plaza}, near the venue`
+      } rather than arrivals.`,
     });
   };
 
@@ -806,40 +921,84 @@ export default function TrafficPage() {
      Each line is computed from the loaded payload at render time, from the same
      arrays the charts draw; nothing here is fetched, stored or hardcoded. When
      the data is not in, the line is simply absent. */
-  const busiestSlot = data && data.hourDow.length > 0
-    ? data.hourDow.reduce((a, b) => (b.v > a.v ? b : a))
-    : null;
-  const slowestHour = data && data.speedByHour.length > 0
-    ? data.speedByHour.reduce((a, b) => (b.speed < a.speed ? b : a))
-    : null;
-  const top3Share = data && derived && derived.plazaTotal > 0 && data.byPlaza.length > 3
-    ? (data.byPlaza.slice(0, 3).reduce((s, r) => s + r.v, 0) / derived.plazaTotal) * 100
-    : null;
-  const furthest = impactChart && impactChart.rows.length > 0
-    ? impactChart.rows.reduce((a, b) => (Math.abs(b.pct) > Math.abs(a.pct) ? b : a))
-    : null;
+  /* Quick insights, one per chart card, each computed from what that card draws. */
+  const trendInsight = useMemo(() => {
+    const days = (data?.dailyTrend ?? []).map((r) => ({ d: r.d, v: r.nb + r.sb + (r.bothdir ?? 0) })).filter((r) => r.v > 0);
+    if (days.length < 2) return null;
+    const sorted = [...days].sort((a, b) => a.v - b.v);
+    const median = sorted[Math.floor(sorted.length / 2)].v;
+    const hi = sorted[sorted.length - 1];
+    const lo = sorted[0];
+    return { median, hi, lo };
+  }, [data]);
+  const plazaInsight = useMemo(() => {
+    const rows = [...(data?.byPlaza ?? [])].filter((r) => r.v > 0).sort((a, b) => b.v - a.v);
+    const total = rows.reduce((s, r) => s + r.v, 0);
+    if (rows.length < 6 || total <= 0) return null;
+    const bottom = rows.slice(-5).reduce((s, r) => s + r.v, 0);
+    const top3 = rows.slice(0, 3).reduce((s, r) => s + r.v, 0);
+    return { top: rows[0], topPct: (rows[0].v / total) * 100, top3Pct: (top3 / total) * 100, bottomPct: (bottom / total) * 100 };
+  }, [data]);
+  const impactInsight = useMemo(() => {
+    const rows: { label: string; date?: string; pct: number }[] = impactMode === "Events"
+      ? eventRows.filter((e) => e.deviationPct != null).map((e) => ({ label: e.label, date: e.date, pct: e.deviationPct as number }))
+      : (data?.holidayImpact ?? []).map((h) => ({ label: h.label, pct: h.deviationPct }));
+    if (rows.length === 0) return null;
+    const avg = rows.reduce((s, r) => s + r.pct, 0) / rows.length;
+    const top = rows.reduce((a, b) => (Math.abs(b.pct) > Math.abs(a.pct) ? b : a));
+    return { n: rows.length, above: rows.filter((r) => r.pct > 0).length, avg, top };
+  }, [data, eventRows, impactMode]);
+  const heatInsight = useMemo(() => {
+    const rows = data?.hourDow ?? [];
+    const wd = rows.filter((r) => r.dow >= 1 && r.dow <= 5);
+    const we = rows.filter((r) => r.dow === 0 || r.dow === 6);
+    if (wd.length === 0 || we.length === 0) return null;
+    const mean = (a: { v: number }[]) => a.reduce((s, r) => s + r.v, 0) / a.length;
+    const quiet = rows.reduce((m, r) => (r.v < m.v ? r : m), rows[0]);
+    const busy = rows.reduce((m, r) => (r.v > m.v ? r : m), rows[0]);
+    return { wd: mean(wd), we: mean(we), quiet, busy };
+  }, [data]);
+  const speedInsight = useMemo(() => {
+    const rows = (data?.speedByHour ?? []).filter((r) => r.speed != null);
+    if (rows.length < 2) return null;
+    const fast = rows.reduce((m, r) => (r.speed > m.speed ? r : m), rows[0]);
+    const slow = rows.reduce((m, r) => (r.speed < m.speed ? r : m), rows[0]);
+    return { fast, slow, gapPct: fast.speed > 0 ? ((fast.speed - slow.speed) / fast.speed) * 100 : 0 };
+  }, [data]);
+
 
   /* ---------- Active filters, as removable chips ----------
      Each × calls the filter's existing setter with its default value, the same
      call the default button makes. Range and Weather set on Descriptive still
      reach the volume forecast, so they are shown on Predictive too. */
   const RANGE_LABEL: Record<RangeMode, string> = { "3": "3 mo", "12": "12 mo", all: "All", custom: "Custom" };
-  const chips: { key: string; name: string; value: string; clear: () => void }[] = [];
+  /* The Range is always shown, as the exact dates the data covers; any other filter only once it is moved off its
+     default (user request: no "All weather" / "All classes" chips). */
+  const chips: FilterChip[] = [];
   if (activeTab !== "Prescriptive") {
-    if (rangeMode !== "12") {
-      chips.push({
-        key: "range",
-        name: "Range",
-        value: rangeMode === "custom" ? (customFrom && customTo ? `${customFrom} to ${customTo}` : "Custom, pick two dates") : RANGE_LABEL[rangeMode],
-        clear: () => setRangeMode("12"),
-      });
-    }
-    if (weather !== "all") {
-      chips.push({ key: "weather", name: "Weather", value: weather === "dry" ? "Dry" : "Wet", clear: () => setWeather("all") });
-    }
+    const dates = rangeText(data?.range.from, data?.range.to);
+    chips.push({
+      key: "range",
+      label: "Range",
+      value: dates ?? (rangeMode === "custom" ? "Pick two dates" : RANGE_LABEL[rangeMode]),
+      ...(rangeMode !== "12" ? { onClear: () => setRangeMode("12"), resetTo: "the last 12 months" } : {}),
+    });
+    if (weather !== "all") chips.push({
+      key: "weather",
+      label: "Weather",
+      value: weather === "dry" ? "Dry hours" : "Wet hours",
+      onClear: () => setWeather("all"),
+      resetTo: "all weather",
+    });
   }
-  if (activeTab === "Descriptive" && vClass !== "All") {
-    chips.push({ key: "class", name: "Class", value: vClass, clear: () => setVClass("All") });
+  if (activeTab === "Descriptive") {
+    if (vClass !== "All") chips.push({
+      key: "class",
+      label: "Class",
+      value: vClass,
+      onClear: () => setVClass("All"),
+      resetTo: "all classes",
+    });
   }
 
   const sortButton = (sort: "desc" | "asc", setSort: (s: "desc" | "asc") => void) => (
@@ -877,7 +1036,8 @@ export default function TrafficPage() {
           much history the forecast card shows) but not Custom, and not the
           Weather filter: the forecast card carries its own weather toggle.
           Prescriptive takes no filter at all. */}
-      <div className={styles.filterRow}>
+      {/* No filter bar on Predictive: its Range control lives in the Volume Forecast card, the only chart it affects. */}
+      {activeTab !== "Predictive" && <div className={styles.filterRow}>
         {activeTab !== "Prescriptive" && (
           <div className={styles.filterGroup}>
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-muted)" }}><rect x="2" y="2" width="12" height="12" rx="3" stroke="currentColor" strokeWidth="1.4" /><path d="M2 6h12" stroke="currentColor" strokeWidth="1.4" /><path d="M5.5 2V4M10.5 2V4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
@@ -918,22 +1078,31 @@ export default function TrafficPage() {
           </div>
         )}
 
-        {activeTab === "Descriptive" && loading && data && <span className={styles.updating}>Updating…</span>}
-
-        {chips.length > 0 && (
-          <div className="nct-chips" aria-label="Active filters">
-            {chips.map((c) => (
-              <span key={c.key} className="nct-chip">
-                <span className="nct-chip-name">{c.name}</span>
-                {c.value}
-                <button type="button" onClick={c.clear} aria-label={`Clear ${c.name} filter`} title={`Clear ${c.name}`}>
-                  <X size={12} strokeWidth={2.4} aria-hidden="true" />
-                </button>
-              </span>
-            ))}
+        {/* Vehicle class: one page-wide filter (5 Nov 2026). Every volume chart, the KPIs, the plaza ranking, the hour
+            grid and the event / holiday impact follow it; the Waze jam speeds have no class and do not. */}
+        {activeTab === "Descriptive" && (
+          <div className={styles.filterGroup}>
+            <span className={styles.filterLabel}>Class</span>
+            {/* A dropdown drawn as one of the bar's pills: filled in the accent once a class is picked. */}
+            <div className={`nct-pill-select${vClass !== "All" ? " is-set" : ""}`}>
+              <CustomSelect
+                value={vClass}
+                onChange={(v) => setVClass(v as VehicleClass)}
+                options={[
+                  { label: "All", value: "All" },
+                  { label: "Class 1", value: "Class 1" },
+                  { label: "Class 2", value: "Class 2" },
+                  { label: "Class 3", value: "Class 3" },
+                ]}
+              />
+            </div>
           </div>
         )}
-      </div>
+
+        {activeTab === "Descriptive" && loading && data && <span className={styles.updating}>Updating…</span>}
+
+        <FilterChips chips={chips} />
+      </div>}
 
       <div className={styles.modeStage} key={activeTab}>
         {activeTab === "Descriptive" && (
@@ -957,10 +1126,7 @@ export default function TrafficPage() {
                 <span className={styles.kpiIcon} aria-hidden="true"><CalendarClock size={15} /></span>
                 <h3>Avg Daily Volume<InfoTooltip text="Total volume divided by the number of days in the Range — the corridor's typical day." /></h3>
                 <div className={styles.kpiValue}>{kpiValue(derived ? fmtInt(derived.curAdt) : null)}</div>
-                <div className={styles.sparkBox}>
-                  {sparkOption && <ReactECharts option={applyChartTheme(sparkOption, chartTheme)} style={{ width: "100%", height: "100%" }} opts={{ renderer: "canvas" }} />}
-                </div>
-                {sparkOption && <p className={`${styles.kpiHint} nct-kpi-note`}>Last 30 days</p>}
+                <p className={styles.kpiHint}>{data ? `vehicles a day, averaged over ${fmtInt(data.kpis.days)} day${data.kpis.days === 1 ? "" : "s"}` : "—"}</p>
               </article>
               <article className={styles.kpiTile}>
                 <span className={styles.kpiIcon} aria-hidden="true"><Clock size={15} /></span>
@@ -1000,13 +1166,11 @@ export default function TrafficPage() {
             {/* The main time series, full width. */}
             <article className={`${styles.chartCard} ${styles.hero} nct-span-full`}>
               <div className={styles.chartHead}>
+                <div className="nc-head-main">
+                <CardIcon icon={TrendingUp} />
                 <div className={styles.headText}>
                   <h3>Volume Trend<InfoTooltip text="Vehicles per day, week or month over the Range, with the 7-day average smoothing out weekday swings. Click a point for that period's summary." /></h3>
-                  {data && !error && (
-                    <p className="nct-answer-line">
-                      <b>{data.range.from}</b> to <b>{data.range.to}</b> · entry volume, {grain}
-                    </p>
-                  )}
+                </div>
                 </div>
               </div>
               <div className={`${styles.heroFilters} nct-hero-filters`}>
@@ -1029,20 +1193,6 @@ export default function TrafficPage() {
                       </button>
                     ))}
                   </div>
-                </div>
-                <div className={styles.heroFilterDivider} />
-                <div className={styles.heroFilterGroup}>
-                  <span className={styles.heroFilterLabel}>Class</span>
-                  <CustomSelect
-                    value={vClass}
-                    onChange={(v) => setVClass(v as VehicleClass)}
-                    options={[
-                      { label: "All classes", value: "All" },
-                      { label: "Class 1", value: "Class 1" },
-                      { label: "Class 2", value: "Class 2" },
-                      { label: "Class 3", value: "Class 3" },
-                    ]}
-                  />
                 </div>
                 <div className={styles.heroFilterDivider} />
                 <div className={styles.heroFilterGroup}>
@@ -1086,16 +1236,21 @@ export default function TrafficPage() {
                 </div>
               </div>
               <div className={styles.chartBody}>{chartFrame(trendOption, "No volume data for the selected filters", onTrendClick)}</div>
+              {trendInsight && !error && (
+                <CardInsight lead={`Busiest day: ${trendInsight.hi.d}, with ${fmtCompact(trendInsight.hi.v)} entries.`}>
+                  Quietest: {trendInsight.lo.d} ({fmtCompact(trendInsight.lo.v)}). A typical day carries about {fmtCompact(trendInsight.median)}.
+                </CardInsight>
+              )}
             </article>
 
             {/* Breakdowns, two columns: by plaza, and against normal days. */}
             <article className={`${styles.chartCard} nct-span-half`}>
               <div className={styles.chartHead}>
+                <div className="nc-head-main">
+                <CardIcon icon={Building2} />
                 <div className={styles.headText}>
                   <h3>Volume by Plaza<InfoTooltip text="Share of the Range's volume handled by each toll plaza, counted where each trip paid. Click a bar for that plaza's summary. SCTEX is an interchange, not a toll exit: its bar is the vehicles that entered NLEX through the Mabiga toll plaza (Mabalacat), the connection to SCTEX. No data records vehicles leaving NLEX at Mabiga." /></h3>
-                  {top3Share != null && !error && (
-                    <p className="nct-answer-line">Top 3 plazas carry <b>{top3Share.toFixed(1)}%</b> of the selected volume</p>
-                  )}
+                </div>
                 </div>
                 <div className="nct-head-tools">
                   {sortButton(plazaSort, setPlazaSort)}
@@ -1106,12 +1261,20 @@ export default function TrafficPage() {
                 </div>
               </div>
               <div className={styles.chartBody}>{chartFrame(plazaChart?.option ?? null, "No data for the selected filters", onPlazaClick)}</div>
+              {plazaInsight && !error && (
+                <CardInsight lead={`Busiest plaza: ${plazaInsight.top.plaza}, with ${plazaInsight.topPct.toFixed(1)}% of the volume.`}>
+                  The top 3 plazas carry {plazaInsight.top3Pct.toFixed(1)}%; the five smallest together {plazaInsight.bottomPct.toFixed(1)}%.
+                </CardInsight>
+              )}
             </article>
 
             <article className={`${styles.chartCard} nct-span-half`}>
               <div className={styles.chartHead}>
+                <div className="nc-head-main">
+                <CardIcon icon={CalendarDays} />
                 <div className={styles.headText}>
-                  <h3>{impactMode === "Events" ? "Arena Event Impact (venue exit entries)" : "Holiday Impact vs Normal Days"}<InfoTooltip text="How volume on Philippine Arena event days or public holidays compares with the normal days around them (±45-day local baseline). Toggle Events / Holidays above." /></h3>
+                  <h3>{impactMode === "Events" ? "Arena Event Impact" : "Holiday vs Normal Days"}<InfoTooltip text="How volume on Philippine Arena event days or public holidays compares with the normal days around them (±45-day local baseline). Toggle Events / Holidays above." /></h3>
+                </div>
                 </div>
                 <div className="nct-head-tools">
                   <div className={styles.segmented} role="group" aria-label="Events or holidays">
@@ -1126,44 +1289,42 @@ export default function TrafficPage() {
                     View all
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                   </button>
+                  {/* Which exit the events are measured at: a sub-option of Events, so it sits right under that toggle. */}
+                  {impactMode === "Events" && (
+                    <div className="nct-exit-pick">
+                      <CustomSelect
+                        prefix="Measured at"
+                        value={eventExit}
+                        onChange={(v) => setEventExit(v as EventExitView)}
+                        options={EVENT_EXIT_VIEWS.map((v) => ({ label: v.label, value: v.value }))}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
-              {/* The answer, on one line under the header, the full width of the card. */}
-              {data?.eventWeather && !error && (
-                <p className="nct-answer-line is-one-line" title={data.eventWeather.rule}>
-                  {impactMode === "Events"
-                    ? <>Only <b>{data.eventWeather.day}</b> event days ({data.eventImpact.length}), each compared with {data.eventWeather.day} normal days</>
-                    : <>Holidays are not split by weather: too few rainy holidays to compare</>}
-                </p>
-              )}
-              {furthest && !error && (
-                <p className="nct-answer-line is-one-line nct-answer-row">Furthest from normal: <b>{furthest.event ? furthest.event.label : furthest.holiday ? furthest.holiday.label : furthest.label}</b> <b>{fmtPct(furthest.pct)}</b></p>
-              )}
               <div className={styles.chartBody}>{chartFrame(impactChart?.option ?? null, "No impact data available", onImpactClick)}</div>
+              {impactInsight && !error && (
+                <CardInsight lead={`Furthest from normal: ${impactInsight.top.label}${impactInsight.top.date ? ` (${impactInsight.top.date})` : ""}, ${fmtPct(impactInsight.top.pct)}.`}>
+                  {impactInsight.above} of {impactInsight.n} {impactMode === "Events" ? "event days" : "holidays"} ran above normal; the average change was {fmtPct(impactInsight.avg)}.
+                </CardInsight>
+              )}
+              {data?.eventWeather && !error && (
+                <CardInsight lead={impactMode === "Events" ? `Only ${data.eventWeather.day} event days (${data.eventImpact.length}).` : "Holidays are not split by weather."}>
+                  {impactMode === "Events"
+                    ? <>Each is compared with {data.eventWeather.day} normal days.<InfoTooltip text={`${data.eventWeather.rule.charAt(0).toUpperCase()}${data.eventWeather.rule.slice(1)}.`} /></>
+                    : <>Too few rainy holidays to compare.</>}
+                </CardInsight>
+              )}
             </article>
 
             {/* By hour: the hour × day heatmap, then jam speed by hour. */}
             <article className={`${styles.chartCard} nct-span-heat`}>
               <div className={styles.chartHead}>
+                <div className="nc-head-main">
+                <CardIcon icon={Grid3x3} />
                 <div className={styles.headText}>
                   <h3>Average Volume by Hour and Day<InfoTooltip text="Typical vehicles per hour for each day of the week — darker cells are busier. Shows when the corridor peaks." /></h3>
-                  {busiestSlot && !error && (
-                    <p className="nct-answer-line">
-                      Busiest: <b>{DOW_LABELS[DOW_ORDER.indexOf(busiestSlot.dow)]} {fmtHour(busiestSlot.hour)}</b> · {fmtInt(busiestSlot.v)} vehicles/hr on average
-                    </p>
-                  )}
-                  {weather !== "all" && rainEffect && !error && (() => {
-                    const heavy = rainEffect.volume.find((b) => b.mmTo == null);
-                    const light = rainEffect.volume[0];
-                    if (!heavy || heavy.effectPct == null || !light) return null;
-                    return (
-                      <p className="nct-answer-line" title={METHOD_NOTE}>
-                        Like for like, heavy-rain days ({heavy.mmFrom} mm+) are associated with <b>{Math.abs(heavy.effectPct).toFixed(0)}% {heavy.effectPct < 0 ? "less" : "more"} traffic</b> than
-                        dry days of the same weekday nearby{isClear(heavy.lowPct, heavy.highPct) ? "" : " (not a clear difference)"};
-                        {isClear(light.lowPct, light.highPct) ? ` light rain: ${light.effectPct}%.` : " light rain shows no clear change."}
-                      </p>
-                    );
-                  })()}
+                </div>
                 </div>
               </div>
               <div className={styles.chartBody}>{chartFrame(heatmapOption, "No data for the selected filters", onHeatmapClick, false, (c) => { heatChart.current = c; })}</div>
@@ -1177,46 +1338,73 @@ export default function TrafficPage() {
                 highLabel="Busier"
                 onScrub={scrub(heatChart, heatMinValue, heatMaxValue)}
               />
+              {heatInsight && !error && (
+                <CardInsight lead={`Busiest time: ${DOW_FULL[DOW_ORDER.indexOf(heatInsight.busy.dow)]} • ${fmtHour(heatInsight.busy.hour)}, ${fmtInt(heatInsight.busy.v)} vehicles/hr on average.`}>
+                  Quietest: {DOW_FULL[DOW_ORDER.indexOf(heatInsight.quiet.dow)]} • {fmtHour(heatInsight.quiet.hour)} ({fmtInt(heatInsight.quiet.v)}). Weekdays average {fmtInt(heatInsight.wd)} vehicles/hr, weekends {fmtInt(heatInsight.we)}.
+                </CardInsight>
+              )}
+              {weather !== "all" && rainEffect && !error && (() => {
+                const heavy = rainEffect.volume.find((b) => b.mmTo == null);
+                const light = rainEffect.volume[0];
+                if (!heavy || heavy.effectPct == null || !light) return null;
+                return (
+                  <CardInsight lead={`Heavy-rain days (${heavy.mmFrom} mm+): ${Math.abs(heavy.effectPct).toFixed(0)}% ${heavy.effectPct < 0 ? "less" : "more"} traffic.`}>
+                    Like for like, against dry days of the same weekday nearby{isClear(heavy.lowPct, heavy.highPct) ? "" : " (not a clear difference)"};
+                    {isClear(light.lowPct, light.highPct) ? ` light rain: ${light.effectPct}%.` : " light rain shows no clear change."}
+                    <InfoTooltip text={METHOD_NOTE} />
+                  </CardInsight>
+                );
+              })()}
             </article>
 
             <article className={`${styles.chartCard} nct-span-speed`}>
               <div className={styles.chartHead}>
+                <div className="nc-head-main">
+                <CardIcon icon={Gauge} />
                 <div className={styles.headText}>
                   <h3>Average Speed in Jams by Hour<InfoTooltip text="Mean speed reported inside Waze jams for each hour of the day — lower means slower-moving jams at that hour." /></h3>
-                  {slowestHour && !error && (
-                    <p className="nct-answer-line">Slowest: <b>{fmtHour(slowestHour.hour)}</b> · {slowestHour.speed} km/h inside jams</p>
-                  )}
-                  {weather !== "all" && rainEffect && !error && (() => {
-                    const hard = rainEffect.jams.bands.find((b) => b.mmPerHourTo == null);
-                    if (!hard || hard.jamDiffPts == null || hard.delayDiffMin == null) return null;
-                    const clear = isClear(hard.jamLowPts, hard.jamHighPts) || isClear(hard.delayLowMin, hard.delayHighMin);
-                    return (
-                      <p className="nct-answer-line" title={`Live Waze, ${rainEffect.jams.from} to ${rainEffect.jams.to ?? "now"}: each rainy hour at an exit against dry hours at the same exit, hour of day and part of the week. Light rain shows no clear change. Speed inside a jam barely moves with rain; how often jams form and how long they delay does.`}>
-                        Like for like, hours with moderate or heavy rain ({hard.mmPerHourFrom} mm/h+) are associated with jams <b>{hard.jamDiffPts > 0 ? "+" : ""}{hard.jamDiffPts.toFixed(0)} pts more often</b> and <b>{hard.delayDiffMin > 0 ? "+" : ""}{hard.delayDiffMin.toFixed(1)} min</b> more delay{clear ? "" : " (not a clear difference)"}; speed inside a jam barely changes.
-                      </p>
-                    );
-                  })()}
-                  {weather !== "all" && rainEffect && !error && (() => {
-                    const f = rainEffect.jams.flood;
-                    if (!f || f.exitHours === 0 || f.delayMin == null || f.rainyDelayMin == null) return null;
-                    return (
-                      <p className="nct-answer-line" title={`Live Waze since ${rainEffect.jams.from}: each exit-hour with a Waze flood report against rainy hours without one at the same exit, hour of day and part of the week (${f.exitHours} flood hours over ${f.days} days; 95% range of the extra delay ${f.delayLowMin} to ${f.delayHighMin} min). A link, not proof: drivers already stuck may report water more readily. Live flood reports show on the Live Map.`}>
-                        Flood-reported hours are associated with <b>{f.delayMin.toFixed(0)} min</b> of delay against {f.rainyDelayMin.toFixed(0)} min in rainy hours without a flood report, and a jam {f.jamPct?.toFixed(0)}% vs {f.rainyJamPct?.toFixed(0)}% of the time.
-                      </p>
-                    );
-                  })()}
+                </div>
                 </div>
               </div>
               <div className={styles.chartBody}>{chartFrame(speedOption, "No congestion data in the selected range", onSpeedClick, true, (c) => { speedChart.current = c; })}</div>
+              {/* Read light to dark like the busyness key beside it (user request): Faster on the left, Slower on the
+                  right. The chart's colours are unchanged (slowest = deepest); only the key runs the other way, so the
+                  pointer position is flipped before it reaches the chart. */}
               <RampKey
-                colors={SEVERITY}
-                min={speedRange[0]}
-                max={speedRange[1]}
+                colors={[...SEVERITY].reverse()}
+                min={speedRange[1]}
+                max={speedRange[0]}
                 format={(v) => `${v.toFixed(0)} km/h`}
-                lowLabel="Slower"
-                highLabel="Faster"
-                onScrub={scrub(speedChart, speedRange[0], speedRange[1])}
+                lowLabel="Faster"
+                highLabel="Slower"
+                onScrub={(t) => scrub(speedChart, speedRange[0], speedRange[1])(t == null ? null : 1 - t)}
               />
+              {speedInsight && !error && (
+                <CardInsight lead={`Slowest jams at ${fmtHour(speedInsight.slow.hour)}: ${speedInsight.slow.speed} km/h.`}>
+                  That is {speedInsight.gapPct.toFixed(0)}% slower than at {fmtHour(speedInsight.fast.hour)}, the fastest hour ({speedInsight.fast.speed} km/h).
+                </CardInsight>
+              )}
+              {weather !== "all" && rainEffect && !error && (() => {
+                const hard = rainEffect.jams.bands.find((b) => b.mmPerHourTo == null);
+                if (!hard || hard.jamDiffPts == null || hard.delayDiffMin == null) return null;
+                const clear = isClear(hard.jamLowPts, hard.jamHighPts) || isClear(hard.delayLowMin, hard.delayHighMin);
+                return (
+                  <CardInsight lead={`Moderate or heavy rain (${hard.mmPerHourFrom} mm/h+): jams ${hard.jamDiffPts > 0 ? "+" : ""}${hard.jamDiffPts.toFixed(0)} pts more often, ${hard.delayDiffMin > 0 ? "+" : ""}${hard.delayDiffMin.toFixed(1)} min more delay.`}>
+                    Like for like{clear ? "" : " (not a clear difference)"}; speed inside a jam barely changes.
+                    <InfoTooltip text={`Live Waze, ${rainEffect.jams.from} to ${rainEffect.jams.to ?? "now"}: each rainy hour at an exit against dry hours at the same exit, hour of day and part of the week. Light rain shows no clear change. Speed inside a jam barely moves with rain; how often jams form and how long they delay does.`} />
+                  </CardInsight>
+                );
+              })()}
+              {weather !== "all" && rainEffect && !error && (() => {
+                const f = rainEffect.jams.flood;
+                if (!f || f.exitHours === 0 || f.delayMin == null || f.rainyDelayMin == null) return null;
+                return (
+                  <CardInsight lead={`Flood-reported hours: ${f.delayMin.toFixed(0)} min of delay.`}>
+                    Against {f.rainyDelayMin.toFixed(0)} min in rainy hours without a flood report, and a jam {f.jamPct?.toFixed(0)}% vs {f.rainyJamPct?.toFixed(0)}% of the time.
+                    <InfoTooltip text={`Live Waze since ${rainEffect.jams.from}: each exit-hour with a Waze flood report against rainy hours without one at the same exit, hour of day and part of the week (${f.exitHours} flood hours over ${f.days} days; 95% range of the extra delay ${f.delayLowMin} to ${f.delayHighMin} min). A link, not proof: drivers already stuck may report water more readily. Live flood reports show on the Live Map.`} />
+                  </CardInsight>
+                );
+              })()}
             </article>
           </>
         )}
@@ -1229,6 +1417,7 @@ export default function TrafficPage() {
                 from={rangeMode === "custom" ? customFrom : undefined}
                 to={rangeMode === "custom" ? customTo : undefined}
                 weather={weather}
+                onMonthsChange={(m) => setRangeMode(m)}
               />
             </div>
             {/* The hour-by-hour 48-hour forecast (adviser's brief) is the "Hourly" view of the card above since
@@ -1291,12 +1480,6 @@ export default function TrafficPage() {
                 </div>
               ))}
             </div>
-            {detail.note && (
-              <div className={styles.detailFooter}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, marginTop: 3 }}><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.4" /><path d="M8 7v4M8 5.2v.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
-                <p>{detail.note}</p>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -1310,7 +1493,7 @@ export default function TrafficPage() {
               <div className={styles.detailIcon}><Building2 size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>Volume by Plaza — Full Ranking</h3>
-                <p>{data.byPlaza.length} exits · SCTEX = vehicles entering NLEX through Mabiga (Mabalacat)</p>
+                <p>{data.byPlaza.length} exits · click a column to sort · SCTEX = vehicles entering NLEX through Mabiga (Mabalacat)</p>
               </div>
               <button className={styles.detailClose} onClick={() => setAllPlazasOpen(false)} aria-label="Close">
                 {closeIcon}
@@ -1318,13 +1501,11 @@ export default function TrafficPage() {
             </div>
             <div className={styles.plazaTableWrap}>
               <table className={styles.plazaTable}>
-                <thead>
-                  <tr><th>#</th><th>Plaza</th><th>Volume</th><th>Share</th></tr>
-                </thead>
+                <SortHead cols={plazaCols} sort={plazaSorted.sort} onSort={plazaSorted.toggle} />
                 <tbody>
-                  {data.byPlaza.map((r, i) => (
+                  {plazaSorted.sorted.map((r) => (
                     <tr key={r.plaza}>
-                      <td className={styles.plazaRank}>{i + 1}</td>
+                      <td className={styles.plazaRank}>{r.rank}</td>
                       <td>{r.plaza}</td>
                       <td className={styles.plazaNum}>{fmtInt(r.v)}</td>
                       <td className={styles.plazaNum}>{derived && derived.plazaTotal > 0 ? `${((r.v / derived.plazaTotal) * 100).toFixed(1)}%` : "—"}</td>
@@ -1348,8 +1529,8 @@ export default function TrafficPage() {
                 <h3>{impactMode === "Events" ? "Arena Events — Full List" : "Holidays — Full List"}</h3>
                 <p>
                   {impactMode === "Events"
-                    ? `${eventsShown.length} event${eventsShown.length === 1 ? "" : "s"}${yearShown === "all" ? "" : ` in ${yearShown}`} vs ${data.eventWeather ? `same-weekday ${data.eventWeather.day} days` : "same-weekday baseline"}${data.eventWeather ? ` · ${data.eventWeather.day} event days only` : ""} · click a row for details`
-                    : `${data.holidayImpact.length} holidays${data.eventWeather ? " · all weather (not split by Dry/Wet)" : ""} · click a row for details`}
+                    ? `${eventsShown.length} event${eventsShown.length === 1 ? "" : "s"}${yearShown === "all" ? "" : ` in ${yearShown}`} · measured at ${EVENT_EXIT_VIEWS.find((v) => v.value === eventExit)?.label ?? "the venue exit"}${data.eventWeather ? ` · ${data.eventWeather.day} event days only, vs same-weekday ${data.eventWeather.day} days` : ""} · ${eventSorted.sort.key === "dist" ? "furthest from normal first" : "click a column to sort"}, a row for details`
+                    : `${data.holidayImpact.length} holidays${data.eventWeather ? " · all weather (not split by Dry/Wet)" : ""} · ${holidaySorted.sort.key === "dist" ? "furthest from normal first" : "click a column to sort"}, a row for details`}
                 </p>
               </div>
               <button className={styles.detailClose} onClick={() => setImpactListOpen(false)} aria-label="Close">
@@ -1368,11 +1549,9 @@ export default function TrafficPage() {
             <div className={styles.plazaTableWrap}>
               {impactMode === "Events" ? (
                 <table className={styles.plazaTable}>
-                  <thead>
-                    <tr><th>Date</th><th>Event</th><th>Plaza volume</th><th>Baseline</th><th>Deviation</th></tr>
-                  </thead>
+                  <SortHead cols={eventCols} sort={eventSorted.sort} onSort={eventSorted.toggle} />
                   <tbody>
-                    {eventsShown.map((e) => (
+                    {eventSorted.sorted.map((e) => (
                       <tr
                         key={`${e.date}-${e.label}`}
                         className={styles.clickableRow}
@@ -1393,11 +1572,9 @@ export default function TrafficPage() {
                 </table>
               ) : (
                 <table className={styles.plazaTable}>
-                  <thead>
-                    <tr><th>Holiday</th><th>Avg volume</th><th>Baseline</th><th>Deviation</th><th>Days</th></tr>
-                  </thead>
+                  <SortHead cols={holidayCols} sort={holidaySorted.sort} onSort={holidaySorted.toggle} />
                   <tbody>
-                    {[...data.holidayImpact].sort((a, b) => b.deviationPct - a.deviationPct).map((h) => (
+                    {holidaySorted.sorted.map((h) => (
                       <tr
                         key={h.label}
                         className={styles.clickableRow}

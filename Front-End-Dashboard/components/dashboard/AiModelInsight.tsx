@@ -72,6 +72,8 @@ type Props = {
   buildBody?: () => unknown;
   /** What counts as a change of subject, when it is not the model roster. */
   subjectKey?: string;
+  /** Hide the "Details" fold (the rest of the summary): the card shows only the headline read-out. */
+  hideDetails?: boolean;
 };
 
 export default function AiModelInsight(props: Props) {
@@ -253,7 +255,7 @@ export default function AiModelInsight(props: Props) {
         </p>
       )}
 
-      {(restOfSummary || more.length > 0) && (
+      {!props.hideDetails && (restOfSummary || more.length > 0) && (
         <details className="nc-details">
           <summary>Details</summary>
           <div>

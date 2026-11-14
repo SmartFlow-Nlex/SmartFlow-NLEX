@@ -11,6 +11,8 @@ import { withAlpha } from "../../lib/chart-kit";
 import { aggregateSeries } from "./aggregateSeries";
 import IncidentNarrative, { MetricHint, metricHintFor, modelHintFor } from "./IncidentNarrative";
 import EvidenceModal from "./EvidenceModal";
+import { GenerateReportButton } from "./NarrativePanel";
+import { ShieldCheck, Siren } from "lucide-react";
 import {
   ACTUAL_COLOR,
   META,
@@ -127,6 +129,11 @@ export default function PredictiveIncidentChart({
   // forecast exists (data.accidentSplit); off by default so the chart opens on
   // the same total-count view it always has.
   const [splitView, setSplitView] = useState(false);
+  // The narrative report and the validation evidence both open from the card's
+  // own controls (the foot's Generate Report button, the summary's evidence
+  // button), the same way the Traffic Volume Forecast card does.
+  const [reportOpen, setReportOpen] = useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
 
   /* ECharts resolves no CSS, so every colour inside `option` below has to be a
      real string. The surrounding DOM uses var() directly. Both come from the
@@ -325,14 +332,6 @@ export default function PredictiveIncidentChart({
   // reads its untrimmed chartData.holdoutStart/futureStart rather than the
   // (possibly cut/bucketed) render-local ones.
   const presentScoredDays = futureStart - validationStart;
-
-  // Past/Present's share of the full trained-plus-scored window — real
-  // figures straight from the training run's own metadata (modelInfo.
-  // trainedDays/scoredDays), not derived from whatever's currently drawn, so
-  // the percentage stays true regardless of which Range slice is on screen.
-  const trainedPlusScored = (modelInfo.trainedDays ?? 0) + presentScoredDays;
-  const trainedPct = trainedPlusScored > 0 && modelInfo.trainedDays != null ? (modelInfo.trainedDays / trainedPlusScored) * 100 : null;
-  const scoredPct = trainedPlusScored > 0 ? (presentScoredDays / trainedPlusScored) * 100 : null;
 
   // Aggregation: a viewing aid only, same contract as PredictiveVolumeChart
   // (see aggregateSeries.ts) — a bucket carries the MEAN of the days inside
@@ -1249,366 +1248,322 @@ export default function PredictiveIncidentChart({
       );
     })();
 
-  // ---------- Model trust strip ----------
-  // Compact pills built from the same response the table reads: the champion,
-  // the window it was scored on, its error against the naive last-week
-  // baseline (MASE) and its own error. Each one opens the full validation
-  // evidence in a modal.
+  // ---------- Forecast summary figures ----------
+  // The headline figures the old trust strip carried (champion, scored window,
+  // MASE against the naive last-week baseline, held-out error), now read out in
+  // the summary column beside the chart; its button opens the full validation
+  // evidence in the modal.
   const champ = modelMetrics.find((m) => m.isChampion) ?? null;
   const champKey = (champ?.model ?? data.summary.championModel ?? modelInfo.championModel) as ModelKey | null;
   const champLabel = champKey ? (META[champKey]?.label ?? champKey) : null;
   const champMase = champ?.MASE != null && isFinite(champ.MASE) ? champ.MASE : null;
   const futureFirst = futureAvailable > 0 ? fullDaily[fullFutureStart]?.date ?? null : null;
-  const futureLast = futureAvailable > 0 ? fullDaily[fullDaily.length - 1]?.date ?? null : null;
+  const splitChampLabel = split?.championModel ? (META[split.championModel as ModelKey]?.label ?? split.championModel) : null;
+  // The model the summary names: the accident model in split view (the picker is off there), else the first line on the chart.
+  const leadKey = activeModels[0] ?? null;
+  const scoredDayCount = data.scoringWindow ? data.scoringWindow.n : presentScoredDays;
+  // The headline: the forecast incidents per day over the Ahead window, from the same line the chart draws
+  // (the toggles' twin series; the champion's total in split view), and its busiest day.
+  const futVals = daily.slice(futureStart).map((d, i) =>
+    splitOn ? d.predicted ?? null : leadKey ? modelsFlat[leadKey]?.[futureStart + i] ?? null : null
+  );
+  const futNums = futVals.filter((v): v is number => v != null && isFinite(v));
+  const futAvg = futNums.length > 0 ? futNums.reduce((a, b) => a + b, 0) / futNums.length : null;
+  const futPeakIdx = futNums.length > 0 ? futVals.indexOf(Math.max(...futNums)) : -1;
+  const futPeakDate = futPeakIdx >= 0 ? daily[futureStart + futPeakIdx]?.date ?? null : null;
+  const futShownLast = daily.length > futureStart ? daily[daily.length - 1]?.date ?? null : null;
+
+  const fc2Sep = <span className="fc2-sep" aria-hidden="true" />;
 
   return (
-    <article className="chart-card wide inc-card">
-      {/* Title and the view toggles share one row and only stack when the card
-          is too narrow to hold both. */}
-      <div className="inc-card-head">
-        <div className="inc-card-titles">
-          <h3 className="inc-card-title">
-            Incident Walk-Forward Forecast
-            <InfoTooltip text="Daily incident forecast, scored against real held-out data. Past = training history, Present = the model's held-out accuracy check (never trained on), Future = the published forecast for days that haven't happened yet." />
-          </h3>
-          <p className="inc-card-sub">Click any point to view that day&apos;s hourly breakdown</p>
-        </div>
-      </div>
+    <article className="chart-card wide inc-card fc2">
+      <div className="fc2-grid">
+        {/* ---------- The graph, with its controls above and its key below (layout of the Traffic Volume Forecast) ---------- */}
+        <div className="fc2-main">
+          <header className="fc2-head">
+            <h3 className="nct-title">
+              Incident Walk-Forward Forecast
+              <InfoTooltip text="Daily incident forecast, scored against real held-out data. Past = training history, Present = the model's held-out accuracy check (never trained on), Future = the published forecast for days that haven't happened yet. Click any point to view that day's hourly breakdown." />
+            </h3>
+          </header>
 
-      {/* The answer: how far the published forecast reaches. */}
-      {futureFirst && futureLast && (
-        <div className="fc-answer">
-          <span className="fc-answer-label">Published forecast</span>
-          <span className="fc-answer-value">{fmtInt(futureAvailable)} days</span>
-          <span className="fc-answer-context">
-            <b>{fmtDateFull(futureFirst)}</b> to <b>{fmtDateFull(futureLast)}</b>
-            {champLabel ? <> · champion <b>{champLabel}</b></> : null}
-          </span>
-        </div>
-      )}
-
-      {/* The model picker has its own row instead of sharing the flex-wrapping cluster
-          above, and keeps its height in split view (saying why the picker doesn't
-          apply) so nothing below shifts when the view changes. */}
-      <div className="fc-row fc-models" style={{ minHeight: 36 }}>
-        {splitOn && split ? (
-          <span className="inc-model-note">
-            Model picker off in this view: accidents use{" "}
-            {split.championModel ? (META[split.championModel as ModelKey]?.label ?? split.championModel) : "their own champion model"}; breakdowns = total − accidents.
-            <InfoTooltip
-              text={`Model picker not used in this view — the accident forecast is ${split.championModel ? (META[split.championModel as ModelKey]?.label ?? split.championModel) : "its own champion model"}, fitted on accidents alone; breakdowns are derived as blended total minus accidents.`}
-            />
-          </span>
-        ) : (
-          modelToolbar
-        )}
-        {/* Overlay toggles at the end of the models row, as on the Traffic forecast. */}
-        <span className="fc-group fc-push">
-          {/* Exposure overlay toggle — same pill the traffic forecast uses for
-              its Weather overlay, so the two charts are operated the same way. */}
-          <button
-            onClick={() => setShowVolume(!showVolume)}
-            aria-pressed={showVolume}
-            className={`inc-toggle${showVolume ? " is-on" : ""}`}
-            title={
-              hasVolumeFreeTwin
-                ? showVolume
-                  ? "Volume ON: forecasts fitted WITH traffic volume, overlay shown. Click to switch to the volume-free models."
-                  : "Volume OFF: forecasts fitted WITHOUT traffic volume. Click to use the volume-aware models and show the overlay."
-                : showVolume
-                  ? "Hide the volume overlay (this training run stored no volume-free models, so the forecast lines do not change)"
-                  : "Show the volume overlay (this training run stored no volume-free models, so the forecast lines do not change)"
-            }
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M3 17h2l1-4h12l1 4h2M6 13l1.5-5h9L18 13M7.5 17.5h.01M16.5 17.5h.01"
-                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-              />
-            </svg>
-            Volume
-          </button>
-          {/* Says what the line is, now that it runs the whole window (see effVolume's doc comment). Shown only
-              with the toggle on: there is nothing to explain about an overlay that isn't drawn. */}
-          {showVolume && (
-            <InfoTooltip text="The daily vehicle volume the volume-aware models read. Solid: recorded volume, through Past and Present (Present is held-out history, so the models saw the real day's traffic). Dashed: the traffic module's volume forecast, the input the models take for each Future day. Turn Volume off to see the same models fitted without it." />
-          )}
-          {/* Rainfall toggle — same pill, independent of Volume so the user can
-              show either, both, or neither. Like Volume, it switches the
-              forecast itself when the pipeline stored a weather-free twin
-              (has_weather_free_twin), not merely the rainfall overlay. */}
-          <button
-            onClick={() => setShowWeather(!showWeather)}
-            aria-pressed={showWeather}
-            className={`inc-toggle${showWeather ? " is-on" : ""}`}
-            title={
-              hasWeatherFreeTwin
-                ? showWeather
-                  ? "Weather ON: forecasts fitted WITH rainfall, recorded rain shown. Days past a real weather forecast (16 days) are forecast without weather either way: no forecast is fed guessed rain. Click to switch to the weather-free models."
-                  : "Weather OFF: forecasts fitted WITHOUT rainfall. Click to use the weather-aware models and show the overlay."
-                : showWeather
-                  ? "Hide the rainfall overlay (this training run stored no weather-free models, so the forecast lines do not change)"
-                  : "Show the rainfall overlay (this training run stored no weather-free models, so the forecast lines do not change)"
-            }
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M17 15.5a4 4 0 0 0-1.2-7.85 5.5 5.5 0 0 0-10.6 1.5A3.75 3.75 0 0 0 6.5 16.5"
-                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-              />
-              <path d="M8 18.5l-1 2M12 18.5l-1 2M16 18.5l-1 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Weather
-          </button>
-        </span>
-      </div>
-
-      {/* Controls, then the key: the order every forecast card uses. Show (the
-          Total / Accident-Breakdown split), View, then Ahead with the window
-          the forecast was validated over. */}
-      <div className="fc-row fc-controls">
-        {data.accidentSplit && (
-          <div className="fc-group">
-            <span className="fc-label">Show</span>
-            <div
-              className="inc-seg"
-              role="group"
-              aria-label="Forecast view"
-              title="Total: the blended forecast with every candidate model. Split: a dedicated accident forecast, with breakdowns derived as blended total minus accidents."
-            >
-              {([false, true] as const).map((on) => (
-                <button key={String(on)} onClick={() => setSplitView(on)} aria-pressed={splitView === on} className={splitView === on ? "is-on" : ""}>
-                  {on ? "Accident / Breakdown" : "Total"}
-                </button>
-              ))}
+          <div className="fc2-controls">
+            <div className="fc2-row" style={{ minHeight: 36 }}>
+              {/* The picker keeps its height in split view (saying why it doesn't apply)
+                  so nothing below shifts when the view changes. */}
+              {splitOn && split ? (
+                <span className="inc-model-note">
+                  Model picker off in this view: accidents use {splitChampLabel ?? "their own champion model"}; breakdowns = total − accidents.
+                  <InfoTooltip
+                    text={`Model picker not used in this view — the accident forecast is ${splitChampLabel ?? "its own champion model"}, fitted on accidents alone; breakdowns are derived as blended total minus accidents.`}
+                  />
+                </span>
+              ) : (
+                modelToolbar
+              )}
+              {data.accidentSplit && (
+                <>
+                  {fc2Sep}
+                  <div className="fc-group">
+                    <span className="fc-label">Show</span>
+                    <div
+                      className="inc-seg"
+                      role="group"
+                      aria-label="Forecast view"
+                      title="Total: the blended forecast with every candidate model. Split: a dedicated accident forecast, with breakdowns derived as blended total minus accidents."
+                    >
+                      {([false, true] as const).map((on) => (
+                        <button key={String(on)} onClick={() => setSplitView(on)} aria-pressed={splitView === on} className={splitView === on ? "is-on" : ""}>
+                          {on ? "Accident / Breakdown" : "Total"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-          </div>
-        )}
-        <div className="fc-group">
-          <span className="fc-label">View</span>
-          <span className="inc-seg">
-            {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
-              <button
-                key={g}
-                onClick={() => setGranularity(g)}
-                aria-pressed={granularity === g}
-                className={granularity === g ? "is-on" : ""}
+            <div className="fc2-row">
+              <div className="fc-group">
+                <span className="fc-label">View</span>
+                <span className="inc-seg">
+                  {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
+                    <button
+                      key={g}
+                      onClick={() => setGranularity(g)}
+                      aria-pressed={granularity === g}
+                      className={granularity === g ? "is-on" : ""}
+                      title={
+                        g === "Daily"
+                          ? "One point per day — the resolution the models actually forecast"
+                          : `Averaged per ${g.replace("ly", "").toLowerCase()} — a viewing aid, not a separate forecast`
+                      }
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </span>
+              </div>
+              {/* Hidden outright when the visible window has no Future band at all (a
+                  custom range ending before the horizon starts), since there would be
+                  nothing for the preset buttons to trim. */}
+              {futureAvailable > 0 && (
+                <>
+                  {fc2Sep}
+                  <div className="fc-group">
+                    <span className="fc-label">Ahead</span>
+                    <span className="inc-seg">
+                      {FUTURE_PRESETS.map((item) => {
+                        const unavailable = item.d > futureAvailable;
+                        const active = effectiveFutureDays === item.d;
+                        return (
+                          <button
+                            key={item.label}
+                            onClick={() => setFutureDays(item.d)}
+                            disabled={unavailable}
+                            aria-pressed={active}
+                            className={active ? "is-on" : ""}
+                            title={
+                              unavailable
+                                ? `The forecast only runs ${futureAvailable} day${futureAvailable === 1 ? "" : "s"} ahead — retrain the incident pipeline with a longer horizon to use this`
+                                : `Show ${item.d} days of forecast`
+                            }
+                          >
+                            {item.label}
+                          </button>
+                        );
+                      })}
+                    </span>
+                  </div>
+                </>
+              )}
+              {fc2Sep}
+              {/* Exposure overlay. Switches the forecast itself when the pipeline stored a
+                  volume-free twin, not merely the overlay. */}
+              <label
+                className="fc2-switch"
                 title={
-                  g === "Daily"
-                    ? "One point per day — the resolution the models actually forecast"
-                    : `Averaged per ${g.replace("ly", "").toLowerCase()} — a viewing aid, not a separate forecast`
+                  hasVolumeFreeTwin
+                    ? showVolume
+                      ? "Volume ON: forecasts fitted WITH traffic volume, overlay shown. Click to switch to the volume-free models."
+                      : "Volume OFF: forecasts fitted WITHOUT traffic volume. Click to use the volume-aware models and show the overlay."
+                    : showVolume
+                      ? "Hide the volume overlay (this training run stored no volume-free models, so the forecast lines do not change)"
+                      : "Show the volume overlay (this training run stored no volume-free models, so the forecast lines do not change)"
                 }
               >
-                {g}
-              </button>
-            ))}
-          </span>
-        </div>
-        {/* Hidden outright when the visible window has no Future band at all (a
-            custom range ending before the horizon starts), since there would be
-            nothing for the preset buttons to trim. */}
-        {futureAvailable > 0 && (
-          <div className="fc-group">
-            <span className="fc-label">Ahead</span>
-            <span className="inc-seg">
-              {FUTURE_PRESETS.map((item) => {
-                const unavailable = item.d > futureAvailable;
-                const active = effectiveFutureDays === item.d;
-                return (
-                  <button
-                    key={item.label}
-                    onClick={() => setFutureDays(item.d)}
-                    disabled={unavailable}
-                    aria-pressed={active}
-                    className={active ? "is-on" : ""}
-                    title={
-                      unavailable
-                        ? `The forecast only runs ${futureAvailable} day${futureAvailable === 1 ? "" : "s"} ahead — retrain the incident pipeline with a longer horizon to use this`
-                        : `Show ${item.d} days of forecast`
-                    }
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
-            </span>
-            {futureHorizonBucket && (
-              <span className={`fc-note${futureHorizonBucket.usable ? "" : " is-warn"}`} title={futureHorizonBucket.note ?? undefined}>
-                typical error {futureHorizonBucket.wmape != null ? `${futureHorizonBucket.wmape.toFixed(0)}%` : "n/a"}
-                {!futureHorizonBucket.usable ? " (beyond what this champion clears)" : ""}
+                <span className="fc-label">Volume</span>
+                <input type="checkbox" checked={showVolume} onChange={() => setShowVolume(!showVolume)} />
+                <span className="fc2-switch-track" aria-hidden="true"><span className="fc2-switch-thumb" /></span>
+              </label>
+              {/* Says what the line is, now that it runs the whole window (see effVolume's doc comment). Shown only
+                  with the toggle on: there is nothing to explain about an overlay that isn't drawn. */}
+              {showVolume && (
+                <InfoTooltip text="The daily vehicle volume the volume-aware models read. Solid: recorded volume, through Past and Present (Present is held-out history, so the models saw the real day's traffic). Dashed: the traffic module's volume forecast, the input the models take for each Future day. Turn Volume off to see the same models fitted without it." />
+              )}
+              {fc2Sep}
+              {/* Rainfall, independent of Volume. Like Volume, it switches the forecast itself
+                  when the pipeline stored a weather-free twin (has_weather_free_twin). */}
+              <label
+                className="fc2-switch"
+                title={
+                  hasWeatherFreeTwin
+                    ? showWeather
+                      ? "Weather ON: forecasts fitted WITH rainfall, recorded rain shown. Days past a real weather forecast (16 days) are forecast without weather either way: no forecast is fed guessed rain. Click to switch to the weather-free models."
+                      : "Weather OFF: forecasts fitted WITHOUT rainfall. Click to use the weather-aware models and show the overlay."
+                    : showWeather
+                      ? "Hide the rainfall overlay (this training run stored no weather-free models, so the forecast lines do not change)"
+                      : "Show the rainfall overlay (this training run stored no weather-free models, so the forecast lines do not change)"
+                }
+              >
+                <span className="fc-label">Weather</span>
+                <input type="checkbox" checked={showWeather} onChange={() => setShowWeather(!showWeather)} />
+                <span className="fc2-switch-track" aria-hidden="true"><span className="fc2-switch-thumb" /></span>
+              </label>
+            </div>
+          </div>
+
+          <div className="inc-chart-frame" style={{ height: "450px" }}>
+            <DashboardChart option={option} height={450} onEvents={{ click: onChartClick as (p: never) => void }} />
+          </div>
+
+          <div className="fc2-foot">
+            {/* The report opens under the card; its button sits on the foot line, left, beside the rainfall key. */}
+            {!reportOpen && shownMetrics.length > 0 && <GenerateReportButton onClick={() => setReportOpen(true)} />}
+            {/* Without this key the rainfall bars are anonymous blue blocks. */}
+            {showWeather && (
+              <span className="fc2-rain-key">
+                <span className="fc2-rain-title" title="Colour = the wettest hour (PAGASA classes) · taller bar = more rain that day">Rainfall</span>
+                {RAIN_BANDS.map((b, i) => (
+                  <span key={b.label} className="fc2-rain-item">
+                    <i style={{ background: b.color }} aria-hidden="true" />
+                    {b.label}{" "}
+                    <span className="nct-key-dim">
+                      {i === 0 ? `≤ ${b.max} mm/h`
+                        : b.max === Infinity ? `> ${RAIN_BANDS[i - 1].max} mm/h`
+                        : `${RAIN_BANDS[i - 1].max}–${b.max} mm/h`}
+                    </span>
+                  </span>
+                ))}
               </span>
             )}
           </div>
-        )}
-      </div>
-
-      {/* The key: what each band of the chart is, with the averaging notice at
-          the end once points are means rather than days (without it a weekly
-          mean reads as a total to anyone skimming the axis). */}
-      <div className="fc-legend">
-        {showPast && (
-          <span className="fc-legend-item">
-            <i className="inc-zone-swatch is-past" aria-hidden="true" />
-            <b>Past</b>
-            {modelInfo.trainedDays != null && (
-              <span>
-                {fmtInt(modelInfo.trainedDays)}d trained{trainedPct != null ? ` · ${trainedPct.toFixed(2)}%` : ""} · showing last {fmtInt(effHoldoutStart)}d
-              </span>
-            )}
-          </span>
-        )}
-        {showPresent && (
-          <span className="fc-legend-item">
-            <i className="inc-zone-swatch is-present" aria-hidden="true" />
-            <b>Present</b>
-            <span>
-              {presentScoredDays}d scored{scoredPct != null ? ` · ${scoredPct.toFixed(2)}%` : ""} · fixed by evaluation
-            </span>
-          </span>
-        )}
-        {futureAvailable > 0 && (
-          <span className="fc-legend-item">
-            <i className="inc-zone-swatch is-future" aria-hidden="true" />
-            <b>Future</b>
-            <span>
-              {effectiveFutureDays}d forecast shown
-              {daily.length > 0 && <> · to {fmtDateFull(daily[daily.length - 1].date)}</>}
-            </span>
-          </span>
-        )}
-        {isAggregated && (
-          <span className="inc-agg-badge fc-push">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Each point = {granularity === "Weekly" ? "7-day" : "~30-day"} mean, not a total
-          </span>
-        )}
-      </div>
-
-      <div className="inc-chart-frame" style={{ height: "450px" }}>
-        <DashboardChart option={option} height={450} onEvents={{ click: onChartClick as (p: never) => void }} />
-      </div>
-
-      {/* Without this key the rainfall bars are anonymous blue blocks. Heavier
-          rain here reads as a warning, not a calming signal: fewer cars are out,
-          but slicker roads drive collisions and breakdowns per mile up. */}
-      {showWeather && (
-        <div className="inc-rainkey">
-          <b>Rainfall</b>
-          {RAIN_BANDS.map((b, i) => (
-            <span key={b.label}>
-              <i style={{ background: b.color }} aria-hidden="true" />
-              {b.label}
-              <em>
-                {i === 0 ? `≤ ${b.max} mm/h`
-                  : b.max === Infinity ? `> ${RAIN_BANDS[i - 1].max} mm/h`
-                  : `${RAIN_BANDS[i - 1].max}–${b.max} mm/h`}
-              </em>
-            </span>
-          ))}
-          <span className="inc-rainkey-aside">Colour = the wettest hour (PAGASA classes) · taller bar = more rain that day</span>
         </div>
-      )}
 
-      {/* Model trust strip: the headline figures on the card; the strip opens
-          the full validation evidence (metrics table, rainfall evidence) in a
-          modal, the same strip every forecast card carries. */}
-      <EvidenceModal
-        subtitle={scoringCaption}
-        strip={<>
-          {champLabel && (
-            <span className="nct-trust-pill" title={championTitle}>
-              <span className="nct-trust-k">Champion</span>
-              {champLabel}
-            </span>
-          )}
-          <span className="nct-trust-pill" title={scoringCaption}>
-            <span className="nct-trust-k">Tested on</span>
-            {data.scoringWindow
-              ? <>{data.scoringWindow.n} days · {fmtDateFull(data.scoringWindow.start)} – {fmtDateFull(data.scoringWindow.end)}</>
-              : <>full holdout · trained {fmtTrainedAt(modelInfo.trainedAt)}</>}
-          </span>
-          {champMase != null && (
-            <span className="nct-trust-pill" title={metricHintFor("MASE", champ)}>
-              <span className="nct-trust-k">Accuracy</span>
-              MASE {champMase.toFixed(3)}
-              <span className={champMase < 1 ? "nct-ok" : "nct-bad"}>
-                {champMase < 1 ? " · beats last week" : " · does not beat last week"}
+        {/* ---------- The summary beside it: the answer, then the evidence for it ---------- */}
+        <aside className="fc2-side" aria-label="Forecast summary">
+          <div className="fc2-side-head">
+            <span className="fc2-side-icon" aria-hidden="true"><Siren size={18} /></span>
+            <h4>Forecast Summary</h4>
+          </div>
+          {futAvg != null && futureFirst && futShownLast && (
+            <div className="fc2-answer">
+              <span className="fc2-answer-label">Forecast daily average · next {effectiveFutureDays} days</span>
+              <span className="fc2-answer-value">{fmtInt(Math.round(futAvg))}</span>
+              <span className="fc2-answer-unit">
+                incidents/day · {fmtDateFull(futureFirst)} – {fmtDateFull(futShownLast)}
+                {futPeakDate && <> · busiest {fmtDate(futPeakDate)}</>}
               </span>
-            </span>
+            </div>
           )}
-          {champ?.MAE != null && (
-            <span className="nct-trust-pill" title={metricHintFor("MAE")}>
-              <span className="nct-trust-k">Held-out error</span>
-              MAE {fmtNum(champ.MAE)} incidents/day{champ.WMAPE != null ? ` · WMAPE ${champ.WMAPE.toFixed(2)}%` : ""}
-            </span>
+          <div className="fc2-pair">
+            <div title={futureHorizonBucket?.note ?? undefined}>
+              <span className="fc2-k">{effectiveFutureDays}-day typical error</span>
+              <span className="fc2-v">
+                {futureHorizonBucket?.wmape != null ? `${futureHorizonBucket.wmape.toFixed(0)}%` : "n/a"}
+              </span>
+            </div>
+            <div>
+              <span className="fc2-k">{splitOn ? "Accident model" : "Selected model"}</span>
+              {splitOn ? (
+                <span className="fc2-v fc2-model">{splitChampLabel ?? "Champion"}</span>
+              ) : leadKey ? (
+                <span className="fc2-v fc2-model" title={activeModels.map((k) => META[k].label).join(", ")}>
+                  <i style={{ background: META[leadKey].color }} />
+                  {META[leadKey].label}
+                  {activeModels.length > 1 && <span className="fc2-k">+{activeModels.length - 1}</span>}
+                </span>
+              ) : (
+                <span className="fc2-v">—</span>
+              )}
+            </div>
+          </div>
+          {futureHorizonBucket && !futureHorizonBucket.usable && (
+            <p className="fc2-note-warn">This horizon is beyond what this champion clears.</p>
           )}
-        </>}
-      >
+
+          {splitOn && split && (
+            <div className="fc2-evidence">
+              <dl>
+                {typeof split.metrics?.MAE === "number" && (
+                  <div><dt>Accident MAE</dt><dd>{fmtNum(split.metrics.MAE as number)} /day</dd></div>
+                )}
+                {typeof split.metrics?.R2 === "number" && (
+                  <div><dt>Accident R²</dt><dd>{fmtNum(split.metrics.R2 as number, 3)}</dd></div>
+                )}
+                <div><dt>Accident model trained</dt><dd>{fmtTrainedAt(split.trainedAt)}</dd></div>
+                <div><dt>Breakdowns</dt><dd>blended − accidents</dd></div>
+              </dl>
+              <p className="fc2-period">
+                Accident skill is modest: not clearly better than the historical average without volume (re-measured 2026-09-21).
+                Validation evidence below is for the blended forecast.
+              </p>
+            </div>
+          )}
+
+          <div className="fc2-evidence">
+            <div className="fc2-ev-head"><ShieldCheck size={17} aria-hidden="true" /><h5>Validation Evidence</h5></div>
+            <dl>
+              {champ?.WMAPE != null && (
+                <div title={metricHintFor("WMAPE")}><dt>WMAPE</dt><dd>{champ.WMAPE.toFixed(2)}%</dd></div>
+              )}
+              {champ?.MAE != null && (
+                <div title={metricHintFor("MAE")}><dt>MAE</dt><dd>{fmtNum(champ.MAE)} /day</dd></div>
+              )}
+              {champMase != null && (
+                <div title={metricHintFor("MASE", champ)}>
+                  <dt>MASE</dt>
+                  <dd>
+                    {champMase.toFixed(3)}
+                    <span className={champMase < 1 ? "nct-ok" : "nct-bad"}>
+                      {champMase < 1 ? " · beats last week" : " · does not beat last week"}
+                    </span>
+                  </dd>
+                </div>
+              )}
+              <div><dt>Scored days</dt><dd>{fmtInt(scoredDayCount)}</dd></div>
+              {champLabel && <div title={championTitle}><dt>Champion</dt><dd>{champLabel}</dd></div>}
+            </dl>
+            <p className="fc2-period" title={scoringCaption}>
+              {data.scoringWindow
+                ? <>Period: {fmtDateFull(data.scoringWindow.start)} – {fmtDateFull(data.scoringWindow.end)}</>
+                : <>Full holdout · trained {fmtTrainedAt(modelInfo.trainedAt)}</>}
+            </p>
+            <button type="button" className="fc2-ev-btn" onClick={() => setEvidenceOpen(true)}>View validation details</button>
+          </div>
+        </aside>
+      </div>
+
+      {/* The full evidence (metrics table, dry vs wet) opens from the summary's button. */}
+      <EvidenceModal subtitle={scoringCaption} hideTrigger open={evidenceOpen} onOpenChange={setEvidenceOpen}>
         <div className="inc-ev-body">
           {metricsTable}
           {weatherPanel}
         </div>
       </EvidenceModal>
 
-      {splitOn && split && (
-        <div className="inc-note">
-          <dl className="inc-kv">
-            <div>
-              <dt>Accident forecast</dt>
-              <dd>
-                <b>{split.championModel ? (META[split.championModel as ModelKey]?.label ?? split.championModel) : "champion"}</b>{" "}
-                <em>· accidents only · trained {fmtTrainedAt(split.trainedAt)}</em>
-              </dd>
-            </div>
-            {typeof split.metrics?.MAE === "number" && typeof split.metrics?.R2 === "number" && (
-              <div>
-                <dt>Held-out</dt>
-                <dd>
-                  MAE <b>{fmtNum(split.metrics.MAE as number)}</b> incidents/day · R² <b>{fmtNum(split.metrics.R2 as number, 3)}</b>
-                </dd>
-              </div>
-            )}
-            <div>
-              <dt>Skill</dt>
-              <dd>
-                Modest: not clearly better than the historical average without volume <em>(re-measured 2026-09-21)</em>
-              </dd>
-            </div>
-            <div>
-              <dt>Breakdowns</dt>
-              <dd>Derived, not separately modeled: blended − accident forecast</dd>
-            </div>
-            <div>
-              <dt>Metrics below</dt>
-              <dd>Blended forecast</dd>
-            </div>
-          </dl>
-          <details className="nc-details">
-            <summary>Details</summary>
-            <p style={{ margin: 0 }}>
-              Accidents are only ~12% of daily incidents, so a fit tuned to the combined count is tuned to breakdowns: on the current
-              holdout, scaling the blended forecast down to an accident estimate does worse than simply assuming the historical average,
-              and this dedicated model beats it clearly. A dedicated breakdown model was tested and did no better than the blended fit.
-            </p>
-          </details>
-        </div>
-      )}
-
       <section id="incident-validation" className="inc-validation" tabIndex={-1} aria-label="Validation details">
-
         {/* Narrative is composed from the same modelMetrics rows that feed the
             metrics table (in the validation modal), so the prose can never
-            drift away from the numbers. scoringCaption is reused verbatim from
-            the table so the two can't disagree about which window they're
-            describing. */}
+            drift away from the numbers. */}
         <IncidentNarrative
           selected={activeModels}
           metrics={shownMetrics}
           scoringCaption={scoringCaption}
           weather={weather ?? "all"}
           horizonDays={modelInfo.forecastHorizon}
+          compact
+          open={reportOpen}
+          onOpenChange={setReportOpen}
         />
       </section>
     </article>

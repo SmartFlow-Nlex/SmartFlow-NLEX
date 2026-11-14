@@ -131,6 +131,9 @@ export default function ModelNarrative({
   quantityNote,
   quantity = "volume",
   naiveMase = null,
+  compact = false,
+  open: openProp,
+  onOpenChange,
 }: {
   selected: NarrativeModelKey[];
   metrics: MetricRow[];
@@ -143,6 +146,11 @@ export default function ModelNarrative({
   quantity?: "volume" | "incidents" | "emissions";
   /** The seasonal naive's own MASE on the scored days; the bar a model's MASE is judged against when known. */
   naiveMase?: number | null;
+  /** Only the read-out: no "From the stored validation metrics…" line and no Details fold. */
+  compact?: boolean;
+  /** Controlled open state: the card draws its own Generate report button and this renders only the report. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   scoredDays: number | null;
   windowStart: string | null;
   windowEnd: string | null;
@@ -150,7 +158,14 @@ export default function ModelNarrative({
 }) {
   // Collapsed by default: the report is a deliberate action, not something that
   // pushes the metrics table off screen every time the page loads.
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const setOpen = (v: boolean | ((o: boolean) => boolean)) => {
+    const next = typeof v === "function" ? v(open) : v;
+    if (controlled) onOpenChange?.(next);
+    else setOpenState(next);
+  };
 
   if (!metrics || metrics.length === 0) return null;
 
@@ -190,7 +205,7 @@ export default function ModelNarrative({
   // Nothing but the button until it is pressed.
   if (!open) return (
     <>
-      <GenerateReportButton onClick={() => setOpen(true)} />
+      {!controlled && <GenerateReportButton onClick={() => setOpen(true)} />}
       {method}
     </>
   );
@@ -213,7 +228,7 @@ export default function ModelNarrative({
       </div>
 
       <div className="nc-narrative-body">
-        <p className="nc-narrative-context">
+        {!compact && <p className="nc-narrative-context">
           From the stored validation metrics of the selected models
           {scoredDays != null && windowStart && windowEnd ? (
             <>
@@ -222,7 +237,7 @@ export default function ModelNarrative({
             </>
           ) : null}
           {showWeather === undefined ? null : showWeather ? " · weather-driven variants" : " · weather-free variants"}
-        </p>
+        </p>}
 
       {/* The read-out is the language model's alone. The metrics it was given
           are the ones on the card above, so the two cannot disagree. */}
@@ -234,6 +249,7 @@ export default function ModelNarrative({
         windowEnd={windowEnd}
         weatherMode={showWeather === undefined ? null : showWeather ? "with" : "without"}
         naiveMase={naiveMase}
+        hideDetails={compact}
         labelFor={(name) => {
           const key = Object.keys(DBN).find((k) => DBN[k] === name);
           return key ? LBL[key] ?? name : name;

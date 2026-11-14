@@ -81,7 +81,7 @@ const RAIL = {
 };
 
 const NAVIE_X = -0.1; // the middle of the painted toll lane, which is also inside the highway's centre lane
-const NAVIE_H = 1.25; // height on the road, in units
+const NAVIE_H = 1.5; // height on the road, in units
 /* The toll painting is the same frame as the highway's, with the same sky, so it simply dissolves into it. */
 const TOLL_FADE = [0.4, 20]; // the scroll over which it does
 /* Street lamps on the grass in front of the guardrails. They travel on the rail's own path, in post numbers, so they

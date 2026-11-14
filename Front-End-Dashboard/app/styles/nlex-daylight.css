@@ -664,6 +664,8 @@ button.chart-card:hover {
   transform-origin: top center;
   animation: nlex-pop 260ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
 }
+[class*="customSelectMenu"] { min-width: 220px; padding: 6px; }
+[class*="customSelectOption"] { gap: 10px; padding: 9px 12px; border-radius: 9px; font-size: 14px; white-space: nowrap; }
 [class*="customSelectOptionActive"] { background: var(--nlex-sky); color: var(--nlex-blue); }
 :root[data-theme="dark"] [class*="customSelectOptionActive"] { background: rgba(91, 141, 255, 0.18); color: #cfe0ff; }
 @keyframes nlex-pop {
@@ -1031,3 +1033,362 @@ html[data-effects="off"] .ov-navie-bubble.is-open { animation: none; }
   :root:not([data-theme="light"]) [class*="modeName"] svg { color: #b7d0ff; filter: drop-shadow(0 0 4px rgba(4, 12, 34, 0.95)); }
   :root:not([data-theme="light"]) [class*="modeTabActive"] [class*="modeName"] svg { color: var(--page-accent, #8cc2ff); }
 }
+
+/* --- The chosen pill in every segmented control (4 Nov 2026, user request) ---------------------------------
+   Range, Weather, Direction, Class, Granularity and every card toggle mark their choice with class="active"
+   and aria-pressed. traffic.module.css styles `.active`, but CSS Modules hash that name, so the plain class
+   never matched and nothing looked picked (only Incidents had a patch). aria-pressed is never renamed, so the
+   choice is matched by it, on every tab: a filled pill in the tab's own accent. */
+:root .ds-main [class*="segmented"] > button:is(.active, [aria-pressed="true"]),
+:root .ds-main [class*="segmented"] > button:is(.active, [aria-pressed="true"]):hover {
+  background: var(--page-accent, var(--nlex-blue));
+  border-color: var(--page-accent, var(--nlex-blue));
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 6px 14px -8px color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 80%, transparent);
+}
+:root .ds-main [class*="segmented"] > button:is(.active, [aria-pressed="true"]):disabled { opacity: 0.55; }
+:root .ds-main [class*="segmented"] > button:is(.active, [aria-pressed="true"]):focus-visible {
+  outline: 2px solid var(--page-accent, var(--nlex-blue));
+  outline-offset: 2px;
+}
+
+/* --- Chart card icon and quick insight (4 Nov 2026, user request) -----------------------------------------
+   components/dashboard/CardBits.tsx. The icon tile sits beside each chart title, in the tab's accent; the
+   insight strip closes the card with one computed takeaway. */
+.nc-head-main { display: flex; align-items: flex-start; gap: 14px; min-width: 0; flex: 1; }
+/* The tile lines up with the title (one 22 px line), whatever sits under it. */
+.nc-head-main > .nc-card-icon { margin-top: -6px; }
+.nc-card-icon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 12%, transparent);
+  color: var(--page-accent, var(--nlex-blue));
+}
+.nc-card-insight {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 11px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 8%, transparent);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  text-wrap: pretty;
+}
+.nc-card-insight b { color: var(--text-primary); font-weight: 700; }
+.nc-card-insight-icon { flex: none; margin-top: 2px; color: var(--page-accent, var(--nlex-blue)); }
+@media (max-width: 640px) {
+  .nc-card-icon { width: 38px; height: 38px; border-radius: 10px; }
+  .nc-head-main { gap: 10px; }
+}
+/* Dark mode: the accents lighten (Incidents goes to a pale orange), so white text on them washes out; the chosen
+   pill takes the page's deep navy instead. */
+:root[data-theme="dark"] .ds-main [class*="segmented"] > button:is(.active, [aria-pressed="true"]) { color: #0a1430; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ds-main [class*="segmented"] > button:is(.active, [aria-pressed="true"]) { color: #0a1430; }
+}
+
+/* Chart card headers, one style on every tab (4 Nov 2026): title, then one compact line in body size, lined up under
+   the title. The big figures moved out: the quick insight under each chart now carries the takeaway. */
+.viz-emissions .chart-card-answer-fix,
+.viz-emissions [class*="chartCard"] .nc-em-answer { gap: 2px 6px; margin: 6px 0 0; }
+.viz-emissions [class*="chartCard"] .nc-em-answer b {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: 0;
+}
+.viz-emissions [class*="chartCard"] .nc-em-answer > span { line-height: 1.45; }
+.inc-answer.inc-chart-answer { gap: 2px 6px; margin: -4px 0 12px calc(44px + 14px); }
+.inc-answer.inc-chart-answer .inc-answer-value {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: 0;
+}
+@media (max-width: 640px) {
+  .inc-answer.inc-chart-answer { margin-left: calc(38px + 10px); }
+}
+/* Lines that sit under a chart card's header row rather than inside it (Traffic's "Furthest from normal" and the
+   arena exit picker) line up under the title too. */
+.nct-answer-line.nct-answer-row { margin-left: calc(44px + 14px); }
+@media (max-width: 640px) {
+  .nct-answer-line.nct-answer-row { margin-left: calc(38px + 10px); }
+}
+
+/* --- Sortable table headers (components/dashboard/SortableTable.tsx, 5 Nov 2026) ------------------------- */
+.st-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.st-sort:hover, .st-sort.is-active { color: var(--text-primary); }
+.st-sort:focus-visible { outline: 2px solid var(--page-accent, var(--nlex-blue)); outline-offset: 3px; border-radius: 4px; }
+.st-num { text-align: right !important; }
+/* The arrow follows the label on every column, numeric ones included. */
+.st-num .st-sort { justify-content: flex-end; }
+.st-arrow path { fill: currentColor; opacity: 0.28; }
+.st-arrow path.on { opacity: 1; fill: var(--page-accent, var(--nlex-blue)); }
+
+/* --- Dialogs: "View all" lists and detail cards (5 Nov 2026) --------------------------------------------
+   Each list dialog is as wide as its columns need and no wider, so there is no empty band beside the table;
+   the table fills it. Headers stay put while the rows scroll, and the scroll sits inside the table, not the page. */
+[class*="detailModal"] { display: flex; flex-direction: column; max-height: min(86vh, 860px); }
+[class*="detailModal"] [class*="detailHeader"] { padding: 20px 22px 14px; align-items: center; }
+[class*="detailModal"] [class*="detailTitles"] h3 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+[class*="detailModal"] [class*="detailTitles"] p { margin-top: 3px; font-size: 13.5px; line-height: 1.45; text-wrap: pretty; }
+[class*="detailModal"] [class*="plazaTableWrap"] { flex: 1; min-height: 0; max-height: none; padding: 0 22px 20px; }
+[class*="detailModal"] [class*="plazaTable"] { font-size: 14px; }
+[class*="detailModal"] [class*="plazaTable"] th { padding: 10px 12px; font-size: 12px; letter-spacing: 1px; white-space: nowrap; }
+[class*="detailModal"] [class*="plazaTable"] td { padding: 11px 12px; vertical-align: middle; }
+[class*="detailModal"] [class*="plazaTable"] tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--text-primary) 2.5%, transparent); }
+[class*="detailModal"] [class*="eventName"] { max-width: none; min-width: 240px; }
+[class*="plazaModal"] { width: min(94vw, 560px); }
+[class*="holidayModal"] { width: min(94vw, 700px); }
+[class*="impactModal"] { width: min(94vw, 860px); }
+[class*="detailModal"] .nct-year-filter { margin: 0 22px 12px; }
+@media (max-width: 640px) {
+  [class*="detailModal"] [class*="eventName"] { min-width: 160px; }
+}
+
+/* The colour key and the insight strip under a chart keep a clear gap. */
+[class*="chartCard"] > [class*="rampKey"] + .nc-card-insight,
+[class*="chartCard"] > [class*="RampKey"] + .nc-card-insight { margin-top: 16px; }
+
+/* --- Detail cards: the pop-up that opens when a bar, point or row is clicked (5 Nov 2026, every tab) ---------
+   Wide enough that a figure never breaks across lines ("19,954 vehicle s"); each row is a label in small caps on
+   the left and the figure on the right, on one line; the method note sits in a quiet panel at the foot. */
+[class*="detailModal"]:not([class*="plazaModal"]):not([class*="impactModal"]):not([class*="holidayModal"]):not(.nc-ops-modal) {
+  width: min(94vw, 520px);
+}
+[class*="detailModal"] [class*="detailIcon"] {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 12%, transparent);
+  color: var(--page-accent, var(--nlex-blue));
+}
+[class*="detailModal"] [class*="detailTitles"] h3 { line-height: 1.25; text-wrap: balance; }
+[class*="detailModal"] [class*="detailClose"] {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+[class*="detailModal"] [class*="detailClose"]:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+[class*="detailModal"] [class*="detailBody"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 22px 16px;
+  overflow-y: auto;
+}
+[class*="detailModal"] [class*="detailRow"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 11px 14px;
+  border-radius: 10px;
+}
+[class*="detailModal"] [class*="detailKey"] {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  line-height: 1.35;
+  white-space: normal;
+  color: var(--text-muted);
+}
+[class*="detailModal"] [class*="detailVal"] {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: right;
+  max-width: 280px;
+  /* Wraps only between words: the old break-word split "vehicles" into "vehicle s". */
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+  text-wrap: balance;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+[class*="detailModal"] [class*="detailFooter"] {
+  margin: 0 22px 20px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 7%, transparent);
+  color: var(--page-accent, var(--nlex-blue));
+}
+[class*="detailModal"] [class*="detailFooter"] p { font-size: 13px; line-height: 1.55; font-weight: 400; color: var(--text-secondary); }
+
+/* --- The component dialogs (ds-modal: Predictive lists and details, evidence, data management) take the same
+   header, title and spacing, so every pop-up on the dashboard reads as one family. */
+.ds-modal { border-radius: var(--radius-xl, 20px); }
+.ds-modal-head { padding: 20px 22px 14px; align-items: center; }
+.ds-modal-head h2 { font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.01em; text-wrap: balance; }
+.ds-modal-head p { margin-top: 3px; font-size: 13.5px; line-height: 1.45; max-width: 60ch; text-wrap: pretty; }
+.ds-modal-close { width: 36px; height: 36px; border-radius: 50%; border-color: var(--border-strong); }
+.ds-modal-body { padding: 16px 22px 20px; }
+.ds-modal-foot { padding: 14px 22px; }
+.ds-modal-note { font-size: 13px; }
+
+/* --- Active filter chips (components/dashboard/FilterChips.tsx, 5 Nov 2026) ------------------------------
+   One pill per filter holding its label and value, in the filter bar's idiom: a solid surface so it reads over the
+   road art, the small capitalised label, then the value. A filter moved off its default takes the accent fill of a
+   selected pill and a × to put it back. */
+.fc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.fc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 16px;
+  border: 1px solid color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 30%, var(--border-strong));
+  border-radius: 999px;
+  background: var(--bg-raised, #fff);
+  box-shadow: 0 4px 14px -8px rgba(10, 30, 70, 0.35);
+}
+.fc-label {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.fc-value {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.fc-chip.is-set {
+  padding-right: 6px;
+  border-color: var(--page-accent, var(--nlex-blue));
+  background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 14%, var(--bg-raised, #fff));
+}
+.fc-chip.is-set .fc-label { color: var(--page-accent, var(--nlex-blue)); }
+.fc-chip button {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: 0 0 0 8px;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.fc-chip button:hover { background: var(--page-accent, var(--nlex-blue)); color: #fff; }
+.fc-chip button:focus-visible { outline: 2px solid var(--page-accent, var(--nlex-blue)); outline-offset: 2px; }
+@media (max-width: 760px) { .fc-row { margin-left: 0; width: 100%; } .fc-value { white-space: normal; } }
+
+/* A dropdown in the filter bar drawn as one of its pills (Traffic's Class, 5 Nov 2026): same height, border,
+   capitals and tracking as Range / Weather; the accent fill once moved off "All". */
+.nct-pill-select [class*="customSelectBtn"] {
+  min-height: 30px;
+  padding: 0 11px 0 14px;
+  gap: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  box-shadow: none;
+}
+.nct-pill-select [class*="customSelectBtn"]:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: var(--text-primary); }
+.nct-pill-select.is-set [class*="customSelectBtn"] {
+  background: var(--page-accent, var(--nlex-blue));
+  border-color: var(--page-accent, var(--nlex-blue));
+  color: #fff;
+  font-weight: 700;
+}
+:root[data-theme="dark"] .nct-pill-select.is-set [class*="customSelectBtn"] { color: #0a1430; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .nct-pill-select.is-set [class*="customSelectBtn"] { color: #0a1430; } }
+.nct-pill-select [class*="customSelectOption"] { text-transform: uppercase; letter-spacing: 1px; font-size: 12.5px; font-weight: 600; }
+
+/* --- Validation evidence pop-up (5 Nov 2026): roomier tables that read at a glance --------------------------
+   White cards per section; the model column wide enough that a name stays on one line ("Dual-Path LSTM + XGBoost");
+   a tinted header row; striped rows; the switch for secondary metrics as a clear pill button. */
+.ev-modal .ev-head h2 { font-size: 20px; font-weight: 700; }
+.ev-modal .nct-evidence { display: flex; flex-direction: column; gap: 16px; }
+.ev-modal .nct-ev-section {
+  gap: 12px;
+  padding: 18px 20px;
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  background: var(--bg-raised, #fff);
+  box-shadow: 0 6px 18px -14px rgba(10, 30, 70, 0.35);
+}
+.ev-modal .nct-ev-heading { font-size: 15.5px; font-weight: 700; color: var(--text-primary); }
+.ev-modal .nct-link-btn {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--page-accent, var(--nlex-blue));
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--page-accent, var(--nlex-blue));
+  text-decoration: none;
+  cursor: pointer;
+}
+.ev-modal .nct-link-btn:hover { background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 10%, transparent); }
+.ev-modal .nct-link-btn:focus-visible { outline: 2px solid var(--page-accent, var(--nlex-blue)); outline-offset: 2px; }
+.ev-modal .nct-table-wrap { border: 1px solid var(--border-default); border-radius: 12px; overflow-x: auto; }
+.ev-modal .nct-table { width: 100%; font-size: 14px; border-collapse: separate; border-spacing: 0; }
+.ev-modal .nct-table th {
+  padding: 11px 14px;
+  font-size: 11.5px;
+  letter-spacing: 1.2px;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 6%, var(--bg-raised, #fff));
+  border-bottom: 1px solid var(--border-default);
+}
+.ev-modal .nct-table td { padding: 12px 14px; vertical-align: middle; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ev-modal .nct-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--text-primary) 2.5%, var(--bg-raised, #fff)); }
+.ev-modal .nct-table tbody tr:hover td { background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 6%, var(--bg-raised, #fff)); }
+.ev-modal .nct-table .nct-sticky { min-width: 230px; background: var(--bg-raised, #fff); box-shadow: 1px 0 0 var(--border-default); }
+.ev-modal .nct-table th.nct-sticky { background: color-mix(in srgb, var(--page-accent, var(--nlex-blue)) 6%, var(--bg-raised, #fff)); }
+.ev-modal .nct-table td.nct-sticky { font-weight: 600; }
+.ev-modal .nct-table td.nct-sticky .pill { vertical-align: middle; }
+
+/* A modal locks scrolling by setting overflow:hidden on the scroller (EvidenceModal). Without a reserved gutter the
+   scrollbar vanished, the page grew ~15 px wider and every chart resized behind the modal, then back again on close
+   (10 Nov 2026). The gutter stays reserved whether or not the scrollbar is showing. */
+.ds-main { scrollbar-gutter: stable; }
+
+/* The dashboard scrolls inside .ds-main, never the page itself. Chart tooltips are drawn on <body> (so no card can
+   cover them); while one animated into place it could stick out below the window, the page grew a scrollbar for a
+   moment and every card shifted ~9 px left (10 Nov 2026). With the shell on screen the page cannot scroll at all. */
+body:has(.ds-shell) { overflow: hidden; }

@@ -6,21 +6,23 @@
 
 ## How to use this script
 
-- **Working assumption: 20 minutes** of presentation before Q&A. No presentation length is documented in the manuscript; replace this if the panel gives you one.
-- About **12 minutes 30 seconds (63%)** goes to the live demonstration, which has exactly one slide (slide 10).
-- Lines that start with a presenter's name (e.g. **Hans:**) are spoken word-for-word. Lines in *[brackets]* are cues and are never read aloud. **Operator action** lines are for the person at the keyboard.
+- Estimated length: about 31:05 before Q&A, because the demo explains every card on the Traffic, Incidents and Emissions tabs. No presentation length is documented in the manuscript; if the panel sets a limit, choose cards to skip.
+- About 23:55 (77%) goes to the live demonstration, which has exactly one slide (slide 11).
+- Presenters: Kiarra, Ysa and Hans. Jertz is not attending and stays on the title slide as a team member.
+- Lines that start with a presenter's name are spoken word-for-word. Lines in [brackets] are cues and are never read aloud. "Operator action" lines are for the person at the keyboard.
+- Hans operates the laptop while Kiarra or Ysa speaks; Ysa operates while Hans speaks.
 - Objective text inside quotation marks is the exact wording of Sections 1.4.1 and 1.4.2. Read it verbatim.
-- Values marked **[REHEARSAL: …]** change with live data. Read them off the screen on the day; never memorise a number from rehearsal.
-- Source manuscript: *SmartFlow_NLEX_Chapters_1-3_Revised.docx* (manuscript-exports/Ch1-3_Revision_2026-10-21, rebuilt 2 Nov 2026).
+- Demo style: Speak to the whole room, technical and non-technical. On every screen say three things in this order: the question this screen answers, what the audience is looking at, and the decision it helps with. Point at the chart while you say it. Do not read out numbers unless they help the point; a number is never the point.
+- Values marked [REHEARSAL: …] change with live data. Read them off the screen on the day, or leave them out.
+- Source manuscript: SmartFlow_NLEX_Chapters_1-3_Revised.docx (manuscript-exports/Ch1-3_Revision_2026-10-21, rebuilt 2 Nov 2026).
 
 ### Roles
 
-| Presenter | Role | Main speaking parts |
+| Presenter | Role | Speaking parts |
 |---|---|---|
-| Kiarra | Project Manager | Opening hook, problem, system and team introduction, closing; demo timekeeper |
-| Jertz | Quality Assurance | Objectives, scope, limitations; reading accuracy and limits during the demo |
-| Hans | Lead Developer | Leads the live demo: sign-in, Overview, Live Map, Traffic, Incidents, Scenario Sandbox |
-| Ysa | Developer | Demo operator for Hans's part; presents Emissions, Mobile App configuration and the commuter mobile app |
+| Kiarra | Project Manager | Opening, problem, system and team; demo: Login, Overview, Traffic, Live Map, Settings; closing |
+| Ysa | Developer | Objectives and how we met them; demo: Incidents, Maintenance, Mobile Control |
+| Hans | Lead Developer | Scope and limitations; demo: Emissions, Simulator, Data Management & Audit Log |
 
 Speaking parts are presentation assignments only. They do not indicate who built or tested any feature.
 
@@ -28,24 +30,25 @@ Speaking parts are presentation assignments only. They do not indicate who built
 
 | Slide | Section | Time | Speaker(s) |
 |---|---|---|---|
-| 1 | A. Introduction — SmartFlow NLEX (title) | 0:00–0:25 | Kiarra |
-| 2 | A. Introduction — Illustrative scenario — Friday, 5:00 PM | 0:25–1:05 | Kiarra |
-| 3 | A. Introduction — Two gaps between data and decisions | 1:05–1:50 | Kiarra |
-| 4 | A. Introduction — SmartFlow NLEX merges the lanes | 1:50–2:40 | Kiarra |
-| 5 | B. Objectives — General objective | 2:40–3:25 | Jertz |
-| 6 | B. Objectives — Specific objectives 1–2 | 3:25–4:25 | Jertz |
-| 7 | B. Objectives — Specific objectives 3–4 | 4:25–5:05 | Jertz |
-| 8 | C. Scope and Limitations — Scope — where this route runs | 5:05–6:00 | Jertz |
-| 9 | C. Scope and Limitations — Limitations — know the road conditions | 6:00–6:50 | Jertz |
-| 10 | D. Actual System Demonstration | 6:50–19:20 (12:30) | Hans, Ysa, Jertz |
-| 11 | E. Closing — Closing — Friday, 5:00 PM, again | 19:20–19:56 | Kiarra |
-| 12 | E. Closing — Thank you — Questions? | 19:56–20:00 | Kiarra |
+| 1 | A. Introduction — SmartFlow NLEX (title) | 0:00–0:20 | Kiarra |
+| 2 | A. Introduction — Illustrative scenario — Friday, 5:00 PM | 0:20–0:55 | Kiarra |
+| 3 | A. Introduction — Two gaps between data and decisions | 0:55–1:40 | Kiarra |
+| 4 | A. Introduction — SmartFlow NLEX merges the lanes | 1:40–2:25 | Kiarra |
+| 5 | B. Objectives — General objective | 2:25–3:00 | Ysa |
+| 6 | B. Objectives — Specific objectives 1–2 | 3:00–3:55 | Ysa |
+| 7 | B. Objectives — Specific objectives 3–4 | 3:55–4:25 | Ysa |
+| 8 | B. Objectives — How we met each objective | 4:25–5:20 | Ysa |
+| 9 | C. Scope and Limitations — Scope — where this route runs | 5:20–5:55 | Hans |
+| 10 | C. Scope and Limitations — Limitations — know the road conditions | 5:55–6:30 | Hans |
+| 11 | D. Actual System Demonstration | 6:30–30:25 (23:55) | Kiarra, Ysa, Hans |
+| 12 | E. Closing — Closing — Friday, 5:00 PM, again | 30:25–31:01 | Kiarra |
+| 13 | E. Closing — Thank you — Questions? | 31:01–31:05 | Kiarra |
 
-Approximate spoken words per presenter (at ~140 words per minute): Kiarra 481 · Jertz 732 · Hans 1020 · Ysa 328.
+Approximate spoken words per presenter (~130 words per minute): Kiarra 1553 · Ysa 1141 · Hans 973.
 
 ## A. Introduction
 
-### Slide 1 — SmartFlow NLEX (title) · 0:00–0:25
+### Slide 1 — SmartFlow NLEX (title) · 0:00–0:20
 
 *[Kiarra stands centre. Slide 1 is already showing when the panel is ready.]*
 
@@ -53,347 +56,480 @@ Approximate spoken words per presenter (at ~140 words per minute): Kiarra 481 ·
 
 *[Pause]*
 
-**Kiarra:** Today we want to take you on a short journey — from a familiar problem on the expressway to a system you will see running live. Let me start with a moment many of us know.
+**Kiarra:** Let me start with a moment many of us know.
 
 *[Advance slide]*
 
-### Slide 2 — Illustrative scenario — Friday, 5:00 PM · 0:25–1:05
+### Slide 2 — Illustrative scenario — Friday, 5:00 PM · 0:20–0:55
 
-**Kiarra:** Picture this. It is Friday, five in the afternoon, at the start of a long weekend. You are heading north from Balintawak, at kilometre twelve. This is an illustrative scenario, not a recorded event — but the situation is familiar.
+**Kiarra:** Picture this. It is Friday, five in the afternoon, at the start of a long weekend. You are heading north from Balintawak, at kilometre twelve. This is an illustrative scenario, not a recorded event — but it is familiar.
 
-**Kiarra:** Right now, everyone can see the traffic. Navigation apps show red lines. Social media shows photos of the toll plaza.
+**Kiarra:** Right now, everyone can see the traffic. Navigation apps show red lines.
 
 *[Pause — gesture to the 'In 2 hours' and 'Tomorrow' markers]*
 
-**Kiarra:** But the operator in the control room needs to answer a harder question. Not "What is happening?" — but "What is likely to happen next, and what should we do before it does?"
+**Kiarra:** But the operator in the control room needs a harder answer. Not "What is happening?" — but "What is likely to happen next, and what should we do before it does?"
 
 *[Advance slide]*
 
-### Slide 3 — Two gaps between data and decisions · 1:05–1:50
+### Slide 3 — Two gaps between data and decisions · 0:55–1:40
 
-**Kiarra:** Our manuscript found two gaps behind that question.
+**Kiarra:** Behind that question are two gaps.
 
-**Kiarra:** The first gap: the data look backward. Traffic, incident and toll data are presented mainly as summaries of current or past conditions. There is no forecasting layer to anticipate surges from weather, holidays or events.
+**Kiarra:** First, the data look backward. Traffic, incident and toll data are shown mainly as summaries of what already happened. There is no forecasting layer to warn about surges from weather, holidays or events.
 
-**Kiarra:** The second gap: the data travel in separate lanes. Toll records, incident logs, crowdsourced reports, weather and event schedules are held separately, never combined in one analytical pipeline.
+**Kiarra:** Second, the data travel in separate lanes. Toll records, incident logs, crowdsourced reports, weather and event schedules are kept apart, never combined in one place.
 
-**Kiarra:** And the stakes are real. For Holy Week 2025, traffic across NLEX, SCTEX and the NLEX Connector was projected to peak at about four hundred ninety-three thousand vehicles a day, against about three hundred fifty thousand on a regular NLEX day.
+**Kiarra:** And this matters, because NLEX is one road carrying two kinds of trips: goods moving between Metro Manila and the provinces, and the daily commute of workers and students. When the expressway slows, both are delayed together — most of all at rush hour, on long weekends and on holidays.
 
 *[Advance slide]*
 
-### Slide 4 — SmartFlow NLEX merges the lanes · 1:50–2:40
+### Slide 4 — SmartFlow NLEX merges the lanes · 1:40–2:25
 
-**Kiarra:** So we built SmartFlow NLEX to merge those lanes.
+**Kiarra:** So we built SmartFlow NLEX to merge those lanes. It brings six kinds of data into one place — toll, incident, Waze, weather, holiday and event data — and answers four questions. What happened? What is likely next? What should we consider doing? And can we test it before we act?
 
-**Kiarra:** It brings six kinds of data into one warehouse — toll, incident, Waze, weather, holiday and event data — and answers four questions. What happened? What is likely next? What response should we consider? And can we test it before we act?
+**Kiarra:** Operators use a desktop dashboard. Commuters use a mobile app. And one rule runs through all of it: the system advises — operators decide.
 
-**Kiarra:** Operators see the results in a desktop dashboard. Commuters see them in a mobile app. One principle runs through all of it: the system advises — operators decide.
+**Kiarra:** I am Kiarra, the project manager. With me are Ysa, our developer, and Hans, our lead developer. Our quality assurance lead, Jertz, cannot be with us today. Ysa will now show you where this journey is headed.
 
-**Kiarra:** I am Kiarra, the project manager. With me are Jertz, our quality assurance lead; Hans, our lead developer; and Ysa, our developer.."] Jertz will now show you where this journey is headed.
-
-*[Handoff — Kiarra steps back; Jertz steps forward]*
+*[Handoff — Kiarra steps back; Ysa steps forward]*
 
 *[Advance slide]*
 
 ## B. Objectives
 
-### Slide 5 — General objective · 2:40–3:25
+### Slide 5 — General objective · 2:25–3:00
 
-**Jertz:** Thank you, Kiarra. Every journey needs a destination. Ours is our general objective, which I will read exactly as approved.
+**Ysa:** Thank you, Kiarra. Every journey needs a destination. Ours is our general objective, which I will read exactly as approved.
 
 *[Read verbatim — do not paraphrase]*
 
-**Jertz:** "The general objective of this capstone project is to develop and evaluate SmartFlow NLEX, a centralized decision-intelligence platform that leverages a 4-year historical NLEX dataset alongside real-time crowdsourced and external data to optimize proactive traffic management and incident response. By reducing traffic congestion, the capstone project proposal will support SDG 9 (Industry, Innovation, and Infrastructure) through lower vehicular carbon emissions."
-
-**Jertz:** In simple terms: use four years of history plus live data to help operators act earlier. To get there, we set four waypoints.
+**Ysa:** "The general objective of this capstone project is to develop and evaluate SmartFlow NLEX, a centralized decision-intelligence platform that leverages a 4-year historical NLEX dataset alongside real-time crowdsourced and external data to optimize proactive traffic management and incident response. By reducing traffic congestion, the capstone project proposal will support SDG 9 (Industry, Innovation, and Infrastructure) through lower vehicular carbon emissions."
 
 *[Advance slide]*
 
-### Slide 6 — Specific objectives 1–2 · 3:25–4:25
+### Slide 6 — Specific objectives 1–2 · 3:00–3:55
 
-**Jertz:** Specific Objective 1:
+**Ysa:** To get there, we set four specific objectives. Specific Objective 1:
 
-**Jertz:** "To evaluate response strategies within an Agent-Based Simulation Sandbox in order to minimize expressway downtime and maximize vehicle throughput during incidents or demand surges, providing NLEX management with a risk-free, data-driven environment to test operational decisions before live deployment using a custom HTML5 Canvas-based simulation interface."
+**Ysa:** "To evaluate response strategies within an Agent-Based Simulation Sandbox in order to minimize expressway downtime and maximize vehicle throughput during incidents or demand surges, providing NLEX management with a risk-free, data-driven environment to test operational decisions before live deployment using a custom HTML5 Canvas-based simulation interface."
 
-**Jertz:** In other words: try a response on a virtual road first.
+**Ysa:** Specific Objective 2:
 
-**Jertz:** Specific Objective 2:
-
-**Jertz:** "To develop the "SmartFlow NLEX" decision-intelligence system for NLEX operators using a custom-built Next.js and TypeScript web dashboard. This system aims to merge and visualize real-time, multi-source data streams across web and conversational channels. By doing so, we will provide operators with a highly usable, accessible platform that simplifies complex data, streamlines operational decision-making, and ensures widespread user adoption."
-
-**Jertz:** That is the dashboard you will see in a few minutes.
+**Ysa:** "To develop the "SmartFlow NLEX" decision-intelligence system for NLEX operators using a custom-built Next.js and TypeScript web dashboard. This system aims to merge and visualize real-time, multi-source data streams across web and conversational channels. By doing so, we will provide operators with a highly usable, accessible platform that simplifies complex data, streamlines operational decision-making, and ensures widespread user adoption."
 
 *[Advance slide]*
 
-### Slide 7 — Specific objectives 3–4 · 4:25–5:05
+### Slide 7 — Specific objectives 3–4 · 3:55–4:25
 
-**Jertz:** Specific Objective 3:
+**Ysa:** Specific Objective 3:
 
-**Jertz:** "To analyze a 4-year historical NLEX dataset to map and identify recurring systemic inefficiencies and traffic congestion patterns for strategic capacity planning using Python and RStudio."
+**Ysa:** "To analyze a 4-year historical NLEX dataset to map and identify recurring systemic inefficiencies and traffic congestion patterns for strategic capacity planning using Python and RStudio."
 
-**Jertz:** Specific Objective 4:
+**Ysa:** Specific Objective 4:
 
-**Jertz:** "To deploy existing multi-source predictive models within the SmartFlow NLEX dashboard that forecast expressway conditions using integrating historical toll records, crowdsourced data, weather inputs, and event schedules using existing machine learning algorithms."
+**Ysa:** "To deploy existing multi-source predictive models within the SmartFlow NLEX dashboard that forecast expressway conditions using integrating historical toll records, crowdsourced data, weather inputs, and event schedules using existing machine learning algorithms."
 
-**Jertz:** Put simply: learn from the past, then forecast what comes next — and show how accurate each forecast is.
+*[Advance slide]*
+
+### Slide 8 — How we met each objective · 4:25–5:20
+
+**Ysa:** Here is how each objective became something you can see — and where you will see it in the demo.
+
+**Ysa:** The general objective became one place that joins all six data sources, with pages that explain the past, forecast the future and suggest responses. You will see it in every tab.
+
+**Ysa:** Objective one became the Simulator: a virtual road where an operator compares a response with doing nothing. Objective two became the dashboard itself — secure sign-in, pages for each role, and a command box you can simply type to.
+
+**Ysa:** Objective three became the Descriptive tabs, built from our analysis of the 2022 to 2025 record. And objective four became the Predictive tabs, where every forecast is tested against a simple rule of thumb before we show it. Hans will tell you the boundaries.
+
+*[Handoff — Ysa steps back; Hans steps forward]*
 
 *[Advance slide]*
 
 ## C. Scope and Limitations
 
-### Slide 8 — Scope — where this route runs · 5:05–6:00
+### Slide 9 — Scope — where this route runs · 5:20–5:55
 
-**Jertz:** Now, the route itself. SmartFlow NLEX covers the NLEX main line, from Balintawak at kilometre twelve to Sta. Ines at kilometre eighty-seven — twenty exits, about seventy-six kilometres.
+**Hans:** Thanks, Ysa. SmartFlow NLEX covers the NLEX main line, from Balintawak at kilometre twelve to Sta. Ines at kilometre eighty-seven — twenty exits, about seventy-six kilometres.
 
-**Jertz:** It serves four kinds of users. On the dashboard: Traffic Control Center operators, incident operators and NLEX data analysts. On the mobile app: commuters and drivers.
-
-**Jertz:** It reads hourly toll records from January 2022 to December 2025, NLEX incident records, the Waze archive and a live feed refreshed about every two minutes, plus weather, air quality, holidays and a calendar of one hundred fifty-nine events.
-
-**Jertz:** And it does four things: it describes past patterns, it forecasts — including congestion for each exit from one to one hundred sixty-eight hours ahead — it recommends responses, and it lets operators test them in a sandbox. It also estimates emissions.
+**Hans:** It serves Traffic Control Center operators, incident operators and data analysts on the dashboard, and commuters on the mobile app. It reads toll and incident records from 2022 to 2025, the Waze feed, weather, holidays and an events calendar. And it describes, forecasts, recommends and simulates.
 
 *[Advance slide]*
 
-### Slide 9 — Limitations — know the road conditions · 6:00–6:50
+### Slide 10 — Limitations — know the road conditions · 5:55–6:30
 
-**Jertz:** Before we drive, a QA lead should tell you the road conditions. Here are the limits we want you to keep in mind during the demo.
+**Hans:** Before we drive, here are the road conditions — the limits to keep in mind during the demo.
 
-**Jertz:** First, the system is advisory. It does not control barriers, signs or patrol units. Second, it is evaluated as a capstone demonstration, not in live NLEX operations — so any reduction in congestion or emissions is estimated from history and simulation, not observed.
+**Hans:** The system only advises; it does not control barriers, signs or patrol units. It has not been used in live NLEX operations, so any benefit is estimated from history and simulation. Forecasts and emission figures are estimates, not certainties. And live features need the internet and outside services.
 
-**Jertz:** Third, forecasts are estimates. Several models beat simple baselines only modestly, and anything beyond the validated horizon is labelled unvalidated. Fourth, emissions are estimates from fixed European factors, not roadside measurements. And finally, live features depend on the internet and on outside providers.
+**Hans:** With that, Kiarra will take us into the system.
 
-**Jertz:** With that, let's see it working. Hans?
-
-*[Handoff — Hans moves to the demo laptop]*
+*[Handoff — Kiarra moves beside the screen; Hans goes to the demo laptop as operator]*
 
 *[Advance slide]*
 
 ## D. Actual System Demonstration
 
-### Slide 10 — Actual System Demonstration · 6:50–19:20
+### Slide 11 — Actual System Demonstration · 6:30–30:25
 
-*[Slide 10 stays on screen while Hans introduces the demo.]*
+*[Slide 11 stays on screen during the lead-in.]*
 
-**Hans:** Thank you, Jertz. For the next twelve minutes, we follow one operator through a shift — signing in, seeing what is happening, forecasting what comes next, and testing a response before acting. Then Ysa shows the commuter's side. Ysa drives the keyboard while I explain.
+**Kiarra:** Now let's leave the slides and see it working. We will go tab by tab, the way an operator moves through a shift. For every screen, we will tell you the question it answers and the decision it helps with. Hans is at the keyboard.
 
 *[Switch to live system]*
 
-**Before the defense (operator checklist):**
+**Before the defense (checklist):**
 
-- Sign in on the demo laptop is NOT done in advance: the sign-in is part of the demo. Have a Data Analyst account ready (it is the only role that sees every page, including Emissions) and the authenticator app on Ysa's phone.
-- Open the dashboard in a window sized to the projector (1920×1080 or 1440×900). Set Appearance to Light theme in Settings so it matches slide 10.
-- Warm every page once 15–30 minutes before the defense (Overview, Live Map, Traffic, Incidents, Emissions, Scenario Sandbox, Mobile App). The demonstration API is on a free tier and can take several seconds after inactivity. The Live Map needs 20–35 seconds for map tiles the first time.
-- Check the Overview freshness line says "Live", not "Feed stale". If it says stale, say so in the demo — do not hide it.
-- Phone: install the SmartFlow NLEX mobile app, sign in (two-step), and mirror the screen to the projector laptop (e.g. scrcpy or the vendor's screen-mirroring app). Test the mirror on the venue projector.
-- Prepare the advisory text in advance: "Demo advisory: lane works near Km 20 southbound this afternoon." Delete it after the defense.
-- Rehearsal check: confirm the sandbox flow — Capture baseline, then Apply the Copilot plan, then Play — fills the "Before / after" panel. If the order differs on the day, follow what the screen asks and keep the narration.
-- Keep PowerPoint running in Slide Show on slide 10 so Alt+Tab returns to it.
-- Rehearse once on the defense network, and write the day's numbers in the [REHEARSAL] blanks only as a guide — always read live values off the screen.
+- Sign in is part of the demo, so do not sign in beforehand. Use a Data Analyst account: it is the only role that sees every tab, including Emissions, Data Management and Audit Log. Keep the authenticator app ready on Hans's phone.
+- Open the dashboard sized to the projector (1920×1080 or 1440×900). Set Settings › Appearance to the Light theme so it matches the slides.
+- Warm every tab 15–30 minutes before the defense. The demonstration server is on a free tier and can be slow after a pause; the Live Map needs 20–35 seconds for map tiles the first time.
+- Check that the Overview freshness line says "Live", not "Feed stale". If it is stale on the day, say so — do not hide it.
+- Descriptive views: set Range to "Custom", 1 Jan 2022 – 31 Dec 2025 (the period the manuscript reports). Do not use "All".
+- Data Management: prepare a small sample file in the NLEX export format (for example, a few days of the hourly toll export) and use "Check only", which checks the file without loading it. [REHEARSAL: sample file name.]
+- Maintenance and Mobile Control write to the shared system. Prepare the demo text in advance, and after the defense delete the demo maintenance schedule and the demo advisory.
+- Rehearsal check: confirm that in the Simulator, "Capture baseline" → Copilot "Apply" → "Play" fills the "Before / after" panel. If the order differs on the day, follow what the screen asks.
+- Keep PowerPoint running in Slide Show on slide 11 so Alt+Tab returns to it.
 
-#### Demo 1 — Sign-in (two-step) · 7:10–7:55 (0:45)
+#### Demo 1 — Login · 6:50–7:25 (0:35)
 
-*Speaker: Hans · Operator: Ysa · Objective link: SO 2*
+*Speaker: Kiarra · Operator: Hans · Objective: SO 2*
 
-> **Operator action:** On the sign-in page, type the Data Analyst email and password, click "Sign In". On "Enter Your Code", type the 6-digit code from the authenticator app, leave "Remember this device for 7 days" unticked, click "Verify".
+> **Operator action:** Type the Data Analyst email and password, click "Sign In". On "Enter Your Code", type the 6-digit code from the authenticator app (leave "Remember this device for 7 days" unticked), click "Verify".
 
-**Hans — Spoken:** “Our operator starts the shift here. SmartFlow NLEX is decision support for a public expressway, so access matters. Signing in takes two steps: a password, then a six-digit code from an authenticator app on the operator's phone.”
+**Kiarra:** “Every shift starts here. The question this screen answers is simple: is this person allowed in? Signing in takes two steps — a password, and then a six-digit code from an app on the operator's phone. So even if someone learns a password, they still cannot get in.”
 
-**Hans — Spoken:** “What you see next depends on your role. We are signed in as a data analyst, who sees every page. A Traffic Control Center operator does not see Emissions, data uploads or the audit log, and an incident operator also does not see the sandbox.”
+**Kiarra:** “What you see after this depends on your job. We are signed in as a data analyst, who sees every tab. Other roles see only the tabs they need.”
 
-*[Wait for the Overview to load]*
+#### Demo 2 — Overview · 7:25–8:10 (0:45)
 
-#### Demo 2 — Overview · 7:55–8:50 (0:55)
+*Speaker: Kiarra · Operator: Hans · Objective: SO 2 · GO*
 
-*Speaker: Hans · Operator: Ysa · Objective link: SO 2 · GO*
+**Kiarra:** “This is the Overview, and it answers the first question of every shift: how is the expressway right now?”
 
-**Hans — Spoken:** “This is the Overview. Remember Kiarra's question: what is happening right now? This page answers it in one glance.”
+> **Operator action:** Point at the freshness line under the title, then at the headline card and "Slowest reading on the corridor".
 
-> **Operator action:** Point the cursor at the freshness line under the title.
-
-**Hans — Spoken:** “First, we check that the data are fresh. This line says the Waze jam reports are [REHEARSAL: "Live · just now"] and covers a sixty-minute window. If the feed ever falls behind, the same line says "Feed stale" — the system tells you when not to trust it.”
-
-> **Operator action:** Point at the headline card and "Slowest reading on the corridor".
-
-**Hans — Spoken:** “Right now, [REHEARSAL: N] exit-directions are congested, and the slowest reading on the corridor is at [REHEARSAL: exit · N km/h].”
+**Kiarra:** “This small line tells you how fresh the information is — here it says Live. Next to it, the system tells you how many exits are congested right now, and where traffic is slowest. You do not have to read a chart; it says it in words.”
 
 > **Operator action:** Scroll down to "Live Corridor Status".
 
-**Hans — Spoken:** “Below, Live Corridor Status lays out every exit from Balintawak to Sta. Ines, in both directions, coloured congested, slow or clear. This is the present. But an operator's job is the next few hours — so let's open the Live Map.”
+**Kiarra:** “Below, every exit from Balintawak to Sta. Ines is marked congested, slow or clear, each in its own colour. In one look, the operator knows where to pay attention first.”
 
-#### Demo 3 — Live Map · 8:50–10:00 (1:10)
+#### Demo 3 — Traffic › Descriptive · 8:10–11:05 (2:55)
 
-*Speaker: Hans · Jertz · Operator: Ysa · Objective link: SO 2 · SO 4*
+*Speaker: Kiarra · Operator: Hans · Objective: SO 3*
 
-> **Operator action:** Click "Live Map" in the sidebar (Operations group). Wait for both maps to draw (allow up to 30 seconds on first load).
+> **Operator action:** Click "Traffic". On "Descriptive", set Range "Custom" (1 Jan 2022 – 31 Dec 2025). Point along the row of summary cards.
 
-**Hans — Spoken:** “The Live Map puts two maps side by side. On the left, Waze Real-Time Traffic: jams and alerts reported by drivers, refreshed about every two minutes. On the right, Forecasted Traffic: the congestion state our model expects at each exit.”
+**Kiarra:** “Every analytics tab has three parts, shown at the top: what happened, what's next, and what to do. We start with what happened.”
 
-> **Operator action:** On the timeline under the maps, click "Next 24 h". Use "Jump to exit…" and choose [REHEARSAL: the congested exit named on the Overview].
+**Kiarra:** “The top row is a quick summary of the period we picked. Total Volume is how many vehicles passed through the NLEX toll plazas. Average Daily Volume is the same thing per day. Peak Hour is the busiest hour on a normal weekday. Busiest Plaza is the toll plaza with the most traffic. And the Congestion Index tells you how bad jams are when they happen, on a scale from one, light, to five, standstill — based on Waze reports.”
 
-**Hans — Spoken:** “With the timeline, the operator can move forward in time — here, the next twenty-four hours. Now we are not just looking at traffic. We are looking at traffic that has not happened yet.”
+> **Operator action:** Point at "Volume Trend".
 
-**Jertz — Spoken:** “One quality note. The percentage beside the forecast model — labelled accurate, and ML Confidence — is the model's R-squared: how well it fits past data, not the share of correct forecasts. And the exit-level forecast is only modestly better than the usual pattern for that exit and hour, which is why we show it beside the live data.”
+**Kiarra:** “Volume Trend answers: is traffic going up or down over time? The faint line is each day. The bold line is the seven-day average, which smooths out the daily ups and downs so the direction is easy to see. We can also show one vehicle class, or split northbound and southbound.”
 
-**Hans — Spoken:** “Thanks, Jertz. So where do these forecasts come from? Let's go to Traffic.”
+> **Operator action:** Scroll to "Volume by Plaza".
 
-#### Demo 4 — Traffic › Descriptive · 10:00–10:55 (0:55)
+**Kiarra:** “Volume by Plaza answers: which toll plazas carry the most traffic? The longest bars are where extra toll staff matter most. One note: the SCTEX bar counts vehicles entering NLEX from SCTEX — it is not an NLEX exit.”
 
-*Speaker: Hans · Operator: Ysa · Objective link: SO 3*
+> **Operator action:** Point at "Holiday Impact vs Normal Days". Then click the "Events" toggle (the title changes to "Arena Event Impact (venue exit entries)"), then back to "Holidays".
 
-> **Operator action:** Click "Traffic". Make sure the "Descriptive" tab is selected. Set Range to "Custom": 1 Jan 2022 – 31 Dec 2025 (the period the manuscript reports; do not use "All"). Scroll to "Average Volume by Hour and Day".
+**Kiarra:** “This card answers: how different is a holiday from a normal day? Each bar shows how far above or below normal the traffic was, compared with the same weekday in the weeks around it. Switch to Events, and it does the same for event days at the Philippine Arena exit.”
 
-**Hans — Spoken:** “Traffic has three tabs that follow our analytics: Descriptive — what happened; Predictive — what's next; and Prescriptive — what to do.”
+> **Operator action:** Scroll to "Average Volume by Hour and Day".
 
-**Hans — Spoken:** “Descriptive first. This heatmap, Average Volume by Hour and Day, is built from four years of hourly toll records, January 2022 to December 2025. Each cell is an hour of the week. The darker cells are the recurring peaks — [REHEARSAL: describe the darkest band, e.g. weekday mornings and Friday evenings]. These are the patterns our third objective asked us to map.”
+**Kiarra:** “Average Volume by Hour and Day answers: when is NLEX usually busiest? Each square is one hour of one day of the week. The darker the square, the more vehicles. When the same squares are dark every week, that is a pattern we can plan for, not a surprise.”
 
-> **Operator action:** On the events/holidays card, click the "Holidays" toggle (title becomes "Holiday Impact vs Normal Days").
+> **Operator action:** Point at "Average Speed in Jams by Hour" beside it.
 
-**Hans — Spoken:** “And here we compare holidays with normal days around them, so the operator sees how much a long weekend actually changes demand at each plaza. History tells us what usually happens. Next, the forecast tells us what is likely this time.”
+**Kiarra:** “And beside it: when jams happen, how slow are they at each hour of the day? This comes from Waze jam reports, so it shows which hours have the worst jams — not the speed of all traffic.”
 
-#### Demo 5 — Traffic › Predictive · 10:55–12:20 (1:25)
+#### Demo 4 — Traffic › Predictive · 11:05–13:20 (2:15)
 
-*Speaker: Hans · Jertz · Operator: Ysa · Objective link: SO 4*
+*Speaker: Kiarra · Operator: Hans · Objective: SO 4*
 
-> **Operator action:** Click the "Predictive" tab. Wait for "Traffic Volume Walk-Forward Forecast".
+> **Operator action:** Click "Predictive". Point at "Traffic Volume Walk-Forward Forecast".
 
-**Hans — Spoken:** “This is the Traffic Volume Walk-Forward Forecast: past, present and future. Five candidate models are trained. The one with the lowest error on held-out data — which must also beat a simple baseline — becomes the champion, re-selected at every weekly retraining. Today it is [REHEARSAL: champion model name].”
+**Kiarra:** “Now, what's next. The first card answers: how many vehicles should we expect in the coming weeks? The chart has three parts. On the left is the past the model learned from. In the middle is a test period, where we check its forecast against what really happened. On the right is the future.”
 
-> **Operator action:** On the card's "Validation evidence" strip, click "View".
+**Kiarra:** “We tried five forecasting methods — these buttons. The one selected first did best in the test, and it had to beat a simple rule of thumb: "next week will look like last week."”
 
-**Jertz — Spoken:** “This is what QA cares about most. Every forecast comes with its evidence: the champion, the period it was tested on, and its error — here [REHEARSAL: accuracy / WMAPE value] — next to a naive baseline, which simply repeats the same day of last week. A model that cannot beat that should not be trusted, and some of our candidates, like the daily LSTM, did not.”
+> **Operator action:** Click "View" on the "Validation evidence" strip. Close it after the next line.
 
-> **Operator action:** Close the modal. Scroll to "Predictive Congestion State Map". Set Range to "Next 24 h".
+**Kiarra:** “This box is the proof: which method won, when it was tested, and how far off it usually is. That tells the operator how much to trust the forecast.”
 
-**Hans — Spoken:** “Below, the Predictive Congestion State Map shows low, medium or high congestion for each exit, hour by hour, up to seven days ahead, refreshed every hour. The commuter app uses this same forecast.”
+> **Operator action:** Set View to "Daily". Click a day inside the short dashed 48-hour line [REHEARSAL: pick that day]. After the next line, click "← Back to daily".
 
-*[Optional, only if on time: click "Generate report" on the volume card]*
+**Kiarra:** “Clicking a day breaks it down hour by hour. The black line is what really happened. The dashed line is a second, hour-by-hour forecast made just for the next two days.”
 
-**Hans — Spoken:** “[Optional] And if an operator prefers words to charts, "Generate report" asks a language model to explain the chart in plain language — using only the values already shown, and with a fixed template if the model is unavailable. It explains the result; it never changes it.”
+> **Operator action:** Scroll to "Predictive Congestion State Map". Set Range to "Next 24 h".
 
-#### Demo 6 — Traffic › Prescriptive · 12:20–13:00 (0:40)
+**Kiarra:** “The Predictive Congestion State Map answers: which exits are likely to have a jam, and at what hour? Each row is an exit and each column is an hour ahead. The colour says moving, heavy or severe. It updates every hour and can look up to seven days ahead, and the list beside it names the stretches to act on.”
 
-*Speaker: Hans · Operator: Ysa · Objective link: GO · SO 2*
+> **Operator action:** Scroll to "Event Surge Impact by Exit". Open the "Showing" selector to show the choices, then close it.
 
-> **Operator action:** Click the "Prescriptive" tab. On "Booth Staffing Plan", point at the slider "One booth serves N veh/hr" (default 350).
+**Kiarra:** “Event Surge Impact by Exit answers: when there is an event at the Philippine Arena, which exits get the extra traffic, and how much? The longer the bar, the more extra vehicles per day. We can look at past events, or choose an upcoming event date.”
 
-**Hans — Spoken:** “A forecast is only useful if it leads to a decision. On the Prescriptive tab, the Booth Staffing Plan turns the forecast volume into how many toll booths to open per plaza, per hour.”
+#### Demo 5 — Traffic › Prescriptive · 13:20–14:50 (1:30)
 
-> **Operator action:** Drag the slider from 350 to about 300, then back.
+*Speaker: Kiarra · Operator: Hans · Objective: GO · SO 2*
 
-**Hans — Spoken:** “The assumption is visible: one booth serves three hundred fifty vehicles an hour by default. If a plaza is slower, the operator changes it and the plan updates — [REHEARSAL: plaza, hour, booths before → after]. Below, the Congestion Response Advisory flags exits where severe congestion is predicted. All of these are recommendations; the operator decides. Now, the other half of the job — incidents.”
+> **Operator action:** Click "Prescriptive". Point at "Staffing Priority". Switch "Week ahead" to "Hour by hour" and back.
 
-#### Demo 7 — Incidents · 13:00–14:05 (1:05)
+**Kiarra:** “And finally, what to do. Staffing Priority answers: where and when will traffic go above normal this week, so we can add toll staff? It compares the forecast with each plaza's usual level, names the plaza and hour to staff first, and says how sure it is. We can see the whole week, or hour by hour.”
 
-*Speaker: Hans · Jertz · Operator: Ysa · Objective link: SO 3 · GO*
+> **Operator action:** Point at "Congestion Response Advisory".
 
-> **Operator action:** Click "Incidents". On "Descriptive", set Range to "Custom": 1 Jan 2022 – 31 Dec 2025 (if Custom is not offered here, use "All" and do not quote a period). Scroll to "Hotspots by Km Segment".
+**Kiarra:** “The Congestion Response Advisory answers: in the next twelve hours, which stretches need action? "Act" means prepare a counter-flow plan, send an advisory to the mobile app and alert the control room before the jam is expected. "Monitor" means keep watching. It also shows how often its past "Act" calls turned out right — so the operator knows how much weight to give it.”
 
-**Hans — Spoken:** “Incidents follow the same three tabs. On the descriptive side, Hotspots by Km Segment ranks the stretches of the corridor where accidents and breakdowns concentrate. The top segment in the 2022 to 2025 record is [REHEARSAL: Km segment].”
+> **Operator action:** Point at "Event Intervention Ranking".
+
+**Kiarra:** “Event Intervention Ranking answers: on an event day, which exits should get patrols and advisories first? It ranks the exits by the extra traffic we are most confident about, so the top of the list is the safest place to start. All of these are suggestions — the operator decides. Ysa?”
+
+*[Handoff — Ysa speaks; Hans stays at the keyboard]*
+
+#### Demo 6 — Incidents › Descriptive · 14:50–17:25 (2:35)
+
+*Speaker: Ysa · Operator: Hans · Objective: SO 3*
+
+> **Operator action:** Click "Incidents". On "Descriptive", set Range "Custom" (1 Jan 2022 – 31 Dec 2025). Point along the summary cards.
+
+**Ysa:** “Thank you, Kiarra. Incidents follow the same three steps, starting with what happened.”
+
+**Ysa:** “The top row summarises the period. Total Incidents counts accidents and breakdowns. Injuries counts people hurt. Average Response Time is how long breakdowns waited for a response, from the dispatch log. Average Time to Clear is how long it took until the road was clear. Top Hotspot is the five-kilometre stretch with the most incidents. And Crash Rate in Rain tells us how many times more crashes happen when it rains, compared with the same hours when it is dry.”
+
+> **Operator action:** Point at "Incident Trend".
+
+**Ysa:** “Incident Trend answers: are incidents going up or down? Accidents are on top and breakdowns below. Each has its own scale, so compare the shapes, not the heights.”
+
+> **Operator action:** Scroll to "Hotspots by Km Segment".
+
+**Ysa:** “Hotspots by Km Segment answers: where on the expressway do incidents happen most? Each bar is a stretch of road, named after its nearest exit.”
+
+> **Operator action:** Point at the causes card; click "Accident causes", "Breakdown causes", then "Types".
+
+**Ysa:** “This card answers: why do they happen? We can switch between the top causes of accidents, the top causes of breakdowns, and the types of accidents.”
 
 > **Operator action:** Scroll to "Dry vs Wet: Incidents per Day".
 
-**Hans — Spoken:** “And this compares incidents per day in dry and wet weather — useful when a rainy Friday is in the forecast.”
+**Ysa:** “Dry versus Wet answers: does rain make things worse? It compares incidents per day in dry and in wet weather, adjusted for how many hours were actually wet — so it is a fair comparison.”
 
-> **Operator action:** Click the "Prescriptive" tab. On "Clearance Response Protocol", set Type "Accident", Severity "Injury", Weather "Wet", Demand "Peak".
+> **Operator action:** Point at "Incidents by Hour and Day". Click one dark square.
 
-**Hans — Spoken:** “On the prescriptive side, the Clearance Response Protocol suggests how many response units to send and when to escalate, for the situation the operator describes — here, an injury accident, in the rain, at peak demand.”
+**Ysa:** “Incidents by Hour and Day answers: at what time do incidents usually happen? Darker squares mean more incidents. Clicking a square shows how many were accidents and how many were breakdowns.”
 
-**Jertz — Spoken:** “Two reminders. The protocol learns from historical clearance times, and only from the records that have one. And it dispatches no one — it shows its assumptions so an operator can judge it.”
+> **Operator action:** Scroll to "Response Time Breakdown". Switch the group from "By Cause" to "By Service".
 
-**Hans — Spoken:** “Which brings us to the question every operator wants answered before committing a crew: what if we try it first?”
+**Ysa:** “And Response Time Breakdown answers: which kinds of breakdowns, or which response services, take the longest? We can group by cause or by service, and show the typical response time or the time spent on scene. Longer bars point to where response can improve.”
 
-#### Demo 8 — Scenario Sandbox · 14:05–16:30 (2:25)
+#### Demo 7 — Incidents › Predictive · 17:25–18:50 (1:25)
 
-*Speaker: Hans · Operator: Ysa · Objective link: SO 1*
+*Speaker: Ysa · Operator: Hans · Objective: SO 4*
 
-> **Operator action:** Click "Scenario Sandbox" (Planning group). Set "Carriageway" to "SB". In Simulation Controls › Corridor, choose "Km range" and set a short stretch around Km 20 (e.g. From km 19 to To km 23), then click "Set a km range".
+> **Operator action:** Click "Predictive". Point at "Incident Walk-Forward Forecast".
 
-**Hans — Spoken:** “This is the Scenario Sandbox — our first specific objective. Every car you will see is an agent. Each one follows rules for keeping a safe distance and for changing lanes, and congestion emerges from how they interact. The traffic flowing in is drawn from our warehouse data, not invented.”
+**Ysa:** “Next, what's likely. The Incident Walk-Forward Forecast answers: how many incidents should we prepare for each day? It reads the same way as the traffic forecast — past, test, future — and it was tested against the same kind of simple rule of thumb before we show it. The evidence box shows that test.”
 
-> **Operator action:** Click "Play". Set speed to "10×". Let it run about 10 seconds. Then click "Capture baseline".
+> **Operator action:** Scroll to "Predicted Incident Hotspots". Keep Horizon at "7d".
 
-**Hans — Spoken:** “First, we let the road run normally and capture that as our baseline — the no-intervention case. Every result will be compared against it.”
+**Ysa:** “Predicted Incident Hotspots answers: which exits are likely to have the most incidents in the coming days? The colours rank the exits against each other: High means the top quarter for this period. Grey means there is no history there — unknown, not safe. The first day is the most reliable; later days show the general shape.”
 
-> **Operator action:** Open the "Command" tab (SmartFlow Copilot). Type: isara lane 4 southbound mula Km 20.1 hanggang 20.4 — click "Execute Command". Wait for "Interpreting…". Read the proposed plan, then click "Apply".
+> **Operator action:** Scroll to "Expected Breakdown Response Time". Pick a Day and a Time.
 
-**Hans — Spoken:** “Now the scenario. Instead of clicking controls, an operator can type an instruction in English, Filipino or Taglish — here, in Filipino: close lane four southbound from kilometre 20.1 to 20.4. [Pause] Nothing changes yet. The Copilot shows the plan it understood and waits for Apply. A language model reads the sentence; the operator stays in control.”
+**Ysa:** “And Expected Breakdown Response Time answers: at this day and time, how long does a breakdown response usually take, for each cause or service? It is based on past dispatches at the same time, so the operator can see when response tends to be slow.”
 
-> **Operator action:** Click "Play" (10×). Let it run 20–30 seconds. Point at the queue forming at the closure, then at the "Before / after" panel.
+#### Demo 8 — Incidents › Prescriptive · 18:50–20:05 (1:15)
 
-**Hans — Spoken:** “Watch the cars merge out of the closed lane — and watch the queue grow behind it. The Before / after panel compares the two runs: average speed, throughput, longest queue and the CO₂ rate. With the closure, [REHEARSAL: avg speed X → Y km/h; longest queue A → B].”
+*Speaker: Ysa · Operator: Hans · Objective: GO*
+
+> **Operator action:** Click "Prescriptive". Point at "Resource Staging & Patrol Repositioning".
+
+**Ysa:** “And what to do. Resource Staging answers: where should response units wait? It lists the exits in order — put the first unit here, the second there — and shows how many of the expected incidents three or five units would cover.”
+
+> **Operator action:** Scroll to "Patrol Alert Schedule".
+
+**Ysa:** “The Patrol Alert Schedule answers: at which hours of the week should patrols be on alert? The outlined hours are the ones that have clearly been busier than normal for that day, based on past incidents.”
+
+> **Operator action:** Scroll to "Clearance Response Protocol". Keep Accident and Injury selected.
+
+**Ysa:** “And the Clearance Response Protocol answers: when should a slow incident be escalated? It gives a simple rule — if it is not cleared by this many minutes, there is this much chance it will run much longer, so escalate. The curve shows how many incidents are still not cleared as the minutes pass. Hans will show what all this means for the environment.”
+
+*[Handoff — Hans speaks; Ysa takes the keyboard]*
+
+#### Demo 9 — Emissions › Descriptive · 20:05–22:20 (2:15)
+
+*Speaker: Hans · Operator: Ysa · Objective: GO*
+
+> **Operator action:** Click "Emissions". On "Descriptive", set Range "Custom" (1 Jan 2022 – 31 Dec 2025). Point along the summary cards.
+
+**Hans:** “Thanks, Ysa. Our general objective connects traffic to carbon emissions. One thing first: these are estimates. We calculate them from the distance each toll trip travelled — we do not measure them at the roadside.”
+
+**Hans:** “The top row: Total CO₂ is the estimated carbon dioxide from all trips in the period. Average Daily CO₂ is the same per day. Heavy-Vehicle Impact compares the share of CO₂ from heavy vehicles — Class 2 and 3 — with their share of the distance driven. Peak Emission Hour is the hour with the most CO₂. Delay-Induced CO₂ is the extra CO₂ from vehicles idling behind lane-blocking accidents. And Estimated Air Quality comes from a weather service's model — it covers all sources, not just NLEX.”
+
+> **Operator action:** Point at "CO₂ Emissions Trend by Vehicle Class".
+
+**Hans:** “The trend answers: is CO₂ going up or down, and which vehicle class is it coming from?”
+
+> **Operator action:** Scroll to "When Emissions Happen"; switch "By hour" to "By day" and back.
+
+**Hans:** “When Emissions Happen answers: at which hours, or on which days, is the most CO₂ produced — and are weekdays different from weekends?”
+
+> **Operator action:** Point at "Fleet Mix vs Pollution Load".
+
+**Hans:** “Fleet Mix versus Pollution Load answers: does a vehicle class pollute more than its share of the traffic? It compares each class's share of vehicles with its share of CO₂ and other pollutants.”
+
+> **Operator action:** Point at "Heavy-Vehicle Share of CO₂", then "Estimated Air Quality by Month".
+
+**Hans:** “Heavy-Vehicle Share answers: over time, how much of the CO₂ comes from heavy vehicles? And Air Quality by Month answers: in each month, how often was the estimated air quality good, fair or worse?”
+
+> **Operator action:** Scroll to "CO₂ by Hour and Weekday".
+
+**Hans:** “Finally, this grid answers: in a typical week, which hours produce the most CO₂? Darker squares mean more.”
+
+#### Demo 10 — Emissions › Predictive · 22:20–23:20 (1:00)
+
+*Speaker: Hans · Operator: Ysa · Objective: SO 4*
+
+> **Operator action:** Click "Predictive". Point at "Corridor CO₂ Walk-Forward Forecast". Click "View" on "Validation evidence", then close.
+
+**Hans:** “The CO₂ forecast answers: how much CO₂ should we expect in the coming days? We compared four methods, and the evidence box shows how each one did in the test. We trust it up to seven days ahead; beyond that, the chart shows a warning.”
+
+> **Operator action:** Scroll to "Forecasted Fleet Composition".
+
+**Hans:** “Forecasted Fleet Composition answers: what share of the traffic will be heavy vehicles, Class 2 and 3? The solid part is what we observed, and the paler part is the forecast. If a jump in heavy vehicles is expected, a warning appears — useful, because the largest trucks, Class 3, produce about four times the CO₂ of a car for the same distance.”
+
+#### Demo 11 — Emissions › Prescriptive · 23:20–24:40 (1:20)
+
+*Speaker: Hans · Operator: Ysa · Objective: GO*
+
+> **Operator action:** Click "Prescriptive". Point at the recommendation card.
+
+**Hans:** “And what to do. The main recommendation answers: what is the most practical way to cut CO₂ from incidents? Clear lane blockages as fast as the quickest ten percent of similar cases. The card estimates how much CO₂ that would have saved, looking back, and how much it could save in the coming days — where, when, and where to start. It is a what-if estimate, not a measured saving.”
+
+> **Operator action:** Open "Why Class 3". Then point at the "Advise Class 3 to avoid …" card and the tolling card below it (if shown).
+
+**Hans:** “"Why Class 3" explains why large trucks are the focus: they produce the most CO₂ for every kilometre. The truck advisory answers: which hours should large trucks avoid? Those are the hours expected to be most congested, with the hours they could move to. And the tolling card answers: if a truck surcharge were considered, at which few exits and hours would it matter most. It says where — not how much to charge — and it claims no saving. Kiarra?”
+
+*[Handoff — Kiarra speaks; Hans takes the keyboard]*
+
+#### Demo 12 — Live Map · 24:40–25:30 (0:50)
+
+*Speaker: Kiarra · Operator: Hans · Objective: SO 2 · SO 4*
+
+> **Operator action:** Click "Live Map". Wait for both maps to draw (up to 30 seconds the first time).
+
+**Kiarra:** “The Live Map answers: where is the trouble now, and where will it be? On the left is today, live: jams and alerts reported by drivers on Waze, refreshed about every two minutes. On the right is the forecast for the same road.”
+
+> **Operator action:** On the timeline under the maps, click "Next 24 h". Use "Jump to exit…" to pick the exit the Overview showed as slowest.
+
+**Kiarra:** “With the timeline, the operator moves forward in time and sees traffic that has not happened yet. The percentage beside the forecast shows how closely the model followed past traffic — think of it as a match score, not a guarantee. Ysa?”
+
+*[Handoff — Ysa speaks; Hans stays at the keyboard]*
+
+#### Demo 13 — Maintenance · 25:30–26:20 (0:50)
+
+*Speaker: Ysa · Operator: Hans · Objective: SO 2*
+
+> **Operator action:** Click "Maintenance". Point at the cards "Active Now", "Starting Soon", "Conflicts" and "Next Up".
+
+**Ysa:** “Road works are one of the few causes of congestion the operator can plan. This page answers: what work is happening, what is coming up, and does any of it clash?”
+
+> **Operator action:** Click "Schedule Maintenance". Enter the prepared title, Direction SB, Start Km 20, End Km 21, one lane closed, and a start and end time. Point at the quiet-window hint.
+
+**Ysa:** “When we schedule new work, the system suggests the quietest window for that stretch, based on past traffic, and warns us if it overlaps other work. That way, the lane closure hurts as few drivers as possible.”
+
+> **Operator action:** Click "Schedule maintenance".
+
+**Ysa:** “Once saved, the schedule also reaches drivers through the mobile app — which brings us to the next tab.”
+
+#### Demo 14 — Mobile Control · 26:20–27:05 (0:45)
+
+*Speaker: Ysa · Operator: Hans · Objective: SO 2*
+
+> **Operator action:** Click "Mobile App". Point at a tab's section toggles and at the "Preview" phone.
+
+**Ysa:** “This is the Mobile Control Centre. It answers: what do drivers see on their phones? Each part of the app can be switched on or off here, and the phone on the right previews the result.”
+
+> **Operator action:** Advisories strip → "Manage" → "Add advisory". Paste the prepared message, Tone "Warning", tick "Publish", click "Save & publish".
+
+**Ysa:** “And we can publish an advisory — here, a warning about the lane works we just scheduled. Drivers get it without downloading a new version of the app. Hans will now show how operators can test a decision before making it.”
+
+*[Handoff — Hans speaks; Ysa takes the keyboard]*
+
+#### Demo 15 — Simulator (Scenario Sandbox) · 27:05–28:55 (1:50)
+
+*Speaker: Hans · Operator: Ysa · Objective: SO 1*
+
+> **Operator action:** Click "Scenario Sandbox". Set "Carriageway" to "SB". In Simulation Controls › Corridor, choose "Km range", From km 19 to To km 23, click "Set a km range".
+
+**Hans:** “This is our simulator, and it answers the most important question of all: what happens if we try this — before we try it for real?”
+
+**Hans:** “Every moving dot is a car. Each one keeps a safe distance and changes lanes like a real driver, and the number of cars coming in is based on our real traffic data.”
+
+> **Operator action:** Click "Play", set speed "10×", let it run about 10 seconds, then click "Capture baseline".
+
+**Hans:** “First we let traffic run normally and save it. That is our "do nothing" picture, so we have something to compare against.”
+
+> **Operator action:** Open the "Command" tab. Type: isara lane 4 southbound mula Km 20.1 hanggang 20.4 — click "Execute Command". When the plan appears, click "Apply".
+
+**Hans:** “Now the test. Instead of clicking menus, the operator can simply type an instruction — in English, Filipino or Taglish. I typed, in Filipino, "close lane four southbound from kilometre 20.1 to 20.4". The system shows what it understood and waits for us to approve it. Nothing changes until the operator says yes.”
+
+> **Operator action:** Click "Play" (10×). Let it run 20–30 seconds. Point at the queue at the closure, then at the "Before / after" panel.
+
+**Hans:** “Watch the cars squeeze out of the closed lane, and the line grow behind it. This panel puts the two pictures side by side: how fast cars move, how many get through, how long the line gets, and the CO₂. So before a single cone goes on the road, the operator can see the likely cost — and try a different stretch or a different time instead.”
 
 *[Optional, only if on time: Confidence run — set Runs to 5, click "Run"]*
 
-**Hans — Spoken:** “[Optional] One run can be lucky. The Confidence run repeats the simulation several times and reports each measure as an average with a ninety-five percent confidence interval.”
+**Hans:** “[Optional] One run could be lucky, so the simulator can repeat the test several times and show a range we can be confident in.”
 
-**Hans — Spoken:** “So before a single cone goes on the road, the operator sees the likely cost of the closure, and can try another stretch, another time, or a speed-limit zone. These are simulated estimates, not observations — a risk-free place to be wrong.”
+#### Demo 16 — Data Management & Audit Log · 28:55–29:55 (1:00)
 
-**Hans — Spoken:** “Ysa, over to you.”
+*Speaker: Hans · Operator: Ysa · Objective: GO · SO 2*
 
-*[Handoff — Ysa speaks; Hans takes the keyboard]*
+> **Operator action:** Click "Data Management". Click "Select File", choose the prepared sample file, then "Check only".
 
-#### Demo 9 — Emissions · 16:30–17:10 (0:40)
+**Hans:** “Everything you have seen depends on good data, so this page answers: how does new NLEX data get in — safely? The analyst uploads the latest export. Here I chose "Check only": the system checks every row without loading anything.”
 
-*Speaker: Ysa · Operator: Hans · Objective link: GO*
+> **Operator action:** Point at "Rows in the file", "Set aside" and "ETL Validation Gates"; then scroll to "Weekly model retraining".
 
-> **Operator action:** Click "Emissions" (Data Analyst only). Stay on "Descriptive" and set Range to "Custom": 1 Jan 2022 – 31 Dec 2025. Point at "Total CO₂ (Modeled)" and "Delay-Induced CO₂".
+**Hans:** “It tells us how many rows are fine and how many were set aside, and why — a wrong plaza name, a missing date. Bad rows never reach the charts. And every week the forecasts are retrained on the new data, but a new version is only used if it passes our accuracy check.”
 
-**Ysa — Spoken:** “Thanks, Hans. Our general objective links traffic to carbon emissions. For every toll trip, the system multiplies the kilometres driven between its entry and exit plazas by a fixed factor for its vehicle class — for this period, [REHEARSAL: total CO₂ and its low–high range].”
+> **Operator action:** Click "Audit Log". Point at the insight cards, then the table.
 
-**Ysa — Spoken:** “Delay-Induced CO₂ adds what vehicles emit idling behind lane-blocking incidents. As Jertz said, these are modelled estimates with European factors, not roadside measurements — so we always show the range.”
+**Hans:** “Finally, the Audit Log answers: who did what, and when? Every sign-in, upload, schedule change and model update is recorded. Kiarra will close the shift.”
 
-**Ysa — Spoken:** “Now, everything so far has been for operators. But the driver at Balintawak is the one sitting in the queue. So let's look at how operators reach them.”
+*[Handoff — Kiarra speaks; Hans takes the keyboard]*
 
-#### Demo 10 — Mobile Control Centre · 17:10–17:55 (0:45)
+#### Demo 17 — Settings · 29:55–30:25 (0:30)
 
-*Speaker: Ysa · Operator: Hans · Objective link: SO 2*
+*Speaker: Kiarra · Operator: Hans · Objective: SO 2*
 
-> **Operator action:** Click "Mobile App" (page title "Mobile Control Centre"). On the Advisories strip click "Manage" → "Add advisory". Paste the prepared message, set Tone to "Warning", tick "Publish", click "Save & publish".
+> **Operator action:** Click "Settings". Point at "Sign out after inactivity", then "This device" and "Appearance".
 
-**Ysa — Spoken:** “This is the Mobile Control Centre. From here, an operator decides what travellers get. Each tab of the mobile app has its own sections that can be switched on or off, and the Preview on the right shows the result.”
+**Kiarra:** “Last, Settings. It answers: how do I keep my account safe? The operator chooses how soon an idle screen signs itself out, can make the system forget this computer, and can switch between light and dark themes for long shifts.”
 
-**Ysa — Spoken:** “Most importantly, the operator can publish an advisory. I am publishing a warning about lane works near kilometre twenty southbound — the same closure we just tested. No new app version is needed; the phones pick it up from the server.”
+> **Operator action:** Click "Log out", then "Log out" in the "Log out of SmartFlow?" dialog.
 
-*[Switch the projector to the mirrored phone]*
+**Kiarra:** “And that is the end of the shift.”
 
-#### Demo 11 — Commuter mobile app · 17:55–19:20 (1:25)
-
-*Speaker: Ysa · Operator: Ysa (phone) · Objective link: SO 2 · SO 4*
-
-> **Operator action:** On the phone, open the "Alerts" tab and show the advisory just published.
-
-**Ysa — Spoken:** “Here is the commuter's side. On the Alerts tab, the advisory we just published is already here [REHEARSAL: if it has not arrived, pull to refresh].”
-
-> **Operator action:** Open the "Corridor" tab. Switch from "Live now" to "Forecast". Choose "Next 7 days". Tap the exit shown congested earlier; show Northbound / Southbound.
-
-**Ysa — Spoken:** “On the Corridor tab, the driver sees the same exit-by-exit congestion forecast the operator saw — live now, or forecast up to seven days ahead. Tap an exit, and you see the expected condition in each direction. So the driver at Balintawak can check before leaving, not after joining the queue.”
-
-> **Operator action:** Open the "Assistant" tab. Tap the suggestion "How is NLEX right now?".
-
-**Ysa — Spoken:** “And for drivers who would rather ask, the assistant answers questions about current corridor conditions, in English or Tagalog, using the system's live corridor data. It is deliberately limited: it declines general questions, and it does not give travel times or tell you when to leave.”
-
-*[Pause for the answer to appear]*
-
-**Ysa — Spoken:** “[REHEARSAL: one sentence summarising the answer.] From the control room to the driver's phone — that is one connected flow. Kiarra?”
-
-*[Return to PowerPoint — Hans switches the projector back to the laptop and Alt+Tabs to the slideshow; advance to slide 11]*
+*[Return to PowerPoint — Hans presses Alt+Tab to the slideshow and advances to slide 12]*
 
 **If something fails during the demo:**
 
-- A page loads slowly: Hans keeps talking about what it will show ("While this loads, here is what we are looking for…"); after 20 seconds, move to the next step and return later if time allows.
-- The live feed is stale or the internet drops: say plainly that live features depend on the Waze feed and the connection (a documented limitation), then continue with the historical analytics, which read from the warehouse.
-- The language-model narrative or the Copilot command fails or is slow: say that these depend on an outside provider; the narrative falls back to a fixed template, and every Copilot change can be made with the manual controls instead (Close a lane → Set stretch).
-- Phone mirroring fails: Ysa shows the same forecast on the dashboard's Mobile Control Centre Preview and describes the app; do not use recorded video.
-- A panel member asks for a number that is not on screen: answer "We would rather not quote that from memory; we can show it in the system or in the manuscript."
+- A tab loads slowly: keep talking about what it will show ("While this loads, this screen answers…"). After 20 seconds, move on and come back if time allows.
+- The live feed is stale or the internet drops: say plainly that live features depend on the Waze feed and the connection — a limitation we stated — and continue with the history tabs, which read from our own database.
+- The plain-language report or the Copilot is slow or fails: say these use an outside language-model service. Make the same change with the manual controls (Close a lane → Set stretch).
+- Someone asks for a number that is not on screen: "We would rather not quote that from memory — we can show it in the system or in the manuscript."
 
 ## E. Closing
 
-### Slide 11 — Closing — Friday, 5:00 PM, again · 19:20–19:56
+### Slide 12 — Closing — Friday, 5:00 PM, again · 30:25–31:01
 
 **Kiarra:** Let's go back to Friday, five o'clock, at Balintawak.
 
 **Kiarra:** Before, the only question anyone could answer was: what is happening right now? With SmartFlow NLEX, an operator can also ask: what is likely next, how reliable is that estimate, and what could we test before we act?
 
-**Kiarra:** Our contribution: six data sources in one corridor warehouse; every forecast shown with its accuracy against a naive baseline; and recommendations, with a safe place to try them first.
+**Kiarra:** Our contribution: six data sources in one corridor warehouse; every forecast shown with how well it was tested; and recommendations, with a safe place to try them first.
 
 *[Pause]*
 
@@ -401,27 +537,32 @@ Approximate spoken words per presenter (at ~140 words per minute): Kiarra 481 ·
 
 *[Advance slide]*
 
-### Slide 12 — Thank you — Questions? · 19:56–20:00
+### Slide 13 — Thank you — Questions? · 31:01–31:05
 
 **Kiarra:** Thank you. We would be glad to take your questions.
 
-*[All presenters stand in line. Keep the live system open on the second screen or one Alt+Tab away for questions.]*
+*[Kiarra, Ysa and Hans stand in line. Keep the live system one Alt+Tab away for questions.]*
 
 ## Placeholders to resolve before rehearsal
 
 - [morning/afternoon] in Kiarra's opening line.
-- Defense duration: 20 minutes is a working assumption. Replace it if the panel sets a different limit, and re-time the demo so it stays at about 60–70%.
-- [REHEARSAL: …] values in the demo (congested counts, slowest exit and speed, champion model and accuracy, booth counts, hotspot segment, sandbox before/after values, CO₂ total). They change with the data; read them off the screen.
-- UAT results (task success, SUS score) are not in the current manuscript (Chapter 3 states a UAT plan; results belong in Chapter 4). The script does not quote any. Add them only after Chapter 4 is final.
+- Defense duration: the full walkthrough of every analytics card makes the talk about 31:05 (demo 23:55, about 77%). If the panel sets a shorter limit, tell the team which cards to skip on the day.
+- [REHEARSAL: …] notes in the demo mark live values. They change with the data; read them off the screen, or leave them out — the script works without them.
+- [REHEARSAL: sample file name] for the Data Management check.
+- Usability-test and KPI results are not in the current manuscript (results belong in Chapter 4), so the script quotes none.
 
 ## Source discrepancies to know before the defense
 
-- SO 3 says "using Python and RStudio"; no R code exists in the repository (Pending Decisions A4). The objective is shown verbatim; be ready for the question.
+- SO 3 says "using Python and RStudio"; no R code exists in the repository (Pending Decisions A4). The objective is shown verbatim, and the "How we met each objective" slide says Python only; be ready for the question.
 - The general objective says the project will support SDG 9 "by reducing traffic congestion"; the system is not deployed in live operations, so reductions are estimated, not observed (Limitation: Deployment and Evaluation Scope). The script never claims an observed reduction.
-- Mobile app, Dashboard tab: the "Traffic Forecast" card shows delay and travel time, but the manuscript says travel-time estimates are not part of the current version (Section 3.8e, Limitation: AI Knowledge Domain Restriction). The demo uses the Corridor tab instead. Fix the app or the manuscript before the defense.
+- Mobile app, Dashboard tab: the "Traffic Forecast" card shows delay and travel time, but the manuscript says travel-time estimates are not part of the current version (Section 3.8e, Limitation: AI Knowledge Domain Restriction). The demo does not open the phone app; if the panel asks to see it, use the Corridor tab, and fix the app or the manuscript before the defense.
 - Scenario Sandbox: the manuscript lists travel time among the outputs (FR-06, Section 3.8f); the sandbox shows avg speed, throughput, longest queue and CO₂ rate, but no travel time. The script names only the outputs that exist.
-- Live Map: the "% accurate" and "ML Confidence" figures are the model's R², not an accuracy measure. Jertz says so during the demo.
-- Event uplift: the weekly batch overwrote the event-surge table with the old circular method (Code Fix List A22). The demo avoids the "Event Surge Impact by Exit" card and the Events toggle; do not open them if asked without a caveat.
+- Live Map: the "% accurate" and "ML Confidence" figures are the model's R², not an accuracy measure. Kiarra describes it as a match score with past traffic, not a guarantee.
+- Event Surge Impact by Exit: the weekly batch overwrote the event-surge table with the old circular method on 1 Nov (Code Fix List A22). The demo explains what the card is for and quotes no number; check before the defense that its values come from the calendar-based method.
 - Date range: the warehouse has records after 31 Dec 2025, but the manuscript reports the NLEX record as Jan 2022 – Dec 2025. The demo sets Custom ranges ending 31 Dec 2025 on descriptive views. Forecast charts may still show 2026 dates as the 'present'.
 - Mobile Control Centre: the "Corridor outlook" switch has no effect in the app, and saving needs only a signed-in user (Code Fix List A23). The demo does not use that switch.
 - Open code fixes (Code Fix List A1, A3–A18, A22–A29) mean some live screens may differ from Chapter 3 (for example, the "12-hour horizon" wording on the Congestion Response Advisory). Rehearse on the build you will defend with.
+- Dashboard changed on 3 Nov (commit 873bcd2): Traffic › Prescriptive now shows "Staffing Priority" (where and when traffic goes above normal) instead of booth counts, and Emissions › Prescriptive no longer ranks emission strategies (TOPSIS removed). FR-07 in the manuscript still says the system recommends toll booths to staff and ranked emission strategies. Align the manuscript or be ready to explain.
+- Incidents › Avg Response Time: the KPI tooltip calls it "reported → first responder dispatched", but the Response Time Breakdown card describes the same field as dispatch → arrival. The script says only "how long breakdowns waited for a response, from the dispatch log". Confirm which is right.
+- Emissions › Fleet Mix vs Pollution Load: the bar labelled NOx is computed from the NO₂ emission factor. The script says "other pollutants" only.
+- Emissions › Estimated Air Quality by Month: the weather service's levels shift sharply between March and April 2025; avoid comparing months across that change.

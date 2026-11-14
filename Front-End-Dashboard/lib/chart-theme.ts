@@ -245,6 +245,24 @@ export function applyChartTheme<T extends Record<string, any>>(option: T, t: Cha
           },
         },
       };
+      /* A chart that wrote no formatter of its own gets ECharts' axis tooltip with its header (the month, the day,
+         the hour) in bold (user request, 5 Nov 2026): the same rows, marker and value as before. */
+      if (tip.formatter == null) {
+        const fmtVal = typeof tip.valueFormatter === "function" ? tip.valueFormatter : (v: unknown) => (typeof v === "number" ? v.toLocaleString("en-US") : String(v ?? "—"));
+        tip.formatter = (params: any) => {
+          const ps = (Array.isArray(params) ? params : [params]).filter((p: any) => p && p.seriesName != null);
+          if (ps.length === 0) return "";
+          const head = ps[0].axisValueLabel ?? ps[0].name ?? "";
+          const rows = ps
+            .filter((p: any) => p.value != null && !(Array.isArray(p.value) && p.value[p.value.length - 1] == null))
+            .map((p: any) => {
+              const v = Array.isArray(p.value) ? p.value[p.value.length - 1] : p.value;
+              return `<div style="display:flex;align-items:center;gap:8px;margin-top:3px">${p.marker ?? ""}<span>${p.seriesName}</span><b style="margin-left:auto;padding-left:18px">${fmtVal(v, p.dataIndex)}</b></div>`;
+            })
+            .join("");
+          return `<b>${head}</b>${rows}`;
+        };
+      }
     }
     out.tooltip = tip;
   }
