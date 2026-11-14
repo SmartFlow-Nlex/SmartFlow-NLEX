@@ -90,7 +90,7 @@ const TABS: { key: TabKey; label: string; icon: Icon; blurb: string; sections: S
     key: "map",
     label: "Corridor",
     icon: MapIcon,
-    blurb: "The live map. Reads the same real-time feed as the Live Map page here.",
+    blurb: "The live map. Reads the same real-time feed as the Map page here.",
     sections: [
       { key: "liveStatus", label: "Live view", icon: Radio, blurb: "Current readings, straight from the feed." },
       { key: "forecastView", label: "Forecast view", icon: TrendingUp, blurb: "Modelled state ahead of now." },

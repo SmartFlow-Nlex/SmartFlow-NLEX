@@ -1,8 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { ArrowUpRight, BarChart3, Car, CheckCircle2, ChevronDown, ChevronRight, Gauge, Home, Map as MapIcon } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowUpRight, Car, CheckCircle2, ChevronDown, ChevronRight, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSun, Construction, Home, Megaphone, Sun } from "lucide-react";
+import { cachedJson } from "../../lib/cached-json";
+import { corridorGuard, type LngLat } from "../../lib/corridor-shape";
+import { FALLBACK_EXITS } from "../../lib/nlex-exits";
+import { isActiveReport } from "../../lib/waze-reports";
+import { lookOf } from "../../lib/waze-report-look";
+import nlexGeometry from "../maps/nlex-geometry.json";
 import { useCorridorLive } from "../../lib/use-corridor-live";
 import type { ExitStatus } from "../../lib/corridor-status";
 import { displayExitName, type NlexExit } from "../../lib/nlex-exits";
@@ -62,8 +68,66 @@ const severity = (s: ExitStatus) => (s.status === "congested" ? 2 : s.status ===
 
 type Hot = { s: ExitStatus; exit: NlexExit | undefined };
 
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
+
+/* The corridor test the Map counts its reports by, so the Overview's count is the Map's count. */
+const CORRIDOR = corridorGuard(
+  (nlexGeometry as unknown as { coordinates: LngLat[] }).coordinates,
+  [...FALLBACK_EXITS].sort((a, b) => a.km - b.km).map((e) => [e.longitude, e.latitude] as LngLat),
+);
+
+type Closure = { id: string; title: string; start_km: number; end_km: number; direction: string; lane_closure: string; starts_at: string; ends_at: string; status: string };
+type Weather = { tempC: number | null; condition: string | null; code: number | null; rainingCount: number; total: number };
+type Reports = { count: number; top: string | null; topCount: number };
+
+/* The rest of the corridor at a glance (13 Nov 2026, user request): Waze reports, maintenance and the weather, each
+   read from the endpoint its own page uses. The real-time feed is the same memoised read the live block makes. */
+function useCorridorExtras() {
+  const [reports, setReports] = useState<Reports | null>(null);
+  const [closures, setClosures] = useState<Closure[] | null>(null);
+  const [weather, setWeather] = useState<Weather | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      cachedJson<{ features?: { type?: string; geometry?: unknown; properties?: Record<string, unknown> }[] }>(`${BACKEND}/api/map-comparison/real-time`, 25_000)
+        .then((fc) => {
+          if (cancelled) return;
+          const on = (fc?.features ?? []).filter((f) => CORRIDOR.onCorridor(f as never) && isActiveReport(f as never));
+          const byType = new Map<string, number>();
+          for (const f of on) {
+            const label = lookOf(String(f.properties?.type ?? ""), f.properties?.subtype as string | null | undefined).label;
+            byType.set(label, (byType.get(label) ?? 0) + 1);
+          }
+          const top = [...byType.entries()].sort((a, b) => b[1] - a[1])[0];
+          setReports({ count: on.length, top: top?.[0] ?? null, topCount: top?.[1] ?? 0 });
+        })
+        .catch(() => { if (!cancelled) setReports(null); });
+      cachedJson<{ success?: boolean; data?: Closure[] }>(`${BACKEND}/api/maintenance/list`, 60_000)
+        .then((b) => { if (!cancelled && b?.success && Array.isArray(b.data)) setClosures(b.data); })
+        .catch(() => {});
+      cachedJson<{ success?: boolean; data?: { rainingCount: number; points: unknown[]; corridor?: { tempC: number | null; condition: string | null; code: number | null } } }>(`${BACKEND}/api/map-comparison/live-rain`, 4 * 60_000)
+        .then((j) => {
+          const d = j?.data;
+          if (cancelled || !d) return;
+          setWeather({ tempC: d.corridor?.tempC ?? null, condition: d.corridor?.condition ?? null, code: d.corridor?.code ?? null, rainingCount: d.rainingCount, total: Array.isArray(d.points) ? d.points.length : 0 });
+        })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+  return { reports, closures, weather };
+}
+
+const weatherIcon = (code: number | null, raining: boolean) =>
+  code == null ? (raining ? CloudRain : Cloud)
+  : code === 0 ? Sun : code <= 2 ? CloudSun : code === 3 ? Cloud : code === 45 || code === 48 ? CloudFog
+  : code >= 95 ? CloudLightning : code >= 51 && code <= 57 ? CloudDrizzle : CloudRain;
+
 export default function OverviewLive() {
   const live = useCorridorLive();
+  const extras = useCorridorExtras();
   const { exits, statuses, tally, slowest, stale, loading, failed } = live;
   const [hover, setHover] = useState<string | null>(null);
   const [allOpen, setAllOpen] = useState(false);
@@ -87,16 +151,6 @@ export default function OverviewLive() {
   );
 
 
-  // The headline is computed from the tally, never written in advance.
-  const headline = failed
-    ? "Live feed unreachable"
-    : loading || !tally
-      ? "Reading the live feed…"
-      : tally.congested > 0
-        ? `${tally.congested} exit-direction${tally.congested === 1 ? "" : "s"} congested`
-        : tally.slow > 0
-          ? `${tally.slow} exit-direction${tally.slow === 1 ? "" : "s"} slow`
-          : "Corridor flowing";
   const headState = failed || loading || !tally ? "none" : tally.congested > 0 ? "congested" : tally.slow > 0 ? "slow" : "clear";
   const windowMin = live.windowMinutes ?? 60;
 
@@ -163,85 +217,103 @@ export default function OverviewLive() {
           Balintawak <b>Km {KM_POST_START}</b> <span aria-hidden="true">→</span><span className="sr-only">to</span> Sta. Ines <b>Km {KM_POST_END}</b> · both carriageways
         </p>
 
-        <div className="ov-hero-cols">
-          {/* The answer: freshness and the computed headline. */}
-          <div className="ov-answer">
-            <div className="ov-fresh" role="status">
-              {failed ? (
-                <><SignalGlyph state="none" size={20} title="" /><span><b>Live feed unreachable.</b> Counts and the corridor are not current.</span></>
-              ) : loading ? (
-                /* Placeholder bars while the first read is in flight; the words are for screen readers. */
-                <><span className="ov-skel ov-skel-dot" aria-hidden="true" /><span className="ov-skel ov-skel-line" aria-hidden="true" /><span className="sr-only">Reading the live feed…</span></>
-              ) : (
-                <>
-                  {stale ? <SignalGlyph state="slow" size={20} title="" /> : <span className="ov-live-dot" aria-hidden="true" />}
-                  <span>
-                    <b>{stale ? "Feed stale" : "Live"}</b> · Waze jam reports · {ageText(live.ageMinutes)}
-                    {live.windowMinutes ? ` · ${live.windowMinutes}‑minute window` : ""}
-                  </span>
-                  {/* The whole card opens the Live Map, where these reports are drawn (17 Oct 2026, testers OV-5). */}
-                  <Link href="/dashboard/map-comparison" className="ov-card-go" aria-label="Open the Live Map" title="Open the Live Map">
-                    <ArrowUpRight size={17} strokeWidth={2.2} aria-hidden="true" />
-                  </Link>
-                </>
-              )}
-            </div>
-            {loading && !failed && !tally ? (
-              <h2 className="ov-headline is-loading" aria-busy="true">
-                <span className="ov-skel ov-skel-head" aria-hidden="true" />
-                <span className="ov-skel ov-skel-head is-short" aria-hidden="true" />
-                <span className="sr-only">{headline}</span>
-              </h2>
-            ) : (
-              <div className={`ov-headline-card is-${headState}`}>
-                <span className="ov-headline-icon" aria-hidden="true">
-                  {headState === "clear" ? <CheckCircle2 size={22} strokeWidth={2.2} /> : <Car size={22} strokeWidth={2.2} />}
-                </span>
-                <h2 className={`ov-headline is-${headState}`}>{headline}</h2>
-                {!failed && hot.length > 0 && (
-                  <button type="button" className="ov-card-go" onClick={toNow} aria-label="Show the slow and congested exit-directions">
-                    <ChevronRight size={18} strokeWidth={2.2} aria-hidden="true" />
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+        {/* Freshness as a quiet line, not a card: it qualifies the numbers below rather than being one. */}
+        <p className="ov-fresh-line" role="status">
+          {failed ? (
+            <><SignalGlyph state="none" size={16} title="" /><b>Live feed unreachable.</b> The traffic figures are not current.</>
+          ) : loading ? (
+            <span className="sr-only">Reading the live feed…</span>
+          ) : (
+            <>
+              {stale ? <SignalGlyph state="slow" size={16} title="" /> : <span className="ov-live-dot is-small" aria-hidden="true" />}
+              <b>{stale ? "Feed stale" : "Live"}</b> · Waze, {ageText(live.ageMinutes)}
+              {live.windowMinutes ? ` · last ${live.windowMinutes} minutes` : ""}
+            </>
+          )}
+        </p>
 
-          <div className="ov-answer-side">
-            <div className="ov-worst">
-              <div className="ov-worst-label">
-                <Gauge size={13} strokeWidth={2.2} aria-hidden="true" />
-                Slowest reading on the corridor
-              </div>
-              {slowest ? (
-                <>
-                  <div className="ov-worst-value">
-                    {displayExitName(slowest.exit)} · <span>{Math.round(slowest.speedKmh)} km/h</span>
-                  </div>
-                  <button type="button" className="ov-card-go" onClick={toNow} aria-label="Show where the corridor is slow">
-                    <ChevronRight size={18} strokeWidth={2.2} aria-hidden="true" />
-                  </button>
-                </>
-              ) : (
-                loading ? (
-                  <div className="ov-worst-value is-none" aria-busy="true">
-                    <span className="ov-skel ov-skel-line is-wide" aria-hidden="true" />
-                    <span className="sr-only">Waiting for the feed</span>
-                  </div>
-                ) : (
-                  <div className="ov-worst-value is-none">No speed reported</div>
-                )
-              )}
-            </div>
-            <div className="ov-actions">
-              <Link href="/dashboard/map-comparison" className="btn-muted">
-                <MapIcon size={15} strokeWidth={2.2} aria-hidden="true" /> Open Live Map <ArrowUpRight size={14} aria-hidden="true" />
+        {/* The corridor at a glance (13 Nov 2026, user request): four equal tiles, each a link to where its detail
+            lives. Traffic is one of the four rather than three cards of its own, and the quick-action buttons went:
+            the tiles are the actions. */}
+        <div className="ov-tiles">
+          <button type="button" className={`ov-tile is-traffic is-${headState}`} onClick={toNow} disabled={failed || hot.length === 0}>
+            <span className="ov-tile-icon" aria-hidden="true">
+              {headState === "clear" ? <CheckCircle2 size={19} strokeWidth={2.2} /> : <Car size={19} strokeWidth={2.2} />}
+            </span>
+            <span className="ov-tile-k">Traffic now</span>
+            <span className="ov-tile-v">
+              {failed ? "Unavailable" : loading || !tally ? <span className="ov-skel ov-skel-line" aria-hidden="true" /> :
+                tally.congested + tally.slow === 0 ? "Flowing" : (
+                  <>
+                    {tally.congested > 0 && <>{tally.congested} congested</>}
+                    {tally.congested > 0 && tally.slow > 0 && <i> · </i>}
+                    {tally.slow > 0 && <>{tally.slow} slow</>}
+                  </>
+                )}
+            </span>
+            <span className="ov-tile-sub">
+              {slowest ? <>Slowest: {displayExitName(slowest.exit)}, {Math.round(slowest.speedKmh)} km/h</> : "Exit-directions with a jam"}
+            </span>
+            {hot.length > 0 && <ChevronRight size={17} className="ov-tile-go" aria-hidden="true" />}
+          </button>
+
+          <Link href="/dashboard/map-comparison" className={`ov-tile is-reports${(extras.reports?.count ?? 0) > 0 ? " is-active" : ""}`}>
+            <span className="ov-tile-icon" aria-hidden="true"><Megaphone size={18} strokeWidth={2.2} /></span>
+            <span className="ov-tile-k">Waze reports</span>
+            <span className="ov-tile-v">
+              {extras.reports == null ? "—" : extras.reports.count === 0 ? "None" : `${extras.reports.count} on the road`}
+            </span>
+            <span className="ov-tile-sub">
+              {extras.reports && extras.reports.count > 0 && extras.reports.top
+                ? `${extras.reports.topCount} ${extras.reports.top.toLowerCase()}${extras.reports.count > extras.reports.topCount ? `, ${extras.reports.count - extras.reports.topCount} other` : ""}`
+                : "Accidents, hazards, closures, police"}
+            </span>
+            <ArrowUpRight size={16} className="ov-tile-go" aria-hidden="true" />
+          </Link>
+
+          {(() => {
+            const list = extras.closures ?? [];
+            const active = list.filter((c) => c.status === "in_progress");
+            const next = list
+              .filter((c) => c.status === "scheduled" && new Date(c.starts_at).getTime() > Date.now())
+              .sort((x, y) => new Date(x.starts_at).getTime() - new Date(y.starts_at).getTime())[0];
+            const where = (c: Closure) => `Km ${fmtKm(Math.min(c.start_km, c.end_km))}–${fmtKm(Math.max(c.start_km, c.end_km))}${c.direction === "NB" || c.direction === "SB" ? ` ${c.direction}` : ""}`;
+            return (
+              <Link href="/dashboard/maintenance" className={`ov-tile is-works${active.length > 0 ? " is-active" : ""}`}>
+                <span className="ov-tile-icon" aria-hidden="true"><Construction size={18} strokeWidth={2.2} /></span>
+                <span className="ov-tile-k">Maintenance</span>
+                <span className="ov-tile-v">
+                  {extras.closures == null ? "—" : active.length > 0 ? `${active.length} closure${active.length === 1 ? "" : "s"} now` : "No work now"}
+                </span>
+                <span className="ov-tile-sub">
+                  {active[0]
+                    ? `${active[0].title} · ${where(active[0])}`
+                    : next
+                      ? `Next: ${new Date(next.starts_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${next.title}`
+                      : "Nothing scheduled"}
+                </span>
+                <ArrowUpRight size={16} className="ov-tile-go" aria-hidden="true" />
               </Link>
-              <Link href="/dashboard/traffic" className="btn-muted">
-                <BarChart3 size={15} strokeWidth={2.2} aria-hidden="true" /> Traffic forecast <ArrowUpRight size={14} aria-hidden="true" />
+            );
+          })()}
+
+          {(() => {
+            const w = extras.weather;
+            const Icon = weatherIcon(w?.code ?? null, (w?.rainingCount ?? 0) > 0);
+            return (
+              <Link href="/dashboard/map-comparison" className={`ov-tile is-weather${(w?.rainingCount ?? 0) > 0 ? " is-active" : ""}`}>
+                <span className="ov-tile-icon" aria-hidden="true"><Icon size={18} strokeWidth={2.2} /></span>
+                <span className="ov-tile-k">Weather now</span>
+                <span className="ov-tile-v">
+                  {w == null ? "—" : <>{w.tempC != null ? `${Math.round(w.tempC)}°C` : ""}{w.tempC != null && w.condition ? <i> · </i> : null}{w.condition ?? ""}</>}
+                </span>
+                <span className="ov-tile-sub">
+                  {w == null ? "Reading unavailable" : w.rainingCount > 0 ? `Raining at ${w.rainingCount} of ${w.total} exits` : `Dry at all ${w.total} exits`}
+                </span>
+                <ArrowUpRight size={16} className="ov-tile-go" aria-hidden="true" />
               </Link>
-            </div>
-          </div>
+            );
+          })()}
         </div>
       </div>
 

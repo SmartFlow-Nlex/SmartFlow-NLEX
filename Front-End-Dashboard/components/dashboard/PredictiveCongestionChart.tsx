@@ -15,7 +15,9 @@ import { useTrafficPalette, type TrafficPalette } from "./trafficPalette";
 import SignalGlyph from "./SignalGlyph";
 import StateNote from "../stage/StateNote";
 import EvidenceModal from "./EvidenceModal";
+import EvBlock from "./EvBlock";
 import { GenerateReportButton } from "./NarrativePanel";
+import GroupMenu from "./GroupMenu";
 import { ArrowRight, ChevronRight, ShieldCheck, Siren } from "lucide-react";
 
 type State = "Low" | "Med" | "High";
@@ -247,12 +249,17 @@ const STATE_META_DARK: StateMeta = {
    prints its number, so the colour is a second reading of the value and never
    the only one. */
 type WeekBand = { min: number; max: number; color: string; label: string };
+/* Seven steps across the whole day (13 Nov 2026, user request): a week ahead runs 0 to 23 congested hours a day,
+   and with "9 h+" as the top band nearly every cell was the same navy, so a 12-hour day and a 22-hour day looked
+   alike. The colour now separates them; the number in the cell is still the value. */
 const WEEK_BANDS_LIGHT: WeekBand[] = [
   { min: 0, max: 0, color: "#d6e6f7", label: "none" },
-  { min: 1, max: 2, color: "#fde8c8", label: "1-2 h" },
-  { min: 3, max: 5, color: "#f9c97f", label: "3-5 h" },
-  { min: 6, max: 8, color: "#f0a63a", label: "6-8 h" },
-  { min: 9, max: 24, color: "#d12f2f", label: "9 h+" },
+  { min: 1, max: 3, color: "#fde8c8", label: "1–3 h" },
+  { min: 4, max: 6, color: "#f9c97f", label: "4–6 h" },
+  { min: 7, max: 10, color: "#f0a63a", label: "7–10 h" },
+  { min: 11, max: 14, color: "#e07a2a", label: "11–14 h" },
+  { min: 15, max: 18, color: "#d12f2f", label: "15–18 h" },
+  { min: 19, max: 24, color: "#9b1c1c", label: "19 h+" },
 ];
 const WEEK_BANDS_DARK: WeekBand[] = [
   { min: 0, max: 0, color: "#1b3866", label: "none" },
@@ -292,12 +299,12 @@ function weekBandsFor(t: ChartTheme) {
   const hit = weekBandsCache.get(t.isDark);
   if (hit) return hit;
   const ramp = heatRamp(t);
-  const pick = [0, 2, 3, 5, 6];
+  const pick = [0, 1, 2, 3, 4, 5, 6];
   const bands = WEEK_BANDS_LIGHT.map((b, i) => ({ ...b, color: ramp[pick[i]] }));
   // Text on each band, chosen for contrast with that step of the ramp.
   const ink = t.isDark
-    ? ["#f4f1ea", "#f4f1ea", "#f4f1ea", "#03060d", "#03060d"]
-    : ["#0b1220", "#0b1220", "#ffffff", "#ffffff", "#ffffff"];
+    ? ["#f4f1ea", "#f4f1ea", "#f4f1ea", "#f4f1ea", "#03060d", "#03060d", "#03060d"]
+    : ["#0b1220", "#0b1220", "#0b1220", "#0b1220", "#ffffff", "#ffffff", "#ffffff"];
   const out = { bands, ink };
   weekBandsCache.set(t.isDark, out);
   return out;
@@ -464,28 +471,7 @@ function ReplayChart({ series, exits }: { series: { t: string; e: number; a: num
  *  over its answer, so a reader can skim the titles and stop at the one they
  *  came for. Each step opens and closes on its number or title (2026-10-26);
  *  the first starts open, so the window opens short. */
-function EvBlock({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(n === 1);
-  const toggle = () => setOpen((o) => !o);
-  return (
-    <div className="nct-ev-block">
-      <button type="button" className="nct-ev-n" onClick={toggle} aria-expanded={open}
-        aria-label={`${open ? "Close" : "Open"} step ${n}`} style={{ cursor: "pointer", border: "none", font: "inherit" }}>
-        {n}
-      </button>
-      <div style={{ minWidth: 0 }}>
-        <button type="button" className="nct-ev-title" onClick={toggle} aria-expanded={open}
-          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "none",
-                   border: "none", padding: 0, cursor: "pointer", font: "inherit", fontWeight: 600, color: "inherit" }}>
-          <span>{title}</span>
-          <span aria-hidden="true" style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-muted)",
-                transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▶</span>
-        </button>
-        {open && <div className="nct-ev-body">{children}</div>}
-      </div>
-    </div>
-  );
-}
+/* EvBlock now lives in ./EvBlock (shared with the event surge card, 13 Nov 2026). */
 
 const kmLabel = (e?: { km: number | null; est: boolean }) =>
   e?.km == null ? "—" : `${fmtKm(e.km)}${e.est ? "*" : ""}`;
@@ -1560,6 +1546,8 @@ export default function PredictiveCongestionChart() {
   const pct = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(0)}%`);
   const hzFirst = hzAcc[0];
   const hzLast = hzAcc[hzAcc.length - 1];
+  // 1 when the "Does it hold up" step is drawn, 0 when it is hidden (fewer than two horizons stored).
+  const holdStep = hzAcc.length > 1 && hzFirst && hzLast ? 1 : 0;
   const hiddenSorted = [...hiddenSegments].sort((a, b) => (firstSevere(a) ?? 99) - (firstSevere(b) ?? 99));
 
   /* The episode to act on first. Alerts are ranked severe-first, then longest, then surest, so it is the first. */
@@ -1654,26 +1642,46 @@ export default function PredictiveCongestionChart() {
           <div className="cg-main-head">
             <h4>Congestion by exit and {isWeek ? "day" : "hour"}</h4>
             {/* Which exits are drawn: one dropdown. Hidden exits list soonest-severe first. */}
-            <select
-              value=""
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === "__all") setExtraExits(hiddenSegments);
-                else if (v === "__reset") setExtraExits([]);
-                else if (v) setExtraExits((cur) => [...cur, v]);
-              }}
-              title={urgentHidden ? "Some hidden exits turn severe sooner than any shown" : "Add an exit to the grid"}
-              aria-label="Exits shown"
-              className={`nct-select cg-exit-select${urgentHidden ? " is-warn" : ""}`}
-            >
-              <option value="">{urgentHidden ? "⚠ " : ""}{shownSegments.length} of {segments.length} exits shown</option>
-              {hiddenCount > 0 && <option value="__all">Show all {segments.length}</option>}
-              {extraExits.length > 0 && <option value="__reset">Back to the default {shownSegments.length - extraExits.length}</option>}
-              {hiddenSorted.map((sg) => {
-                const f = firstSevere(sg);
-                return <option key={sg} value={sg}>Add {sg}{f != null ? ` — severe at +${f}h` : " — stays clear"}</option>;
-              })}
-            </select>
+            {/* The dashboard's own grouped menu (13 Nov 2026, user request) in place of the browser's list: what to
+                show, then the hidden exits split into those that turn severe (soonest first) and those that stay clear. */}
+            {(() => {
+              const severeSoon = hiddenSorted.filter((sg) => firstSevere(sg) != null);
+              const clearOnes = hiddenSorted.filter((sg) => firstSevere(sg) == null);
+              const showItems = [
+                ...(hiddenCount > 0 ? [{ value: "__all", main: `Show all ${segments.length} exits` }] : []),
+                ...(extraExits.length > 0 ? [{ value: "__reset", main: `Back to the default ${shownSegments.length - extraExits.length}` }] : []),
+              ];
+              return (
+                <GroupMenu
+                  value=""
+                  onChange={(v) => {
+                    if (v === "__all") setExtraExits(hiddenSegments);
+                    else if (v === "__reset") setExtraExits([]);
+                    else if (v) setExtraExits((cur) => [...cur, v]);
+                  }}
+                  ariaLabel="Exits shown"
+                  minWidth={220}
+                  menuWidth={340}
+                  buttonLabel={<>{urgentHidden && <span className="cg-exit-warn" title="Some hidden exits turn severe sooner than any shown">!</span>}<b>{shownSegments.length}</b> of {segments.length} exits shown</>}
+                  groups={[
+                    ...(showItems.length ? [{ items: showItems }] : []),
+                    ...(severeSoon.length ? [{
+                      label: "Add · turns severe",
+                      items: severeSoon.map((sg) => {
+                        const f = firstSevere(sg)!;
+                        return {
+                          value: sg,
+                          main: sg,
+                          side: `severe at +${f}h`,
+                          tags: f < earliestShown ? [{ label: "sooner", tone: "warn" as const }] : [],
+                        };
+                      }),
+                    }] : []),
+                    ...(clearOnes.length ? [{ label: "Add · stays clear", items: clearOnes.map((sg) => ({ value: sg, main: sg, side: "clear" })) }] : []),
+                  ]}
+                />
+              );
+            })()}
           </div>
 
           <div className="nct-key nct-grid-key">
@@ -1719,7 +1727,7 @@ export default function PredictiveCongestionChart() {
           <div className="fc2-foot cg-foot">
             {!reportOpen && modelInfo && <GenerateReportButton onClick={() => setReportOpen(true)} />}
             {/* Validation evidence beside it (10 Nov 2026): the headline holds/fades line, opening the full evidence. */}
-            {hzAcc.length > 1 && hzFirst && hzLast && (
+            {(hzAcc.length > 0 || evalInfo) && (
               <button type="button" className="cg-ev-btn" aria-haspopup="dialog" onClick={() => setEvidenceOpen(true)}>
                 <ShieldCheck size={16} aria-hidden="true" className="cg-ev-icon" />
                 <span className="cg-ev-title">View validation details</span>
@@ -1832,7 +1840,7 @@ export default function PredictiveCongestionChart() {
         />
       </div>
 
-      {hzAcc.length > 1 && hzFirst && hzLast && (
+      {(hzAcc.length > 0 || evalInfo) && (
         <EvidenceModal
           subtitle="Congestion forecast: how it was tested, how far ahead it holds, and how it compares with no-change."
           hideTrigger
@@ -2032,6 +2040,7 @@ export default function PredictiveCongestionChart() {
             )}
 
             {/* 5. Accuracy by hour ahead (the original bars). */}
+            {hzAcc.length > 1 && hzFirst && hzLast && (
             <EvBlock n={evalInfo ? (evalInfo.replay ? 6 : 5) : 3} title="Does it hold up 12 hours out?">
               <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 34 }}>
                 {hzAcc.map((a) => {
@@ -2047,11 +2056,12 @@ export default function PredictiveCongestionChart() {
                   {hzLast.persistenceAccuracy != null && <>, which falls to {pct(hzLast.persistenceAccuracy)} by +{hzLast.horizon}h</>}
               </p>
             </EvBlock>
+            )}
 
             {/* 6. The queue, distance and delay figures are a second model on
                    top of the state, so they get their own check. */}
             {jamEval && (
-              <EvBlock n={(evalInfo ? (evalInfo.replay ? 6 : 5) : 3) + 1} title="How exact are the queue and delay figures?">
+              <EvBlock n={(evalInfo ? (evalInfo.replay ? 6 : 5) : 3) + holdStep} title="How exact are the queue and delay figures?">
                 <p style={{ margin: "0 0 8px" }}>
                   They are what jams at that exit, hour and day type typically looked like over{" "}
                   <b>{jamEval.history_exit_hours != null ? `${jamEval.history_exit_hours.toLocaleString()} past jam-hours` : "four years of Waze history"}</b>{" "}
@@ -2110,7 +2120,7 @@ export default function PredictiveCongestionChart() {
               ];
               const peak = Math.max(...volEval.bands.map((b) => b.jam_rate));
               return (
-                <EvBlock n={(evalInfo ? (evalInfo.replay ? 6 : 5) : 3) + (jamEval ? 2 : 1)} title="Does it line up with traffic volume?">
+                <EvBlock n={(evalInfo ? (evalInfo.replay ? 6 : 5) : 3) + holdStep + (jamEval ? 1 : 0)} title="Does it line up with traffic volume?">
                   <p style={{ margin: "0 0 8px" }}>
                     The model only sees Waze jam reports, never a vehicle count, so this is an outside check. In the toll data
                     ({new Date(volEval.from).getFullYear()}–{new Date(volEval.to).getFullYear()}), jams get more common as an exit gets busier:
@@ -2154,7 +2164,7 @@ export default function PredictiveCongestionChart() {
             {/* 8. The map as served, scored. The figures above come from tests
                    inside training; this is the forecasts people actually saw. */}
             <EvBlock
-              n={(evalInfo ? (evalInfo.replay ? 6 : 5) : 3) + (jamEval ? 1 : 0) + (volEval ? 1 : 0) + 1}
+              n={(evalInfo ? (evalInfo.replay ? 6 : 5) : 3) + holdStep + (jamEval ? 1 : 0) + (volEval ? 1 : 0)}
               title="Checked against what happened"
             >
               {liveScore && liveScore.buckets.length > 0 ? (

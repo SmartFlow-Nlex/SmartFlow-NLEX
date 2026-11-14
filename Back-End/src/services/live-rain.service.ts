@@ -33,6 +33,18 @@ export type LiveRainPoint = {
   thunder: boolean;
   /** WMO weather code (Open-Meteo); null from the weather table. */
   code: number | null;
+  /** Air temperature at 2 m, degrees C; null when the source did not give one. */
+  tempC: number | null;
+};
+
+/** The corridor as one reading, for the Map's live band (13 Nov 2026): the mean temperature across the exits and
+ *  the condition most of them report. */
+export type CorridorWeather = {
+  tempC: number | null;
+  /** "Clear", "Partly cloudy", "Light rain", ...; null when no exit reported a condition (weather-table fallback). */
+  condition: string | null;
+  /** The WMO code behind `condition`. */
+  code: number | null;
 };
 
 export type LiveRain = {
@@ -42,6 +54,7 @@ export type LiveRain = {
   intervalMin: number;
   points: LiveRainPoint[];
   rainingCount: number;
+  corridor: CorridorWeather;
 };
 
 /* Five minutes, the map's own poll. Open-Meteo's current block is a 15-minute slot, but its value for that slot can
@@ -55,6 +68,44 @@ const TABLE_MAX_AGE_H = 3;
    (snow codes cannot occur here). */
 const RAIN_CODES = new Set([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99]);
 const THUNDER_CODES = new Set([95, 96, 99]);
+
+/* WMO weather codes in words, as Open-Meteo documents them. */
+export function conditionOf(code: number | null): string | null {
+  if (code == null) return null;
+  if (code === 0) return "Clear";
+  if (code === 1) return "Mainly clear";
+  if (code === 2) return "Partly cloudy";
+  if (code === 3) return "Overcast";
+  if (code === 45 || code === 48) return "Fog";
+  if (code >= 51 && code <= 57) return "Drizzle";
+  if (code === 61 || code === 80) return "Light rain";
+  if (code === 63 || code === 81) return "Rain";
+  if (code === 65 || code === 82 || code === 66 || code === 67) return "Heavy rain";
+  if (code >= 95) return "Thunderstorm";
+  return null;
+}
+
+/* One reading for the corridor: the mean temperature, and the condition most exits share. Rain is named whenever a
+   quarter or more of the exits have it, even if the rest are dry, because that is the condition that matters on the
+   road; the wettest code among them is the one named. */
+function corridorOf(points: LiveRainPoint[]): CorridorWeather {
+  const temps = points.map((p) => p.tempC).filter((t): t is number => t != null && Number.isFinite(t));
+  const tempC = temps.length ? Math.round((temps.reduce((a, b) => a + b, 0) / temps.length) * 10) / 10 : null;
+  const codes = points.map((p) => p.code).filter((c): c is number => c != null);
+  if (!codes.length) {
+    const wet = points.filter((p) => p.raining).length;
+    return { tempC, condition: wet > 0 ? (wet >= points.length / 4 ? "Rain" : null) : null, code: null };
+  }
+  const wetCodes = codes.filter((c) => RAIN_CODES.has(c));
+  if (wetCodes.length && wetCodes.length >= codes.length / 4) {
+    const code = Math.max(...wetCodes);
+    return { tempC, condition: conditionOf(code), code };
+  }
+  const count = new Map<number, number>();
+  for (const c of codes) count.set(c, (count.get(c) ?? 0) + 1);
+  const code = [...count.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0][0];
+  return { tempC, condition: conditionOf(code), code };
+}
 
 export function intensityOf(mmPerHour: number, raining: boolean): RainIntensity {
   if (!raining) return "none";
@@ -96,13 +147,13 @@ async function fromOpenMeteo(pts: Pt[]): Promise<LiveRain | null> {
     "https://api.open-meteo.com/v1/forecast" +
     `?latitude=${pts.map((p) => p.lat.toFixed(5)).join(",")}` +
     `&longitude=${pts.map((p) => p.lon.toFixed(5)).join(",")}` +
-    "&current=precipitation,weather_code&timezone=Asia%2FManila";
+    "&current=precipitation,weather_code,temperature_2m&timezone=Asia%2FManila";
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = (await res.json()) as unknown;
     const list = (Array.isArray(body) ? body : [body]) as {
-      current?: { time?: string; interval?: number; precipitation?: number; weather_code?: number };
+      current?: { time?: string; interval?: number; precipitation?: number; weather_code?: number; temperature_2m?: number };
     }[];
     if (list.length !== pts.length) throw new Error(`expected ${pts.length} points, got ${list.length}`);
     let asOf = "";
@@ -118,12 +169,14 @@ async function fromOpenMeteo(pts: Pt[]): Promise<LiveRain | null> {
       return {
         ...p, mm, mmPerHour, raining, intensity: intensityOf(mmPerHour, raining),
         thunder: code != null && THUNDER_CODES.has(code), code,
+        tempC: Number.isFinite(Number(c.temperature_2m)) ? Number(c.temperature_2m) : null,
       };
     });
     if (!asOf) throw new Error("no current time in the response");
     return {
       asOf: manilaIso(asOf), source: "open-meteo-current", intervalMin: Math.round(intervalS / 60), points,
       rainingCount: points.filter((p) => p.raining).length,
+      corridor: corridorOf(points),
     };
   } catch (err) {
     console.warn("live-rain: Open-Meteo current unavailable, trying the weather table:", (err as Error).message);
@@ -134,8 +187,8 @@ async function fromOpenMeteo(pts: Pt[]): Promise<LiveRain | null> {
 async function fromWeatherTable(): Promise<LiveRain | null> {
   if (!db) return null;
   try {
-    const r = await db.query<{ name: string; lat: string; lon: string; mm: string | null; at: string }>(
-      `SELECT location_name AS name, latitude AS lat, longitude AS lon, rainfall AS mm,
+    const r = await db.query<{ name: string; lat: string; lon: string; mm: string | null; t: string | null; at: string }>(
+      `SELECT location_name AS name, latitude AS lat, longitude AS lon, rainfall AS mm, temperature AS t,
               to_char(timestamp_utc AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI:SS') AS at
          FROM public.hourly_weather
         WHERE timestamp_utc = (SELECT max(timestamp_utc) FROM public.hourly_weather
@@ -150,12 +203,14 @@ async function fromWeatherTable(): Promise<LiveRain | null> {
         return {
           name: x.name, lat: Number(x.lat), lon: Number(x.lon), mm, mmPerHour: mm, raining,
           intensity: intensityOf(mm, raining), thunder: false, code: null,
+          tempC: x.t == null || !Number.isFinite(Number(x.t)) ? null : Number(x.t),
         };
       })
       .sort((a, b) => a.lat - b.lat);
     return {
       asOf: `${r.rows[0].at}+08:00`, source: "weather-table", intervalMin: 60, points,
       rainingCount: points.filter((p) => p.raining).length,
+      corridor: corridorOf(points),
     };
   } catch (err) {
     console.error("live-rain: weather table unavailable:", (err as Error).message);

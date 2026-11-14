@@ -9038,10 +9038,9 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
   border: 1px solid var(--border-default);
   box-shadow: 0 10px 28px rgb(0 0 0 / 0.22);
 }
-.mjp-pop .mapboxgl-popup-tip {
-  border-top-color: var(--bg-surface);
-  border-bottom-color: var(--bg-surface);
-}
+/* (13 Nov 2026) No blanket tip colour here. Mapbox draws the tip as a bordered triangle with only the
+   side facing the point coloured; colouring top and bottom on every card filled in the transparent sides of
+   a sideways-opening card's tip and drew a square beside it. nc-livemap.css colours the right side per anchor. */
 
 .mjp {
   min-width: 172px;

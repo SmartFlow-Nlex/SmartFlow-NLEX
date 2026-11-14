@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import { ChevronDown, Clock, Map, Maximize2, Milestone, Box } from "lucide-react";
+import { ChevronDown, Clock, Map, Maximize2, Milestone, X, Sun, CloudSun, Cloud, CloudFog, CloudDrizzle, CloudRain, CloudLightning, Thermometer } from "lucide-react";
 import type { Feature } from "geojson";
 import TrafficMapPanel, { MAJOR_EXITS } from "../../../components/maps/TrafficMapPanel";
 import ForecastExpandModal from "../../../components/maps/ForecastExpandModal";
@@ -64,6 +64,12 @@ export default function MapComparisonPage() {
   const [activeReports, setActiveReports] = useState<number | null>(null);
   const [avgSpeed, setAvgSpeed] = useState<number | null>(null);
   const [timeStr, setTimeStr] = useState("");
+  /* The weather on the corridor now (13 Nov 2026, user request): mean temperature and the condition most exits
+     report, from GET /api/map-comparison/live-rain (Open-Meteo's current block at the twenty exits). */
+  const [weatherNow, setWeatherNow] = useState<{
+    tempC: number | null; condition: string | null; code: number | null;
+    asOf: string; rainingCount: number; total: number; source: string;
+  } | null>(null);
 
   // Exit picker. The whole corridor is loaded once and shown as a dropdown in
   // geographic order (Balintawak in the south through to Sta. Ines in the
@@ -75,7 +81,7 @@ export default function MapComparisonPage() {
 
   /* Night Corridor (presentation only): the 3D tilt, the corridor strip and
      the strip <-> map hover link. None of it touches the state above. */
-  const [pitched, setPitched] = useState(false);
+  const [pitched] = useState(false); // 3D toggle removed (13 Nov 2026); the maps stay flat and north-up
   const [stripMode, setStripMode] = useState<"live" | "forecast">("live");
   const [stripOpen, setStripOpen] = useState(true);
   const [liveSnap, setLiveSnap] = useState<CorridorSnapshot | null>(null);
@@ -92,6 +98,13 @@ export default function MapComparisonPage() {
     const mins = Math.max(0, Math.round((Date.now() - new Date(at).getTime()) / 60000));
     const ago = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.floor(mins / 60)} h ${mins % 60} min ago`;
     return `${liveSnap?.feed?.stale ? "Stale" : "Live"} · updated ${ago}`;
+  })();
+  /* What the corridor dock is showing, said once (13 Nov 2026). */
+  const liveAgo = (() => {
+    const at = liveSnap?.feed?.newestAt;
+    if (!at) return null;
+    const mins = Math.max(0, Math.round((Date.now() - new Date(at).getTime()) / 60000));
+    return mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.floor(mins / 60)} h ${mins % 60} min ago`;
   })();
   const forecastHours = forecastSnap?.hoursAhead ?? horizon;
   const forecastAhead = hoursFromNow(forecastHours);
@@ -136,6 +149,32 @@ export default function MapComparisonPage() {
     setExitOpen(false);
     window.dispatchEvent(new CustomEvent("nlex:resetview"));
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      cachedJson<{ success?: boolean; data?: {
+        asOf: string; source: string; rainingCount: number; points: unknown[];
+        corridor?: { tempC: number | null; condition: string | null; code: number | null };
+      } }>(`${BACKEND}/api/map-comparison/live-rain`, 4 * 60_000)
+        .then((j) => {
+          const d = j?.data;
+          if (cancelled || !d) return;
+          setWeatherNow({
+            tempC: d.corridor?.tempC ?? null,
+            condition: d.corridor?.condition ?? null,
+            code: d.corridor?.code ?? null,
+            asOf: d.asOf,
+            rainingCount: d.rainingCount,
+            total: Array.isArray(d.points) ? d.points.length : 0,
+            source: d.source,
+          });
+        })
+        .catch(() => {/* the card says the reading is unavailable */});
+    load();
+    const t = setInterval(load, 5 * 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
 
   // Live running clock
   useEffect(() => {
@@ -229,7 +268,7 @@ export default function MapComparisonPage() {
     <section className="ds-content ds-long lm-page">
       <PageHeader
         icon={Map}
-        title="Live Map"
+        title="Map Comparison"
         subtitle="Live Waze conditions beside the model's forecast, NLEX corridor"
         actions={
           <>
@@ -285,16 +324,17 @@ export default function MapComparisonPage() {
               </ul>
             )}
           </div>
-          {/* Optional 3D: tilts both maps to about 50 degrees; 2D north-up is the default. */}
+          {/* Clear, where the 3D toggle was (13 Nov 2026, user request): drops the chosen plaza and returns both
+              maps to the whole corridor. Disabled until a plaza is chosen, so it never looks like it did nothing. */}
           <button
             type="button"
-            className={`lm-3d${pitched ? " is-on" : ""}`}
-            aria-pressed={pitched}
-            title={pitched ? "3D on: click for the flat, north-up view" : "Tilt the maps (3D)"}
-            onClick={() => setPitched((v) => !v)}
+            className="lm-3d lm-clear"
+            disabled={!selectedExit}
+            title={selectedExit ? `Clear ${displayExitName(selectedExit)} and show the whole corridor` : "Choose a plaza first"}
+            onClick={resetView}
           >
-            <Box size={15} strokeWidth={2.2} aria-hidden="true" />
-            <span>{pitched ? "3D on" : "3D"}</span>
+            <X size={15} strokeWidth={2.4} aria-hidden="true" />
+            <span>Clear</span>
           </button>
           </>
         }
@@ -309,9 +349,10 @@ export default function MapComparisonPage() {
             subtitle="Live traffic conditions"
             badge={
               <>
-                <span className="lm-tag is-live">
+                {/* The feed's own age, from its newest jam (13 Nov 2026): the running clock moved to the band below. */}
+                <span className={`lm-tag is-live${liveSnap?.feed?.stale ? " is-stale" : ""}`}>
                   <i className="mc-dot green" style={{ display: "inline-block", marginRight: "6px", verticalAlign: "middle" }}></i>
-                  LIVE | {timeStr || "Loading..."}
+                  {liveAge ?? "Live · waiting for the feed"}
                 </span>
                 <button
                   type="button"
@@ -346,13 +387,49 @@ export default function MapComparisonPage() {
 
           {/* Feed status, in a band under the map rather than over it. Data age
               comes from the feed's own timestamp. */}
-          <div className="lm-band">
-            {liveAge && (
-              <div className={`lm-age is-live${liveSnap?.feed?.stale ? " is-stale" : ""}`}>
+          {/* The band, laid out like the forecast's (13 Nov 2026, user request): what time it is now on the left,
+              the weather on the corridor on the right, where the forecast shows its model. */}
+          <div className="lm-band is-live">
+            <div className="lm-when is-live">
+              <span className="lm-age is-live">
                 <i aria-hidden="true" />
-                {liveAge}
-              </div>
-            )}
+                Live · now
+              </span>
+              <span className="lm-when-time">{timeStr || "\u2014"}</span>
+              <span className="lm-when-day">Today</span>
+            </div>
+            <div className="mc-model-card lm-weather-card">
+              <span className="mc-model-line">
+                <span className="mc-model-head lm-weather-head">
+                  <Thermometer size={13} aria-hidden="true" /> Weather now
+                </span>
+                {weatherNow && (weatherNow.tempC != null || weatherNow.condition) ? (
+                  <span className="mc-model-name lm-weather-name">
+                    {(() => {
+                      const c = weatherNow.code;
+                      const Icon = c == null ? (weatherNow.rainingCount > 0 ? CloudRain : Cloud)
+                        : c === 0 ? Sun : c <= 2 ? CloudSun : c === 3 ? Cloud : c === 45 || c === 48 ? CloudFog
+                        : c >= 95 ? CloudLightning : c >= 51 && c <= 57 ? CloudDrizzle : CloudRain;
+                      return <Icon size={16} aria-hidden="true" className="lm-weather-icon" />;
+                    })()}
+                    {weatherNow.tempC != null && <b>{Math.round(weatherNow.tempC)}°C</b>}
+                    {weatherNow.condition && <em>{weatherNow.condition}</em>}
+                  </span>
+                ) : (
+                  <span className="mc-model-note">Weather reading unavailable</span>
+                )}
+              </span>
+              {weatherNow && (
+                <span className="mc-model-note">
+                  {weatherNow.rainingCount > 0
+                    ? `Raining at ${weatherNow.rainingCount} of ${weatherNow.total} exits`
+                    : `Dry at all ${weatherNow.total} exits`}
+                  {" · "}
+                  {weatherNow.source === "weather-table" ? "weather table" : "Open-Meteo"},{" "}
+                  {new Date(weatherNow.asOf).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Waze Footer Stats */}
@@ -498,27 +575,8 @@ export default function MapComparisonPage() {
 
       </div>
 
-      {/* One card under the maps: the horizon timeline, then the corridor strip. */}
+      {/* One card under the maps: what is shown, the time control, then the corridor strip. */}
       <div className="lm-dock">
-      {/* The horizon timeline: "Live" at the left end, then one tick per
-          forecast hour the data offers. Same picker, same options and
-          behaviour; the select is still there for exact picks. */}
-      <div className="mc-forecast-controls lm-timeline-dock">
-        <ForecastHorizonPicker
-          horizon={horizon}
-          setHorizon={setHorizon}
-          range={horizonRange}
-          setRange={setHorizonRange}
-          maxHorizon={forecastModel?.maxHorizon ?? null}
-          live={{
-            label: liveAge ?? "Waze feed",
-            active: stripMode === "live",
-            onSelect: () => setStripMode("live"),
-          }}
-          onPick={() => setStripMode("forecast")}
-        />
-      </div>
-
       {/* The legend folds to a pill on phones; wider screens carry it in the strip's header. */}
       <details className="lm-key-pill">
         <summary>Legend</summary>
@@ -528,15 +586,33 @@ export default function MapComparisonPage() {
       <CorridorStrip
         snapshot={stripMode === "live" ? liveSnap : forecastSnap}
         mode={stripMode}
-        setMode={setStripMode}
-        horizon={horizon}
         closures={closures}
         mapHover={mapHover}
         onHover={setStripHover}
         open={stripOpen}
         setOpen={setStripOpen}
-        ageLabel={stripMode === "live" ? liveAge : `${forecastAge} · ${when.day === "Today" ? when.time : `${when.day} · ${when.time}`}`}
+        ageLabel={
+          stripMode === "live"
+            ? `Showing live traffic${liveSnap?.feed?.stale ? " (the feed is stale)" : ""}${liveAgo ? `, updated ${liveAgo}` : ""}`
+            : `Showing the forecast for ${when.time} ${when.day === "Today" ? "today" : when.day === "Tomorrow" ? "tomorrow" : `on ${when.day}`} (${forecastAhead <= 0 ? "this hour" : `+${forecastAhead} h from now`})`
+        }
         majorExits={MAJOR_EXITS}
+        onPickExit={(name) => setSelectedExit(name)}
+        timeline={
+          <ForecastHorizonPicker
+            horizon={horizon}
+            setHorizon={setHorizon}
+            range={horizonRange}
+            setRange={setHorizonRange}
+            maxHorizon={forecastModel?.maxHorizon ?? null}
+            live={{
+              label: "now",
+              active: stripMode === "live",
+              onSelect: () => setStripMode("live"),
+            }}
+            onPick={() => setStripMode("forecast")}
+          />
+        }
       />
       </div>
       </div>

@@ -224,7 +224,14 @@ export function createJamCallouts(
       lead.className = "lm-callout-lead";
       const plate = document.createElement("span");
       plate.className = "lm-callout-plate";
-      plate.textContent = text;
+      /* A solid chip in the queue's colour with a clock (13 Nov 2026): it was a white plate like the exit
+         names, so "456 m · +2 min · SB" and "Pulilan Km 45" read as the same kind of thing. A place is a
+         white label; a condition is a coloured chip. The icon is static markup; the text is a text node. */
+      const icon = document.createElement("span");
+      icon.className = "lm-callout-ico";
+      icon.innerHTML =
+        '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+      plate.append(icon, document.createTextNode(text));
       el.append(lead, plate);
       const at = (f.geometry as GeoJSON.Point).coordinates as [number, number];
       const marker = new Marker({ element: el, anchor: "center" }).setLngLat(at).addTo(map);

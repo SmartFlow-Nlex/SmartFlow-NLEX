@@ -11,6 +11,10 @@ import { REPLAY_ACTUAL, REPLAY_FORECAST, useMeasuredWidth } from "./replayViz";
 import { useTrafficPalette } from "./trafficPalette";
 import StateNote from "../stage/StateNote";
 import EvidenceModal from "./EvidenceModal";
+import EvBlock from "./EvBlock";
+import { GenerateReportButton } from "./NarrativePanel";
+import GroupMenu, { type GroupMenuGroup } from "./GroupMenu";
+import { ChevronRight, ShieldCheck } from "lucide-react";
 
 type RawRow = {
   exit: string;
@@ -76,7 +80,7 @@ const isArena = (venue: string | null) => !venue || /arena/i.test(venue);
 // Resolved per theme from the page accent (see `SURGE` in the component).
 
 const fmtVeh = (n: number) => Math.round(n).toLocaleString("en-US");
-const fmtK = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n));
+const fmtK = (n: number) => (n >= 10000 ? `${(n / 1000).toFixed(0)}k` : n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k` : String(n));
 
 // Mainline barriers, ramps and spur roads are toll points, not exits people
 // leave the expressway from — worth separating so "Bocaue Barrier" is not
@@ -205,8 +209,11 @@ export default function PredictiveEventChart() {
   // shows the forecast for that specific day.
   const [upcoming, setUpcoming] = useState<UpcomingEvent[]>([]);
   const [selUpcoming, setSelUpcoming] = useState<number | null>(null);
-  // Which year's events the list offers (mock defense, 3 Nov 2026: by year, so the years do not run together).
+  // The report and the validation details open from the card's foot line (13 Nov 2026), as on the other cards.
+  const [reportOpen, setReportOpen] = useState(false);
+  // A quick year filter beside the menu (13 Nov 2026, user request): "all" or one year of upcoming nights.
   const [eventYear, setEventYear] = useState<string>("all");
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -301,7 +308,7 @@ export default function PredictiveEventChart() {
     );
   }
 
-  const { affected, rows, minorAffected, otherExits, otherPoints, totalAdded, affectedBaseline, eventName, totalPlazas } = model;
+  const { affected, rows, minorAffected, otherExits, otherPoints, totalAdded, affectedBaseline, totalPlazas } = model;
   const top = affected[0];
   const multiple = top.surge / top.baseline;
 
@@ -312,7 +319,7 @@ export default function PredictiveEventChart() {
   // zero is the most accurate comparison available, and it stops the smallest
   // exit collapsing into a sliver.
   const impactOption: EChartsOption = {
-    grid: { left: 152, right: 150, top: 10, bottom: 40 },
+    grid: { left: 132, right: 120, top: 8, bottom: 44 },
     tooltip: {
       trigger: "item",
       confine: true,
@@ -338,7 +345,8 @@ export default function PredictiveEventChart() {
       nameGap: 26,
       nameTextStyle: { color: K.muted, fontSize: 11 },
       axisLabel: { color: K.muted, formatter: (v: number) => (v === 0 ? "0" : `+${fmtK(v)}`), fontSize: 11 },
-      splitLine: { show: false },
+      splitNumber: 4,
+      splitLine: { show: true, lineStyle: { color: K.hover, type: "dashed" } },
     },
     yAxis: {
       type: "category",
@@ -351,7 +359,9 @@ export default function PredictiveEventChart() {
       {
         name: "Added by event",
         type: "bar",
-        barMaxWidth: 26,
+        barMaxWidth: 22,
+        showBackground: true,
+        backgroundStyle: { color: K.hover, borderRadius: [0, 4, 4, 0] },
         data: rows.map((r) => r.added),
         itemStyle: { color: SURGE, borderRadius: [0, 4, 4, 0] },
         label: {
@@ -392,7 +402,7 @@ export default function PredictiveEventChart() {
     international: "International acts", filipino: "Filipino acts", mixed: "Mixed lineups",
     solo_concert: "Solo concerts", festival: "Festivals", multi_artist_showcase: "Multi-artist showcases", sports: "Sports",
   };
-  const impactHeight = Math.max(rows.length * 56 + 62, 220);
+  const impactHeight = Math.max(rows.length * 46 + 72, 150);
   const VISIBLE_OTHERS = 8;
   const shownOthers = showAllOthers ? otherExits : otherExits.slice(0, VISIBLE_OTHERS);
   // How concentrated the surge is: the share the two biggest exits carry
@@ -413,173 +423,210 @@ export default function PredictiveEventChart() {
     </div>
   );
 
+  /* The "Showing" menu (13 Nov 2026): past events first, then each upcoming night under its year. One menu with
+     year headings replaces the separate Year select, which only filtered this list. */
+  const menuGroups: GroupMenuGroup[] = [
+    { items: [{ value: "", main: "Typical event day (past events)", side: meta?.nEvents ? `${meta.nEvents} nights` : undefined }] },
+    ...(eventYear !== "all" && !upcomingYears.includes(eventYear)
+      ? [{ label: eventYear, items: [{ value: "__none", main: "No nights listed for this year yet", side: undefined }] }]
+      : []),
+    ...upcomingYears.filter((y) => eventYear === "all" || y === eventYear).map((year) => ({
+      label: year,
+      items: upcoming.flatMap((u, i) => {
+        if (!u.date.startsWith(year)) return [];
+        // Group nights by the act, not the full title: the source spells one tour two ways.
+        const act = shortTitle(u.title);
+        const nth = upcoming.slice(0, i + 1).filter((x) => shortTitle(x.title) === act).length;
+        const multi = upcoming.filter((x) => shortTitle(x.title) === act).length > 1;
+        const d = new Date(`${u.date}T00:00:00`);
+        const lead = Math.round((d.getTime() - Date.now()) / 86400000);
+        const tags: { label: string; tone?: "muted" | "warn" | "accent" }[] = [];
+        if (multi) tags.push({ label: `Day ${nth}`, tone: "accent" });
+        if (!isArena(u.venue) && u.venue) tags.push({ label: u.venue.replace(/^Philippine /, ""), tone: "muted" });
+        if (u.verified === false) tags.push({ label: "Unverified", tone: "warn" });
+        return [{
+          value: String(i),
+          main: <><b className="gm-date">{d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</b>{act}</>,
+          side: lead >= 0 ? (lead === 0 ? "today" : `in ${lead} d`) : undefined,
+          tags,
+        }];
+      }),
+    })),
+  ];
+
+  /* Layout (13 Nov 2026, user request, in the shape of the other Predictive cards): title and status, one
+     controls panel, the finding, the four numbers beside the chart, then a foot line with Generate report and
+     View validation details. */
   return (
-    <article className="chart-card wide nct-card">
-      {/* Row 1: title on the left, provenance on the right. */}
+    <article className="chart-card wide nct-card ev-card">
       <div className="nct-card-head-split">
         <h3 className="nct-title">
           Event Surge Impact by Exit
-          <InfoTooltip text="Extra vehicles each exit takes on a Philippine Arena event day versus a normal day. Choose a past pattern or an upcoming event above." />
+          <InfoTooltip text="Extra vehicles each exit takes on an event day at the Philippine Arena complex, against a normal day. Choose the typical event day or an upcoming night." />
         </h3>
         <div className="nct-pill-row">
-          {/* Forecast and model labels wear model violet, so a forecast never
-              reads as a road state; observed history is a plain pill. */}
           {chosen ? (
-            <span className="pill purple">
-              Forecast · {chosenDate}
-            </span>
+            <span className="pill purple">Forecast · {chosenDate}</span>
           ) : (
-            <span className="pill">
-              Observed{meta?.nEvents ? ` · ${meta.nEvents} past event days` : ""}
-            </span>
+            <span className="pill">Observed{meta?.nEvents ? ` · ${meta.nEvents} past event days` : ""}</span>
           )}
           {champ?.wmape != null && (
-            <span
-              title={champ.diagnosis ?? undefined}
-              className={`pill ${champ.accepted ? "green" : "red"}`}
-            >
-              {champ.accepted ? "✓ tested" : "failed test"} · {champ.wmape.toFixed(1)}% error held-out
+            <span title={champ.diagnosis ?? undefined} className={`pill ${champ.accepted ? "green" : "red"}`}>
+              {champ.accepted ? "✓ Tested" : "Failed test"} · {champ.wmape.toFixed(1)}% error held-out
             </span>
           )}
         </div>
       </div>
 
-      {/* Row 2: what is shown. A select, not seven pills -- the pills wrapped to
-          three lines and pushed the finding below the fold. */}
-      <div className="nct-toolbar">
-        {upcomingYears.length > 1 && (
-          <label className="nct-group">
-            <span className="nct-group-label">Year</span>
-            <select
-              value={eventYear}
-              onChange={(e) => {
-                const y = e.target.value;
-                setEventYear(y);
-                // A day from another year is no longer in the list: back to the past-events view.
-                if (y !== "all" && selUpcoming != null && !upcoming[selUpcoming]?.date.startsWith(y)) setSelUpcoming(null);
-              }}
-              className="nct-select"
-              aria-label="Filter upcoming events by year"
-            >
-              <option value="all">All years</option>
-              {upcomingYears.map((y) => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
-          </label>
-        )}
-        <label className="nct-group">
-          <span className="nct-group-label">Showing</span>
-          <select
+      <div className="fc2-controls ev-controls">
+        <div className="fc2-row">
+          {/* Year, as a dropdown (13 Nov 2026, user request): every year with listed nights, and the next two years
+              even before anything is listed, so a planner can look ahead. */}
+          {(() => {
+            const now = new Date().getFullYear();
+            const years = [...new Set([...upcomingYears, String(now), String(now + 1), String(now + 2)])].sort();
+            return (
+              <>
+                <span className="fc-label">Year</span>
+                <GroupMenu
+                  value={eventYear}
+                  onChange={(y) => {
+                    setEventYear(y);
+                    // A night from another year is no longer listed: back to the typical event day.
+                    if (y !== "all" && selUpcoming != null && !upcoming[selUpcoming]?.date.startsWith(y)) setSelUpcoming(null);
+                  }}
+                  ariaLabel="Year"
+                  minWidth={130}
+                  menuWidth={220}
+                  groups={[{
+                    items: [
+                      { value: "all", main: "All years", side: `${upcoming.length} nights` },
+                      ...years.map((y) => {
+                        const n = upcoming.filter((u) => u.date.startsWith(y)).length;
+                        return { value: y, main: y, side: n ? `${n} night${n === 1 ? "" : "s"}` : "none listed yet" };
+                      }),
+                    ],
+                  }]}
+                />
+                <span className="fc2-sep" aria-hidden="true" />
+              </>
+            );
+          })()}
+          <span className="fc-label">Showing</span>
+          <GroupMenu
             value={selUpcoming == null ? "" : String(selUpcoming)}
-            onChange={(e) => setSelUpcoming(e.target.value === "" ? null : Number(e.target.value))}
-            className="nct-select"
-            style={{ maxWidth: 360 }}
-          >
-            <option value="">Past events — what {eventName === "the upcoming event" ? "event" : eventName} days did</option>
-            {/* One group per year, each headed by its year, so 2026's nights and 2027's are not one long run. */}
-            {upcomingYears.filter((y) => eventYear === "all" || y === eventYear).map((year) => (
-            <optgroup key={year} label={`${year} events`}>
-            {upcoming.map((u, i) => {
-              if (!u.date.startsWith(year)) return null;
-              // Group nights by the act, not the full title: the source spells
-              // BTS's three nights two different ways ("BTS - Arirang World
-              // Tour", "BTS - BTS WORLD TOUR 'ARIRANG'"), which by full title
-              // read as one lone night plus a two-night run.
-              const act = shortTitle(u.title);
-              const nth = upcoming.slice(0, i + 1).filter((x) => shortTitle(x.title) === act).length;
-              const multi = upcoming.filter((x) => shortTitle(x.title) === act).length > 1;
-              const d = new Date(`${u.date}T00:00:00`);
-              return (
-                <option key={u.date} value={String(i)}>
-                  {d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} — {shortTitle(u.title)}{multi ? ` (day ${nth})` : ""}{isArena(u.venue) ? "" : ` · ${u.venue}`}{u.verified === false ? " · unverified" : ""}
-                </option>
-              );
-            })}
-            </optgroup>
-            ))}
-          </select>
-        </label>
-        <InfoTooltip
-          text={`Normal day = each exit's median on the same weekday over the last 8 weeks of real toll data (to 24 May 2026), counting only days with no event and no holiday, so events cannot inflate their own baseline; on a public holiday it is scaled by the exit's holiday factor. The event effect is measured on verified show nights only${
-            meta?.firstEvent && meta?.lastEvent ? `, ${meta.firstEvent} to ${meta.lastEvent}` : ""
-          }.`}
-        />
+            onChange={(v) => { if (v !== "__none") setSelUpcoming(v === "" ? null : Number(v)); }}
+            groups={menuGroups}
+            ariaLabel="Event shown"
+            minWidth={300}
+            menuWidth={440}
+            buttonLabel={chosen
+              ? <><b className="gm-date">{chosenDate}</b>{shortTitle(chosen.title)}</>
+              : "Typical event day (past events)"}
+          />
+          <InfoTooltip
+            text={`Normal day = each exit's median on the same weekday over the last 8 weeks of real toll data, counting only days with no event and no holiday, so events cannot inflate their own baseline. The event effect is measured on verified show nights only${
+              meta?.firstEvent && meta?.lastEvent ? `, ${meta.firstEvent} to ${meta.lastEvent}` : ""
+            }.`}
+          />
+        </div>
       </div>
 
-      {/* Row 3: the finding, in one sentence, event first. */}
-      <div className="nct-finding nct-finding-text" data-tone="accent">
-        {chosen ? (
-          /* An upcoming day, as the answer then two labelled rows. */
-          <>
-            Expect <b>+{fmtVeh(totalAdded)}</b> extra vehicles during <b>{shortTitle(chosen.title)}</b>
-            {chosen.isDerived && <span title="A recurring event the ETL inferred from prior years, not an announced date." className="nct-soft"> (inferred)</span>}
-            {chosen.verified === false && <span title="A new listing from the scraped calendar that has not been checked against a public source yet." className="nct-soft"> (unverified listing)</span>}.
-            {chosen.sourceUrl && (
-              <span className="nct-finding-kv">
-                <span className="nct-kv-k">Source</span>
-                <span>
-                  <a href={chosen.sourceUrl} target="_blank" rel="noopener noreferrer">
-                    {(() => { try { return new URL(chosen.sourceUrl).hostname.replace(/^www\./, ""); } catch { return "source"; } })()}
-                  </a>
-                  <span className="nct-soft"> · verified date and venue</span>
-                </span>
-              </span>
+      {/* The event, as a banner (13 Nov 2026, user request): a date badge, the event's name with its facts as chips,
+          and the effect on the right. It was one long sentence; the vehicle total is in the figures just below. */}
+      {(() => {
+        const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return "source"; } };
+        const d = chosen ? new Date(`${chosen.date}T00:00:00`) : null;
+        return (
+          <div className={`ev-banner${chosen ? " is-upcoming" : " is-typical"}`}>
+            {d ? (
+              <div className="ev-date" aria-hidden="true">
+                <span>{d.toLocaleDateString("en-US", { month: "short" })}</span>
+                <b>{d.getDate()}</b>
+                <em>{d.toLocaleDateString("en-US", { weekday: "short" })}</em>
+              </div>
+            ) : (
+              /* The same three lines as the calendar badge (13 Nov 2026): label, number, unit. */
+              <div className="ev-date is-typical" title={`Measured over ${meta?.nEvents ?? "the"} past show nights`}>
+                <span>Past</span>
+                <b>{meta?.nEvents ?? "—"}</b>
+                <em>nights</em>
+              </div>
             )}
-            <span className="nct-finding-kv">
-              <span className="nct-kv-k">When</span>
-              <span>
-                <b>{chosenDateLong}</b>
-                {chosenLead != null && chosenLead >= 0 && <> · in {chosenLead} day{chosenLead === 1 ? "" : "s"}</>}
-                {!isArena(chosen.venue) && (
-                  <span className="nct-soft"> · at {chosen.venue}{chosen.capacity ? ` (${fmtVeh(chosen.capacity)} capacity)` : ""}</span>
+            <div className="ev-banner-main">
+              <span className="ev-banner-k">{chosen ? "Upcoming event" : "Typical event day"}</span>
+              <h4 className="ev-banner-title">{chosen ? shortTitle(chosen.title) : "What a show night at the Arena complex does"}</h4>
+              <div className="ev-banner-chips">
+                {chosen ? (
+                  <>
+                    <span className="ev-chip">{chosenDateLong}</span>
+                    {chosenLead != null && chosenLead >= 0 && (
+                      <span className="ev-chip is-accent">{chosenLead === 0 ? "Today" : `In ${chosenLead} day${chosenLead === 1 ? "" : "s"}`}</span>
+                    )}
+                    {chosen.venue && <span className="ev-chip">{chosen.venue}{chosen.capacity ? ` · ${fmtVeh(chosen.capacity)} seats` : ""}</span>}
+                    {chosen.isDerived && <span className="ev-chip is-warn" title="A recurring event inferred from prior years, not an announced date.">Inferred date</span>}
+                    {chosen.verified === false && <span className="ev-chip is-warn" title="A new listing from the scraped calendar, not yet checked against a public source.">Unverified</span>}
+                    {chosen.sourceUrl && (
+                      <a className="ev-chip is-link" href={chosen.sourceUrl} target="_blank" rel="noopener noreferrer">
+                        Source: {host(chosen.sourceUrl)}
+                      </a>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {meta?.firstEvent && meta?.lastEvent && (() => {
+                      const my = (iso: string) => { const d = new Date(`${iso.slice(0, 10)}T00:00:00`); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US", { month: "short", year: "numeric" }); };
+                      return <span className="ev-chip">{my(meta.firstEvent)} – {my(meta.lastEvent)}</span>;
+                    })()}
+                    <span className="ev-chip">Verified show nights only</span>
+                  </>
                 )}
-              </span>
-            </span>
-            <span className="nct-finding-kv">
-              <span className="nct-kv-k">Top exit</span>
-              <span>
-                <b>{top.exit}</b> takes {top.shareOfSurge.toFixed(0)}% of it, {multiple.toFixed(1)}× its normal{" "}
-                {new Date(`${chosen.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}
-              </span>
-            </span>
-          </>
-        ) : (
-          <>
-            On a <b>{eventName}</b> day, <b>{top.exit}</b> takes {top.shareOfSurge.toFixed(0)}% of the surge —{" "}
-            {multiple.toFixed(1)}× a normal day, +{fmtVeh(top.added)} vehicles.
-          </>
+              </div>
+            </div>
+            <div className="ev-banner-effect">
+              <span className="ev-banner-k">Biggest effect</span>
+              <b>{top.exit}</b>
+              <span>{top.shareOfSurge.toFixed(0)}% of the rise · {multiple.toFixed(1)}× a normal day</span>
+            </div>
+          </div>
+        );
+      })()}
+
+      <div className="nct-split is-event ev-body">
+        <div className="nct-stats">
+          {stat(`+${fmtVeh(totalAdded)}`, "extra vehicles")}
+          {stat(`${affected.length} of ${totalPlazas}`, "exits with a clear rise")}
+          {stat(`+${((totalAdded / affectedBaseline) * 100).toFixed(0)}%`, "uplift at those exits")}
+          {stat(`${top2Share.toFixed(0)}%`, `carried by the top ${Math.min(2, affected.length)}`)}
+        </div>
+        <div className="ev-chart">
+          <div className="ev-chart-head">
+            <span>Extra vehicles by exit</span>
+            {(minorAffected.length > 0) && <em>{minorAffected.length} smaller rise{minorAffected.length === 1 ? "" : "s"} in the details</em>}
+          </div>
+          <div style={{ height: `${impactHeight}px` }}>
+            <DashboardChart option={impactOption} height={impactHeight} />
+          </div>
+        </div>
+      </div>
+
+      {/* The foot line, as on the volume forecast and the congestion map. */}
+      <div className="fc2-foot cg-foot ev-foot">
+        {!reportOpen && champ && <GenerateReportButton onClick={() => setReportOpen(true)} />}
+        {champ?.wmape != null && (
+          <button type="button" className="cg-ev-btn" aria-haspopup="dialog" onClick={() => setEvidenceOpen(true)}>
+            <ShieldCheck size={16} aria-hidden="true" className="cg-ev-icon" />
+            <span className="cg-ev-title">View validation details</span>
+            <ChevronRight size={16} aria-hidden="true" className="cg-ev-chev" />
+          </button>
         )}
       </div>
 
-      {/* Row 4: the numbers, once each, on one line. */}
-      {/* Two by two, not auto-fit: in a half-width card four stats wrapped 3+1
-          and left the last one orphaned on its own line. */}
-      <div className="nct-split is-event">
-      <div className="nct-stats">
-        {stat(`+${fmtVeh(totalAdded)}`, "extra vehicles")}
-        {stat(`${affected.length} of ${totalPlazas}`, "exits with a material rise")}
-        {stat(`+${((totalAdded / affectedBaseline) * 100).toFixed(0)}%`, "uplift at those exits")}
-        {stat(`${top2Share.toFixed(0)}%`, `carried by the top ${Math.min(2, affected.length)}`)}
-      </div>
-
-      {/* Row 5: the chart, with the room the strip and tiles were taking. */}
-      {/* At least its natural height, and it grows into whatever the card has spare: beside the taller
-          congestion card this one used to end in a large blank area (user request). */}
-      <div className="nct-fill-chart" style={{ minHeight: `${impactHeight}px` }}>
-        <div><DashboardChart option={impactOption} height="100%" /></div>
-      </div>
-      </div>
-
-      {/* Row 6: what a reviewer needs and an operator does not need first.
-          Validation as a table, matching how the volume card above shows its
-          models; the long tail and unchanged exits as one chip row, there so
-          "13 of 19" can be checked, not to be read. */}
-      {/* The model's own read-out, in the open: the control that asks for it
-          has to be visible, and it is the same panel the other Predictive
-          cards carry so the tab reads as one system. */}
       {champ && (
         <EventSurgeNarrative
+          compact
+          open={reportOpen}
+          onOpenChange={setReportOpen}
           models={[champ, ...others].map((m) => ({
             model: m.model,
             wmape: m.wmape ?? null,
@@ -606,196 +653,120 @@ export default function PredictiveEventChart() {
       )}
 
       <EvidenceModal
-        subtitle="Event surge model: its error on held-out events, and the exits it covers."
-        strip={<>
-          {champ?.wmape != null && (
-            <span className="nct-trust-pill" style={{ order: 4 }}>
-              {champ.model} · {champ.wmape.toFixed(1)}% error on held-out events
-              {noAdj?.wmape != null && <> ({noAdj.wmape.toFixed(1)}% without it)</>}
-            </span>
-          )}
-          {(minorAffected.length > 0 || otherExits.length > 0) && (
-            <span className="nct-dim" style={{ order: 5, fontSize: "var(--fs-body)" }}>
-              the other {minorAffected.length + otherExits.length} exits
-            </span>
-          )}
-        </>}
+        subtitle="How well the event estimate held up on events it never saw, and what it is built from."
+        hideTrigger
+        open={evidenceOpen}
+        onOpenChange={setEvidenceOpen}
       >
-
-        <div className="nct-evidence nct-ev-body">
+        {/* Numbered steps that open on a click, as on the congestion map (13 Nov 2026, user request): the first is open,
+            the rest stay folded until wanted. */}
+        <div className="nct-evidence nct-ev-blocks ev-evidence">
           {evalInfo?.series && evalInfo.series.length > 1 && (
-            <div>
-              <div className="nct-ev-title">
-                Did past predictions match what really happened?
-              </div>
-              <p style={{ margin: "0 0 2px", fontSize: "var(--fs-body)", lineHeight: 1.55, color: "var(--text-secondary)" }}>
-                <b>{evalInfo.events_test} event days the model never saw</b>, in date order · the gap is the error
+            <EvBlock n={0 + 1} title="Did past predictions match what happened?">
+              <p className="ev-lead">
+                {evalInfo.events_test} event days the model never saw. Each line joins the prediction to what arrived; a short line is a close call.
               </p>
               <EventReplayChart series={evalInfo.series} />
-              <div style={{
-                display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))", gap: 8, marginTop: 8,
-                padding: "8px 10px", borderRadius: 8, background: "color-mix(in srgb, var(--text-primary) 4%, transparent)", border: "1px solid var(--border-default)",
-              }}>
-                {[[`${evalInfo.median_day_error_pct.toFixed(1)}%`, "off on the typical event day"],
-                  [`${evalInfo.wmape.toFixed(1)}%`, "error across all exit-days"],
-                  [`${evalInfo.baseline_wmape.toFixed(1)}%`, "if you ignored the event"]].map(([v, l]) => (
-                  <div key={l} style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: "var(--fs-title)", fontWeight: 600, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{v}</span>
-                    <span style={{ fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>{l}</span>
-                  </div>
-                ))}
+              <div className="ev-figs">
+                <div><b>{evalInfo.median_day_error_pct.toFixed(1)}%</b><span>off on a typical event day</span></div>
+                <div><b>{evalInfo.wmape.toFixed(1)}%</b><span>error with the event estimate</span></div>
+                <div className="is-muted"><b>{evalInfo.baseline_wmape.toFixed(1)}%</b><span>error if the event is ignored</span></div>
               </div>
-              {evalInfo.examples?.length > 0 && (
-                <div style={{ display: "grid", gap: 3, marginTop: 7, fontSize: "var(--fs-label)", color: "var(--text-secondary)" }}>
-                  {evalInfo.examples.map((ex) => (
-                    <div key={ex.kind}>
-                      {ex.kind.charAt(0).toUpperCase() + ex.kind.slice(1)} —{" "}
-                      <b style={{ color: "var(--text-primary)" }}>{new Date(ex.t + "T00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</b>:
-                      {" "}predicted {ex.predicted.toLocaleString()}, actually {ex.actual.toLocaleString()}.
-                    </div>
-                  ))}
-                </div>
-              )}
-              <p style={{ margin: "7px 0 0", fontSize: "var(--fs-label)", lineHeight: 1.5, color: "var(--text-muted)" }}>
-                {evalInfo.events_total} verified show nights (Philippine Arena, Philippine Sports Stadium, Clark) ·
-                each confirmed by a public source
-                <InfoTooltip
-                  text="Event nights come from the verified calendar: every night is confirmed by an official venue, promoter, artist or ticketing page, Billboard, or an established Philippine news outlet, never inferred from how busy the road was. Holidays are measured separately, so a holiday is not credited to the event."
-                />
-              </p>
-            </div>
+            </EvBlock>
           )}
 
           {basis && (
-            <div>
-              <div className="nct-ev-title">What the forecast is based on</div>
-              <p style={{ margin: "0 0 6px", fontSize: "var(--fs-body)", lineHeight: 1.55, color: "var(--text-secondary)" }}>
-                <b>{basis.calendar_counts.held_nights_at_venues} verified show nights</b>{" "}
-                ({basis.calendar_counts.first} to {basis.calendar_counts.last}), {basis.calendar_counts.scored_nights} of them on
-                real toll days. Sources: {basis.sources}.
+            <EvBlock n={(evalInfo?.series && evalInfo.series.length > 1 ? 1 : 0) + 1} title="What it is built from">
+              <p className="ev-lead">
+                {basis.calendar_counts.held_nights_at_venues} show nights ({basis.calendar_counts.first} to {basis.calendar_counts.last}),
+                each confirmed by an official or news source.
               </p>
-              {[["By venue", basis.by_venue], ["By act", basis.by_origin], ["By format", basis.by_format]].map(([label, groups]) => {
-                const g = groups as Record<string, GroupStat> | undefined;
-                const list = g ? Object.entries(g).filter(([, v]) => v.n >= 3).sort((a, b) => b[1].median - a[1].median) : [];
-                if (list.length === 0) return null;
+              {(() => {
+                const table = (label: string, groups: Record<string, GroupStat> | undefined) => {
+                  const list = groups ? Object.entries(groups).filter(([, v]) => v.n >= 3).sort((x, y) => y[1].median - x[1].median) : [];
+                  if (!list.length) return null;
+                  return (
+                    <table className="nct-table ev-table">
+                      <thead>
+                        <tr><th>{label}</th><th>Nights</th><th>Typical rise</th></tr>
+                      </thead>
+                      <tbody>
+                        {list.map(([k, v]) => (
+                          <tr key={k}>
+                            <td>{GROUP_LABEL[k] ?? k}</td>
+                            <td>{v.n}</td>
+                            <td><b>{pctUp(v.median)}</b> <span>({pctUp(v.ci[0])} to {pctUp(v.ci[1])})</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  );
+                };
+                const more = [table("By act", basis.by_origin), table("By format", basis.by_format)].filter(Boolean);
                 return (
-                  <table key={label as string} className="nct-table" style={{ marginTop: 4 }}>
-                    <thead>
-                      <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--border-default)" }}>
-                        <th style={{ padding: "4px 6px", fontWeight: 600 }}>{label as string}: past nights at the venue exit</th>
-                        <th style={{ padding: "4px 6px", fontWeight: 600, textAlign: "right" }}>Nights</th>
-                        <th style={{ padding: "4px 6px", fontWeight: 600, textAlign: "right" }}>Typical rise (95% range)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {list.map(([k, v]) => (
-                        <tr key={k} style={{ borderBottom: "1px solid var(--border-default)" }}>
-                          <td style={{ padding: "4px 6px" }}>{GROUP_LABEL[k] ?? k}</td>
-                          <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{v.n}</td>
-                          <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                            <b>{pctUp(v.median)}</b>{" "}
-                            <span style={{ color: "var(--text-muted)" }}>({pctUp(v.ci[0])} to {pctUp(v.ci[1])})</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <>
+                    {table("By venue", basis.by_venue)}
+                    {more.length > 0 && (
+                      <details className="ev-more">
+                        <summary>More breakdowns (by act and format)</summary>
+                        {more}
+                      </details>
+                    )}
+                  </>
                 );
-              })}
-              <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: "var(--fs-label)", lineHeight: 1.55, color: "var(--text-secondary)" }}>
-                {basis.per_1000_attendees && (
-                  <li>
-                    Reported attendance exists for only {basis.per_1000_attendees.nights} nights, too few to forecast with, and ticket
-                    sales are not published before an event, so attendance is not used.
-                  </li>
-                )}
-                {basis.attendance_test && !basis.attendance_test.significant && (
-                  <li>
-                    Tested as a forecast input on the {basis.attendance_test.nights} held-out nights that have it, attendance did not
-                    improve the forecast; it is re-tested every week as more nights are recorded.
-                  </li>
-                )}
-                {basis.far_normal && basis.far_normal_choice && (
-                  <li>
-                    Normal day for future dates: {Object.entries(basis.far_normal).map(([k, v]) => `${k} ${v.toFixed(1)}% error`).join(" vs ")} on
-                    ordinary days 90–300 days ahead; the <b>{basis.far_normal_choice}</b> is used.
-                  </li>
-                )}
-                <li>
-                  {/(gradient boosting|random forest)/i.test(evalInfo?.model ?? "")
-                    ? <>The forecast is made by <b>{evalInfo?.model}</b>, which learned from these nights how the rise at each exit
-                      depends on the venue, weekday or weekend, act (Filipino or international), format and run of nights. It won the
-                      test below: on later nights it never saw, it beat both ignoring the event and a flat uplift.</>
-                    : <>The differences above are what past nights did. A rule that uses them is served only once it beats ignoring
-                      the event and a flat uplift on later nights it never saw (table below).</>}
-                </li>
-              </ul>
-            </div>
+              })()}
+            </EvBlock>
           )}
 
           {champ?.wmape != null && (
-            <div>
-              <table className="nct-table">
-                <thead>
-                  <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--border-default)" }}>
-                    <th style={{ padding: "4px 6px", fontWeight: 600 }}>Model</th>
-                    <th style={{ padding: "4px 6px", fontWeight: 600, textAlign: "right" }}>Error on held-out events</th>
-                  </tr>
-                </thead>
+            <EvBlock n={(evalInfo?.series && evalInfo.series.length > 1 ? 1 : 0) + (basis ? 1 : 0) + 1} title="Which method is used">
+              <table className="nct-table ev-table">
+                <thead><tr><th>Method</th><th>Error on unseen events</th></tr></thead>
                 <tbody>
                   {[champ, ...others].map((m, i) => (
-                    <tr key={m.model} style={{ borderBottom: "1px solid var(--border-default)", color: i === 0 ? "var(--text-primary)" : "var(--text-secondary)" }}>
-                      <td style={{ padding: "4px 6px", fontWeight: i === 0 ? 700 : 500 }}>
-                        {m.model}{i === 0 && <span className="pill purple" style={{ marginLeft: 8, padding: "1px 8px" }}>used</span>}
-                      </td>
-                      <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: i === 0 ? 700 : 500 }}>
-                        {m.wmape != null ? `${m.wmape.toFixed(2)}%` : "—"}
-                      </td>
+                    <tr key={m.model} className={i === 0 ? "is-used" : undefined}>
+                      <td>{m.model}{i === 0 && <span className="pill purple ev-used">used</span>}</td>
+                      <td>{m.wmape != null ? `${m.wmape.toFixed(1)}%` : "—"}</td>
                     </tr>
                   ))}
                   {noAdj?.wmape != null && (
-                    <tr style={{ color: "var(--text-muted)" }}>
-                      <td style={{ padding: "4px 6px", fontStyle: "italic" }}>Ignoring the event</td>
-                      <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{noAdj.wmape.toFixed(2)}%</td>
-                    </tr>
+                    <tr className="is-muted"><td>Ignoring the event</td><td>{noAdj.wmape.toFixed(1)}%</td></tr>
                   )}
                 </tbody>
               </table>
-              <p style={{ margin: "6px 0 0", lineHeight: 1.5, color: "var(--text-muted)" }}>
-                Fitted on earlier events, scored on later ones it never saw{champ.diagnosis ? ` (${champ.diagnosis})` : ""}.{" "}
-                {chosen
-                  ? <>The day shown is each nearby exit&apos;s normal day (same weekday, last 8 real weeks){" "}
-                      {/(gradient boosting|random forest)/i.test(evalInfo?.model ?? "")
-                        ? <>times {evalInfo?.model}&apos;s forecast for this event, from its venue, day, act and format{chosen.verified === false ? " (an unverified listing gets the typical multiplier, since its act and format are not checked yet)" : ""}.</>
-                        : <>times the tested multiplier.</>}</>
-                  : <>Choose an upcoming date above to see the forecast for it.</>}
+              <p className="ev-note">
+                Fitted on earlier events and scored on later ones. {chosen
+                  ? "The forecast for a chosen night is each exit's normal day for that weekday, times the method's estimate for the event."
+                  : "Choose an upcoming night to see its forecast."}
               </p>
-            </div>
+            </EvBlock>
           )}
 
           {(minorAffected.length > 0 || otherExits.length > 0) && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {minorAffected.map((r) => (
-                <span key={r.exit} title={`${r.exit}: +${fmtVeh(r.added)} vehicles, ${r.shareOfSurge.toFixed(1)}% of the surge — too small to chart`} className="nct-mini-chip is-accent">
-                  {r.exit}<b>+{fmtVeh(r.added)}</b>
-                </span>
-              ))}
-              {shownOthers.map((o) => (
-                <span key={o.exit} title={`${o.exit}: ${fmtVeh(o.baseline)} vehicles/day, no material event effect`} className="nct-mini-chip">
-                  {o.exit}<span>no change</span>
-                </span>
-              ))}
-              {otherExits.length > VISIBLE_OTHERS && (
-                <button type="button" onClick={() => setShowAllOthers((v) => !v)} className="nct-mini-chip">
-                  {showAllOthers ? "fewer" : `+${otherExits.length - VISIBLE_OTHERS} more`}
-                </button>
-              )}
+            <EvBlock n={(evalInfo?.series && evalInfo.series.length > 1 ? 1 : 0) + (basis ? 1 : 0) + (champ?.wmape != null ? 1 : 0) + 1} title="The other exits">
+              <div className="ev-chips">
+                {minorAffected.map((r) => (
+                  <span key={r.exit} title={`${r.exit}: +${fmtVeh(r.added)} vehicles, ${r.shareOfSurge.toFixed(1)}% of the surge`} className="nct-mini-chip is-accent">
+                    {r.exit}<b>+{fmtVeh(r.added)}</b>
+                  </span>
+                ))}
+                {shownOthers.map((o) => (
+                  <span key={o.exit} title={`${o.exit}: ${fmtVeh(o.baseline)} vehicles/day, no clear event effect`} className="nct-mini-chip">
+                    {o.exit}<span>no change</span>
+                  </span>
+                ))}
+                {otherExits.length > VISIBLE_OTHERS && (
+                  <button type="button" onClick={() => setShowAllOthers((v) => !v)} className="nct-mini-chip">
+                    {showAllOthers ? "Fewer" : `+${otherExits.length - VISIBLE_OTHERS} more`}
+                  </button>
+                )}
+              </div>
               {otherPoints.length > 0 && (
-                <span className="nct-dim" style={{ alignSelf: "center" }} title={otherPoints.map((x) => x.exit).join(", ")}>
-                  · {otherPoints.length} barriers/ramps excluded
-                </span>
+                <p className="ev-note" title={otherPoints.map((x) => x.exit).join(", ")}>
+                  {otherPoints.length} barriers and ramps are left out: they are toll points, not exits.
+                </p>
               )}
-            </div>
+            </EvBlock>
           )}
         </div>
       </EvidenceModal>

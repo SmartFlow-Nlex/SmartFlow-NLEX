@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { mapPalette } from "../../lib/map-palette";
 import { useChartTheme } from "../../lib/chart-theme";
-import { RefreshCw, TrendingUp, X, Radio } from "lucide-react";
+import { ChevronRight, RefreshCw, TrendingUp, X, Radio } from "lucide-react";
 import TrafficMapPanel from "./TrafficMapPanel";
 import { WAZE_REPORT_TYPES } from "../../lib/waze-reports";
 // Shared with the map markers and the collapsed legend, so all three
@@ -109,7 +109,11 @@ function whereText(a: { street?: string | null; nearestExit?: string | null; met
   return side ? `${side} · ${place}` : place;
 }
 
-const agoText = (m: number | null) => (m == null ? "—" : m < 1 ? "Just now" : m < 60 ? `${m} min ago` : `${Math.floor(m / 60)}h ${m % 60}m ago`);
+const agoText = (raw: number | null) => {
+  if (raw == null || !Number.isFinite(raw)) return "—";
+  const m = Math.round(raw);
+  return m < 1 ? "Just now" : m < 60 ? `${m} min ago` : `${Math.floor(m / 60)} h ${m % 60} min ago`;
+};
 
 /**
  * Waze jam levels and the colours the Mapbox layer paints them, kept in step by
@@ -136,7 +140,6 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
   const corridorAlerts = (data?.alerts ?? []).filter(onCorridor).filter(notDisputed);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
-  const [clock, setClock] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -164,12 +167,9 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
 
   useEffect(() => {
     if (!open) return;
-    const tick = () => setClock(new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
-    tick();
-    const id = setInterval(tick, 1000);
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
-    return () => { clearInterval(id); window.removeEventListener("keydown", onKey); };
+    return () => { window.removeEventListener("keydown", onKey); };
   }, [open, onClose]);
 
   if (!open) return null;
@@ -194,8 +194,10 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
             </div>
           </div>
           <div className="wz-head-right">
+            {/* The feed's age, the same words as the page's tag (13 Nov 2026); the clock said nothing about the data. */}
             <span className={`wz-live ${data?.feed.stale ? "stale" : ""}`}>
-              <i /> {data?.feed.stale ? "STALE" : "LIVE"} <b>{clock}</b>
+              <i /> {data?.feed.stale ? "Stale" : "Live"}
+              {data && <> · updated {agoText(data.feed.jamsAgeMinutes).toLowerCase()}</>}
             </span>
             <button type="button" className="wz-btn" onClick={load} disabled={loading}>
               <RefreshCw size={14} className={loading ? "wz-spin" : ""} /> Refresh
@@ -218,9 +220,11 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
             >
               {/* The same component the collapsed panel uses, so the key
                   cannot describe one map in the panel and another here. */}
-              <div className="wz-legend">
+              {/* Folds away (13 Nov 2026): open, it covered a quarter of the map for good. */}
+              <details className="wz-legend" open>
+                <summary>Legend</summary>
                 <MapLegend />
-              </div>
+              </details>
             </TrafficMapPanel>
           </div>
 
@@ -251,16 +255,17 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
                   <div className="wz-kpi delay" title="Current delay caused by the jams on the corridor">
                     <span className="wz-kpi-label">Delay</span>
                     <span className="wz-kpi-value">
-                      {delayMin == null ? "—" : delayMin >= 60 ? `${Math.floor(delayMin / 60)}h ${delayMin % 60}m` : `${delayMin}m`}
+                      {delayMin == null ? "—" : delayMin >= 60 ? <>{Math.floor(delayMin / 60)}<em>h</em> {delayMin % 60}<em>min</em></> : <>{delayMin}<em>min</em></>}
                     </span>
                   </div>
                 </div>
 
                 <h4 className="wz-sec">Traffic density</h4>
-                <div className="wz-density">
+                <div className="wz-density" title={avg == null ? undefined : `Average speed in jams ${avg} km/h, placed between free flow (50 km/h and up) and a standstill`}>
                   <span className="wz-density-bar" />
                   <span className="wz-density-mark" style={{ left: `${densityPct}%` }} />
                 </div>
+                <div className="wz-density-scale" aria-hidden="true"><span>Free flow</span><span>Standstill</span></div>
                 <p className="wz-note">
                   {data && data.exits.length > 0
                     ? `${data.jamCount} jams across ${data.exits.length} exits · worst is ${levelWord(data.exits[0].worstLevel).toLowerCase()}`
@@ -272,7 +277,7 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
                     were hidden — the list is the thing people read to find out
                     what the number means. It scrolls instead of truncating. */}
                 <h4 className="wz-sec">
-                  Current alerts{corridorAlerts.length ? ` (${corridorAlerts.length})` : ""}
+                  Current alerts{corridorAlerts.length > 0 && <span className="wz-count">{corridorAlerts.length}</span>}
                 </h4>
                 <ul className="wz-alerts">
                   {corridorAlerts.map((a, i) => {
@@ -288,6 +293,7 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
                         <button
                           type="button"
                           className="wz-alert-row"
+                          style={{ ["--c" as string]: look.colour }}
                           disabled={!locatable}
                           title={locatable ? "Show this report on the map" : "Waze gave no position for this report"}
                           onClick={() => {
@@ -321,6 +327,7 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
                             <em>{whereText(a)}</em>
                           </span>
                           <span className="wz-alert-age">{agoText(a.minutesAgo)}</span>
+                          {locatable && <ChevronRight size={15} className="wz-alert-go" aria-hidden="true" />}
                         </button>
                       </li>
                     );

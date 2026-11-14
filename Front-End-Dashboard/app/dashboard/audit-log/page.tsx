@@ -88,7 +88,7 @@ const PAGE_LABEL: Record<string, string> = {
   "/dashboard/traffic": "Traffic",
   "/dashboard/incident": "Incidents",
   "/dashboard/sustainability": "Emissions",
-  "/dashboard/map-comparison": "Live Map",
+  "/dashboard/map-comparison": "Map",
   "/dashboard/maintenance": "Maintenance",
   "/dashboard/mobile": "Mobile App",
   "/dashboard/scenario-sandbox": "Scenario Sandbox",

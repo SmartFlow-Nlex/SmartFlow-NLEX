@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCw, X } from "lucide-react";
+import { ChevronRight, RefreshCw, X } from "lucide-react";
 import TrafficMapPanel from "./TrafficMapPanel";
 import MapLegend from "./MapLegend";
-import ForecastHorizonPicker, { clockFor, hoursFromNow, type HorizonRangeKey } from "./ForecastHorizonPicker";
+import ForecastHorizonPicker, { clockFor, dayTimeFor, hoursFromNow, type HorizonRangeKey } from "./ForecastHorizonPicker";
+import { FALLBACK_EXITS, displayExitName } from "../../lib/nlex-exits";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -117,8 +118,14 @@ export default function ForecastExpandModal({
             <span className="fc-badge">Predicted</span>
             <div>
               <h2>Forecasted Traffic</h2>
+              {/* One sentence, the same words as the page's corridor dock (13 Nov 2026). */}
               <p>
-                {`${hoursFromNow(horizon) <= 0 ? "Now" : `+${hoursFromNow(horizon)} h`} · around ${clockFor(horizon)}`}
+                {(() => {
+                  const w = dayTimeFor(horizon);
+                  const ahead = hoursFromNow(horizon);
+                  const day = w.day === "Today" ? "today" : w.day === "Tomorrow" ? "tomorrow" : `on ${w.day}`;
+                  return `Forecast for ${w.time} ${day} (${ahead <= 0 ? "this hour" : `+${ahead} h from now`})`;
+                })()}
                 {model?.name ? ` · ${model.name}` : ""}
                 {model?.accuracy != null ? ` · ${Math.round(model.accuracy * 100)}% accurate` : ""}
               </p>
@@ -149,9 +156,11 @@ export default function ForecastExpandModal({
               layerColor="#a855f7"
               tone="purple"
             >
-              <div className="wz-legend">
+              {/* Folds away, as on the live view (13 Nov 2026). */}
+              <details className="wz-legend" open>
+                <summary>Legend</summary>
                 <MapLegend variant="forecast" />
-              </div>
+              </details>
             </TrafficMapPanel>
           </div>
 
@@ -174,28 +183,64 @@ export default function ForecastExpandModal({
                 <div className="fc-tally">
                   {(["High", "Med", "Low"] as const).map((k) => (
                     <span key={k} className={`fc-tally-item is-${k.toLowerCase()}`}>
+                      <span className="fc-tally-k">{STATE_LABEL[k]}</span>
                       <b>{counts[k] ?? 0}</b>
-                      {STATE_LABEL[k]}
+                      <small>exit{(counts[k] ?? 0) === 1 ? "" : "s"}</small>
                     </span>
                   ))}
                 </div>
 
-                {/* Ordered worst first: with twenty segments the question is
-                    which ones need attention, not what the corridor is called
-                    from south to north. */}
-                <ul className="fc-list">
-                  {ranked.map((s) => (
-                    <li key={s.segment_id} className={`is-${s.congestion_state.toLowerCase()}`}>
-                      <span className="fc-dot" aria-hidden="true" />
-                      <span className="fc-name" title={s.corridor_segment}>
-                        {s.segment_id}
-                      </span>
-                      <span className="fc-state">{STATE_LABEL[s.congestion_state] ?? s.congestion_state}</span>
-                      <span className="fc-prob">{Math.round(s.probability * 100)}%</span>
-                    </li>
-                  ))}
-                </ul>
+                {/* Grouped by state, worst first (13 Nov 2026): one flat list of twenty grey bars read as a table
+                    to scan rather than an answer. Each row says what its percentage is, and clicking it shows the
+                    exit on the map. */}
+                {(["High", "Med", "Low"] as const).map((k) => {
+                  const rows = ranked.filter((x) => x.congestion_state === k);
+                  if (!rows.length) return null;
+                  return (
+                    <section key={k} className={`fc-group is-${k.toLowerCase()}`}>
+                      <h4 className="wz-sec">
+                        {STATE_LABEL[k]}
+                        <span className="wz-count">{rows.length}</span>
+                      </h4>
+                      <ul className="fc-list">
+                        {rows.map((x) => {
+                          const exit = FALLBACK_EXITS.find(
+                            (e) => e.exit_name.toLowerCase().trim() === String(x.segment_id).toLowerCase().trim(),
+                          );
+                          const pc = Math.round(x.probability * 100);
+                          return (
+                            <li key={x.segment_id}>
+                              <button
+                                type="button"
+                                className={`fc-row is-${k.toLowerCase()}`}
+                                disabled={!exit}
+                                title={`${x.corridor_segment}: ${pc}% chance of ${STATE_LABEL[k]?.toLowerCase()} at this hour${exit ? ". Show on the map." : ""}`}
+                                onClick={() => {
+                                  if (!exit) return;
+                                  window.dispatchEvent(new CustomEvent("nlex:flyto", {
+                                    detail: { lng: Number(exit.longitude), lat: Number(exit.latitude), name: exit.exit_name, zoom: 13.5 },
+                                  }));
+                                }}
+                              >
+                                <span className="fc-dot" aria-hidden="true" />
+                                <span className="fc-name">{displayExitName(String(x.segment_id))}</span>
+                                <span className="fc-prob">
+                                  <b>{pc}%</b> likely
+                                  <i aria-hidden="true"><em style={{ width: `${pc}%` }} /></i>
+                                </span>
+                                {exit && <ChevronRight size={15} className="wz-alert-go" aria-hidden="true" />}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </section>
+                  );
+                })}
 
+                <p className="wz-updated">
+                  Each percentage is the model&apos;s chance of that state at the exit at {clockFor(horizon)}.
+                </p>
               </>
             )}
           </aside>

@@ -416,3 +416,139 @@
 /* Nothing left to show beneath the grid until the report is opened. */
 .cg-strips:empty, .cg-card > .ev-trust.is-bare { display: none; }
 @media (max-width: 640px) { .cg-ev-text { display: none; } }
+
+/* ==========================================================================
+   Event Surge Impact by Exit, laid out like the other Predictive cards (13 Nov 2026).
+   ========================================================================== */
+.ev-card { gap: 14px; }
+.ev-card .ev-controls { margin-top: 2px; }
+.ev-card .ev-controls .fc2-row { gap: 10px 12px; }
+.ev-card .ev-finding { margin: 0; font-size: 14px; line-height: 1.55; }
+.ev-card .ev-source { display: block; margin-top: 4px; font-size: 12.5px; color: var(--text-secondary); }
+.ev-card .ev-body { align-items: start; }
+.ev-card .ev-chart {
+  min-width: 0;
+  padding: 12px 14px 4px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+}
+.ev-card .ev-chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ev-card .ev-chart-head span { font-size: 13.5px; font-weight: 700; color: var(--text-primary); }
+.ev-card .ev-chart-head em { font-size: 12px; font-style: normal; color: var(--text-muted); }
+.ev-card .ev-foot { margin-top: 2px; }
+
+/* The validation details, shorter and easier to scan. */
+.ev-evidence { display: grid; gap: 22px; }
+.ev-evidence section { display: grid; gap: 8px; }
+.ev-evidence .ev-lead { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
+.ev-evidence .ev-figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.ev-evidence .ev-figs > div {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
+}
+.ev-evidence .ev-figs b { font-size: 20px; font-weight: 750; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.ev-evidence .ev-figs span { font-size: 12px; color: var(--text-secondary); }
+.ev-evidence .ev-figs .is-muted b { color: var(--text-muted); }
+.ev-evidence .ev-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.ev-evidence .ev-table th { padding: 6px 8px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-default); letter-spacing: 0; text-transform: none; }
+.ev-evidence .ev-table td { padding: 7px 8px; border-bottom: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent); color: var(--text-primary); }
+.ev-evidence .ev-table th:not(:first-child),
+.ev-evidence .ev-table td:not(:first-child) { text-align: right; }
+.ev-evidence .ev-table td span { color: var(--text-muted); font-size: 12px; }
+.ev-evidence .ev-table tr.is-used td { font-weight: 700; }
+.ev-evidence .ev-table tr.is-muted td { color: var(--text-muted); font-style: italic; }
+.ev-evidence .ev-used { margin-left: 8px; padding: 1px 8px; font-style: normal; }
+.ev-evidence .ev-more > summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--page-accent, var(--action)); padding: 4px 0; }
+.ev-evidence .ev-more[open] > summary { margin-bottom: 6px; }
+.ev-evidence .ev-more .ev-table + .ev-table { margin-top: 10px; }
+.ev-evidence .ev-note { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-muted); }
+.ev-evidence .ev-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 640px) { .ev-evidence .ev-figs { grid-template-columns: 1fr; } }
+
+/* Event banner (13 Nov 2026): a date badge, the event with its facts as chips, the biggest effect on the right. */
+.ev-card .ev-years .nct-pill-btn { min-width: 0; }
+.ev-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(200px, 260px);
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--page-accent, var(--action)) 28%, var(--border-default));
+  border-radius: 16px;
+  background: linear-gradient(100deg, color-mix(in srgb, var(--page-accent, var(--action)) 9%, var(--bg-raised)), var(--bg-raised) 70%);
+}
+.ev-date {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  width: 64px;
+  height: 70px;
+  border-radius: 14px;
+  background: var(--bg-raised);
+  border: 1px solid color-mix(in srgb, var(--page-accent, var(--action)) 30%, var(--border-default));
+  box-shadow: 0 2px 8px rgb(15 23 42 / 0.08);
+  line-height: 1.05;
+}
+.ev-date span { font-size: 11px; font-weight: 750; letter-spacing: 1.2px; text-transform: uppercase; color: var(--page-accent, var(--action)); }
+.ev-date b { font-size: 26px; font-weight: 800; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.ev-date em { font-size: 11px; font-style: normal; font-weight: 600; color: var(--text-muted); }
+.ev-banner-main { display: grid; gap: 5px; min-width: 0; }
+.ev-banner-k { font-size: 11.5px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--text-muted); }
+.ev-banner-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 750;
+  line-height: 1.3;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ev-banner-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ev-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-decoration: none;
+}
+.ev-chip.is-accent { border-color: transparent; background: color-mix(in srgb, var(--page-accent, var(--action)) 14%, transparent); color: var(--page-accent, var(--action)); font-weight: 700; }
+.ev-chip.is-warn { border-color: transparent; background: color-mix(in srgb, var(--color-warning, #b45309) 15%, transparent); color: var(--color-warning, #b45309); font-weight: 650; }
+.ev-chip.is-link { color: var(--page-accent, var(--action)); }
+.ev-chip.is-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.ev-banner-effect {
+  display: grid;
+  gap: 2px;
+  padding-left: 16px;
+  border-left: 1px solid var(--border-default);
+}
+.ev-banner-effect b { font-size: 17px; font-weight: 750; color: var(--text-primary); }
+.ev-banner-effect span:last-child { font-size: 12.5px; color: var(--text-secondary); }
+@media (max-width: 900px) {
+  .ev-banner { grid-template-columns: auto minmax(0, 1fr); }
+  .ev-banner-effect { grid-column: 1 / -1; padding: 10px 0 0; border-left: 0; border-top: 1px solid var(--border-default); }
+}
+
+/* The exit menu's warning mark: a hidden exit turns severe before any shown one. */
+.cg-exit-warn { display: inline-grid; place-items: center; width: 17px; height: 17px; margin-right: 7px; border-radius: 50%; background: var(--color-warning, #b45309); color: #fff; font-size: 11px; font-weight: 800; }
+.cg-main-head .gm-btn b { margin-right: 3px; }
+.cg-main-head .gm-menu { left: auto; right: 0; }
+
+/* The date badge, held against the card's other rules (13 Nov 2026): label, number and unit on three lines in both
+   the calendar and the "past nights" form, so the typical-day badge no longer wraps its words. */
+.ev-card .ev-banner .ev-date { gap: 1px; padding: 6px 0; }
+.ev-card .ev-banner .ev-date > span { margin: 0; font-size: 10.5px; font-weight: 750; font-style: normal; letter-spacing: 1.2px; text-transform: uppercase; line-height: 1.1; color: var(--page-accent, var(--action)); }
+.ev-card .ev-banner .ev-date > b { margin: 0; font-size: 26px; font-weight: 800; line-height: 1; color: var(--text-primary); }
+.ev-card .ev-banner .ev-date > em { margin: 0; font-size: 11px; font-weight: 600; font-style: normal; letter-spacing: 0; text-transform: none; line-height: 1.1; color: var(--text-muted); white-space: nowrap; }

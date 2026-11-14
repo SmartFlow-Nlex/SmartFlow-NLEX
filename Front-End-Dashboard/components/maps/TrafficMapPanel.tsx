@@ -23,7 +23,7 @@ import { nearExitsText } from "../../lib/exit-lookup";
 import { corridorKm } from "./corridor-km";
 import { useActiveClosures, type Closure } from "./useActiveClosures";
 import {
-  FLOW_BANDS, STATIC_DASH, addNightCorridorImages, buildSnapshot, carriagewayShift, createJamCallouts,
+  STATIC_DASH, addNightCorridorImages, buildSnapshot, carriagewayShift, createJamCallouts,
   dashAt, dashPhase, type CorridorSnapshot, type StripAlert,
 } from "./livemap-graphics";
 
@@ -1163,9 +1163,9 @@ export default function TrafficMapPanel({
          Three tiers because the speed is the message — a free stretch races and
          a standstill crawls, so the eye reads rate the way it reads colour. */
       const FLOW_TIERS = [
-        { id: "fast", levels: [0, 1], cycleMs: 1100, opacity: 0.55 },
-        { id: "mid",  levels: [2, 3], cycleMs: 2600, opacity: 0.5 },
-        { id: "slow", levels: [4, 5], cycleMs: 6000, opacity: 0.45 },
+        { id: "fast", levels: [0, 1], cycleMs: 1400, opacity: 0.78 },
+        { id: "mid",  levels: [2, 3], cycleMs: 3000, opacity: 0.72 },
+        { id: "slow", levels: [4, 5], cycleMs: 6500, opacity: 0.66 },
       ] as const;
 
       const PW = 32;   // pattern length in texels; repeat is scaled to line width
@@ -1177,21 +1177,26 @@ export default function TrafficMapPanel({
         return [parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)];
       })(PALETTE.arrow.startsWith("#") ? PALETTE.arrow : "#ffffff");
 
-      /* A soft band that reaches zero well before the edges of the image, which
-         is what makes the tiling seam invisible at any scroll offset. */
+      /* One crisp dash per tile (13 Nov 2026, user report: "very messy" zoomed in). The soft pulse was a
+         blurred band the full width of the ribbon, so close up every carriageway carried smudges sliding
+         under still lane dashes and chevrons. A dash with a one-texel soft edge reads as a lane marking on
+         the move: sharp at every zoom, and still seamless, because it is zero at both ends of the tile. */
+      const DASH_HALF = 0.17;   // half the dash length, as a share of the tile
       const pulse = (u: number) => {
         const w = ((u % 1) + 1) % 1;
-        const d = Math.abs(w - 0.5);
-        const k = Math.max(0, 1 - d / 0.22);
-        return k * k * (3 - 2 * k);   // smoothstep, so it has no hard shoulders
+        const d = Math.abs(w - 0.5) * PW;            // texels from the dash centre
+        return Math.max(0, Math.min(1, DASH_HALF * PW + 0.5 - d));
       };
+      /* Across the ribbon: a bar a third of its width, centred, with soft rows either side. */
+      const ROW_A = [0, 0, 0.35, 1, 1, 0.35, 0, 0];
 
       /* Written into an existing buffer rather than allocating one, because
          this runs on every animated frame for every ribbon. */
       const writePulse = (data: Uint8Array, phase: number, opacity: number) => {
         for (let x = 0; x < PW; x++) {
-          const a = Math.round(pulse(x / PW + phase) * opacity * 255);
+          const along = pulse(x / PW + phase) * opacity;
           for (let y = 0; y < PH; y++) {
+            const a = Math.round(along * ROW_A[y] * 255);
             const i = (y * PW + x) * 4;
             data[i] = rgb[0];
             data[i + 1] = rgb[1];
@@ -1305,12 +1310,14 @@ export default function TrafficMapPanel({
          ribbon. The ribbons carry no measured speed (Waze reports speed only
          inside a jam), so nothing moves here; the moving dashes ride on the
          queues further up, at their own measured speed. */
-      for (const dir of ["NB", "SB"] as const) {
+      /* Only where no flow is drawn (13 Nov 2026): a still dash under a moving one was half the clutter
+         zoomed in. Live ribbons all carry flow; on the forecast only an unforecast stretch (-1) is still. */
+      for (const dir of isRealtimeEndpoint ? ([] as ("NB" | "SB")[]) : (["NB", "SB"] as const)) {
         map.addLayer({
           id: `lm-lane-dash-${dir.toLowerCase()}`,
           type: "line",
           source: "nlex-corridor",
-          filter: ["==", ["get", "direction"], dir],
+          filter: ["all", ["==", ["get", "direction"], dir], ["==", ["get", "level"], -1]],
           layout: { "line-join": "round", "line-cap": "butt" },
           paint: {
             "line-color": PALETTE.lane,
@@ -1401,6 +1408,8 @@ export default function TrafficMapPanel({
         id: "lm-jam-pulse",
         type: "line",
         source: "traffic",
+        // Zoomed in the queue is plainly visible, and a 30-40 px blurred wash under it was clutter (13 Nov 2026).
+        maxzoom: 13.5,
         filter: ["all", ["==", ["get", "feature_type"], "jam"], ["has", "direction_source"]],
         layout: { "line-join": "round", "line-cap": "round" },
         paint: {
@@ -1636,14 +1645,9 @@ export default function TrafficMapPanel({
       const flowLayers: { id: string; rate: number; dir: "NB" | "SB"; key: number }[] = [];
       for (const dir of ["NB", "SB"] as const) {
         const d = dir.toLowerCase();
-        map.addLayer({
-          id: `lm-flow-${d}-nodata`,
-          type: "line",
-          source: "traffic",
-          filter: jamFilter(dir, [["!=", ["typeof", ["get", "speed"]], "number"]]),
-          layout: { "line-join": "round", "line-cap": "butt" },
-          paint: { "line-color": PALETTE.lane, "line-opacity": PALETTE.laneOpacity, "line-width": DASH_W, "line-dasharray": STATIC_DASH, "line-offset": OFFSET },
-        }, "jam-mark-nb");
+        /* (13 Nov 2026) No still dash on a queue that has no speed, and none per speed band below: each sat on
+           top of the queue's moving dash, so every queue carried two dash patterns. A queue at 0 km/h keeps its
+           still dashes, which is how the map says "stopped". */
         map.addLayer({
           id: `lm-flow-${d}-stop`,
           type: "line",
@@ -1652,22 +1656,6 @@ export default function TrafficMapPanel({
           layout: { "line-join": "round", "line-cap": "butt" },
           paint: { "line-color": PALETTE.dash, "line-opacity": 0.8, "line-width": DASH_W, "line-dasharray": STATIC_DASH, "line-offset": OFFSET },
         }, "jam-mark-nb");
-        for (const band of FLOW_BANDS) {
-          const id = `lm-flow-${d}-${band.id}`;
-          map.addLayer({
-            id,
-            type: "line",
-            source: "traffic",
-            filter: jamFilter(dir, [hasSpeed, [">=", speedOf, band.min], ["<", speedOf, band.max]]),
-            layout: { "line-join": "round", "line-cap": "butt" },
-            /* Still dashes (16 Oct 2026, user report of glitching lines): animating line-dasharray
-               re-rasterises the dash pattern on every step, so the dashes flickered and snapped.
-               The motion now comes only from the smooth scrolling glow (jam-flow), whose speed
-               already follows the queue's severity. */
-            paint: { "line-color": PALETTE.dash, "line-opacity": 0.6, "line-width": DASH_W, "line-dasharray": STATIC_DASH, "line-offset": OFFSET },
-          }, "jam-mark-nb");
-          void band.rate;
-        }
       }
 
       /* Direction of travel. Chevrons rather than triangles: under line
@@ -1698,7 +1686,9 @@ export default function TrafficMapPanel({
           ],
         },
         paint: {
-          "icon-opacity": 0.85,
+          /* Fade out as the dashes take over (13 Nov 2026): close in, the fixed 9 px offset put the arrows
+             between the carriageways, on the median, rather than on the road they point along. */
+          "icon-opacity": ["interpolate", ["linear"], ["zoom"], 12.5, 0.85, 13.5, 0],
         },
       });
 
@@ -1730,24 +1720,43 @@ export default function TrafficMapPanel({
          construction and there is no public way to change it afterwards.
          Anchor "left" puts the card's left edge on the point, so it opens to
          the east; "right" opens to the west. */
+      /* Every card on this map, so showing one closes the rest (13 Nov 2026): a closure and the report
+         beside it could both be open, one over the other. */
+      const allCards: { remove: () => void }[] = [];
+      type Anchor = "left" | "right" | "top-left" | "top-right" | "bottom-left" | "bottom-right";
       const sideCard = (className?: string) => {
-        const make = (anchor: "left" | "right") =>
-          new mapboxgl.Popup({ closeButton: false, closeOnClick: false, anchor, offset: 18, className });
-        const pair = { left: make("left"), right: make("right") };
-        return {
+        const make = (anchor: Anchor) =>
+          new mapboxgl.Popup({ closeButton: false, closeOnClick: false, anchor, offset: 18, className, maxWidth: "300px" });
+        /* Level with the point in the middle of the map; near the top it opens downward and near the bottom
+           upward (13 Nov 2026), because a card centred on a point near the edge ran off the map. */
+        const popups = new Map<Anchor, mapboxgl.Popup>();
+        const popupFor = (a: Anchor) => {
+          let pp = popups.get(a);
+          if (!pp) { pp = make(a); popups.set(a, pp); }
+          return pp;
+        };
+        const pair = {
+          remove() { for (const pp of popups.values()) pp.remove(); },
+        };
+        const card = {
           show(lngLat: mapboxgl.LngLatLike, html: string) {
+            for (const other of allCards) if (other !== card) other.remove();
             // Open away from the panel edge: anchored east near the right edge
             // the card runs off the map, and a fixed anchor will not flip back.
             const px = map.project(lngLat);
             const side: "left" | "right" = px.x < map.getCanvas().clientWidth / 2 ? "left" : "right";
-            pair[side === "left" ? "right" : "left"].remove();
-            pair[side].setLngLat(lngLat).setHTML(html).addTo(map);
+            const h = map.getCanvas().clientHeight;
+            const anchor: Anchor = px.y < h * 0.34 ? `top-${side}` : px.y > h * 0.66 ? `bottom-${side}` : side;
+            const target = popupFor(anchor);
+            for (const pp of popups.values()) if (pp !== target) pp.remove();
+            target.setLngLat(lngLat).setHTML(html).addTo(map);
           },
           remove() {
-            pair.left.remove();
-            pair.right.remove();
+            pair.remove();
           },
         };
+        allCards.push(card);
+        return card;
       };
 
       /* `mjp-pop`, not `map-card`. Mapbox puts the popup's class on its OUTER
@@ -1832,7 +1841,12 @@ export default function TrafficMapPanel({
 
       // The line and its marker carry identical properties, so both open the
       // same card: whichever one the reader happens to find answers them.
+      /* A pin under the pointer answers for itself (13 Nov 2026). The map's layer hovers fire through the HTML
+         markers, so a report on a queue opened the report card and then the queue card on top of it. */
+      const overMarker = (e: mapboxgl.MapLayerMouseEvent) =>
+        (e.originalEvent?.target as HTMLElement | null)?.closest?.(".waze-alert-marker, .custom-toll-marker") != null;
       const onJamMove = (e: mapboxgl.MapLayerMouseEvent) => {
+        if (overMarker(e)) return;
         const f = e.features?.[0];
         if (!f) return;
         map.getCanvas().style.cursor = "pointer";
@@ -1949,6 +1963,7 @@ export default function TrafficMapPanel({
           ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
           : "—";
       map.on("mousemove", "lm-closure-hatch", (e: mapboxgl.MapLayerMouseEvent) => {
+        if (overMarker(e)) return;
         const f = e.features?.[0];
         if (!f) return;
         map.getCanvas().style.cursor = "pointer";
@@ -2916,16 +2931,15 @@ export default function TrafficMapPanel({
               : `near ${props.nearest_exit}`
             : (props.street ?? "On the corridor");
 
+          /* The same card as a queue, a closure and an exit (13 Nov 2026): it was its own design, so two
+             cards side by side on the map looked like two different products. */
           const summary = `
-            <div class="nlex-pop" style="--pop-accent:${color}">
-              <div class="nlex-pop-head">
-                <span class="nlex-pop-mark">${look.svg}</span>
-                <span class="nlex-pop-name">
-                  <span class="nlex-pop-title">${look.label}</span>
-                  <span class="nlex-pop-sub">${dirText ? `${dirText} &middot; ` : ""}${exitText}</span>
-                </span>
+            <div class="mjp">
+              <div class="mjp-head is-report" style="--mjp-c:${color}">
+                <div class="mjp-mark">${look.svg}</div>
+                <div class="mjp-head-text">${look.label}<span>${dirText ? `${dirText} &middot; ` : ""}${exitText}</span></div>
               </div>
-              <div class="nlex-pop-foot">Click for the full report</div>
+              <div class="mjp-foot">Click for the full report</div>
             </div>
           `;
 
@@ -3289,6 +3303,7 @@ export default function TrafficMapPanel({
 
         const rainCard = sideCard("mjp-pop");
         map.on("mousemove", "lm-rain-veil", (e: mapboxgl.MapLayerMouseEvent) => {
+          if (overMarker(e)) return;
           // On the road itself the queue and exit cards answer; the wash answers either side of it.
           if (map.getLayer("lm-roadbed") && map.queryRenderedFeatures(e.point, { layers: ["lm-roadbed"] }).length) {
             rainCard.remove();
@@ -3546,186 +3561,132 @@ export default function TrafficMapPanel({
         {/* Report detail. Anchored inside the map container so it sits over the
             canvas without leaving the panel, and every row is omitted rather
             than zero-filled when Waze did not report that field. */}
-        {selectedReport && (
-          <div className="wz-report-detail" role="dialog" aria-label="Waze report detail">
-            <header>
-              <div>
-                {isFloodSubtype(selectedReport.subtype) ? (
-                  <span className="wz-rd-type">Flood</span>
-                ) : (
-                  <>
-                    <span className="wz-rd-type">{selectedReport.type.replace(/_/g, " ")}</span>
-                    {selectedReport.subtype && (
-                      <span className="wz-rd-sub">{selectedReport.subtype.replace(/_/g, " ").toLowerCase()}</span>
-                    )}
-                  </>
-                )}
+        {/* Report detail (13 Nov 2026, user request): the same card language as the hover cards. The answer first
+            (what, where, which way, when), then how far to trust it as three meters, then the record as
+            label/value rows. Every row is still omitted rather than zero-filled when Waze did not send that field. */}
+        {selectedReport && (() => {
+          const r = selectedReport;
+          const flood = isFloodSubtype(r.subtype);
+          const look = lookOf(r.type, r.subtype);
+          const Icon = look.icon;
+          const nice = (iso: string) =>
+            new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+          /* "HAZARD_ON_SHOULDER_CAR_STOPPED" under a "Hazard" title -> "On shoulder, car stopped". */
+          const subPhrase = (() => {
+            if (flood || !r.subtype) return null;
+            const typeWords = r.type.toUpperCase().split("_");
+            let words = r.subtype.toUpperCase().split("_");
+            while (words.length && typeWords.includes(words[0])) words = words.slice(1);
+            if (!words.length) return null;
+            const t = words.join(" ").toLowerCase()
+              .replace(/^on shoulder /, "on shoulder, ")
+              .replace(/^on road /, "on road, ");
+            return t.charAt(0).toUpperCase() + t.slice(1);
+          })();
+          const { dir, source } = directionOfReport(r.street, r.heading);
+          const where = (() => {
+            if (!r.nearest_exit) return null;
+            const at = r.lon != null && r.lat != null ? ([r.lon, r.lat] as [number, number]) : null;
+            const w = dir && at ? queueWhere(at, dir) : null;
+            const k = w?.rel_kind;
+            const x = w?.rel_a;
+            const y = w?.rel_b;
+            const m = w?.rel_m;
+            if (k === "at" && x) return `At ${plazaLabel(x)}`;
+            if (k === "past" && x && m != null) return `${fmtM(m)} past ${plazaLabel(x)}`;
+            if (k === "before" && x && m != null) return `${fmtM(m)} before ${plazaLabel(x)}`;
+            if (k === "between" && x && y) return `Midway between ${plazaLabel(x)} and ${plazaLabel(y)}`;
+            const d = r.exit_distance_m;
+            return d != null ? `${d < 1000 ? `${d} m` : `${(d / 1000).toFixed(1)} km`} from ${r.nearest_exit}` : `Near ${r.nearest_exit}`;
+          })();
+          const meter = (label: string, v: number | null | undefined, max: number, hint: string) =>
+            v == null ? null : (
+              <div className="wz-rd2-meter" title={hint}>
+                <span className="wz-rd2-meter-k">{label}</span>
+                <span className="wz-rd2-meter-v">{v}<small>/{max}</small></span>
+                <span className="wz-rd2-meter-bar" aria-hidden="true"><i style={{ width: `${Math.max(0, Math.min(1, v / max)) * 100}%` }} /></span>
               </div>
-              <button type="button" onClick={() => setSelectedReport(null)} aria-label="Close report detail">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </header>
+            );
+          const first = r.first_report_at ?? r.reported_at;
+          const n = r.reports_here ?? 0;
+          const earlier = r.first_report_at != null && n > 1;
+          return (
+            <div className="wz-report-detail wz-rd2" role="dialog" aria-label="Waze report detail" style={{ ["--rd-c" as string]: look.colour }}>
+              <header className="wz-rd2-head">
+                <span className="wz-rd2-icon" aria-hidden="true"><Icon size={17} strokeWidth={2.3} /></span>
+                <div className="wz-rd2-title">
+                  <h3>{flood ? "Flood" : look.label}</h3>
+                  {subPhrase && <span>{subPhrase}</span>}
+                </div>
+                <button type="button" className="wz-rd2-close" onClick={() => setSelectedReport(null)} aria-label="Close report detail">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </header>
 
+              <div className="wz-rd2-body">
             {isFloodSubtype(selectedReport.subtype) && floodFinding && floodFinding.delayMin != null && floodFinding.rainyDelayMin != null && (
-              <p className="wz-rd-flood" title="Each exit-hour with a flood report against rainy hours without one at the same exit, hour of day and part of the week. A link, not proof: drivers already stuck may report water more readily.">
+              <p className="wz-rd-flood wz-rd2-flood" title="Each exit-hour with a flood report against rainy hours without one at the same exit, hour of day and part of the week. A link, not proof: drivers already stuck may report water more readily.">
                 On NLEX, hours with a flood report averaged about {floodFinding.delayMin.toFixed(0)} min of delay and a jam
                 {" "}{floodFinding.jamPct?.toFixed(0)}% of the time, against {floodFinding.rainyDelayMin.toFixed(0)} min and
                 {" "}{floodFinding.rainyJamPct?.toFixed(0)}% in rainy hours without one ({floodFinding.exitHours} flood hours, live Waze since Aug 2026).
               </p>
             )}
-            <p className="wz-rd-where">
-              {selectedReport.street ?? "NLEX"}
-              {selectedReport.city ? ` · ${selectedReport.city}` : ""}
-            </p>
 
-            {selectedReport.reported_at && (
-              <p className="wz-rd-when">
-                Reported {sinceLabel(selectedReport.reported_at)}
-                <span>{new Date(selectedReport.reported_at).toLocaleString()}</span>
-              </p>
-            )}
+                {(where || dir) && (
+                  <p className="wz-rd2-where">
+                    {dir && <b>{dir === "NB" ? "Northbound" : "Southbound"}</b>}
+                    {dir && where && " · "}
+                    {where}
+                  </p>
+                )}
+                {r.reported_at && (
+                  <p className="wz-rd2-when">
+                    <span className="wz-rd2-ago">Reported {sinceLabel(r.reported_at)}</span>
+                    <span>{nice(r.reported_at)}</span>
+                  </p>
+                )}
 
-            {/* When this kind of thing was FIRST reported at this spot.
-
-                The live feed is one snapshot, so the line above is only this
-                report's own publication: a hazard at a site that has been
-                reported on and off for weeks still reads as an hour old. The
-                warehouse remembers every report it has ingested, so this is the
-                earliest of them within 150 m, of this same kind.
-
-                Not windowed, by request -- it reaches back as far as the
-                history goes, which on this corridor is currently about seven
-                weeks. That makes it a fact about the PLACE, not about this
-                problem, and the count is shown beside it so it cannot be read
-                as one unbroken closure: "64 reports here since 7 Aug" says what
-                it is. With no earlier record the first report is this one, and
-                the line says so rather than inventing a date. */}
-            {(() => {
-              const first = selectedReport.first_report_at ?? selectedReport.reported_at;
-              if (!first) return null;
-              const n = selectedReport.reports_here ?? 0;
-              const earlier = selectedReport.first_report_at != null && n > 1;
-              return (
-                <p className="wz-rd-first">
-                  <span className="wz-rd-first-k">First report</span>
-                  <span className="wz-rd-first-v">
-                    {new Date(first).toLocaleString()}
-                    <em>
-                      {earlier
-                        ? `${n} reports here since then`
-                        : "no earlier report on record here"}
-                    </em>
-                  </span>
-                </p>
-              );
-            })()}
-
-            <dl className="wz-rd-grid">
-              {selectedReport.reliability != null && (
-                <div><dt>Reliability</dt><dd>{selectedReport.reliability}/10</dd></div>
-              )}
-              {selectedReport.confidence != null && (
-                <div><dt>Confidence</dt><dd>{selectedReport.confidence}/10</dd></div>
-              )}
-              {/* "Rating", not "Report rating": the longer label wrapped onto two
-                  lines in a third-width column and pushed its value out of line
-                  with the two beside it. Next to Reliability and Confidence it
-                  is unambiguous. */}
-              {selectedReport.report_rating != null && (
-                <div><dt>Rating</dt><dd>{selectedReport.report_rating}/5</dd></div>
-              )}
-              {selectedReport.nearest_exit && (
-                <div className="wz-rd-wide">
-                  <dt>Nearest exit</dt>
-                  <dd>
-                    {/* Which SIDE of the plaza, not just how far from it. A
-                        distance alone leaves the reader to guess whether they
-                        meet this before the toll or after, which is the thing
-                        they are looking at the card to find out. Same wording
-                        and the same measurement as the queue card. */}
-                    {(() => {
-                      const { dir } = directionOfReport(selectedReport.street, selectedReport.heading);
-                      const at =
-                        selectedReport.lon != null && selectedReport.lat != null
-                          ? ([selectedReport.lon, selectedReport.lat] as [number, number])
-                          : null;
-                      const w = dir && at ? queueWhere(at, dir) : null;
-                      const k = w?.rel_kind;
-                      const a = w?.rel_a;
-                      const b = w?.rel_b;
-                      const m = w?.rel_m;
-                      if (k === "at" && a) return `At ${plazaLabel(a)}`;
-                      if (k === "past" && a && m != null) return `${fmtM(m)} past ${plazaLabel(a)}`;
-                      if (k === "before" && a && m != null) return `${fmtM(m)} before ${plazaLabel(a)}`;
-                      if (k === "between" && a && b) {
-                        return `Midway between ${plazaLabel(a)} and ${plazaLabel(b)}`;
-                      }
-                      return (
-                        <>
-                          {selectedReport.nearest_exit}
-                          {selectedReport.exit_distance_m != null && (
-                            <span className="wz-rd-note">
-                              {selectedReport.exit_distance_m < 1000
-                                ? ` ${selectedReport.exit_distance_m} m away`
-                                : ` ${(selectedReport.exit_distance_m / 1000).toFixed(1)} km away`}
-                            </span>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </dd>
-                </div>
-              )}
-              {(() => {
-                /* Worked out here rather than carried on the record, so a
-                   report opened from the alerts list says the same thing as one
-                   clicked on the map -- the list hands over its own row and
-                   knows nothing about the corridor. */
-                const { dir, source } = directionOfReport(selectedReport.street, selectedReport.heading);
-                if (!dir) return null;
-                return (
-                  /* Full width: "Southbound" plus where it was read from does
-                     not fit a third of the card, and wrapped it collided with
-                     the row beneath. */
-                  <div className="wz-rd-wide">
-                    <dt>Direction</dt>
-                    <dd>
-                      {dir === "NB" ? "Northbound" : "Southbound"}
-                      <span className="wz-rd-note">
-                        {source === "street" ? " from road name" : " from heading"}
-                      </span>
-                    </dd>
+                {(r.reliability != null || r.confidence != null || r.report_rating != null) && (
+                  <div className="wz-rd2-meters">
+                    {meter("Reliability", r.reliability, 10, "Rises as other drivers confirm the report; starts at 5")}
+                    {meter("Confidence", r.confidence, 10, "How sure Waze is of the report, from the reporter's history")}
+                    {meter("Rating", r.report_rating, 5, "The reporter's Waze rank")}
                   </div>
-                );
-              })()}
-              {selectedReport.heading != null && (
-                <div><dt>Heading</dt><dd>{headingLabel(selectedReport.heading)}</dd></div>
-              )}
-              {selectedReport.road_type != null && (
-                <div>
-                  <dt>Road type</dt>
-                  <dd>{ROAD_TYPE_LABEL[selectedReport.road_type] ?? `Type ${selectedReport.road_type}`}</dd>
-                </div>
-              )}
-              {selectedReport.by_municipality != null && (
-                <div>
-                  <dt>Source</dt>
-                  <dd>{selectedReport.by_municipality ? "Municipality account" : "Waze driver"}</dd>
-                </div>
-              )}
-              {selectedReport.lat != null && selectedReport.lon != null && (
-                <div className="wz-rd-wide">
-                  <dt>Coordinates</dt>
-                  <dd>{selectedReport.lat.toFixed(5)}, {selectedReport.lon.toFixed(5)}</dd>
-                </div>
-              )}
-            </dl>
+                )}
 
-            {selectedReport.uuid && <p className="wz-rd-id">Waze ID {selectedReport.uuid}</p>}
-          </div>
-        )}
+                <dl className="wz-rd2-rows">
+                  <div><dt>Road</dt><dd>{r.street ?? "NLEX"}{r.city ? <small>{r.city}</small> : null}</dd></div>
+                  {first && (
+                    <div>
+                      <dt>First report here</dt>
+                      <dd>
+                        {nice(first)}
+                        <small>{earlier ? `${n} reports here since then` : "No earlier report on record"}</small>
+                      </dd>
+                    </div>
+                  )}
+                  {dir && (
+                    <div><dt>Direction</dt><dd>{dir === "NB" ? "Northbound" : "Southbound"}<small>{source === "street" ? "From the road name" : "From the heading"}</small></dd></div>
+                  )}
+                  {r.heading != null && <div><dt>Heading</dt><dd>{headingLabel(r.heading)}</dd></div>}
+                  {r.road_type != null && (
+                    <div><dt>Road type</dt><dd>{ROAD_TYPE_LABEL[r.road_type] ?? `Type ${r.road_type}`}</dd></div>
+                  )}
+                  {r.by_municipality != null && (
+                    <div><dt>Reported by</dt><dd>{r.by_municipality ? "Municipality account" : "Waze driver"}</dd></div>
+                  )}
+                  {r.lat != null && r.lon != null && (
+                    <div><dt>Coordinates</dt><dd className="wz-rd2-mono">{r.lat.toFixed(5)}, {r.lon.toFixed(5)}</dd></div>
+                  )}
+                </dl>
+
+                {r.uuid && <p className="wz-rd2-id">Waze ID {r.uuid}</p>}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </article>
   );

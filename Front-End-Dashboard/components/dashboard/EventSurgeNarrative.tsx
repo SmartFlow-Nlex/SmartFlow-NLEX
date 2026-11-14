@@ -36,7 +36,14 @@ export default function EventSurgeNarrative({
   topAdded,
   topSharePct,
   top2SharePct,
+  open,
+  onOpenChange,
+  compact,
 }: {
+  /** Controlled open state, for a card that draws its own Generate report control (13 Nov 2026). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  compact?: boolean;
   models: EventSurgeValidationRow[];
   noAdjustment: { model: string; wmape: number | null } | null;
   eventDays: number | null;
@@ -64,6 +71,9 @@ export default function EventSurgeNarrative({
 
   return (
     <NarrativePanel
+      open={open}
+      onOpenChange={onOpenChange}
+      compact={compact}
       subtitle="Plain-language read-out of how far to trust this event estimate"
       metrics={models.map((m) => ({ model: m.model }))}
       endpoint="/api/ai-insight/event-surge-narrative"

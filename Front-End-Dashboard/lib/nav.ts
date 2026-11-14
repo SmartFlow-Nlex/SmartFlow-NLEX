@@ -34,7 +34,7 @@ export const NAV_TABS: NavTab[] = [
   { label: "Incidents", href: "/dashboard/incident", icon: AlertTriangle, group: "Analytics" },
   { label: "Emissions", href: "/dashboard/sustainability", icon: Leaf, group: "Analytics" },
 
-  { label: "Live Map", href: "/dashboard/map-comparison", icon: Map, group: "Operations" },
+  { label: "Map", href: "/dashboard/map-comparison", icon: Map, group: "Operations" },
   { label: "Maintenance", href: "/dashboard/maintenance", icon: Wrench, group: "Operations" },
   { label: "Mobile App", href: "/dashboard/mobile", icon: Smartphone, group: "Operations" },
 

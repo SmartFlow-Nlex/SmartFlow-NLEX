@@ -87,7 +87,7 @@ function clickLines(l: Live, you: string): string[] {
     "Whee! Again, again!",
     "Careful, I just had my wheels polished.",
     "You can drag me to spin me around!",
-    "Tip: click a jam on the Live Corridor strip to zoom in on it in the Live Map.",
+    "Tip: click a jam on the Live Corridor strip to zoom in on it in the Map.",
     "Tip: the Traffic tab can forecast up to seven days ahead.",
     "Tip: change how long before you're signed out in Settings.",
     "Did you know? I watch 20 exits from Balintawak to Sta. Ines.",

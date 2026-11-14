@@ -1401,7 +1401,7 @@ export default function TrafficPage() {
                 return (
                   <CardInsight lead={`Flood-reported hours: ${f.delayMin.toFixed(0)} min of delay.`}>
                     Against {f.rainyDelayMin.toFixed(0)} min in rainy hours without a flood report, and a jam {f.jamPct?.toFixed(0)}% vs {f.rainyJamPct?.toFixed(0)}% of the time.
-                    <InfoTooltip text={`Live Waze since ${rainEffect.jams.from}: each exit-hour with a Waze flood report against rainy hours without one at the same exit, hour of day and part of the week (${f.exitHours} flood hours over ${f.days} days; 95% range of the extra delay ${f.delayLowMin} to ${f.delayHighMin} min). A link, not proof: drivers already stuck may report water more readily. Live flood reports show on the Live Map.`} />
+                    <InfoTooltip text={`Live Waze since ${rainEffect.jams.from}: each exit-hour with a Waze flood report against rainy hours without one at the same exit, hour of day and part of the week (${f.exitHours} flood hours over ${f.days} days; 95% range of the extra delay ${f.delayLowMin} to ${f.delayHighMin} min). A link, not proof: drivers already stuck may report water more readily. Live flood reports show on the Map.`} />
                   </CardInsight>
                 );
               })()}

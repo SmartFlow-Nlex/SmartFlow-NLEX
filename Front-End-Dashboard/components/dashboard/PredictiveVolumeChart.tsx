@@ -15,7 +15,6 @@ import { areaFade, forecastLineStyle, nowMarkLine } from "../../lib/chart-kit";
 import { useTrafficPalette } from "./trafficPalette";
 import StateNote from "../stage/StateNote";
 import EvidenceModal from "./EvidenceModal";
-import { useRainEffect, isClear, type DayEffect } from "../../lib/rain-effect";
 import { fetchJsonWithRetry } from "./prescriptiveTraffic.shared";
 
 type ModelType = "LSTM" | "Prophet" | "HoltWinters" | "SARIMAX" | "HoltsLinear";
@@ -256,7 +255,6 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [showWeather, setShowWeather] = useState(true);
-  const rainEffect = useRainEffect();
 
   // How much of each zone to display, in days. These trim the view only — the
   // scored window and the forecast horizon are fixed by the model run, so
@@ -1615,23 +1613,8 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               </span>
             )}
           </div>
-          {/* Rain's association with traffic, like for like (Hans, 9 Nov 2026): always in view while the rain bars are, so the
-              reader is told what the bars mean for traffic without opening the evidence. Full table in the evidence. */}
-          {showWeather && rainEffect && (() => {
-            const vol = rainEffect.volume;
-            const heavy = vol.find((b) => b.mmTo == null);
-            const light = vol[0];
-            if (!heavy || heavy.effectPct == null || !light) return null;
-            const pct = (b: DayEffect) => `${Math.abs(b.effectPct ?? 0).toFixed(0)}%`;
-            const heavyWord = (heavy.effectPct ?? 0) < 0 ? "less" : "more";
-            return (
-              <p className="nct-caption" style={{ margin: "4px 0 0" }}>
-                Like for like, heavy-rain days ({heavy.mmFrom} mm+) are associated with about {pct(heavy)} {heavyWord} traffic than dry
-                days of the same weekday nearby{isClear(heavy.lowPct, heavy.highPct) ? ` (95% range ${Math.min(Math.abs(heavy.lowPct ?? 0), Math.abs(heavy.highPct ?? 0)).toFixed(0)}–${Math.max(Math.abs(heavy.lowPct ?? 0), Math.abs(heavy.highPct ?? 0)).toFixed(0)}%, ${heavy.days} days)` : " (not a clear difference)"};
-                {isClear(light.lowPct, light.highPct) ? ` light rain: ${light.effectPct}%.` : " light rain shows no clear change."} Details in the evidence.
-              </p>
-            );
-          })()}
+          {/* (13 Nov 2026, user request) The rain caption Hans added on 9 Nov left the card: the same like-for-like figures
+              are in the evidence, in WeatherEvidencePanel's "Rain on the day, like for like" table. */}
         </div>
 
         {/* ---------- The summary beside it: the answer, then the evidence for it ---------- */}

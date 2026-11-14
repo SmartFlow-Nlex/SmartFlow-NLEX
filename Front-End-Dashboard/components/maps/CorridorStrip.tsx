@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { ChevronDown, Construction } from "lucide-react";
 import { useChartTheme } from "../../lib/chart-theme";
 import { mapPalette } from "../../lib/map-palette";
@@ -9,7 +9,6 @@ import { nearExitsText } from "../../lib/exit-lookup";
 import { lookOf } from "../../lib/waze-report-look";
 import { KM_POST_END, KM_POST_START, fmtKm, fmtKmRange, kmMeasured } from "../../lib/km-post";
 import { corridorKm } from "./corridor-km";
-import { hoursFromNow } from "./ForecastHorizonPicker";
 import type { CorridorSnapshot } from "./livemap-graphics";
 import { fmtDelayShort, fmtDistance, levelWord } from "./livemap-graphics";
 import type { Closure } from "./useActiveClosures";
@@ -22,7 +21,7 @@ export type StripHover = { km: number; dir: Dir | null } | null;
  * (live solid, forecast hatched with a dashed edge). Swatches are the map's
  * own palette, so the key cannot describe a different map.
  */
-export function LegendKey() {
+export function LegendKey({ finish = "both" }: { finish?: "both" | "forecast" | "none" } = {}) {
   const { isDark } = useChartTheme();
   const P = mapPalette(isDark);
   const states: [string, string][] = [
@@ -39,15 +38,19 @@ export function LegendKey() {
           {label}
         </span>
       ))}
-      <span className="lm-key-sep" aria-hidden="true" />
-      <span className="lm-key-item">
-        <i className="lm-key-finish is-live" style={{ background: P.status.clear }} aria-hidden="true" />
-        Live
-      </span>
-      <span className="lm-key-item">
-        <i className="lm-key-finish is-forecast" style={{ background: P.status.clear }} aria-hidden="true" />
-        Forecast
-      </span>
+      {finish !== "none" && <span className="lm-key-sep" aria-hidden="true" />}
+      {finish === "both" && (
+        <span className="lm-key-item">
+          <i className="lm-key-finish is-live" style={{ background: P.status.clear }} aria-hidden="true" />
+          Live
+        </span>
+      )}
+      {finish !== "none" && (
+        <span className="lm-key-item">
+          <i className="lm-key-finish is-forecast" style={{ background: P.status.clear }} aria-hidden="true" />
+          Forecast
+        </span>
+      )}
     </div>
   );
 }
@@ -66,8 +69,6 @@ export function LegendKey() {
 export default function CorridorStrip({
   snapshot,
   mode,
-  setMode,
-  horizon,
   closures,
   mapHover,
   onHover,
@@ -75,18 +76,23 @@ export default function CorridorStrip({
   setOpen,
   ageLabel,
   majorExits,
+  timeline,
+  onPickExit,
 }: {
   snapshot: CorridorSnapshot | null;
   mode: "live" | "forecast";
-  setMode: (m: "live" | "forecast") => void;
-  horizon: number;
   closures: Closure[] | null;
   mapHover: StripHover;
   onHover: (h: { km: number; dir: Dir } | null) => void;
   open: boolean;
   setOpen: (o: boolean) => void;
+  /** One plain sentence: what the strip and the maps are showing right now. */
   ageLabel: string | null;
   majorExits: Set<string>;
+  /** The time row (Live now, or a forecast hour), set between the header and the strip. */
+  timeline?: ReactNode;
+  /** Told which exit a click on the strip landed nearest, so the page can select it (13 Nov 2026). */
+  onPickExit?: (exitName: string) => void;
 }) {
   const K = corridorKm();
   const span = K.kmEnd - K.kmStart;
@@ -129,6 +135,11 @@ export default function CorridorStrip({
   /* Keyboard: arrows walk the strip a kilometre at a time, Esc lets go. */
   const [kbd, setKbd] = useState<{ km: number; dir: Dir } | null>(null);
   const onKey = (dir: Dir) => (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter" && kbd && kbd.dir === dir) {
+      e.preventDefault();
+      flyToKm(kbd.km);
+      return;
+    }
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Escape") return;
     e.preventDefault();
     if (e.key === "Escape") {
@@ -148,6 +159,17 @@ export default function CorridorStrip({
     const km = K.kmStart + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * span;
     setOwn({ km, dir });
     onHover({ km, dir });
+  };
+
+  /* A click on the strip takes both maps there (13 Nov 2026, user request). The maps already answer nlex:flyto
+     (the exit picker uses it); the nearest exit is handed to the page so its picker and Clear follow. */
+  const nearestExit = (km: number) =>
+    K.exits.reduce((best, x) => (Math.abs(x.km - km) < Math.abs(best.km - km) ? x : best));
+  const flyToKm = (km: number, zoom = 14) => {
+    const p = K.pointAtKm(km);
+    const ex = nearestExit(km);
+    window.dispatchEvent(new CustomEvent("nlex:flyto", { detail: { lng: p[0], lat: p[1], name: ex.name, zoom } }));
+    onPickExit?.(ex.name);
   };
 
   const cursor = kbd ?? own ?? mapHover;
@@ -174,7 +196,14 @@ export default function CorridorStrip({
           ref={dir === "NB" ? trackRef : undefined}
           tabIndex={0}
           role="group"
-          aria-label={`${dir === "NB" ? "Northbound" : "Southbound"} lane. Left and right arrows move along the corridor.`}
+          aria-label={`${dir === "NB" ? "Northbound" : "Southbound"} lane. Left and right arrows move along the corridor; Enter, or a click, shows that spot on both maps.`}
+          title="Click to show this spot on both maps"
+          onClick={(e) => {
+            // Report and closure icons have their own clicks; let them through.
+            if ((e.target as HTMLElement).closest("button")) return;
+            const r = e.currentTarget.getBoundingClientRect();
+            flyToKm(K.kmStart + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * span);
+          }}
           onMouseMove={onMove(dir)}
           onMouseLeave={() => {
             setOwn(null);
@@ -265,24 +294,24 @@ export default function CorridorStrip({
 
   return (
     <section className={`lm-strip${open ? "" : " is-collapsed"}`} aria-label="Corridor strip">
+      {/* (13 Nov 2026, user request) One header that says what is on screen, then the one time control, then the
+          strip. The Live / Forecast toggle that sat here duplicated the timeline's Live button and could disagree
+          with it, and the feed's age was printed three times on the page. */}
       <header className="lm-strip-head">
         <div className="lm-strip-title">
           <h2>Corridor</h2>
           <span className="lm-strip-span">
             Km {fmtKm(first.km)} {displayExitName(first.name)} → Km {fmtKm(last.km)} {displayExitName(last.name)}
           </span>
+          {ageLabel && (
+            <p className="lm-strip-summary" data-mode={mode} aria-live="polite">
+              <i aria-hidden="true" />
+              {ageLabel}
+            </p>
+          )}
         </div>
-        <div className="lm-strip-mode" role="group" aria-label="Strip shows">
-          <button type="button" aria-pressed={live} className={live ? "is-on" : ""} onClick={() => setMode("live")}>
-            Live
-          </button>
-          <button type="button" aria-pressed={!live} className={!live ? "is-on" : ""} onClick={() => setMode("forecast")}>
-            Forecast +{horizon} h
-          </button>
-        </div>
-        {ageLabel && <span className="lm-strip-age">{ageLabel}</span>}
         <div className="lm-strip-key">
-          <LegendKey />
+          <LegendKey finish={live ? "none" : "forecast"} />
         </div>
         <button
           type="button"
@@ -296,20 +325,25 @@ export default function CorridorStrip({
         </button>
       </header>
 
+      {timeline && <div className="lm-strip-time">{timeline}</div>}
+
       <div id="lm-strip-body" className="lm-strip-body" hidden={!open}>
         {/* The instrument: exit names over a single field (northbound lane,
             median, southbound lane) crossed by an exit grid, then a km ruler. */}
         <div className={`lm-instrument${live ? " is-live" : " is-forecast"}`}>
-          <span className="lm-instrument-badge" aria-hidden="true">
-            <i />
-            {live ? "Live" : hoursFromNow(horizon) <= 0 ? "Now" : `+${hoursFromNow(horizon)} h`}
-          </span>
-          <div className="lm-strip-names" aria-hidden="true">
+          <div className="lm-strip-names">
             {K.exits.map((e, i) =>
               named.has(i) ? (
-                <span key={e.name} className="lm-strip-name" style={{ left: `${pct(e.km)}%` }}>
+                <button
+                  key={e.name}
+                  type="button"
+                  className="lm-strip-name"
+                  style={{ left: `${pct(e.km)}%` }}
+                  title={`Show ${displayExitName(e.name)} on both maps`}
+                  onClick={() => flyToKm(e.km, 13.5)}
+                >
                   {displayExitName(e.name)}
-                </span>
+                </button>
               ) : null,
             )}
           </div>

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Clock } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown } from "lucide-react";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -197,16 +197,99 @@ export default function ForecastHorizonPicker({
     if (offered.length > 0 && !offered.includes(horizon)) setHorizon(offered[0]);
   }, [offered, horizon, setHorizon]);
 
-  const chosen = hourOf(horizon);
+  /* While the strip shows Live, no forecast hour is "selected" (13 Nov 2026): a lit tick beside a lit Live button
+     said two different times at once. The forecast map keeps its hour; the timeline just stops claiming it. */
+  const liveOn = !!live?.active;
+
+  /* The page's dock (13 Nov 2026, user request "easier to understand and navigate"): one row, read left to right --
+     Live now, the forecast hours on a track, and how far ahead the track reaches. The dropdown and the separate day
+     word went: the chosen hour is already printed large over its tick. The expanded view keeps the compact form. */
+  if (!compact) {
+    const rangeButtons = (
+      <div className="mc-horizon-ranges" role="group" aria-label="How far ahead">
+        {HORIZON_RANGES.map((r) => {
+          const reach = maxHorizon ?? 0;
+          const ok = reach >= r.hours;
+          return (
+            <button
+              key={r.key}
+              type="button"
+              className={`mc-horizon-range${range === r.key ? " is-active" : ""}`}
+              aria-pressed={range === r.key}
+              disabled={!ok}
+              title={ok ? `Show the hours within ${r.label.toLowerCase()} on the track` : `The forecast currently reaches +${reach} h.`}
+              onClick={() => {
+                setRange(r.key);
+                setHorizon(Math.min(horizon, r.hours));
+              }}
+            >
+              {r.label.replace("Next ", "")}
+            </button>
+          );
+        })}
+      </div>
+    );
+    return (
+      <div className={`mc-horizon lm-time${liveOn ? " is-live" : " is-forecast"}`}>
+        {live && (
+          <button
+            type="button"
+            className={`lm-scrub-live${liveOn ? " is-active" : ""}`}
+            aria-pressed={liveOn}
+            onClick={live.onSelect}
+            title="Show what Waze reports now"
+          >
+            <i aria-hidden="true" />
+            <span className="lm-scrub-live-word">Live</span>
+            <span className="lm-scrub-live-age">{live.label}</span>
+          </button>
+        )}
+        <span className="lm-time-sep" aria-hidden="true">or</span>
+        <div className="lm-scrub" role="group" aria-label="Forecast hour">
+          <div className="lm-scrub-track" style={{ ["--ticks" as string]: offered.length }}>
+            {liveOn && <span className="lm-scrub-hint">Pick an hour to see its forecast</span>}
+            {offered.map((h, i) => {
+              const t = usePeaks ? new Date(peaks![i].at) : hourOf(h);
+              const on = h === horizon && !liveOn;
+              const every = offered.length <= 13 ? 1 : offered.length <= 30 ? 4 : 8;
+              const labelled = on || usePeaks || i % every === 0 || i === offered.length - 1;
+              const ahead = hoursFromNow(h);
+              const short = usePeaks
+                ? t.toLocaleDateString(undefined, { weekday: "short" })
+                : ahead <= 0 ? "Now" : `+${ahead} h`;
+              return (
+                <button
+                  key={`${h}-${i}`}
+                  type="button"
+                  className={`lm-tick${on ? " is-on" : ""}${labelled ? " is-labelled" : ""}`}
+                  aria-pressed={on}
+                  aria-label={`Forecast for ${dayOf(t)} ${timeOf(t)}, ${ahead <= 0 ? "this hour" : `${ahead} h from now`}`}
+                  title={`${dayOf(t)} · ${timeOf(t)} · ${ahead <= 0 ? "this hour" : `+${ahead} h from now`}`}
+                  onClick={() => {
+                    setHorizon(h);
+                    onPick?.(h);
+                  }}
+                >
+                  {on && (
+                    <span className="lm-tick-now" aria-hidden="true">
+                      <b>{timeOf(t)}</b>
+                      <small>{dayOf(t)}</small>
+                    </span>
+                  )}
+                  <span className="lm-tick-mark" aria-hidden="true" />
+                  <span className="lm-tick-label" aria-hidden="true">{short}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {rangeButtons}
+      </div>
+    );
+  }
 
   return (
     <div className={`mc-horizon${compact ? " is-compact" : ""}`}>
-      {!compact && (
-        <span className="mc-horizon-head">
-          <Clock size={13} className="mc-purple-text" /> Forecast time
-        </span>
-      )}
-
       <div className="mc-horizon-ranges" role="group" aria-label="Forecast range">
         {HORIZON_RANGES.map((r) => {
           const reach = maxHorizon ?? 0;
@@ -234,103 +317,126 @@ export default function ForecastHorizonPicker({
         })}
       </div>
 
-      {/* The timeline scrubber: one tick per hour the forecast actually
-          offers for this range (the same list the select below holds), with
-          "Live" at the left end. Picking a tick does exactly what picking the
-          same hour in the select does. */}
-      {!compact && offered.length > 0 && (
-        <div className="lm-scrub" role="group" aria-label="Forecast timeline">
-          {live && (
-            <button
-              type="button"
-              className={`lm-scrub-live${live.active ? " is-active" : ""}`}
-              aria-pressed={live.active}
-              onClick={live.onSelect}
-              title="Show the live map's state on the corridor strip"
-            >
-              <i aria-hidden="true" />
-              <span className="lm-scrub-live-word">Live</span>
-              <span className="lm-scrub-live-age">{live.label}</span>
-            </button>
-          )}
-          <div className="lm-scrub-track" style={{ ["--ticks" as string]: offered.length }}>
-            {offered.map((h, i) => {
-              const t = usePeaks ? new Date(peaks![i].at) : hourOf(h);
-              const on = h === horizon;
-              const every = offered.length <= 13 ? 1 : offered.length <= 30 ? 4 : 8;
-              const labelled = on || usePeaks || i % every === 0 || i === offered.length - 1;
-              const ahead = hoursFromNow(h);
-              const short = usePeaks
-                ? t.toLocaleDateString(undefined, { weekday: "short" })
-                : ahead <= 0 ? "Now" : `+${ahead} h`;
-              return (
-                <button
-                  key={`${h}-${i}`}
-                  type="button"
-                  className={`lm-tick${on ? " is-on" : ""}${labelled ? " is-labelled" : ""}`}
-                  aria-pressed={on}
-                  aria-label={`${dayOf(t)} ${timeOf(t)}, ${ahead <= 0 ? "now" : `${ahead} h from now`}`}
-                  title={`${dayOf(t)} · ${timeOf(t)} · ${ahead <= 0 ? "now" : `+${ahead} h from now`}`}
-                  onClick={() => {
-                    setHorizon(h);
-                    onPick?.(h);
-                  }}
-                >
-                  {/* The chosen hour, large, riding above its tick. */}
-                  {on && (
-                    <span className="lm-tick-now" aria-hidden="true">
-                      <b>{timeOf(t)}</b>
-                      <small>{dayOf(t)}</small>
-                    </span>
-                  )}
-                  <span className="lm-tick-mark" aria-hidden="true" />
-                  <span className="lm-tick-label" aria-hidden="true">{short}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      <label className="mc-horizon-pick">
-        <span className="sr-only">Forecast hour</span>
-        <select value={horizon} onChange={(e) => setHorizon(Number(e.target.value))}>
-          {usePeaks
-            ? peaks!.map((p) => {
-                const t = new Date(p.at);
-                return (
-                  // The date leads because that is what is being chosen; the
-                  // hour is the answer to "when that day", and the count says
-                  // why that hour and not another.
-                  <option key={p.day} value={p.hoursAhead}>
-                    {`${dayOf(t)}  ·  ${timeOf(t)}  ·  ${
-                      // "0 congested" is true but reads as a missing number.
-                      // On a day the model expects nothing heavy, the worst
-                      // hour is simply a clear one, so say that.
-                      p.congested + (p.slow ?? 0) > 0
-                        ? [p.congested > 0 ? `${p.congested} congested` : "", (p.slow ?? 0) > 0 ? `${p.slow} slow` : ""].filter(Boolean).join(" · ")
-                        : "clear"
-                    }`}
-                  </option>
-                );
-              })
-            : groups.map((g) => (
-                <optgroup key={g.day} label={g.day}>
-                  {g.items.map((o) => (
-                    <option key={o.h} value={o.h}>
-                      {`${o.time}  ·  ${hoursFromNow(o.h) <= 0 ? "now" : `+${hoursFromNow(o.h)} h`}`}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-        </select>
-      </label>
+      <HourMenu
+        value={horizon}
+        onChange={setHorizon}
+        groups={
+          usePeaks
+            ? [{
+                day: "Each day's worst hour",
+                items: peaks!.map((p) => {
+                  const t = new Date(p.at);
+                  return {
+                    h: p.hoursAhead,
+                    main: `${dayOf(t)} · ${timeOf(t)}`,
+                    // "0 congested" is true but reads as a missing number; a day with nothing heavy is "clear".
+                    side: p.congested + (p.slow ?? 0) > 0
+                      ? [p.congested > 0 ? `${p.congested} congested` : "", (p.slow ?? 0) > 0 ? `${p.slow} slow` : ""].filter(Boolean).join(" · ")
+                      : "clear",
+                  };
+                }),
+              }]
+            : groups.map((g) => ({
+                day: g.day,
+                items: g.items.map((o) => ({
+                  h: o.h,
+                  main: o.time,
+                  side: hoursFromNow(o.h) <= 0 ? "now" : `+${hoursFromNow(o.h)} h`,
+                })),
+              }))
+        }
+      />
 
       {/* A native select shows only the chosen row's text, which inside a day
           group no longer names the day. This says which one, so the closed
           control is never ambiguous. The expanded header states it in its own
           subtitle, so it is not repeated there. */}
-      {!compact && !usePeaks && <span className="mc-horizon-when">{dayOf(chosen)}</span>}
+    </div>
+  );
+}
+
+type MenuGroup = { day: string; items: { h: number; main: string; side: string }[] };
+
+/**
+ * The hour picker's menu (13 Nov 2026, user request "improve the drop down design"). A native <select> drew the
+ * browser's own list, which cannot be styled: a white box, grey day headings and a solid blue bar on the chosen
+ * row. This is the same choice in the dashboard's style: day headings, the time with its offset set apart on the
+ * right, a tint and a check on the chosen hour. Closes on Escape or a click outside; arrow keys move the choice.
+ */
+function HourMenu({ value, onChange, groups }: { value: number; onChange: (h: number) => void; groups: MenuGroup[] }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement | null>(null);
+  const list = useRef<HTMLDivElement | null>(null);
+  const flat = groups.flatMap((g) => g.items);
+  const current = flat.find((i) => i.h === value) ?? flat[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const out = (e: MouseEvent) => { if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false); };
+    /* Escape closes the menu only: caught on the way down (capture, on window) and stopped there, so the expanded
+       view's own Escape handler does not close the whole view as well. */
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", out);
+    window.addEventListener("keydown", key, true);
+    // Bring the chosen hour into view when the list opens.
+    list.current?.querySelector<HTMLElement>("[aria-selected='true']")?.scrollIntoView({ block: "nearest" });
+    return () => { document.removeEventListener("mousedown", out); window.removeEventListener("keydown", key, true); };
+  }, [open]);
+
+  const step = (d: 1 | -1) => {
+    const i = flat.findIndex((x) => x.h === value);
+    const next = flat[Math.max(0, Math.min(flat.length - 1, (i < 0 ? 0 : i) + d))];
+    if (next) onChange(next.h);
+  };
+
+  return (
+    <div className={`lm-hour${open ? " is-open" : ""}`} ref={wrap}>
+      <button
+        type="button"
+        className="lm-hour-btn"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Forecast hour"
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") { e.preventDefault(); step(1); }
+          if (e.key === "ArrowUp") { e.preventDefault(); step(-1); }
+        }}
+      >
+        <span className="lm-hour-main">{current?.main ?? "—"}</span>
+        {current && <span className="lm-hour-side">{current.side}</span>}
+        <ChevronDown size={15} aria-hidden="true" className="lm-hour-chev" />
+      </button>
+      {open && (
+        <div className="lm-hour-menu" role="listbox" aria-label="Forecast hour" ref={list}>
+          {groups.map((g) => (
+            <div key={g.day} className="lm-hour-group">
+              <div className="lm-hour-day">{g.day}</div>
+              {g.items.map((it) => {
+                const on = it.h === value;
+                return (
+                  <button
+                    key={it.h}
+                    type="button"
+                    role="option"
+                    aria-selected={on}
+                    className={`lm-hour-opt${on ? " is-on" : ""}`}
+                    onClick={() => { onChange(it.h); setOpen(false); }}
+                  >
+                    <span className="lm-hour-check" aria-hidden="true">{on && <Check size={14} strokeWidth={2.6} />}</span>
+                    <span className="lm-hour-main">{it.main}</span>
+                    <span className="lm-hour-side">{it.side}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

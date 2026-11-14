@@ -889,40 +889,52 @@
 }
 
 /* --- Map graphics drawn as markers ---------------------------------------- */
-/* Jam callouts: a leader from the queue's head to "length · delay · direction". */
+/* Jam callouts (13 Nov 2026): a solid chip in the queue's own colour with a clock, on a leader from the
+   queue's head. They were white plates with a coloured border, the same object as the exit names, so a
+   condition and a place read alike. Exit names stay white labels; conditions are coloured chips. */
 .lm-page .lm-callout { position: relative; width: 0; height: 0; pointer-events: none; z-index: 4; }
 .lm-page .lm-callout-lead {
   position: absolute;
   left: 0;
   top: 0;
   width: 24px;
-  height: 1.5px;
+  height: 2px;
+  border-radius: 1px;
   background: var(--lm-c);
   transform-origin: 0 50%;
   rotate: -48deg;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--stage) 55%, transparent);
+  box-shadow: 0 0 0 1.25px color-mix(in srgb, var(--bg-raised) 85%, transparent);
 }
 .lm-page .lm-callout[data-side="west"] .lm-callout-lead { rotate: -132deg; }
 .lm-page .lm-callout-plate {
   position: absolute;
   left: 16px;
-  top: -40px;
-  height: 22px;
-  display: flex;
+  top: -41px;
+  height: 23px;
+  display: inline-flex;
   align-items: center;
-  padding: 0 8px;
-  border: 1px solid color-mix(in srgb, var(--lm-c) 65%, transparent);
-  border-radius: var(--radius-sm);
-  background: var(--bg-raised);
-  box-shadow: var(--lm-shadow);
-  font-size: var(--fs-label);
-  font-weight: 600;
+  gap: 5px;
+  padding: 0 10px 0 7px;
+  border: 1.5px solid color-mix(in srgb, #fff 70%, transparent);
+  border-radius: 999px;
+  background: var(--lm-c);
+  box-shadow: 0 2px 8px rgb(15 23 42 / 0.28);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-  color: var(--text-primary);
+  color: #fff;
 }
+.lm-page .lm-callout-ico { display: inline-flex; flex: none; opacity: 0.95; }
 .lm-page .lm-callout[data-side="west"] .lm-callout-plate { left: auto; right: 16px; }
-.lm-page .lm-callout[data-predicted] .lm-callout-plate { border-style: dashed; }
+/* A forecast queue: the same chip, outlined in dashes, as the forecast's other marks. */
+.lm-page .lm-callout[data-predicted] .lm-callout-plate { border-style: dashed; border-color: color-mix(in srgb, #fff 90%, transparent); }
+/* Dark: the slow amber is a light yellow there, so its chip takes dark type. */
+:root[data-theme="dark"] .lm-page .lm-callout[data-level="slow"] .lm-callout-plate { color: #1d1400; border-color: color-mix(in srgb, #1d1400 25%, transparent); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lm-page .lm-callout[data-level="slow"] .lm-callout-plate { color: #1d1400; border-color: color-mix(in srgb, #1d1400 25%, transparent); }
+}
 
 /* The strip's spot on the map. */
 .lm-page .lm-hover-ring,
@@ -955,42 +967,50 @@
 }
 
 /* Exit pins: rings in expressway blue, plates with the km post. */
-.lm-page .custom-toll-marker .toll-pin-dot { background: var(--bg-raised); border-color: var(--action); color: var(--text-primary); box-shadow: none; }
+/* The ring sits above its own leader (13 Nov 2026): the leader started 15 px into a 24 px badge, so the line
+   ran across the toll icon. --lead-inset is now the ring's width plus a hair, per tier, so it starts at the edge. */
+.lm-page .custom-toll-marker .toll-pin-dot { position: relative; z-index: 1; background: var(--bg-raised); border-color: var(--action); color: var(--text-primary); box-shadow: none; }
 .lm-page .custom-toll-marker[data-tier="far"] .toll-pin-dot { width: 11px; height: 11px; border: 2.5px solid var(--action); background: var(--bg-raised); box-shadow: none; }
 .lm-page .custom-toll-marker[data-tier="mid"] .toll-pin-dot { width: 15px; height: 15px; border: 3px solid var(--action); background: var(--bg-raised); box-shadow: none; }
-.lm-page .custom-toll-marker[data-tier="near"] .toll-pin-dot { width: 24px; height: 24px; border: 2px solid var(--bg-raised); background: var(--action); color: var(--action-ink); }
+.lm-page .custom-toll-marker[data-tier="near"] .toll-pin-dot { width: 24px; height: 24px; border: 2px solid var(--bg-raised); background: var(--action); color: var(--action-ink); box-shadow: 0 1px 4px rgb(15 23 42 / 0.3); }
+.lm-page .custom-toll-marker[data-tier="far"] .toll-pin-name { --lead-inset: 13px; }
+.lm-page .custom-toll-marker[data-tier="mid"] .toll-pin-name { --lead-inset: 17px; }
+.lm-page .custom-toll-marker[data-tier="near"] .toll-pin-name { --lead-inset: 26px; }
 .lm-page .custom-toll-marker[data-tier="far"] .toll-pin:hover .toll-pin-dot,
 .lm-page .custom-toll-marker[data-tier="mid"] .toll-pin:hover .toll-pin-dot { border-color: var(--text-primary); }
+/* A place label: white, square-cornered, name in ink and the km post muted. */
 .lm-page .custom-toll-marker .toll-pin-name {
-  --callout-line: color-mix(in srgb, var(--text-primary) 45%, transparent);
-  padding: 2px 7px 3px;
+  --callout-line: color-mix(in srgb, var(--action) 70%, var(--text-primary));
+  padding: 2px 8px 3px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: 4px;
   background: var(--bg-raised);
-  box-shadow: none;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.12);
   font-size: var(--fs-label);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: 650;
+  letter-spacing: 0.01em;
   color: var(--text-primary);
 }
 .lm-page .custom-toll-marker .toll-pin-name::before,
-.lm-page .custom-toll-marker .toll-pin-name::after { box-shadow: 0 0 0 1.25px color-mix(in srgb, var(--stage) 60%, transparent); }
-.lm-page .toll-pin-km { margin-left: 6px; font-weight: 400; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.lm-page .custom-toll-marker .toll-pin-name::after { box-shadow: 0 0 0 1.25px color-mix(in srgb, var(--bg-raised) 85%, transparent); }
+.lm-page .toll-pin-km { margin-left: 6px; font-weight: 450; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .lm-page .custom-toll-marker[data-label="off"] .toll-pin-name { display: none; }
 .lm-page .custom-toll-marker[data-selected="on"] .toll-pin-dot { box-shadow: 0 0 0 3px color-mix(in srgb, var(--action) 45%, transparent); }
 .lm-page .custom-toll-marker[data-selected="on"] .toll-pin-name { border-color: var(--action); }
-:root .lm-page .custom-toll-marker[data-queue="slow"] .toll-pin-name {
-  --callout-line: var(--signal-slow);
-  color: var(--signal-slow);
-  border-color: color-mix(in srgb, var(--signal-slow) 55%, transparent);
-  background: color-mix(in srgb, var(--signal-slow) 12%, var(--bg-surface-solid));
+/* An exit with a queue on it keeps the white place label and gains a status dot in the queue's colour,
+   with the leader in that colour too (13 Nov 2026): the whole plate used to turn red or amber, which made
+   it look like a traffic chip. */
+:root .lm-page .custom-toll-marker[data-queue] .toll-pin-name {
+  padding-left: 18px;
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background:
+    radial-gradient(circle at 9px 50%, var(--queue-c) 0 3.6px, transparent 4.2px),
+    var(--bg-raised);
+  font-weight: 700;
 }
-:root .lm-page .custom-toll-marker[data-queue="congested"] .toll-pin-name {
-  --callout-line: var(--signal-congested);
-  color: var(--signal-congested);
-  border-color: color-mix(in srgb, var(--signal-congested) 55%, transparent);
-  background: color-mix(in srgb, var(--signal-congested) 12%, var(--bg-surface-solid));
-}
+:root .lm-page .custom-toll-marker[data-queue="slow"] .toll-pin-name { --queue-c: var(--signal-slow); --callout-line: var(--signal-slow); }
+:root .lm-page .custom-toll-marker[data-queue="congested"] .toll-pin-name { --queue-c: var(--signal-congested); --callout-line: var(--signal-congested); }
 
 /* Waze report pins: a soft stage-coloured halo so they lift off the dark map. */
 .lm-page .pulsing-marker-container { position: relative; display: grid; place-items: center; }
@@ -1003,52 +1023,134 @@
 }
 
 /* --- Hover cards (Mapbox popups) ------------------------------------------- */
-.lm-page .mjp-pop .mapboxgl-popup-content,
-.lm-page .mapboxgl-popup-content {
+/* One card for every thing on the map (13 Nov 2026): a tinted header with the title on top and its
+   location underneath, never side by side -- "Maintenance" beside "Southbound · Km 14.5–19.8" in spaced
+   capitals wrapped into a ragged column -- then label/value rows and an optional note or footer.
+   Scoped to the popup class as well as the page, so the expanded map views get the same card. */
+.lm-page .mapboxgl-popup-content,
+.mjp-pop .mapboxgl-popup-content {
+  padding: 0;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border-radius: 12px;
+  overflow: hidden;
   background: var(--bg-raised);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 12px 32px rgb(15 23 42 / 0.2), 0 2px 6px rgb(15 23 42 / 0.1);
   color: var(--text-primary);
 }
-.lm-page .mapboxgl-popup-anchor-left .mapboxgl-popup-tip { border-right-color: var(--bg-raised); }
-.lm-page .mapboxgl-popup-anchor-right .mapboxgl-popup-tip { border-left-color: var(--bg-raised); }
+.lm-page .mapboxgl-popup-anchor-left .mapboxgl-popup-tip,
+.mjp-pop.mapboxgl-popup-anchor-left .mapboxgl-popup-tip { border-right-color: var(--bg-raised); }
+.lm-page .mapboxgl-popup-anchor-right .mapboxgl-popup-tip,
+.mjp-pop.mapboxgl-popup-anchor-right .mapboxgl-popup-tip { border-left-color: var(--bg-raised); }
 .lm-page .mapboxgl-popup-anchor-top .mapboxgl-popup-tip { border-bottom-color: var(--bg-raised); }
 .lm-page .mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip { border-top-color: var(--bg-raised); }
-.lm-page .mjp { min-width: 190px; font-size: var(--fs-body); }
-.lm-page .mjp-head {
+.mjp-pop.mapboxgl-popup-anchor-top-left .mapboxgl-popup-tip,
+.mjp-pop.mapboxgl-popup-anchor-top-right .mapboxgl-popup-tip { border-bottom-color: var(--bg-raised); }
+.mjp-pop.mapboxgl-popup-anchor-bottom-left .mapboxgl-popup-tip,
+.mjp-pop.mapboxgl-popup-anchor-bottom-right .mapboxgl-popup-tip { border-top-color: var(--bg-raised); }
+
+.mjp-pop .mjp, .lm-page .mjp { width: 264px; max-width: 100%; font-size: 12.5px; line-height: 1.4; color: var(--text-primary); }
+
+.mjp-pop .mjp-head, .lm-page .mjp-head {
   --mjp-c: var(--text-muted);
-  padding: 8px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--mjp-c) 38%, transparent);
-  background: color-mix(in srgb, var(--mjp-c) 14%, var(--bg-surface-solid));
-  color: var(--mjp-c);
-  font-size: var(--fs-label);
-  font-weight: 600;
-  letter-spacing: 2px;
-  text-transform: uppercase;
+  display: grid;
+  gap: 2px;
+  padding: 11px 14px 10px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--mjp-c) 22%, var(--border-default));
+  background: color-mix(in srgb, var(--mjp-c) 9%, var(--bg-raised));
+  box-shadow: inset 4px 0 0 var(--mjp-c);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0;
+  text-transform: none;
 }
-.lm-page .mjp-head span { font-size: var(--fs-label); letter-spacing: 1px; color: var(--text-secondary); opacity: 1; font-variant-numeric: tabular-nums; }
-.lm-page .mjp-head.is-clear { --mjp-c: var(--signal-clear); }
-.lm-page .mjp-head.is-slow { --mjp-c: var(--signal-slow); }
-.lm-page .mjp-head.is-congested { --mjp-c: var(--signal-congested); }
-.lm-page .mjp-head.is-exit,
-.lm-page .mjp-head.is-closure { --mjp-c: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 6%, var(--bg-surface-solid)); border-bottom-color: var(--border-default); }
-.lm-page .mjp-where { padding: 8px 12px 4px; font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.3px; color: var(--text-primary); max-width: 270px; }
-.lm-page .mjp-row { padding: 3px 12px; font-size: var(--fs-label); }
-.lm-page .mjp-row span { color: var(--text-secondary); }
-.lm-page .mjp-row b { font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
-.lm-page .mjp-row:last-child { padding-bottom: 10px; }
-.lm-page .mjp-answer { padding-top: 9px; padding-bottom: 4px; align-items: baseline; }
-.lm-page .mjp-answer b { font-size: var(--fs-title); font-weight: 600; }
-.lm-page .mjp-basis { font-weight: 400; color: var(--text-muted); padding-top: 6px; line-height: 1.45; }
-.lm-page .mjp-warn { font-weight: 600; color: var(--text-primary); padding-top: 6px; }
-.lm-page .mjp-warn::before { content: "! "; color: var(--signal-congested); font-weight: 600; }
-.lm-page .mjp-note { margin: 2px 12px 10px; padding-top: 7px; font-size: var(--fs-label); line-height: 1.45; color: var(--text-secondary); border-top-color: var(--border-default); }
-.lm-page .nlex-pop { font-family: var(--font-ui); }
-.lm-page .nlex-pop-head { border-left: 0; background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-surface-solid)); }
-.lm-page .nlex-pop-title { font-size: var(--fs-label); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-primary); }
-.lm-page .nlex-pop-sub { font-size: var(--fs-label); color: var(--text-secondary); }
-.lm-page .nlex-pop-foot { font-size: var(--fs-micro); letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); background: transparent; }
+/* The second line: where, and which way. */
+.mjp-pop .mjp-head > span, .lm-page .mjp-head > span,
+.mjp-pop .mjp-head-text > span, .lm-page .mjp-head-text > span {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  opacity: 1;
+  font-variant-numeric: tabular-nums;
+}
+.mjp-pop .mjp-head.is-clear, .lm-page .mjp-head.is-clear { --mjp-c: var(--signal-clear); }
+.mjp-pop .mjp-head.is-slow, .lm-page .mjp-head.is-slow { --mjp-c: var(--signal-slow); }
+.mjp-pop .mjp-head.is-congested, .lm-page .mjp-head.is-congested { --mjp-c: var(--signal-congested); }
+.mjp-pop .mjp-head.is-exit, .lm-page .mjp-head.is-exit { --mjp-c: var(--action); }
+.mjp-pop .mjp-head.is-closure, .lm-page .mjp-head.is-closure { --mjp-c: #b45309; }
+.mjp-pop .mjp-head.is-rain, .lm-page .mjp-head.is-rain { --mjp-c: #0891b2; }
+.mjp-pop .mjp-head.is-rain.is-moderate, .lm-page .mjp-head.is-rain.is-moderate { --mjp-c: #0369a1; }
+.mjp-pop .mjp-head.is-rain.is-heavy, .lm-page .mjp-head.is-rain.is-heavy { --mjp-c: #1e40af; }
+.mjp-pop .mjp-head.is-rain.is-intense, .lm-page .mjp-head.is-rain.is-intense { --mjp-c: #6d28d9; }
+
+/* A report: its own icon beside the two lines. --mjp-c comes inline, in the report's colour. */
+.mjp-pop .mjp-head.is-report, .lm-page .mjp-head.is-report { display: flex; align-items: center; gap: 11px; }
+.mjp-pop .mjp-mark, .lm-page .mjp-mark {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--mjp-c);
+  color: #fff;
+}
+.mjp-pop .mjp-mark svg, .lm-page .mjp-mark svg { width: 15px; height: 15px; }
+.mjp-pop .mjp-head-text, .lm-page .mjp-head-text { display: block; min-width: 0; }
+
+/* A line of its own: where a queue starts, a closure's title, a basis. */
+.mjp-pop .mjp-where, .lm-page .mjp-where {
+  padding: 10px 14px 4px 16px;
+  font-size: 12.5px;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: 0;
+  color: var(--text-primary);
+  max-width: none;
+  overflow-wrap: break-word;
+}
+
+/* Label and value: the label left, the value right and allowed to wrap onto a second line. */
+.mjp-pop .mjp-row, .lm-page .mjp-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 14px 6px 16px;
+  font-size: 12.5px;
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+}
+.mjp-pop .mjp-head + .mjp-row, .lm-page .mjp-head + .mjp-row { border-top: 0; }
+.mjp-pop .mjp-row span, .lm-page .mjp-row span { flex: none; color: var(--text-secondary); }
+.mjp-pop .mjp-row b, .lm-page .mjp-row b { min-width: 0; text-align: right; font-weight: 650; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.mjp-pop .mjp-row:last-child, .lm-page .mjp-row:last-child { padding-bottom: 11px; }
+/* The card's answer: the same row, set larger. */
+.mjp-pop .mjp-answer, .lm-page .mjp-answer { padding-top: 10px; padding-bottom: 8px; align-items: center; border-top: 0; }
+.mjp-pop .mjp-answer b, .lm-page .mjp-answer b { font-size: 20px; font-weight: 750; letter-spacing: -0.01em; }
+.mjp-pop .mjp-basis, .lm-page .mjp-basis { font-weight: 400; font-size: 12px; color: var(--text-muted); padding-top: 6px; padding-bottom: 8px; line-height: 1.45; }
+.mjp-pop .mjp-warn, .lm-page .mjp-warn { font-weight: 600; color: var(--text-primary); padding-top: 6px; padding-bottom: 10px; }
+.mjp-pop .mjp-warn::before, .lm-page .mjp-warn::before { content: "! "; color: var(--signal-congested); font-weight: 700; }
+.mjp-pop .mjp-flood, .lm-page .mjp-flood { font-weight: 550; color: #0369a1; padding-bottom: 10px; }
+.mjp-pop .mjp-note, .lm-page .mjp-note {
+  margin: 0;
+  padding: 9px 14px 11px 16px;
+  border-top: 1px solid var(--border-default);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  max-width: none;
+}
+.mjp-pop .mjp-foot, .lm-page .mjp-foot {
+  padding: 8px 14px 9px 16px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-primary) 3%, var(--bg-raised));
+}
 
 /* --- Report detail panel ---------------------------------------------------- */
 .lm-page .wz-report-detail {
@@ -1752,3 +1854,570 @@
    rings the whole card rather than only the 28 px arrow inside it. */
 .ov-page .ov-fresh:has(.ov-card-go:focus-visible) { outline: 2px solid var(--nlex-blue); outline-offset: 3px; }
 .ov-page .ov-fresh .ov-card-go:focus-visible { outline: none; }
+
+/* ==========================================================================
+   Corridor dock, reworked (13 Nov 2026, user request: "easier to understand and navigate").
+   One header that says in a sentence what is on screen; one time row (Live now, or a forecast hour on the track,
+   and how far ahead the track reaches); then the strip. The strip's own Live/Forecast toggle and the third copy
+   of the feed's age are gone.
+   ========================================================================== */
+.lm-page .lm-strip { padding: 16px 20px 12px; }
+.lm-page .lm-strip-head { align-items: flex-start; }
+.lm-page .lm-strip-title { flex: 1 1 360px; row-gap: 4px; }
+.lm-page .lm-strip-title h2 { font-size: 18px; font-weight: 700; }
+.lm-page .lm-strip-summary {
+  flex-basis: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--text-primary);
+}
+.lm-page .lm-strip-summary i { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--signal-clear); box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal-clear) 22%, transparent); }
+.lm-page .lm-strip-summary[data-mode="forecast"] i { background: var(--color-purple); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-purple) 22%, transparent); }
+.lm-page .lm-strip-key { margin-left: auto; padding-top: 4px; }
+
+/* The time row. */
+.lm-page .lm-strip-time {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
+}
+.lm-page .lm-strip-time .mc-horizon.lm-time {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.lm-page .lm-time .lm-scrub { flex: 1 1 auto; order: 0; min-width: 0; }
+.lm-page .lm-time .mc-horizon-ranges { flex: none; }
+.lm-page .lm-time .mc-horizon-range { padding: 5px 11px; letter-spacing: 0.5px; }
+.lm-page .lm-time-sep { flex: none; font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: lowercase; }
+.lm-page .lm-time .lm-scrub-live { height: 40px; padding: 0 16px 0 12px; }
+.lm-page .lm-time .lm-scrub-live-word { letter-spacing: 1.5px; }
+.lm-page .lm-time .lm-scrub-live-age { font-size: 12.5px; }
+.lm-page .lm-time .lm-scrub-live.is-active {
+  border-color: var(--signal-clear);
+  background: color-mix(in srgb, var(--signal-clear) 14%, var(--bg-raised));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal-clear) 16%, transparent);
+}
+.lm-page .lm-time .lm-scrub-live.is-active i { box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal-clear) 30%, transparent); }
+/* Live on: the track is a menu of hours, so it reads quieter and says what it is for. */
+.lm-page .lm-time.is-live .lm-scrub-track { opacity: 0.85; }
+.lm-page .lm-scrub-hint {
+  position: absolute;
+  top: 6px;
+  left: 0;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--text-muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.lm-page .lm-time.is-forecast .lm-tick.is-on .lm-tick-mark { width: 14px; height: 14px; }
+.lm-page .lm-time .lm-tick-now b { font-weight: 650; }
+.lm-page .lm-strip-body { padding-top: 10px; }
+
+@media (max-width: 900px) {
+  .lm-page .lm-strip-time .mc-horizon.lm-time { flex-wrap: wrap; }
+  .lm-page .lm-time .lm-scrub { flex-basis: 100%; order: 3; }
+  .lm-page .lm-time-sep { display: none; }
+  .lm-page .lm-time .mc-horizon-ranges { margin-left: auto; }
+}
+
+/* The live band's weather card (13 Nov 2026), in the slot the forecast band gives its model. */
+.lm-page .lm-band.is-live { flex-wrap: nowrap; }
+.lm-page .lm-when.is-live .lm-age { color: var(--signal-clear); }
+.lm-page .lm-weather-head { color: var(--signal-clear); }
+.lm-page .lm-weather-name { display: inline-flex; align-items: center; gap: 8px; }
+.lm-page .lm-weather-name b { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.lm-page .lm-weather-name em {
+  padding: 1px 9px;
+  border: 1px solid color-mix(in srgb, var(--signal-clear) 45%, transparent);
+  border-radius: var(--radius-full);
+  font-style: normal;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.lm-page .lm-weather-icon { color: #d97706; flex: none; }
+@media (max-width: 640px) { .lm-page .lm-band.is-live { flex-wrap: wrap; } }
+
+/* The header's live tag carries the feed's age now, in the same spaced capitals as the other tags. */
+.lm-page .lm-tag.is-live.is-stale .mc-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-muted); }
+
+/* Clear, where 3D was. */
+.lm-page .lm-clear:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+/* ==========================================================================
+   Report detail, redesigned (13 Nov 2026, user request). Same card language as the hover cards: a tinted header in
+   the report's colour, then the answer (where, which way, when), three trust meters, and label/value rows.
+   ========================================================================== */
+.wz-report-detail.wz-rd2 {
+  width: min(320px, calc(100% - 28px));
+  padding: 0;
+  overflow-x: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--bg-raised);
+  box-shadow: 0 16px 40px rgb(15 23 42 / 0.22), 0 2px 6px rgb(15 23 42 / 0.1);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.wz-rd2-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 12px 12px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--rd-c) 25%, var(--border-default));
+  background: color-mix(in srgb, var(--rd-c) 10%, var(--bg-raised));
+  box-shadow: inset 4px 0 0 var(--rd-c);
+}
+.wz-rd2-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--rd-c);
+  color: #fff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rd-c) 22%, transparent);
+}
+.wz-rd2-title { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.wz-rd2-title h3 { margin: 0; font-size: 15.5px; font-weight: 750; line-height: 1.2; letter-spacing: 0; text-transform: none; color: var(--text-primary); }
+.wz-rd2-title span { font-size: 12.5px; font-weight: 500; color: var(--text-secondary); }
+.wz-rd2-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.wz-rd2-close:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+.wz-rd2-close:focus-visible { outline: 2px solid var(--rd-c); outline-offset: 2px; }
+
+.wz-rd2-body { padding: 12px 16px 12px; display: grid; gap: 12px; }
+.wz-rd2-flood { margin: 0; }
+.wz-rd2-where { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.4; color: var(--text-primary); }
+.wz-rd2-where b { font-weight: 750; }
+.wz-rd2-when { margin: -6px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.wz-rd2-ago {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--rd-c) 14%, transparent);
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+/* Three trust meters. */
+.wz-rd2-meters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.wz-rd2-meter {
+  display: grid;
+  gap: 3px;
+  padding: 8px 9px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
+  cursor: help;
+}
+.wz-rd2-meter-k { font-size: 11.5px; font-weight: 550; color: var(--text-secondary); }
+.wz-rd2-meter-v { font-size: 17px; font-weight: 750; color: var(--text-primary); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.wz-rd2-meter-v small { font-size: 11.5px; font-weight: 500; color: var(--text-muted); margin-left: 1px; }
+.wz-rd2-meter-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text-primary) 10%, transparent); overflow: hidden; }
+.wz-rd2-meter-bar i { display: block; height: 100%; border-radius: 2px; background: var(--rd-c); }
+
+/* The record. */
+.wz-rd2-rows { margin: 0; display: grid; border-top: 1px solid var(--border-default); }
+.wz-rd2-rows > div {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+}
+.wz-rd2-rows dt { font-size: 12px; font-weight: 500; color: var(--text-secondary); letter-spacing: 0; text-transform: none; }
+.wz-rd2-rows dd { margin: 0; display: grid; gap: 1px; font-size: 12.5px; font-weight: 650; color: var(--text-primary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.wz-rd2-rows dd small { font-size: 11.5px; font-weight: 450; color: var(--text-muted); }
+/* Readouts are Inter (DESIGN.md, Readouts); tabular figures keep the coordinates aligned without a mono face. */
+.wz-rd2-mono { font-family: inherit; font-variant-numeric: tabular-nums; letter-spacing: 0.01em; font-size: 12px !important; font-weight: 550 !important; }
+.wz-rd2-id { margin: -4px 0 0; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+/* The whole card in the report's colour (13 Nov 2026, user request: "if hazard, make it yellow, but professional").
+   The bright report colour is kept to tints and accents; type and the icon disc take a deep shade of it
+   (hazard yellow #eab308 becomes a dark amber), which reads as a colour rather than a warning light. */
+.wz-report-detail.wz-rd2 {
+  --rd-deep: color-mix(in oklab, var(--rd-c) 58%, #1a1206);
+  --rd-ink: var(--rd-deep);
+  border-color: color-mix(in srgb, var(--rd-c) 42%, var(--border-default));
+  background: color-mix(in srgb, var(--rd-c) 6%, var(--bg-raised));
+  box-shadow: 0 16px 40px color-mix(in srgb, var(--rd-deep) 22%, transparent), 0 2px 6px rgb(15 23 42 / 0.1);
+}
+.wz-rd2 .wz-rd2-head {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--rd-c) 24%, var(--bg-raised)), color-mix(in srgb, var(--rd-c) 14%, var(--bg-raised)));
+  border-bottom-color: color-mix(in srgb, var(--rd-c) 40%, transparent);
+  box-shadow: inset 4px 0 0 var(--rd-c);
+}
+.wz-rd2 .wz-rd2-icon { background: var(--rd-deep); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rd-c) 35%, transparent); }
+.wz-rd2 .wz-rd2-title h3 { color: var(--rd-ink); }
+.wz-rd2 .wz-rd2-close { border-color: color-mix(in srgb, var(--rd-c) 45%, var(--border-strong)); }
+.wz-rd2 .wz-rd2-ago { background: color-mix(in srgb, var(--rd-c) 22%, transparent); color: var(--rd-ink); }
+.wz-rd2 .wz-rd2-meter {
+  border-color: color-mix(in srgb, var(--rd-c) 30%, var(--border-default));
+  background: color-mix(in srgb, var(--bg-raised) 80%, var(--rd-c));
+}
+.wz-rd2 .wz-rd2-meter-bar { background: color-mix(in srgb, var(--rd-c) 18%, transparent); }
+.wz-rd2 .wz-rd2-meter-bar i { background: color-mix(in oklab, var(--rd-c) 80%, var(--rd-deep)); }
+.wz-rd2 .wz-rd2-rows { border-top-color: color-mix(in srgb, var(--rd-c) 30%, var(--border-default)); }
+.wz-rd2 .wz-rd2-rows > div { border-bottom-color: color-mix(in srgb, var(--rd-c) 18%, var(--border-default)); }
+/* Dark: the deep shade would vanish into the card, so type goes to a light tint of the colour instead. */
+:root[data-theme="dark"] .wz-report-detail.wz-rd2 { --rd-ink: color-mix(in oklab, var(--rd-c) 70%, #fff); background: color-mix(in srgb, var(--rd-c) 8%, var(--bg-raised)); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .wz-report-detail.wz-rd2 { --rd-ink: color-mix(in oklab, var(--rd-c) 70%, #fff); background: color-mix(in srgb, var(--rd-c) 8%, var(--bg-raised)); }
+}
+
+/* A quiet scrollbar on the report card (13 Nov 2026, user request): thin, in the report's colour, no arrow buttons,
+   on a clear track. Standard properties for Chromium 121+ and Firefox; the WebKit rules for older engines. */
+.wz-report-detail.wz-rd2 {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--rd-c) 45%, transparent) transparent;
+  scrollbar-gutter: auto;
+}
+.wz-report-detail.wz-rd2::-webkit-scrollbar { width: 6px; height: 6px; }
+.wz-report-detail.wz-rd2::-webkit-scrollbar-track { background: transparent; margin: 10px 0; }
+.wz-report-detail.wz-rd2::-webkit-scrollbar-thumb { border-radius: 999px; background: color-mix(in srgb, var(--rd-c) 45%, transparent); }
+.wz-report-detail.wz-rd2::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--rd-c) 70%, transparent); }
+.wz-report-detail.wz-rd2::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+
+/* Fitted to the panel map (13 Nov 2026, user request): the panel is about 540 px tall, so the card may use almost
+   all of it rather than two thirds, and everything is set a size tighter so a report reads without scrolling. */
+.wz-report-detail.wz-rd2 { top: 12px; left: 12px; max-height: calc(100% - 24px); width: min(304px, calc(100% - 24px)); }
+.wz-rd2 .wz-rd2-head { gap: 10px; padding: 10px 10px 10px 14px; }
+.wz-rd2 .wz-rd2-icon { width: 30px; height: 30px; }
+.wz-rd2 .wz-rd2-icon svg { width: 15px; height: 15px; }
+.wz-rd2 .wz-rd2-title h3 { font-size: 14.5px; }
+.wz-rd2 .wz-rd2-title span { font-size: 12px; }
+.wz-rd2 .wz-rd2-close { width: 28px; height: 28px; }
+.wz-rd2 .wz-rd2-body { padding: 10px 14px 10px; gap: 9px; }
+.wz-rd2 .wz-rd2-where { font-size: 13px; }
+.wz-rd2 .wz-rd2-when { margin-top: -3px; font-size: 12px; }
+.wz-rd2 .wz-rd2-ago { padding: 1px 8px; }
+.wz-rd2 .wz-rd2-meters { gap: 6px; }
+.wz-rd2 .wz-rd2-meter { gap: 2px; padding: 6px 8px 7px; border-radius: 9px; }
+.wz-rd2 .wz-rd2-meter-k { font-size: 11px; }
+.wz-rd2 .wz-rd2-meter-v { font-size: 15px; }
+.wz-rd2 .wz-rd2-meter-bar { height: 3px; }
+.wz-rd2 .wz-rd2-rows > div { grid-template-columns: 96px minmax(0, 1fr); gap: 10px; padding: 5px 0; }
+.wz-rd2 .wz-rd2-rows dt { font-size: 11.5px; }
+.wz-rd2 .wz-rd2-rows dd { font-size: 12px; }
+.wz-rd2 .wz-rd2-rows dd small { font-size: 11px; }
+.wz-rd2 .wz-rd2-id { font-size: 10.5px; margin-top: -2px; }
+
+/* ==========================================================================
+   The expanded live view, tidied (13 Nov 2026, user request). Alert rows are cards in the report's colour that
+   stay inside the sidebar; the legend folds; the header carries the feed's age; plain section headings.
+   ========================================================================== */
+/* Header tag: the feed's age, like the page's tag. */
+.lm-page .wz-live { gap: 8px; padding: 6px 13px; text-transform: uppercase; letter-spacing: 1.5px; font-size: 12px; white-space: nowrap; }
+
+/* Legend: a card that folds. */
+.lm-page details.wz-legend { top: 14px; left: 14px; padding: 0; min-width: 0; max-width: 250px; overflow: hidden; box-shadow: 0 6px 18px rgb(15 23 42 / 0.12); }
+.lm-page details.wz-legend > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  list-style: none;
+  font-size: var(--fs-label);
+  font-weight: 650;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+.lm-page details.wz-legend > summary::-webkit-details-marker { display: none; }
+.lm-page details.wz-legend > summary::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  rotate: -45deg;
+  transition: rotate 0.15s ease;
+}
+.lm-page details.wz-legend[open] > summary::before { rotate: 45deg; }
+.lm-page details.wz-legend[open] > summary { border-bottom: 1px solid var(--border-default); }
+.lm-page details.wz-legend > :not(summary) { padding: 10px 14px 12px; }
+.lm-page details.wz-legend .wz-legend-row { padding: 2px 0; font-size: 13px; }
+.lm-page details.wz-legend h4 { margin: 0 0 6px; font-size: 11px; letter-spacing: 1.5px; }
+
+/* Sidebar. */
+.lm-page .wz-side { display: flex; flex-direction: column; gap: 0; padding: 18px 18px 18px; }
+.lm-page .wz-side-title { margin: 0 0 12px; font-size: 18px; font-weight: 700; }
+.lm-page .wz-kpis { gap: 8px; }
+.lm-page .wz-kpi,
+.lm-page .wz-kpi.speed,
+.lm-page .wz-kpi.reports,
+.lm-page .wz-kpi.delay { padding: 10px 12px 11px; border-radius: 12px; }
+.lm-page .wz-kpi-label { font-size: 11px; font-weight: 600; letter-spacing: 0.3px; text-transform: none; color: var(--text-secondary); }
+.lm-page .wz-kpi-value { margin-top: 3px; font-size: 21px; font-weight: 700; gap: 3px; }
+.lm-page .wz-kpi-value em { font-size: 11.5px; font-weight: 550; font-style: normal; color: var(--text-muted); }
+
+.lm-page .wz-sec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-primary);
+}
+.lm-page .wz-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.lm-page .wz-density { margin-top: 2px; }
+.lm-page .wz-density-scale { display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px; font-weight: 550; color: var(--text-muted); }
+.lm-page .wz-note { margin-top: 6px; font-size: 12.5px; color: var(--text-secondary); }
+
+/* Alerts: each row a card inside the sidebar, tinted by its report on hover. */
+.lm-page .wz-alerts { display: grid; gap: 6px; max-height: 320px; overflow-y: auto; padding: 1px; scrollbar-width: thin; }
+.lm-page .wz-alerts li { border-bottom: 0; }
+.lm-page .wz-alert-row {
+  --c: var(--text-muted);
+  margin: 0;
+  padding: 10px 10px 10px 12px;
+  gap: 11px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lm-page .wz-alert-row:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--c) 45%, var(--border-default));
+  background: color-mix(in srgb, var(--c) 9%, var(--bg-raised));
+  box-shadow: inset 3px 0 0 var(--c);
+}
+.lm-page .wz-alert-row:focus-visible { outline: 2px solid var(--c); outline-offset: 2px; }
+.lm-page .wz-alert-row .wz-chip { width: 30px; height: 30px; background: var(--c) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 20%, transparent); }
+.lm-page .wz-alert-row .wz-chip svg { width: 15px; height: 15px; }
+.lm-page .wz-alert-text { gap: 1px; }
+.lm-page .wz-alert-text b { font-size: 13.5px; font-weight: 700; letter-spacing: 0; text-transform: none; color: var(--text-primary); }
+.lm-page .wz-alert-text em { font-size: 12px; color: var(--text-secondary); }
+.lm-page .wz-alert-age { font-size: 12px; color: var(--text-muted); }
+.lm-page .wz-alert-go { flex: none; color: var(--text-muted); opacity: 0; transition: opacity 0.15s ease, translate 0.15s ease; }
+.lm-page .wz-alert-row:hover .wz-alert-go,
+.lm-page .wz-alert-row:focus-visible .wz-alert-go { opacity: 1; translate: 2px 0; color: var(--c); }
+.lm-page .wz-empty-row { padding: 10px 12px; border: 1px dashed var(--border-default); border-radius: 12px; font-style: normal; }
+
+/* Slowest stretch: the same card shape, in the congested colour. */
+.lm-page .wz-worst {
+  margin-top: 16px;
+  padding: 12px 14px;
+  gap: 2px;
+  border-radius: 12px;
+  border-color: color-mix(in srgb, var(--signal-congested) 35%, var(--border-default));
+  background: color-mix(in srgb, var(--signal-congested) 6%, var(--bg-raised));
+  box-shadow: inset 3px 0 0 var(--signal-congested);
+}
+.lm-page .wz-worst-head { font-size: 11px; letter-spacing: 1.2px; color: var(--signal-congested); }
+.lm-page .wz-worst b { font-size: 17px; font-weight: 700; }
+.lm-page .wz-worst-speed { font-size: 12.5px; color: var(--text-secondary); }
+.lm-page .wz-updated { margin-top: auto; padding-top: 14px; font-size: 12px; color: var(--text-muted); }
+/* Space before each legend group after the first, so "Waze reports" does not sit on the last traffic row. */
+.lm-page details.wz-legend h4:not(:first-of-type),
+.lm-page details.wz-legend .wz-legend-gap { margin-top: 14px; }
+
+/* ==========================================================================
+   Forecast hour menu (13 Nov 2026): replaces the native select in the expanded forecast header.
+   ========================================================================== */
+.lm-page .lm-hour { position: relative; }
+.lm-page .lm-hour-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  min-width: 200px;
+  padding: 0 12px 0 16px;
+  border: 1px solid color-mix(in srgb, var(--color-purple) 35%, var(--border-strong));
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lm-page .lm-hour-btn:hover,
+.lm-page .lm-hour.is-open .lm-hour-btn { border-color: var(--color-purple); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-purple) 16%, transparent); }
+.lm-page .lm-hour-btn:focus-visible { outline: 2px solid var(--color-purple); outline-offset: 2px; }
+.lm-page .lm-hour-btn .lm-hour-main { font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lm-page .lm-hour-btn .lm-hour-side { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--color-purple) 12%, transparent); color: var(--color-purple); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.lm-page .lm-hour-chev { margin-left: auto; color: var(--text-muted); transition: rotate 0.15s ease; }
+.lm-page .lm-hour.is-open .lm-hour-chev { rotate: 180deg; }
+.lm-page .lm-hour-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: max(100%, 248px);
+  max-height: min(360px, 60vh);
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--bg-raised);
+  box-shadow: 0 18px 44px rgb(15 23 42 / 0.22), 0 2px 6px rgb(15 23 42 / 0.1);
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-purple) 35%, transparent) transparent;
+}
+.lm-page .lm-hour-day {
+  position: sticky;
+  top: -6px;
+  z-index: 1;
+  margin: 0 -6px;
+  padding: 8px 14px 6px;
+  background: var(--bg-raised);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.lm-page .lm-hour-group + .lm-hour-group { margin-top: 4px; border-top: 1px solid var(--border-default); }
+.lm-page .lm-hour-opt {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.lm-page .lm-hour-opt:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.lm-page .lm-hour-opt.is-on { background: color-mix(in srgb, var(--color-purple) 13%, transparent); }
+.lm-page .lm-hour-opt .lm-hour-main { font-weight: 550; font-variant-numeric: tabular-nums; }
+.lm-page .lm-hour-opt.is-on .lm-hour-main { font-weight: 700; }
+.lm-page .lm-hour-opt .lm-hour-side { font-size: 12px; font-weight: 550; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lm-page .lm-hour-opt.is-on .lm-hour-side { color: var(--color-purple); }
+.lm-page .lm-hour-check { display: grid; place-items: center; color: var(--color-purple); }
+
+/* ==========================================================================
+   The expanded forecast view, tidied the same way as the live one (13 Nov 2026).
+   ========================================================================== */
+.lm-page .wz-side { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text-primary) 18%, transparent) transparent; }
+.lm-page .fc-tally { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 4px; }
+.lm-page .fc-tally-item {
+  display: grid;
+  gap: 1px;
+  padding: 10px 12px 11px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.lm-page .fc-tally-k { font-size: 11.5px; font-weight: 650; color: var(--text-secondary); }
+.lm-page .fc-tally-item b { font-size: 26px; font-weight: 750; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.lm-page .fc-tally-item small { font-size: 11.5px; color: var(--text-muted); }
+.lm-page .fc-tally-item.is-high { border-color: color-mix(in srgb, var(--signal-congested) 35%, var(--border-default)); background: color-mix(in srgb, var(--signal-congested) 6%, var(--bg-raised)); }
+.lm-page .fc-tally-item.is-med { border-color: color-mix(in srgb, var(--signal-slow) 35%, var(--border-default)); background: color-mix(in srgb, var(--signal-slow) 6%, var(--bg-raised)); }
+.lm-page .fc-tally-item.is-low { border-color: color-mix(in srgb, var(--signal-clear) 35%, var(--border-default)); background: color-mix(in srgb, var(--signal-clear) 6%, var(--bg-raised)); }
+.lm-page .fc-tally-item.is-high .fc-tally-k { color: var(--signal-congested); }
+.lm-page .fc-tally-item.is-med .fc-tally-k { color: var(--signal-slow); }
+.lm-page .fc-tally-item.is-low .fc-tally-k { color: var(--signal-clear); }
+
+.lm-page .fc-group .wz-sec { margin-top: 16px; }
+.lm-page .fc-group.is-high .wz-count { background: color-mix(in srgb, var(--signal-congested) 16%, transparent); color: var(--signal-congested); }
+.lm-page .fc-group.is-med .wz-count { background: color-mix(in srgb, var(--signal-slow) 18%, transparent); color: var(--signal-slow); }
+.lm-page .fc-group.is-low .wz-count { background: color-mix(in srgb, var(--signal-clear) 16%, transparent); color: var(--signal-clear); }
+.lm-page .fc-list { display: grid; gap: 5px; }
+.lm-page .fc-list li,
+.lm-page .fc-list li:nth-child(odd) { padding: 0; background: none; border: 0; border-radius: 0; }
+.lm-page .fc-row {
+  --c: var(--signal-clear);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px 9px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 11px;
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lm-page .fc-row.is-high { --c: var(--signal-congested); }
+.lm-page .fc-row.is-med { --c: var(--signal-slow); }
+.lm-page .fc-row:hover:not(:disabled) { border-color: color-mix(in srgb, var(--c) 45%, var(--border-default)); background: color-mix(in srgb, var(--c) 8%, var(--bg-raised)); box-shadow: inset 3px 0 0 var(--c); }
+.lm-page .fc-row:focus-visible { outline: 2px solid var(--c); outline-offset: 2px; }
+.lm-page .fc-row:disabled { cursor: default; }
+.lm-page .fc-row .fc-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--c); }
+.lm-page .fc-row .fc-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lm-page .fc-row .fc-prob { display: grid; justify-items: end; gap: 3px; flex: none; font-size: 11.5px; color: var(--text-muted); }
+.lm-page .fc-row .fc-prob b { font-size: 13.5px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.lm-page .fc-row .fc-prob i { display: block; width: 64px; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--c) 18%, transparent); overflow: hidden; }
+.lm-page .fc-row .fc-prob em { display: block; height: 100%; background: var(--c); }
+.lm-page .fc-row:hover .wz-alert-go,
+.lm-page .fc-row:focus-visible .wz-alert-go { opacity: 1; translate: 2px 0; color: var(--c); }
+.lm-page .fc-shell .wz-side-title { display: flex; align-items: center; gap: 8px; }
+
+/* Rows fill the sidebar and each group stacks its heading over its rows: older .fc-list li and .fc-group rules made
+   them flex rows that shrank to their content (13 Nov 2026). */
+.lm-page .fc-shell .fc-group { display: block; width: 100%; }
+.lm-page .fc-shell .fc-list li { display: block; width: 100%; }
+.lm-page .fc-shell .fc-row .fc-prob { grid-template-columns: auto auto; column-gap: 4px; align-items: baseline; }
+.lm-page .fc-shell .fc-row .fc-prob i { grid-column: 1 / -1; justify-self: end; }
+
+/* The strip goes to the maps on a click (13 Nov 2026): exit names are buttons, the lanes take a pointer cursor. */
+.lm-page button.lm-strip-name { padding: 1px 4px; border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: var(--fs-label); font-weight: 600; color: var(--text-secondary); cursor: pointer; transition: color 0.15s ease, background-color 0.15s ease; }
+.lm-page button.lm-strip-name:hover { color: var(--action); background: color-mix(in srgb, var(--action) 10%, transparent); }
+.lm-page button.lm-strip-name:focus-visible { outline: 2px solid var(--action); outline-offset: 1px; }
+.lm-page .lm-lane-track { cursor: pointer; }
+/* The hover cursor and its chip sit under the pointer; clicks go through them to the lane (13 Nov 2026). */
+.lm-page .lm-strip-cursor, .lm-page .lm-strip-chip, .lm-page .lm-median { pointer-events: none; }
+
+/* The hover chip sits over the km ruler; the lanes layer is lifted above the ruler so the ruler's numbers and ticks
+   no longer paint through the chip (13 Nov 2026). */
+.lm-page .lm-strip-field { z-index: 3; }
+.lm-page .lm-strip-chip { z-index: 10; }
