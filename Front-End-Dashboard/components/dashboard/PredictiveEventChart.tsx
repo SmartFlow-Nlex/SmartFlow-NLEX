@@ -48,7 +48,7 @@ type UpcomingEvent = {
   verified?: boolean; sourceUrl?: string | null;
   exits: UpcomingExit[];
 };
-type GroupStat = { n: number; median: number; ci: [number, number] };
+type GroupStat = { n: number; median: number; ci: [number, number]; mean?: number };
 /** What the forecast stands on (train_event_effect.py): the verified calendar, what event types did, the
  *  attendance link and the normal-day test. */
 type EventBasis = {
@@ -56,6 +56,12 @@ type EventBasis = {
   calendar_counts: { held_nights_at_venues: number; scored_nights: number; nights_with_attendance: number; first: string; last: string };
   sources: string;
   by_venue?: Record<string, GroupStat>; by_origin?: Record<string, GroupStat>; by_format?: Record<string, GroupStat>;
+  /** Adviser (13 Nov 2026): annual / international / other, at the venue exit, median and mean. */
+  by_class?: Record<string, GroupStat>;
+  /** Class of each verified upcoming night, keyed by date. */
+  upcoming_class?: Record<string, string>;
+  /** Each nearby exit's typical rise on past event nights (history bars). */
+  exit_history?: Record<string, { median: number; ci: [number, number]; n: number; real: boolean; exit?: string }>;
   per_1000_attendees?: { nights: number; per_1000: number; ci: [number, number]; nights_below_normal?: number } | null;
   attendance_test?: { nights: number; significant: boolean; wmape_class_model: number; wmape_with_attendance: number } | null;
   far_normal?: Record<string, number>; far_normal_choice?: string | null;
@@ -311,14 +317,55 @@ export default function PredictiveEventChart() {
   // floating lengths, the one thing bar charts are bad at. Length from a common
   // zero is the most accurate comparison available, and it stops the smallest
   // exit collapsing into a sliver.
+  /* History bars (user, 13 Nov 2026): every nearby exit whose rise on past event nights is real (95% range above
+     zero) is drawn in grey beside the forecast, as that exit's normal day times its typical past rise. The forecast
+     (blue) stays what passed the hidden-event test; the grey bars show the event's wider footprint as history. */
+  const exitHistory = evalInfo?.basis?.exit_history ?? {};
+  const baselineOf = new Map((effectiveRaw ?? []).map((d) => [d.exit, Number(d.baseline)]));
+  const forecastBy = new Map(rows.map((r) => [r.exit, r]));
+  const histBy = new Map(
+    Object.entries(exitHistory)
+      // Mainline barriers carry through traffic, not people leaving for the venue; the chart keeps them apart.
+      .filter(([exit, h]) => h.real && !NON_EXIT.test(exit))
+      .map(([exit, h]) => {
+        const base = baselineOf.get(exit) ?? 0;
+        return [exit, { exit, extra: Math.max(0, Math.round(base * (h.median - 1))), base, ...h }] as const;
+      })
+      .filter(([, h]) => h.base > 0),
+  );
+  // Bottom-up category order: the biggest bar of either kind on top.
+  const chartExits = [...new Set([...forecastBy.keys(), ...histBy.keys()])].sort(
+    (a, b) => Math.max(forecastBy.get(a)?.added ?? 0, histBy.get(a)?.extra ?? 0) - Math.max(forecastBy.get(b)?.added ?? 0, histBy.get(b)?.extra ?? 0),
+  );
   const impactOption: EChartsOption = {
-    grid: { left: 152, right: 150, top: 10, bottom: 40 },
+    grid: { left: 152, right: 150, top: histBy.size ? 30 : 10, bottom: 40 },
+    legend: histBy.size
+      ? { top: 0, right: 0, itemWidth: 12, itemHeight: 10, textStyle: { color: K.muted, fontSize: 11 },
+          data: ["Forecast (tested)", "Past event nights (history)"] }
+      : undefined,
     tooltip: {
       trigger: "item",
       confine: true,
       extraCssText: P.tooltipCss,
       formatter: (params: unknown) => {
-        const r = rows[(params as { dataIndex: number }).dataIndex];
+        const p = params as { name: string; seriesName: string };
+        const r = forecastBy.get(p.name);
+        const h = histBy.get(p.name);
+        if (p.seriesName.startsWith("Past") && h) {
+          return `
+          <div style="padding:2px 4px; min-width:240px;">
+            <b style="font-size:1.05em; color:var(--text-primary);">${h.exit}</b>
+            <div style="margin-top:8px; display:grid; grid-template-columns:auto 1fr; gap:5px 12px; font-size:0.9em;">
+              <span style="color:var(--text-secondary);">Past event nights</span><span style="font-weight:600;">+${fmtVeh(h.extra)} (+${((h.median - 1) * 100).toFixed(1)}%)</span>
+              <span style="color:var(--text-secondary);">95% range</span><span>+${((h.ci[0] - 1) * 100).toFixed(1)}% to +${((h.ci[1] - 1) * 100).toFixed(1)}%</span>
+              <span style="color:var(--text-secondary);">Nights</span><span>${h.n}</span>
+            </div>
+            <div style="margin-top:6px; font-size:0.85em; color:var(--text-muted); max-width:260px; white-space:normal;">
+              History, not the forecast: the rise is real on average, but adding it did not make the forecast more accurate on the hidden test nights.
+            </div>
+          </div>`;
+        }
+        if (!r) return "";
         return `
           <div style="padding:2px 4px; min-width:225px;">
             <b style="font-size:1.05em; color:var(--text-primary);">${r.exit}</b>
@@ -342,36 +389,52 @@ export default function PredictiveEventChart() {
     },
     yAxis: {
       type: "category",
-      data: rows.map((r) => r.exit),
+      data: chartExits,
       axisTick: { show: false },
       axisLine: { show: false },
       axisLabel: { color: K.ink, fontWeight: 600, fontSize: 11 },
     },
     series: [
       {
-        name: "Added by event",
+        name: "Forecast (tested)",
         type: "bar",
-        barMaxWidth: 26,
-        data: rows.map((r) => r.added),
+        barMaxWidth: 22,
+        barGap: "15%",
+        data: chartExits.map((e) => forecastBy.get(e)?.added ?? null),
         itemStyle: { color: SURGE, borderRadius: [0, 4, 4, 0] },
         label: {
           show: true,
           position: "right",
           distance: 10,
           formatter: (params: unknown) => {
-            const r = rows[(params as { dataIndex: number }).dataIndex];
-            // The "50,890 -> 63,119 · 1.2x normal" second line repeated on
-            // every bar and is already in the tooltip. The bar carries the
-            // two numbers a reader actually scans for.
-            return `{add|+${fmtVeh(r.added)}}  {pct|+${r.pct.toFixed(0)}%}`;
+            const r = forecastBy.get((params as { name: string }).name);
+            return r ? `{add|+${fmtVeh(r.added)}}  {pct|+${r.pct.toFixed(0)}%}` : "";
           },
           rich: {
             add: { color: K.ink, fontWeight: 600, fontSize: 13, lineHeight: 17 },
             pct: { color: K.ink2, fontWeight: 400, fontSize: 11, lineHeight: 17 },
-            ctx: { color: K.muted, fontSize: 11, lineHeight: 14 },
           },
         },
       },
+      ...(histBy.size
+        ? [{
+            name: "Past event nights (history)",
+            type: "bar" as const,
+            barMaxWidth: 22,
+            data: chartExits.map((e) => histBy.get(e)?.extra ?? null),
+            itemStyle: { color: K.faint, opacity: 0.55, borderRadius: [0, 4, 4, 0] },
+            label: {
+              show: true,
+              position: "right" as const,
+              distance: 10,
+              formatter: (params: unknown) => {
+                const h = histBy.get((params as { name: string }).name);
+                return h ? `{h|+${fmtVeh(h.extra)}  +${((h.median - 1) * 100).toFixed(0)}% (history)}` : "";
+              },
+              rich: { h: { color: K.muted, fontSize: 11, lineHeight: 15 } },
+            },
+          }]
+        : []),
     ],
   };
 
@@ -387,12 +450,18 @@ export default function PredictiveEventChart() {
   const others = val.filter((v) => v.model !== champ?.model && v.model !== noAdj?.model);
   const basis = evalInfo?.basis ?? null;
   const pctUp = (r: number) => `${r >= 1 ? "+" : "−"}${Math.abs((r - 1) * 100).toFixed(0)}%`;
+  /* Event class (adviser, 13 Nov 2026): annual = the same series held in two or more years by a Filipino or mixed
+     lineup (Summer Blast, the New Year Countdown, Clark Aurora); international = an international act. */
+  const CLASS_LABEL: Record<string, string> = { annual: "Annual event", international: "International act", other: "Other event" };
+  const classOf = (date: string) => basis?.upcoming_class?.[date] ?? null;
+  const chosenClass = chosen ? classOf(chosen.date) : null;
+  const chosenClassStat = chosenClass ? basis?.by_class?.[chosenClass] ?? null : null;
   const GROUP_LABEL: Record<string, string> = {
     arena: "Philippine Arena (CDV exit)", stadium: "Philippine Sports Stadium (CDV exit)", clark: "Clark Global City (Dau exit)",
     international: "International acts", filipino: "Filipino acts", mixed: "Mixed lineups",
     solo_concert: "Solo concerts", festival: "Festivals", multi_artist_showcase: "Multi-artist showcases", sports: "Sports",
   };
-  const impactHeight = Math.max(rows.length * 56 + 62, 220);
+  const impactHeight = Math.max(chartExits.length * (histBy.size ? 64 : 56) + 72, 220);
   const VISIBLE_OTHERS = 8;
   const shownOthers = showAllOthers ? otherExits : otherExits.slice(0, VISIBLE_OTHERS);
   // How concentrated the surge is: the share the two biggest exits carry
@@ -492,7 +561,7 @@ export default function PredictiveEventChart() {
               const d = new Date(`${u.date}T00:00:00`);
               return (
                 <option key={u.date} value={String(i)}>
-                  {d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} — {shortTitle(u.title)}{multi ? ` (day ${nth})` : ""}{isArena(u.venue) ? "" : ` · ${u.venue}`}{u.verified === false ? " · unverified" : ""}
+                  {d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} — {shortTitle(u.title)}{multi ? ` (day ${nth})` : ""}{isArena(u.venue) ? "" : ` · ${u.venue}`}{classOf(u.date) ? ` · ${CLASS_LABEL[classOf(u.date) as string] ?? classOf(u.date)}` : ""}{u.verified === false ? " · unverified" : ""}
                 </option>
               );
             })}
@@ -536,6 +605,20 @@ export default function PredictiveEventChart() {
                 )}
               </span>
             </span>
+            {chosenClass && (
+              <span className="nct-finding-kv">
+                <span className="nct-kv-k">Event type</span>
+                <span>
+                  <b>{CLASS_LABEL[chosenClass] ?? chosenClass}</b>
+                  {chosenClassStat && (
+                    <span className="nct-soft">
+                      {" "}· past {CLASS_LABEL[chosenClass]?.toLowerCase() ?? chosenClass}s raised the venue exit by a typical{" "}
+                      {pctUp(chosenClassStat.median)} ({chosenClassStat.n} nights); shown as history, not used in the number
+                    </span>
+                  )}
+                </span>
+              </span>
+            )}
             <span className="nct-finding-kv">
               <span className="nct-kv-k">Top exit</span>
               <span>
@@ -674,6 +757,35 @@ export default function PredictiveEventChart() {
                 ({basis.calendar_counts.first} to {basis.calendar_counts.last}), {basis.calendar_counts.scored_nights} of them on
                 real toll days. Sources: {basis.sources}.
               </p>
+              {basis.by_class && Object.keys(basis.by_class).length > 0 && (
+                <table className="nct-table" style={{ marginTop: 4 }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--border-default)" }}>
+                      <th style={{ padding: "4px 6px", fontWeight: 600 }}>By event class: past nights at the venue exit</th>
+                      <th style={{ padding: "4px 6px", fontWeight: 600, textAlign: "right" }}>Nights</th>
+                      <th style={{ padding: "4px 6px", fontWeight: 600, textAlign: "right" }}>Typical rise (median, 95% range)</th>
+                      <th style={{ padding: "4px 6px", fontWeight: 600, textAlign: "right" }}>Average rise (mean)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(basis.by_class).sort((a, b) => b[1].median - a[1].median).map(([k, v]) => (
+                      <tr key={k} style={{ borderBottom: "1px solid var(--border-default)" }}>
+                        <td style={{ padding: "4px 6px" }}>
+                          {CLASS_LABEL[k] ?? k}
+                          {k === "annual" && <span className="nct-soft"> (Summer Blast, New Year Countdown, Clark Aurora)</span>}
+                        </td>
+                        <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{v.n}</td>
+                        <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                          <b>{pctUp(v.median)}</b> <span style={{ color: "var(--text-muted)" }}>({pctUp(v.ci[0])} to {pctUp(v.ci[1])})</span>
+                        </td>
+                        <td style={{ padding: "4px 6px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                          {v.mean != null ? pctUp(v.mean) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
               {[["By venue", basis.by_venue], ["By act", basis.by_origin], ["By format", basis.by_format]].map(([label, groups]) => {
                 const g = groups as Record<string, GroupStat> | undefined;
                 const list = g ? Object.entries(g).filter(([, v]) => v.n >= 3).sort((a, b) => b[1].median - a[1].median) : [];

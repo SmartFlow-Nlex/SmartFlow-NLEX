@@ -58,11 +58,17 @@ CAL_PATH = ARGS[ARGS.index("--calendar") + 1] if "--calendar" in ARGS else None
 CACHE = Path(WORK) / "cache"
 CACHE.mkdir(parents=True, exist_ok=True)
 RNG = np.random.default_rng(42)
+RNG_FIT = np.random.default_rng(7)   # model fitting draws, kept apart from the test bootstrap
 BOOT = 2000
 # --weeks W: sensitivity check of the normal-day window (default 8, protocol section 9); at least half must be usable.
 NORMAL_WEEKS = int(ARGS[ARGS.index("--weeks") + 1]) if "--weeks" in ARGS else 8
 NORMAL_MIN = max(2, NORMAL_WEEKS // 2)
 TAG = "" if NORMAL_WEEKS == 8 else f"_w{NORMAL_WEEKS}"
+# --hours A-B (correction 7): the event-hours study, traffic from hour A to hour B (Manila time) on each day.
+HOURS = tuple(int(x) for x in ARGS[ARGS.index("--hours") + 1].split("-")) if "--hours" in ARGS else None
+if HOURS:
+    TAG += f"_h{HOURS[0]}-{HOURS[1]}"
+MIN_TRAIN_NIGHTS = 10   # correction 6: test every night that has at least this many earlier scored nights
 BROKEN_SHARE = 0.5
 TEST_SHARE = 0.40
 VENUES = {"Philippine Arena": "arena", "Philippine Sports Stadium": "stadium", "Clark Global City": "clark"}
@@ -71,7 +77,18 @@ ANCHOR = {"bulacan": "cdvpharena", "clark": "dau"}
 KM_RANGE = {"bulacan": (20, 39), "clark": (72, 88)}
 NAMES = {1: "No adjustment (baseline)", 2: "Flat uplift (baseline)", 3: "Per-exit uplift",
          4: "Venue + day", 5: "+ event class", 6: "+ run", 7: "+ reported attendance",
-         8: "Gradient Boosting", 9: "Random Forest", 10: "Event uplift at the venue exit"}
+         8: "Gradient Boosting", 9: "Random Forest", 10: "Event uplift at the venue exit",
+         11: "Venue-exit uplift, mean", 12: "Venue-exit uplift by class (median)",
+         13: "Venue-exit uplift by class (mean)", 14: "Venue exit's own uplift (median)",
+         15: "Venue exit's own uplift (mean)", 16: "Venue exit's own uplift by class (median)",
+         17: "Venue exit's own uplift by class (mean)",
+         18: "Uplift at exits with a real rise (median)", 19: "Uplift at exits with a real rise (mean)",
+         21: "Per-exit uplift (mean)"}
+# Candidates 11-17 (adviser, 13 Nov 2026; protocol section 9 correction 4): mean vs median, event class, and the
+# venue exit's own ratios instead of the pool of nearby exits. All applied at the venue exit only.
+VENUE_EXIT_VARIANTS = {11: ("pool", "mean", False), 12: ("pool", "median", True), 13: ("pool", "mean", True),
+                       14: ("own", "median", False), 15: ("own", "mean", False), 16: ("own", "median", True),
+                       17: ("own", "mean", True)}
 # Candidates 8-9 (added 12 Nov 2026, protocol section 9 correction 2): one row per exit-night, the class/run features
 # plus where the exit is and how big its normal day is; fixed settings, never tuned on the test nights.
 TREE_FEATURES = ["v_stadium", "v_clark", "weekend", "o_filipino", "o_mixed", "f_showcase", "f_festival", "f_sports",
@@ -96,8 +113,11 @@ def banner(t):
 banner("STEP 1: data")
 conn = psycopg2.connect(PG)
 conn.set_session(readonly=True)
-d = pd.read_sql("SELECT date, exit_canonical AS ex, SUM(total)::float AS v FROM gold.fact_traffic_hourly "
+_hsel = f"SUM(total) FILTER (WHERE hour BETWEEN {HOURS[0]} AND {HOURS[1]})" if HOURS else "SUM(total)"
+d = pd.read_sql(f"SELECT date, exit_canonical AS ex, {_hsel}::float AS v FROM gold.fact_traffic_hourly "
                 "WHERE date <= %s GROUP BY 1, 2", conn, params=(REAL_END_VOLUME.date(),))
+if HOURS:
+    print(f"  EVENT-HOURS STUDY: traffic from {HOURS[0]:02d}:00 to {HOURS[1]:02d}:59 only (correction 7)")
 d["date"] = pd.to_datetime(d.date)
 hol = set(pd.to_datetime(pd.read_sql("SELECT DISTINCT date_day::date d FROM public.ph_holidays", conn).d))
 if CAL_PATH:
@@ -166,6 +186,20 @@ cal["att"] = cal.apply(att_per_night, axis=1)
 cal = cal.sort_values(["show_date", "vk"])
 multi = cal[cal.duplicated("show_date", keep=False)]
 nights = cal.drop_duplicates("show_date", keep="first").copy()
+# Event class (correction 4): annual = the same series (name without years/brackets) held in >= 2 calendar years by a
+# Filipino or mixed lineup; international = an international act; other = everything else.
+def family(a):
+    return re.sub(r"[^a-z]+", " ", re.sub(r"\(.*?\)|\d+", " ", str(a).lower())).strip()
+_held = cal.assign(fam=cal.act.map(family), yr=cal.show_date.dt.year)
+_years = _held.groupby("fam").yr.nunique()
+def event_class(r):
+    org = str(r.act_origin).lower()
+    if _years.get(family(r.act), 1) >= 2 and org in ("filipino", "mixed"):
+        return "annual"
+    return "international" if org == "international" else "other"
+nights["evclass"] = nights.apply(event_class, axis=1)
+print("  event classes:", nights.evclass.value_counts().to_dict(), "| annual series:",
+      sorted({family(a) for a, c in zip(nights.act, nights.evclass) if c == "annual"}))
 if len(multi):
     print(f"  {multi.show_date.nunique()} night(s) with two venues: kept {', '.join(sorted(set(nights[nights.show_date.isin(multi.show_date)].vk)))}")
 EVENT_DAYS = set(nights.show_date)
@@ -240,7 +274,7 @@ for _, r in nights.iterrows():
         rows.append(dict(date=t, k=k, v=v, exp=exp_, y=np.log(v / exp_), vk=r.vk, grp=GROUP[r.vk],
                          weekend=int(t.dayofweek >= 5), origin=str(r.act_origin).lower(),
                          fmt=str(r.format).lower(), nights=int(r.nights_in_run), first=int(r.first_night),
-                         att=r.att, act=r.act))
+                         att=r.att, act=r.act, evclass=r.evclass))
 E = pd.DataFrame(rows)
 E["km"] = E.k.map(KM)
 E["near"] = [KM_RANGE[g][0] <= km <= KM_RANGE[g][1] if np.isfinite(km) else False for g, km in zip(E.grp, E.km)]
@@ -280,6 +314,11 @@ def fit_predict(m: int, train: pd.DataFrame, test: pd.DataFrame) -> np.ndarray:
         flat = float(np.exp(near.y.median())) if len(near) else 1.0
         per = train.groupby(["grp", "k"]).y.median().map(np.exp)
         return np.array([per.get((g, k), flat) for g, k in zip(test.grp, test.k)])
+    if m == 21:
+        # Correction 8: candidate 3's twin with each exit's own MEAN ratio.
+        flat = float(np.mean(np.exp(near.y))) if len(near) else 1.0
+        per = train.assign(r=np.exp(train.y)).groupby(["grp", "k"]).r.mean()
+        return np.array([per.get((g, k), flat) for g, k in zip(test.grp, test.k)])
     if m in (8, 9):
         mdl = (GradientBoostingRegressor(n_estimators=200, max_depth=2, learning_rate=0.05, subsample=0.8, random_state=42)
                if m == 8 else RandomForestRegressor(n_estimators=300, min_samples_leaf=5, random_state=42, n_jobs=-1))
@@ -288,6 +327,31 @@ def fit_predict(m: int, train: pd.DataFrame, test: pd.DataFrame) -> np.ndarray:
     if m == 10:
         flat = float(np.exp(near.y.median())) if len(near) else 1.0
         return np.where(test.is_anchor.values, flat, 1.0)
+    if m in (18, 19):
+        # Correction 5: each exit's own ratio, only where its 95% bootstrap interval over the training nights is above 1.
+        agg = np.median if m == 18 else np.mean
+        mult = {}
+        for (g, k), rows_ in train[train.near].groupby(["grp", "k"]):
+            r_ = np.exp(rows_.y.values)
+            if len(r_) < 8:
+                continue
+            draws = [agg(r_[RNG_FIT.integers(0, len(r_), len(r_))]) for _ in range(400)]
+            if np.percentile(draws, 2.5) > 1:
+                mult[(g, k)] = float(agg(r_))
+        return np.array([mult.get((g, k), 1.0) for g, k in zip(test.grp, test.k)])
+    if m in VENUE_EXIT_VARIANTS:
+        scope, agg, by_class = VENUE_EXIT_VARIANTS[m]
+        pool = near if scope == "pool" else train[train.is_anchor]
+        def aggregate(rows_):
+            r_ = np.exp(rows_.y.values)
+            return float(np.mean(r_) if agg == "mean" else np.median(r_)) if len(r_) else 1.0
+        value = aggregate(pool)
+        if by_class:
+            cls = test.evclass.iloc[0]
+            sub = pool[pool.evclass == cls]
+            if sub.date.nunique() >= 3:
+                value = aggregate(sub)
+        return np.where(test.is_anchor.values, value, 1.0)
     feats = FEATURES[m]
     tr = train if m != 7 else train[train.att.notna()]
     anc = tr[tr.is_anchor].drop_duplicates("date")
@@ -311,8 +375,8 @@ def fit_predict(m: int, train: pd.DataFrame, test: pd.DataFrame) -> np.ndarray:
 
 # ── 3. Leave-future-out ──────────────────────────────────────────────────────────────────────────────────────────
 banner("STEP 2: leave-future-out test")
-n_test = int(round(len(NIGHTS) * TEST_SHARE))
-TEST_NIGHTS = NIGHTS[-n_test:]
+# Correction 6 (13 Nov 2026): walk forward through every night with at least MIN_TRAIN_NIGHTS earlier nights.
+TEST_NIGHTS = NIGHTS[MIN_TRAIN_NIGHTS:]
 print(f"  test nights: {len(TEST_NIGHTS)} ({pd.Timestamp(TEST_NIGHTS[0]).date()}..{pd.Timestamp(TEST_NIGHTS[-1]).date()}),"
       f" each predicted from nights at least one day before it")
 preds = []
@@ -408,6 +472,150 @@ if eligible:
             champion = simpler
             break
 print(f"  CHAMPION: {NAMES[champion]}  ({note})")
+
+# Correction 4 (adviser): mean vs median, event class, own vs pooled ratios, against the served venue-exit uplift.
+banner("STEP 3c: mean vs median, event class (adviser, correction 4)")
+anchor_scope = SCOPES["CDV/Dau anchor"]
+variant = {}
+base_m = champion if champion == 10 else None
+if base_m:
+    for m in VENUE_EXIT_VARIANTS:
+        if NAMES[m] not in table:
+            continue
+        lo_a, hi_a, n_a = boot_diff(P, m, base_m, anchor_scope)
+        lo_n, hi_n, _ = boot_diff(P, m, base_m, near)
+        better = hi_a < 0 and not lo_n > 0
+        variant[NAMES[m]] = {"venue_exit": table[NAMES[m]]["CDV/Dau anchor"], "near": table[NAMES[m]]["near the venue"],
+                             "vs_served_venue_exit": [round(lo_a, 3), round(hi_a, 3)], "vs_served_near": [round(lo_n, 3), round(hi_n, 3)],
+                             "replaces": bool(better)}
+        print(f"  {NAMES[m]:<44} venue exit {table[NAMES[m]]['CDV/Dau anchor']:6.2f}%  vs served {lo_a:+.2f}..{hi_a:+.2f}"
+              f"  | nearby {table[NAMES[m]]['near the venue']:6.2f}%  -> {'REPLACES' if better else 'no'}")
+    for a, b in ((10, 11), (14, 15), (12, 13), (16, 17)):
+        if NAMES[a] in table and NAMES[b] in table:
+            lo_, hi_, _ = boot_diff(P, b, a, anchor_scope)
+            print(f"  mean vs median: {NAMES[b]} minus {NAMES[a]} at the venue exit {lo_:+.2f}..{hi_:+.2f}"
+                  f" ({'mean significantly better' if hi_ < 0 else 'median significantly better' if lo_ > 0 else 'no significant difference'})")
+            variant[f"mean vs median: {NAMES[b]} vs {NAMES[a]}"] = [round(lo_, 3), round(hi_, 3)]
+    winners = [m for m in VENUE_EXIT_VARIANTS if variant.get(NAMES[m], {}).get("replaces")]
+    if winners:
+        best = min(winners, key=lambda m: table[NAMES[m]]["CDV/Dau anchor"])
+        simpler_first = [m for m in (11, 14, 15, 12, 13, 16, 17) if m in winners]
+        for m in simpler_first:
+            if m == best:
+                break
+            lo_, hi_, _ = boot_diff(P, best, m, anchor_scope)
+            if not hi_ < 0:
+                best = m
+                break
+        champion, note = best, f"{NAMES[best]} is significantly more accurate at the venue exit than the served uplift (correction 4)"
+        print(f"  CHAMPION now: {NAMES[champion]}")
+    else:
+        print("  no variant is significantly better at the venue exit; the served uplift stays")
+
+# Correction 5 (user): uplift at every exit with a real rise, against the champion so far.
+banner("STEP 3d: uplift at every exit with a real rise (correction 5)")
+real_rise = {}
+for m in (18, 19):
+    if NAMES[m] not in table:
+        continue
+    lo_n, hi_n, _ = boot_diff(P, m, champion, near)
+    lo_a, hi_a, _ = boot_diff(P, m, champion, anchor_scope)
+    ok = hi_n < 0 and not lo_a > 0
+    real_rise[NAMES[m]] = {"near": table[NAMES[m]]["near the venue"], "venue_exit": table[NAMES[m]]["CDV/Dau anchor"],
+                           "vs_champion_near": [round(lo_n, 3), round(hi_n, 3)],
+                           "vs_champion_venue_exit": [round(lo_a, 3), round(hi_a, 3)], "replaces": bool(ok)}
+    print(f"  {NAMES[m]:<44} nearby {table[NAMES[m]]['near the venue']:6.2f}% vs {table[NAMES[champion]]['near the venue']:.2f}%"
+          f"  diff {lo_n:+.2f}..{hi_n:+.2f} | venue exit {table[NAMES[m]]['CDV/Dau anchor']:6.2f}%  diff {lo_a:+.2f}..{hi_a:+.2f}"
+          f"  -> {'REPLACES' if ok else 'no'}")
+wins5 = [m for m in (18, 19) if real_rise.get(NAMES[m], {}).get("replaces")]
+if wins5:
+    best5 = wins5[0] if len(wins5) == 1 else min(wins5, key=lambda m: table[NAMES[m]]["near the venue"])
+    if best5 == 19 and 18 in wins5:
+        lo_, hi_, _ = boot_diff(P, 19, 18, near)
+        if not hi_ < 0:
+            best5 = 18
+    champion, note = best5, f"{NAMES[best5]} is significantly more accurate across the nearby exits (correction 5)"
+    print(f"  CHAMPION now: {NAMES[champion]}")
+else:
+    print("  not significantly better across the nearby exits; the served uplift stays")
+
+# Correction 8 (adviser): per-exit MEAN against per-exit MEDIAN on the same nights.
+banner("STEP 3d2: per-exit average vs per-exit median (correction 8)")
+mean_vs_median = None
+if NAMES[21] in table and NAMES[3] in table:
+    lo_n, hi_n, n_n = boot_diff(P, 21, 3, near)
+    lo_a, hi_a, _ = boot_diff(P, 21, 3, anchor_scope)
+    mean_wins = hi_n < 0 and not lo_a > 0
+    mean_vs_median = {"median": {"near": table[NAMES[3]]["near the venue"], "venue_exit": table[NAMES[3]]["CDV/Dau anchor"],
+                                 "all": table[NAMES[3]]["all exits"]},
+                      "mean": {"near": table[NAMES[21]]["near the venue"], "venue_exit": table[NAMES[21]]["CDV/Dau anchor"],
+                               "all": table[NAMES[21]]["all exits"]},
+                      "mean_minus_median_near": [round(lo_n, 3), round(hi_n, 3)],
+                      "mean_minus_median_venue_exit": [round(lo_a, 3), round(hi_a, 3)], "nights": n_n, "mean_wins": bool(mean_wins)}
+    print(f"  per-exit median: nearby {table[NAMES[3]]['near the venue']:.2f}%  venue exit {table[NAMES[3]]['CDV/Dau anchor']:.2f}%")
+    print(f"  per-exit mean:   nearby {table[NAMES[21]]['near the venue']:.2f}%  venue exit {table[NAMES[21]]['CDV/Dau anchor']:.2f}%")
+    print(f"  mean minus median: nearby {lo_n:+.2f}..{hi_n:+.2f}, venue exit {lo_a:+.2f}..{hi_a:+.2f} ({n_n} nights) -> "
+          + ("MEAN significantly better" if mean_wins else ("MEDIAN significantly better" if lo_n > 0 else "no significant difference; median kept")))
+    if mean_wins and champion == 3:
+        champion, note = 21, "each exit's own average is significantly more accurate than its median (correction 8)"
+        print(f"  CHAMPION now: {NAMES[champion]}")
+
+# Correction 7: per exit, its own median uplift (candidate 3) against no adjustment, at that exit alone.
+banner("STEP 3e: per-exit test, own uplift vs no adjustment at each exit (correction 7)")
+per_exit_test = {}
+for k in sorted(E[E.near].k.unique(), key=lambda k: KM.get(k, 99)):
+    one = lambda df, k=k: (df.k == k)
+    if not ((P.m == 3) & (P.k == k)).any():
+        continue
+    lo_, hi_, n_ = boot_diff(P, 3, 1, one)
+    e_none = wm(P[(P.m == 1) & (P.k == k)]); e_own = wm(P[(P.m == 3) & (P.k == k)])
+    nm = str(d.loc[d.k == k, "ex"].iloc[0])
+    per_exit_test[k] = {"name": nm, "err_none": round(e_none, 3), "err_own": round(e_own, 3), "diff_ci": [round(lo_, 3), round(hi_, 3)],
+                        "nights": n_, "proven": bool(hi_ < 0)}
+    print(f"  {nm:<22} no adjustment {e_none:6.2f}%  own uplift {e_own:6.2f}%  diff {lo_:+.2f}..{hi_:+.2f}  "
+          f"{'PROVEN' if hi_ < 0 else 'not proven'}")
+
+# Correction 7, daily study only: the assembled forecast = the served one, plus the event-hours uplift at every exit
+# proven in the event-hours study, scored on whole-day traffic.
+assembled = None
+_wjson, _wcsv = CACHE / f"event_study_h12-23.json", CACHE / f"event_study_h12-23.csv"
+if not HOURS and _wjson.exists() and _wcsv.exists():
+    W = json.loads(_wjson.read_text())
+    proven = {k for k, v in W.get("per_exit_test", {}).items() if v.get("proven")}
+    if proven:
+        banner("STEP 3f: assembled forecast with event-hours uplift at proven exits (correction 7)")
+        PW = pd.read_csv(_wcsv, parse_dates=["date"])
+        wx = PW[PW.m == 3].merge(PW[PW.m == 1][["date", "k", "pred"]], on=["date", "k"], suffixes=("", "_none"))
+        wx["extra"] = wx.pred - wx.pred_none
+        extra = {(r.date, r.k): r.extra for r in wx.itertuples()}
+        base = P[P.m == champion].copy()
+        none = P[P.m == 1].set_index(["date", "k"]).pred
+        rows_ = []
+        for r in base.itertuples():
+            key_ = (r.date, r.k)
+            if r.k in proven and key_ in extra and key_ in none.index:
+                pred = float(none[key_] + extra[key_])
+            else:
+                pred = r.pred
+            rows_.append({"date": r.date, "k": r.k, "m": 20, "v": r.v, "pred": pred, "near": r.near, "anchor": r.anchor})
+        P = pd.concat([P, pd.DataFrame(rows_)], ignore_index=True)
+        NAMES[20] = "Served uplift plus event-hours uplift at proven exits"
+        table[NAMES[20]] = {sc: round(wm(P[(P.m == 20) & f(P)]), 3) for sc, f in SCOPES.items()}
+        lo_n, hi_n, _ = boot_diff(P, 20, champion, near)
+        lo_a, hi_a, _ = boot_diff(P, 20, champion, anchor_scope)
+        ok = not lo_n > 0 and not lo_a > 0
+        assembled = {"proven_exits": sorted(W["per_exit_test"][k]["name"] for k in proven),
+                     "near": table[NAMES[20]]["near the venue"], "venue_exit": table[NAMES[20]]["CDV/Dau anchor"],
+                     "vs_served_near": [round(lo_n, 3), round(hi_n, 3)], "vs_served_venue_exit": [round(lo_a, 3), round(hi_a, 3)],
+                     "adopted": bool(ok), "base_champion_id": int(champion), "base_champion": NAMES[champion]}
+        print(f"  proven exits (event hours): {assembled['proven_exits']}")
+        print(f"  assembled: nearby {table[NAMES[20]]['near the venue']:.2f}% vs served {table[NAMES[champion]]['near the venue']:.2f}%"
+              f" (diff {lo_n:+.2f}..{hi_n:+.2f}); venue exit {table[NAMES[20]]['CDV/Dau anchor']:.2f}% vs "
+              f"{table[NAMES[champion]]['CDV/Dau anchor']:.2f}% (diff {lo_a:+.2f}..{hi_a:+.2f}) -> {'ADOPTED' if ok else 'not adopted'}")
+        if ok:
+            champion, note = 20, "served uplift plus the event-hours uplift at exits proven in the event-hours test (correction 7)"
+            print(f"  CHAMPION now: {NAMES[champion]}")
+        P.to_csv(CACHE / f"event_study{TAG}.csv", index=False)
 
 # Candidate 7 on the nights that have attendance, against 5 on the same nights.
 att_result = None
@@ -556,6 +764,14 @@ for label, col in (("venue", "vk"), ("weekend", "weekend"), ("act origin", "orig
         m_, lo_, hi_ = med_ci(g.ratio)
         desc[label][str(val)] = {"n": int(len(g)), "median": round(m_, 4), "ci": [round(lo_, 4), round(hi_, 4)]}
         print(f"    {str(val):<24} n={len(g):>3}  median {m_:.3f}x  (95% {lo_:.3f}-{hi_:.3f})")
+# By event class (adviser, 13 Nov 2026), with the mean beside the median.
+desc["event class"] = {}
+print("  anchor exit by event class:")
+for val, g in anchorE.groupby("evclass"):
+    m_, lo_, hi_ = med_ci(g.ratio)
+    desc["event class"][str(val)] = {"n": int(len(g)), "median": round(m_, 4), "ci": [round(lo_, 4), round(hi_, 4)],
+                                     "mean": round(float(g.ratio.mean()), 4)}
+    print(f"    {str(val):<24} n={len(g):>3}  median {m_:.3f}x (95% {lo_:.3f}-{hi_:.3f})  mean {g.ratio.mean():.3f}x")
 top = anchorE.sort_values("ratio", ascending=False)[["date", "act", "vk", "ratio"]].head(8)
 print("  biggest nights at the anchor:")
 for _, r in top.iterrows():
@@ -566,7 +782,8 @@ out = {"protocol": "EVALUATION_PROTOCOL.md section 9 (11 Nov 2026; corrections 1
        "real_end": str(REAL_END_VOLUME.date()), "event_nights_scored": len(NIGHTS), "test_nights": len(TEST_NIGHTS),
        "test_from": str(pd.Timestamp(TEST_NIGHTS[0]).date()), "table": table, "intervals": {NAMES[m]: v for m, v in ci.items()},
        "champion": NAMES[champion], "champion_id": champion, "note": note, "attendance_test": att_result,
-       "per_1000_attendees": per1000, "dated": DATED, "typical": TYPICAL, "band": BAND, "far_normal": far, "far_normal_choice": far_choice, "description": desc}
+       "per_1000_attendees": per1000, "class_mean_median": variant, "real_rise": real_rise,
+       "per_exit_test": per_exit_test, "assembled": assembled, "mean_vs_median_per_exit": mean_vs_median, "hours": list(HOURS) if HOURS else None, "dated": DATED, "typical": TYPICAL, "band": BAND, "far_normal": far, "far_normal_choice": far_choice, "description": desc}
 # For the publisher: names, km, holiday factor, and each exit's normal day per weekday at the end of the real record
 # (median of that weekday's ordinary days in the last 8 weeks) - the normal the far-date test chose.
 last8 = ordinary.loc[REAL_END_VOLUME - pd.Timedelta(days=7 * NORMAL_WEEKS - 1):REAL_END_VOLUME]
@@ -576,13 +793,36 @@ out["exits"] = {k: {"name": str(d.loc[d.k == k, "ex"].iloc[0]), "km": KM.get(k),
                                           for w, v in last8[k].groupby(last8.index.dayofweek).median().items()}}
                 for k in wide.columns}
 # Served parameters, refitted on ALL scored nights (protocol section 7): the flat uplift, and each exit's median.
-out["served"] = {"flat": [round(v, 4) for v in flat_all], "per_exit": {}}
+out["served"] = {"flat": [round(v, 4) for v in flat_all], "per_exit": {}, "per_exit_mean": {}}
+for (g, k), grp_rows in E[E.near].groupby(["grp", "k"]):
+    r_ = np.exp(grp_rows.y.values)
+    bm = [float(np.mean(r_[RNG.integers(0, len(r_), len(r_))])) for _ in range(BOOT)]
+    out["served"]["per_exit_mean"].setdefault(g, {})[k] = {"mean": round(float(np.mean(r_)), 4),
+        "ci": [round(float(np.percentile(bm, 2.5)), 4), round(float(np.percentile(bm, 97.5)), 4)], "n": int(len(r_))}
+# The mean version (correction 4): mean of the nearby-exit ratios, with a bootstrap 95% interval of the mean.
+_r = np.exp(E[E.near].y.values)
+_bm = [float(np.mean(_r[RNG.integers(0, len(_r), len(_r))])) for _ in range(BOOT)]
+out["served"]["flat_mean"] = [round(float(np.mean(_r)), 4), round(float(np.percentile(_bm, 2.5)), 4),
+                              round(float(np.percentile(_bm, 97.5)), 4)]
+print(f"  served values: median {flat_all[0]:.4f}, mean {out['served']['flat_mean'][0]:.4f} "
+      f"({out['served']['flat_mean'][1]:.4f}-{out['served']['flat_mean'][2]:.4f})")
 for (g, k), grp_rows in E.groupby(["grp", "k"]):
     m_, lo_, hi_ = med_ci(np.exp(grp_rows.y))
     out["served"]["per_exit"].setdefault(g, {})[k] = {"median": round(m_, 4), "ci": [round(lo_, 4), round(hi_, 4)],
                                                      "n": int(len(grp_rows)), "near": bool(grp_rows.near.iloc[0])}
 out["season"] = {k: {str(m_): (lambda sel: round(float(sel.median()), 4) if len(sel) >= 8 else 1.0)(
     ORD_RATIO[k][ORD_RATIO[k].index.month == m_].dropna()) for m_ in range(1, 13)} for k in wide.columns}
+# Class of every verified upcoming night (scheduled), by the same rule, for the card.
+_sch = CAL_ALL[CAL_ALL.status.astype(str).str.lower().eq("scheduled") & CAL_ALL.show_date.notna()].copy()
+_sch["show_date"] = pd.to_datetime(_sch.show_date)
+_yrs_all = pd.concat([_held[["fam", "yr"]], _sch.assign(fam=_sch.act.map(family), yr=_sch.show_date.dt.year)[["fam", "yr"]]])
+_years_all = _yrs_all.groupby("fam").yr.nunique()
+def upcoming_class(r):
+    org = str(r.act_origin).lower()
+    if _years_all.get(family(r.act), 1) >= 2 and org in ("filipino", "mixed"):
+        return "annual"
+    return "international" if org == "international" else "other"
+out["upcoming_class"] = {str(r.show_date.date()): upcoming_class(r) for r in _sch.itertuples()}
 out["calendar_counts"] = {"held_nights_at_venues": int(len(nights)), "scored_nights": len(NIGHTS),
                           "nights_with_attendance": int(E.drop_duplicates("date").att.notna().sum()),
                           "first": str(pd.Timestamp(NIGHTS[0]).date()), "last": str(pd.Timestamp(NIGHTS[-1]).date())}
