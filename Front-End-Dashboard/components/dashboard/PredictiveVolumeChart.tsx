@@ -52,7 +52,7 @@ type ModelMeta = {
 // call failed. "—" makes a missing fetch visibly missing instead of confidently wrong.
 const MODELS: ModelMeta[] = [
   { key: "LSTM", label: "LSTM", note: "Loading…", accepted: false, color: "#2a78d6", rmse: "—", mae: "—", wmape: "—", r2: "—" },
-  { key: "Prophet", label: "Prophet", note: "Loading…", accepted: false, color: "#c2185b", rmse: "—", mae: "—", wmape: "—", r2: "—" },
+  { key: "Prophet", label: "Prophet + holidays", note: "Loading…", accepted: false, color: "#c2185b", rmse: "—", mae: "—", wmape: "—", r2: "—" },
   { key: "HoltWinters", label: "Holt-Winters", note: "Loading…", accepted: false, color: "#0b8db0", rmse: "—", mae: "—", wmape: "—", r2: "—" },
   { key: "SARIMAX", label: "SARIMAX", note: "Loading…", accepted: false, color: "#7a5fe0", rmse: "—", mae: "—", wmape: "—", r2: "—" },
   { key: "HoltsLinear", label: "Holts Linear", note: "Loading…", accepted: false, color: "#e87ba4", rmse: "—", mae: "—", wmape: "—", r2: "—" },

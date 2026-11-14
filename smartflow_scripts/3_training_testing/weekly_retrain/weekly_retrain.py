@@ -110,6 +110,10 @@ INPUTS = {
 CONGESTION = ROOT.parent / "All_Scripts" / "Predictive_Modeling"
 HOURLY_48H = WORK / "cache" / "traffic_hourly_48h"
 
+# The real record ends here (common/rolling_eval.REAL_END_VOLUME): the toll tables run to 30 June 2026, but 25 May -
+# 30 Jun is broken or synthetic, so every daily trainer stops on this day and forecasts from the next (user, 13 Nov
+# 2026: "make sure all dates are all aligned"). The future checks below compare with it, not with the tables' end.
+REAL_END_SQL = "LEAST(max(date), DATE '2026-05-24')"
 VOLUME_PREDS = ("pred_lstm, pred_prophet, pred_xgboost, pred_holtwinters, pred_sarimax, "
                 "pred_holts_linear, pred_prophet_nw, pred_sarimax_nw, pred_lstm_nw")
 CO2_PREDS = "pred_gbr, pred_polynomial, pred_lstm, pred_derived"
@@ -158,8 +162,8 @@ GROUPS = [
         checks=[
             ("a 90-day future forecast for the 80/20 split the dashboard serves",
              "SELECT count(*) >= 90 FROM gold.ml_predictive_volume WHERE is_future AND split_label = '80_20'"),
-            ("the future starts the day after the record ends",
-             "SELECT min(forecast_date) = (SELECT max(date) + 1 FROM gold.daily_traffic_volume_corrected) "
+            ("the future starts the day after the real record ends",
+             f"SELECT min(forecast_date) = (SELECT {REAL_END_SQL} + 1 FROM gold.daily_traffic_volume_corrected) "
              "FROM gold.ml_predictive_volume WHERE is_future AND split_label = '80_20'"),
             ("no negative forecast",
              f"SELECT NOT EXISTS (SELECT 1 FROM gold.ml_predictive_volume WHERE LEAST({VOLUME_PREDS}) < 0)"),
@@ -226,8 +230,8 @@ GROUPS = [
         checks=[
             ("a future forecast exists",
              "SELECT count(*) > 0 FROM gold.ml_predictive_emissions WHERE is_future"),
-            ("the future starts the day after the record ends",
-             "SELECT min(forecast_date) = (SELECT max(date) + 1 FROM gold.fact_emissions_hourly) "
+            ("the future starts the day after the real record ends",
+             f"SELECT min(forecast_date) = (SELECT {REAL_END_SQL} + 1 FROM gold.fact_emissions_hourly) "
              "FROM gold.ml_predictive_emissions WHERE is_future"),
             ("no negative forecast",
              f"SELECT NOT EXISTS (SELECT 1 FROM gold.ml_predictive_emissions WHERE LEAST({CO2_PREDS}) < 0)"),

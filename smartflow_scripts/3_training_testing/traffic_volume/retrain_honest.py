@@ -69,7 +69,10 @@ STEP      = 14   # non-overlapping blocks
 # the volume panel, which filters on split_label, completely empty.
 #   SPLIT=90_10 python retrain_honest.py   -> the 90/10 arm
 SPLIT = os.environ.get("SPLIT", "80_20")
-N_ORIGINS = {"80_20": 21, "90_10": 10}[SPLIT]
+# 14 Nov 2026: 80/20 = the 26 two-week origins of the protocol's fair test (traffic_study.py, every 14 days over the
+# last 52 weeks of the real record), so the dashboard scores the same start days the champion was chosen on. With 21
+# origins on a record running to 30 June, Holt-Winters "won" at 5.17% on lucky start days (model audit 10 Nov).
+N_ORIGINS = {"80_20": 26, "90_10": 10}[SPLIT]
 SEASON    = 7    # weekly seasonality
 # Project 28 days even though only 14 are validated. Days 1-14 carry the measured
 # h=14 accuracy; days 15-28 are extrapolation beyond it and the chart marks them
@@ -107,6 +110,14 @@ def banner(text):
 banner("STEP 1: Loading traffic and weather")
 
 conn = psycopg2.connect(POSTGRES_URL)
+
+# Philippine holidays (public.ph_holidays), known in advance. Both Prophet models get them with a +/-1-day window,
+# exactly as the fair test's champion "Prophet + holidays" (traffic_study.py, 5.59% against the best baseline's
+# 7.11%, significant): Prophet_nw IS that model, and Prophet is the same plus the weather regressors (14 Nov 2026).
+PH_HOLIDAYS = pd.read_sql_query(
+    "SELECT date_day::date AS ds, holiday_name AS holiday FROM public.ph_holidays ORDER BY 1", conn)
+PH_HOLIDAYS["ds"] = pd.to_datetime(PH_HOLIDAYS["ds"])
+PH_HOLIDAYS["lower_window"], PH_HOLIDAYS["upper_window"] = -1, 1
 
 # total_volume > 0 drops the zero-filled placeholder rows that run to 2026-12-30.
 # gold.daily_traffic_volume summed Entries AND Exits across all 25 CSV plaza
@@ -314,7 +325,7 @@ def m_sarimax(train, h, exog_future):
 
 def m_prophet(train, h, future_df):
     from prophet import Prophet
-    mdl = Prophet(weekly_seasonality=True, yearly_seasonality=True, daily_seasonality=False)
+    mdl = Prophet(weekly_seasonality=True, yearly_seasonality=True, daily_seasonality=False, holidays=PH_HOLIDAYS)
     for c in WEATHER_COLS:
         mdl.add_regressor(c)
     mdl.fit(train[["ds", "y"] + WEATHER_COLS])
@@ -382,7 +393,7 @@ def m_sarimax_nw(train, h):
 
 def m_prophet_nw(train, h, future_df):
     from prophet import Prophet
-    mdl = Prophet(weekly_seasonality=True, yearly_seasonality=True, daily_seasonality=False)
+    mdl = Prophet(weekly_seasonality=True, yearly_seasonality=True, daily_seasonality=False, holidays=PH_HOLIDAYS)
     mdl.fit(train[["ds", "y"]])
     _in = mdl.predict(train[["ds"]])["yhat"].values
     return mdl.predict(future_df[["ds"]])["yhat"].values, (train["y"].values, _in)
@@ -478,7 +489,7 @@ import pickle
 
 CKPT = str(WORK / "cache" / "retrain_checkpoint.pkl")
 _data_sig = int(pd.util.hash_pandas_object(df["y"], index=False).sum() % (10 ** 12))
-FINGERPRINT = ("climatology-weather-v3-insample", HORIZON, STEP, N_ORIGINS, len(df), _data_sig, sorted(MODELS))
+FINGERPRINT = ("climatology-weather-v4-holidays", HORIZON, STEP, N_ORIGINS, len(df), _data_sig, sorted(MODELS))
 done_origins: set[int] = set()
 # Per-origin (actual, fitted) pairs on the TRAINING rows, for train R2. Kept out
 # of the checkpoint deliberately: the cached file predates this diagnostic, and

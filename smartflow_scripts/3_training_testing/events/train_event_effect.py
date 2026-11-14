@@ -47,7 +47,14 @@ def banner(t):
 
 # ── 1. The study ──
 if "--skip-study" not in ARGS:
-    banner("STEP 1: event_study.py on silver.arena_events_verified")
+    # The event-hours study (12:00-23:59) runs first: the daily study reads its per-exit proof for correction 7
+    # (the assembled forecast). Without it, as on a fresh cloud runner, the daily study would silently skip step 3f
+    # and serve a different champion than the one tested.
+    banner("STEP 1a: event_study.py --hours 12-23 (event-hours study, correction 7)")
+    r = subprocess.run([sys.executable, "-u", str(HERE / "event_study.py"), "--hours", "12-23"], cwd=HERE)
+    if r.returncode:
+        raise SystemExit("the event-hours study failed; nothing published")
+    banner("STEP 1b: event_study.py on silver.arena_events_verified")
     r = subprocess.run([sys.executable, "-u", str(HERE / "event_study.py")], cwd=HERE)
     if r.returncode:
         raise SystemExit("the study failed; nothing published")
