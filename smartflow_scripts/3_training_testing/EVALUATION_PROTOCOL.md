@@ -127,6 +127,47 @@ Those looks are why these candidates are declared; none of them is assumed to wi
      added: the normal is multiplied by the exit's seasonal factor for that calendar month, the median of
      actual / normal on that exit's ordinary days of the same month, using only days before the night being
      measured or predicted (at least 8 such days, else 1). Re-run for every candidate.
+  4. *Event class and mean vs median (adviser, 13 Nov 2026), declared before these candidates were scored.* Each
+     verified night gets a class: **annual** = the same event series (name without years or brackets) held in two
+     or more different calendar years by a Filipino or mixed lineup (e.g. Summer Blast, the New Year Countdown,
+     Clark Aurora); **international** = an international act, not annual; **other** = everything else. New
+     candidates, all applied at the venue exit only like the current one: the uplift as the MEAN instead of the
+     median; the uplift per class (median and mean); and the venue exit's OWN ratios instead of the pool of nearby
+     exits (median and mean, overall and per class). A class with fewer than 3 training nights falls back to the
+     overall value. A candidate replaces the served uplift only if it is significantly more accurate at the venue
+     exit (95% interval of the WMAPE difference below 0) and not significantly worse across the nearby exits;
+     among several, the lowest venue-exit error wins, and a non-significant lead goes to the simpler (no class
+     before class). Mean against median is also reported head to head.
+  5. *Uplift at every exit with a real rise (user, 13 Nov 2026), declared before it was scored.* On all 57 nights,
+     five nearby exits rose by an amount whose 95% interval excludes zero (Tambubong, CDV/PH Arena, Marilao, Bocaue
+     Interchange, Bocaue Barrier), while four did not. New candidates: each exit's own median (and, separately, mean)
+     ratio, applied only at exits whose bootstrap 95% interval over the TRAINING nights before the test night lies
+     above 1; no adjustment elsewhere. It replaces the served uplift only if it is significantly more accurate across
+     the nearby exits and not significantly worse at the venue exit; median before mean on a non-significant tie.
+  6. *More test nights (13 Nov 2026), declared before it was run.* The newest-40% split leaves 23 test nights, too
+     few to decide per exit (Tambubong and Marilao improved on average, with intervals just crossing zero). The test
+     now walks forward through every night that has at least 10 earlier scored nights: each is predicted from the
+     nights before it only. Every candidate is re-scored on these nights and the same selection rules apply.
+  7. *Event hours (13 Nov 2026), declared before it was run.* Whole-day totals mix the event with 12 or more
+     ordinary hours. A second study uses the traffic from 12:00 to 23:59 Manila time on the event day (arrivals and
+     the first part of the exodus), with the same normal-day construction on that window. Per exit, the exit's own
+     median ratio (candidate 3's form) is tested against no adjustment AT THAT EXIT on the walk-forward nights; an
+     exit whose 95% interval of the error difference lies below 0 is "proven". The served forecast then adds, at
+     every proven exit, its window normal times (its median window ratio - 1) to the daily normal; unproven exits
+     keep the currently served forecast (so the venue exit keeps its tested uplift unless it is proven here too).
+     This assembled forecast is scored on whole-day traffic against the served one, and it
+     replaces the served one only if it is not significantly worse across the nearby exits or at the venue exit.
+  8. *Per-exit average vs per-exit median (adviser, 13 Nov 2026), declared before it was run.* Candidate 3 uses each
+     exit's own MEDIAN ratio. A twin uses each exit's own MEAN ratio, scored on the same walk-forward nights. The
+     mean replaces the median only if it is significantly more accurate across the nearby exits (95% interval of
+     the difference below 0) and not significantly worse at the venue exit; otherwise the median, declared first,
+     is kept. The comparison is reported either way.
+     *Result (47 walk-forward nights, 13 Nov 2026):* median nearby 8.27% vs mean 9.04% (mean minus median +0.18..+1.32),
+     venue exit 13.63% vs 14.45% (+0.03..+1.59): the median is significantly better at both and is kept. Why: a few
+     extreme nights move the mean both ways. At CDV and Tambubong the biggest concerts pull it up (BLACKPINK
+     2023-03-26 at 2.02x normal); at the other nearby exits New Year's Eve nights pull it down (0.54-0.82x normal on
+     31 Dec 2023/2024/2025). The median is not moved by a few extreme nights. Open item, not acted on: the normal day
+     does not capture the New Year's Eve drop at the nearby exits.
 * **Normal day for a future event date**: inside the traffic forecast window, the published daily corridor forecast
   times the exit's share (same weekday, last 8 real weeks); beyond it, the section 3 "same day last year, scaled"
   baseline, which is tested here on ordinary days at 90-300 days ahead against the plain trailing 8-week median.

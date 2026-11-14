@@ -37,6 +37,18 @@ def main() -> None:
             GROUP BY e.start_date ORDER BY e.start_date""", conn)
     df["why"] = df.inferred.map({True: "inferred recurring date (most were wrong when checked)",
                                  False: "new listing, not checked yet"})
+    # Adviser (13 Nov 2026): a verified night still marked "scheduled" after its date must be re-checked: did it
+    # happen, or was it rescheduled or cancelled? Its status stays "scheduled" until someone confirms it.
+    with psycopg2.connect(PG) as conn:
+        conn.set_session(readonly=True)
+        passed = pd.read_sql("""
+            SELECT show_date AS date, COALESCE(NULLIF(event_title, ''), act) AS title, venue
+            FROM silver.arena_events_verified
+            WHERE status = 'scheduled' AND show_date < (now() AT TIME ZONE 'Asia/Manila')::date
+            ORDER BY show_date""", conn)
+    passed["inferred"] = False
+    passed["why"] = "date has passed: confirm held, rescheduled or cancelled"
+    df = pd.concat([df, passed], ignore_index=True).sort_values("date")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(OUT, index=False)
     print(f"{len(df)} scraped date(s) not yet in the verified calendar (last 90 days onward) -> {OUT}")

@@ -60,8 +60,16 @@ print(f"  champion: {S['champion']} ({S['note']})")
 
 # ── 2. Served multipliers ──
 banner("STEP 2: served multiplier per exit")
+# Correction 7: champion 20 = the base champion, plus the event-hours uplift at exits proven in the event-hours study.
+ASSEMBLED = champ == 20
+PROVEN, WIN = set(), None
+if ASSEMBLED:
+    WIN = json.loads((CACHE / "event_study_h12-23.json").read_text())
+    PROVEN = {k for k, v in WIN.get("per_exit_test", {}).items() if v.get("proven")}
+    champ = int(S["assembled"]["base_champion_id"])
+    print(f"  assembled: base {S['assembled']['base_champion']} + event-hours uplift at {sorted(PROVEN)}")
 TREE = champ in (8, 9)
-if champ not in (1, 2, 3, 8, 9, 10):
+if champ not in (1, 2, 3, 8, 9, 10, 11, 21):
     raise SystemExit(f"{S['champion']} won, but the dashboard cannot serve it yet (needs event-strength support in "
                      "the backend). The published table is left as it is.")
 rows = []
@@ -74,8 +82,13 @@ for k, e in S["exits"].items():
             # The tree model's typical multiplier for this exit (past nights), with its held-out 80% range.
             up = S["typical"].get(g, {}).get(k, 1.0) if near else 1.0
             lo, hi = (up * S["band"][0], up * S["band"][1]) if near else (1.0, 1.0)
-        elif champ == 1 or not near or (champ == 10 and not is_venue_exit):
+        elif champ == 1 or not near or (champ in (10, 11) and not is_venue_exit):
             up, lo, hi = 1.0, 1.0, 1.0
+        elif champ == 11:
+            up, lo, hi = S["served"]["flat_mean"]
+        elif champ == 21:
+            pm = S["served"]["per_exit_mean"].get(g, {}).get(k)
+            up, lo, hi = (pm["mean"], pm["ci"][0], pm["ci"][1]) if pm else (1.0, 1.0, 1.0)
         elif champ in (2, 10):
             up, lo, hi = S["served"]["flat"]
         else:
@@ -84,6 +97,17 @@ for k, e in S["exits"].items():
                 up, lo, hi = pe["median"], pe["ci"][0], pe["ci"][1]
             else:
                 up, lo, hi = S["served"]["flat"]
+        proven_here = False
+        if ASSEMBLED and near and k in PROVEN:
+            # Event-hours uplift as a whole-day multiplier: 1 + (event-hours share of the day) x (window ratio - 1),
+            # the share taken per weekday from the two normals and averaged.
+            pw = WIN["served"]["per_exit"].get(g, {}).get(k)
+            wn, dn = WIN["exits"][k]["normal_by_weekday"], e["normal_by_weekday"]
+            shares = [wn[w] / dn[w] for w in dn if dn.get(w) and wn.get(w)]
+            if pw and shares:
+                sh = float(np.mean(shares))
+                up, lo, hi = (1 + sh * (pw["median"] - 1), 1 + sh * (pw["ci"][0] - 1), 1 + sh * (pw["ci"][1] - 1))
+                proven_here = True
         normals = [v for v in e["normal_by_weekday"].values() if v]
         base = float(np.mean(normals)) if normals else None
         rows.append(dict(exit_name=e["name"], venue_group=g, event_name=GROUP_LABEL[g],
@@ -92,7 +116,7 @@ for k, e in S["exits"].items():
                          uplift=up, uplift_lo=lo, uplift_hi=hi,
                          extra_vehicles=None if base is None else int(round(base * (up - 1))),
                          n_events=S["event_nights_scored"],
-                         material=bool(near and (TREE or (champ != 1 and lo > 1.0))),
+                         material=bool(near and (proven_here or TREE or (champ != 1 and lo > 1.0))),
                          anchor_exit=ANCHOR[g], first_event=S["calendar_counts"]["first"],
                          last_event=S["calendar_counts"]["last"], holiday_factor=e["holiday_factor"]))
 R = pd.DataFrame(rows)
@@ -107,8 +131,14 @@ normal_rows = [(e["name"], int(w), v) for e in S["exits"].values() for w, v in e
 
 # ── 3. Leaderboard and replay ──
 NAMES = {1: "No adjustment (baseline)", 2: "Flat uplift (baseline)", 3: "Per-exit uplift", 4: "Venue + day",
-         5: "+ event class", 6: "+ run", 8: "Gradient Boosting", 9: "Random Forest", 10: "Event uplift at the venue exit"}
-order = [champ] + sorted((m for m in NAMES if m != champ and NAMES[m] in S["table"]),
+         5: "+ event class", 6: "+ run", 8: "Gradient Boosting", 9: "Random Forest", 10: "Event uplift at the venue exit",
+         11: "Venue-exit uplift, mean", 12: "Venue-exit uplift by class (median)", 13: "Venue-exit uplift by class (mean)",
+         14: "Venue exit's own uplift (median)", 15: "Venue exit's own uplift (mean)",
+         16: "Venue exit's own uplift by class (median)", 17: "Venue exit's own uplift by class (mean)",
+         18: "Uplift at exits with a real rise (median)", 19: "Uplift at exits with a real rise (mean)",
+         20: "Served uplift plus event-hours uplift at proven exits", 21: "Per-exit uplift (mean)"}
+_lead = int(S["champion_id"])
+order = [_lead] + sorted((m for m in NAMES if m != _lead and NAMES[m] in S["table"]),
                          key=lambda m: S["table"][NAMES[m]]["near the venue"])
 metrics = []
 for rank, m in enumerate(order, start=1):
@@ -124,7 +154,7 @@ for rank, m in enumerate(order, start=1):
     metrics.append((name, sc["near the venue"], rank, accepted or m == champ,
                     None if (accepted or m == champ) else "does not beat both baselines with a 95% interval", diag))
 
-T = P[(P.m == champ) & P.near].groupby("date").agg(p=("pred", "sum"), a=("v", "sum"), n=("k", "size")).reset_index()
+T = P[(P.m == int(S["champion_id"])) & P.near].groupby("date").agg(p=("pred", "sum"), a=("v", "sum"), n=("k", "size")).reset_index()
 T["err"] = (T.p - T.a).abs() / T.a * 100
 best, worst = T.loc[T.err.idxmin()], T.loc[T.err.idxmax()]
 NA = P[(P.m == 1) & P.near]
@@ -142,6 +172,7 @@ payload = {
                  {"kind": "widest miss", "t": worst.date.strftime("%Y-%m-%d"), "predicted": int(worst.p), "actual": int(worst.a)}],
     "anchor_exit": "CDV/PH Arena",
     "anchor_uplift": (S["typical"]["bulacan"].get("cdvpharena") if TREE else
+                      float(S["served"]["flat_mean"][0]) if champ == 11 else
                       float(S["served"]["flat"][0]) if champ in (2, 10) else None),
     "material_exits": int(R[(R.venue_group == "bulacan") & R.material].shape[0]),
     "total_exits": int(R[R.venue_group == "bulacan"].shape[0]),
@@ -153,9 +184,20 @@ payload = {
                    "outlets; never Wikipedia; one source link per show night",
         "by_venue": desc.get("venue"), "by_origin": desc.get("act origin"), "by_format": desc.get("format"),
         "by_weekend": desc.get("weekend"), "near_all_nights": desc.get("flat_near_all_nights"),
+        "by_class": desc.get("event class"), "upcoming_class": S.get("upcoming_class"),
+        # Each nearby exit's typical rise on past event nights (median, 95% range), for the chart's history bars.
+        "exit_history": {S["exits"][k]["name"]: {"median": v["median"], "ci": v["ci"], "n": v["n"],
+                                                "real": bool(v["ci"][0] > 1)}
+                         for k, v in S["served"]["per_exit"].get("bulacan", {}).items() if v.get("near")},
+        "real_rise_test": S.get("real_rise"),
         "per_1000_attendees": S.get("per_1000_attendees"), "attendance_test": S.get("attendance_test"),
         "far_normal": S.get("far_normal"), "far_normal_choice": S.get("far_normal_choice"),
         "intervals": S.get("intervals"), "baseline_tie": S.get("baseline_tie"),
+        "per_exit_test_daily": S.get("per_exit_test"), "assembled": S.get("assembled"),
+        "mean_vs_median_per_exit": S.get("mean_vs_median_per_exit"),
+        "per_exit_test_event_hours": (json.loads((CACHE / "event_study_h12-23.json").read_text()).get("per_exit_test")
+                                      if (CACHE / "event_study_h12-23.json").exists() else None),
+        "class_mean_median": S.get("class_mean_median"),
     },
 }
 print(f"\n  replay: {len(T)} held-out nights, typical night off by {payload['median_day_error_pct']:.1f}% "
@@ -238,3 +280,15 @@ with psycopg2.connect(PG) as conn, conn.cursor() as cur:
     cur.execute("""INSERT INTO gold.ml_event_surge_eval (id, payload, updated_at) VALUES (1, %s, now())
         ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()""", (json.dumps(payload),))
 print(f"  written: {len(R)} exit rows, {len(normal_rows)} normal-day rows, {len(metrics)} leaderboard rows, replay + basis")
+
+# The backend keeps GET answers for up to 3 hours (route-cache.ts); a dashboard open on this machine would show the old
+# event forecast until then. Best effort: when the backend runs here, ask it to refill the forecast URLs the dashboard
+# reads (x-cache-bypass is honoured only from localhost). Elsewhere (the GitHub runner) this quietly does nothing.
+try:
+    import urllib.request
+    for q in ("?months=all", "?months=12", "?months=3", ""):
+        req = urllib.request.Request(f"http://localhost:4000/api/traffic/forecast{q}", headers={"x-cache-bypass": "1"})
+        urllib.request.urlopen(req, timeout=180).read()
+    print("  refreshed the running backend's cached forecast answers")
+except Exception as e:  # noqa: BLE001
+    print(f"  backend cache not refreshed here ({type(e).__name__}); it expires within 3 hours")

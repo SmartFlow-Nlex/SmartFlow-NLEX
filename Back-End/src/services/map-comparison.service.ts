@@ -165,8 +165,9 @@ export async function getForecastModelInfo(): Promise<{
     const [{ rows: model }, { rows: variance }, { rows: base }] = await Promise.all([
       db.query(
         `SELECT model_name, r2, updated_at,
+                -- rank 0 is the served baseline itself, never "accepted": don't count it among the ones it beat
                 (SELECT COUNT(*) FROM gold.ml_model_metrics
-                  WHERE target = 'Congestion' AND NOT accepted)::int AS rejected
+                  WHERE target = 'Congestion' AND NOT accepted AND rank IS DISTINCT FROM 0)::int AS rejected
            FROM gold.ml_model_metrics
           -- rank 0 = the exit-hour profile, served when no model is accepted (train_congestion_horizon.py, A4)
           WHERE target = 'Congestion' AND (accepted OR rank = 0)
