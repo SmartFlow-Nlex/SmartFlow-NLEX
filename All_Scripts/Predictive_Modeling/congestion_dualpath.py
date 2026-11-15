@@ -283,8 +283,9 @@ def _calendar(dsn):
     conn = psycopg2.connect(dsn)
     try:
         hol = pd.read_sql("SELECT date_day FROM public.ph_holidays", conn, parse_dates=["date_day"])
-        ev = pd.read_sql("SELECT DISTINCT event_date::date AS d FROM silver.philippine_arena_events_clean "
-                         "WHERE event_date IS NOT NULL", conn, parse_dates=["d"])
+        # the verified calendar, as train_congestion_horizon.py (15 Nov 2026): the scraped one has false dates
+        ev = pd.read_sql("SELECT DISTINCT show_date AS d FROM silver.arena_events_verified "
+                         "WHERE status IN ('held', 'scheduled')", conn, parse_dates=["d"])
     finally:
         conn.close()
     return set(hol.date_day.dt.normalize()), set(ev.d.dt.normalize())

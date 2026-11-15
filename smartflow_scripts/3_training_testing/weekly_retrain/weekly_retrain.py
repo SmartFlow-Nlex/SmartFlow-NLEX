@@ -47,6 +47,9 @@ Usage, from this folder:
   python weekly_retrain.py --plan                  read-only: what changed, what would run, current test results
   python weekly_retrain.py --force                 retrain even where no data changed
   python weekly_retrain.py --only volume,emissions
+  python weekly_retrain.py --only emissions --rebase emissions
+                                                   once, when the previous scores came from an older evaluation or a
+                                                   since-corrected record: they are reported, not compared
   python weekly_retrain.py --restore volume        put back the version before the latest retrain
   python weekly_retrain.py --test-restore volume   back up, restore and compare (proves rollback on the live tables)
 
@@ -87,6 +90,14 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # got clearly worse, not ordinary week-to-week movement.
 ERROR_TOLERANCE = 0.25              # an error metric (WMAPE, MAE) may rise by at most 25%
 SCORE_TOLERANCE = 0.05              # a score (accuracy, AUC, R2) may fall by at most 0.05
+# --rebase (15 Nov 2026). The comparison above assumes last week's score and this week's come from the same evaluation
+# on nearly the same days. After the record was trimmed to its real end (25 May - 30 Jun 2026 removed, mostly
+# synthetic) the groups last trained before EVALUATION_PROTOCOL.md (11 Nov) still carried scores from the old single
+# split, partly on days that no longer exist. Batch #24 then kept a CO2 champion that, re-scored on the same 26 origins,
+# was 9.81% against the new 5.63%, because the new score "rose" from the old 4.26%. For the groups named, the
+# comparison is still reported but not enforced; every other test (clean exits, new results written, the group's own
+# checks, the trainers' own baseline tests) still decides. Refused on the scheduled run.
+REBASE: set[str] = set()
 STEP_TIMEOUT_S = 4 * 3600
 RETRY_WAIT_S = 180
 
@@ -785,6 +796,9 @@ def gate(g: Group, before: dict, stamp_before, after: dict, stamp_after) -> tupl
             problems.append(f"{b['target']}: no champion after retraining")
             continue
         text, fails = compare(b, a)
+        if g.key in REBASE and fails:
+            text += f"  (not enforced, --rebase: {'; '.join(fails)})"
+            fails = []
         comparisons.append(text)
         problems += [f"{b['target']}: {f}" for f in fails]
     return problems, comparisons, passed
@@ -974,7 +988,11 @@ def run_group(g: Group, entry: dict, fp: dict, run_id: int, log_path: Path) -> N
     finally:
         conn.close()
     entry["status"] = "retrained"
-    entry["reason"] = f"passed all {len(entry['checks']) + len(compared)} tests; the new models are live"
+    if g.key in REBASE:
+        entry["reason"] = (f"passed all {len(entry['checks'])} tests; the previous scores came from an older evaluation "
+                           "or record, so they were reported, not compared (--rebase); the new models are live")
+    else:
+        entry["reason"] = f"passed all {len(entry['checks']) + len(compared)} tests; the new models are live"
     say(f"  RETRAINED — {entry['reason']}")
 
 
@@ -1011,6 +1029,8 @@ def batch(args, log_path: Path) -> int:
     finally:
         conn.close()
     say(f"weekly retrain #{run_id} ({trigger})  log: {log_path}")
+    if REBASE:
+        say(f"  --rebase {', '.join(sorted(REBASE))}: their previous scores are reported, not compared")
     for sid, strig, started, marked, groups in unlogged:
         done = {g.get("key"): g.get("status") for g in groups or [] if g.get("key")}
         audit_entry(sid, "model.weekly_batch", "interrupted", "batch", str(sid), to_status="interrupted",
@@ -1207,12 +1227,22 @@ def main() -> int:
                    help="comma-separated groups: " + ", ".join(BY_KEY))
     p.add_argument("--restore", choices=list(BY_KEY), help="put back the version before the latest retrain")
     p.add_argument("--test-restore", choices=list(BY_KEY), help="back up, restore, and compare the group's tables")
+    p.add_argument("--rebase", type=lambda s: [x.strip() for x in s.split(",") if x.strip()], default=None,
+                   help="comma-separated groups (also in --only) whose previous scores came from an older evaluation "
+                        "or a since-corrected record: the before/after score comparison is reported, not enforced")
     p.add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)
     args = p.parse_args()
     if args.only:
         bad = [k for k in args.only if k not in BY_KEY]
         if bad:
             p.error(f"unknown group(s): {', '.join(bad)}; choose from {', '.join(BY_KEY)}")
+    if args.rebase:
+        if args.scheduled:
+            p.error("--rebase is a one-off operator decision, never part of the scheduled run")
+        bad = [k for k in args.rebase if not args.only or k not in args.only]
+        if bad:
+            p.error(f"--rebase group(s) not in --only: {', '.join(bad)}")
+        REBASE.update(args.rebase)
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     if args.plan:
@@ -1225,24 +1255,15 @@ def main() -> int:
     log_path = LOG_DIR / f"weekly_retrain_{datetime.now():%Y%m%d_%H%M%S}.log"
     _log = open(log_path, "a", encoding="utf-8")
     # The cloud workflow (.github/workflows/weekly-retrain.yml) is the weekly batch since it first ran on 1 Nov 2026.
-    # This PC's Sunday task is the fallback: both retrained everything that week, the PC's run died part-way (the PC
-    # slept) and the cloud restored what it had left half-written. A scheduled run here does nothing while the cloud
-    # has finished a batch within 8 days, and takes over by itself if the cloud stops running.
+    # Until 16 Nov a laptop's Sunday task was a fallback that took over when the cloud had not run for 8 days; on the
+    # week both ran, the laptop's run died part-way (it slept) and the cloud restored what it had left half-written.
+    # ONE BATCH (16 Nov 2026, user: "we need to only have one"): a scheduled run anywhere but the cloud now does
+    # nothing, so a Sunday task left switched on on any laptop can never train beside the cloud. A manual batch
+    # (no --scheduled) still runs here when an operator starts one.
     if args.scheduled and not os.environ.get("GITHUB_ACTIONS"):
-        c = connect()
-        try:
-            with c.cursor() as cur:
-                cur.execute("SELECT id, host, finished_at FROM gold.ml_batch_runs WHERE trigger = 'scheduled' "
-                            "AND host IS DISTINCT FROM %s AND status IN ('retrained', 'no new data', 'needs attention') "
-                            "AND finished_at > now() - interval '8 days' ORDER BY id DESC LIMIT 1",
-                            (socket.gethostname(),))
-                recent = cur.fetchone()
-        finally:
-            c.close()
-        if recent:
-            say(f"the cloud ran this week's batch (#{recent[0]} on {recent[1]}, finished {recent[2]}); "
-                "this PC's scheduled run is only a fallback, so nothing to do")
-            return 0
+        say("the weekly batch runs only in the cloud (GitHub Actions), so this machine's scheduled run does nothing. "
+            "Its 'SmartFlow weekly retrain' task can be turned off; run without --scheduled for a manual batch.")
+        return 0
     lock = connect()
     lock.autocommit = True
     try:

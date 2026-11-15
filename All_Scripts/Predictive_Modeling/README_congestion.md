@@ -14,6 +14,11 @@ run out, so the script has to run regularly for the map to mean anything.
 
 ## Staying fresh automatically
 
+**Since 16 Nov 2026 only GitHub refreshes the map** (`.github/workflows/congestion-hourly.yml`, which sets
+`CONGESTION_PUBLISHER=1`). On any other machine the trainer stops at once unless `--dry-run` is given, so a laptop
+task left on does nothing; it can be deleted with the `/Delete` line below. The rest of this section describes the
+old laptop task.
+
 `refresh_congestion.bat` runs the `--fast` path and appends to
 `refresh_congestion.log`. The Scheduled Task calls it through
 `refresh_congestion_hidden.ps1`, which starts it with no visible window: run

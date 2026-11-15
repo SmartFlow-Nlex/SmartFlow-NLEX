@@ -67,6 +67,12 @@ import warnings
 # warehouse. Use it to judge a feature change before the leaderboard and the
 # served forecast are overwritten. (Also forced by the publish guard below.)
 DRY_RUN = "--dry-run" in sys.argv
+# --data-end YYYY-MM-DD (16 Nov 2026, experiments only): the data stops at the end of that day, so the usual test (the
+# last --test-days days) sits on a past window, e.g. All Saints 2026 (--data-end 2026-11-03 --test-days 5). Every
+# input, label and fit then ends there too. Always a dry run: a forecast from a past day must never reach the map.
+DATA_END = sys.argv[sys.argv.index("--data-end") + 1] if "--data-end" in sys.argv else None
+if DATA_END:
+    DRY_RUN = True
 
 # --fast: skip SARIMAX. It is ~90% of the runtime (280 model fits at rolling
 # origins) and it has never been accepted — it scores near chance because a
@@ -131,6 +137,21 @@ NO_MSTL = "--no-mstl" in sys.argv
 # run also writes congestion_results_horizon.json beside this file, as before.
 RESULTS_JSON = sys.argv[sys.argv.index("--results-json") + 1] if "--results-json" in sys.argv else None
 
+# ONE PUBLISHER (10 Nov 2026, tightened 16 Nov, user: "we need to only have one"). Three machines ran this trainer every
+# hour (this laptop, a teammate's laptop and the GitHub runner), each with its own copy and model files, and each
+# replaced the map with its own champion, so the map flipped between models from hour to hour. Only ONE machine may
+# publish: the one whose environment sets CONGESTION_PUBLISHER=1 (the GitHub workflows). Until 16 Nov any other machine
+# fell back to a dry run, so a laptop's hourly task still trained for ~15 minutes every hour, loading the database for a
+# result nobody read. Now a run that would publish (no --dry-run, no --data-end) on any other machine stops here, before
+# loading anything, so a laptop task left switched on does nothing. Experiments still work anywhere: add --dry-run.
+import os
+PUBLISHER = os.environ.get("CONGESTION_PUBLISHER", "").strip().lower() in ("1", "true", "yes")
+if not DRY_RUN and not PUBLISHER:
+    print("  ONE PUBLISHER: this machine is not the congestion publisher (only the GitHub workflows set "
+          "CONGESTION_PUBLISHER=1), so this run does nothing. The map is refreshed from GitHub. This machine's "
+          "'SmartFlow congestion refresh' task can be turned off. To test the trainer here, add --dry-run.")
+    sys.exit(0)
+
 import numpy as np
 import pandas as pd
 import psycopg2
@@ -144,19 +165,9 @@ warnings.filterwarnings("ignore")
 
 # Connection comes from Back-End/.env (PG_* keys), never from this file: the
 # original carried the production password in plain text.
-import os
 from pathlib import Path
 
-# PUBLISH GUARD (10 Nov 2026). Three machines ran this trainer every hour (this laptop, a teammate's laptop and the
-# GitHub runner), each with its own copy and model files, and each replaced the map with its own champion, so the map
-# flipped between models from hour to hour. Only ONE machine may publish: the one whose environment sets
-# CONGESTION_PUBLISHER=1 (the GitHub workflow). Everywhere else the run is a dry run: it trains, tests and prints
-# everything, writes nothing to the database (no forecast, metrics or audit entry) and says so.
-PUBLISHER = os.environ.get("CONGESTION_PUBLISHER", "").strip().lower() in ("1", "true", "yes")
-if not DRY_RUN and not PUBLISHER:
-    print("  PUBLISH GUARD: CONGESTION_PUBLISHER is not set to 1 on this machine, so this run is a DRY RUN and writes "
-          "nothing to the database. Only the one publishing machine (the GitHub workflow) sets it.")
-    DRY_RUN = True
+# A dry run (any machine) writes nothing to the database: no forecast, metrics or audit entry. See ONE PUBLISHER above.
 if DUALPATH_TRAIN and DRY_RUN and "--dualpath-dir" not in sys.argv:
     os.environ["SMARTFLOW_DUALPATH_DIR"] = "dualpath_models_dryrun"
     print("  --dualpath-train in a dry run: the family is saved to dualpath_models_dryrun/, never over dualpath_models/")
@@ -462,6 +473,9 @@ df["ts"] = pd.to_datetime(df.d.astype(str)) + pd.to_timedelta(df.h, unit="h")
 # reappear here as free flow even after trimming the raw jams above.
 if len(_ok):
     df = df[df.ts <= _last_good]
+if DATA_END:
+    df = df[df.ts < pd.Timestamp(DATA_END) + pd.Timedelta(days=1)]
+    print(f"  --data-end {DATA_END}: data stops at {df.ts.max()} (experiment, dry run)")
 df = df.sort_values(["exit_name", "ts"]).reset_index(drop=True)
 df["dow"] = df.ts.dt.dayofweek
 df["is_weekend"] = (df.dow >= 5).astype(int)
@@ -508,9 +522,13 @@ for _name, _src, _map in (("nb_prev_lag1", _lag1_p, _prev), ("nb_next_lag1", _la
 
 # Holidays and Arena event days: known in advance. The dual-path family's future branch reads them, and since
 # 10 Nov 2026 XGBoost does too (feature parity, EVALUATION_PROTOCOL.md section 4).
+# Event days come from the VERIFIED calendar (15 Nov 2026), the one the event forecast has used since 12 Nov: the
+# scraped silver.philippine_arena_events_clean carries false dates (SEVENTEEN 36 nights vs 6 real; Post Malone
+# 2026-09-29 listed though postponed; 2026-12-30 not an event night). Held and scheduled nights count; postponed
+# and not-found ones do not.
 _hol = pd.read_sql_query("SELECT date_day::date AS d FROM public.ph_holidays", conn)
-_evd = pd.read_sql_query("SELECT DISTINCT event_date::date AS d FROM silver.philippine_arena_events_clean "
-                         "WHERE event_date IS NOT NULL", conn)
+_evd = pd.read_sql_query("SELECT DISTINCT show_date AS d FROM silver.arena_events_verified "
+                         "WHERE status IN ('held', 'scheduled')", conn)
 HOL = set(pd.to_datetime(_hol.d)); EVD = set(pd.to_datetime(_evd.d))
 
 # The whole grid, uncollected hours included, for the dual-path family's own windows (step 6b), and every known state
@@ -1401,8 +1419,7 @@ if RESULTS_JSON:
 banner("STEP 10: Writing to AWS")
 if DRY_RUN:
     print("  DRY RUN: nothing written. Leaderboard, per-horizon scores and the served")
-    print("  forecast in the database are unchanged" + (" (CONGESTION_PUBLISHER is not set on this machine)."
-                                                          if not PUBLISHER and "--dry-run" not in sys.argv else "."))
+    print("  forecast in the database are unchanged.")
     conn.close()
     banner("DONE (dry run)")
     banner_done()
