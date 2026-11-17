@@ -100,6 +100,9 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  // Listen before loading. 'ready-to-show' can fire before loadURL() resolves; registered after it (as it
+  // was), the event was missed and the window stayed hidden for good: the app ran with nothing on screen.
+  window.once('ready-to-show', () => window.show());
 
   if (isDev) {
     let hasLoaded = false;
@@ -115,10 +118,11 @@ async function createWindow() {
     // Electron's icon, and sharing the taskbar button with it put that icon in place of the SmartFlow logo.
     if (process.env.SMARTFLOW_DEVTOOLS === '1') window.webContents.openDevTools({ mode: 'detach' });
   } else {
-    await window.loadURL(APP_START_URL);
+    try { await window.loadURL(APP_START_URL); }
+    catch (error) { console.error('Failed to load the app pages:', error); }
   }
-
-  window.once('ready-to-show', () => window.show());
+  // Belt and braces: whatever happened above, never leave a running app with no window on screen.
+  if (!window.isDestroyed() && !window.isVisible()) window.show();
 }
 
 // Same id as build.appId, so Windows groups the taskbar button under SmartFlow rather than Electron.
