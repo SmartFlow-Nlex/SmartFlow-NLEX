@@ -1,43 +1,49 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const http = require('http');
 
 const isDev = !app.isPackaged;
 const OUT_DIR = path.join(app.getAppPath(), 'out');
 const staticEntry = path.join(OUT_DIR, 'index.html');
 
 /*
- * The packaged app serves its own files over HTTP instead of loading them from
- * disk.
+ * How the installed app shows its screens (17 Nov 2026).
  *
- * loadFile() opens the pages on a file:// origin, and a file:// page sends
- * "Origin: null" on every cross-origin request. The backend's CORS allow-list
- * (FRONTEND_ORIGIN) admits named origins only, so an installed copy rendered
- * its interface perfectly and then failed every data call — the hardest kind of
- * failure to diagnose, because nothing looks broken until a panel stays empty.
+ * The pages are read straight from the app's own files through a private
+ * address, app://smartflow/..., registered below. There is no web server, no
+ * port and no localhost: a copy installed on any computer runs on its own, and
+ * all data comes from the deployed backend.
  *
- * Serving out/ on port 3002 puts the packaged app on an origin the backend
- * already allows, and makes the packaged and unpackaged runs take the same code
- * path rather than diverging at the one point that matters.
+ * Earlier versions served out/ on 127.0.0.1:3002. That worked, but the installed
+ * app was then a localhost page, it could not open while anything else held
+ * port 3002 (the dashboard's dev server does), and the backend had to allow that
+ * address. loadFile() was not an option either: a file:// page sends
+ * "Origin: null", which the backend's CORS allow-list (FRONTEND_ORIGIN) refuses.
+ * A registered scheme sends a real origin, "app://smartflow", which the backend
+ * allows by name.
  *
- * The server binds 127.0.0.1, but the window opens the pages as localhost
- * (17 Nov 2026). The origin a request carries is the host in the page's URL, and
- * the deployed backend on Render allows http://localhost:3002, not
- * http://127.0.0.1:3002, so an installed copy pointed at Render failed every
- * data call on CORS. localhost resolves to the same loopback server.
+ * Development (npm run electron:dev / electron .) still opens the Next dev server.
  */
-const SERVE_PORT = 3002;
-const SERVE_HOST = '127.0.0.1';
-const PAGE_HOST = 'localhost';
+const APP_SCHEME = 'app';
+const APP_HOST = 'smartflow';
+const APP_START_URL = `${APP_SCHEME}://${APP_HOST}/dashboard`;
+const DEV_URL = process.env.NEXT_DEV_URL || 'http://localhost:3002/dashboard';
+
+// Must run before the app is ready. "standard" gives the scheme normal URL rules (relative links,
+// a real origin); "secure" lets its pages call the https backend and keep sign-in in local storage.
+protocol.registerSchemesAsPrivileged([
+  { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+]);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
   '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ico': 'image/x-icon',
-  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf',
   '.map': 'application/json; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
+  '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.wasm': 'application/wasm',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
 };
 
 /** Resolve a URL path inside out/, refusing anything that escapes it. */
@@ -48,27 +54,38 @@ function resolveInOut(urlPath) {
   return resolved;
 }
 
-function startStaticServer() {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      let file = resolveInOut(req.url || '/');
-      if (!file) { res.writeHead(403).end('Forbidden'); return; }
+/** The file a request maps to. A static export writes each route as a directory with index.html and as
+ *  <route>.html, so both are tried before falling back to the 404 page, so deep links work. */
+function fileFor(urlPath) {
+  let p = urlPath || '/';
+  // The production build uses relative asset paths (next.config assetPrefix './'), so an asset can be asked
+  // for under the page or stylesheet that named it: a font in a stylesheet comes as
+  // /_next/static/css/_next/static/media/x.woff2, a script on /dashboard/traffic as /dashboard/_next/... .
+  // Every build asset lives under out/_next, so the path from the LAST "/_next/" on is the real one (the
+  // stylesheet case starts with /_next/ itself).
+  const nextAt = p.lastIndexOf('/_next/');
+  if (nextAt > 0) p = p.slice(nextAt);
+  const file = resolveInOut(p);
+  if (!file) return null;
+  const isFile = (c) => { try { return fs.statSync(c).isFile(); } catch { return false; } };
+  // A missing asset (anything with an extension) is a 404, never a page: answering a font or script request
+  // with HTML is how the fonts silently failed to load.
+  if (path.extname(file)) return isFile(file) ? file : null;
+  const candidates = [path.join(file, 'index.html'), file + '.html', path.join(OUT_DIR, '404.html'), staticEntry];
+  return candidates.find(isFile) || null;
+}
 
-      // A static export writes each route as a directory with index.html, and also
-      // as <route>.html. Try both before giving up, so deep links work.
-      const candidates = [file];
-      if (!path.extname(file)) candidates.push(path.join(file, 'index.html'), file + '.html');
-      candidates.push(path.join(OUT_DIR, '404.html'), staticEntry);
-
-      const found = candidates.find((c) => { try { return fs.statSync(c).isFile(); } catch { return false; } });
-      if (!found) { res.writeHead(404).end('Not found'); return; }
-
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(found).toLowerCase()] || 'application/octet-stream' });
-      fs.createReadStream(found).pipe(res);
+function registerAppProtocol() {
+  protocol.handle(APP_SCHEME, async (request) => {
+    const url = new URL(request.url);
+    if (url.host !== APP_HOST) return new Response('Not found', { status: 404 });
+    const file = fileFor(url.pathname);
+    if (!file) return new Response('Not found', { status: 404 });
+    const body = await fs.promises.readFile(file);
+    return new Response(body, {
+      status: 200,
+      headers: { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream' },
     });
-
-    server.once('error', reject);
-    server.listen(SERVE_PORT, SERVE_HOST, () => resolve(server));
   });
 }
 
@@ -85,35 +102,20 @@ async function createWindow() {
   });
 
   if (isDev) {
-    const devUrl = process.env.NEXT_DEV_URL || `http://${SERVE_HOST}:${SERVE_PORT}/dashboard`;
     let hasLoaded = false;
     const fallbackToStatic = async () => {
       if (hasLoaded) return;
       hasLoaded = true;
-      try { await window.loadFile(staticEntry); }
-      catch (error) { console.error('Failed to load static fallback:', error); }
+      try { await window.loadURL(APP_START_URL); }
+      catch (error) { console.error('Failed to load the built pages:', error); }
     };
     window.webContents.once('did-fail-load', fallbackToStatic);
-    window.loadURL(devUrl).catch(fallbackToStatic);
+    window.loadURL(DEV_URL).catch(fallbackToStatic);
     // DevTools on request only (Ctrl+Shift+I, or SMARTFLOW_DEVTOOLS=1). Its detached window carries
     // Electron's icon, and sharing the taskbar button with it put that icon in place of the SmartFlow logo.
     if (process.env.SMARTFLOW_DEVTOOLS === '1') window.webContents.openDevTools({ mode: 'detach' });
   } else {
-    try {
-      await startStaticServer();
-      await window.loadURL(`http://${PAGE_HOST}:${SERVE_PORT}/dashboard`);
-    } catch (error) {
-      // A port clash is the one failure worth naming out loud: the backend's
-      // allow-list is keyed to this port, so silently moving to another one
-      // would reintroduce exactly the CORS failure this server exists to avoid.
-      dialog.showErrorBox(
-        'SmartFlow NLEX could not start',
-        `The application serves its interface on ${SERVE_HOST}:${SERVE_PORT}, and that port is ` +
-        `already in use.\n\nClose whatever is using it and start SmartFlow again.\n\n${error.message}`,
-      );
-      app.quit();
-      return;
-    }
+    await window.loadURL(APP_START_URL);
   }
 
   window.once('ready-to-show', () => window.show());
@@ -123,6 +125,7 @@ async function createWindow() {
 app.setAppUserModelId('ph.edu.ust.smartflow.nlex');
 
 app.whenReady().then(() => {
+  registerAppProtocol();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

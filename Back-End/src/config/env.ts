@@ -14,7 +14,12 @@ const envSchema = z.object({
   // React Native fetch sends no Origin header at all. This exists so an Expo
   // *web* build is not blocked, and so a second dev port does not require an
   // edit here.
-  FRONTEND_ORIGIN: z.string().default("http://localhost:3002"),
+  //
+  // app://smartflow is the installed desktop app (electron/main.js loads its
+  // pages from its own files under that address, 17 Nov 2026). A server that
+  // sets FRONTEND_ORIGIN itself must list it too, or the desktop app's data
+  // calls are refused.
+  FRONTEND_ORIGIN: z.string().default("http://localhost:3002,app://smartflow"),
   CLIMATIQ_API_KEY: z.string().optional(),
 
   // Z.ai (GLM) — powers the AI Sandbox natural-language command parser.
