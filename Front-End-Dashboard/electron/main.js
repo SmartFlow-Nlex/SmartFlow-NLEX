@@ -17,12 +17,19 @@ const staticEntry = path.join(OUT_DIR, 'index.html');
  * its interface perfectly and then failed every data call — the hardest kind of
  * failure to diagnose, because nothing looks broken until a panel stays empty.
  *
- * Serving out/ on 127.0.0.1:3002 puts the packaged app on an origin the backend
+ * Serving out/ on port 3002 puts the packaged app on an origin the backend
  * already allows, and makes the packaged and unpackaged runs take the same code
  * path rather than diverging at the one point that matters.
+ *
+ * The server binds 127.0.0.1, but the window opens the pages as localhost
+ * (17 Nov 2026). The origin a request carries is the host in the page's URL, and
+ * the deployed backend on Render allows http://localhost:3002, not
+ * http://127.0.0.1:3002, so an installed copy pointed at Render failed every
+ * data call on CORS. localhost resolves to the same loopback server.
  */
 const SERVE_PORT = 3002;
 const SERVE_HOST = '127.0.0.1';
+const PAGE_HOST = 'localhost';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -94,7 +101,7 @@ async function createWindow() {
   } else {
     try {
       await startStaticServer();
-      await window.loadURL(`http://${SERVE_HOST}:${SERVE_PORT}/dashboard`);
+      await window.loadURL(`http://${PAGE_HOST}:${SERVE_PORT}/dashboard`);
     } catch (error) {
       // A port clash is the one failure worth naming out loud: the backend's
       // allow-list is keyed to this port, so silently moving to another one
