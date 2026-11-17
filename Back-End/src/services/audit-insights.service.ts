@@ -6,7 +6,8 @@
  *   usage        actions and page views per day, per module, per user, per page
  *   maintenance  where the schedule flow waits (average time in each status),
  *                turnaround from creation to completed, and the open schedules
- *                that are late to start or running past their planned end
+ *                that are late to start, running past their planned end, or
+ *                still scheduled after their whole window (overdue)
  *   uploads      loads, failures, undos and checks, how long a load takes, and
  *                the loads still waiting for the weekly retrain
  *   models       the weekly retrain's latest result per model group, and the hourly congestion refresh
@@ -17,15 +18,22 @@
  *
  * Entries written before the structured columns were filled have no module;
  * it is read from the action's prefix instead ("maintenance.x" -> maintenance).
- * "dashboard" and "anonymous" are entries whose user was not identified.
+ * "dashboard" and "anonymous" are entries whose user was not identified; "system:..." and
+ * "script:..." are the system's own jobs and command-line scripts, not people.
  */
 import { db } from "../config/db.js";
 import { nextRetrain } from "./retrain-schedule.js";
+import { listRetrainRunsInDb } from "./upload.service.js";
 
 const MODULE = `COALESCE(module, CASE split_part(action, '.', 1)
   WHEN 'upload' THEN 'data_management' WHEN 'mobile_config' THEN 'mobile_app' ELSE split_part(action, '.', 1) END)`;
 const IN_WINDOW = `"timestamp" >= now() - make_interval(days => $1)`;
-const UNIDENTIFIED = `(user_id IN ('dashboard', 'anonymous') OR user_id LIKE 'system:%')`;
+// Not a person: unverified entries, and the system's own jobs and command-line scripts (system:..., script:...).
+const UNIDENTIFIED = `(user_id IN ('dashboard', 'anonymous') OR user_id LIKE 'system:%' OR user_id LIKE 'script:%')`;
+/* A schedule still "scheduled" after its whole planned window has ended is not late to start: the work either
+   happened or did not, and the record was never updated. Counted apart so the operator closes it out
+   (17 Nov 2026 audit: all 18 scheduled works were in this state and were all counted "late to start"). */
+const OVERDUE = "overdue — needs an update";
 const ROUTINE = `action IN ('page.viewed', 'model.live_refresh')`;
 
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -84,17 +92,22 @@ export async function getAuditInsights(days: number) {
                              WHERE a.target_resource = 'maintenance:' || s.id::text
                                AND a.action IN ('maintenance.status_changed', 'maintenance.schedule_created')), s.created_at) AS since,
                   CASE WHEN s.status = 'in_progress' AND s.ends_at < now() THEN 'overrunning'
+                       WHEN s.status = 'scheduled' AND s.ends_at < now() THEN '${OVERDUE}'
                        WHEN s.status = 'scheduled' AND s.starts_at < now() THEN 'late to start' END AS flag
              FROM nlex_maintenance_schedules s
             WHERE s.status IN ('scheduled', 'in_progress')
             ORDER BY (CASE WHEN s.status = 'in_progress' AND s.ends_at < now() THEN 0
-                           WHEN s.status = 'scheduled' AND s.starts_at < now() THEN 1 ELSE 2 END), since`, [])
+                           WHEN s.status = 'scheduled' AND s.ends_at < now() THEN 1
+                           WHEN s.status = 'scheduled' AND s.starts_at < now() THEN 2 ELSE 3 END), since`, [])
       : Promise.resolve([]),
     q(`SELECT DISTINCT ON (entity_id) entity_id AS "group", details->>'title' AS title, outcome, from_status, to_status, "timestamp" AS at
          FROM audit_logs WHERE module = 'model_training' AND entity_type = 'model_group'
         ORDER BY entity_id, "timestamp" DESC`, []),
+    // The latest run with its parts merged (upload.service.ts groupRetrainRuns): the cloud batch writes one row per part.
     hasBatches
-      ? q(`SELECT id, started_at, finished_at, trigger, status, summary FROM gold.ml_batch_runs ORDER BY id DESC LIMIT 1`, [])
+      ? listRetrainRunsInDb(1).then((r) =>
+          (r ?? []).map((x) => ({ id: x.id, parts: x.parts, started_at: x.started_at, finished_at: x.finished_at, trigger: x.trigger, status: x.status, summary: x.summary })),
+        )
       : Promise.resolve([]),
     // The hourly congestion refresh over the last 24 hours: distinct clock hours with a published run, failures,
     // and the newest entry. A run that never started leaves no entry, so a missing hour shows as a gap here.
@@ -141,6 +154,7 @@ export async function getAuditInsights(days: number) {
       open: open.length,
       overrunning: open.filter((o) => o.flag === "overrunning").length,
       lateToStart: open.filter((o) => o.flag === "late to start").length,
+      overdue: open.filter((o) => o.flag === OVERDUE).length,
       items: openItems.slice(0, 6),
     },
     models: {

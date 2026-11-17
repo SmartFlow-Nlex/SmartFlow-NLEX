@@ -35,16 +35,22 @@ export const FORECAST_LEVEL: Record<string, number> = { Low: 0, Med: 2, Medium: 
 export const SIDE_CUT = 0.4;
 
 /**
- * The state a forecast exit is SHOWN as -- the same rule as the congestion
- * card, so the two cannot disagree about which exits jam: a jam when the chance
- * of one (heavy + severe) is 50% or more, its severity whichever of the two is
- * likelier. The API already sends congestion_state this way; this re-derives it
- * from the probabilities so an older payload is read the same.
+ * The state a forecast exit is SHOWN as: the state the model stored
+ * (congestion_state), from its own severe-weighted decision rule -- the state
+ * the congestion card, the Expand list, the 7-day peaks and the mobile app show,
+ * and the one the accuracy is measured on (fix list A25, 2 Nov 2026).
+ * FIXED 17 Nov 2026 (system audit): this re-derived the state from the
+ * probabilities (a jam when heavy + severe reached 50%), the rule the backend
+ * had dropped, so 13% of the map's exit-hours disagreed with the list beside it
+ * (e.g. Bocaue Barrier stored High but drawn clear). The probabilities are used
+ * only when a payload carries no stored state.
  */
 export function shownForecastState(p: Record<string, unknown>): string {
+  const stored = p.congestion_state ?? p.model_state;
+  if (stored != null && String(stored) !== "") return String(stored);
   const pm = p.p_med == null ? null : Number(p.p_med);
   const ph = p.p_high == null ? null : Number(p.p_high);
-  if (pm == null || ph == null) return String(p.congestion_state ?? "");
+  if (pm == null || ph == null) return "";
   if (pm + ph < 0.5) return "Low";
   return ph >= pm ? "High" : "Med";
 }

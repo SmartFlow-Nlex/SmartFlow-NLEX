@@ -14,6 +14,10 @@ const audit = (req: Request, action: string, details: Record<string, unknown>) =
  * usable. When the row is missing or RDS is unreachable the service returns the
  * fail-open defaults and marks `source: "defaults"` — the caller can tell the
  * two apart, which is why this does not 503 like the write path does.
+ *
+ * Who saved it last is not part of this public answer (17 Nov 2026 audit): the
+ * next save writes the saver's email there, and anyone could read it. The
+ * Mobile App page does not show it; the audit log keeps who changed what.
  */
 export const readMobileConfig = async (_req: Request, res: Response) => {
   const result = await getMobileConfigFromDb();
@@ -23,7 +27,6 @@ export const readMobileConfig = async (_req: Request, res: Response) => {
     meta: {
       source: result.source,
       updatedAt: result.updatedAt,
-      updatedBy: result.updatedBy,
     },
   });
 };

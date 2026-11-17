@@ -61,6 +61,10 @@ export default function CorridorRiskNarrative({
   } | null;
   spatialLstm: {
     mae: number | null;
+    /** Set when the grid shows a baseline because no model beat it (lib/hotspot-served.ts). */
+    servedModel?: string | null;
+    /** The Spatial LSTM's own held-out MAE, for that comparison. */
+    lstmMae?: number | null;
     poissonDeviance: number | null;
     n: number | null;
     epochs: number | null;
@@ -105,7 +109,7 @@ export default function CorridorRiskNarrative({
       endpoint="/api/ai-insight/corridor-risk-narrative"
       subjectKey={`corridor-risk:${gwr ? `gwr=${gwr.loocvMae ?? gwr.mae ?? "?"}` : "no-gwr"}:${
         spatialLstm ? `lstm=${topExits.map((e) => `${e.exitName}@${e.rank}`).join(",")}` : "no-lstm"
-      }`}
+      }${spatialLstm?.servedModel ? ":served=baseline" : ""}`}
       horizonDays={1}
       chips={
         <>
@@ -163,7 +167,9 @@ export default function CorridorRiskNarrative({
         spatialLstm: spatialLstm
           ? {
               mae: spatialLstm.mae,
-              poissonDeviance: spatialLstm.poissonDeviance,
+              servedModel: spatialLstm.servedModel ?? null,
+              lstmMae: spatialLstm.lstmMae ?? null,
+              poissonDeviance: spatialLstm.servedModel ? null : spatialLstm.poissonDeviance,
               n: spatialLstm.n,
               epochs: spatialLstm.epochs,
               seqLen: spatialLstm.seqLen,

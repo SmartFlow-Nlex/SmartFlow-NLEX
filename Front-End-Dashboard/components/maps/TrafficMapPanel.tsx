@@ -704,18 +704,19 @@ export default function TrafficMapPanel({
             | [number, number]
             | undefined;
           if (head) {
-            queuePins.push({
-              at: head,
-              line: coords as [number, number][],
-              level: Number((f.properties as { level?: unknown })?.level ?? 0),
-            });
+            const lvl = Number((f.properties as { level?: unknown })?.level ?? 0);
             const where = queueWhere(head, snapped.direction);
             const marked = { ...properties, ...(where ?? {}) };
-            marks.push({
-              type: "Feature",
-              properties: { ...marked, feature_type: "jam_mark" },
-              geometry: { type: "Point", coordinates: head },
-            });
+            /* Level 0 is a Waze jam still moving at 20+ km/h: not congested on the model's scale (the forecast
+               map's), so it is drawn as clear road with no "queue starts here" marker or exit pin (15 Nov 2026). */
+            if (lvl > 0) {
+              queuePins.push({ at: head, line: coords as [number, number][], level: lvl });
+              marks.push({
+                type: "Feature",
+                properties: { ...marked, feature_type: "jam_mark" },
+                geometry: { type: "Point", coordinates: head },
+              });
+            }
             return {
               ...f,
               properties: marked,
@@ -1788,6 +1789,11 @@ export default function TrafficMapPanel({
       const LEVEL_WORD: Record<number, string> = {
         0: "Clear", 1: "Slow", 2: "Slow", 3: "Congested", 4: "Congested", 5: "Blocked",
       };
+      /* Waze's own grade, shown beside the model-scale word: live jams are coloured by speed now
+         (under 10 km/h congested, 10-20 slow, 20+ moving), the same scale as the forecast. */
+      const WAZE_GRADE: Record<number, string> = {
+        1: "light", 2: "moderate", 3: "heavy", 4: "standstill", 5: "blocked",
+      };
 
       /* Street names arrive from Waze, so they are outside data going into
          innerHTML. Escaped rather than trusted. */
@@ -1930,7 +1936,7 @@ export default function TrafficMapPanel({
           e.lngLat,
             `<div class="mjp">
                <div class="mjp-head is-${lvl >= 3 ? "congested" : lvl >= 1 ? "slow" : "clear"}">
-                 ${LEVEL_WORD[lvl] ?? "Reported"}
+                 ${lvl === 0 && p.waze_level != null ? "Moving" : LEVEL_WORD[lvl] ?? "Reported"}
                  <span>${String(p.direction ?? "")}${
                    p.rel_km == null ? "" : ` &middot; km ${fmtKm(Number(p.rel_km), 0)}`
                  }</span>
@@ -1939,6 +1945,9 @@ export default function TrafficMapPanel({
                ${len != null ? row("Queue length", km(len)) : ""}
                <div class="mjp-where">${where ?? esc(p.street ?? p.nearest_exit ?? "NLEX")}</div>
                ${speed != null && speed > 0 ? row("Speed", `${speed} km/h`) : ""}
+               ${p.waze_level != null && WAZE_GRADE[Number(p.waze_level)]
+                 ? row("Waze grade", WAZE_GRADE[Number(p.waze_level)])
+                 : ""}
                ${running != null && running > 0 ? row("Going on for", mins(running * 60)) : ""}
                ${floodCause(p)}
              </div>`,

@@ -7,7 +7,7 @@ import { RECORD_END } from "../etl/toll-hourly.js";
 // is derived instead of hardcoded.
 import { searchExitsInDb } from "./map-comparison.service.js";
 import { buildExitToExitSegments, segmentIndexForKm } from "../lib/exit-segments.js";
-import { KM_POST_START, kmPostSql } from "../lib/km-post.js";
+import { KM_POST_END, KM_POST_START, kmMeasured, kmPostSql } from "../lib/km-post.js";
 import { FACT_HOURLY_JAMS_LOCAL } from "../utils/waze-jams-local.js";
 
 // ---------------------------------------------------------------------------
@@ -111,6 +111,20 @@ const EVENTS_CTE = `
     FROM silver.nlex_breakdown_events_clean
     WHERE event_encoded_date IS NOT NULL
   )`;
+
+/* The road length a hotspot bin covers, in MEASURED km (lib/km-post.ts: lengths and rates per km use measured km,
+   the shown km is the official post). The bins are not equal (17 Nov 2026): Km 12-14 is the first three posts and
+   3.44 km of road, Km 30-34 is 3.70 km, the last bin stops at Sta. Ines (Km 87), and "South of Km 12" (bin 0) is a
+   catch-all with no length at all. Ranking them by raw count favoured the longer ones, so each row also carries its
+   length and incidents per km, and the page ranks on that. Null for bin 0. */
+function hotspotBinLengthKm(bin: number): number | null {
+  if (bin < KM_POST_START) return null;
+  // Bins are FLOOR(post / 5) * 5 raised to Km 12, so bin 12 ends at post 15 like bin 10 would.
+  const from = Math.max(bin, KM_POST_START);
+  const to = Math.min((Math.floor(bin / 5) + 1) * 5, KM_POST_END);
+  if (to <= from) return null;
+  return Number((kmMeasured(to) - kmMeasured(from)).toFixed(2));
+}
 
 /** db.query, at most `limit` at a time; the rest wait here rather than in the pool's timed queue. */
 function oneAtATime(limit: number) {
@@ -221,6 +235,11 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
        holds ten connections, so the rest waited out its 45 s connect timeout and the page said "database not
        reachable" with the database healthy (31 Oct 2026). Five at a time takes longer and finishes. */
     const queued = oneAtATime(wx ? 5 : 15);
+    /* The causes/types rankings read one source table each, so the Incident type filter scopes them by table:
+       with Breakdowns chosen the accident causes and types come back empty, and the reverse (17 Nov 2026). They
+       used to ignore it, though the page says the type filter scopes every Descriptive card.
+       $1=lo $2=hi $3=weather $4=src */
+    const typeScoped = [lo, hi, wx, src];
 
     const [
       trend,
@@ -293,9 +312,10 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
                 SUM(COALESCE(number_of_fatality,0))::int AS fatalities
          FROM silver.nlex_accident_events_clean e
          WHERE e.event_start_date::date BETWEEN $1 AND $2 AND sub_cause IS NOT NULL
+           AND ($4::text IS NULL OR $4 = 'accident')
            AND ${weatherOkFor("e.event_start_date", "$3")}
          GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 12`,
-        [lo, hi, wx]
+        typeScoped
       ),
       // Top breakdown causes — mechanical faults, a different vocabulary
       // entirely from accident causes, kept as its own ranking rather than
@@ -306,9 +326,10 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
          SELECT sub_cause AS label, main_cause AS "mainCause", COUNT(*)::int AS total
          FROM silver.nlex_breakdown_events_clean e
          WHERE e.event_encoded_date::date BETWEEN $1 AND $2 AND sub_cause IS NOT NULL
+           AND ($4::text IS NULL OR $4 = 'breakdown')
            AND ${weatherOkFor("e.event_encoded_date", "$3")}
          GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 12`,
-        [lo, hi, wx]
+        typeScoped
       ),
       // Top accident types (type_of_event) — breakdowns have no discrete
       // "type" field, so this stays accident-only, same restriction the old
@@ -320,9 +341,10 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
                 SUM(COALESCE(number_of_fatality,0))::int AS fatalities
          FROM silver.nlex_accident_events_clean e
          WHERE e.event_start_date::date BETWEEN $1 AND $2 AND type_of_event IS NOT NULL
+           AND ($4::text IS NULL OR $4 = 'accident')
            AND ${weatherOkFor("e.event_start_date", "$3")}
          GROUP BY 1 ORDER BY 2 DESC LIMIT 12`,
-        [lo, hi, wx]
+        typeScoped
       ),
       // Weather exposure: wet vs dry hours in range (unchanged — reads only
       // hourly_weather, no incident table involved)
@@ -423,17 +445,23 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
       ),
       // MTTC, accident side: clearance_min is already a computed duration
       // (event start -> site cleared) on this table — nothing to derive,
-      // just aggregate with a sanity floor at 0 (a negative value here would
-      // be a data-entry error, not a real duration).
+      // just aggregate the plausible ones. A negative value is a data-entry
+      // error, and exactly 0 minutes is a recording default, not a clearance:
+      // site_cleared equals the start time in about a fifth of crashes, and in
+      // most of those blockage_cleared does too (17 Nov 2026). The Clearance
+      // Response Protocol already left both out (clearance-protocol.service.ts
+      // toObservations); this tile kept the zeros, so it read a 4-minute median
+      // against the protocol's 5. Over 1,440 min is left out as on the
+      // breakdown side below.
       queued(
         `WITH ${WXALL_CTE}
          SELECT COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE clearance_min IS NOT NULL AND clearance_min >= 0)::int AS valid_n,
-                ROUND(AVG(clearance_min) FILTER (WHERE clearance_min IS NOT NULL AND clearance_min >= 0)::numeric, 1)::float AS avg_min,
+                COUNT(*) FILTER (WHERE clearance_min > 0 AND clearance_min <= 1440)::int AS valid_n,
+                ROUND(AVG(clearance_min) FILTER (WHERE clearance_min > 0 AND clearance_min <= 1440)::numeric, 1)::float AS avg_min,
                 -- Median and 90th percentile beside the mean (fix list A15, 2 Nov 2026): a few very long clearances
                 -- pull the mean well above what a typical incident takes.
-                ROUND((percentile_cont(0.5) WITHIN GROUP (ORDER BY clearance_min) FILTER (WHERE clearance_min IS NOT NULL AND clearance_min >= 0))::numeric, 1)::float AS median_min,
-                ROUND((percentile_cont(0.9) WITHIN GROUP (ORDER BY clearance_min) FILTER (WHERE clearance_min IS NOT NULL AND clearance_min >= 0))::numeric, 1)::float AS p90_min
+                ROUND((percentile_cont(0.5) WITHIN GROUP (ORDER BY clearance_min) FILTER (WHERE clearance_min > 0 AND clearance_min <= 1440))::numeric, 1)::float AS median_min,
+                ROUND((percentile_cont(0.9) WITHIN GROUP (ORDER BY clearance_min) FILTER (WHERE clearance_min > 0 AND clearance_min <= 1440))::numeric, 1)::float AS p90_min
          FROM silver.nlex_accident_events_clean e
          WHERE e.event_start_date::date BETWEEN $1 AND $2
            AND ($3::text IS NULL OR $3 = 'accident')
@@ -481,7 +509,9 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
          FROM (
            SELECT
              (CASE WHEN first_response_min BETWEEN 0 AND 1440 THEN first_response_min END) AS resp_min,
-             (CASE WHEN EXTRACT(EPOCH FROM (last_departure - event_encoded_date)) / 60 BETWEEN 0 AND 1440
+             -- Above 0, as on the accident side and in the clearance protocol: 0 minutes is a recording default.
+             (CASE WHEN EXTRACT(EPOCH FROM (last_departure - event_encoded_date)) / 60 > 0
+                    AND EXTRACT(EPOCH FROM (last_departure - event_encoded_date)) / 60 <= 1440
                    THEN EXTRACT(EPOCH FROM (last_departure - event_encoded_date)) / 60 END) AS mttc_min
            FROM per_event
          ) x`,
@@ -550,7 +580,10 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
         },
       },
       dailyTrend: trend.rows,
-      hotspots: hotspot.rows,
+      hotspots: hotspot.rows.map((r: { km_bin: number; total: number }) => {
+        const lengthKm = hotspotBinLengthKm(r.km_bin);
+        return { ...r, length_km: lengthKm, per_km: lengthKm != null && lengthKm > 0 ? Number((r.total / lengthKm).toFixed(1)) : null };
+      }),
       heatmap: heatmap.rows,
       accidentCauses: accidentCauses.rows,
       breakdownCauses: breakdownCauses.rows,
@@ -1081,7 +1114,7 @@ const DAILY_WET_SQL = `
 
 // Daily vehicle volume for the incident forecast chart's exposure overlay —
 // observed history only. The Future band's volume is a separate field
-// (FUTURE_VOLUME_SQL below): it is a forecast the models took as input, not a
+// (futureVolumeSql below): it is a forecast the models took as input, not a
 // measurement, and the chart draws it dashed so the two are never confused.
 //
 // Read from gold.ml_predictive_volume rather than gold.daily_traffic_volume
@@ -1103,16 +1136,36 @@ const DAILY_VOLUME_SQL = `
 `;
 
 /* The volume the volume-aware models actually read on Future days (17 Oct 2026, testers IN-10). Hiding it left
-   the forecast depending on an input the chart never showed. Same table and the same COALESCE order as
-   train_incident_models.py's FUTURE_VOLUME_SQL, returned as its own field (volumeForecast) so `volume` above
-   stays observed-only and the chart can draw the two differently. */
-const FUTURE_VOLUME_SQL = `
-  SELECT forecast_date::text AS date,
-         COALESCE(pred_lstm, pred_prophet, pred_sarimax, pred_holtwinters, pred_holts_linear, pred_xgboost)::float AS volume
+   the forecast depending on an input the chart never showed. Returned as its own field (volumeForecast) so
+   `volume` above stays observed-only and the chart can draw the two differently.
+
+   Which series that is comes from the training run itself (17 Nov 2026). train_incident_models.py serves the
+   traffic study's champion refitted on the real record (metadata served_volume_input.traffic_champion, "Prophet +
+   holidays" in the 15 Nov run), and falls back to the traffic module's published COALESCE only when that refit
+   fails (served_volume_input.source then starts "PUBLISHED"). This query used to read the COALESCE every time,
+   which puts the LSTM first: up to 22% off the Prophet series the Random Forest read. The refit itself is kept
+   only in the trainer's local cache; the traffic module's published column for the same model is within 0.11% of
+   it on all 90 days, so that column is drawn. */
+const PUBLISHED_VOLUME_COALESCE = "COALESCE(pred_lstm, pred_prophet, pred_sarimax, pred_holtwinters, pred_holts_linear, pred_xgboost)";
+/** Traffic champion name (traffic_study.json / served_volume_input.traffic_champion) -> its gold.ml_predictive_volume column. */
+function servedVolumeColumn(metadata: Record<string, unknown>): string {
+  const info = metadata.served_volume_input as { source?: unknown; traffic_champion?: unknown } | undefined;
+  const champion = typeof info?.traffic_champion === "string" ? info.traffic_champion.toLowerCase() : "";
+  if (!champion || (typeof info?.source === "string" && info.source.startsWith("PUBLISHED"))) return PUBLISHED_VOLUME_COALESCE;
+  if (champion.startsWith("prophet")) return "pred_prophet";
+  if (champion.startsWith("sarimax")) return "pred_sarimax";
+  if (champion.startsWith("lstm")) return "pred_lstm";
+  if (champion.startsWith("xgboost")) return "pred_xgboost";
+  if (champion.startsWith("holt-winters") || champion.startsWith("holtwinters")) return "pred_holtwinters";
+  if (champion.startsWith("holt")) return "pred_holts_linear";
+  return PUBLISHED_VOLUME_COALESCE;
+}
+const futureVolumeSql = (column: string) => `
+  SELECT forecast_date::text AS date, ${column}::float AS volume
   FROM gold.ml_predictive_volume
   WHERE is_future AND split_label = '80_20'
     AND forecast_date >= $1::date AND forecast_date <= $2::date
-    AND COALESCE(pred_lstm, pred_prophet, pred_sarimax, pred_holtwinters, pred_holts_linear, pred_xgboost) IS NOT NULL
+    AND ${column} IS NOT NULL
   ORDER BY forecast_date ASC
 `;
 
@@ -1150,17 +1203,13 @@ export type IncidentPredictiveAnchors = {
   // the custom-range picker reach into the Future band rather than stopping
   // at "today".
   maxForecastDate: string;
-  // Seasonal-naive (m=7) MAE over the FULL ml_daily_actuals series, computed
-  // once per request. MASE divides every window's MAE by this fixed number —
-  // if the denominator shrank along with the window, "MASE improved" would
-  // partly be an artifact of a smaller window rather than a better model.
-  seasonalNaiveMae: number | null;
+  // (seasonalNaiveMae, the lag-7 MAE over the whole 2022-2026 series, was the MASE denominator until 17 Nov 2026.
+  // It is gone: MASE is now scaled by the naive's error on the same scored days; see computeModelMetricsForModel.)
 };
 
 /**
  * Full-series aggregates needed before any window can be resolved: the
- * validation/future split dates, the earliest and latest data points, and the
- * fixed MASE denominator. Fetched once and handed to both the request-scoped
+ * validation/future split dates and the earliest and latest data points. Fetched once and handed to both the request-scoped
  * Zod schema (to refine from/to against real bounds) and
  * getIncidentPredictiveFromDb (to resolve the historical window) — never
  * queried twice for the same request.
@@ -1173,7 +1222,6 @@ export async function getIncidentPredictiveAnchors(): Promise<IncidentPredictive
       future_start: string | null;
       max_forecast_date: string | null;
       min_actual_date: string | null;
-      seasonal_naive_mae: string | number | null;
     }>(`
       WITH pred_anchors AS (
         SELECT
@@ -1184,17 +1232,10 @@ export async function getIncidentPredictiveAnchors(): Promise<IncidentPredictive
       ),
       actual_bounds AS (
         SELECT MIN(d)::text AS min_actual_date FROM ml_daily_actuals
-      ),
-      seasonal AS (
-        SELECT AVG(ABS(total - lag_total)) AS seasonal_naive_mae
-        FROM (
-          SELECT total, LAG(total, 7) OVER (ORDER BY d) AS lag_total FROM ml_daily_actuals
-        ) t
-        WHERE lag_total IS NOT NULL
       )
       SELECT pred_anchors.validation_start, pred_anchors.future_start, pred_anchors.max_forecast_date,
-             actual_bounds.min_actual_date, seasonal.seasonal_naive_mae
-      FROM pred_anchors, actual_bounds, seasonal
+             actual_bounds.min_actual_date
+      FROM pred_anchors, actual_bounds
     `);
     const r = rows[0];
     if (!r || !r.min_actual_date || !r.max_forecast_date) {
@@ -1214,7 +1255,6 @@ export async function getIncidentPredictiveAnchors(): Promise<IncidentPredictive
       futureStart: r.future_start,
       minActualDate: r.min_actual_date,
       maxForecastDate: r.max_forecast_date,
-      seasonalNaiveMae: r.seasonal_naive_mae != null ? Number(r.seasonal_naive_mae) : null,
     };
   } catch (error) {
     console.error("ML incident forecast anchors: query threw (connectivity or SQL error):", error);
@@ -1287,6 +1327,9 @@ type AlignedValidationRow = {
   actual: number;
   isWet: boolean | null;
   models: Record<string, number | null>;
+  // The "repeat last week" forecast for this day, made from the same rolling origin as the models' forecast
+  // (lastWeekNaiveByDate). Null when the week before the origin is not loaded.
+  naive: number | null;
 };
 
 type ComputedModelMetrics = {
@@ -1306,14 +1349,10 @@ type ComputedModelMetrics = {
  * the Range-independent full holdout — so the arithmetic can't drift between
  * the two call sites the way two independently-maintained blocks eventually do.
  */
-function computeModelMetricsForModel(
-  rows: AlignedValidationRow[],
-  modelKey: string,
-  seasonalNaiveMae: number | null
-): ComputedModelMetrics {
+function computeModelMetricsForModel(rows: AlignedValidationRow[], modelKey: string): ComputedModelMetrics {
   const pairs = rows
-    .map((r) => ({ actual: r.actual, predicted: r.models[modelKey] }))
-    .filter((p): p is { actual: number; predicted: number } => p.predicted != null);
+    .map((r) => ({ actual: r.actual, predicted: r.models[modelKey], naive: r.naive }))
+    .filter((p): p is { actual: number; predicted: number; naive: number | null } => p.predicted != null);
 
   const n = pairs.length;
   if (n === 0) return { mae: null, rmse: null, wmape: null, mase: null, r2: null, n: 0 };
@@ -1325,11 +1364,20 @@ function computeModelMetricsForModel(
   const ssTot = pairs.reduce((s, p) => s + (p.actual - mean) ** 2, 0);
   const mae = absErr / n;
 
+  /* MASE: this model's error over the "repeat last week" forecast's error on the SAME days (17 Nov 2026), the
+     trainer's own definition (incident_study.bucket_detail, mase_vs_last_week). It divided by the lag-7 error over
+     the whole 2022-2026 series (15.86) before, while the naive missed by 19.47 on the scored days, so Random
+     Forest read 0.923 against the trainer's 0.752 and GRU "does not beat last week" though it does (0.897). The
+     Traffic tab judges MASE against the naive on the same days for the same reason (23 Oct 2026). */
+  const scaled = pairs.filter((p): p is { actual: number; predicted: number; naive: number } => p.naive != null);
+  const naiveAbs = scaled.reduce((s, p) => s + Math.abs(p.actual - p.naive), 0);
+  const modelAbsOnScaled = scaled.reduce((s, p) => s + Math.abs(p.actual - p.predicted), 0);
+
   return {
     mae,
     rmse: Math.sqrt(sqErr / n),
     wmape: sumActual > 0 ? (absErr / sumActual) * 100 : null,
-    mase: seasonalNaiveMae != null && seasonalNaiveMae > 0 ? mae / seasonalNaiveMae : null,
+    mase: naiveAbs > 0 ? modelAbsOnScaled / naiveAbs : null,
     // Guarded rather than left to swing on a handful of days — see
     // MIN_R2_SAMPLE_SIZE.
     r2: n < MIN_R2_SAMPLE_SIZE ? null : ssTot > 0 ? 1 - sqErr / ssTot : null,
@@ -1592,7 +1640,8 @@ function toAlignedValidationRows(
   wetByDate: Map<string, boolean>,
   availableModels: readonly (typeof INCIDENT_MODELS)[number][],
   includeVolume: boolean,
-  includeWeather: boolean
+  includeWeather: boolean,
+  naiveByDate: Map<string, number> = new Map()
 ): AlignedValidationRow[] {
   return rows
     .filter((p) => p.prediction_type === "validation" && actualByDate.has(p.date))
@@ -1600,10 +1649,46 @@ function toAlignedValidationRows(
       date: p.date,
       actual: actualByDate.get(p.date)!,
       isWet: wetByDate.get(p.date) ?? null,
+      naive: naiveByDate.get(p.date) ?? null,
       models: Object.fromEntries(
         availableModels.map((m) => [m.key, pickPrediction(p, m, includeVolume, includeWeather)])
       ),
     }));
+}
+
+/**
+ * The "repeat last week" forecast for every scored day, exactly as the trainer makes it (rolling_eval.
+ * baseline_last_week): from each rolling origin, the last 7 observed days repeated, so day h after the origin
+ * takes the count of origin - 7 + ((h - 1) mod 7). The origins are the training run's own
+ * (metadata.evaluation.origin_dates, step_days apart). Without them, each day falls back to the same weekday a
+ * week earlier, which is the same thing for days 1-7.
+ */
+function lastWeekNaiveByDate(
+  scoredDates: string[],
+  actualByDate: Map<string, number>,
+  evaluation: { origin_dates?: unknown; step_days?: unknown } | undefined
+): Map<string, number> {
+  const origins = (Array.isArray(evaluation?.origin_dates) ? (evaluation!.origin_dates as unknown[]) : [])
+    .filter((d): d is string => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  const stepDays = evaluation?.step_days;
+  const step = typeof stepDays === "number" && stepDays > 0 ? stepDays : 14;
+  const dayIndex = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / 86_400_000;
+  const out = new Map<string, number>();
+  for (const d of scoredDates) {
+    let src = subtractDays(d, 7);
+    if (origins.length > 0) {
+      let origin: string | null = null;
+      for (const o of origins) if (o <= d) origin = o;
+      if (origin == null) continue;
+      const h = dayIndex(d) - dayIndex(origin); // 0-based: the origin itself is day 1
+      if (h >= step) continue;
+      src = subtractDays(origin, 7 - (h % 7));
+    }
+    const v = actualByDate.get(src);
+    if (v != null) out.set(d, v);
+  }
+  return out;
 }
 
 export function buildIncidentPredictiveResponse(
@@ -1645,7 +1730,7 @@ export function buildIncidentPredictiveResponse(
   // Rolling-origin long-horizon accuracy (measure_incident_horizon_accuracy.py).
   // Optional/defaulted to [] for the same reason volumeByDate/locationRows are.
   horizonAccuracy: IncidentPredictiveResult["horizonAccuracy"] = [],
-  // The traffic module's volume forecast for Future days (FUTURE_VOLUME_SQL). Optional like volumeByDate.
+  // The traffic forecast the models read on Future days (futureVolumeSql). Optional like volumeByDate.
   volumeForecastByDate: Map<string, number> = new Map()
 ): IncidentPredictiveResult {
   const actualByDate = new Map(actuals.map((r) => [r.date, Number(r.total)]));
@@ -1796,8 +1881,17 @@ export function buildIncidentPredictiveResponse(
   const scoredOnly = <T extends { date: string }>(rows: T[]): T[] =>
     excludedScoringDates.size === 0 ? rows : rows.filter((r) => !excludedScoringDates.has(r.date));
 
+  // The naive needs the week before each origin, which the Range can leave out: holdoutActuals (from two weeks
+  // before the first validation day) and the Range's own actuals together cover it.
+  const holdoutActualByDate = new Map(holdoutActuals.map((r) => [r.date, Number(r.total)]));
+  const naiveActuals = new Map([...holdoutActualByDate, ...actualByDate]);
+  const naiveByDate = lastWeekNaiveByDate(
+    [...predictions, ...holdoutPredictions].filter((p) => p.prediction_type === "validation").map((p) => p.date),
+    naiveActuals,
+    metadata.evaluation as { origin_dates?: unknown; step_days?: unknown } | undefined
+  );
   const rangeAligned = scoredOnly(
-    toAlignedValidationRows(predictions, actualByDate, wetByDate, availableModels, includeVolume, includeWeather)
+    toAlignedValidationRows(predictions, actualByDate, wetByDate, availableModels, includeVolume, includeWeather, naiveByDate)
   );
   const weatherFilteredRangeAligned =
     filters.weather === "all" ? rangeAligned : rangeAligned.filter((r) => r.isWet === (filters.weather === "wet"));
@@ -1821,7 +1915,7 @@ export function buildIncidentPredictiveResponse(
 
   const modelMetrics = availableModels
     .map((m) => {
-      const computed = computeModelMetricsForModel(weatherFilteredRangeAligned, m.key, anchors.seasonalNaiveMae);
+      const computed = computeModelMetricsForModel(weatherFilteredRangeAligned, m.key);
       const isChampion = m.key === championModel;
       const fallback = rawComparison.find((r) => String(r.model) === m.key);
 
@@ -1876,7 +1970,6 @@ export function buildIncidentPredictiveResponse(
   // this deliberately does NOT reuse the Range-bounded `predictions` above;
   // holdoutPredictions/holdoutActuals carry the full holdout independent of
   // whatever the user picked in the Range control.
-  const holdoutActualByDate = new Map(holdoutActuals.map((r) => [r.date, Number(r.total)]));
   const holdoutAligned = scoredOnly(
     toAlignedValidationRows(holdoutPredictions, holdoutActualByDate, wetByDate, availableModels, includeVolume, includeWeather)
   );
@@ -1891,7 +1984,7 @@ export function buildIncidentPredictiveResponse(
 
           const models = availableModels
             .map((m) => {
-              const computed = computeModelMetricsForModel(rows, m.key, null);
+              const computed = computeModelMetricsForModel(rows, m.key);
               if (computed.n === 0) return null;
               return {
                 model: m.key as string,
@@ -2076,10 +2169,34 @@ async function getAccidentSplit(
       byDate.set(r.date, cur);
     }
     const meta = metaRes.rows[0].metadata_json;
+    /* The accident model against its best simple baseline, from the training run (17 Nov 2026), so the card
+       states the current result instead of a fixed sentence from an older run. Carried inside `metrics` because
+       that is the open record the response schema passes through. */
+    const ev = (meta.evaluation ?? {}) as Record<string, unknown>;
+    const comparison = Array.isArray(meta.model_comparison) ? (meta.model_comparison as Record<string, unknown>[]) : [];
+    const scoreOf = (name: unknown) => {
+      const v = comparison.find((r) => r.model === name)?.score_mae;
+      return typeof v === "number" && Number.isFinite(v) ? v : null;
+    };
+    const ci = Array.isArray(ev.vs_baseline_ci) && ev.vs_baseline_ci.every((v) => typeof v === "number") ? (ev.vs_baseline_ci as number[]) : null;
+    const vsBaseline =
+      typeof ev.best_baseline === "string"
+        ? {
+            baseline: ev.best_baseline,
+            championIsBaseline: meta.champion_is_baseline === true,
+            significant: typeof ev.vs_baseline_significant === "boolean" ? ev.vs_baseline_significant : null,
+            ci,
+            championScoreMae: scoreOf(meta.champion_model),
+            baselineScoreMae: scoreOf(ev.best_baseline),
+            usesVolume: meta.uses_volume === true,
+            usesWeather: meta.uses_weather === true,
+          }
+        : null;
+    const metrics = (meta.metrics as Record<string, unknown> | undefined) ?? null;
     return {
       championModel: (meta.champion_model as string | undefined) ?? null,
       trainedAt: metaRes.rows[0].created_at ? new Date(metaRes.rows[0].created_at).toISOString() : null,
-      metrics: (meta.metrics as Record<string, unknown> | undefined) ?? null,
+      metrics: metrics || vsBaseline ? { ...(metrics ?? {}), vs_baseline: vsBaseline } : null,
       daily: Array.from(byDate.entries())
         .sort(([a], [b]) => (a < b ? -1 : 1))
         .map(([date, v]) => ({ date, actual: v.actual, predicted: v.predicted })),
@@ -2195,10 +2312,12 @@ export async function getIncidentPredictiveFromDb(
       ]),
       // Full holdout, independent of Range — see the doc comment on
       // weatherMetrics in buildIncidentPredictiveResponse for why.
+      // From two weeks before validation starts: the "repeat last week" naive behind MASE reads the week before
+      // the first rolling origin. Only validation days are ever scored, so the extra days change nothing else.
       anchors.validationStart
         ? db.query<DailyActualRow>(
             `SELECT d::text AS date, total FROM ml_daily_actuals
-             WHERE d >= $1::date AND d < $2::date
+             WHERE d >= $1::date - 14 AND d < $2::date
              ORDER BY d ASC`,
             [anchors.validationStart, anchors.futureStart ?? anchors.maxForecastDate]
           )
@@ -2224,7 +2343,10 @@ export async function getIncidentPredictiveFromDb(
       // shared helper already uses for its search box.
       searchExitsInDb(""),
       anchors.futureStart
-        ? db.query<{ date: string; volume: string | number | null }>(FUTURE_VOLUME_SQL, [anchors.futureStart, anchors.maxForecastDate])
+        ? db.query<{ date: string; volume: string | number | null }>(
+            futureVolumeSql(servedVolumeColumn(metaRes.rows[0].metadata_json ?? {})),
+            [anchors.futureStart, anchors.maxForecastDate]
+          )
         : Promise.resolve({ rows: [] as { date: string; volume: string | number | null }[] }),
     ]);
 

@@ -192,6 +192,9 @@ export const getForecast48hHandler = async (req: Request, res: Response) => {
   res.json({ success: true, data });
 };
 
+// Today's date in Manila, the dashboard's day. toISOString() gives the UTC day, which before 8 AM is yesterday.
+const manilaToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+
 // [REQ-01, DEV-01, DEV-02, DEV-03] GET /api/v1/traffic/volume-adt
 export const getVolumeAdt = async (_req: Request, res: Response) => {
   
@@ -216,7 +219,7 @@ export const getVolumeAdt = async (_req: Request, res: Response) => {
       success: true, 
       source: "database",
       data: {
-        date: new Date().toISOString().split('T')[0],
+        date: manilaToday(),
         totalAdt,
         directionalFlow: flowRows,
         classDistribution
@@ -226,7 +229,7 @@ export const getVolumeAdt = async (_req: Request, res: Response) => {
 
   // Graceful Mock Fallback
   const mockData = {
-    date: new Date().toISOString().split('T')[0],
+    date: manilaToday(),
     totalAdt: 350000,
     directionalFlow: [
       { direction: "NB", total: 180000 },

@@ -5179,6 +5179,9 @@ body {
   padding: 2.5px 0;
   color: var(--text-secondary);
 }
+/* The speed range beside a map colour (MapLegend SPEED_RANGE): quieter than the label. */
+.wz-legend-sub { opacity: 0.65; font-size: 0.92em; white-space: nowrap; }
+
 
 /* Density hues are fixed: they mean the same thing in both themes. */
 .wz-line { width: 22px; height: 4px; border-radius: 2px; flex: none; }

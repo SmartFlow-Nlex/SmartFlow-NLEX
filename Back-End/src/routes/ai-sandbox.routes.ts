@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../middleware/error.middleware.js";
-import { triggerSimulation, configLanes, getResults } from "../controllers/ai-sandbox.controller.js";
+import { triggerSimulation } from "../controllers/ai-sandbox.controller.js";
 import { parseSandboxCommand, commandStatus, scenarioContext, demandExits, demandProfile, plazaFlows, hotspots, eventDay } from "../controllers/sandbox-command.controller.js";
 import { authenticateToken, authorizeRoles } from "../middleware/auth.middleware.js";
 import { aiLimiter } from "../middleware/ai-limit.js";
@@ -32,7 +32,7 @@ router.use(authenticateToken);
 router.use(authorizeRoles(["data-analyst", "tcc-operator"]));
 
 router.post("/simulate", asyncHandler(triggerSimulation));
-router.post("/config-lanes", asyncHandler(configLanes));
-router.get("/results/:id", asyncHandler(getResults));
+/* POST /config-lanes and GET /results/:id were removed (17 Nov 2026): mocks nothing called, the first answering
+   "Lanes configured successfully" to anything valid and the second inventing a completed result for any id. */
 
 export default router;

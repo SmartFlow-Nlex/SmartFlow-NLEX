@@ -3318,13 +3318,20 @@ export class TrafficSim {
 
   metrics(): Metrics {
     const n = this.vehicles.length;
-    const avgV = n ? this.vehicles.reduce((s, v) => s + v.v, 0) / n : 0;
-    const stopped = this.vehicles.filter((v) => v.v < 1).length;
+    /* Speed, stopped vehicles, queue and density are the traffic's: the vehicles the road is serving. A wreck and a
+     * parked responder stand still by design, so counting them read a collision's tow phase as 52.3 km/h with 7
+     * stopped where the traffic itself ran at 65.3 with none stopped, and set off the "congestion is building"
+     * advice with no car held up. Throughput already counted traffic alone (step). The agent count stays everything
+     * on the road. */
+    const traffic = this.vehicles.filter((v) => v.role === "traffic");
+    const nt = traffic.length;
+    const avgV = nt ? traffic.reduce((s, v) => s + v.v, 0) / nt : 0;
+    const stopped = traffic.filter((v) => v.v < 1).length;
 
     // longest standing queue (contiguous slow vehicles, any lane), in metres
     let longestQueue = 0;
     for (let l = 0; l < this.cfg.laneCount; l++) {
-      const slow = this.vehicles
+      const slow = traffic
         .filter((v) => v.lane === l && v.v < 3)
         .sort((a, b) => a.x - b.x);
       let runStart: number | null = null;
@@ -3364,7 +3371,7 @@ export class TrafficSim {
       activeAgents: n,
       avgSpeedKmh: avgV * 3.6,
       throughputPerMin: throughput,
-      densityPerKmLane: (n / (this.cfg.length / 1000)) / this.cfg.laneCount,
+      densityPerKmLane: (nt / (this.cfg.length / 1000)) / this.cfg.laneCount,
       stoppedCount: stopped,
       longestQueueM: longestQueue,
       co2RatePerMin,

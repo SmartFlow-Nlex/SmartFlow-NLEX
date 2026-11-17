@@ -39,7 +39,7 @@ export type DemandProfile = {
 };
 
 /* Kept in memory for six hours. It aggregates all 1.1M hourly rows of a table
-   that only changes when toll data is reloaded (it ends Dec 2025), and took
+   that only changes when toll data is reloaded (it ends 24 May 2026), and took
    ~26 s alone and close to a minute on a cold, busy load. */
 const DEMAND_EXITS_TTL_MS = 6 * 3_600_000;
 let demandExitsCache: { at: number; value: { exits: unknown[]; source: string } } | null = null;
@@ -78,18 +78,26 @@ export async function getDemandProfile(
 
   /* Direction is NULL for some interchanges in this table (single-carriageway
    * plazas and the Harbor Link), so it is matched with IS NOT DISTINCT FROM
-   * rather than = , which would silently return nothing for exactly those. */
+   * rather than = , which would silently return nothing for exactly those.
+   *
+   * Each hour of each day is summed first and the hours then averaged. An
+   * exit can hold more than one row per hour (the Bocaue Barrier southbound
+   * has an Entry and an Exit row in every hour), and averaging the ROWS read
+   * it at half its hourly volume: 1,428 veh/h at 08:00 against the 2,857 that
+   * actually pass. A DB error throws, for the route to answer 503. */
   const r = await db.query(
     `SELECT hour,
-            AVG(total)::float             AS veh_h,
-            AVG(class_1)::float           AS c1,
-            AVG(class_2)::float           AS c2,
-            AVG(class_3)::float           AS c3,
-            COUNT(DISTINCT date)::int     AS days
-     FROM gold.fact_traffic_hourly
-     WHERE exit_canonical = $1
-       AND ($2::text IS NULL OR direction IS NOT DISTINCT FROM $2)
-       AND total IS NOT NULL
+            AVG(v)::float                 AS veh_h,
+            AVG(c1)::float                AS c1,
+            AVG(c2)::float                AS c2,
+            AVG(c3)::float                AS c3,
+            COUNT(*)::int                 AS days
+     FROM (SELECT date, hour, SUM(total) AS v, SUM(class_1) AS c1, SUM(class_2) AS c2, SUM(class_3) AS c3
+             FROM gold.fact_traffic_hourly
+            WHERE exit_canonical = $1
+              AND ($2::text IS NULL OR direction IS NOT DISTINCT FROM $2)
+              AND total IS NOT NULL
+            GROUP BY date, hour) d
      GROUP BY hour
      ORDER BY hour`,
     [exit, direction ?? null],

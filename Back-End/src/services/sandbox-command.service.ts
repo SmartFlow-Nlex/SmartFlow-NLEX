@@ -190,9 +190,12 @@ export { GlmError as CommandParseError, isGlmConfigured };
 /** The Lanes sliders (page.tsx). */
 const LANES_MIN = 2;
 const LANES_MAX = 5;
-/** The Inflow sliders (page.tsx). */
-const INFLOW_MIN = 1000;
-const INFLOW_MAX = 8000;
+/** The Inflow sliders (page.tsx, useDirectionSim.inflowSliderRange): from 100 veh/h up to 2,200 per lane, or 8,000
+ *  where that is more. */
+const INFLOW_MIN = 100;
+const INFLOW_PER_LANE_MAX = 2200;
+const INFLOW_MAX_FLOOR = 8000;
+const inflowMaxFor = (lanes: number | null) => Math.max(INFLOW_MAX_FLOOR, (lanes ?? 0) * INFLOW_PER_LANE_MAX);
 /** MIN_SEG_M / MAX_SEG_M in page.tsx; a new route opens on its first DEFAULT_SEG_M. */
 const WINDOW_MIN_KM = 0.1;
 const WINDOW_MAX_KM = 3;
@@ -200,8 +203,9 @@ const DEFAULT_WINDOW_KM = 0.6;
 /** An event's stretch: at least this long (MIN_EVENT_STRETCH_M in the scenario adapter), and short enough to show whole. */
 const STRETCH_MIN_M = 20;
 const STRETCH_MAX_KM = WINDOW_MAX_KM - 0.2;
+/** The Speed limit zone slider (page.tsx): 20 to 95 km/h, its 100 meaning no limit. */
 const SPEED_MIN = 20;
-const SPEED_MAX = 120;
+const SPEED_MAX = 95;
 /** An event starts within four hours of now. */
 const START_MAX_MIN = 240;
 /** ScenarioPanel's default for a manual duration. */
@@ -334,7 +338,7 @@ const ACTION_LIST = `  {"type":"set_route","originExitId":<id>,"destinationExitI
   {"type":"set_view","view":"Both"|"NB"|"SB"}
   {"type":"close_lane","direction":"NB"|"SB","lanes":[<lane>],"fromKm":<km>|null,"toKm":<km>|null}
   {"type":"open_lane","direction":"NB"|"SB","lanes":[<lane>]}
-  {"type":"set_speed_limit","direction":"NB"|"SB","kmh":<20-120>|null,"fromKm":<km>|null,"toKm":<km>|null}
+  {"type":"set_speed_limit","direction":"NB"|"SB","kmh":<20-95>|null,"fromKm":<km>|null,"toKm":<km>|null}
   {"type":"add_event","direction":"NB"|"SB","family":"<FAMILY>","variant":{<variant fields>},
      "lane":<lane>|null,"extraLanes":[<lane>],"km":<km>|null,"fromKm":<km>|null,"toKm":<km>|null,
      "placeId":"<id from PLACES>"|null,"site":"booth"|"pump"|"approach"|null,"stations":[<0-based>],
@@ -343,7 +347,7 @@ const ACTION_LIST = `  {"type":"set_route","originExitId":<id>,"destinationExitI
   {"type":"clear_events","direction":"NB"|"SB"}                  every scenario event and incident on that carriageway
   {"type":"set_reallocation","toward":"NB"|"SB"|null,"fromKm":<km>|null,"toKm":<km>|null}
   {"type":"set_lane_count","direction":"NB"|"SB","lanes":<2-5>|"auto"}
-  {"type":"set_inflow","direction":"NB"|"SB","vehPerHour":<1000-8000>|"observed"}
+  {"type":"set_inflow","direction":"NB"|"SB","vehPerHour":<100-13200>|"observed"}
   {"type":"set_time","hour":<0-23>,"minute":<0-59>}
   {"type":"set_forecast_day","date":"<YYYY-MM-DD from FORECAST DAYS>"}
   {"type":"capture_baseline","direction":"NB"|"SB"}
@@ -737,7 +741,7 @@ function checkActions(raw: unknown, n: Norm, warnings: string[]): Action[] {
           const v = num(a.kmh);
           if (v === null) break;
           kmh = clamp(Math.round(v), SPEED_MIN, SPEED_MAX);
-          if (kmh !== Math.round(v)) warnings.push(`Speed limit clamped to ${kmh} km/h.`);
+          if (kmh !== Math.round(v)) warnings.push(`Speed limit clamped to ${kmh} km/h (the zone runs ${SPEED_MIN}-${SPEED_MAX}; no limit is "null").`);
         }
         const s = kmh === null ? null : stretchOnScreen(span(a.fromKm, a.toKm, "Speed limit"), "Speed limit");
         out.push({ type: "set_speed_limit", direction: d, kmh, fromKm: s?.fromKm ?? null, toKm: s?.toKm ?? null });
@@ -1026,8 +1030,9 @@ function checkActions(raw: unknown, n: Norm, warnings: string[]): Action[] {
         }
         const v = num(a.vehPerHour);
         if (v === null) break;
-        const c = clamp(Math.round(v / 100) * 100, INFLOW_MIN, INFLOW_MAX);
-        if (Math.abs(c - v) >= 100) warnings.push(`Inflow clamped to ${c} veh/h (the sandbox runs ${INFLOW_MIN}-${INFLOW_MAX}).`);
+        const max = inflowMaxFor(lanes[d]);
+        const c = clamp(Math.round(v / 100) * 100, INFLOW_MIN, max);
+        if (Math.abs(c - v) >= 100) warnings.push(`Inflow clamped to ${c} veh/h (the sandbox runs ${INFLOW_MIN}-${max} on ${lanes[d] ?? "these"} lanes).`);
         out.push({ type: "set_inflow", direction: d, vehPerHour: c });
         break;
       }

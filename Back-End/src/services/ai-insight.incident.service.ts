@@ -1,7 +1,8 @@
 import { chat, extractJson, GlmError } from "../lib/glm.client.js";
 import { fmtKm } from "../lib/km-post.js";
 // km values arriving from the page are MEASURED; prompts print the official post (lib/km-post.ts).
-import { validate, type Insight } from "./ai-insight.service.js";
+import { checkFigures, validate, type Insight } from "./ai-insight.service.js";
+import { lineFacts, sectionFacts } from "./ai-figure-check.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════
    AI INSIGHT — THE INCIDENT MODULE'S NON-FORECAST MODELS
@@ -236,17 +237,27 @@ export async function generateIncidentModelsInsight(
   if ((req.severity.models ?? []).length === 0 && !req.clearance && !req.secondaryRisk) {
     throw new GlmError("No incident model metrics were supplied.", "bad_model_output");
   }
+  const user = buildIncidentModelsMessage(req);
   const content = await chat({
     system: INCIDENT_MODELS_SYSTEM,
-    user: buildIncidentModelsMessage(req),
+    user,
     json: true,
     maxTokens: 1600,
     temperature: 0.3,
   });
-  return validate(extractJson(content), {
-    quantity: "incidents",
-    metrics: roster,
-    horizonDays: 1,
+  // Every figure in the reply must be in the message (checkFigures); 0.5 is the prompt's coin toss.
+  return checkFigures(validate(extractJson(content), { quantity: "incidents", metrics: roster, horizonDays: 1 }), {
+    endpoint: "incident-models",
+    user,
+    roster: roster.map((r) => r.model),
+    extra: [0.5],
+    summary: req.severity.champion
+      ? `The severity model in use is ${req.severity.champion}. The recorded figures for each model are listed below.`
+      : null,
+    verdicts: {
+      [CLEARANCE_MODEL_NAME]: sectionFacts(CLEARANCE_MODEL_NAME, user),
+      [SECONDARY_MODEL_NAME]: sectionFacts(SECONDARY_MODEL_NAME, user),
+    },
   });
 }
 
@@ -329,17 +340,29 @@ export async function generateClearanceInsight(req: ClearanceInsightRequest): Pr
   if (req.groups.length === 0) {
     throw new GlmError("No clearance groups were supplied.", "bad_model_output");
   }
+  const user = buildClearanceMessage(req);
   const content = await chat({
     system: CLEARANCE_SYSTEM,
-    user: buildClearanceMessage(req),
+    user,
     json: true,
     maxTokens: 1400,
     temperature: 0.3,
   });
-  return validate(extractJson(content), {
+  const out = validate(extractJson(content), {
     quantity: "incidents",
     metrics: req.groups.map((g) => ({ model: g.group })),
     horizonDays: 1,
+  });
+  const slowest = req.groups
+    .filter((g) => !g.isBaseline && g.medianMin != null && Number.isFinite(g.medianMin))
+    .sort((a, b) => b.medianMin! - a.medianMin!)[0];
+  return checkFigures(out, {
+    endpoint: "clearance",
+    user,
+    roster: req.groups.map((g) => g.group),
+    summary: slowest
+      ? `By ${req.dimension}, ${slowest.group} has the longest median clearance, ${num(slowest.medianMin, 0)} min.`
+      : null,
   });
 }
 
@@ -405,17 +428,29 @@ export async function generateBreakdownResponseInsight(req: BreakdownResponseIns
   if (req.groups.length === 0) {
     throw new GlmError("No response-time groups were supplied.", "bad_model_output");
   }
+  const user = buildBreakdownResponseMessage(req);
   const content = await chat({
     system: BREAKDOWN_RESPONSE_SYSTEM,
-    user: buildBreakdownResponseMessage(req),
+    user,
     json: true,
     maxTokens: 1400,
     temperature: 0.3,
   });
-  return validate(extractJson(content), {
+  const out = validate(extractJson(content), {
     quantity: "incidents",
     metrics: req.groups.map((g) => ({ model: g.group })),
     horizonDays: 1,
+  });
+  const slowest = req.groups
+    .filter((g) => g.predictedMedianMin != null && Number.isFinite(g.predictedMedianMin))
+    .sort((a, b) => b.predictedMedianMin! - a.predictedMedianMin!)[0];
+  return checkFigures(out, {
+    endpoint: "breakdown-response",
+    user,
+    roster: req.groups.map((g) => g.group),
+    summary: slowest
+      ? `By ${req.dimension}, the model predicts the longest median response for ${slowest.group}, ${slowest.predictedMedianMin!.toFixed(0)} min.`
+      : null,
   });
 }
 
@@ -458,6 +493,10 @@ export type CorridorRiskInsightRequest = {
   } | null;
   spatialLstm?: {
     mae?: number | null;
+    /** Set when the grid shows a baseline because no model beat it in the rolling test; `mae` is then its error. */
+    servedModel?: string | null;
+    /** The Spatial LSTM's own held-out MAE, sent with servedModel. */
+    lstmMae?: number | null;
     poissonDeviance?: number | null;
     n?: number | null;
     epochs?: number | null;
@@ -557,6 +596,14 @@ function buildCorridorRiskMessage(req: CorridorRiskInsightRequest): string {
     lines.push(
       "A genuine forecast, held out in time: it ranks exits by expected incidents over the next 24 hours.",
     );
+    const servedModel = typeof l.servedModel === "string" ? l.servedModel.slice(0, 80) : null;
+    if (servedModel) {
+      lines.push(
+        `SERVED: the numbers below come from a baseline, the ${servedModel}, because no model beat it in the rolling ` +
+          `test${num(l.lstmMae, 3) ? ` (the Spatial LSTM's held-out MAE was ${num(l.lstmMae, 3)})` : ""}. ` +
+          "Say so plainly in this model's verdict; do not credit the Spatial LSTM with this ranking.",
+      );
+    }
     const fit = [
       num(l.mae, 3) ? `held-out MAE ${num(l.mae, 3)} incidents per exit` : null,
       num(l.poissonDeviance, 2) ? `Poisson deviance ${num(l.poissonDeviance, 2)}` : null,
@@ -589,16 +636,30 @@ export async function generateCorridorRiskInsight(req: CorridorRiskInsightReques
     ...(req.gwr ? [{ model: GWR_MODEL_NAME }] : []),
     ...(req.spatialLstm ? [{ model: SPATIAL_LSTM_MODEL_NAME }] : []),
   ];
+  const user = buildCorridorRiskMessage(req);
   const content = await chat({
     system: CORRIDOR_RISK_SYSTEM,
-    user: buildCorridorRiskMessage(req),
+    user,
     json: true,
     maxTokens: 2000,
     temperature: 0.3,
   });
   // Both spatial models look one day ahead: the LSTM forecasts the next 24
   // hours, and the GWR is not a forecast at all.
-  return validate(extractJson(content), { quantity: "incidents", metrics: names, horizonDays: 1 });
+  const out = validate(extractJson(content), { quantity: "incidents", metrics: names, horizonDays: 1 });
+  const first = req.spatialLstm?.topExits?.find((e) => e.rank === 1) ?? req.spatialLstm?.topExits?.[0];
+  return checkFigures(out, {
+    endpoint: "corridor-risk",
+    user,
+    roster: names.map((n) => n.model),
+    summary: first
+      ? `Ranked first for the next 24 hours: ${first.exitName}, ${num(first.predictedIncidents, 2)} incidents expected. The local risk map (GWR) describes where risk sits and forecasts nothing.`
+      : null,
+    verdicts: {
+      [GWR_MODEL_NAME]: sectionFacts(GWR_MODEL_NAME, user, 2),
+      [SPATIAL_LSTM_MODEL_NAME]: sectionFacts(SPATIAL_LSTM_MODEL_NAME, user, 3),
+    },
+  });
 }
 
 /* ── 5. Probability of an unusually high-incident day ─────────────────────────
@@ -712,16 +773,27 @@ export async function generateHighIncidentDayInsight(
   if (req.auc == null && req.baseRate == null && !req.rainScenarios?.length) {
     throw new GlmError("The high-incident-day model supplied no figures.", "bad_model_output");
   }
+  const user = buildHighIncidentDayMessage(req);
   const content = await chat({
     system: HIGH_DAY_SYSTEM,
-    user: buildHighIncidentDayMessage(req),
+    user,
     json: true,
     maxTokens: 1200,
     temperature: 0.3,
   });
-  return validate(extractJson(content), {
+  const out = validate(extractJson(content), {
     quantity: "incidents",
     metrics: [{ model: HIGH_DAY_MODEL_NAME }],
     horizonDays: 1,
+  });
+  const fit = lineFacts("FIT:", user);
+  return checkFigures(out, {
+    endpoint: "high-incident-day",
+    user,
+    roster: [HIGH_DAY_MODEL_NAME],
+    // 0.5 and 0.50: the prompt's coin toss.
+    extra: [0.5],
+    summary: fit ? `The high-incident-day model, as recorded: ${fit}` : null,
+    verdicts: { [HIGH_DAY_MODEL_NAME]: fit },
   });
 }

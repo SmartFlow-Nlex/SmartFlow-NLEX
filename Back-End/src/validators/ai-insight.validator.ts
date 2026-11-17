@@ -27,7 +27,8 @@ export const ModelNarrativeSchema = z.object({
   // seven, so anything beyond this is a malformed client rather than a real
   // selection, and each row costs prompt tokens.
   metrics: z.array(MetricRowSchema).min(1).max(12),
-  horizonDays: z.number().int().min(1).max(365),
+  // Nullable: a card whose horizon is unknown sends null, and the prompt then states none (CO2 states its tested protocol instead).
+  horizonDays: z.number().int().min(1).max(365).nullable().optional(),
   scoredDays: z.number().int().nullable().optional(),
   windowStart: z.string().max(40).nullable().optional(),
   windowEnd: z.string().max(40).nullable().optional(),
@@ -149,7 +150,9 @@ export const EventSurgeNarrativeSchema = z.object({
  *
  * The Forecasted Fleet Composition card: a daily forecast of the SHARE of each
  * toll class (a composition that sums to 1), ranked by Aitchison distance and
- * benchmarked against persistence (assume tomorrow's mix is today's). Neither
+ * benchmarked against the best of its baselines (its skill is Aitchison over
+ * that baseline's; validatedDays is not used: the protocol is read from the
+ * warehouse, see testingProtocol in ai-insight.service.ts). Neither
  * the forecast nor the congestion schema fits a composition, so it has its own.
  */
 export const FleetMixNarrativeSchema = z.object({
@@ -376,6 +379,9 @@ export const CorridorRiskNarrativeSchema = z.object({
   spatialLstm: z
     .object({
       mae: z.number().min(0).max(100000).nullable().optional(),
+      // Set when the grid shows a baseline because no model beat it (lib/hotspot-served.ts on the dashboard).
+      servedModel: z.string().max(80).nullable().optional(),
+      lstmMae: z.number().min(0).max(100000).nullable().optional(),
       poissonDeviance: z.number().min(0).max(1000000).nullable().optional(),
       n: z.number().int().min(0).max(10000000).nullable().optional(),
       epochs: z.number().int().min(0).max(100000).nullable().optional(),

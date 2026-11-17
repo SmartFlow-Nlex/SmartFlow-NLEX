@@ -40,7 +40,11 @@ type Strategy = {
   /** How the blockage floors were set and how many incidents stand behind them. */
   floorNote?: string;
   /** The saving carried forward over the incident forecast's validated days; null with a reason otherwise. */
-  projection?: { tonnes: number; from: string; to: string; days: number; forecastIncidents: number; basis: string } | null;
+  /** `spans`: the stretches of dates counted, only the forecast days its accuracy study passes, so from-to can skip days. */
+  projection?: {
+    tonnes: number; from: string; to: string; days: number; forecastIncidents: number; basis: string;
+    spans?: { from: string; to: string }[];
+  } | null;
   projectionNote?: string;
 };
 
@@ -63,6 +67,10 @@ type HeavyWindow = {
   basis?: string;
   /** Set, with no action, when the window would be over half the day. */
   noWindow?: string;
+  /** Set when a forecast was read but not used for the window (its top hours are not busy hours, or it is flat). */
+  fallbackNote?: string;
+  /** A caution worded for the window's time of day, from the service. */
+  check?: string;
 };
 type Tolling = {
   hours: string;
@@ -129,6 +137,18 @@ function dayRange(from: string, to: string): string {
   if (a.getUTCMonth() === b.getUTCMonth() && a.getUTCFullYear() === b.getUTCFullYear())
     return `${a.getUTCDate()}–${fmt(b, { day: "numeric", month: "short", year: "numeric" })}`;
   return `${fmt(a, { day: "numeric", month: "short" })} – ${fmt(b, { day: "numeric", month: "short", year: "numeric" })}`;
+}
+
+/* The days a projection leaves out between its spans: "8–23 Jun 2026" for the forecast days that fail their test. */
+function gapsOf(spans: { from: string; to: string }[]): string[] {
+  const day = (iso: string, by: number) => new Date(Date.parse(`${iso}T00:00:00Z`) + by * 86_400_000).toISOString().slice(0, 10);
+  const out: string[] = [];
+  for (let i = 1; i < spans.length; i++) {
+    const a = day(spans[i - 1].to, 1);
+    const b = day(spans[i].from, -1);
+    if (a <= b) out.push(dayRange(a, b));
+  }
+  return out;
 }
 
 /* The tonnes are over the Range, not per year. "A year" was printed whatever
@@ -331,8 +351,16 @@ export default function PrescriptiveEmissionsPanel({
             {s.projection ? (
               <>
                 <b>~{fmtT(s.projection.tonnes)} <small>tonnes</small></b>
+                {/* The days counted, not first to last (17 Nov 2026: "25 May – 22 Aug" read as 90 days while the 74
+                    the forecast's accuracy study passes were counted, leaving out 8–23 Jun). */}
                 <span title={s.projection.basis}>
-                  {dayRange(s.projection.from, s.projection.to)} · {s.projection.forecastIncidents.toLocaleString()} incidents forecast
+                  {(s.projection.spans?.length ? s.projection.spans : [{ from: s.projection.from, to: s.projection.to }])
+                    .map((p) => dayRange(p.from, p.to))
+                    .join(" and ")}{" "}
+                  ({s.projection.days} days) · {s.projection.forecastIncidents.toLocaleString()} incidents forecast
+                  {gapsOf(s.projection.spans ?? []).length > 0 && (
+                    <> · {gapsOf(s.projection.spans ?? []).join(", ")} left out (the incident forecast fails its accuracy test there)</>
+                  )}
                 </span>
               </>
             ) : (
@@ -406,9 +434,15 @@ export default function PrescriptiveEmissionsPanel({
               <dt>Incidents</dt>
               <dd>{data.basis.incidentsCounted.toLocaleString()} that blocked a lane, each for as long as it stayed blocked</dd>
             </div>
+            {/* Not "same length, same hour" (17 Nov 2026): blockages of an hour or more, which hold most of the
+                saving, are set against their length band at any hour, since too few share an hour. */}
             <div>
               <dt>Target</dt>
-              <dd title={s.floorNote}>The fastest 10% of comparable blockages (same length, same hour) on this corridor</dd>
+              <dd title={s.floorNote}>
+                The fastest 10% of comparable blockages on this corridor. Under an hour: the same length at the same
+                hour where at least 10 exist, otherwise at any hour. An hour or more
+                {longHit ? ` (${longHit[1]}% of the saving)` : ""}: the same length band at any hour.
+              </dd>
             </div>
             {s.range && (
               <div>
@@ -422,6 +456,7 @@ export default function PrescriptiveEmissionsPanel({
                 <dd title={s.projection.basis}>
                   Saving per incident × {s.projection.forecastIncidents.toLocaleString()} incidents forecast on the{" "}
                   {s.projection.days} days the forecast&apos;s accuracy study passes
+                  {gapsOf(s.projection.spans ?? []).length > 0 && <> ({gapsOf(s.projection.spans ?? []).join(", ")} left out)</>}
                 </dd>
               </div>
             )}
@@ -459,8 +494,6 @@ export default function PrescriptiveEmissionsPanel({
         const tl = data.tolling;
         const stamp = forecastStamp(w?.basis);
         const fromForecast = w?.source === "forecast";
-        const concentrated = w?.allDayClass3SharePct != null && w.peakClass3SharePct > w.allDayClass3SharePct * 1.5;
-        const avoided = w?.allDayClass3SharePct != null && w.peakClass3SharePct < w.allDayClass3SharePct / 2;
         return (
           <section className="nc-em-span nc-em-recs nc-em-rx-busy" aria-label="Class 3 recommendations" {...busy}>
             {/* Why Class 3 (the diagram's KPI, CO2 per class-km): the reason for both cards, not a card of its own. */}
@@ -514,10 +547,16 @@ export default function PrescriptiveEmissionsPanel({
                   <span className="nc-em-action-tag">Class 3 window advisory</span>
                   <SourceBadge
                     kind={fromForecast ? "forecast" : "history"}
-                    detail={fromForecast ? "Window from the congestion forecast's High-congestion hours" : "No forecast available: the Range's busiest hours"}
+                    detail={
+                      fromForecast
+                        ? "Window from the congestion forecast's High-congestion hours that are also busy hours"
+                        : w.fallbackNote
+                          ? "Forecast not used for the window: the Range's busiest hours"
+                          : "No forecast available: the Range's busiest hours"
+                    }
                   />
                   {stamp && <ForecastAge at={stamp.at} stale={stamp.stale} />}
-                  <InfoTooltip text={`${w.basis ?? ""} Effect measured on the diagram's KPI, Class 3's share of vehicle-km in the window; what the advisory would change on the road cannot be measured with this data. ${w.capacityNote} No CO2 change is claimed, and daytime truck restrictions are not in our data.`} />
+                  <InfoTooltip text={`${w.basis ?? ""} Effect measured on the diagram's KPI, Class 3's share of vehicle-km in the window; what the advisory would change on the road cannot be measured with this data. ${w.capacityNote} No CO2 change is claimed, and truck restrictions are not in our data.`} />
                 </div>
                 <h3 className="nc-em-rcard-title" title={w.action}>Advise Class 3 to avoid {w.peakHours}</h3>
                 <dl className="nc-em-rows">
@@ -532,14 +571,18 @@ export default function PrescriptiveEmissionsPanel({
                     <dt>Move to</dt>
                     <dd title={w.capacityNote}>{w.receivingHours}{w.fitsOffPeak ? "" : " (not all of it fits)"}</dd>
                   </div>
-                  {(concentrated || avoided) && (
+                  {/* Worded by the service for the window's time of day (17 Nov 2026: a midnight window said
+                      "check daytime truck restrictions"). */}
+                  {w.check && (
                     <div className="is-note">
                       <dt>Check</dt>
-                      <dd>
-                        {concentrated
-                          ? "Trucks concentrate here; check daytime truck restrictions first."
-                          : "Trucks already avoid these hours."}
-                      </dd>
+                      <dd>{w.check}</dd>
+                    </div>
+                  )}
+                  {w.fallbackNote && (
+                    <div className="is-note">
+                      <dt>Window</dt>
+                      <dd>{w.fallbackNote}</dd>
                     </div>
                   )}
                 </dl>

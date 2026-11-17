@@ -1,109 +1,314 @@
 {
-  "champion": "Dirichlet",
-  "baseline": {
-    "name": "Climatology",
-    "aitchison": 0.12410695653806958
+  "generated": "2026-11-15T05:09:38",
+  "code_version": "0e80bfc+uncommitted",
+  "protocol": "EVALUATION_PROTOCOL.md (10 Nov 2026)",
+  "study": {
+    "file": "fleet_mix_study.json",
+    "fingerprint": "bc87cd19d0de8185",
+    "generated": "2026-11-15T05:09:04"
   },
-  "tied": [
-    "Dirichlet"
-  ],
+  "champion": "Prophet + holidays",
+  "champion_is_baseline": false,
+  "baseline": {
+    "name": "Baseline: weekday average",
+    "aitchison": 0.1102
+  },
+  "selection": {
+    "metric": "aitchison",
+    "table": {
+      "Prophet + holidays": {
+        "d1-7": 0.0613,
+        "d8-14": 0.0647,
+        "d15-30": 0.0673,
+        "score": 0.0644
+      },
+      "XGBoost + calendar": {
+        "d1-7": 0.0636,
+        "d8-14": 0.066,
+        "d15-30": 0.0706,
+        "score": 0.0668
+      },
+      "Dirichlet + calendar": {
+        "d1-7": 0.0823,
+        "d8-14": 0.0813,
+        "d15-30": 0.0839,
+        "score": 0.0825
+      },
+      "LSTM + calendar": {
+        "d1-7": 0.091,
+        "d8-14": 0.0936,
+        "d15-30": 0.1101,
+        "score": 0.0983
+      },
+      "Dirichlet": {
+        "d1-7": 0.11,
+        "d8-14": 0.0969,
+        "d15-30": 0.1033,
+        "score": 0.1034
+      },
+      "Baseline: weekday average": {
+        "d1-7": 0.1174,
+        "d8-14": 0.1016,
+        "d15-30": 0.1115,
+        "score": 0.1102
+      },
+      "Baseline: last year (scaled)": {
+        "d1-7": 0.1325,
+        "d8-14": 0.0888,
+        "d15-30": 0.1131,
+        "score": 0.1115
+      },
+      "Prophet": {
+        "d1-7": 0.1227,
+        "d8-14": 0.1092,
+        "d15-30": 0.1161,
+        "score": 0.116
+      },
+      "Baseline: last week": {
+        "d1-7": 0.1348,
+        "d8-14": 0.1204,
+        "d15-30": 0.1362,
+        "score": 0.1304
+      },
+      "XGBoost": {
+        "d1-7": 0.1346,
+        "d8-14": 0.1216,
+        "d15-30": 0.1359,
+        "score": 0.1307
+      },
+      "LSTM": {
+        "d1-7": 0.2407,
+        "d8-14": 0.4067,
+        "d15-30": 0.4659,
+        "score": 0.3711
+      }
+    },
+    "best_baseline": "Baseline: weekday average",
+    "eligible": [
+      "Prophet + holidays",
+      "XGBoost + calendar",
+      "Dirichlet + calendar",
+      "LSTM + calendar",
+      "Dirichlet"
+    ],
+    "block": 3,
+    "origins": 26,
+    "vs_baseline_ci": [
+      -0.0897438178075187,
+      -0.013514436093435986
+    ],
+    "vs_baseline_significant": true,
+    "runner_up": "XGBoost + calendar",
+    "vs_runner_up_ci": [
+      -0.015565311932176166,
+      0.006868382572825307
+    ],
+    "vs_runner_up_significant": false,
+    "champion": "Prophet + holidays",
+    "usable": {
+      "d1-7": true,
+      "d8-14": true,
+      "d15-30": true
+    }
+  },
+  "previous_champion": "previous champion Dirichlet re-scored: Aitchison 0.1034 vs Prophet + holidays 0.0644 (difference 95% interval +0.0077 to +0.0804) -> not better",
+  "publish_problems": [],
   "models": [
     {
-      "model": "Dirichlet",
-      "n": 294,
-      "aitchison": 0.12100791250688613,
-      "tvd_pct": 1.3800611277978112,
-      "mae_pp": 0.9200407518652076,
-      "rmse_pp": 1.9928523763752501,
-      "mape": 11.701913179773873,
-      "heavy_wmape": 5.363967649343152,
-      "heavy_r2": 0.5560750155881841,
-      "is_candidate": true,
-      "skill": 0.6011114416943991,
+      "model_name": "Prophet + holidays",
+      "rmse": 0.8637363333333333,
+      "mae": 0.6183546666666667,
+      "wmape": 3.9373236666666664,
+      "r2": 0.9144073333333332,
+      "mase": 0.5843920145190562,
+      "mape": 3.6872550000000004,
+      "rank": 1.0,
       "accepted": true,
-      "rank": 1,
-      "diagnosis": null
+      "rejected_reason": null,
+      "diagnosis": "Aitchison 0.0644 (mean of d1-7, d8-14, d15-30); tied with XGBoost + calendar - lead not significant (95% interval -0.0156 to +0.0069)",
+      "split_label": "rolling origin 26 x 30 d, step 14, to 2026-05-24"
     },
     {
-      "model": "Climatology",
-      "n": 294,
-      "aitchison": 0.12410695653806958,
-      "tvd_pct": 1.4525890745830126,
-      "mae_pp": 0.9683927163886752,
-      "rmse_pp": 1.995396564990825,
-      "mape": 12.219607282877204,
-      "heavy_wmape": 5.691531281359111,
-      "heavy_r2": 0.5643180702054649,
-      "is_candidate": false,
-      "skill": 0.6165060616565697,
-      "accepted": false,
-      "rank": null,
-      "diagnosis": "baseline, not a candidate"
+      "model_name": "XGBoost + calendar",
+      "rmse": 0.8977149999999999,
+      "mae": 0.609928,
+      "wmape": 3.946796666666667,
+      "r2": 0.9067326666666666,
+      "mase": 0.6061705989110707,
+      "mape": 3.8479266666666665,
+      "rank": 2.0,
+      "accepted": true,
+      "rejected_reason": null,
+      "diagnosis": "Aitchison 0.0668 (mean of d1-7, d8-14, d15-30); tied with Prophet + holidays - lead not significant (95% interval -0.0156 to +0.0069)",
+      "split_label": "rolling origin 26 x 30 d, step 14, to 2026-05-24"
     },
     {
-      "model": "Prophet",
-      "n": 294,
-      "aitchison": 0.13346521083793828,
-      "tvd_pct": 1.6614871334430372,
-      "mae_pp": 1.1076580889620244,
-      "rmse_pp": 1.809972117998189,
-      "mape": 10.27439987285607,
-      "heavy_wmape": 7.3830623725398015,
-      "heavy_r2": 0.6322437467799576,
-      "is_candidate": true,
-      "skill": 0.6629935484448141,
-      "accepted": false,
-      "rank": 2,
-      "diagnosis": null
+      "model_name": "Dirichlet + calendar",
+      "rmse": 1.2015763333333334,
+      "mae": 0.7309579999999999,
+      "wmape": 4.773094,
+      "r2": 0.8279203333333333,
+      "mase": 0.7486388384754991,
+      "mape": 6.349984333333333,
+      "rank": 3.0,
+      "accepted": true,
+      "rejected_reason": null,
+      "diagnosis": "Aitchison 0.0825 (mean of d1-7, d8-14, d15-30)",
+      "split_label": "rolling origin 26 x 30 d, step 14, to 2026-05-24"
     },
     {
-      "model": "XGBoost",
-      "n": 294,
-      "aitchison": 0.13489502965823352,
-      "tvd_pct": 1.7375302478801702,
-      "mae_pp": 1.1583534985867805,
-      "rmse_pp": 2.3222302979747593,
-      "mape": 10.015544902417101,
-      "heavy_wmape": 7.8003266796512785,
-      "heavy_r2": 0.379245533506686,
-      "is_candidate": true,
-      "skill": 0.6700962282169368,
-      "accepted": false,
-      "rank": 3,
-      "diagnosis": null
+      "model_name": "LSTM + calendar",
+      "rmse": 1.1497283333333332,
+      "mae": 0.828428,
+      "wmape": 5.137328666666666,
+      "r2": 0.8549196666666666,
+      "mase": 0.8920145190562613,
+      "mape": 5.596065,
+      "rank": 4.0,
+      "accepted": true,
+      "rejected_reason": null,
+      "diagnosis": "Aitchison 0.0983 (mean of d1-7, d8-14, d15-30)",
+      "split_label": "rolling origin 26 x 30 d, step 14, to 2026-05-24"
     },
     {
-      "model": "LSTM",
-      "n": 294,
-      "aitchison": 0.1546529723087214,
-      "tvd_pct": 1.938804644077792,
-      "mae_pp": 1.2925364293851944,
-      "rmse_pp": 2.1230814300610756,
-      "mape": 9.875122621040514,
-      "heavy_wmape": 8.663482520702747,
-      "heavy_r2": 0.48691407246971463,
-      "is_candidate": true,
-      "skill": 0.7682445653421984,
-      "accepted": false,
-      "rank": 4,
-      "diagnosis": null
+      "model_name": "Dirichlet",
+      "rmse": 1.8570883333333335,
+      "mae": 0.8966220000000001,
+      "wmape": 5.779063333333333,
+      "r2": 0.5822173333333334,
+      "mase": 0.9382940108892922,
+      "mape": 9.836184000000001,
+      "rank": 5.0,
+      "accepted": true,
+      "rejected_reason": null,
+      "diagnosis": "Aitchison 0.1034 (mean of d1-7, d8-14, d15-30)",
+      "split_label": "rolling origin 26 x 30 d, step 14, to 2026-05-24"
     },
     {
-      "model": "Persistence",
-      "n": 294,
-      "aitchison": 0.20130695261063705,
-      "tvd_pct": 3.2342398901605134,
-      "mae_pp": 2.1561599267736757,
-      "rmse_pp": 3.4252130276522776,
-      "mape": 18.266426768829295,
-      "heavy_wmape": 14.607933396387788,
-      "heavy_r2": -0.3511660526953446,
-      "is_candidate": false,
-      "skill": 1.0,
+      "model_name": "Prophet",
+      "rmse": 1.6667506666666665,
+      "mae": 1.0460506666666667,
+      "wmape": 6.903124000000001,
+      "r2": 0.6660433333333333,
+      "mase": 1.0526315789473684,
+      "mape": 8.683005,
+      "rank": 6.0,
       "accepted": false,
-      "rank": null,
-      "diagnosis": "baseline, not a candidate"
+      "rejected_reason": "Aitchison 0.1160 does not beat the best baseline (Baseline: weekday average) 0.1102; days 1-7 Aitchison 0.1227 does not beat the best baseline 0.1174",
+      "diagnosis": "Aitchison 0.1160 (mean of d1-7, d8-14, d15-30)",
+      "split_label": "rolling origin 26 x 30 d, step 14, to 2026-05-24"
+    },
+    {
+      "model_name": "XGBoost",
+      "rmse": 2.4196476666666666,
+      "mae": 1.1180896666666666,
+      "wmape": 7.339289666666666,
+      "r2": 0.28122033333333335,
+      "mase": 1.1860254083484574,
+      "mape": 10.990637000000001,
+      "rank": 7.0,
+      "accepted": false,
+      "rejected_reason": "Aitchison 0.1307 does not beat the best baseline (Baseline: weekday average) 0.1102; days 1-7 Aitchison 0.1346 does not beat the best baseline 0.1174",
+      "diagnosis": "Aitchison 0.1307 (mean of d1-7, d8-14, d15-30)",
+      "split_label": "rolling origin 26 x 30 d, step 14, to 2026-05-24"
+    },
+    {
+      "model_name": "LSTM",
+      "rmse": 4.191555999999999,
+      "mae": 3.0500583333333338,
+      "wmape": 20.392331000000002,
+      "r2": -1.2840623333333332,
+      "mase": 3.367513611615245,
+      "mape": 20.881928666666667,
+      "rank": 8.0,
+      "accepted": false,
+      "rejected_reason": "Aitchison 0.3711 does not beat the best baseline (Baseline: weekday average) 0.1102; days 1-7 Aitchison 0.2407 does not beat the best baseline 0.1174",
+      "diagnosis": "Aitchison 0.3711 (mean of d1-7, d8-14, d15-30)",
+      "split_label": "rolling origin 26 x 30 d, step 14, to 2026-05-24"
+    },
+    {
+      "model_name": "Baseline: weekday average",
+      "rmse": 1.9967759999999999,
+      "mae": 1.0544173333333333,
+      "wmape": 6.942896999999999,
+      "r2": 0.5132063333333333,
+      "mase": 1.0,
+      "mape": 10.485621333333333,
+      "rank": NaN,
+      "accepted": false,
+      "rejected_reason": "baseline, not a candidate",
+      "diagnosis": "Aitchison 0.1102 (mean of d1-7, d8-14, d15-30)",
+      "split_label": "rolling origin 26 x 30 d, step 14, to 2026-05-24"
+    },
+    {
+      "model_name": "Baseline: last year (scaled)",
+      "rmse": 1.7387946666666665,
+      "mae": 0.9374143333333333,
+      "wmape": 6.096908666666667,
+      "r2": 0.6252666666666666,
+      "mase": 1.0117967332123412,
+      "mape": 7.5391216666666665,
+      "rank": NaN,
+      "accepted": false,
+      "rejected_reason": "baseline, not a candidate",
+      "diagnosis": "Aitchison 0.1115 (mean of d1-7, d8-14, d15-30)",
+      "split_label": "rolling origin 26 x 30 d, step 14, to 2026-05-24"
+    },
+    {
+      "model_name": "Baseline: last week",
+      "rmse": 2.449045,
+      "mae": 1.1272413333333333,
+      "wmape": 7.399744000000001,
+      "r2": 0.26455033333333333,
+      "mase": 1.1833030852994553,
+      "mape": 11.071784333333333,
+      "rank": NaN,
+      "accepted": false,
+      "rejected_reason": "baseline, not a candidate",
+      "diagnosis": "Aitchison 0.1304 (mean of d1-7, d8-14, d15-30)",
+      "split_label": "rolling origin 26 x 30 d, step 14, to 2026-05-24"
     }
   ],
-  "surge_threshold": 0.2812245548927686
+  "surge_threshold_future": 0.2819889885365202,
+  "horizon_accuracy": [
+    {
+      "model": "Prophet + holidays",
+      "h_lo": 1,
+      "h_hi": 7,
+      "n": 182,
+      "heavy_wmape": 3.697828,
+      "mape": 3.495625,
+      "aitchison_vs_best_baseline": 0.5221209540034071,
+      "mae_pp": 0.572371,
+      "baseline_heavy_wmape": 7.179197,
+      "usable": true,
+      "note": "Aitchison 0.0613 vs best baseline Baseline: weekday average 0.1174: beats every baseline. Columns: mase = Aitchison over the best baseline's, wmape = heavy-share WMAPE, baseline_wmape = the best baseline heavy-share WMAPE, mae = class-share MAE (pp), mape = per-class MAPE"
+    },
+    {
+      "model": "Prophet + holidays",
+      "h_lo": 8,
+      "h_hi": 14,
+      "n": 182,
+      "heavy_wmape": 4.009314,
+      "mape": 3.731415,
+      "aitchison_vs_best_baseline": 0.7289752252252252,
+      "mae_pp": 0.633977,
+      "baseline_heavy_wmape": 4.842157,
+      "usable": true,
+      "note": "Aitchison 0.0647 vs best baseline Baseline: last year (scaled) 0.0888: beats every baseline. Columns: mase = Aitchison over the best baseline's, wmape = heavy-share WMAPE, baseline_wmape = the best baseline heavy-share WMAPE, mae = class-share MAE (pp), mape = per-class MAPE"
+    },
+    {
+      "model": "Prophet + holidays",
+      "h_lo": 15,
+      "h_hi": 30,
+      "n": 398,
+      "heavy_wmape": 4.104829,
+      "mape": 3.834725,
+      "aitchison_vs_best_baseline": 0.603677130044843,
+      "mae_pp": 0.648716,
+      "baseline_heavy_wmape": 6.269372,
+      "usable": true,
+      "note": "Aitchison 0.0673 vs best baseline Baseline: weekday average 0.1115: beats every baseline. Columns: mase = Aitchison over the best baseline's, wmape = heavy-share WMAPE, baseline_wmape = the best baseline heavy-share WMAPE, mae = class-share MAE (pp), mape = per-class MAPE"
+    }
+  ]
 }

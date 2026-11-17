@@ -149,8 +149,8 @@ const show = (p: { actions: readonly Action[]; warnings: readonly string[] }) =>
 {
   const p = plan([{ type: "close_lane", lanes: [2] }, { type: "set_speed_limit", direction: "sb", kmh: 400 }, { type: "set_inflow", direction: "NB", vehPerHour: 20000 }]);
   check(
-    "values: no carriageway → the focused one (said); 'sb' is SB; a speed limit and an inflow are held to the controls' ranges",
-    (p.actions[0] as any).direction === "NB" && (p.actions[1] as any).direction === "SB" && (p.actions[1] as any).kmh === 120 && (p.actions[2] as any).vehPerHour === 8000 && p.warnings.length === 3,
+    "values: no carriageway → the focused one (said); 'sb' is SB; a speed limit and an inflow are held to the controls' ranges (20-95 km/h; 100 to 2,200 veh/h a lane, at least 8,000)",
+    (p.actions[0] as any).direction === "NB" && (p.actions[1] as any).direction === "SB" && (p.actions[1] as any).kmh === 95 && (p.actions[2] as any).vehPerHour === 8800 && p.warnings.length === 3,
     show(p),
   );
 }

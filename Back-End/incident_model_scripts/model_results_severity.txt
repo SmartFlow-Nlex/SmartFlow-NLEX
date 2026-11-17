@@ -2,20 +2,30 @@
   INCIDENT SEVERITY / CLEARANCE MODELS (per-incident)
 ================================================================================
 
-  Severity — chronological holdout
-    OrdinalLogistic  accuracy=0.900  MAE_ordinal=0.102  n=4361  
-    XGBoost          accuracy=0.902  MAE_ordinal=0.100  n=4361  [SELECTED]
+  Severity — chronological holdout (selection on macro-F1; must also beat the class prior on log-loss)
+    model                    macroF1  balAcc  logloss  LLskill Brier sk    acc   recall PDO/Inj/Fatal   predicted PDO/Inj/Fatal
+    OrdinalLogistic            0.412   0.400   0.2718   0.1766   0.1273  0.892   0.96/0.24/0.00         4015/250/0
+    XGBoost                    0.428   0.435   0.2697   0.1829   0.1344  0.870   0.92/0.38/0.00         3809/456/0  [SELECTED]
+    Class prior (baseline)     0.317   0.333   0.3301   0.0000   0.0000  0.905   1.00/0.00/0.00         4265/0/0
+    holdout classes PDO/Injury/Fatal = 3859/395/11 (n=4265)
+    eligible: XGBoost, OrdinalLogistic
+    champion - prior, macro-F1: 95% interval [+0.096, +0.126]
+    champion - prior, log-loss: 95% interval [-0.0690, -0.0527] (negative = champion better)
+    champion vs runner-up (OrdinalLogistic), macro-F1: 95% interval [+0.002, +0.030]
 
-  Cox PH — clearance-time survival (site_cleared - event_start_date; see module docstring)
-    concordance index = 0.625
-    MAE (minutes)     = 18.55
-    median-based avg  = 7.82 min (mean of per-row predict_median)
-    mean-based avg    = 22.78 min (mean of per-row predict_expectation)
-    n (holdout)       = 4361
-    trained+scored on = 21067 incidents with known daily volume (96.6% of all incidents — volume now a real covariate, alongside weather, cause, type, and corridor position)
+  Clearance time (site_cleared - event_start_date) — Cox PH vs baselines, same holdout rows
+    scored: 4145 incidents 2025-07-22..2026-05-24 (volume input = mean daily volume of the 7 days before the incident, real volume only (to 2026-05-24))
+    CoxPH                                  MAE=  18.56 min   test c-index=0.613  [SERVED]
+    Per type x cause median (baseline)     MAE=  18.77 min   test c-index=0.604
+    Constant training median (baseline)    MAE=  19.77 min   test c-index=0.500
+    best baseline: Per type x cause median (baseline);  Cox vs best baseline MAE difference: [-0.607, +0.114] (NOT significant)
+    Cox training c-index (for reference only) = 0.625
+    served mean-based avg = 22.38 min
+    trained+scored on = 20540 incidents with a real previous-week volume (96.3% of all incidents)
 
-  Secondary incident risk — logistic regression
-    AUC       = 0.620
-    base rate = 11.5% of holdout incidents had a secondary incident follow
-    n         = 4361
+  Secondary incident risk — logistic regression (baseline: the training base rate, AUC 0.5)
+    AUC       = 0.614  95% interval [0.588, 0.645]
+    log-loss skill = +0.0200   Brier skill = +0.0171  (vs the base rate)
+    base rate = 11.3% of holdout incidents had a secondary incident follow (483 of 4265)
+    1 training rows purged (their label window ran into the holdout)
 ================================================================================

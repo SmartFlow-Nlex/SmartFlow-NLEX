@@ -60,7 +60,8 @@ type MobileConfig = {
   advisories: Advisory[];
 };
 
-type Meta = { source: "db" | "defaults"; updatedAt: string | null; updatedBy: string | null };
+/** The public read no longer says who saved last (17 Nov 2026); a save's own answer still does. */
+type Meta = { source: "db" | "defaults"; updatedAt: string | null; updatedBy?: string | null };
 
 type Icon = typeof MapIcon;
 type SectionMeta = { key: string; label: string; blurb: string; icon: Icon };

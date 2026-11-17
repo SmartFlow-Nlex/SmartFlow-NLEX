@@ -77,4 +77,6 @@ export const MaintenanceIdSchema = z.string().uuid();
 
 export const MaintenanceListQuerySchema = z.object({
   status: z.enum([...MAINTENANCE_STATUSES, "all"]).optional().default("all"),
+  /** "1": also the work still "scheduled" after its whole window has ended (the Maintenance page asks for it). */
+  include_overdue: z.enum(["0", "1"]).optional(),
 });

@@ -262,8 +262,12 @@ export async function getForecastCongestionFromDb(hoursAhead: number) {
          FROM dim_location dl
          WHERE dl.geom IS NOT NULL
            AND (dl.start_node ILIKE c.segment_name || '%'
-                OR dl.start_node ILIKE '%' || c.segment_name || '%')
-         ORDER BY (dl.start_node ILIKE c.segment_name || '%') DESC, dl.location_id
+                OR dl.start_node ILIKE '%' || c.segment_name || '%'
+                -- The corridor's last exit (Sta. Ines) starts no segment, only ends one, so it was never drawn
+                -- although the forecast holds it (fixed 17 Nov 2026): it falls back to its incoming segment.
+                OR dl.end_node ILIKE c.segment_name || '%')
+         ORDER BY (dl.start_node ILIKE c.segment_name || '%') DESC,
+                  (dl.start_node ILIKE '%' || c.segment_name || '%') DESC, dl.location_id
          LIMIT 1
        ) d ON TRUE
        ${withProfile ? jp.join : ""}
@@ -363,17 +367,23 @@ export async function getForecastDailyPeaksFromDb(): Promise<
                 base_ts + make_interval(hours => hours_ahead) AS at
            FROM per_hour
           WHERE base_ts IS NOT NULL
-       )
+       ), peaks AS (
        -- to_char, not at::date. The driver parses a DATE into a JS Date at
        -- LOCAL midnight, and toISOString then walks it back across UTC, so
        -- every day came out one behind: the peak at 2026-09-19 13:00 was
        -- labelled 2026-09-18. Formatting it in Postgres keeps the calendar
        -- day the grouping actually used.
+       -- Hours already past are left out (fixed 17 Nov 2026): a run can be several hours old, so day 1's "peak"
+       -- could point at an hour that has gone. base_ts is stored in Manila time, so "now" is taken there too.
        SELECT DISTINCT ON (at::date)
-              to_char(at, 'YYYY-MM-DD') AS day, hours_ahead,
+              at::date AS d, to_char(at, 'YYYY-MM-DD') AS day, hours_ahead,
               to_char(at, 'YYYY-MM-DD"T"HH24:MI:SS') || '+08:00' AS at, congested, slow, confidence
          FROM stamped
+        WHERE at >= date_trunc('hour', NOW() AT TIME ZONE 'Asia/Manila')
         ORDER BY at::date, congested DESC, slow DESC, confidence DESC, hours_ahead
+       )
+       -- Seven days, as the picker says (168 hours from a 17:00 run touch eight calendar days).
+       SELECT day, hours_ahead, at, congested, slow, confidence FROM peaks ORDER BY d LIMIT 7
       `,
     );
 

@@ -34,10 +34,11 @@ export type EventExitProfile = {
 /**
  * The venue's own exit on event nights (10 Nov 2026, the user: an event day at CDV "is not getting traffic").
  *
- * The Event Prediction counts CDV/PH Arena as not material (daily uplift 1.097, interval 1.00-1.21), so the profile
- * above left the venue's own plazas untouched. Hour by hour the records say otherwise: after a concert the entries
- * towards Manila (southbound) at CDV run several times a normal night between 21:00 and midnight, while arrivals
- * (northbound exits) barely move on a typical night. So CDV gets its own measured ratios, per movement:
+ * The Event Prediction now counts CDV/PH Arena as material too (daily uplift 1.2037, interval 1.17-1.34, on the
+ * verified calendar), but as one figure for the whole day and both movements together. Hour by hour the records
+ * show two different things: after a concert the entries towards Manila (southbound) at CDV run several times a
+ * normal night between 21:00 and midnight, while arrivals (northbound exits) rise through the day and fall away at
+ * night. One daily ratio spread over the day cannot say that, so CDV gets its own measured ratios, per movement:
  *   entries = southbound entries (the post-event exodus), exits = northbound exits (arrivals),
  * from past event nights held AT the Arena or the Stadium (calendar-derived nights such as New Year countdowns and
  * events elsewhere, such as Clark, are left out), each hour against the median for that hour on non-event,
@@ -69,19 +70,34 @@ export type EventDayPayload = {
 };
 
 const TTL_MS = 6 * 60 * 60 * 1000;
-let cache: { at: number; data: EventDayPayload } | null = null;
-let building: Promise<EventDayPayload | null> | null = null;
+/* A payload built while the venue's own query failed is served, but kept only this long (17 Nov 2026): kept for the
+   full six hours, one failed read ran every event day without the venue's measured nights until the cache expired.
+   Short rather than not at all: a cold build takes up to two minutes, and a venue query that keeps failing should not
+   start one on every request. */
+const INCOMPLETE_TTL_MS = 5 * 60 * 1000;
+let cache: { at: number; ttl: number; data: EventDayPayload } | null = null;
+let building: Promise<{ data: EventDayPayload; complete: boolean } | null> | null = null;
+
+/*
+ * CDV/PH Arena's record changes level on 3 Nov 2024: southbound entries start there that day (none before), and its
+ * northbound exits are higher after it too (a normal 23:00 at the exit totals 179 vehicles before, 426 after). An
+ * event night after it measured against normal nights mostly from before it read as a rise that was only the new
+ * plaza (2.09x at 13:00 instead of 1.26x), and most of its past event nights (36) are before it. So at CDV both the normal
+ * days and the event nights are taken from that date on.
+ */
+const VENUE_EXIT = "CDV/PH Arena";
+const VENUE_LEVEL_SHIFT = "2024-11-03";
 
 export async function getEventDayProfile(): Promise<EventDayPayload | null> {
   if (!db) return null;
-  if (cache && Date.now() - cache.at < TTL_MS) return cache.data;
+  if (cache && Date.now() - cache.at < cache.ttl) return cache.data;
   building ??= build().finally(() => { building = null; });
-  const data = await building;
-  if (data) cache = { at: Date.now(), data };
-  return data;
+  const built = await building;
+  if (built) cache = { at: Date.now(), ttl: built.complete ? TTL_MS : INCOMPLETE_TTL_MS, data: built.data };
+  return built?.data ?? null;
 }
 
-async function build(): Promise<EventDayPayload | null> {
+async function build(): Promise<{ data: EventDayPayload; complete: boolean } | null> {
   try {
     const [model, hourly, upcoming] = await Promise.all([
       db!.query(
@@ -97,6 +113,8 @@ async function build(): Promise<EventDayPayload | null> {
                  WHERE total IS NOT NULL
                    AND exit_canonical IN (SELECT exit_name FROM gold.ml_event_surge_forecast
                                           WHERE material AND COALESCE(venue_group, 'bulacan') = 'bulacan')
+                   -- CDV only from its level shift on (VENUE_LEVEL_SHIFT), its normal days and event nights alike.
+                   AND (exit_canonical <> $1 OR date >= $2::date)
                  GROUP BY 1, 2, 3),
               base AS (
                 SELECT ex, hour, EXTRACT(DOW FROM date)::int AS dow, EXTRACT(MONTH FROM date)::int AS m,
@@ -114,10 +132,11 @@ async function build(): Promise<EventDayPayload | null> {
          SELECT ex AS exit, hour::int, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY v / b)::float AS r,
                 AVG(b)::float AS base, COUNT(*)::int AS n
            FROM evh GROUP BY 1, 2`,
+        [VENUE_EXIT, VENUE_LEVEL_SHIFT],
       ),
       getUpcomingEventSurge(),
     ]);
-    const venue = await buildVenueProfile();
+    const { profile: venue, failed: venueFailed } = await buildVenueProfile();
 
     const byExit = new Map<string, { r: number[]; base: number[]; n: number }>();
     for (const row of hourly.rows as { exit: string; hour: number; r: number; base: number; n: number }[]) {
@@ -151,7 +170,7 @@ async function build(): Promise<EventDayPayload | null> {
     const added = addedByHour.map((v) => Math.round(v));
     const peakHour = added.reduce((best, v, h) => (v > added[best] ? h : best), 0);
 
-    return {
+    const data: EventDayPayload = {
       events: (upcoming ?? []).map((e) => ({
         date: e.date, title: e.title, isDerived: e.isDerived, capacity: e.capacity, venue: e.venue,
         extraVehicles: Math.round(e.exits.reduce((s, x) => s + (x.surge - x.baseline), 0)),
@@ -164,17 +183,18 @@ async function build(): Promise<EventDayPayload | null> {
       method:
         "Event Prediction (gold.ml_event_surge_forecast): each affected exit's daily uplift on Philippine Arena days. " +
         "Spread over the day by the same exits' hourly ratios on past calendar event days (gold.fact_traffic_hourly, " +
-        "holidays excluded) against non-event, non-holiday days of the same weekday and month, scaled to add up to that daily uplift.",
+        "holidays excluded) against non-event, non-holiday days of the same weekday and month, scaled to add up to that daily uplift. " +
+        `At ${VENUE_EXIT}, only days from ${VENUE_LEVEL_SHIFT} on, when its southbound entries began.`,
     };
+    return { data, complete: !venueFailed };
   } catch (error) {
     console.error("Failed to build the event-day profile:", error);
     return null;
   }
 }
 
-const VENUE_EXIT = "CDV/PH Arena";
-
-async function buildVenueProfile(): Promise<VenueExitProfile | null> {
+/** `failed` when the query itself failed, as against a venue with no past nights to measure (profile null either way). */
+async function buildVenueProfile(): Promise<{ profile: VenueExitProfile | null; failed: boolean }> {
   try {
     const { rows } = await db!.query(
       `WITH ev AS (
@@ -188,7 +208,7 @@ async function buildVenueProfile(): Promise<VenueExitProfile | null> {
        h AS (
          SELECT date, hour, direction, role, SUM(total)::float AS v
            FROM gold.fact_traffic_hourly
-          WHERE exit_canonical = $1 AND total IS NOT NULL
+          WHERE exit_canonical = $1 AND total IS NOT NULL AND date >= $2::date
             AND ((direction = 'SB' AND role = 'Entry') OR (direction = 'NB' AND role = 'Exit'))
           GROUP BY 1, 2, 3, 4),
        base AS (
@@ -207,9 +227,9 @@ async function buildVenueProfile(): Promise<VenueExitProfile | null> {
               PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY r)::float AS busy,
               AVG(b)::float AS normal, COUNT(DISTINCT date)::int AS nights
          FROM evh GROUP BY 1, 2`,
-      [VENUE_EXIT],
+      [VENUE_EXIT, VENUE_LEVEL_SHIFT],
     );
-    if (rows.length === 0) return null;
+    if (rows.length === 0) return { profile: null, failed: false };
     const blank = () => Array(24).fill(1) as number[];
     const out: VenueExitProfile = {
       exit: VENUE_EXIT, nights: 0, exitNights: 0,
@@ -226,9 +246,9 @@ async function buildVenueProfile(): Promise<VenueExitProfile | null> {
       if (row.role === "Entry") out.nights = Math.max(out.nights, Number(row.nights));
       else out.exitNights = Math.max(out.exitNights, Number(row.nights));
     }
-    return out;
+    return { profile: out, failed: false };
   } catch (error) {
     console.error("Failed to build the venue exit profile:", error);
-    return null;
+    return { profile: null, failed: true };
   }
 }

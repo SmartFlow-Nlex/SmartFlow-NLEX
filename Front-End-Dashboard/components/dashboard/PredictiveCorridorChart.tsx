@@ -6,10 +6,11 @@ import { X } from "lucide-react";
 import { useThemeTokens } from "./useThemeTokens";
 import InfoTooltip from "./InfoTooltip";
 import CorridorRiskNarrative from "./CorridorRiskNarrative";
-import { fmtInt, fmtNum, fmtDateFull } from "./incidentPredictive.shared";
+import { fmtInt, fmtNum, fmtDate, fmtDateFull } from "./incidentPredictive.shared";
 import { useNlexExits, accessLabel, displayExitName } from "../../lib/nlex-exits";
 import { corridorKmFromPost } from "../../lib/exit-lookup";
 import { fmtKm as fmtKmPost } from "../../lib/km-post";
+import { hotspotServed } from "../../lib/hotspot-served";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -37,7 +38,11 @@ type GwrMetrics = { MAE: number; Poisson_Deviance: number; n: number; loocv_mae:
 type LstmMetrics = { MAE: number; Poisson_Deviance: number; n?: number; epochs?: number };
 type Metadata = {
   gwr?: { bandwidth: number; metrics: GwrMetrics; variables: string[] };
-  spatial_lstm?: { metrics: LstmMetrics; seq_len: number; n_neighbors: number; horizon_days?: number; rollout_assumptions?: string };
+  spatial_lstm?: {
+    metrics: LstmMetrics; seq_len: number; n_neighbors: number; horizon_days?: number; rollout_assumptions?: string;
+    /** What the map shows: a baseline when no model beat it (lib/hotspot-served.ts). */
+    served_model?: string;
+  };
 };
 type SpatialData = {
   coefficients: GwrCoefficient[];
@@ -337,6 +342,7 @@ export default function PredictiveCorridorChart() {
   }
 
   const lstmMeta = data.metadata?.spatial_lstm;
+  const served = hotspotServed(lstmMeta);
   const gwrMeta = data.metadata?.gwr;
   const accentInk = T.isDark
     ? "color-mix(in srgb, var(--page-accent, #4f46e5) 36%, #ffffff)"
@@ -469,7 +475,13 @@ export default function PredictiveCorridorChart() {
         <div>
           <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
             Predicted Incident Hotspots
-            <InfoTooltip text="A genuine per-exit forecast from the Spatial LSTM (trained on each exit's own history plus its neighbors', held out in time) — not an apportionment of the day-level forecast by historical share. Day 1 is the real next-24h output; later days in a longer window are a recursive rollout, so treat them as a shape rather than a commitment." />
+            <InfoTooltip
+              text={
+                served.isBaseline
+                  ? `A per-exit forecast, held out in time — not an apportionment of the day-level forecast by historical share. The Spatial LSTM and simpler baselines were scored on rolling origins over the last 52 weeks; none of the models beat each exit's ${served.name.toLowerCase()}${served.lstmMae != null && served.mae != null ? ` (MAE ${served.mae.toFixed(3)} vs the Spatial LSTM's ${served.lstmMae.toFixed(3)})` : ""}, so that baseline is what this map shows.`
+                  : "A genuine per-exit forecast from the Spatial LSTM (trained on each exit's own history plus its neighbors', held out in time) — not an apportionment of the day-level forecast by historical share. Day 1 is the real next-24h output; later days in a longer window are a recursive rollout, so treat them as a shape rather than a commitment."
+              }
+            />
           </h3>
           <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "4px 0 0 0" }}>
             Forecast where incidents are most likely to occur along NLEX.
@@ -480,7 +492,11 @@ export default function PredictiveCorridorChart() {
           <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600, display: "flex", alignItems: "center" }}>
             Horizon
             <InfoTooltip
-              text={`Day 1 is the real next-24h forecast. Later days in a longer window are a recursive rollout — each day's own prediction feeds the next day's input${lstmMeta?.rollout_assumptions ? `, holding two inputs flat rather than forecasting them: ${lstmMeta.rollout_assumptions}` : ""}. The further from day 1, the more the rollout's own error compounds — treat a multi-day total as a shape, not a commitment.`}
+              text={
+                served.isBaseline
+                  ? `Each day comes from the exit's ${served.name.toLowerCase()}, so a longer window adds those days up; the rolling test scored it up to 28 days ahead.`
+                  : `Day 1 is the real next-24h forecast. Later days in a longer window are a recursive rollout — each day's own prediction feeds the next day's input${lstmMeta?.rollout_assumptions ? `, holding two inputs flat rather than forecasting them: ${lstmMeta.rollout_assumptions}` : ""}. The further from day 1, the more the rollout's own error compounds — treat a multi-day total as a shape, not a commitment.`
+              }
             />
           </span>
           <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px" }}>
@@ -492,7 +508,13 @@ export default function PredictiveCorridorChart() {
                   key={d}
                   disabled={disabled}
                   onClick={() => { setHorizonDays(d); setHoveredExitId(null); }}
-                  title={disabled ? `The pipeline has only published ${availableDays} future days so far` : d === 1 ? "The real next-24h forecast — not a rollout day" : undefined}
+                  title={
+                    disabled
+                      ? `The pipeline has only published ${availableDays} future days so far`
+                      : d === 1
+                        ? `The first forecast day${horizonDateRange ? `, ${fmtDateFull(horizonDateRange.start)}` : ""}${served.isBaseline ? "" : " — the model's own next-day forecast, not a rollout day"}`
+                        : undefined
+                  }
                   style={{
                     padding: "4px 12px", borderRadius: "999px", border: "none", cursor: disabled ? "not-allowed" : "pointer",
                     background: active ? "var(--page-accent, #4f46e5)" : "transparent",
@@ -500,7 +522,7 @@ export default function PredictiveCorridorChart() {
                     fontWeight: 600, fontSize: "0.8rem", opacity: disabled ? 0.5 : 1,
                   }}
                 >
-                  {d === 1 ? "Today" : `${d}d`}
+                  {d === 1 ? (horizonDateRange ? fmtDate(horizonDateRange.start) : "Day 1") : `${d}d`}
                 </button>
               );
             })}
@@ -593,7 +615,7 @@ export default function PredictiveCorridorChart() {
         <div style={{ minWidth: "940px" }}>
           <p style={{ display: "flex", alignItems: "center", gap: "8px", margin: "0 0 7px 0", fontSize: "0.82rem", fontWeight: 700, letterSpacing: "0.02em", color: "var(--text-secondary)", justifyContent: "flex-end" }}>
             Southbound (SB) · to Metro Manila <span aria-hidden="true" style={{ fontSize: "1.25em", fontWeight: 800, color: "var(--page-accent, #4f46e5)" }}>←</span>
-            <InfoTooltip text="The Spatial LSTM forecasts one risk value per exit, not per direction — a given exit's SB and NB lane blocks are always the same colour. Where the two lanes genuinely differ is access: a hatched block means this exit has no on/off ramp in that direction (e.g. Bocaue Barrier is southbound-only), which is real road structure, not a forecast." />
+            <InfoTooltip text="The forecast gives one risk value per exit, not per direction — a given exit's SB and NB lane blocks are always the same colour. Where the two lanes genuinely differ is access: a hatched block means this exit has no on/off ramp in that direction (e.g. Bocaue Barrier is southbound-only), which is real road structure, not a forecast." />
           </p>
           {renderCarriageway("SB")}
 
@@ -682,8 +704,8 @@ export default function PredictiveCorridorChart() {
         {bandMoves == null
           ? "Colours rank each exit against the others. The ranked bars below wear the same colour as the exit's block on the strip."
           : bandMoves === 0
-            ? `Over ${effectiveHorizon} days the totals grow, but no exit changes colour from Today: the model forecasts each exit almost flat day to day, so the ranking holds.`
-            : `${bandMoves} exit${bandMoves === 1 ? "" : "s"} change colour from Today over ${effectiveHorizon} days; the rest hold their rank because the model forecasts each exit almost flat day to day.`}{" "}
+            ? `Over ${effectiveHorizon} days the totals grow, but no exit changes colour from the first forecast day: the model forecasts each exit almost flat day to day, so the ranking holds.`
+            : `${bandMoves} exit${bandMoves === 1 ? "" : "s"} change colour from the first forecast day over ${effectiveHorizon} days; the rest hold their rank because the model forecasts each exit almost flat day to day.`}{" "}
         A model forecast, so the page&apos;s Range does not change it.
       </p>
 
@@ -740,7 +762,9 @@ export default function PredictiveCorridorChart() {
         spatialLstm={
           lstmMeta
             ? {
-                mae: lstmMeta.metrics?.MAE ?? null,
+                mae: served.mae,
+                servedModel: served.isBaseline ? served.name : null,
+                lstmMae: served.lstmMae,
                 poissonDeviance: lstmMeta.metrics?.Poisson_Deviance ?? null,
                 n: lstmMeta.metrics?.n ?? null,
                 epochs: lstmMeta.metrics?.epochs ?? null,

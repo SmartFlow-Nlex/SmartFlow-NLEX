@@ -25,9 +25,11 @@ import { Sparkles } from "lucide-react";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
-/* The free GLM tier queues under load and the backend allows it 90 s; give it
-   the same before calling the attempt lost. */
-const TIMEOUT_MS = 100_000;
+/* The backend gives the whole call, retries included, at most 110 s
+   (CHAT_DEADLINE_MS in glm.client.ts) and then answers "took too long" itself;
+   the page waits a little longer than that, so it hears the server's answer
+   rather than cutting it off. FeatureBriefing uses the same figure. */
+const TIMEOUT_MS = 120_000;
 
 export type InsightMetric = {
   model: string;

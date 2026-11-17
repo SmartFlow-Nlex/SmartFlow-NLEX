@@ -331,6 +331,43 @@ export async function getClimateResilienceFromDb() {
   }
 }
 
+/* How a served forecast was tested, read off its champion's stored split label ("rolling origin 26 x 90 d, step 14,
+ * scored to 2026-05-24"), so a card states the protocol its metrics come from instead of a horizon written into the
+ * code (17 Nov 2026: the CO2 card said "7 days" for a study that scored every day out to 90). Nulls where the label
+ * does not say. */
+export type ForecastProtocol = {
+  splitLabel: string | null;
+  origins: number | null;
+  horizonDays: number | null;
+  stepDays: number | null;
+  scoredTo: string | null;
+};
+
+export async function getForecastProtocol(target: string): Promise<ForecastProtocol | null> {
+  if (!db) return null;
+  try {
+    const { rows } = await db.query(
+      `SELECT split_label FROM gold.ml_model_metrics
+        WHERE target = $1 AND accepted AND rank IS NOT NULL ORDER BY rank LIMIT 1`,
+      [target],
+    );
+    const label: string | null = rows[0]?.split_label ?? null;
+    const size = /(\d+)\s*x\s*(\d+)\s*d\b/.exec(label ?? "");
+    const step = /step\s+(\d+)/.exec(label ?? "");
+    const to = /(\d{4}-\d{2}-\d{2})/.exec(label ?? "");
+    return {
+      splitLabel: label,
+      origins: size ? Number(size[1]) : null,
+      horizonDays: size ? Number(size[2]) : null,
+      stepDays: step ? Number(step[1]) : null,
+      scoredTo: to ? to[1] : null,
+    };
+  } catch (error) {
+    console.error(`Database query failed for the ${target} test protocol:`, error);
+    return null;
+  }
+}
+
 /* Fleet-mix forecast and the observed fleet profile.
  *
  * Ported from the hans4 tree, where FleetMixForecastChart was already
@@ -386,9 +423,11 @@ export async function getFleetMixForecast(days?: number) {
       champion,
       series: seriesQ.rows,
       split: splitQ.rows[0] ?? null,
-      // `mase` here holds the skill ratio against persistence and `mae` the
-      // mean per-class error in percentage points — the metrics table is shared
-      // with the other targets, so the columns are reused rather than added to.
+      // `mase` here holds the skill ratio, Aitchison distance over the best
+      // baseline's (the baseline row scoring 1.000: the weekday average in the
+      // run of 15 Nov 2026), and `mae` the mean per-class error in percentage
+      // points — the metrics table is shared with the other targets, so the
+      // columns are reused rather than added to.
       models: metricsQ.rows,
     };
   } catch (error) {

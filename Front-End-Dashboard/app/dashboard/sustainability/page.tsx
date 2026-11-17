@@ -107,10 +107,12 @@ const monthLong = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString
 /** One bucket of a grain, as a word: "month" for monthly. */
 const heroPeriodOf = (g: Granularity) => (g === "hourly" ? "hour" : g === "daily" ? "day" : g === "weekly" ? "week" : "month");
 
+/* The Monday of a day's week, as a local date. toISOString() wrote it in UTC, which in Manila (UTC+8) is the day
+   before local midnight, so every weekly bucket was labelled a Sunday (17 Nov 2026). */
 function weekStart(dateStr: string): string {
   const dt = new Date(`${dateStr}T00:00:00`);
   dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
-  return dt.toISOString().slice(0, 10);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
 export default function SustainabilityPage() {
@@ -193,7 +195,9 @@ export default function SustainabilityPage() {
   const derived = useMemo(() => {
     if (!data) return null;
     const { kpis, classes } = data;
-    const deltaPct = kpis.prevCo2T > 0 ? ((kpis.totalCo2T - kpis.prevCo2T) / kpis.prevCo2T) * 100 : 0;
+    // null = nothing earlier to compare against (Range = All starts at the record's first day): no percentage, as on
+    // the Traffic tab, rather than a green "+0.0%".
+    const deltaPct = kpis.prevCo2T > 0 ? ((kpis.totalCo2T - kpis.prevCo2T) / kpis.prevCo2T) * 100 : null;
 
     const totVol = classes.reduce((s, c) => s + c.volume, 0);
     const totCo2 = classes.reduce((s, c) => s + c.co2_t, 0);
@@ -1136,9 +1140,15 @@ export default function SustainabilityPage() {
               </div>
               <p className={styles.kpiHint}>
                 {derived ? (
-                  <span className={derived.deltaPct <= 0 ? styles.deltaUp : styles.deltaDown}>{fmtPct(derived.deltaPct)}</span>
-                ) : "—"}{" "}
-                vs previous period
+                  derived.deltaPct == null ? (
+                    "no earlier data to compare"
+                  ) : (
+                    <>
+                      <span className={derived.deltaPct <= 0 ? styles.deltaUp : styles.deltaDown}>{fmtPct(derived.deltaPct)}</span>{" "}
+                      vs previous period
+                    </>
+                  )
+                ) : "— vs previous period"}
                 {data?.kpis.co2LowT ? <> · range {fmtCompact(data.kpis.co2LowT)}–{fmtCompact(data.kpis.co2HighT ?? 0)} t</> : null}
               </p>
             </article>
@@ -1172,7 +1182,7 @@ export default function SustainabilityPage() {
             </article>
             <article className={styles.kpiTile}>
               <span className={styles.kpiIcon} aria-hidden="true"><Timer size={15} /></span>
-              <h3><span>Delay-Induced <Term t="CO₂" /></span><InfoTooltip text="Idling CO₂ from the queues behind accidents that blocked a lane in the Range. Each queue builds for as long as the lane is blocked (not for as long as the site takes to clear) and drains as it reopens (area λ×T²/2 at that segment's vehicles per hour), so long incidents carry most of it. Moving vehicles' CO₂ does not change with speed in this model: this is the part a delay adds. Counted over all vehicles, so it is not shown for a single class." /></h3>
+              <h3><span>Delay-Induced <Term t="CO₂" /></span><InfoTooltip text="Idling CO₂ from the queues behind accidents that blocked a lane in the Range. Each queue builds for as long as the lane is blocked (not for as long as the site takes to clear) and drains as it reopens (area λ×T²/2, λ being that hour's average vehicles past a point of one carriageway: its vehicle-km over the corridor's length, halved), so long incidents carry most of it. It treats every vehicle arriving during the blockage as stopped until the lane reopens, as if the carriageway were closed; with one lane blocked some traffic still passes, so this is an upper bound. Moving vehicles' CO₂ does not change with speed in this model: this is the part a delay adds. Counted over all vehicles, so it is not shown for a single class." /></h3>
               <div className={styles.kpiValue}>{kpiValue(data?.kpis.delayCarbonT != null ? `${fmtInt(data.kpis.delayCarbonT)} t` : data ? "—" : null)}</div>
               <p className={styles.kpiHint}>
                 {data?.kpis.delayCarbonT != null

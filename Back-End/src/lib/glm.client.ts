@@ -88,10 +88,25 @@ export type ChatOptions = {
  * retry costs a second call only on the minority that need it, where headroom
  * taxed every call. */
 
+/* ONE DEADLINE FOR THE WHOLE CALL (17 Nov 2026 audit).
+ *
+ * A call can take up to three attempts (the first, one at a wider budget after "length", one re-ask for broken
+ * JSON), and each had its own GLM_TIMEOUT_MS (90 s), so a call could run for 270 s while the narrative panels
+ * gave up at 100 s and the briefing panel never did. Every attempt now shares this deadline: each waits at most
+ * GLM_TIMEOUT_MS and never past the deadline, and a retry that could not finish in time is not started. The
+ * dashboard's narrative panels wait 120 s (AiModelInsight, FeatureBriefing) and the sandbox command 150 s, so
+ * the server always answers, with the reply or a clear "took too long", before the page stops listening. */
+export const CHAT_DEADLINE_MS = 110_000;
+/** A retry with less time than this left would only end in a timeout, so it is not sent. */
+const MIN_ATTEMPT_MS = 10_000;
+
 export async function chat(opts: ChatOptions): Promise<string> {
   if (!isGlmConfigured()) {
     throw new GlmError("GLM_API_KEY is not set — add it to Back-End/.env.", "not_configured");
   }
+  const deadline = Date.now() + CHAT_DEADLINE_MS;
+  const tooLong = () =>
+    new GlmError("The model took too long to respond. The AI provider is busy right now — try again.", "upstream_error");
 
   const body: Record<string, unknown> = {
     model: env.GLM_MODEL,
@@ -174,8 +189,10 @@ export async function chat(opts: ChatOptions): Promise<string> {
    * without rebuilding the request or re-running provider detection.
    */
   async function send(): Promise<string> {
+    const left = deadline - Date.now();
+    if (left < MIN_ATTEMPT_MS) throw tooLong();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), env.GLM_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), Math.min(env.GLM_TIMEOUT_MS, left));
 
     let res: Response;
     try {
@@ -198,12 +215,8 @@ export async function chat(opts: ChatOptions): Promise<string> {
       });
     } catch (err) {
       const aborted = err instanceof Error && err.name === "AbortError";
-      throw new GlmError(
-        aborted
-          ? "The model took too long to respond. The AI provider is busy right now — try again."
-          : "Could not reach the GLM API.",
-        "upstream_error",
-      );
+      if (aborted) throw tooLong();
+      throw new GlmError("Could not reach the GLM API.", "upstream_error");
     } finally {
       clearTimeout(timer);
     }

@@ -1,108 +1,441 @@
 {
-  "generated": "2026-11-02",
-  "source": "gold.fact_emissions_hourly (rebuilt from gold.fact_traffic_hourly)",
+  "generated": "2026-11-15T10:40:28",
+  "code_version": "0e80bfc+uncommitted",
+  "protocol": "EVALUATION_PROTOCOL.md (10 Nov 2026)",
+  "study": {
+    "file": "emissions_study.json",
+    "fingerprint": "b661f383a6bc4163",
+    "generated": "2026-11-15T04:48:22"
+  },
+  "source": "gold.fact_emissions_hourly",
   "series": {
-    "days": 1642,
+    "days": 1605,
     "from": "2022-01-01",
-    "to": "2026-06-30",
-    "mean_tonnes_per_day": 2135.7592655952944
+    "to": "2026-05-24",
+    "scored_to": "2026-05-24"
   },
-  "protocol": {
-    "origins": 42,
-    "horizon": 7,
-    "step": 7,
-    "season": 7,
-    "scored_days": 294
+  "origins": 26,
+  "horizon": 90,
+  "champion": "Derived + calendar ratio",
+  "champion_column": "Derived",
+  "served_variants": {
+    "GBR": "GBR",
+    "Polynomial": "Polynomial",
+    "LSTM": "LSTM + calendar",
+    "Derived": "Derived + calendar ratio"
   },
-  "baseline": {
-    "name": "SeasonalNaive",
-    "wmape": 11.789278425114489
+  "volume_model": {
+    "champion": "Prophet + holidays",
+    "source": "traffic_study.json",
+    "twin": null,
+    "served": "Prophet + holidays"
   },
-  "results": [
+  "best_baseline": "Baseline: last year (scaled)",
+  "selection": {
+    "metric": "wmape",
+    "table": {
+      "Derived + calendar ratio": {
+        "d1-14": 5.3258,
+        "d15-30": 5.7763,
+        "d31-60": 5.8611,
+        "d61-90": 5.5611,
+        "score": 5.6311
+      },
+      "Derived": {
+        "d1-14": 5.7464,
+        "d15-30": 6.1942,
+        "d31-60": 6.2013,
+        "d61-90": 5.4326,
+        "score": 5.8936
+      },
+      "Stacked LSTM": {
+        "d1-14": 5.9797,
+        "d15-30": 6.3651,
+        "d31-60": 6.5046,
+        "d61-90": 6.1875,
+        "score": 6.2592
+      },
+      "Polynomial": {
+        "d1-14": 6.0729,
+        "d15-30": 7.4124,
+        "d31-60": 6.7971,
+        "d61-90": 6.8217,
+        "score": 6.776
+      },
+      "LSTM + calendar": {
+        "d1-14": 5.2892,
+        "d15-30": 6.9621,
+        "d31-60": 7.6909,
+        "d61-90": 8.652,
+        "score": 7.1485
+      },
+      "Baseline: last year (scaled)": {
+        "d1-14": 6.6873,
+        "d15-30": 7.3661,
+        "d31-60": 7.5447,
+        "d61-90": 7.6746,
+        "score": 7.3182
+      },
+      "MSTL + holidays": {
+        "d1-14": 7.0851,
+        "d15-30": 7.8455,
+        "d31-60": 8.1211,
+        "d61-90": 7.4557,
+        "score": 7.6268
+      },
+      "MSTL": {
+        "d1-14": 7.2459,
+        "d15-30": 8.0086,
+        "d31-60": 8.3462,
+        "d61-90": 7.6887,
+        "score": 7.8224
+      },
+      "Baseline: weekday average": {
+        "d1-14": 7.522,
+        "d15-30": 8.1902,
+        "d31-60": 8.7462,
+        "d61-90": 9.1503,
+        "score": 8.4022
+      },
+      "Baseline: last week": {
+        "d1-14": 7.1395,
+        "d15-30": 8.2677,
+        "d31-60": 9.6328,
+        "d61-90": 9.9565,
+        "score": 8.7491
+      },
+      "GBR": {
+        "d1-14": 6.1913,
+        "d15-30": 8.612,
+        "d31-60": 11.7503,
+        "d61-90": 12.7014,
+        "score": 9.8137
+      },
+      "LSTM": {
+        "d1-14": 8.2273,
+        "d15-30": 10.0962,
+        "d31-60": 11.0448,
+        "d61-90": 13.2849,
+        "score": 10.6633
+      }
+    },
+    "best_baseline": "Baseline: last year (scaled)",
+    "eligible": [
+      "Derived + calendar ratio",
+      "Derived",
+      "Stacked LSTM",
+      "Polynomial",
+      "LSTM + calendar"
+    ],
+    "block": 7,
+    "origins": 26,
+    "vs_baseline_ci": [
+      -2.826514117428713,
+      -0.6407487903299685
+    ],
+    "vs_baseline_significant": true,
+    "runner_up": "Derived",
+    "vs_runner_up_ci": [
+      -0.47190089976529787,
+      0.08168734700642002
+    ],
+    "vs_runner_up_significant": false,
+    "champion": "Derived + calendar ratio",
+    "usable": {
+      "d1-14": true,
+      "d15-30": true,
+      "d31-60": true,
+      "d61-90": true
+    }
+  },
+  "weather_tests": {
+    "GBR + weather": {
+      "twin": "GBR",
+      "weather_d1_14": 5.497962915486358,
+      "twin_d1_14": 6.191286722562074,
+      "diff_ci": [
+        -2.0320647206099354,
+        0.5022529405050826
+      ],
+      "significant": false
+    },
+    "Polynomial + weather": {
+      "twin": "Polynomial",
+      "weather_d1_14": 4.781404131016599,
+      "twin_d1_14": 6.072878870369854,
+      "diff_ci": [
+        -2.2669148254708245,
+        -0.36397953407804745
+      ],
+      "significant": true
+    }
+  },
+  "previous_champion": "previous champion GBR re-scored: 9.81% vs Derived + calendar ratio 5.63% (difference 95% interval +1.31 to +6.27) -> not better",
+  "publish_problems": [],
+  "metrics": [
     {
-      "model": "GBR",
-      "n": 294,
-      "mape": 6.539378580074395,
-      "wmape": 5.604829746848462,
-      "rmse": 199.2465321442391,
-      "mae": 129.68665826260693,
-      "mase": 0.9800639993480166,
-      "r2": 0.635678762685632,
+      "model_name": "Derived",
+      "rmse": 191.6723875,
+      "mae": 130.0668675,
+      "wmape": 5.6311,
+      "r2": 0.6807825000000001,
+      "mase": 0.769465169030636,
+      "mape": 6.55528,
+      "rank": 1.0,
       "accepted": true,
-      "rank": 1,
-      "tied_with_best": true,
-      "diagnosis": null
+      "rejected_reason": null,
+      "uses_weather": false,
+      "diagnosis": "tied with Derived (weekday ratio) - lead not significant (95% interval -0.47 to +0.08 pp); study model: Derived + calendar ratio",
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "Derived (weekday ratio)",
+      "rmse": 200.5258725,
+      "mae": 136.09284,
+      "wmape": 5.8936,
+      "r2": 0.650075,
+      "mase": 0.8053346451313165,
+      "mape": 6.9075625,
+      "rank": 2.0,
+      "accepted": true,
+      "rejected_reason": null,
+      "uses_weather": false,
+      "diagnosis": "tied with Derived - lead not significant (95% interval -0.47 to +0.08 pp); study model: Derived",
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "Stacked LSTM",
+      "rmse": 206.311875,
+      "mae": 144.57749,
+      "wmape": 6.2592,
+      "r2": 0.6304675,
+      "mase": 0.8552922849881118,
+      "mape": 7.043255,
+      "rank": 3.0,
+      "accepted": true,
+      "rejected_reason": null,
+      "uses_weather": false,
+      "diagnosis": null,
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "Polynomial + weather",
+      "rmse": 214.26199250000002,
+      "mae": 149.0921075,
+      "wmape": 6.4532,
+      "r2": 0.593835,
+      "mase": 0.8818015358968052,
+      "mape": 7.122005,
+      "rank": 4.0,
+      "accepted": false,
+      "rejected_reason": "reads weather: served only while a real weather forecast exists, which no window after the record end has (days 1-14 with OBSERVED weather 4.78% vs its twin 6.07%, significant)",
+      "uses_weather": true,
+      "diagnosis": null,
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "Polynomial",
+      "rmse": 222.903295,
+      "mae": 156.5142425,
+      "wmape": 6.776,
+      "r2": 0.5667375,
+      "mase": 0.9259107430788992,
+      "mape": 7.4546425,
+      "rank": 5.0,
+      "accepted": true,
+      "rejected_reason": null,
+      "uses_weather": false,
+      "diagnosis": null,
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "LSTM",
+      "rmse": 217.2034275,
+      "mae": 165.285895,
+      "wmape": 7.1485,
+      "r2": 0.5849799999999999,
+      "mase": 0.9768112377360554,
+      "mape": 7.819675,
+      "rank": 6.0,
+      "accepted": true,
+      "rejected_reason": null,
+      "uses_weather": false,
+      "diagnosis": "study model: LSTM + calendar",
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "MSTL + holidays",
+      "rmse": 255.75348250000002,
+      "mae": 176.1617075,
+      "wmape": 7.6268,
+      "r2": 0.4322975,
+      "mase": 1.0421688393320763,
+      "mape": 8.775525,
+      "rank": 7.0,
+      "accepted": false,
+      "rejected_reason": "mean WMAPE 7.63% does not beat the best baseline (Baseline: last year (scaled)) 7.32%; days 1-14 WMAPE 7.09% does not beat the best baseline 6.69%",
+      "uses_weather": false,
+      "diagnosis": null,
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "MSTL",
+      "rmse": 270.8965925,
+      "mae": 180.68279,
+      "wmape": 7.8224,
+      "r2": 0.363025,
+      "mase": 1.0688967232379547,
+      "mape": 9.0932575,
+      "rank": 8.0,
+      "accepted": false,
+      "rejected_reason": "mean WMAPE 7.82% does not beat the best baseline (Baseline: last year (scaled)) 7.32%; days 1-14 WMAPE 7.25% does not beat the best baseline 6.69%",
+      "uses_weather": false,
+      "diagnosis": null,
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "GBR + weather",
+      "rmse": 306.94439750000004,
+      "mae": 223.04674500000002,
+      "wmape": 9.6404,
+      "r2": 0.1312225,
+      "mase": 1.3173184662895248,
+      "mape": 10.496965,
+      "rank": 9.0,
+      "accepted": false,
+      "rejected_reason": "reads weather: served only while a real weather forecast exists, which no window after the record end has (days 1-14 with OBSERVED weather 5.50% vs its twin 6.19%, not significant); mean WMAPE 9.64% does not beat the best baseline (Baseline: last year (scaled)) 7.32%",
+      "uses_weather": true,
+      "diagnosis": null,
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "GBR",
+      "rmse": 311.86615,
+      "mae": 227.0312925,
+      "wmape": 9.8137,
+      "r2": 0.11382,
+      "mase": 1.340999152797136,
+      "mape": 10.6683375,
+      "rank": 10.0,
+      "accepted": false,
+      "rejected_reason": "mean WMAPE 9.81% does not beat the best baseline (Baseline: last year (scaled)) 7.32%",
+      "uses_weather": false,
+      "diagnosis": null,
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "LSTM (univariate)",
+      "rmse": 332.33614,
+      "mae": 246.58413000000002,
+      "wmape": 10.6633,
+      "r2": 0.031365000000000004,
+      "mase": 1.457093274302424,
+      "mape": 11.922955,
+      "rank": 11.0,
+      "accepted": false,
+      "rejected_reason": "mean WMAPE 10.66% does not beat the best baseline (Baseline: last year (scaled)) 7.32%; days 1-14 WMAPE 8.23% does not beat the best baseline 6.69%",
+      "uses_weather": false,
+      "diagnosis": "study model: LSTM",
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "Baseline: last year (scaled)",
+      "rmse": 289.4637,
+      "mae": 169.0801425,
+      "wmape": 7.3182,
+      "r2": 0.2720475,
+      "mase": 1.0,
+      "mape": 8.5833975,
+      "rank": NaN,
+      "accepted": false,
+      "rejected_reason": "baseline, not a candidate",
+      "uses_weather": false,
+      "diagnosis": null,
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "Baseline: weekday average",
+      "rmse": 290.046675,
+      "mae": 194.16394499999998,
+      "wmape": 8.4022,
+      "r2": 0.2695825,
+      "mase": 1.1481238555929054,
+      "mape": 9.8684,
+      "rank": NaN,
+      "accepted": false,
+      "rejected_reason": "baseline, not a candidate",
+      "uses_weather": false,
+      "diagnosis": null,
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    },
+    {
+      "model_name": "Baseline: last week",
+      "rmse": 334.9923725,
+      "mae": 202.239735,
+      "wmape": 8.7491,
+      "r2": 0.025365,
+      "mase": 1.1955262222951,
+      "mape": 10.239799999999999,
+      "rank": NaN,
+      "accepted": false,
+      "rejected_reason": "baseline, not a candidate",
+      "uses_weather": false,
+      "diagnosis": null,
+      "split_label": "rolling origin 26 x 90 d, step 14, scored to 2026-05-24"
+    }
+  ],
+  "horizon_accuracy": [
+    {
+      "model": "Derived",
+      "h_lo": 1,
+      "h_hi": 14,
+      "n": 364,
+      "wmape": 5.32582,
+      "mape": 6.20965,
+      "mase": 0.7964081168782619,
+      "mae": 122.43038,
+      "baseline_wmape": 6.6873,
+      "usable": true,
+      "note": "beats every baseline (best: Baseline: last year (scaled) 6.69%)"
     },
     {
       "model": "Derived",
-      "n": 294,
-      "mape": 7.900500463681576,
-      "wmape": 6.633655999903984,
-      "rmse": 245.6439979479333,
-      "mae": 153.4920269745885,
-      "mase": 1.159965194878674,
-      "r2": 0.4462480612241909,
-      "accepted": false,
-      "rank": 2,
-      "tied_with_best": false,
-      "diagnosis": null
+      "h_lo": 15,
+      "h_hi": 30,
+      "n": 398,
+      "wmape": 5.77627,
+      "mape": 6.90238,
+      "mase": 0.7841693704945629,
+      "mae": 132.50116,
+      "baseline_wmape": 7.3661,
+      "usable": true,
+      "note": "beats every baseline (best: Baseline: last year (scaled) 7.37%)"
     },
     {
-      "model": "Polynomial",
-      "n": 294,
-      "mape": 8.58854334260068,
-      "wmape": 7.451730584943267,
-      "rmse": 257.5731291015368,
-      "mae": 172.42094434321484,
-      "mase": 1.303014223268768,
-      "r2": 0.391158771498305,
-      "accepted": false,
-      "rank": 3,
-      "tied_with_best": false,
-      "diagnosis": null
+      "model": "Derived",
+      "h_lo": 31,
+      "h_hi": 60,
+      "n": 698,
+      "wmape": 5.86108,
+      "mape": 6.80589,
+      "mase": 0.7768473232865456,
+      "mae": 135.29338,
+      "baseline_wmape": 7.5447,
+      "usable": true,
+      "note": "beats every baseline (best: Baseline: last year (scaled) 7.54%)"
     },
     {
-      "model": "SeasonalNaive",
-      "n": 294,
-      "mape": 9.393190075792294,
-      "wmape": 8.25497844428086,
-      "rmse": 317.6695210149063,
-      "mae": 191.00679535727272,
-      "mase": 1.4434706412237988,
-      "r2": 0.07390819315062946,
-      "accepted": false,
-      "rank": null,
-      "tied_with_best": false,
-      "diagnosis": "baseline, not a candidate"
-    },
-    {
-      "model": "LSTM",
-      "n": 294,
-      "mape": 9.828023526302431,
-      "wmape": 8.46306379956264,
-      "rmse": 295.36073855692985,
-      "mae": 195.82155255396637,
-      "mase": 1.479856575268965,
-      "r2": 0.19941310593879624,
-      "accepted": false,
-      "rank": 4,
-      "tied_with_best": false,
-      "diagnosis": null
-    },
-    {
-      "model": "Climatology",
-      "n": 294,
-      "mape": 15.4117098447271,
-      "wmape": 14.697612785862505,
-      "rmse": 394.00604543883367,
-      "mae": 340.0788913718645,
-      "mase": 2.5700336706713545,
-      "r2": -0.4246517522648048,
-      "accepted": false,
-      "rank": null,
-      "tied_with_best": false,
-      "diagnosis": "baseline, not a candidate"
+      "model": "Derived",
+      "h_lo": 61,
+      "h_hi": 90,
+      "n": 634,
+      "wmape": 5.5611,
+      "mape": 6.3032,
+      "mase": 0.7246110546477992,
+      "mae": 130.04255,
+      "baseline_wmape": 7.6746,
+      "usable": true,
+      "note": "beats every baseline (best: Baseline: last year (scaled) 7.67%)"
     }
-  ],
-  "champion": "GBR"
+  ]
 }

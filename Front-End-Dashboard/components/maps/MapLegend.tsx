@@ -30,6 +30,11 @@ export const FORECAST_KEY = [
   { state: "High", label: "Congested", status: "congested" as const },
 ];
 
+/* What each colour means, on BOTH maps (15 Nov 2026). The live map used Waze's grade, whose "slow" was mostly
+   traffic moving at 20-55 km/h, while the forecast uses the model's speed cuts; one key, one scale now.
+   Same cuts as train_congestion_horizon.py (SEVERE_KMH 10, HEAVY_KMH 20) and Back-End utils/nlex-street.ts. */
+const SPEED_RANGE = { clear: "20+ km/h", slow: "10-20 km/h", congested: "under 10 km/h" } as const;
+
 export default function MapLegend({ variant = "live" }: { variant?: "live" | "forecast" }) {
   const { isDark } = useChartTheme();
   const palette = mapPalette(isDark);
@@ -44,12 +49,19 @@ export default function MapLegend({ variant = "live" }: { variant?: "live" | "fo
         {FORECAST_KEY.map((k) => (
           <div key={k.state} className="wz-legend-row">
             <span className="wz-line" style={{ background: palette.status[k.status] }} /> {k.label}
+            <span className="wz-legend-sub">&middot; {SPEED_RANGE[k.status]}</span>
           </div>
         ))}
         {/* Grey is a stretch nobody forecast, which the forecast map draws. */}
         <div className="wz-legend-row">
           <span className="wz-line" style={{ background: palette.noData }} /> No data
         </div>
+        {/* What a forecast hour means (17 Nov 2026, system audit): the live map is the latest few minutes, while a
+            forecast hour is congested if a queue is expected at any time in that hour, so the forecast normally
+            shows more colour than the live map at the same moment. Both count NLEX's own lanes, ramps and plazas. */}
+        <p className="wz-legend-sub" style={{ margin: "6px 0 0", maxWidth: 220 }}>
+          Speeds of queues on NLEX itself. An hour is coloured if the queue is expected at any time in that hour.
+        </p>
         <h4 className="wz-legend-gap">On the map</h4>
         <div className="wz-legend-row">
           <span className="mc-legend-pin" aria-hidden="true" /> NLEX exit
@@ -71,6 +83,7 @@ export default function MapLegend({ variant = "live" }: { variant?: "live" | "fo
         <div key={k} className="wz-legend-row">
           <span className="wz-line" style={{ background: palette.status[k] }} />
           {{ clear: "Clear", slow: "Slow", congested: "Congested" }[k]}
+          <span className="wz-legend-sub">&middot; {SPEED_RANGE[k]}</span>
         </div>
       ))}
 

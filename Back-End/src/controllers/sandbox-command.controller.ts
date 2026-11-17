@@ -85,8 +85,22 @@ export const scenarioContext = async (req: Request, res: Response) => {
  *
  * Which interchanges the sandbox can anchor demand to, busiest first.
  */
+/** The observed-demand reads below, with a failed query answered as the warehouse being unavailable (503) rather
+ *  than as a server fault (500): the sandbox then falls back to its other sources, as it does when there is no data. */
+async function fromWarehouse<T>(res: Response, what: string, read: () => Promise<T>): Promise<{ ok: true; data: T } | { ok: false }> {
+  try {
+    return { ok: true, data: await read() };
+  } catch (error) {
+    console.error(`Reading ${what} failed:`, error);
+    res.status(503).json({ success: false, message: `The warehouse could not be read, so ${what} is unavailable.` });
+    return { ok: false };
+  }
+}
+
 export const demandExits = async (_req: Request, res: Response) => {
-  const data = await getDemandExits();
+  const read = await fromWarehouse(res, "observed demand", getDemandExits);
+  if (!read.ok) return;
+  const data = read.data;
   if (!data) {
     return res.status(503).json({
       success: false,
@@ -111,7 +125,9 @@ export const demandProfile = async (req: Request, res: Response) => {
   if (!exit) {
     return res.status(400).json({ success: false, message: "An `exit` is required." });
   }
-  const data = await getDemandProfile(exit, direction);
+  const read = await fromWarehouse(res, "the demand profile", () => getDemandProfile(exit, direction));
+  if (!read.ok) return;
+  const data = read.data;
   if (!data) {
     return res.status(404).json({
       success: false,
@@ -131,7 +147,9 @@ export const demandProfile = async (req: Request, res: Response) => {
 export const plazaFlows = async (req: Request, res: Response) => {
   const raw = typeof req.query.direction === "string" ? req.query.direction.toUpperCase() : "NB";
   const direction: "NB" | "SB" = raw === "SB" ? "SB" : "NB";
-  const data = await getPlazaFlows(direction);
+  const read = await fromWarehouse(res, "plaza flows", () => getPlazaFlows(direction));
+  if (!read.ok) return;
+  const data = read.data;
   if (!data) {
     return res.status(503).json({
       success: false,

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
 import { asyncHandler } from "../middleware/error.middleware.js";
-import { exportAuditLogs, getAuditSummary, listAuditLogs, recordActivity, writeAuditEvent } from "../controllers/audit-log.controller.js";
+import { exportAuditLogs, getAuditSummary, listAuditLogs, recordActivity } from "../controllers/audit-log.controller.js";
 import { authenticateToken, authorizeRoles } from "../middleware/auth.middleware.js";
 
 const router = Router();
@@ -28,7 +28,8 @@ router.use(authorizeRoles(["data-analyst"]));
 // Reads name people and what they did, and the page is the data analyst's only, so the API says the same (31 Oct 2026).
 router.get("/list", asyncHandler(listAuditLogs));
 router.get("/summary", asyncHandler(getAuditSummary));
-router.post("/event", asyncHandler(writeAuditEvent));
+// POST /event was removed (17 Nov 2026 audit): nothing called it, and it let any data analyst write any action,
+// status, outcome and duration, which feed the insights. Pages report what they may through /activity above.
 router.get("/export", asyncHandler(exportAuditLogs));
 
 export default router;

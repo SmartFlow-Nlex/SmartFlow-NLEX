@@ -32,6 +32,7 @@
  *   minutes). Quadratic in T, so the long incidents carry almost all of it.
  */
 import { db } from "../config/db.js";
+import { KM_POST_ANCHORS } from "../lib/km-post.js";
 
 export const EMISSIONS_TABLE = "gold.fact_emissions_hourly";
 
@@ -63,20 +64,30 @@ export async function recordBounds(): Promise<{ minDate: string; maxDate: string
   return { minDate: rows[0].lo, maxDate: rows[0].hi };
 }
 
+/** The length of road the record's vehicle-km are driven on: Balintawak to Sta. Ines, measured km. Every trip's km is
+    read between these two exits (etl/trip-km.ts), so vehicle-km over this length is the average flow past a point. */
+export const CORRIDOR_KM = KM_POST_ANCHORS[KM_POST_ANCHORS.length - 1][1] - KM_POST_ANCHORS[0][1];
+
 /**
- * Vehicles per hour on ONE exit-segment in ONE direction, by hour of day, over
- * [lo, hi]. An incident blocks one segment of one carriageway, so this is its
- * exposure — the corridor total would trap more vehicles than use the whole
- * corridor in half a day. Divided by the exits and days in the data, and by
- * two carriageways.
+ * Vehicles per hour passing a point of ONE carriageway, by hour of day, over
+ * [lo, hi]: the hour's vehicle-km a day over the corridor's length, halved for
+ * the two directions. An incident blocks one segment of one carriageway, so
+ * this is its exposure — the corridor total would trap more vehicles than use
+ * the whole corridor in half a day.
+ *
+ * Until 17 Nov 2026 this was the hour's toll transactions over the exits and days, halved. A trip is counted
+ * once, at the plaza where it paid, but it passes every segment between its two ends, so that average (about
+ * 400 vehicles an hour a direction over the last 12 months) was the trips paying at one plaza, not the traffic
+ * on a segment: vehicle-km over the 76 km of road gives about 1,950. It is the corridor average; the busiest
+ * stretches, near Metro Manila, carry more.
  */
 export async function exposureByHour(lo: string, hi: string): Promise<Map<number, Exposure>> {
   const { rows } = await db!.query(
     `SELECT hour::int AS hr,
-            SUM(total)::float / NULLIF(COUNT(DISTINCT date), 0) / NULLIF(COUNT(DISTINCT exit_canonical), 0) / 2 AS veh,
+            SUM(vkm_1 + vkm_2 + vkm_3)::float / NULLIF(COUNT(DISTINCT date), 0) / $6 / 2 AS veh,
             (SUM(class_1) * $3 + SUM(class_2) * $4 + SUM(class_3) * $5)::float / NULLIF(SUM(total), 0) AS rate
        FROM ${EMISSIONS_TABLE} WHERE date BETWEEN $1 AND $2 GROUP BY 1`,
-    [lo, hi, ...IDLING_KG_PER_MINUTE],
+    [lo, hi, ...IDLING_KG_PER_MINUTE, CORRIDOR_KM],
   );
   return new Map(rows.map((r: { hr: number; veh: number | null; rate: number | null }) => [Number(r.hr), { veh: Number(r.veh ?? 0), kgPerMinute: Number(r.rate ?? 0) }]));
 }

@@ -65,6 +65,17 @@ export async function actorOf(req: Request): Promise<Actor> {
   return { user: "anonymous", role: null, verified: false };
 }
 
+/**
+ * Who ran a data change from the command line rather than through the API: the script, by name
+ * ("script:ingest-toll-export"). `name` defaults to the running file's, so a script that names no actor
+ * is still identifiable in the log. The person who asked for it, when known, goes in the entry's details
+ * (requested_by), never in place of a verified user.
+ */
+export function scriptActor(name?: string): Actor {
+  const file = name ?? (process.argv[1] ?? "unknown").split(/[\\/]/).pop()!.replace(/\.[cm]?[jt]s$/, "");
+  return { user: `script:${file}`, role: "script", verified: false };
+}
+
 let schemaReady: Promise<void> | null = null;
 
 /** The structured columns and indexes, added once per process if the table lacks them. */
@@ -99,7 +110,8 @@ export async function writeAudit(actor: Actor, e: AuditEvent, requestId?: string
   await ensureAuditSchema();
   const entityId = e.entityId === null || e.entityId === undefined ? null : String(e.entityId);
   const target = e.target ?? (e.entityType ? `${e.entityType}${entityId ? `:${entityId}` : ""}` : e.module);
-  const details = { ...(e.details ?? {}), ...(actor.verified ? {} : { actor_verified: false }) };
+  // A script is not a signed-in user, but it is not an unverified claim either: it ran on the server.
+  const details = { ...(e.details ?? {}), ...(actor.verified || actor.role === "script" ? {} : { actor_verified: false }) };
   const { rows } = await db.query(
     `INSERT INTO audit_logs
        (user_id, action, target_resource, details, module, entity_type, entity_id, from_status, to_status,

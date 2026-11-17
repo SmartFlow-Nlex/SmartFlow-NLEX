@@ -115,6 +115,9 @@ const toIsoDate = (value: string) => {
 
 const fmtVeh = (n: number) => Math.round(n).toLocaleString("en-US");
 const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`);
+/** "2026-01-05" or "2026-01-05 00:00:00" -> "Jan 5, 2026" (the calendar day as written, read in local time). */
+const fmtDay = (ts: string) =>
+  new Date(`${ts.slice(0, 10)}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
 /** GET /api/traffic/forecast/48h (Back-End/src/services/forecast-48h.service.ts), corridor total. */
 type Next48 = {
@@ -122,9 +125,17 @@ type Next48 = {
     modelLabel: string; originTs: string; historyEnd: string; historySynthetic: boolean; intervalLevel: number | null;
     freshness: { stale: boolean; windowPast: boolean };
     backtest: {
+      /** TEST scores (the chosen model, fitted only on earlier days, never used for a choice). Per plaza-hour WAPE %. */
       seriesWape: number | null; corridorWape: number | null; corridorBandCoverage: number | null;
+      /** The TEST window. */
       window: { first: string; last: string } | null;
-      /** Every learned candidate of the same 2025 test (WAPE %), the served one marked. */
+      /** The VALIDATION year the candidates below were scored on; the model in use was chosen there. */
+      validationWindow?: { first: string; last: string } | null;
+      /** Test score: mean WAPE of hours 1-6, 7-24 and 25-48 ahead; the two baselines scored the same way. */
+      testScore?: number | null; naiveTestScore?: number | null; currentTestScore?: number | null;
+      /** The forecast in use is the chosen model refitted on every real day to this date. */
+      servedDataTo?: string | null;
+      /** Every learned candidate on the VALIDATION year (WAPE %), the served one marked. */
       comparison: {
         model: string; label: string; served: boolean; wape: number | null; corridorWape: number | null;
         mase: number | null; mae: number | null; rmse: number | null; r2: number | null; mape: number | null;
@@ -463,7 +474,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
 
     Promise.all(
       selected.map(async (model) => {
-        const r = await fetch(`http://localhost:4000/api/traffic/forecast/hourly?date=${drillDate}&model=${model}&weather=${weather}`);
+        const r = await fetch(`${BACKEND}/api/traffic/forecast/hourly?date=${drillDate}&model=${model}&weather=${weather}`);
         const json = await r.json();
         if (!json.success) throw new Error(json.message ?? "Request failed");
         return [model, json.data as HourlyForecast] as const;
@@ -530,7 +541,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
     <div className="nct-ev-section">
       <div className="nct-ev-section-head">
         <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.2} />} tint="var(--page-accent)" title="Held-out accuracy">
-          <InfoTooltip text={`Scored on the Present zone: real daily counts the model never trained on. WMAPE is the headline error. ${maseVsNaive} Show more adds the secondary error measures.`} />
+          <InfoTooltip text={`Scored on the Present zone: real daily counts the model never trained on, each forecast 1 to ${VALIDATED_HORIZON} days ahead. ${showWeather ? "With Weather on, the weather models were given the usual weather for each date (the average of earlier years), not the weather that came; turn Weather off for their weather-free versions. " : ""}WMAPE is the headline error. ${maseVsNaive} Show more adds the secondary error measures.`} />
         </EvidenceHeading>
         <button type="button" className="nct-link-btn" onClick={() => setShowAllMetrics(!showAllMetrics)}>
           {showAllMetrics ? "Hide secondary metrics" : "Show secondary metrics"}
@@ -1360,7 +1371,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             {weather !== "all" && (
               <p className={`nct-sub nct-sub-note${anyHourly && anyHourly.observedHours === 0 ? " nct-warn" : ""}`}>
                 {anyHourly && anyHourly.observedHours === 0
-                  ? `No ${weather} hours recorded for this date — weather data only covers up to 1 Jul 2026. Bars are hidden; the model curve is unaffected.`
+                  ? `No ${weather} hours recorded for this date — it is past the end of the toll record, so there are no recorded hours to filter. Bars are hidden; the model curve is unaffected.`
                   : `Showing ${weather} hours only (${anyHourly?.observedHours ?? 0} of 24). The models carry no weather dimension, so their curves are unfiltered.`}
               </p>
             )}
@@ -1482,24 +1493,45 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
     .filter((x): x is { v: number; idx: number } => x.v != null);
   const futAvg = futVals.length ? futVals.reduce((a, x) => a + x.v, 0) / futVals.length : null;
   const futPeak = futVals.length ? futVals.reduce((a, b) => (b.v > a.v ? b : a)) : null;
-  const rangeBucket = horizonBucketFor(futureDays);
-  const rangeErr = rangeBucket?.wmape != null ? `${rangeBucket.wmape.toFixed(1)}%` : metricsMeta[primary].wmape;
+  const BY_DB_KEY: Record<string, ModelType> = {
+    prophet: "Prophet", holtwinters: "HoltWinters", sarimax: "SARIMAX",
+    lstm: "LSTM", holtslinear: "HoltsLinear",
+  };
+  // True when a model's forecast ahead is the same with Weather on and off (no weather forecast reaches those days).
+  const sameAhead = (k: ModelType) =>
+    chartData.models[k].slice(chartData.futureStart).every((v, i) => v === chartData.modelsNoWeather[k][chartData.futureStart + i]);
+  /* The error at the chosen range is from a separate test of ONE model (gold.ml_horizon_accuracy): the champion as
+     served past the weather forecast, i.e. its weather-free twin ("Prophet_nw"). It belongs to that model's line and
+     to no other; it used to be quoted for whichever model was selected (17 Nov 2026).
+     The stored `usable` flag is deliberately not read. Besides beating the baseline it demands MASE below 1 on a
+     one-week-ahead naive scale, which no forecast weeks ahead is held to, so it marked days 15-90 as failing although
+     the model beats the stored baseline there by half (6.2 / 5.8 / 5.5% against 11.3 / 11.8 / 12.9%). The evaluation
+     protocol (EVALUATION_PROTOCOL.md section 6, rule 5) calls a range usable when the champion beats the best baseline
+     there, which traffic_study.json found for every range; that rule is applied below to the stored baseline. */
+  const hzModel = horizonAcc[0]?.model ?? null;
+  const hzKey = hzModel ? BY_DB_KEY[hzModel.toLowerCase().replace(/_nw$/, "").replace(/[^a-z]/g, "")] ?? null : null;
+  const hzApplies = hzKey === primary && (!/_nw$/i.test(hzModel ?? "") || !showWeather || sameAhead(primary));
+  const rangeBucket = hzApplies ? horizonBucketFor(futureDays) : null;
+  const rangeErr = rangeBucket?.wmape != null ? `${rangeBucket.wmape.toFixed(1)}%` : null;
+  const rangeBeatsBaseline = rangeBucket?.wmape != null && (rangeBucket.baselineWmape == null || rangeBucket.wmape < rangeBucket.baselineWmape);
+  const rangeErrNote = rangeBucket
+    ? `Typical error of a forecast ${rangeBucket.hLo} to ${rangeBucket.hHi} days ahead, from a separate test that forecast up to 90 days ahead from several start dates (${rangeBucket.n} days scored), using the forecast without weather, as drawn ahead.`
+    : "Measured only for the champion, in a separate test that forecast up to 90 days ahead.";
   const primaryMeta = metricsMeta[primary];
   const futureAvailable = chartData.dates.length - chartData.futureStart;
+  /* Which test each Validation Evidence number is from (17 Nov 2026). With Weather on, a weather model's scores are
+     its weather version's, fed the usual weather for each date; the forecast drawn ahead is its weather-free version
+     whenever the two agree there, so the card names that version's score too. */
+  const TWIN_OF: Partial<Record<ModelType, string>> = { Prophet: "Prophet_nw", SARIMAX: "SARIMAX_nw", LSTM: "LSTM_nw" };
+  const twinRow = TWIN_OF[primary] ? rawMetrics.find((m) => m.model_name === TWIN_OF[primary]) : undefined;
+  const aheadIsWeatherFree = showWeather && twinRow?.wmape != null && sameAhead(primary);
 
   /* The model trust strip, read off the same payload as the table it opens:
      which model the API names champion, the window it was scored on, its
      accuracy against repeating last week (MASE), and the error measured at
      the chosen range. No live track record is shown because this payload
      carries none for the volume forecast. */
-  const champKey = (() => {
-    if (!apiChampion) return null;
-    const BY_DB: Record<string, ModelType> = {
-      prophet: "Prophet", holtwinters: "HoltWinters", sarimax: "SARIMAX",
-      lstm: "LSTM", holtslinear: "HoltsLinear",
-    };
-    return BY_DB[apiChampion.toLowerCase().replace(/[^a-z]/g, "")] ?? null;
-  })();
+  const champKey = apiChampion ? BY_DB_KEY[apiChampion.toLowerCase().replace(/[^a-z]/g, "")] ?? null : null;
   const champLabel = champKey ? metricsMeta[champKey].label : apiChampion;
   const scoredDays = chartData.futureStart - chartData.holdoutStart;
   const testFrom = chartData.isoDates[chartData.holdoutStart] ?? null;
@@ -1631,9 +1663,11 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             </div>
           )}
           <div className="fc2-pair">
-            <div>
+            <div title={rangeErrNote}>
               <span className="fc2-k">{futureDays}-day typical error</span>
-              <span className="fc2-v">{rangeErr}</span>
+              {rangeErr
+                ? <span className="fc2-v">{rangeErr}</span>
+                : <span className="fc2-v fc2-v-sm">{horizonAcc.length ? "Not measured for this model" : "—"}</span>}
             </div>
             <div>
               <span className="fc2-k">Selected model</span>
@@ -1641,6 +1675,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             </div>
           </div>
           {!primaryMeta.accepted && <p className="fc2-note-warn">This model failed acceptance; it is shown for comparison.</p>}
+          {rangeErr && !rangeBeatsBaseline && <p className="fc2-note-warn">This far ahead the forecast is no better than a simple baseline.</p>}
 
           <div className="fc2-evidence">
             <div className="fc2-ev-head"><ShieldCheck size={17} aria-hidden="true" /><h5>Validation Evidence</h5></div>
@@ -1652,7 +1687,12 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
             </dl>
             {testFrom && testTo && (
               <p className="fc2-period">
-                Period: {new Date(`${testFrom}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} – {new Date(`${testTo}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                Period: {fmtDay(testFrom)} – {fmtDay(testTo)}, each day forecast 1 to {VALIDATED_HORIZON} days ahead.
+              </p>
+            )}
+            {aheadIsWeatherFree && twinRow?.wmape != null && (
+              <p className="fc2-period">
+                These scores are the weather version&apos;s, given the usual weather for each date. The forecast ahead is the version without weather, which scored {twinRow.wmape.toFixed(2)}% on the same days.
               </p>
             )}
             <button type="button" className="fc2-ev-btn" onClick={() => setEvidenceOpen(true)}>View validation details</button>
@@ -1664,7 +1704,10 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               <div>
                 <span className="fc2-k">Separate 48-hour model</span>
                 <span className="fc2-h48-name">{next48.run.modelLabel}</span>
-                <span className="fc2-h48-err">{next48.run.backtest.seriesWape.toFixed(1)}% error per plaza-hour</span>
+                <span className="fc2-h48-err">
+                  {next48.run.backtest.seriesWape.toFixed(1)}% error per plaza-hour
+                  {next48.run.backtest.window ? ` (test, ${fmtDay(next48.run.backtest.window.first)} – ${fmtDay(next48.run.backtest.window.last)})` : ""}
+                </span>
               </div>
             </div>
           )}
@@ -1704,11 +1747,20 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               const vals = bt.comparison.map((m) => c.pick(m)).filter((v): v is number => v != null);
               return vals.length ? (c.higher ? Math.max(...vals) : Math.min(...vals)) : null;
             };
+            /* Two periods (17 Nov 2026). The table is the VALIDATION year: every candidate was scored there and the
+               model in use was chosen there, so it is not an untouched test. The TEST (bt.window) came after: the
+               chosen model, fitted only on earlier days, forecast once and used for no choice. The card used to call
+               the validation table "tested on 2025" and leave the test score out. */
+            const served = bt.comparison.find((m) => m.served);
+            const valSpan = bt.validationWindow ? `${fmtDay(bt.validationWindow.first)} – ${fmtDay(bt.validationWindow.last)}` : "2025";
+            const testSpan = bt.window ? `${fmtDay(bt.window.first)} – ${fmtDay(bt.window.last)}` : null;
+            const valYear = bt.validationWindow ? bt.validationWindow.first.slice(0, 4) : "2025";
+            const testYear = bt.window ? bt.window.first.slice(0, 4) : null;
             return (
               <div className="nct-ev-section">
                 <div className="nct-ev-section-head">
-                  <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.2} />} tint="var(--page-accent)" title="48-hour model: tested on 2025">
-                    <InfoTooltip text={`Hourly forecasts of the real ${bt.window ? `${bt.window.first.slice(0, 10)} to ${bt.window.last.slice(0, 10)}` : "2025"} record, which no model trained on (trained on 2022-2024). Scored per plaza, direction and vehicle class, hour by hour; the best in each column is bold. Show secondary metrics adds the corridor total, hours ahead, holidays and heavy rain.`} />
+                  <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.2} />} tint="var(--page-accent)" title={`48-hour model: chosen on ${valYear}${testYear ? `, tested on ${testYear}` : ""}`}>
+                    <InfoTooltip text={`The table is the validation year, ${valSpan}: every model forecast each hour of it, fitted only on earlier days, and the model in use was chosen on these scores. ${testSpan ? `It was then tested once on ${testSpan}, fitted only on days before it; that test played no part in any choice (the line under the table). ` : ""}${bt.servedDataTo ? `The forecast in use is the same model refitted on all data to ${fmtDay(bt.servedDataTo)}. ` : ""}Scored per plaza, direction and vehicle class, hour by hour; the best in each column is bold. Show secondary metrics adds the corridor total, hours ahead, holidays and heavy rain.`} />
                   </EvidenceHeading>
                   <button type="button" className="nct-link-btn" onClick={() => setShowAll48(!showAll48)}>
                     {showAll48 ? "Hide secondary metrics" : "Show secondary metrics"}
@@ -1738,6 +1790,16 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                     </tbody>
                   </table>
                 </div>
+                {testSpan && bt.seriesWape != null && (
+                  <p className="nct-dim" style={{ margin: "6px 0 0" }}>
+                    Untouched test, {testSpan}: {served?.label ?? next48!.run.modelLabel} missed by {bt.seriesWape.toFixed(2)}% per plaza-hour
+                    {served?.wape != null ? ` (${served.wape.toFixed(2)}% in the table above)` : ""}.
+                    {bt.testScore != null && ` Averaged over hours 1-6, 7-24 and 25-48 ahead: ${bt.testScore.toFixed(2)}%`}
+                    {bt.testScore != null && bt.currentTestScore != null && bt.naiveTestScore != null
+                      && `, against ${bt.currentTestScore.toFixed(2)}% for the daily total spread over a typical day and ${bt.naiveTestScore.toFixed(2)}% for repeating the same hour last week`}
+                    {bt.testScore != null && "."}
+                  </p>
+                )}
               </div>
             );
           })()}

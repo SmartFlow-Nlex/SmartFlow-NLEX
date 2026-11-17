@@ -40,8 +40,8 @@ function useSlow(waiting: boolean, afterMs = 6000) {
 /* What the event ranking's "how sure" rests on (2 Nov 2026). The Firm / Fair / Loose words it replaced cut the
    interval width at 0.05 and 0.12, which were set by hand; the interval itself is shown instead. */
 const ESTIMATE_HINT =
-  "Uplift is the median ratio of the exit's entries on past Philippine Arena event days to a normal day (the median of " +
-  "days with no event and no holiday, on the same weekday and month). Its 95% interval comes from resampling those event " +
+  "Uplift is the median ratio of the exit's traffic on past event nights to a normal day (the median of the same " +
+  "weekday over the 8 weeks before, on days with no event and no holiday). Its 95% interval comes from resampling those event " +
   "days (a bootstrap). The ranking uses the interval's lower end: the rise the past event days support even at their weakest.";
 
 function useForecast() {

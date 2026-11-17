@@ -17,6 +17,7 @@
  */
 import type { PoolClient } from "pg";
 import { db } from "../config/db.js";
+import { scriptActor, writeAudit, type Actor } from "../services/audit.js";
 
 /** How many of the latest loads keep their journal. */
 export const UNDO_KEEP = 10;
@@ -164,8 +165,50 @@ export const LATER_OVERLAP = `
  * Put the warehouse back as it was before upload `uploadId`. With `dryRun` it
  * does all of it and rolls back, which is how the page shows what an undo
  * would change before anyone confirms it.
+ *
+ * A real undo, done or refused, writes its own Audit Log entry (upload.undone /
+ * upload.undo_refused) under `actor` (17 Nov 2026 audit: the undos of #55, #56
+ * and #59-62 were run from scripts and left none, because only the route wrote
+ * it). Left out, the running script is named. Callers must not write it again.
+ * A preview (dryRun) is not an action and is not logged.
  */
-export async function undoUpload(uploadId: number, opts: { dryRun?: boolean } = {}): Promise<UndoResult> {
+export async function undoUpload(
+  uploadId: number,
+  opts: { dryRun?: boolean; actor?: Actor; requestId?: string; auditDetails?: Record<string, unknown> } = {},
+): Promise<UndoResult> {
+  const t0 = Date.now();
+  const result = await runUndo(uploadId, Boolean(opts.dryRun));
+  if (!opts.dryRun) {
+    try {
+      await writeAudit(
+        opts.actor ?? scriptActor(),
+        {
+          action: result.done ? "upload.undone" : "upload.undo_refused",
+          module: "data_management",
+          entityType: "upload",
+          entityId: uploadId,
+          fromStatus: result.done ? "processed" : null,
+          toStatus: result.done ? "undone" : null,
+          outcome: result.done ? "success" : "refused",
+          durationMs: Date.now() - t0,
+          details: {
+            ...(result.done
+              ? { removed: result.removed, restored: result.restored, tables: result.tables }
+              : { reason: result.error ?? "", ...(result.blockedBy ? { blocked_by: result.blockedBy } : {}) }),
+            ...(opts.auditDetails ?? {}),
+          },
+        },
+        opts.requestId,
+      );
+    } catch (e: any) {
+      console.error("[audit] could not record the undo:", e?.message ?? e);
+    }
+  }
+  return result;
+}
+
+async function runUndo(uploadId: number, dryRun: boolean): Promise<UndoResult> {
+  const opts = { dryRun };
   const out: UndoResult = { uploadId, dryRun: Boolean(opts.dryRun), done: false, tables: [], removed: 0, restored: 0 };
   if (!db) { out.error = "No database connection is configured."; return out; }
   const exists = await db.query(`SELECT to_regclass('etl_undo.batches') IS NOT NULL AS ok`);

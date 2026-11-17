@@ -1,31 +1,9 @@
 import type { Request, Response } from "express";
 import { getAuditLogsFromDb } from "../services/audit-log.service.js";
 import { getAuditInsights } from "../services/audit-insights.service.js";
-import { actorOf, audit, requestIdOf, writeAudit, type AuditModule } from "../services/audit.js";
+import { actorOf, audit, requestIdOf, writeAudit } from "../services/audit.js";
 import { db } from "../config/db.js";
-import { ActivitySchema, AuditEventSchema, AuditQuerySchema, AuditSummarySchema } from "../validators/audit-log.validator.js";
-
-// POST /api/audit-log/event — a full entry from a trusted writer (authenticated data analysts only).
-// The user and role come from the verified token, never from the body.
-export const writeAuditEvent = async (req: Request, res: Response) => {
-  const parsed = AuditEventSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ success: false, error: "Invalid parameters" });
-  const e = parsed.data;
-  const row = await writeAudit(await actorOf(req), {
-    action: e.action,
-    module: (e.module ?? "audit_log") as AuditModule,
-    entityType: e.entity_type,
-    entityId: e.entity_id,
-    target: e.target_resource,
-    fromStatus: e.from_status,
-    toStatus: e.to_status,
-    outcome: e.outcome,
-    durationMs: e.duration_ms,
-    details: e.details && typeof e.details === "object" ? e.details : undefined,
-  }, requestIdOf(req)).catch(() => null);
-  if (!row) return res.status(503).json({ success: false, error: "Audit log unavailable: database not reachable." });
-  res.json({ success: true, source: "database", data: row });
-};
+import { ActivitySchema, AuditQuerySchema, AuditSummarySchema } from "../validators/audit-log.validator.js";
 
 // POST /api/audit-log/activity — what a page reports about itself: viewed, signed in, signed out, exported.
 export const recordActivity = async (req: Request, res: Response) => {

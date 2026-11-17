@@ -1,11 +1,10 @@
 import type { Request, Response } from "express";
 import { runPipeline } from "../etl/index.js";
 import { uploadFormats } from "../etl/formats.js";
-import { attachUndo, expireOldUndo, undoUpload } from "../etl/undo.js";
-import { audit } from "../services/audit.js";
+import { undoUpload } from "../etl/undo.js";
+import { actorOf, requestIdOf } from "../services/audit.js";
 import { nextRetrain, RETRAIN_SCHEDULE } from "../services/retrain-schedule.js";
-import { listRetrainRunsInDb, listUploadsInDb, saveUploadRecordInDb, triggerTrainingInDb } from "../services/upload.service.js";
-import { UploadTriggerSchema } from "../validators/upload.validator.js";
+import { listRetrainRunsInDb, listUploadsInDb } from "../services/upload.service.js";
 import fs from "fs";
 
 // [ETL] POST /api/upload/file[?mode=check]
@@ -35,54 +34,11 @@ export const handleFileUpload = async (req: Request, res: Response) => {
   try {
     console.log(`[ETL] ${dryRun ? "Checking" : "Processing"} upload: ${file.originalname} (${(file.size / 1024).toFixed(1)} KB)`);
 
-    // Run the full ETL pipeline: Parse → Classify → Clean → Transform → Load → Publish
-    const result = await runPipeline(file.path, file.originalname, { dryRun, window });
-
-    // A check changes nothing, so it is not recorded as an upload.
-    const dbRecord = dryRun
-      ? null
-      : await saveUploadRecordInDb(
-          file.originalname,
-          result.rowsInserted + result.rowsUpdated,
-          result.datasetType,
-          result.success ? "processed" : "failed",
-        );
-
-    // The load's undo journal belongs to this upload; journals beyond the latest few are dropped.
-    if (dbRecord && result.undoBatch) {
-      try {
-        await attachUndo(result.undoBatch, Number(dbRecord.id));
-        await expireOldUndo();
-      } catch (e: any) {
-        console.error("[ETL] Could not record the upload's undo journal:", e.message);
-      }
-    }
-
-    // The audit log: a check, a load or a failed upload, with what it did and how long it took.
-    const flagged = result.comparison?.kind === "toll" ? result.comparison.flagged : undefined;
-    audit(req, {
-      action: dryRun ? "upload.checked" : result.success ? "upload.loaded" : "upload.failed",
-      module: "data_management",
-      entityType: "upload",
-      entityId: dbRecord?.id ?? null,
-      target: dbRecord ? `upload:${dbRecord.id}` : `file:${file.originalname}`,
-      toStatus: dryRun ? null : result.success ? "processed" : "failed",
-      outcome: result.success ? (dryRun ? "passed" : "success") : "failed",
-      durationMs: result.durationMs,
-      details: {
-        filename: file.originalname,
-        layout: result.datasetType,
-        rows_in_file: result.totalRowsParsed,
-        rows_written: result.rowsInserted,
-        rows_updated: result.rowsUpdated,
-        rows_set_aside: result.rowsRejected,
-        rows_refused: result.rowsFailed,
-        ...(window ? { dates_chosen: window } : {}),
-        ...(result.dayScreen ? { days_loaded: result.dayScreen.loaded, days_held_back: result.dayScreen.held, days_missing: result.dayScreen.missing } : {}),
-        ...(flagged !== undefined ? { plaza_days_flagged: flagged } : {}),
-        ...(result.success ? {} : { reason: (result.parseErrors[0] ?? result.loadErrors[0] ?? result.classification.reason ?? "").slice(0, 300) }),
-      },
-    });
+    // Run the full ETL pipeline: Parse → Classify → Clean → Transform → Load → Publish. runPipeline also records
+    // a load in data_uploads with its undo journal and writes the Audit Log entry, under the signed-in user
+    // (etl/index.ts), so a load from a script is recorded the same way; nothing is recorded again here.
+    const result = await runPipeline(file.path, file.originalname, { dryRun, window, actor: await actorOf(req), requestId: requestIdOf(req) });
+    const uploadId = result.uploadId ?? null;
 
     console.log(
       `[ETL] ${dryRun ? "Check" : "Load"} complete: ${result.rowsInserted} new, ${result.rowsUpdated} updated, ` +
@@ -93,7 +49,7 @@ export const handleFileUpload = async (req: Request, res: Response) => {
       success: result.success,
       source: "etl_pipeline",
       data: {
-        upload_id: dbRecord?.id ?? null,
+        upload_id: uploadId,
         dry_run: result.dryRun,
         filename: result.filename,
         file_format: result.fileFormat,
@@ -105,7 +61,7 @@ export const handleFileUpload = async (req: Request, res: Response) => {
         comparison: result.comparison,
         day_screen: result.dayScreen,
         profile: result.profile,
-        can_undo: Boolean(dbRecord && result.undoBatch),
+        can_undo: Boolean(uploadId && result.undoBatch),
         stats: {
           total_rows_parsed: result.totalRowsParsed,
           rows_accepted: result.rowsAccepted,
@@ -160,24 +116,9 @@ export const undoUploadHandler = async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ success: false, error: "Not an upload number." });
   const dryRun = String(req.query.mode ?? "") === "check";
-  const t0 = Date.now();
-  const result = await undoUpload(id, { dryRun });
-  // A done undo, and an undo that was asked for and refused (the preview is not an action).
-  if (!dryRun) {
-    audit(req, {
-      action: result.done ? "upload.undone" : "upload.undo_refused",
-      module: "data_management",
-      entityType: "upload",
-      entityId: id,
-      fromStatus: result.done ? "processed" : null,
-      toStatus: result.done ? "undone" : null,
-      outcome: result.done ? "success" : "refused",
-      durationMs: Date.now() - t0,
-      details: result.done
-        ? { removed: result.removed, restored: result.restored, tables: result.tables }
-        : { reason: result.error ?? "", ...(result.blockedBy ? { blocked_by: result.blockedBy } : {}) },
-    });
-  }
+  // A done undo, and an undo that was asked for and refused, are written to the Audit Log by undoUpload itself,
+  // under the signed-in user (the preview is not an action and is not logged).
+  const result = await undoUpload(id, { dryRun, actor: dryRun ? undefined : await actorOf(req), requestId: requestIdOf(req) });
   const ok = dryRun ? !result.error : result.done;
   return res.status(ok ? 200 : 409).json({ success: ok, data: result, error: result.error });
 };
@@ -187,15 +128,6 @@ export const getUploadFormats = async (_req: Request, res: Response) => {
   return res.json({ success: true, source: "etl_pipeline", data: uploadFormats() });
 };
 
-// [DEV-02] POST /api/v1/upload/trigger-training
-export const triggerTraining = async (req: Request, res: Response) => {
-  const parsed = UploadTriggerSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ success: false, error: "Invalid parameters" });
-
-  const dbRow = await triggerTrainingInDb(parsed.data.upload_id, parsed.data.model_target);
-  if (dbRow) {
-    return res.json({ success: true, source: "database", data: dbRow });
-  }
-
-  res.json({ success: true, source: "mock", data: { upload_id: parsed.data.upload_id, status: `training_${parsed.data.model_target}` } });
-};
+/* POST /api/upload/trigger-training was removed (17 Nov 2026 audit). Nothing called it (dashboard, scripts, logs),
+   it trained nothing (models retrain in the weekly batch), it relabelled an upload's status to "training_<x>", and
+   when the id did not exist or the database was down it still answered success with source "mock". */

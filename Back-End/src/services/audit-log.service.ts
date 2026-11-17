@@ -3,7 +3,7 @@ import { db } from "../config/db.js";
 // Entries are written by services/audit.ts; this reads them.
 
 /** The latest entries, newest first. Page views and the hourly congestion refresh are left out unless asked for:
- *  they would bury every other entry (the page loads the newest 500). */
+ *  they would bury every other entry (the page loads 500 at a time, newest first, and older pages on request). */
 export async function getAuditLogsFromDb(filters: {
   user_id?: string; action?: string; module?: string; include_views?: "0" | "1"; include_hourly?: "0" | "1"; limit?: number;
   start_date?: string; end_date?: string;

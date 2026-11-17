@@ -262,9 +262,11 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
         // was stale and its source held duplicate rows; both are fixed, so the
         // layering is intact again.
         //
-        // Also note the volume series only contains type = 'Entries', so this
-        // counts vehicles ENTERING NLEX at the plaza — largely the post-event
-        // exodus onto the expressway rather than arrivals.
+        // Also note the volume series (type = 'Entries') keeps each trip at the
+        // plaza where it PAID, so a plaza's count can be vehicles leaving NLEX
+        // there or joining it: at CDV/PH Arena northbound vehicles leaving and
+        // southbound vehicles joining, at Bocaue Interchange, Tambubong and Dau
+        // vehicles leaving, at Marilao vehicles joining (17 Nov 2026).
         //
         // Events falling on a holiday are flagged, since their deviation is
         // really a holiday effect.
@@ -272,7 +274,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
         // Other exits people use for the Philippine Arena (4 Nov 2026, user request): each arena event is also
         // measured at Bocaue Interchange, Tambubong and Marilao, and at all four arena exits together, with the
         // same baseline rules. Each row says which view it belongs to (`view`): "venue" is the event's own exit.
-        // Bocaue Barrier is left out on purpose: it is the mainline barrier, so its entries are through traffic.
+        // Bocaue Barrier is left out on purpose: it is the mainline barrier, so its counts are through traffic.
         //
         // Weather (8 Nov 2026, user): with Wet or Dry chosen, only events on a rainy (or dry) DAY are shown, each
         // against baseline days of the same day-weather, so rain and the event effect are not mixed. A rainy day
@@ -475,8 +477,12 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
                hvprevw AS (
                  SELECT hvprev.* FROM hvprev JOIN wx w ON w.d = hvprev.date AND w.h = hvprev.hour WHERE w.wet = $${W}
                ),
-               cur AS (SELECT COALESCE(SUM(v), 0)::bigint AS total, COUNT(DISTINCT date)::int AS days FROM hvw),
-               prev AS (SELECT COALESCE(SUM(v), 0)::bigint AS total, COUNT(DISTINCT date)::int AS days FROM hvprevw),
+               -- hours = the wet (or dry) hours behind each total. A day with one wet hour counted as a whole day, so
+               -- per day, "vs previous period" mostly measured how many wet hours each period had (17 Nov 2026).
+               cur AS (SELECT COALESCE(SUM(v), 0)::bigint AS total, COUNT(DISTINCT date)::int AS days,
+                              COUNT(DISTINCT (date, hour))::int AS hours FROM hvw),
+               prev AS (SELECT COALESCE(SUM(v), 0)::bigint AS total, COUNT(DISTINCT date)::int AS days,
+                               COUNT(DISTINCT (date, hour))::int AS hours FROM hvprevw),
                jam_cur AS (
                  SELECT ROUND(AVG(j.avg_jam_level)::numeric, 2)::float AS jam
                  FROM ${FACT_HOURLY_JAMS_LOCAL} j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
@@ -486,8 +492,8 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
                  FROM ${FACT_HOURLY_JAMS_LOCAL} j JOIN wx w ON w.d = j.date_day AND w.h = j.hour_of_day
                  WHERE j.date_day >= $1::date - ($2::date - $1::date + 1) AND j.date_day < $1::date AND w.wet = $${W}
                )
-               SELECT cur.total AS cur_total, cur.days AS cur_days,
-                      prev.total AS prev_total, prev.days AS prev_days,
+               SELECT cur.total AS cur_total, cur.days AS cur_days, cur.hours AS cur_hours,
+                      prev.total AS prev_total, prev.days AS prev_days, prev.hours AS prev_hours,
                       jam_cur.jam AS cur_jam, jam_prev.jam AS prev_jam
                FROM cur, prev, jam_cur, jam_prev`,
               wparams
@@ -560,6 +566,9 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
         prevTotalVolume: Number(kpi.rows[0].prev_total),
         days: kpi.rows[0].cur_days,
         prevDays: kpi.rows[0].prev_days,
+        /** With Wet or Dry chosen, the wet (or dry) hours behind the totals; null otherwise. */
+        hours: kpi.rows[0].cur_hours ?? null,
+        prevHours: kpi.rows[0].prev_hours ?? null,
         congestionIndex: kpi.rows[0].cur_jam,
         prevCongestionIndex: kpi.rows[0].prev_jam,
       },
@@ -804,7 +813,13 @@ async function recordedDailyWeather(from: string, to: string): Promise<Map<strin
  *  recorded keeps the stored value, which is a real weather forecast where one covered the day and NULL otherwise. */
 async function withRecordedWeather<T extends { date: unknown; weather_rainfall: unknown; weather_temp: unknown }>(rows: T[]): Promise<T[]> {
   if (rows.length === 0) return rows;
-  const iso = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
+  /* node-postgres returns a DATE as local midnight, so the calendar day is in the LOCAL parts. toISOString() read the
+     UTC day, which in Manila (UTC+8) is the day before: every day was drawn with the previous day's rain and
+     temperature (17 Nov 2026). */
+  const iso = (v: unknown) =>
+    v instanceof Date
+      ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`
+      : String(v).slice(0, 10);
   try {
     const rec = await recordedDailyWeather(iso(rows[0].date), iso(rows[rows.length - 1].date));
     return rows.map((r) => {
@@ -1143,7 +1158,8 @@ export async function getUpcomingEventSurge(limit = 60): Promise<UpcomingEvent[]
 // Actuals come straight from nlex_traffic_volume when that date has been
 // observed. Future days have no hourly ground truth and the models only predict
 // a daily total, so the predicted curve is that total redistributed over the
-// station's typical shape for the same weekday (last 90 days of history).
+// station's typical shape for the same weekday (the 90 days of history before
+// the date, or the last 90 recorded days for a date past the record).
 export type HourlyForecastPoint = {
   hour: number;
   actual: number | null;
@@ -1236,16 +1252,21 @@ export async function getMLPredictiveVolumeHourly(
              GROUP BY 1 ORDER BY 1`,
             [date, wetFilter]
           ),
-      // Typical share of the day carried by each hour, same weekday, recent history
+      // Typical share of the day carried by each hour, same weekday, recent history: the 90 days before the date, or,
+      // for a day past the end of the record, the last 90 recorded days. Anchored on the date alone, the last forecast
+      // days (August 2026) had no recorded day in their window, since the record ends 24 May 2026, and showed no
+      // hourly forecast at all (17 Nov 2026).
       db.query(
-        `WITH hv AS (
+        `WITH anchor AS (
+           SELECT LEAST($1::date, (SELECT MAX(date) FROM nlex_traffic_volume) + 1) AS a
+         ), hv AS (
            SELECT t.date, u.hr - 1 AS hour, u.v
            FROM nlex_traffic_volume t,
                 LATERAL unnest(${HOUR_ARRAY}) WITH ORDINALITY AS u(v, hr)
            WHERE t.type = 'Entries' AND t.vehicle_class = 'Total'
              AND EXTRACT(dow FROM t.date) = EXTRACT(dow FROM $1::date)
-             AND t.date < $1::date
-             AND t.date >= $1::date - interval '90 days'
+             AND t.date < (SELECT a FROM anchor)
+             AND t.date >= (SELECT a FROM anchor) - interval '90 days'
          )
          SELECT hour, AVG(v)::float AS v FROM hv GROUP BY 1 ORDER BY 1`,
         [date]

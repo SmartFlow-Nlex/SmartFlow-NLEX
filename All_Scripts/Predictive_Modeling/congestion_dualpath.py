@@ -57,6 +57,14 @@ H, SHORT, LONG_D = 168, 72, 28
 KINDS = ["LSTM (1 layer)", "Stacked LSTM", "Dual-Path LSTM"]
 FILE = {"LSTM (1 layer)": "lstm1.keras", "Stacked LSTM": "lstm2.keras", "Dual-Path LSTM": "dualpath.keras"}
 MAX_TRAIN_SAMPLES = 120_000
+# WITH HISTORY (16 Nov 2026, user: "train the LSTM with history still"). Fitted on a random 120,000 of all origins,
+# the family took 479 min on a laptop: over the 6-hour limit of a free GitHub job. And as the four years outnumber
+# the live weeks ~15 to 1, that sample was 93% history, so the newest road barely entered the fit. Now: EVERY live
+# origin, plus random history origins up to HISTORY_TOTAL_SAMPLES in all (about half and half), and each model stops
+# after FIT_BUDGET_MIN minutes at the end of an epoch, keeping its best epoch's weights. A live-only fit (~28,000
+# samples, 15-35 min a model) is never cut by the budget.
+HISTORY_TOTAL_SAMPLES = 60_000
+FIT_BUDGET_MIN = float(os.environ.get("SMARTFLOW_DUALPATH_BUDGET_MIN", "70"))
 SPEED_MID, SPEED_SCALE = 40.0, 25.0
 BUNDLE_FILES = [*FILE.values(), "calibration.pkl", "panel_fit.npz"]
 # The trainer's feature columns the stacker was fitted on, for bundles saved before bundle.json recorded them.
@@ -159,11 +167,13 @@ class Panel:
         self._cmd = np.vstack([np.zeros((1, E), int), np.cumsum(self.day_miss, axis=0)])
         self.prof = prof                                       # [E, 24, 2(weekday/weekend), 2(mean/2, sev)]
 
-    def fit_profile(self, until):
-        """This exit's usual state at each hour, weekday vs weekend, from hours before `until` only."""
+    def fit_profile(self, until, since=0):
+        """This exit's usual state at each hour, weekday vs weekend, from hours in [since, until) only. With history,
+        `since` is the first live hour, as the trainer's own profile (16 Nov 2026): the four-year profile described
+        2022-2026, not the road now."""
         E = len(self.exits)
         prof = np.zeros((E, 24, 2, 2), np.float32)
-        y = self.y[:until]; hod = self.hod[:until]; wk = self.wk[:until]
+        y = self.y[since:until]; hod = self.hod[since:until]; wk = self.wk[since:until]
         for w in (0, 1):
             for h in range(24):
                 m = (hod == h) & (wk == w)
@@ -278,17 +288,27 @@ class IsoCal:
 
 def _calendar(dsn):
     """Holidays and Arena event days, on a connection of its own: the trainer's connection has sat idle through
-    XGBoost and the forest (15-20 minutes) by the time this runs, and the server closes it."""
+    XGBoost and the forest (15-20 minutes) by the time this runs, and the server closes it.
+    RETRIED (16 Nov 2026): on 16 Nov a name-lookup failure here, after the family had trained for 68 min, left the
+    whole family unscored. Two small tables, so four tries a short wait apart cost nothing."""
     import psycopg2
-    conn = psycopg2.connect(dsn)
-    try:
-        hol = pd.read_sql("SELECT date_day FROM public.ph_holidays", conn, parse_dates=["date_day"])
-        # the verified calendar, as train_congestion_horizon.py (15 Nov 2026): the scraped one has false dates
-        ev = pd.read_sql("SELECT DISTINCT show_date AS d FROM silver.arena_events_verified "
-                         "WHERE status IN ('held', 'scheduled')", conn, parse_dates=["d"])
-    finally:
-        conn.close()
-    return set(hol.date_day.dt.normalize()), set(ev.d.dt.normalize())
+    for attempt in range(1, 5):
+        try:
+            conn = psycopg2.connect(dsn)
+            try:
+                hol = pd.read_sql("SELECT date_day FROM public.ph_holidays", conn, parse_dates=["date_day"])
+                # the verified calendar, as train_congestion_horizon.py (15 Nov 2026): the scraped one has false dates
+                ev = pd.read_sql("SELECT DISTINCT show_date AS d FROM silver.arena_events_verified "
+                                 "WHERE status IN ('held', 'scheduled')", conn, parse_dates=["d"])
+            finally:
+                conn.close()
+            return set(hol.date_day.dt.normalize()), set(ev.d.dt.normalize())
+        except (psycopg2.OperationalError, psycopg2.InterfaceError, pd.errors.DatabaseError) as e:
+            if attempt == 4:
+                raise
+            print(f"  calendar read failed (attempt {attempt} of 4: {str(e).strip().splitlines()[-1][:120]}); "
+                  f"retrying in {30 * attempt} s", flush=True)
+            time.sleep(30 * attempt)
 
 
 def _raw_rows(models, P, rows):
@@ -313,9 +333,11 @@ def _raw_rows(models, P, rows):
 
 
 # ------------------------------------------------------------------------------------------------- weekly fit
-def train_all(grid, exits, prev, nxt, cut, cal_cut, cal_rows, feats_cal, y_cal, dsn, with_history, labels="first_hour"):
+def train_all(grid, exits, prev, nxt, cut, cal_cut, cal_rows, feats_cal, y_cal, dsn, with_history, labels="first_hour",
+              live_from=None):
     """Fits the three recurrent models, the calibrators and the hybrid; saves the complete bundle to OUT in one swap.
-    feats_cal: DataFrame of the trainer's feature columns on the calibration rows (the stacker's inputs)."""
+    feats_cal: DataFrame of the trainer's feature columns on the calibration rows (the stacker's inputs).
+    live_from: the first hour of the live feed; with history, the profile and the sample are built around it."""
     import keras
     import xgboost as xgb
     t_all = time.time()
@@ -326,14 +348,27 @@ def train_all(grid, exits, prev, nxt, cut, cal_cut, cal_rows, feats_cal, y_cal, 
     P = Panel(grid, exits, prev, nxt, hol, ev, jam_sd=jam_sd)
     cut_i, cal_i = int(P.index_of([cut])[0]), int(P.index_of([cal_cut])[0])
     val_i = cal_i - 4 * 24
-    P.fit_profile(val_i)
+    hist_mode = bool(with_history) and live_from is not None
+    live_i = int(np.searchsorted(P.idx, pd.Timestamp(live_from))) if hist_mode else 0
+    P.fit_profile(val_i, since=live_i)
     E = len(exits)
     oo = np.repeat(np.arange(P.T), E); ee = np.tile(np.arange(E), P.T)
     keep = P.complete(np.minimum(oo, P.T - 1), ee)
     fit = keep & (oo < val_i - 1)
     val = keep & (oo >= val_i - 168) & (oo < cal_i - 1)          # targets masked to [.., cal_cut)
     o_f, e_f = oo[fit], ee[fit]
-    if len(o_f) > MAX_TRAIN_SAMPLES:
+    n_live = n_hist = None
+    if hist_mode:
+        is_live = o_f >= live_i
+        h_idx = np.flatnonzero(~is_live)
+        n_live = int(is_live.sum())
+        n_hist = int(min(len(h_idx), max(HISTORY_TOTAL_SAMPLES - n_live, 0)))
+        pick = np.sort(np.concatenate([np.flatnonzero(is_live),
+                                       np.random.default_rng(42).choice(h_idx, n_hist, replace=False)]))
+        o_f, e_f = o_f[pick], e_f[pick]
+        print(f"  dual-path family with history: all {n_live:,} live samples + {n_hist:,} random history samples; "
+              f"profile from the live weeks ({P.idx[live_i]} on); each model stops after {FIT_BUDGET_MIN:g} min")
+    elif len(o_f) > MAX_TRAIN_SAMPLES:
         pick = np.sort(np.random.default_rng(42).choice(len(o_f), MAX_TRAIN_SAMPLES, replace=False))
         o_f, e_f = o_f[pick], e_f[pick]
     o_v, e_v = oo[val], ee[val]
@@ -353,17 +388,31 @@ def train_all(grid, exits, prev, nxt, cut, cal_cut, cal_rows, feats_cal, y_cal, 
     tmp.mkdir(parents=True)
     log = {}
     models = {}
+
+    class _Budget(keras.callbacks.Callback):
+        """Stop at the end of the epoch that passes the time budget; EarlyStopping (Keras 3) then restores the best
+        epoch's weights at the end of training, however it stopped."""
+        def __init__(self, t0):
+            super().__init__(); self.t0, self.hit = t0, False
+
+        def on_epoch_end(self, epoch, logs=None):
+            if time.time() - self.t0 > FIT_BUDGET_MIN * 60:
+                self.hit = True
+                self.model.stop_training = True
+
     for kind in KINDS:
         keras.utils.set_random_seed(42)
         m = build(kind, E)
         t0 = time.time()
+        budget = _Budget(t0)
         hist = m.fit(_batches(P, o_f, e_f, val_i, cw), validation_data=(Xv, yv_all, wv), epochs=30, verbose=2,
                      callbacks=[keras.callbacks.EarlyStopping(patience=3, restore_best_weights=True),
-                                keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=1)])
+                                keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=1), budget])
         m.save(tmp / FILE[kind])
         models[kind] = m
         log[kind] = {"params": int(m.count_params()), "epochs": len(hist.history["loss"]),
-                     "best_val_loss": float(min(hist.history["val_loss"])), "train_sec": round(time.time() - t0)}
+                     "best_val_loss": float(min(hist.history["val_loss"])), "train_sec": round(time.time() - t0),
+                     "stopped_by_budget": budget.hit}
         print(f"  {kind}: {log[kind]}", flush=True)
     # calibration and hybrid on the trainer's calibration rows (targets in [cal_cut, cut)), unseen by the fits
     raw, okc = _raw_rows(models, P, cal_rows)
@@ -380,7 +429,8 @@ def train_all(grid, exits, prev, nxt, cut, cal_cut, cal_rows, feats_cal, y_cal, 
     meta = {"trained_at": pd.Timestamp.now().isoformat(timespec="seconds"), "cut": str(cut), "cal_cut": str(cal_cut),
             "val_start": str(P.idx[val_i]), "with_history": bool(with_history), "train_from": str(P.idx[0]),
             "labels": labels, "exits": list(map(str, exits)), "stack_feats": stack_feats,
-            "fit_samples": int(len(o_f)), "class_weights": cw.tolist(), "models": log,
+            "fit_samples": int(len(o_f)), "fit_samples_live": n_live, "fit_samples_history": n_hist,
+            "live_from": str(P.idx[live_i]) if hist_mode else None, "class_weights": cw.tolist(), "models": log,
             "minutes": round((time.time() - t_all) / 60, 1),
             "files": {n: _digest(tmp / n) for n in BUNDLE_FILES}}
     (tmp / "bundle.json").write_text(json.dumps(meta, indent=1))

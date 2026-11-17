@@ -157,15 +157,27 @@ export async function createMaintenanceScheduleInDb(data: MaintenanceCreate, all
   }
 }
 
-export async function getMaintenanceSchedulesFromDb(status?: MaintenanceStatus | "all") {
+/*
+ * OVERDUE: still "scheduled" after its whole planned window has ended. It is not a planned closure any more
+ * (the work happened or did not, and nobody updated the record), so the public list, which the mobile app
+ * shows drivers as planned work, leaves it out unless asked (includeOverdue); the Maintenance page asks, and
+ * shows it as "Overdue — needs an update" so an operator closes it. Rows are never changed here: only an
+ * operator can say what happened. (17 Nov 2026 audit: all 18 scheduled works were overdue, the latest ending
+ * 6 Nov, and the list still served them as planned closures.) Each row carries `overdue` for any reader.
+ */
+const OVERDUE_SQL = `(status = 'scheduled' AND ends_at < now())`;
+
+export async function getMaintenanceSchedulesFromDb(status?: MaintenanceStatus | "all", opts: { includeOverdue?: boolean } = {}) {
   if (!db) return null;
+  const includeOverdue = opts.includeOverdue ?? true;
   try {
     const { rows } = await db.query(
-      `SELECT ${ROW_COLUMNS} FROM nlex_maintenance_schedules
+      `SELECT ${ROW_COLUMNS}, ${OVERDUE_SQL} AS overdue FROM nlex_maintenance_schedules
        WHERE ($1::text IS NULL OR status = $1)
+         AND ($2::boolean OR NOT ${OVERDUE_SQL})
        ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'scheduled' THEN 1 WHEN 'completed' THEN 2 ELSE 3 END,
                 starts_at DESC`,
-      [status && status !== "all" ? status : null]
+      [status && status !== "all" ? status : null, includeOverdue]
     );
     return rows;
   } catch (error) {

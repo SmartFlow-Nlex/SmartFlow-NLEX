@@ -58,7 +58,7 @@ export async function getDashboardOverview(months: "3" | "12" | "all" = "12") {
         coverage: { pctValid: number | null };
       };
     };
-    hotspots: { km_bin: number; total: number }[];
+    hotspots: { km_bin: number; total: number; per_km?: number | null }[];
   };
   const e = emissions as {
     kpis: { totalCo2T: number; prevCo2T: number; avgAqi: number | null; avgPm25: number | null };
@@ -75,7 +75,10 @@ export async function getDashboardOverview(months: "3" | "12" | "all" = "12") {
   let peak: { dow: number; hour: number; v: number } | null = null;
   for (const r of t.hourDow) if (!peak || r.v > peak.v) peak = r;
 
-  const topHotspot = i.hotspots[0] ?? null;
+  // The densest stretch per km, as the Incident page ranks it since 17 Nov 2026 (the bins differ in length);
+  // the first row by count only when no row carries a length.
+  const byDensity = i.hotspots.filter((h) => h.per_km != null).sort((a, b) => Number(b.per_km) - Number(a.per_km));
+  const topHotspot = byDensity[0] ?? i.hotspots[0] ?? null;
 
   return {
     range: t.range,

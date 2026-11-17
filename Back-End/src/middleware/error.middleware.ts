@@ -1,5 +1,7 @@
 import type { Request, RequestHandler, Response, NextFunction } from "express";
+import multer from "multer";
 import { ZodError } from "zod";
+import { MAX_FILE_SIZE, UploadRefusedError } from "./upload.middleware.js";
 
 export function notFoundHandler(_req: Request, res: Response) {
   res.status(404).json({ message: "Not found" });
@@ -24,6 +26,22 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
       message: "Invalid request parameters",
       issues: err.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
     });
+  }
+
+  /* A refused upload is the caller's to fix, so it is 400 with the reason (17 Nov 2026 audit: a wrong file type
+     or a file over 500 MB came back as 500 "Internal server error"). Both messages are written here, never
+     taken from an unknown error, so nothing internal can leak through them. */
+  if (err instanceof UploadRefusedError) {
+    return res.status(400).json({ success: false, error: err.message, message: err.message });
+  }
+  if (err instanceof multer.MulterError) {
+    const why =
+      err.code === "LIMIT_FILE_SIZE"
+        ? `The file is larger than ${MAX_FILE_SIZE / 1024 / 1024} MB, the most one upload accepts. Split it, for example by year or by month, and upload the parts.`
+        : err.code === "LIMIT_FILE_COUNT" || err.code === "LIMIT_UNEXPECTED_FILE"
+          ? "Upload one file at a time."
+          : "The upload was refused. Check the file and try again.";
+    return res.status(400).json({ success: false, error: why, message: why, code: err.code });
   }
 
   /* The detail goes to the server log, never to the caller (security audit #9, 9 Nov 2026): a raw message could

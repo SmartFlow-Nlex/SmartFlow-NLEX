@@ -14,8 +14,9 @@
 --
 -- gold.v_congestion_forecast_score: each logged prediction next to what Waze
 -- actually reported for that exit and hour, labelled exactly as the training
--- script labels it (length-weighted speed of the hour's jams at the exit:
--- under 10 km/h High, under 20 Med, otherwise or no jam Low). Hours are only
+-- script labels it (length-weighted speed of the jams on the road at the exit
+-- in that hour, active hours: under 10 km/h High, under 20 Med, otherwise or
+-- no jam Low). Hours are only
 -- scored once they are complete and the feed was alive in them.
 --
 -- Two decision rules are scored side by side:
@@ -87,18 +88,40 @@ WITH lg AS (
 ), last_complete AS (
   SELECT MAX(ts) - interval '1 hour' AS ts FROM feed
 ), actual AS (
-  SELECT j.date_day + j.hour_of_day * interval '1 hour' AS ts, e.exit_name,
+  -- Active hours (15 Nov 2026): each jam counts in EVERY hour it was on the road, first seen to cleared, which is
+  -- the label the congestion model has trained on since 10 Nov (train_congestion_horizon.py ACTIVE_HOURS). This
+  -- used date_day/hour_of_day, the jam's FIRST hour only, so the served forecast was scored against a rule it no
+  -- longer predicted. Same generate_series as the trainer. Jams from before the log began are not expanded.
+  SELECT t AS ts, e.exit_name,
          SUM(j.speed_kmh * GREATEST(j.length_meters, 1)) / SUM(GREATEST(j.length_meters, 1)) AS spd
-  FROM silver.fact_waze_jams j JOIN bronze.nlex_exits e ON e.id = j.nlex_exit_id
+  FROM silver.fact_waze_jams j
+  JOIN bronze.nlex_exits e ON e.id = j.nlex_exit_id
+  CROSS JOIN LATERAL generate_series(
+         date_trunc('hour', j.first_seen_at AT TIME ZONE 'Asia/Manila'),
+         date_trunc('hour', COALESCE(j.cleared_at, j.last_seen_at, j.first_seen_at) AT TIME ZONE 'Asia/Manila'),
+         interval '1 hour') AS t
   WHERE j.speed_kmh IS NOT NULL
+    AND j.first_seen_at >= (SELECT MIN(base_ts) FROM gold.ml_congestion_forecast_log) AT TIME ZONE 'Asia/Manila'
+                           - interval '2 days'
+    -- Mainline only (17 Nov 2026, system audit): the expressway's own jams, as the live map and the trainer's
+    -- mainline labels (train_congestion_horizon.py MAINLINE; Back-End/src/utils/nlex-street.ts). 76% of the jams
+    -- tagged to an exit were on local roads beside it, and scoring against them graded the map on side-road traffic.
+    AND j.corridor_match IN ('ON_CORRIDOR', 'NEAR_CORRIDOR')
+    AND (LOWER(j.street) LIKE '%nlex%' OR LOWER(j.street) LIKE '%north luzon%')
+    AND LOWER(j.street) NOT LIKE '%service%' AND LOWER(j.street) NOT LIKE '%crossing%'
+    AND LOWER(j.street) NOT LIKE '%exit rd%' AND LOWER(j.street) NOT LIKE '%halili%'
+    AND LOWER(j.street) NOT LIKE '%dulalia%' AND LOWER(j.street) NOT LIKE '%tullahan%'
+    AND LOWER(j.street) NOT LIKE '%libtong%' AND LOWER(j.street) NOT LIKE '%slex%'
+    AND LOWER(j.street) NOT LIKE '%skyway%' AND LOWER(j.street) NOT LIKE '%sctex%'
+    AND LOWER(j.street) NOT LIKE '%tplex%' AND LOWER(j.street) NOT LIKE '%cavitex%'
   GROUP BY 1, 2
 )
 SELECT lg.base_ts, lg.segment_name, lg.hours_ahead, lg.target_ts,
        COALESCE(lg.p_med, 0) + COALESCE(lg.p_high, 0) AS p_cong,
        lg.congestion_state AS argmax_state,
-       CASE WHEN COALESCE(lg.p_med, 0) + COALESCE(lg.p_high, 0) >= 0.5
-            THEN CASE WHEN COALESCE(lg.p_high, 0) >= COALESCE(lg.p_med, 0) THEN 'High' ELSE 'Med' END
-            ELSE 'Low' END AS shown_state,
+       -- The state the map shows is the model's stored state (A25, 2 Nov 2026; the map itself was fixed to draw it
+       -- on 17 Nov 2026). The old 50%-of-heavy-plus-severe rule is gone everywhere.
+       lg.congestion_state AS shown_state,
        CASE WHEN a.spd IS NULL THEN 'Low' WHEN a.spd < 10 THEN 'High' WHEN a.spd < 20 THEN 'Med' ELSE 'Low' END AS actual_state
 FROM lg
 JOIN feed f ON f.ts = lg.target_ts

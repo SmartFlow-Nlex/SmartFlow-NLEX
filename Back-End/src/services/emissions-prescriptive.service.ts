@@ -1,12 +1,20 @@
 import { db } from "../config/db.js";
 import { exitDisplayName, fmtKm, kmMeasured, kmPost, KM_POST_ANCHORS, KM_POST_START, nearestExitName } from "../lib/km-post.js";
-import { clearedIncidents, EMISSIONS_TABLE, exposureByHour, idleKg, IDLING_SOURCE, recordBounds } from "./emissions-source.js";
+import { clearedIncidents, CORRIDOR_KM, EMISSIONS_TABLE, exposureByHour, idleKg, IDLING_SOURCE, recordBounds } from "./emissions-source.js";
 import { forecastTable } from "./forecast-source.js";
 
 /* Exit names beside every km the Prescriptive tab prints (19 Oct 2026, testers: a bare "Southbound Km 50–60"
    meant nothing to a reader who knows the road by its exits), from lib/km-post.ts's one exit-name map, so the
    names match the rest of the dashboard. */
 const SOUTH_OF_CORRIDOR = `south of Km ${KM_POST_START}, before Balintawak`;
+/* Eastbound and westbound records below Km 12 (17 Nov 2026). The mainline runs north and south; the only NLEX road
+   running east and west at that end is the Harbor Link with its Mindanao Avenue and Karuhatan legs (the operator's
+   own grouping: etl/canonical-exit.ts maps Mindanao, Karuhatan, R10, Caloocan and the MacArthur ramps to it). Those
+   records carry the link's own km (Karuhatan plaza 4.9, carriageway 6.5-11), which the mainline posts read as
+   "before Balintawak": a stretch that does not exist on the mainline. */
+const HARBOR_LINK = "NLEX Harbor Link, off the mainline";
+const offMainline = (direction: string | null | undefined, measured: number) =>
+  (direction === "EB" || direction === "WB") && kmPost(measured) < KM_POST_START;
 
 /** "Km 50–60 near San Simon", "Km 10–20 from Balintawak to Paso de Blas Valenzuela": a 10-km stretch of official posts
     and the exits on it (the nearest one when none falls inside). Below the first post, no km is printed:
@@ -19,8 +27,9 @@ function stretchLabel(lo10: number): string {
   return `Km ${lo10}–${lo10 + 10} ${where}`;
 }
 
-/** One measured km as "Km 59.2 near San Simon" (official post), or the south-of-corridor wording. */
-function pointLabel(measured: number): string {
+/** One measured km as "Km 59.2 near San Simon" (official post), or the south-of-corridor or Harbor Link wording. */
+function pointLabel(measured: number, direction?: string | null): string {
+  if (offMainline(direction, measured)) return `on the ${HARBOR_LINK}`;
   const post = kmPost(measured);
   return post < KM_POST_START ? SOUTH_OF_CORRIDOR : `Km ${fmtKm(measured)} near ${nearestExitName(measured)}`;
 }
@@ -53,8 +62,9 @@ function pointLabel(measured: number): string {
                               comparable blockages shows how far the corridor has
                               itself already cut it. Looked back over the Range,
                               and carried over the incident forecast's validated days.
-     Class 3 window           the congestion forecast's High hours and Class 3's
-                              measured share of vehicle-km in them (no CO2 claimed)
+     Class 3 window           one block of busy hours the congestion forecast expects
+                              High in (else the busiest hours), and Class 3's measured
+                              share of vehicle-km in them (no CO2 claimed)
      Tolling (where)          the exits carrying most of that window's Class 3 CO2
 
    Removed on 2 Nov 2026 as not data-backed: the Class 3 share shift (its size was
@@ -98,7 +108,12 @@ export type Strategy = {
   floorNote?: string;
   /** The same saving carried forward: the incident forecast's validated days x what each incident of the Range
    *  would have saved. Null with a reason in `projectionNote` where the data cannot support one. */
-  projection?: { tonnes: number; from: string; to: string; days: number; forecastIncidents: number; basis: string } | null;
+  projection?: {
+    tonnes: number; from: string; to: string; days: number; forecastIncidents: number; basis: string;
+    /** The stretches of dates the figure covers: only the forecast days its accuracy study passes, so `from` to `to`
+     *  can have days left out (17 Nov 2026: "25 May - 22 Aug" read as 90 days while 74 were counted). */
+    spans: { from: string; to: string }[];
+  } | null;
   projectionNote?: string;
 };
 
@@ -123,9 +138,14 @@ export type HeavyWindow = {
   co2Note: string;
   /** The advice, in words. Absent when there is no distinct window (see noWindow). */
   action?: string;
-  /** Where the window came from: the congestion forecast's High-congestion hours, or (no forecast) the busiest hours. */
+  /** Where the window came from: the congestion forecast's High-congestion hours that are also busy hours, or the
+   *  Range's busiest hours (no forecast, a flat one, or one whose top hours are not busy hours). */
   source: "forecast" | "history";
   basis: string;
+  /** Set when a forecast was read but not used for the window, saying why, for the card to show. */
+  fallbackNote?: string;
+  /** A caution worded for the window's time of day: where trucks concentrate in it, or already avoid it. */
+  check?: string;
   /** Set, with no action, when the window is over half the day: there are then no distinct hours to avoid. */
   noWindow?: string;
 };
@@ -172,6 +192,13 @@ export type PrescriptiveResult = {
 
 const cache = new Map<string, { at: number; data: PrescriptiveResult }>();
 const TTL_MS = 10 * 60 * 1000;
+
+/** The incident forecast's validated days, as one row: their first and last date, count, incidents, buckets, and
+ *  each usable bucket's first and last date. */
+type Ahead = {
+  a: string | null; b: string | null; days: number; n: number | null; buckets: string | null;
+  spans: { from: string; to: string }[] | null;
+};
 
 /* Bootstrap for the blockage strategy. Its saving depends on WHICH incidents
    happen in a Range — and because idling is quadratic, on how many long ones —
@@ -301,9 +328,12 @@ export async function getPrescriptiveStrategies(
            FROM public.ml_predictive_incidents WHERE prediction_type = 'future'
        ), u AS (SELECT h_lo, h_hi FROM ml_incident_horizon_accuracy WHERE usable)
        SELECT MIN(forecast_date)::text AS a, MAX(forecast_date)::text AS b, COUNT(*)::int AS days, SUM(n)::float AS n,
-              (SELECT string_agg(h_lo || '-' || h_hi, ', ' ORDER BY h_lo) FROM u) AS buckets
+              (SELECT string_agg(h_lo || '-' || h_hi, ', ' ORDER BY h_lo) FROM u) AS buckets,
+              (SELECT json_agg(json_build_object('from', s.a, 'to', s.b) ORDER BY s.a)
+                 FROM (SELECT MIN(g.forecast_date)::text AS a, MAX(g.forecast_date)::text AS b
+                         FROM f g JOIN u ON g.h BETWEEN u.h_lo AND u.h_hi GROUP BY u.h_lo) s) AS spans
          FROM f WHERE EXISTS (SELECT 1 FROM u WHERE f.h BETWEEN u.h_lo AND u.h_hi)`,
-    ).catch(() => ({ rows: [] as { a: string | null; b: string | null; days: number; n: number | null; buckets: string | null }[] })),
+    ).catch(() => ({ rows: [] as Ahead[] })),
   ]);
   const factorOf = (c: number) => Number((factorRows.rows as { c: number; g: number }[]).find((r) => Number(r.c) === c)?.g ?? 0);
   const F_LIGHT = factorOf(1);
@@ -410,7 +440,7 @@ export async function getPrescriptiveStrategies(
       if (x.e.km != null && x.e.direction != null) {
         // 10-km stretches of the official km post (lib/km-post.ts); x.e.km is DPWH chainage, which is on the measured scale.
         const lo10 = Math.floor(kmPost(x.e.km) / 10) * 10;
-        const k = `${BOUND[x.e.direction] ?? x.e.direction} ${stretchLabel(lo10)}`;
+        const k = `${BOUND[x.e.direction] ?? x.e.direction} ${offMainline(x.e.direction, x.e.km) ? HARBOR_LINK : stretchLabel(lo10)}`;
         const s = byStretch.get(k) ?? { kg: 0, long: 0 };
         s.kg += v;
         if (x.e.minutes >= 60) s.long++;
@@ -427,7 +457,7 @@ export async function getPrescriptiveStrategies(
        a stretch that leads because of one afternoon is not a stretch that needs a standing patrol. */
     const lone =
       biggest && total > 0 && pick(biggest) / total >= 0.2
-        ? ` One incident alone is ${share(pick(biggest))}% of it (${biggest.e.day}, ${BOUND[biggest.e.direction ?? ""] ?? "direction not recorded"}${biggest.e.km != null ? ` ${pointLabel(biggest.e.km)}` : ""}, lane blocked ${(biggest.e.minutes / 60).toFixed(1)} h), so read the stretch shares as where the long blockages happened this Range, not as a fixed pattern.`
+        ? ` One incident alone is ${share(pick(biggest))}% of it (${biggest.e.day}, ${BOUND[biggest.e.direction ?? ""] ?? "direction not recorded"}${biggest.e.km != null ? ` ${pointLabel(biggest.e.km, biggest.e.direction)}` : ""}, lane blocked ${(biggest.e.minutes / 60).toFixed(1)} h), so read the stretch shares as where the long blockages happened this Range, not as a fixed pattern.`
         : "";
     const topHours = [...byHour.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
     return {
@@ -468,7 +498,15 @@ export async function getPrescriptiveStrategies(
   /* Carried forward (2 Nov 2026): what the Range's incidents would have saved, per incident, times the incidents the
      forecast expects on its validated days, so it carries the Range's mix of incidents, blockage lengths and hours. */
   const rangeIncidentN = Number((rangeIncidents.rows[0] as { n?: number } | undefined)?.n ?? 0);
-  const fc = ahead.rows[0] as { a: string | null; b: string | null; days: number; n: number | null; buckets: string | null } | undefined;
+  const fc = ahead.rows[0] as Ahead | undefined;
+  /* The covered dates as stretches, adjacent buckets joined (days 31-60 and 61-90 are one run of dates). */
+  const nextDay = (iso: string) => new Date(Date.parse(`${iso}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  const spans: { from: string; to: string }[] = [];
+  for (const s of fc?.spans ?? []) {
+    const last = spans[spans.length - 1];
+    if (last && nextDay(last.to) === s.from) last.to = s.to;
+    else spans.push({ from: s.from, to: s.to });
+  }
   const projectionOf = (tonnes: number): { projection: Strategy["projection"]; projectionNote?: string } => {
     if (!fc || fc.n == null || !fc.a || !fc.b || !(fc.days > 0))
       return { projection: null, projectionNote: "No forward figure: the incident forecast has no days its accuracy study passes, so a projection would be no better than repeating last week." };
@@ -481,7 +519,8 @@ export async function getPrescriptiveStrategies(
         to: fc.b,
         days: fc.days,
         forecastIncidents: Math.round(fc.n),
-        basis: `${Math.round(fc.n).toLocaleString("en-US")} incidents forecast for ${fc.a} to ${fc.b} (forecast days ${fc.buckets ?? "?"}, the only ones its accuracy study passes) x ${(perIncident * 1000).toFixed(1)} kg avoided per incident in the Range (${rangeIncidentN.toLocaleString("en-US")} incidents, ${incidents.length.toLocaleString("en-US")} of them lane-blocking). The per-incident saving is the Range's own, so it carries the Range's mix of incidents, blockage lengths and hours.`,
+        spans: spans.length ? spans : [{ from: fc.a, to: fc.b }],
+        basis: `${Math.round(fc.n).toLocaleString("en-US")} incidents forecast for ${(spans.length ? spans : [{ from: fc.a, to: fc.b }]).map((s) => `${s.from} to ${s.to}`).join(" and ")} (${fc.days} days: forecast days ${fc.buckets ?? "?"}, the only ones its accuracy study passes) x ${(perIncident * 1000).toFixed(1)} kg avoided per incident in the Range (${rangeIncidentN.toLocaleString("en-US")} incidents, ${incidents.length.toLocaleString("en-US")} of them lane-blocking). The per-incident saving is the Range's own, so it carries the Range's mix of incidents, blockage lengths and hours.`,
       },
     };
   };
@@ -498,7 +537,7 @@ export async function getPrescriptiveStrategies(
       reductionPct: r2(pct(clearanceTonnes)),
       reductionTonnes: r2(clearanceTonnes),
       range: rangeOf(runsB),
-      lever: "in this Range, each lane blockage shortened to the fastest 10% of comparable blockages the corridor already achieved (same length, same hour where at least 10 exist): what that would have avoided, looking back",
+      lever: "in this Range, each lane blockage shortened to the fastest 10% of comparable blockages the corridor already achieved (the same length band; under an hour, also the same hour where at least 10 exist; an hour or more, that band at any hour): what that would have avoided, looking back",
       where: focusB.where,
       when: focusB.when,
       focus: focusB.focus,
@@ -508,7 +547,8 @@ export async function getPrescriptiveStrategies(
       assumptions: [
         "Queueing lasts as long as a lane is blocked (blockage cleared minus the start), not as long as the site takes to clear: an incident that never blocked a lane queues nobody and is not counted.",
         "Idling is the area of the queue triangle, lambda x T^2 / 2: vehicles join while the lane is blocked and drain as it clears. Still quadratic in delay, so the long tail dominates.",
-        "One incident is taken to affect one exit-segment in one direction, not the whole corridor.",
+        "Upper bound: every vehicle arriving during the blockage is treated as stopped until the lane reopens, as if the carriageway were closed. The records do not say how many lanes were blocked, and with one lane blocked some traffic still passes, so the real idling, and the saving, are lower.",
+        `One incident holds up one carriageway, not the whole corridor: the vehicles queueing are that hour's average flow past a point in one direction (the hour's vehicle-km over the ${CORRIDOR_KM.toFixed(2)} km from Balintawak to Sta. Ines, halved).`,
         floorNote,
         `Idling: ${IDLING_SOURCE} Weighted by each hour's class mix. US figures: none were found for the Philippine fleet.`,
         "Incident records end before the emissions record does; the window is stated in basis.",
@@ -553,13 +593,23 @@ export async function getPrescriptiveStrategies(
   const corridorGPerVkm = vkmSum > 0 ? Math.round(co2Sum / vkmSum) : 0;
 
   /* ── Class 3 window advisory (the diagram's fleet-mix box, KPI: Class 3 peak share reduction) ──────────
-     A recommendation again since 2 Nov 2026, claiming only what can be measured. The window is the hours the
-     CONGESTION FORECAST expects High congestion most (those within 10% of its highest hour's average chance of
-     High, over the next 7 days), so the advice follows the predictive model; with no forecast it falls back to
-     the Range's busiest hours and says so. The effect is the diagram's KPI, Class 3's share of vehicle-km in
-     those hours, which falls to 0 if trucks keep out; the receiving hours are the quietest, filled in order
-     while each stays under the window's own lowest hour. No CO2 saving is claimed: in this model a truck emits
-     the same at 03:00 as at 17:00, and the record has no freight or truck-ban data to say what it costs. */
+     A recommendation again since 2 Nov 2026, claiming only what can be measured. The effect is the diagram's KPI,
+     Class 3's share of vehicle-km in the window, which falls to 0 if trucks keep out. No CO2 saving is claimed: in
+     this model a truck emits the same at 03:00 as at 17:00, and the record has no freight or truck-ban data to say
+     what it costs.
+
+     The rule (17 Nov 2026). The window used to be every hour within 10% of the congestion forecast's top hour, and
+     the receiving hours the quietest wherever they fell. With the forecast's top hours at night that read "avoid
+     00:00–01:00, 04:00–05:00, travel in 01:00–04:00": two pieces of window with the receiving hours between them,
+     all in the quietest part of the day. Now, whatever the forecast says:
+       busy hours  only an hour whose vehicle-km is within 10% of the Range's busiest hour's can be in the window;
+       the window  ONE continuous block of busy hours. The congestion forecast's top hours (within 10% of its highest
+                   hour's average chance of High, next 7 days) that are busy hours set it: from the first to the last
+                   of them inside one block of busy hours (the block with the most vehicle-km if they fall in two).
+                   With no forecast, a flat one (over half the day in its top), or none of its top hours busy, the
+                   window is the busiest block of busy hours, and `basis` and `fallbackNote` say which;
+       receiving   the quietest hours outside the window, each quieter than the window's lowest hour, filled in
+                   order while each stays under that hour. */
   const hrs = (hourly.rows as { h: number; vkm: number; c3: number }[]).map((r) => ({ h: Number(r.h), vkm: Number(r.vkm), c3: Number(r.c3) }));
   let forecastHours: number[] = [];
   let forecastBase: string | null = null;
@@ -581,57 +631,119 @@ export async function getPrescriptiveStrategies(
   }
   let heavyWindow: HeavyWindow | null = null;
   if (hrs.length >= 12) {
+    const byHour = new Map(hrs.map((r) => [r.h, r]));
+    const vkmOf = (hs: number[]) => hs.reduce((a, h) => a + (byHour.get(h)?.vkm ?? 0), 0);
+    /** Maximal runs of consecutive hours in `set`, in clock order; a run across midnight stays one (23, 0, 1). */
+    const runsOf = (set: Set<number>): number[][] => {
+      if (set.size >= 24) return [[...Array(24).keys()]];
+      const runs: number[][] = [];
+      for (const h of [...set].sort((a, b) => a - b)) {
+        if (set.has((h + 23) % 24)) continue; // not the first hour of its run
+        const run = [h];
+        while (set.has((run[run.length - 1] + 1) % 24)) run.push((run[run.length - 1] + 1) % 24);
+        runs.push(run);
+      }
+      return runs;
+    };
+    const busiest = (runs: number[][]) => [...runs].sort((a, b) => vkmOf(b) - vkmOf(a))[0] ?? [];
+
     const top = Math.max(...hrs.map((r) => r.vkm));
-    const fromForecast = forecastHours.length > 0;
-    const peak = fromForecast ? hrs.filter((r) => forecastHours.includes(r.h)) : hrs.filter((r) => r.vkm >= top * 0.9);
-    const peakSet = new Set(peak.map((r) => r.h));
+    const busy = new Set(hrs.filter((r) => r.vkm >= top * 0.9).map((r) => r.h));
+    const blocks = runsOf(busy);
+    const fcTop = new Set(forecastHours);
+    const fcFlat = forecastHours.length > 12;
+    // In each block of busy hours, the stretch from its first to its last forecast top hour.
+    const fcSpans = fcFlat
+      ? []
+      : blocks
+          .map((b) => {
+            const at = b.map((h, i) => (fcTop.has(h) ? i : -1)).filter((i) => i >= 0);
+            return at.length ? b.slice(at[0], at[at.length - 1] + 1) : [];
+          })
+          .filter((s) => s.length > 0);
+    const fromForecast = fcSpans.length > 0;
+    const windowHours = fromForecast ? busiest(fcSpans) : busiest(blocks);
+    const peakSet = new Set(windowHours);
+    const peak = windowHours.map((h) => byHour.get(h)!).filter(Boolean);
     const peakVkm = peak.reduce((a, r) => a + r.vkm, 0);
     const peakC3 = peak.reduce((a, r) => a + r.c3, 0);
     const allC3 = hrs.reduce((a, r) => a + r.c3, 0);
     const allVkmByHour = hrs.reduce((a, r) => a + r.vkm, 0);
     const ceiling = Math.min(...peak.map((r) => r.vkm));
-    const quiet = hrs.filter((r) => !peakSet.has(r.h)).sort((a, b) => a.vkm - b.vkm);
+    // Outside the window and quieter than its lowest hour, quietest first.
+    const quiet = hrs.filter((r) => !peakSet.has(r.h) && r.vkm < ceiling).sort((a, b) => a.vkm - b.vkm);
     let left = peakC3;
     const receiving: number[] = [];
     for (const r of quiet) {
       if (left <= 0) break;
-      const room = Math.max(0, ceiling - r.vkm);
-      if (room <= 0) continue;
       receiving.push(r.h);
-      left -= room;
+      left -= ceiling - r.vkm;
     }
     const sharePeak = peakVkm > 0 ? (peakC3 / peakVkm) * 100 : 0;
-    const window = hourRanges([...peakSet]);
+    const shareAll = allVkmByHour > 0 ? (allC3 / allVkmByHour) * 100 : 0;
+    const window = hourRanges(windowHours);
     const into = receiving.length ? hourRanges(receiving) : "the quieter hours";
+
+    /* Why the forecast was not used, when it was read. */
+    const fcWords = forecastHours.length ? hourRanges(forecastHours) : "";
+    const fcOf = forecastBase ? ` of ${forecastBase}` : "";
+    const BUSY_RULE = "within 10% of the busiest hour's vehicle-km";
+    const fallbackNote = fromForecast || forecastHours.length === 0
+      ? undefined
+      : fcFlat
+        ? `The congestion forecast${fcOf} has no distinct peak (${forecastHours.length} of 24 hours are within 10% of its highest), so the window is this Range's busiest hours instead.`
+        : `The congestion forecast${fcOf} expects High congestion most at ${fcWords}, which ${forecastHours.length === 1 ? "is not a busy hour" : "are not busy hours"} on this Range (${BUSY_RULE}), so the window is this Range's busiest hours instead.`;
+    const leftOut = forecastHours.filter((h) => !peakSet.has(h));
+    const basis = fromForecast
+      ? `Window from the congestion forecast${fcOf}: of the hours it expects High congestion most over the next 7 days (${fcWords}), those that are busy hours on this Range (${BUSY_RULE}), taken as one continuous block.` +
+        (leftOut.length ? ` ${hourRanges(leftOut)} ${leftOut.length === 1 ? "is" : "are"} left out, not being in that block of busy hours.` : "") +
+        " Class 3 shares from this Range's vehicle-km."
+      : `${fallbackNote ?? "No congestion forecast available, so the window is this Range's busiest hours."} Busiest hours: the continuous block of hours ${BUSY_RULE}. Class 3 shares from this Range's vehicle-km.`;
+
+    /* The caution, worded for the window's time of day (17 Nov 2026: "check daytime truck restrictions" was printed
+       under a midnight window). Night is 21:00 to 06:00. */
+    const night = (h: number) => h >= 21 || h < 6;
+    const when = windowHours.every(night) ? "night" : windowHours.some(night) ? "mixed" : "day";
+    const check =
+      sharePeak > shareAll * 1.5
+        ? when === "night"
+          ? "Trucks concentrate in these night hours; check whether daytime truck restrictions are what keeps them there before advising them into other hours."
+          : when === "day"
+            ? "Trucks concentrate in these daytime hours; check the daytime truck restrictions already in force before advising more."
+            : "Trucks concentrate in these hours; check the truck restrictions in force at these times first."
+        : sharePeak < shareAll / 2
+          ? "Trucks already avoid these hours."
+          : undefined;
+
     heavyWindow = {
       peakHours: window,
-      peakHourList: [...peakSet].sort((a, b) => a - b),
+      peakHourList: [...windowHours].sort((a, b) => a - b),
       peakClass3SharePct: r2(sharePeak),
       class3InPeakPct: r2(allC3 > 0 ? (peakC3 / allC3) * 100 : 0),
-      allDayClass3SharePct: r2(allVkmByHour > 0 ? (allC3 / allVkmByHour) * 100 : 0),
+      allDayClass3SharePct: r2(shareAll),
       shareReductionPp: r2(sharePeak),
       receivingHours: receiving.length ? hourRanges(receiving) : "none needed",
       fitsOffPeak: left <= 0,
       capacityNote:
         left <= 0
-          ? `${receiving.length === 1 ? "The quietest hour" : `The ${receiving.length} quietest hours`} can take every moved Class-3 vehicle-km and stay${receiving.length === 1 ? "s" : ""} below the window's own lowest hour.`
-          : `The quiet hours cannot take all of it without becoming as busy as the window (${Math.round((left / peakC3) * 100)}% would be left over): advise part of the window, not all of it.`,
+          ? `${receiving.length === 1 ? "The quietest hour" : `The ${receiving.length} quietest hours`} outside the window can take every moved Class-3 vehicle-km and stay${receiving.length === 1 ? "s" : ""} below the window's own lowest hour.`
+          : `The quieter hours cannot take all of it without becoming as busy as the window (${Math.round((left / peakC3) * 100)}% would be left over): advise part of the window, not all of it.`,
       co2Note:
         "No CO2 saving is claimed: in this model a truck emits the same at 03:00 as at 17:00 (no congestion term), and the record holds no freight, delivery-hour or truck-ban data to say what the advisory costs operators.",
       action: left <= 0
         ? `Advise Class 3 to avoid ${window} and travel in ${into}.`
-        : `Advise Class 3 to avoid the worst of ${window}; the quiet hours cannot take all of it.`,
+        : `Advise Class 3 to avoid the worst of ${window}; the quieter hours cannot take all of it.`,
       source: fromForecast ? "forecast" : "history",
-      basis: fromForecast
-        ? `Window from the congestion forecast${forecastBase ? ` of ${forecastBase}` : ""}: the hours it expects High congestion most over the next 7 days. Class 3 shares from this Range's vehicle-km.`
-        : "No congestion forecast available: the window is this Range's busiest hours (within 10% of the busiest hour's vehicle-km).",
+      basis,
+      ...(fallbackNote ? { fallbackNote } : {}),
+      ...(check ? { check } : {}),
     };
     /* A "window" of more than half the day is not one (2 Nov 2026: a flat forecast once put 17 of 24 hours in
        it). Advising trucks off most of the day is not actionable, so no advisory and no surcharge is offered;
        the card says why instead. */
     if (peakSet.size > 12) {
       heavyWindow.action = undefined;
-      heavyWindow.noWindow = `${fromForecast ? "The congestion forecast" : "This Range's traffic"} has no distinct peak: ${peakSet.size} of 24 hours are within 10% of the highest, so there is no window to advise Class 3 away from.`;
+      heavyWindow.noWindow = `This Range's traffic has no distinct peak: ${peakSet.size} of 24 hours in a row are ${BUSY_RULE}, so there is no window to advise Class 3 away from.`;
     }
   }
 

@@ -128,7 +128,11 @@ export function corridorStatusFromFeed(
     }
 
     const key = `${nearest.exit_name}|${snapped.direction}`;
-    const level = Number.isFinite(Number(p.level)) ? Number(p.level) : null;
+    /* Waze's own 0-5 grade. Since 15 Nov 2026 the feed's `level` is the map colour on the model's speed scale
+       (0 / 2 / 4) and Waze's grade travels as `waze_level`; this panel prints "Jam level N of 5" and explains
+       Waze's scale, so it must read the grade (fixed 17 Nov 2026: a grade-3 jam read "level 4 · severe"). */
+    const rawLevel = p.waze_level ?? p.level;
+    const level = rawLevel != null && Number.isFinite(Number(rawLevel)) ? Number(rawLevel) : null;
     const speed = Number.isFinite(Number(p.speed)) ? Number(p.speed) : null;
     const at = typeof p.observed_at === "string" ? p.observed_at : null;
     const meters = Number.isFinite(Number(p.length_m)) ? Number(p.length_m) : null;

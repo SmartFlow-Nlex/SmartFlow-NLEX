@@ -5,6 +5,7 @@ import { getEmissionsAnalyticsFromDb } from "./emissions.service.js";
 import { getCorridorStatusFull } from "./corridor-status.service.js";
 import { getMaintenanceSchedulesFromDb } from "./maintenance.service.js";
 import { fmtKmRange, nearExitsText } from "../lib/km-post.js";
+import { knownFigures, unknownFigures } from "./ai-figure-check.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════
    AI EXPLAIN — PLAIN-LANGUAGE BRIEFINGS FOR THE NON-PREDICTIVE MODULES
@@ -43,6 +44,8 @@ export type Explanation = {
   watchOut: string | null;
   /** The facts the prose was built from, so a reader can check it. */
   facts: string[];
+  /** "template" when the briefing is the facts themselves, because the reply failed the figure check. */
+  source?: "ai" | "template";
 };
 
 const fmt = (n: number, dp = 0) =>
@@ -433,6 +436,26 @@ function validate(raw: unknown, facts: string[]): Explanation {
   return { headline, points, watchOut, facts };
 }
 
+/* The figure check (ai-figure-check.ts; 17 Nov 2026 audit). The rule above says never to state a number that
+   is not in the facts, and nothing checked it: a briefing could quote a figure of its own beside the real
+   ones. Every figure in the headline, points and watch-out must be one the facts state, to within the
+   briefing's own rounding. One that fails, or a reply with no headline, is replaced by the facts themselves. */
+function checkFigures(out: Explanation, user: string, feature: Feature): Explanation {
+  const bad =
+    out.headline === "No summary was produced."
+      ? ["(no headline)"]
+      : unknownFigures([out.headline, ...out.points, out.watchOut], knownFigures(user));
+  if (bad.length === 0) return { ...out, source: "ai" };
+  console.warn(`[ai-explain] ${feature}: the reply quoted ${bad.slice(0, 6).join(", ")}, not in its facts; serving the facts as written`);
+  return {
+    headline: out.facts[0] ?? "There are no figures to describe for this panel.",
+    points: out.facts.slice(1, 6),
+    watchOut: null,
+    facts: out.facts,
+    source: "template",
+  };
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    ENTRY POINT
 ───────────────────────────────────────────────────────────────────────────── */
@@ -467,9 +490,10 @@ export async function explain(
     );
   }
 
+  const user = buildUser(built);
   const content = await chat({
     system: SYSTEM,
-    user: buildUser(built),
+    user,
     json: true,
     maxTokens: 1400,
     // Slightly above zero: at exactly 0 the points came out as a flat restatement
@@ -477,5 +501,5 @@ export async function explain(
     temperature: 0.3,
   });
 
-  return validate(extractJson(content), built.facts);
+  return checkFigures(validate(extractJson(content), built.facts), user, feature);
 }

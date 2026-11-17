@@ -38,14 +38,14 @@ export type Scenario = {
   availableDates: string[];
   volume: {
     dailyVehicles: number | null;
-    segmentSharePct: number | null;
-    segmentName: string | null;
-    peakHourInflow: number | null;
     /** Corridor-wide vehicles per hour (0-23) — the Traffic page's hourly drill-down for the same model. */
     hourly: (number | null)[] | null;
-    /** `hourly` at the segment: the arrival rate the simulation runs at that hour. */
-    hourlyInflow: (number | null)[] | null;
-    clamped: boolean;
+    /** The corridor's mean vehicles at each hour over every day in the record. */
+    typicalHourly: number[] | null;
+    /** `hourly` / `typicalHourly`: what each stretch's own recorded flow for the hour is multiplied by. */
+    hourlyScale: (number | null)[] | null;
+    /** The day's forecast total against the record's mean day, for a date with no hourly shape. */
+    dayScale: number | null;
     model: string | null;
     wmape: number | null;
   };
@@ -89,7 +89,7 @@ const shortDay = (iso: string) =>
  */
 export function forecastHour(data: Scenario | null, hour: number | null): number | null {
   if (hour != null) return hour;
-  const h = data?.volume.hourlyInflow;
+  const h = data?.volume.hourly;
   if (!h) return null;
   let best = -1;
   let at = 0;
@@ -102,15 +102,22 @@ export function forecastHour(data: Scenario | null, hour: number | null): number
   return best >= 0 ? at : null;
 }
 
+/** What the forecast does to the road at one hour: the factor each stretch's recorded flow is multiplied by, and the
+ *  two corridor figures it comes from (null when the date has no hourly shape and the day's factor is used). */
+export type ForecastScale = { readonly factor: number; readonly corridorForecast: number | null; readonly corridorTypical: number | null };
+
 /**
- * The arrival rate the forecast gives at one hour of the chosen day. Falls back to the day's peak-hour
- * figure only when the day has no hourly shape at all, never to another hour's number.
+ * How busy the forecast says the corridor is at one hour of the chosen day against how busy it usually is at that
+ * hour. The sandbox multiplies each stretch's own recorded flow, in each direction, by it. Falls back to the day's
+ * factor only when the day has no hourly shape at all, never to another hour's number.
  */
-export function forecastInflowAt(data: Scenario | null, hour: number | null): number | null {
+export function forecastScaleAt(data: Scenario | null, hour: number | null): ForecastScale | null {
   if (!data) return null;
   const hr = forecastHour(data, hour);
-  const v = hr != null ? data.volume.hourlyInflow?.[hr] : null;
-  return v ?? data.volume.peakHourInflow;
+  const v = data.volume;
+  const factor = hr != null ? v.hourlyScale?.[hr] ?? null : null;
+  if (factor != null && hr != null) return { factor, corridorForecast: v.hourly?.[hr] ?? null, corridorTypical: v.typicalHourly?.[hr] ?? null };
+  return v.dayScale != null ? { factor: v.dayScale, corridorForecast: null, corridorTypical: null } : null;
 }
 
 /** Whole incidents the forecast expects at one hour of the chosen day, or null when it forecasts none for it. */
@@ -198,6 +205,7 @@ export default function ScenarioForecastPanel({
   forecast,
   hour,
   following = false,
+  inflowHere = null,
   onApplyInflow,
 }: {
   forecast: ScenarioForecast;
@@ -205,8 +213,11 @@ export default function ScenarioForecastPanel({
   hour: number | null;
   /** Once loaded, the road keeps following the chosen day and hour, so the button says so instead of offering a reload. */
   following?: boolean;
-  /** Hands the arrival rate for the chosen hour, and the day it came from, to the page. */
-  onApplyInflow: (vehPerHour: number, forecastDate: string) => void;
+  /** What the forecast puts on the stretch and carriageway in focus at this hour (veh/h), and where that is; null when
+   *  the stretch has no recorded flow to scale. Each stretch and direction gets its own, so the page works it out. */
+  inflowHere?: { readonly vehPerHour: number; readonly where: string } | null;
+  /** Tells the page to load the chosen day; the inflow itself is worked out per carriageway from the scale. */
+  onApplyInflow: (forecastDate: string) => void;
 }) {
   const { data, busy, failed, applied, setApplied } = forecast;
   const [showHelp, setShowHelp] = useState(false);
@@ -218,9 +229,10 @@ export default function ScenarioForecastPanel({
   const isApplied = following || (applied != null && applied === data?.date);
   const hr = forecastHour(data, hour);
   const hourLabel = hr != null && v?.hourly ? hhmm(hr) : null;
-  const inflowNow = forecastInflowAt(data, hour);
+  const scaleNow = forecastScaleAt(data, hour);
   const incidentsNow = forecastIncidentsAt(data, hour);
-  const canApply = inflowNow != null && !busy && !isApplied;
+  const canApply = scaleNow != null && !busy && !isApplied;
+  const scaleText = scaleNow ? `${scaleNow.factor.toFixed(2)} times a usual ${hourLabel ?? "day"}` : null;
 
   // The forecast horizon starts where observed data ends, so the dates on offer
   // sit in the past whenever ingestion has fallen behind. Saying so turns a
@@ -247,8 +259,8 @@ export default function ScenarioForecastPanel({
         <button
           className={`sandbox-forecast-apply${isApplied ? " is-applied" : ""}`}
           onClick={() => {
-            if (!data || inflowNow == null) return;
-            onApplyInflow(inflowNow, data.date);
+            if (!data || scaleNow == null) return;
+            onApplyInflow(data.date);
             setApplied(data.date);
           }}
           disabled={!canApply}
@@ -267,14 +279,14 @@ export default function ScenarioForecastPanel({
               s={`${hourLabel ? `day ${fmt(v?.dailyVehicles)} veh · ` : ""}${v?.model ?? "—"}${v?.wmape != null ? ` · ${v.wmape.toFixed(1)}% WMAPE` : ""}`}
             />
             <Tile
-              k={hourLabel ? `Segment inflow · ${hourLabel}` : "Segment inflow"}
-              v={`${fmt(inflowNow)} veh/h`}
+              k={hourLabel ? `Inflow here · ${hourLabel}` : "Inflow here"}
+              v={inflowHere ? `${fmt(inflowHere.vehPerHour)} veh/h` : scaleNow ? `${scaleNow.factor.toFixed(2)} times usual` : "—"}
               s={
-                v?.segmentName
-                  ? `${v.segmentName} · ${v.segmentSharePct?.toFixed(1)}% of corridor`
-                  : hourLabel
-                    ? "this hour"
-                    : "peak hour"
+                inflowHere
+                  ? `${inflowHere.where}${scaleText ? ` · ${scaleText}` : ""}`
+                  : scaleText
+                    ? `${scaleText}; this stretch has no recorded flow to scale`
+                    : "no forecast for this hour"
               }
               accent
             />
@@ -322,8 +334,11 @@ export default function ScenarioForecastPanel({
 
           {showHelp && (
             <div className="sandbox-forecast-foot" style={{ display: "block" }}>
-              The <b>segment inflow</b> for the chosen hour is loaded into the simulation, on each
-              carriageway the Carriageway control at the top shows. The incidents forecast for that hour are
+              The forecast for the chosen hour is loaded into the simulation on each carriageway the
+              Carriageway control at the top shows. The forecast is a corridor total with no direction, so it
+              is not loaded as it is: each stretch keeps its own recorded flow for that hour and direction, and
+              that flow is multiplied by the forecast corridor total for the hour over the corridor&apos;s
+              average for the same hour in the record (the &quot;times a usual&quot; figure above). The incidents forecast for that hour are
               for the whole corridor, so the sandbox shares them out to the stretch on screen and to each
               carriageway, and adds what that comes to as scenario events: on a short stretch usually none
               or one, at a place, lane and time drawn from NLEX&apos;s records for that day. Both are the same

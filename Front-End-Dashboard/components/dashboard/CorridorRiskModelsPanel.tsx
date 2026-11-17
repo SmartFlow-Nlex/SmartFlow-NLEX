@@ -9,6 +9,7 @@ import { shadeFor } from "./PredictiveCorridorChart";
 import { fmtInt, fmtNum } from "./incidentPredictive.shared";
 import CorridorRiskNarrative from "./CorridorRiskNarrative";
 import { fmtKm } from "../../lib/km-post";
+import { hotspotServed } from "../../lib/hotspot-served";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -45,6 +46,8 @@ type Metadata = {
   spatial_lstm?: {
     metrics: LstmMetrics; seq_len: number; n_neighbors: number;
     horizon_days?: number; rollout_assumptions?: string;
+    /** What the grid shows: a baseline when no model beat it (lib/hotspot-served.ts). */
+    served_model?: string;
   };
 };
 type SpatialData = {
@@ -122,6 +125,7 @@ export default function CorridorRiskModelsPanel() {
   }
 
   const lstmMeta = data.metadata?.spatial_lstm;
+  const served = hotspotServed(lstmMeta);
   const gwrMeta = data.metadata?.gwr;
   const day1Rows = data.segmentRisk.filter((r) => r.horizonDay === 1).sort((a, b) => a.rank - b.rank);
 
@@ -246,8 +250,14 @@ export default function CorridorRiskModelsPanel() {
     <article className="chart-card wide" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "18px" }}>
       <div>
         <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
-          Incident Hotspots — Spatial LSTM &amp; GWR
-          <InfoTooltip text="Two per-exit models, distinct from the walk-forward forecast's own corridor breakdown (which apportions the daily total by historical location share). The Spatial LSTM is trained specifically on each exit's own history plus its neighbors' — a genuine next-24h forecast, and this card's actual hotspot output. GWR is a separate, explanatory-only fit: with only 20 exits there's no meaningful train/test split, so it's scored in-sample and via leave-one-exit-out, not treated as a forecast." />
+          Incident Hotspots — {served.isBaseline ? "Forecast" : "Spatial LSTM"} &amp; GWR
+          <InfoTooltip
+            text={
+              served.isBaseline
+                ? `Two per-exit views, distinct from the walk-forward forecast's own corridor breakdown (which apportions the daily total by historical location share). The hotspot grid is a per-exit forecast held out in time: the Spatial LSTM and simpler baselines were scored on rolling origins over the last 52 weeks, and none of the models beat the ${served.name.toLowerCase()}, so the grid shows that baseline. GWR is a separate, explanatory-only fit: with only 20 exits there's no meaningful train/test split, so it's scored in-sample and via leave-one-exit-out, not treated as a forecast.`
+                : "Two per-exit models, distinct from the walk-forward forecast's own corridor breakdown (which apportions the daily total by historical location share). The Spatial LSTM is trained specifically on each exit's own history plus its neighbors' — a genuine next-24h forecast, and this card's actual hotspot output. GWR is a separate, explanatory-only fit: with only 20 exits there's no meaningful train/test split, so it's scored in-sample and via leave-one-exit-out, not treated as a forecast."
+            }
+          />
         </h3>
         <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", margin: "4px 0 0 0" }}>
           {data.trainedAt ? `Last trained ${new Date(data.trainedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}
@@ -265,10 +275,12 @@ export default function CorridorRiskModelsPanel() {
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", marginBottom: "8px" }}>
           <div>
             <div style={{ fontSize: "0.68rem", fontWeight: 800, color: "var(--page-accent, #4f46e5)", letterSpacing: "0.04em", textTransform: "uppercase" }}>
-              Spatial LSTM — {horizonDays.length}-day hotspot grid
+              {served.name} — {horizonDays.length}-day hotspot grid
             </div>
             <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-              Day 1 is the real next-24h forecast; later days are a recursive rollout — each day&apos;s own prediction feeds the next day&apos;s input, the same walk-forward idea the main Forecast chart uses.
+              {served.isBaseline
+                ? `Each exit's expected incidents per day from its ${served.name.toLowerCase()}. In the rolling test no model beat it${served.lstmMae != null && served.mae != null ? ` (Spatial LSTM MAE ${fmtNum(served.lstmMae, 3)} vs ${fmtNum(served.mae, 3)})` : ""}, so this is what the grid shows.`
+                : "Day 1 is the real next-24h forecast; later days are a recursive rollout — each day's own prediction feeds the next day's input, the same walk-forward idea the main Forecast chart uses."}
             </div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
@@ -290,8 +302,8 @@ export default function CorridorRiskModelsPanel() {
             </div>
             {lstmMeta && (
               <div style={{ display: "flex", gap: "10px", fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                <span>Holdout MAE {fmtNum(lstmMeta.metrics.MAE, 3)}</span>
-                <span>Poisson deviance {fmtNum(lstmMeta.metrics.Poisson_Deviance, 3)}</span>
+                <span>Holdout MAE {fmtNum(served.mae, 3)}</span>
+                {!served.isBaseline && <span>Poisson deviance {fmtNum(lstmMeta.metrics.Poisson_Deviance, 3)}</span>}
               </div>
             )}
           </div>
@@ -345,7 +357,7 @@ export default function CorridorRiskModelsPanel() {
           <span style={{ width: 10, height: 10, borderRadius: "999px", background: `linear-gradient(90deg, color-mix(in srgb, #d97706 50%, ${T.isDark ? "#0e1f45" : "white"}), #451a03)`, display: "inline-block" }} />
           <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>darker = higher predicted incidents · hover a cell for its numbers</span>
         </div>
-        {lstmMeta?.rollout_assumptions && (
+        {!served.isBaseline && lstmMeta?.rollout_assumptions && (
           <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", margin: "6px 0 0 0" }}>
             Days past 1 hold two inputs flat rather than forecasting them: {lstmMeta.rollout_assumptions}. Treat day{" "}
             {horizonDays[horizonDays.length - 1]} as a shape, not a commitment — the further from day 1, the more the rollout&apos;s own error compounds.
@@ -432,7 +444,9 @@ export default function CorridorRiskModelsPanel() {
         spatialLstm={
           lstmMeta
             ? {
-                mae: lstmMeta.metrics?.MAE ?? null,
+                mae: served.mae,
+                servedModel: served.isBaseline ? served.name : null,
+                lstmMae: served.lstmMae,
                 poissonDeviance: lstmMeta.metrics?.Poisson_Deviance ?? null,
                 n: lstmMeta.metrics?.n ?? null,
                 epochs: lstmMeta.metrics?.epochs ?? null,

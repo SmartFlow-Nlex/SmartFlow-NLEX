@@ -1,5 +1,5 @@
 import { db } from "../config/db.js";
-import { liveNlexJamsCte, nlexStreetSql } from "../utils/nlex-street.js";
+import { LIVE_SNAPSHOT_MINUTES, liveNlexJamsCte, nlexStreetSql, speedClassLevelSql } from "../utils/nlex-street.js";
 import { isNlexCorridorStreet, isWazeReportType } from "../lib/nlex-corridor.js";
 
 /**
@@ -62,7 +62,7 @@ export async function getLiveCorridorOverview() {
       jams: number; avg_speed: number | null; min_speed: number | null;
       jam_metres: number | null; delay_seconds: number | null; worst_level: number | null;
     }>(
-      `${liveNlexJamsCte(WINDOW_MINUTES)}
+      `${liveNlexJamsCte(WINDOW_MINUTES, { snapshot: true })}
        SELECT COUNT(*)::int                                   AS jams,
               ROUND(AVG(speed_kmh)::numeric, 1)::float        AS avg_speed,
               ROUND(MIN(speed_kmh)::numeric, 1)::float        AS min_speed,
@@ -74,7 +74,7 @@ export async function getLiveCorridorOverview() {
 
     // Per-exit, for the density strip and the slowest-stretch callout.
     db.query<{ exit_name: string; avg_speed: number; worst_level: number; jams: number; delay_seconds: number | null }>(
-      `${liveNlexJamsCte(60)}
+      `${liveNlexJamsCte(WINDOW_MINUTES, { snapshot: true })}
        SELECT e.exit_name,
               ROUND(AVG(j.speed_kmh)::numeric, 1)::float AS avg_speed,
               MAX(j.level)::int                          AS worst_level,
@@ -215,7 +215,7 @@ export async function getLiveCorridorOverview() {
   const ageMin = (d: Date | null) => (d ? Math.round(((Date.now() - d.getTime()) / 60000) * 10) / 10 : null);
 
   return {
-    windowMinutes: WINDOW_MINUTES,
+    windowMinutes: LIVE_SNAPSHOT_MINUTES,
 
     /**
      * Speed here is the average WITHIN the jams Waze is reporting, not an
@@ -294,7 +294,7 @@ export async function getFeedFreshness(): Promise<{
   ageMinutes: number | null;
   stale: boolean;
 }> {
-  const fallback = { windowMinutes: WINDOW_MINUTES, newestAt: null, ageMinutes: null, stale: true };
+  const fallback = { windowMinutes: LIVE_SNAPSHOT_MINUTES, newestAt: null, ageMinutes: null, stale: true };
   if (!db) return fallback;
   try {
     const { rows } = await db.query<{ newest: Date | null }>(
@@ -303,7 +303,7 @@ export async function getFeedFreshness(): Promise<{
     const newest = rows[0]?.newest ? new Date(rows[0].newest) : null;
     const ageMinutes = newest ? (Date.now() - newest.getTime()) / 60000 : null;
     return {
-      windowMinutes: WINDOW_MINUTES,
+      windowMinutes: LIVE_SNAPSHOT_MINUTES,
       newestAt: newest ? newest.toISOString() : null,
       ageMinutes: ageMinutes != null ? Math.round(ageMinutes * 10) / 10 : null,
       // Same threshold the corridor-status endpoint used, so the wording on the
@@ -332,11 +332,13 @@ export async function getLiveMapGeoJson() {
   if (!db) return { type: "FeatureCollection" as const, features: [] };
 
   const [jams, alerts] = await Promise.all([
-    db.query<{ geojson: string; speed: number | null; level: number | null; street: string | null; city: string | null; delay: number | null; exit_name: string | null; length_m: number | null; running_min: number | null; starts_at: string | null; starts_m: number | null }>(
-      `${liveNlexJamsCte(WINDOW_MINUTES)}
+    db.query<{ geojson: string; speed: number | null; level: number | null; waze_level: number | null; street: string | null; city: string | null; delay: number | null; exit_name: string | null; length_m: number | null; running_min: number | null; starts_at: string | null; starts_m: number | null }>(
+      `${liveNlexJamsCte(WINDOW_MINUTES, { snapshot: true })}
        SELECT ST_AsGeoJSON(j.geom) AS geojson,
               ROUND(j.speed_kmh::numeric, 1)::float AS speed,
-              j.level::int                          AS level,
+              -- Coloured on the congestion model's scale, as the forecast map is (utils/nlex-street.ts).
+              ${speedClassLevelSql("j.speed_kmh", "j.level")}::int AS level,
+              j.level::int                          AS waze_level,
               NULLIF(j.street, '')                  AS street,
               NULLIF(j.city, '')                    AS city,
               j.delay_seconds::int                  AS delay,
@@ -498,7 +500,9 @@ export async function getLiveMapGeoJson() {
       properties: {
         feature_type: "jam",
         speed: r.speed ?? 0,
+        // The model's scale (4 red under 10 km/h, 2 amber 10-20, 0 moving 20+); Waze's own grade beside it.
         level: r.level ?? 0,
+        waze_level: r.waze_level ?? null,
         street: r.street ?? r.exit_name ?? "NLEX",
         city: r.city ?? "",
         delay_seconds: r.delay ?? 0,
@@ -626,12 +630,14 @@ export async function getCorridorCarriagewaysGeoJson() {
     geojson: string; segment_name: string; segment_order: number;
     direction: "NB" | "SB"; level: number | null; speed: number | null; jams: number;
   }>(
-    `WITH jam AS (
-       SELECT ST_LineMerge(geom) AS g, speed_kmh, level
-       FROM silver.fact_waze_jams
-       WHERE corridor_match IN ('ON_CORRIDOR', 'NEAR_CORRIDOR')
-         AND last_seen_at > NOW() - interval '${WINDOW_MINUTES} minutes'
-         AND geom IS NOT NULL
+    /* The expressway's own jams in the latest feed, deduplicated -- the same set the map draws and corridor status
+       counts (utils/nlex-street.ts liveNlexJamsCte). FIXED 17 Nov 2026 (system audit): this read every jam near the
+       corridor with no street test and no de-duplication, so a 0 km/h queue on a barangay road beside San Simon
+       ("Tulaoc", five duplicate rows) painted NLEX segments red here while the map beside it was green. */
+    `${liveNlexJamsCte(WINDOW_MINUTES, { snapshot: true })},
+     jam AS (
+       SELECT ST_LineMerge(geom) AS g, speed_kmh, ${speedClassLevelSql("speed_kmh", "level")} AS level
+       FROM live_jams
      ),
      -- Direction from the jam's own bearing: the feed has no direction field,
      -- but a jam is a LINESTRING and NLEX runs roughly north-south.

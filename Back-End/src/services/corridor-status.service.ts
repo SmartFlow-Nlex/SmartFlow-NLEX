@@ -1,5 +1,5 @@
 import { db } from "../config/db.js";
-import { liveNlexJamsCte } from "../utils/nlex-street.js";
+import { HEAVY_KMH, LIVE_SNAPSHOT_MINUTES, SEVERE_KMH, liveNlexJamsCte } from "../utils/nlex-street.js";
 import { searchExitsInDb } from "./map-comparison.service.js";
 
 /**
@@ -59,24 +59,25 @@ export type ExitStatus = {
 };
 
 /**
- * Waze grades a jam 0-5 as a share of free-flow speed: 0 is 100-80% of free flow,
- * 1 is 80-61%, 2 is 60-41%, 3 is 40-21%, 4 is 20-1%, and 5 is a blocked road.
+ * An exit's state on the congestion model's scale: under 10 km/h congested, 10-20 slow, 20 and over clear
+ * (train_congestion_horizon.py SEVERE_KMH / HEAVY_KMH; utils/nlex-street.ts). The forecast map, the congestion card
+ * and the mobile app all speak this scale, so the live views must too.
  *
- * Splitting at 3 puts everything below half of free-flow speed in red and leaves
- * the merely slow in amber. That matches what the levels carry here: on this
- * corridor level 1 averages 23 km/h, 2 about 16, 3 about 9, 4 about 4, and 5 a
- * standstill.
- *
- * Level 0 is free flow BY DEFINITION, so it returns clear rather than falling
- * through to slow. No level-0 row has appeared in the feed — Waze only emits a
- * jam where there is congestion — but the field is documented as 0-5 and a
- * record that says "free flow" must not be painted amber if one ever arrives.
+ * This used Waze's grade (3+ red, 1-2 amber) on the belief that grade 1 averaged 23 km/h and grade 2 about 16 here.
+ * Measured on the mainline over 30 days to 15 Nov 2026: grade 1 averaged 49 km/h (98% of it at 20+ km/h) and grade 2
+ * 22 km/h (56% at 20+), so amber was mostly moving traffic the forecast calls clear. A jam with no speed falls back
+ * to its grade: 4-5 congested, 3 slow (where their speeds sit), 0-2 clear.
  */
 function classify(level: number | null, speedKmh: number | null): SegmentStatus {
-  if (level == null && speedKmh == null) return "clear";
-  if (level === 0) return "clear";
-  if ((level != null && level >= 3) || (speedKmh != null && speedKmh < 10)) return "congested";
-  return "slow";
+  if (speedKmh != null) {
+    if (speedKmh < SEVERE_KMH) return "congested";
+    if (speedKmh < HEAVY_KMH) return "slow";
+    return "clear";
+  }
+  if (level == null) return "clear";
+  if (level >= 4) return "congested";
+  if (level === 3) return "slow";
+  return "clear";
 }
 
 const WINDOW_MINUTES = 60;
@@ -105,7 +106,7 @@ async function getCorridorStatusUnsafe() {
     delay_s: number | null;
     newest: Date | null;
   }>(
-    `${liveNlexJamsCte(WINDOW_MINUTES)},
+    `${liveNlexJamsCte(WINDOW_MINUTES, { snapshot: true })},
      recent AS (
        SELECT j.nlex_exit_id,
               j.level,
@@ -160,7 +161,8 @@ async function getCorridorStatusUnsafe() {
   const feedAgeMinutes = feedNewest ? (Date.now() - feedNewest.getTime()) / 60000 : null;
 
   return {
-    windowMinutes: WINDOW_MINUTES,
+    // the jams come from the latest feed, this many minutes of it (utils/nlex-street.ts)
+    windowMinutes: LIVE_SNAPSHOT_MINUTES,
     segments,
     feed: {
       newestAt: feedNewest ? feedNewest.toISOString() : null,

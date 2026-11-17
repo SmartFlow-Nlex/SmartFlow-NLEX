@@ -1,7 +1,10 @@
 # The hourly congestion refresh for the Live Map and the congestion graph, on GitHub's runners so the map stays fresh
 # whether or not any laptop is on. Same trainer and flags as the laptop task "SmartFlow congestion refresh":
-# trains and tests XGBoost and the GRU on the live Waze feed, scores the dual-path LSTM family (restored from the
-# cache the weekly batch saves), publishes the champion, and writes one audit entry. It steps aside while the weekly
+# trains and tests XGBoost and the GRU on the live Waze feed plus the 2022-2026 history (--with-history, the user's
+# choice 16 Nov 2026; the exit-hour benchmark stays built from the live weeks), scores the dual-path LSTM family
+# (restored from the cache the weekly batch saves; part 4 fits it on the live weeks plus the history, see weekly_retrain.py), publishes the
+# champion, and writes one audit entry. Since 17 Nov 2026 the labels are expressway jams only (the live map's rule;
+# train_congestion_horizon.py MAINLINE), not every jam Waze tagged to an exit. It steps aside while the weekly
 # batch is training (--skip-if-batch-running), and an overlapping run is queued, never run twice at once.
 #
 # GitHub may start a scheduled run some minutes late under load; the map's base time records the hour actually used.
@@ -9,7 +12,9 @@ name: Congestion refresh (hourly)
 
 on:
   schedule:
-    - cron: "2 * * * *"
+    # Minute 37, not 2 (17 Nov 2026, system audit): GitHub delays and drops scheduled runs most at the start of the
+    # hour, and at :02 the "hourly" refresh actually ran 3-5 times a day (12-16 Nov), leaving the map 6-8 h old.
+    - cron: "37 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -50,4 +55,4 @@ jobs:
           restore-keys: ml-state-
       - name: Train, test and publish
         working-directory: All_Scripts/Predictive_Modeling
-        run: python -u train_congestion_horizon.py --fast --no-qrf --skip-if-batch-running --severe-weight 1.5
+        run: python -u train_congestion_horizon.py --fast --no-qrf --skip-if-batch-running --severe-weight 1.5 --with-history

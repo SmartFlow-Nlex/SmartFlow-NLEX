@@ -77,7 +77,11 @@ type Analytics = {
     weatherKnown: number;
   };
   dailyTrend: { d: string; accident: number; breakdown: number }[];
-  hotspots: { km_bin: number; total: number; accident: number; breakdown: number; injuries: number; fatalities: number }[];
+  hotspots: {
+    km_bin: number; total: number; accident: number; breakdown: number; injuries: number; fatalities: number;
+    /** Road length the stretch covers (measured km) and incidents per km of it; null for the group south of Km 12. */
+    length_km?: number | null; per_km?: number | null;
+  }[];
   // accident/breakdown split the cell's total (v); optional so an older cached response still draws.
   heatmap: { dow: number; hour: number; v: number; accident?: number; breakdown?: number }[];
   /* The API splits causes in two. Accidents are logged against a driver or
@@ -131,6 +135,15 @@ const fmtPct = (p: number) => `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
 const kmLabel = (bin: number) => (bin === SOUTH_OF_CORRIDOR_BIN ? `South of Km ${postRangeForBin(bin).replace("below ", "")}` : `Km ${postRangeForBin(bin)}`);
 /** Kept for its callers: the label already is the roadside km post, so there is nothing to put beside it. */
 const kmLabelBoth = kmLabel;
+/* Hotspots ranked by incidents per km of road, highest first (17 Nov 2026). The stretches are not equal: Km 12–14
+   is the first three posts (3.4 km of road) and the last stops at Sta. Ines, so a raw count favoured the longer
+   ones. The group south of Km 12 has no length and goes last. With no per-km figure from the API, by count. */
+const rankHotspots = <T extends { total: number; per_km?: number | null }>(rows: T[]): T[] =>
+  [...rows].sort((a, b) => (b.per_km ?? -1) - (a.per_km ?? -1) || b.total - a.total);
+/** A local calendar date as YYYY-MM-DD. toISOString() gives the UTC date, which in Manila (UTC+8) is the day
+    before for a local midnight: Monday 26 May 2025 came out as "2025-05-25" (17 Nov 2026). */
+const localIso = (dt: Date) =>
+  `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 const weekdayOf = (dateStr: string) =>
   new Date(`${dateStr}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" });
 
@@ -165,7 +178,7 @@ function HeatmapWithBreakdown({
 function weekStart(dateStr: string): string {
   const dt = new Date(`${dateStr}T00:00:00`);
   dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
-  return dt.toISOString().slice(0, 10);
+  return localIso(dt);
 }
 
 export default function IncidentPage() {
@@ -209,6 +222,13 @@ export default function IncidentPage() {
   const [causeSort, setCauseSort] = useState<"desc" | "asc">("desc");
   const [grain, setGrain] = useState<Granularity>("monthly");
   const [causeMode, setCauseMode] = useState<CauseMode>("Accident causes");
+  /* The Incident type filter now empties the other table's rankings (17 Nov 2026), so the Causes card moves to a
+     ranking that has rows instead of opening empty. */
+  useEffect(() => {
+    if (source === "breakdown" && causeMode !== "Breakdown causes") setCauseMode("Breakdown causes");
+    else if (source === "accident" && causeMode === "Breakdown causes") setCauseMode("Accident causes");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source]);
   const [allHotspotsOpen, setAllHotspotsOpen] = useState(false);
   // Dry vs Wet card: narrow the comparison to a day and/or hour (19 Oct 2026, testers IN-7).
   const [wxDay, setWxDay] = useState<WxDay>("all");
@@ -321,7 +341,7 @@ export default function IncidentPage() {
         ? ((kpis.totalIncidents - kpis.prevTotalIncidents) / kpis.prevTotalIncidents) * 100
         : null;
     const hotspotTotal = hotspots.reduce((s, h) => s + h.total, 0);
-    const topHotspot = hotspots[0] ?? null;
+    const topHotspot = rankHotspots(hotspots)[0] ?? null;
 
     // Crash rate per day of each weather, wet vs dry (crashes = road + moto).
     // Exposure-normalized: wet hours are far rarer than dry, so raw counts can't be compared.
@@ -357,6 +377,11 @@ export default function IncidentPage() {
        variance, sum of (wet hours / dry hours)^2 x dry crashes per hour, is added to 1/observed. */
     let rainLo: number | null = null;
     let rainHi: number | null = null;
+    /* The tile's hint states the rates its headline compares (17 Nov 2026). It printed the plain per-day rates
+       (15.5 vs 13.1 crashes a day over 12 months, 1.18x) under a same-hour headline of 1.01x. With the hour held
+       fixed: crashes per day in the rain hours, against what those same hours of the day see when dry. */
+    let sameHourWetRate: number | null = null;
+    let sameHourDryRate: number | null = null;
     const ci = (r: number, varLog: number) => {
       const half = 1.96 * Math.sqrt(varLog);
       rainLo = Math.exp(Math.log(r) - half);
@@ -373,21 +398,29 @@ export default function IncidentPage() {
       let observed = 0;
       let expected = 0;
       let varExpected = 0;
+      let wetHoursMatched = 0;
       for (const b of byHour.values()) {
         if (b.wetH === 0 || b.dryH === 0) continue;
         observed += b.wetA;
         expected += b.wetH * (b.dryA / b.dryH);
         varExpected += (b.wetH / b.dryH) ** 2 * b.dryA;
+        wetHoursMatched += b.wetH;
       }
       if (expected > 0) {
         rainMultiplier = observed / expected;
         rainSameHour = true;
+        sameHourWetRate = (observed / wetHoursMatched) * 24;
+        sameHourDryRate = (expected / wetHoursMatched) * 24;
         rainLo = rainHi = null;
         if (observed > 0) ci(rainMultiplier, 1 / observed + varExpected / expected ** 2);
       }
     }
 
-    return { deltaPct, topHotspot, hotspotTotal, wetRate, dryRate, rainMultiplier, rainEmptyReason, rainSameHour, rainLo: rainLo as number | null, rainHi: rainHi as number | null };
+    return {
+      deltaPct, topHotspot, hotspotTotal, wetRate, dryRate, rainMultiplier, rainEmptyReason, rainSameHour,
+      rainLo: rainLo as number | null, rainHi: rainHi as number | null,
+      sameHourWetRate: sameHourWetRate as number | null, sameHourDryRate: sameHourDryRate as number | null,
+    };
   }, [data, source]);
 
     // ---------- Trend ----------
@@ -419,10 +452,10 @@ export default function IncidentPage() {
         const start = new Date(`${key}T00:00`);
         const end = new Date(start);
         end.setDate(end.getDate() + 6);
-        return [key, end.toISOString().slice(0, 10)];
+        return [key, localIso(end)];
       }
       const [y, m] = key.split("-").map(Number);
-      return [`${key}-01`, new Date(y, m, 0).toISOString().slice(0, 10)];
+      return [`${key}-01`, localIso(new Date(y, m, 0))];
     };
     const whole = (key: string) => {
       const [s0, e0] = spanOf(key);
@@ -525,9 +558,15 @@ export default function IncidentPage() {
 
   const hotspotChart = useMemo<{ option: EChartsOption; rows: Analytics["hotspots"] } | null>(() => {
     if (!data || data.hotspots.length === 0) return null;
-    const top = data.hotspots.slice(0, 10);
+    /* Incidents per km of road (17 Nov 2026): the stretches differ in length, so a count put the longer ones on
+       top. The group south of Km 12 has no length to divide by; it stays in the full ranking. */
+    const ranked = rankHotspots(data.hotspots);
+    const measured = ranked.filter((r) => r.per_km != null);
+    const perKm = measured.length > 0;
+    const top = (perKm ? measured : ranked).slice(0, 10);
+    const valueOf = (r: Analytics["hotspots"][number]) => (perKm ? (r.per_km as number) : r.total);
     const display = hotspotSort === "desc" ? [...top].reverse() : [...top];
-    const maxV = top[0]?.total ?? 1;
+    const maxV = top[0] ? valueOf(top[0]) : 1;
     return {
       rows: display,
       option: {
@@ -554,7 +593,8 @@ export default function IncidentPage() {
           formatter: (p) => {
             const i = (p as { dataIndex: number }).dataIndex;
             const r = display[i];
-            return `<b>${segLabel(r.km_bin)}</b><br/>${fmtInt(r.total)} incidents · ${fmtInt(r.injuries)} injured · ${fmtInt(r.fatalities)} fatalities`;
+            const rate = r.per_km != null && r.length_km != null ? `${fmtInt(r.per_km)} incidents per km (${fmt1(r.length_km)} km of road)<br/>` : "";
+            return `<b>${segLabel(r.km_bin)}</b><br/>${rate}${fmtInt(r.total)} incidents · ${fmtInt(r.injuries)} injured · ${fmtInt(r.fatalities)} fatalities`;
           },
         },
         /* No legend: one series, and the axis already says these are incidents
@@ -563,11 +603,11 @@ export default function IncidentPage() {
            matches no bar in particular. */
         series: [
           {
-            name: "Incidents by segment",
+            name: perKm ? "Incidents per km" : "Incidents by segment",
             type: "bar",
             data: display.map((r) => ({
-              value: r.total,
-              itemStyle: { color: SEQ[Math.min(3, 1 + Math.floor((r.total / maxV) * 2.99))], borderRadius: [0, 4, 4, 0] },
+              value: valueOf(r),
+              itemStyle: { color: SEQ[Math.min(3, 1 + Math.floor((valueOf(r) / maxV) * 2.99))], borderRadius: [0, 4, 4, 0] },
             })),
             barMaxWidth: 12,
             barCategoryGap: "25%",
@@ -713,10 +753,13 @@ export default function IncidentPage() {
   const hotspotInsight = useMemo(() => {
     const all = data?.hotspots ?? [];
     const total = all.reduce((s, h) => s + h.total, 0);
-    const shown = all.slice(0, 10);
+    // The same stretches, in the same order, as the chart: per km, the group south of Km 12 left out.
+    const ranked = rankHotspots(all);
+    const measured = ranked.filter((h) => h.per_km != null);
+    const shown = (measured.length > 0 ? measured : ranked).slice(0, 10);
     if (shown.length === 0 || total <= 0) return null;
-    // The API ranks segments highest first: [0] is the hotspot the chart and the KPI tile both lead with.
-    const top = all[0];
+    // [0] is the hotspot the chart and the KPI tile both lead with.
+    const top = shown[0];
     const shownPct = (shown.reduce((s, h) => s + h.total, 0) / total) * 100;
     const worst = shown.reduce((a, h) => (h.injuries > a.injuries ? h : a), shown[0]);
     return { top, topPct: (top.total / total) * 100, shown: shown.length, segments: all.length, shownPct, worst: worst.injuries > 0 ? worst : null };
@@ -814,11 +857,12 @@ export default function IncidentPage() {
 
   /* The full hotspot ranking sorts by any column (click a header; click again to flip). */
   type HotspotRow = Analytics["hotspots"][number] & { rank: number };
-  const hotspotRows = useMemo<HotspotRow[]>(() => (data ? data.hotspots.map((r, i) => ({ ...r, rank: i + 1 })) : []), [data]);
+  const hotspotRows = useMemo<HotspotRow[]>(() => (data ? rankHotspots(data.hotspots).map((r, i) => ({ ...r, rank: i + 1 })) : []), [data]);
   const hotspotCols = useMemo<SortCol<HotspotRow>[]>(() => [
     { key: "rank", label: "#", value: (r) => r.rank, num: true, firstDir: "asc" },
     { key: "seg", label: "Segment", value: (r) => r.km_bin, firstDir: "asc" },
     { key: "exit", label: "Nearest exit", value: (r) => exitAt.nameForBin(r.km_bin) ?? null },
+    { key: "perkm", label: "Per km", value: (r) => r.per_km ?? null, num: true },
     { key: "total", label: "Total", value: (r) => r.total, num: true },
     { key: "acc", label: "Accident", value: (r) => r.accident, num: true },
     { key: "brk", label: "Breakdown", value: (r) => r.breakdown, num: true },
@@ -831,9 +875,11 @@ export default function IncidentPage() {
     if (!derived) return;
     setDetail({
       title: kmLabelBoth(r.km_bin),
-      subtitle: "Incident hotspot (5-km segment of official km posts, Balintawak = Km 12)",
+      subtitle: "Incident hotspot (stretch of official km posts, Balintawak = Km 12)",
       rows: [
         ["Nearest exit", exitAt.nameForBin(r.km_bin) ?? "—"],
+        ["Road length", r.length_km != null ? `${fmt1(r.length_km)} km` : "— (records south of Km 12)"],
+        ["Incidents per km", r.per_km != null ? fmtInt(r.per_km) : "—"],
         ["Total incidents", fmtInt(r.total)],
         ["Accidents", fmtInt(r.accident)],
         ["Breakdowns", fmtInt(r.breakdown)],
@@ -1122,8 +1168,11 @@ export default function IncidentPage() {
     const all = acc + brk;
     if (all === 0) return null;
     const pct = (n: number) => `${((n / all) * 100).toFixed(1)}%`;
+    // Per km of road, like the hotspot chart, so a longer stretch does not win on length alone.
     const topSeg = (key: "accident" | "breakdown") => {
-      const h = [...data.hotspots].sort((a, b) => b[key] - a[key])[0];
+      const rate = (h: Analytics["hotspots"][number]) => (h.length_km != null && h.length_km > 0 ? h[key] / h.length_km : null);
+      const pool = data.hotspots.some((h) => rate(h) != null) ? data.hotspots.filter((h) => rate(h) != null) : data.hotspots;
+      const h = [...pool].sort((a, b) => (rate(b) ?? b[key]) - (rate(a) ?? a[key]))[0];
       return h && h[key] > 0 ? h : null;
     };
     const segAcc = topSeg("accident");
@@ -1151,7 +1200,7 @@ export default function IncidentPage() {
                 {topType && <>Most common type <b>{topType.label}</b> ({fmtInt(topType.total)}). </>}
                 {topAccCause && <>Top cause <b>{topAccCause.label}</b> ({fmtInt(topAccCause.total)}). </>}
                 <b>{fmtInt(data.kpis.injuries)}</b> injured, <b>{fmtInt(data.kpis.fatalities)}</b> fatal.
-                {segAcc && <> Busiest near <b>{exitAt.nameForBin(segAcc.km_bin) ?? kmLabel(segAcc.km_bin)}</b> ({kmLabelBoth(segAcc.km_bin)}).</>}
+                {segAcc && <> Busiest per km near <b>{exitAt.nameForBin(segAcc.km_bin) ?? kmLabel(segAcc.km_bin)}</b> ({kmLabelBoth(segAcc.km_bin)}).</>}
               </p>
             </div>
           )}
@@ -1162,7 +1211,7 @@ export default function IncidentPage() {
               <span className="inc-mix-count">{fmtInt(brk)} · {pct(brk)}</span>
               <p className="inc-mix-facts">
                 {topBrkCause && <>Top fault <b>{topBrkCause.label}</b> ({fmtInt(topBrkCause.total)}). </>}
-                {segBrk && <>Busiest near <b>{exitAt.nameForBin(segBrk.km_bin) ?? kmLabel(segBrk.km_bin)}</b> ({kmLabelBoth(segBrk.km_bin)}).</>}
+                {segBrk && <>Busiest per km near <b>{exitAt.nameForBin(segBrk.km_bin) ?? kmLabel(segBrk.km_bin)}</b> ({kmLabelBoth(segBrk.km_bin)}).</>}
               </p>
             </div>
           )}
@@ -1294,7 +1343,7 @@ export default function IncidentPage() {
                 <span className={styles.kpiIcon} aria-hidden="true"><Timer size={15} /></span>
                 <h3>
                   Avg Response Time
-                  {kpiInfo("Breakdowns only: average minutes from a breakdown being reported to the first responder being dispatched. Accidents have no per-dispatch record to measure this from, so they aren't included.")}
+                  {kpiInfo("Breakdowns only: average minutes from the first unit being dispatched to that unit arriving at the scene. Accidents have no per-dispatch record to measure this from, so they aren't included.")}
                 </h3>
                 <div className={styles.kpiValue}>
                   {kpiValue(data?.kpis.avgTimeToFirstResponder.min != null ? `${data.kpis.avgTimeToFirstResponder.min} min` : null)}
@@ -1318,7 +1367,7 @@ export default function IncidentPage() {
                 <span className={styles.kpiIcon} aria-hidden="true"><Timer size={15} /></span>
                 <h3>
                   Avg Time to Clear
-                  {kpiInfo("Minutes from an incident being reported until the road was cleared: accidents from their recorded clearance time, breakdowns until the last responding unit left. The headline is the mean of both, weighted by how many of each have times; the hint gives the median and 90th percentile by type, since a few very long clearances pull the mean up.")}
+                  {kpiInfo("Minutes from an incident being reported until the road was cleared: accidents from their recorded clearance time, breakdowns until the last responding unit left. A clearance logged at 0 minutes (cleared at the same minute it was reported) is a recording default, so it counts as not recorded, as in the Clearance Response Protocol; so do times over 24 hours. The headline is the mean of both, weighted by how many of each have times; the hint gives the median and 90th percentile by type, since a few very long clearances pull the mean up.")}
                 </h3>
                 <div className={styles.kpiValue}>
                   {kpiValue(data?.kpis.mttc?.overallMin != null ? `${data.kpis.mttc.overallMin} min` : null)}
@@ -1337,12 +1386,12 @@ export default function IncidentPage() {
                 <span className={styles.kpiIcon} aria-hidden="true"><MapPin size={15} /></span>
                 <h3>
                   Top Hotspot
-                  {kpiInfo("The 5km corridor segment with the most incidents in the Range, among segments whose location could be resolved.")}
+                  {kpiInfo("The stretch of road with the most incidents per km in the Range, among incidents whose location could be resolved. Stretches follow the official km posts in steps of five, but they are not all the same length (Km 12–14, where the expressway starts, is shorter), so they are compared per km of road.")}
                 </h3>
                 <div className={styles.kpiValue}>{kpiValue(derived?.topHotspot ? kmLabel(derived.topHotspot.km_bin) : null)}</div>
                 <p className={styles.kpiHint}>
                   {derived?.topHotspot && derived.hotspotTotal > 0
-                    ? `${kmLabel(derived.topHotspot.km_bin)} · near ${exitAt.nameForBin(derived.topHotspot.km_bin) ?? "—"} · ${((derived.topHotspot.total / derived.hotspotTotal) * 100).toFixed(1)}% of located incidents`
+                    ? `${kmLabel(derived.topHotspot.km_bin)} · near ${exitAt.nameForBin(derived.topHotspot.km_bin) ?? "—"} · ${derived.topHotspot.per_km != null ? `${fmtInt(derived.topHotspot.per_km)} per km · ` : ""}${((derived.topHotspot.total / derived.hotspotTotal) * 100).toFixed(1)}% of located incidents`
                     : data
                       ? "No incident in this Range and Weather has a resolved location"
                       : pendingHint}
@@ -1358,7 +1407,9 @@ export default function IncidentPage() {
                 <p className={styles.kpiHint}>
                   {derived
                     ? derived.rainMultiplier != null
-                      ? `${derived.wetRate.toFixed(1)} vs ${derived.dryRate.toFixed(1)} crashes/day, wet vs dry${derived.rainLo != null && derived.rainHi != null ? ` · 95% CI ${derived.rainLo.toFixed(2)}–${derived.rainHi.toFixed(2)}×` : ""}${derived.rainSameHour ? " · same hours compared" : ""}${weather !== "all" ? " · always both weathers" : ""}`
+                      ? `${derived.rainSameHour && derived.sameHourWetRate != null && derived.sameHourDryRate != null
+                          ? `${derived.sameHourWetRate.toFixed(1)} vs ${derived.sameHourDryRate.toFixed(1)} crashes/day, rain vs dry at the same hours`
+                          : `${derived.wetRate.toFixed(1)} vs ${derived.dryRate.toFixed(1)} crashes/day, wet vs dry`}${derived.rainLo != null && derived.rainHi != null ? ` · 95% CI ${derived.rainLo.toFixed(2)}–${derived.rainHi.toFixed(2)}×` : ""}${weather !== "all" ? " · always both weathers" : ""}`
                       : derived.rainEmptyReason
                     : pendingHint}
                 </p>
@@ -1413,7 +1464,7 @@ export default function IncidentPage() {
                   <div className={styles.headText}>
                     <h3>
                       Hotspots by Km Segment
-                      <InfoTooltip text="Top 10 km segments by total located incidents in the Range, each named by its nearest exit. Bar shade repeats the length: deeper purple = more incidents. Hover a bar for its injury and fatality counts." />
+                      <InfoTooltip text="Top 10 stretches of the road by incidents per km in the Range, each named by its nearest exit. The stretches follow the official km posts in steps of five, but they are not all the same length (Km 12–14 is shorter, and the last one ends at Sta. Ines), so each bar is incidents per km of road. Records south of Km 12 have no length to divide by; they are in the full ranking. Bar shade repeats the length: deeper purple = more incidents per km. Hover a bar for its count, injuries and fatalities." />
                     </h3>
                   </div>
                 </div>
@@ -1434,10 +1485,10 @@ export default function IncidentPage() {
               <div className={styles.chartBody}>{chartFrame(hotspotChart?.option ?? null, "No located incidents in range", onHotspotClick)}</div>
               {hotspotInsight && !error && (
                 <CardInsight
-                  lead={`Top hotspot: ${kmLabel(hotspotInsight.top.km_bin)}${exitAt.nameForBin(hotspotInsight.top.km_bin) ? ` near ${exitAt.nameForBin(hotspotInsight.top.km_bin)}` : ""}, ${fmtInt(hotspotInsight.top.total)} incidents (${hotspotInsight.topPct.toFixed(1)}% of located).`}
+                  lead={`Top hotspot: ${kmLabel(hotspotInsight.top.km_bin)}${exitAt.nameForBin(hotspotInsight.top.km_bin) ? ` near ${exitAt.nameForBin(hotspotInsight.top.km_bin)}` : ""}, ${hotspotInsight.top.per_km != null ? `${fmtInt(hotspotInsight.top.per_km)} incidents per km (${fmtInt(hotspotInsight.top.total)} in all, ` : `${fmtInt(hotspotInsight.top.total)} incidents (`}${hotspotInsight.topPct.toFixed(1)}% of located).`}
                 >
                   {hotspotInsight.segments > hotspotInsight.shown
-                    ? `The ${hotspotInsight.shown} segments shown hold ${hotspotInsight.shownPct.toFixed(1)}% of located incidents, out of ${hotspotInsight.segments} segments with any.`
+                    ? `The ${hotspotInsight.shown} stretches shown hold ${hotspotInsight.shownPct.toFixed(1)}% of located incidents, out of ${hotspotInsight.segments} groups with any.`
                     : hotspotInsight.worst
                       ? `Most injuries: ${kmLabel(hotspotInsight.worst.km_bin)}, ${fmtInt(hotspotInsight.worst.injuries)} injured in ${fmtInt(hotspotInsight.worst.total)} incidents.`
                       : null}
@@ -1456,7 +1507,7 @@ export default function IncidentPage() {
                         : causeMode === "Breakdown causes"
                           ? "Top Breakdown Causes"
                           : "Top Accident Types"}
-                      <InfoTooltip text="Top 9 logged causes or collision types by incident count in the Range, with injuries and fatalities on hover. Toggle between Causes and Types on the right." />
+                      <InfoTooltip text="Top 9 logged causes or collision types by incident count in the Range, with injuries and fatalities on hover. Toggle between Causes and Types on the right. Accident causes and types count accidents only, and breakdown causes count breakdowns only, so the Incident type filter empties the rankings of the other type." />
                     </h3>
                   </div>
                 </div>
@@ -1626,7 +1677,7 @@ export default function IncidentPage() {
               <div className={styles.detailIcon}><MapPin size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>Hotspots — Full Ranking</h3>
-                <p>{data.hotspots.length} five-km segments · click a column to sort, a row for details</p>
+                <p>{data.hotspots.length} stretches of road, ranked by incidents per km · click a column to sort, a row for details</p>
               </div>
               <button className={styles.detailClose} onClick={() => setAllHotspotsOpen(false)} aria-label="Close">
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4.5 4.5L13.5 13.5M13.5 4.5L4.5 13.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
@@ -1641,6 +1692,7 @@ export default function IncidentPage() {
                       <td className={styles.plazaRank}>{r.rank}</td>
                       <td>{kmLabelBoth(r.km_bin)}</td>
                       <td>{exitAt.nameForBin(r.km_bin) ?? "—"}</td>
+                      <td className={styles.plazaNum}>{r.per_km != null ? fmtInt(r.per_km) : "—"}</td>
                       <td className={styles.plazaNum}>{fmtInt(r.total)}</td>
                       <td className={styles.plazaNum}>{fmtInt(r.accident)}</td>
                       <td className={styles.plazaNum}>{fmtInt(r.breakdown)}</td>

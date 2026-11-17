@@ -45,6 +45,9 @@ type Analytics = {
     prevTotalVolume: number;
     days: number;
     prevDays: number;
+    /** With Wet or Dry chosen: the wet (or dry) hours behind the totals. */
+    hours?: number | null;
+    prevHours?: number | null;
     congestionIndex: number | null;
     prevCongestionIndex: number | null;
   };
@@ -69,15 +72,28 @@ type Analytics = {
 };
 
 /* Where arena events are measured (backend: traffic.service eventImpact `view`). Bocaue Barrier is not offered:
-   it is the mainline barrier, so its entries are through traffic rather than arena trips. */
+   it is the mainline barrier, so its counts are through traffic rather than arena trips. "venue" is each event's own
+   exit: CDV/PH Arena for the Philippine Arena and Stadium, Dau for Clark Global City nights. */
 const EVENT_EXIT_VIEWS = [
-  { value: "venue", label: "Venue exit (CDV / PH Arena)" },
+  { value: "venue", label: "Each venue's own exit (CDV, or Dau for Clark)" },
   { value: "Bocaue Interchange", label: "Bocaue Interchange" },
   { value: "Tambubong", label: "Tambubong (Sta. Maria)" },
   { value: "Marilao", label: "Marilao" },
   { value: "All arena exits", label: "All arena exits combined" },
 ] as const;
 type EventExitView = (typeof EVENT_EXIT_VIEWS)[number]["value"];
+
+/* What an exit's count is (17 Nov 2026). Each trip is counted at the toll plaza where it PAID (the role in
+   gold.fact_traffic_hourly), so near the arena a count is vehicles leaving NLEX at some plazas and joining it at
+   others. The event note used to call every figure an entry onto the expressway. */
+const PAID_AT: Record<string, string> = {
+  "CDV/PH Arena": "at CDV/PH Arena, northbound vehicles leaving NLEX and southbound vehicles joining it",
+  "Bocaue Interchange": "at Bocaue Interchange, vehicles leaving NLEX",
+  Tambubong: "at Tambubong, northbound vehicles leaving NLEX",
+  Marilao: "at Marilao, vehicles joining NLEX",
+  Dau: "at Dau, vehicles leaving NLEX",
+  "All arena exits": "at the four arena exits, vehicles leaving NLEX at Bocaue Interchange and Tambubong, joining it at Marilao, and both at CDV/PH Arena",
+};
 
 type Granularity = "hourly" | "daily" | "weekly" | "monthly";
 type RangeMode = "3" | "12" | "all" | "custom";
@@ -110,7 +126,8 @@ function movingAverage(values: number[], window: number): (number | null)[] {
 function weekStart(dateStr: string): string {
   const dt = new Date(`${dateStr}T00:00:00`);
   dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7)); // back to Monday
-  return dt.toISOString().slice(0, 10);
+  // Local parts: the date is local midnight, and toISOString() named the Sunday before in Manila (UTC+8).
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
 type TrendRow = { label: string; nb: number; sb: number; bothdir: number; total: number };
@@ -263,7 +280,17 @@ export default function TrafficPage() {
 
     const curAdt = kpis.days > 0 ? kpis.totalVolume / kpis.days : 0;
     const prevAdt = kpis.prevDays > 0 ? kpis.prevTotalVolume / kpis.prevDays : 0;
-    const volumeDeltaPct: number | null = prevAdt > 0 ? ((curAdt - prevAdt) / prevAdt) * 100 : null;
+    /* With Wet or Dry on, the totals hold only those hours, and a day with one wet hour counted as a whole day: per
+       day, the comparison mostly measured how many wet hours each period had. Per wet (or dry) hour instead
+       (17 Nov 2026). */
+    const byHour = kpis.hours != null;
+    const hours = kpis.hours ?? 0;
+    const prevHours = kpis.prevHours ?? 0;
+    const perHour = hours > 0 ? kpis.totalVolume / hours : 0;
+    const prevPerHour = prevHours > 0 ? kpis.prevTotalVolume / prevHours : 0;
+    const volumeDeltaPct: number | null = byHour
+      ? prevPerHour > 0 ? ((perHour - prevPerHour) / prevPerHour) * 100 : null
+      : prevAdt > 0 ? ((curAdt - prevAdt) / prevAdt) * 100 : null;
 
     const weekdayByHour = new Map<number, { sum: number; n: number }>();
     for (const r of hourDow) {
@@ -290,8 +317,10 @@ export default function TrafficPage() {
         : null;
 
 
-    return { curAdt, volumeDeltaPct, peakHour, peakHourVolume, busiest, plazaTotal, congestionDelta };
+    return { curAdt, byHour, perHour, volumeDeltaPct, peakHour, peakHourVolume, busiest, plazaTotal, congestionDelta };
   }, [data]);
+  // The hours the KPIs count when Wet or Dry is on.
+  const wxWord = weather === "dry" ? "dry" : "wet";
 
     // ---------- Chart options ----------
   const trendRows = useMemo(() => (data ? buildTrend(data, grain) : []), [data, grain]);
@@ -312,10 +341,15 @@ export default function TrafficPage() {
     const nbLine = { name: "Northbound", type: "line" as const, data: rows.map((r) => r.nb), symbol: "none" as const, itemStyle: { color: PAIR_A }, lineStyle: { width: 2, color: PAIR_A }, endLabel: { show: true, formatter: "NB", color: PAIR_A, fontWeight: 600 } };
     const sbLine = { name: "Southbound", type: "line" as const, data: rows.map((r) => r.sb), symbol: "none" as const, itemStyle: { color: PAIR_B }, lineStyle: { width: 2, color: PAIR_B }, endLabel: { show: true, formatter: "SB", color: PAIR_B, fontWeight: 600 } };
 
+    // The plazas the record does not split by direction (about a fifth of the traffic). Drawn as its own line under
+    // Both, so NB + SB is not read as the whole corridor (17 Nov 2026).
+    const hasNotSplit = rows.some((r) => r.bothdir > 0);
+    const notSplitLine = { name: "Not split by direction", type: "line" as const, data: rows.map((r) => r.bothdir), symbol: "none" as const, itemStyle: { color: RAMP[1] }, lineStyle: { width: 2, color: RAMP[1], type: "dashed" as const } };
+
     const series: EChartsOption["series"] = splitDirection
       // Direction picks which carriageway to keep. Both data series are already
       // in hand, so this is a choice about what to draw, not another request.
-      ? direction === "NB" ? [nbLine] : direction === "SB" ? [sbLine] : [nbLine, sbLine]
+      ? direction === "NB" ? [nbLine] : direction === "SB" ? [sbLine] : hasNotSplit ? [nbLine, sbLine, notSplitLine] : [nbLine, sbLine]
       : window > 0
         ? [
           { name: grain === "hourly" ? "Hourly volume" : "Daily volume", type: "line", data: rows.map((r) => r.total), symbol: "none", itemStyle: { color: FAINT }, lineStyle: { width: 1, color: FAINT } },
@@ -574,7 +608,7 @@ export default function TrafficPage() {
   const eventCols = useMemo<SortCol<EventRow>[]>(() => [
     { key: "date", label: "Date", value: (e) => e.date, firstDir: "desc" },
     { key: "label", label: "Event", value: (e) => e.label },
-    { key: "vol", label: eventExit === "venue" ? "Venue exit entries" : eventExit === "All arena exits" ? "All arena exits entries" : `${eventExit} entries`, value: (e) => e.dayVolume, num: true },
+    { key: "vol", label: eventExit === "venue" ? "Vehicles at venue exit" : eventExit === "All arena exits" ? "Vehicles at all arena exits" : `Vehicles at ${eventExit}`, value: (e) => e.dayVolume, num: true },
     { key: "base", label: "Baseline", value: (e) => e.baseline, num: true },
     { key: "dev", label: "Deviation", value: (e) => e.deviationPct, num: true },
     // The opening order: distance from normal (the size of the swing, up or down), the same ranking as the chart.
@@ -728,7 +762,7 @@ export default function TrafficPage() {
       [`vs previous ${periodWord}`, prev && prev.total > 0 ? fmtPct(((r.total - prev.total) / prev.total) * 100) : "—"],
       ["Rank in range", `#${rank} of ${totals.length} ${periodWord}s by volume`],
     ];
-    setDetail({ title, subtitle: `Entry volume · ${grain}`, rows, note: filtersNote });
+    setDetail({ title, subtitle: `Vehicles, counted where they paid · ${grain}`, rows, note: filtersNote });
   };
 
   const onHeatmapClick = (p: { value: [number, number, number] }) => {
@@ -748,7 +782,7 @@ export default function TrafficPage() {
       [`Weekday avg at ${fmtHour(hour)}`, `${fmtInt(avgOf(wd))} vehicles/hr`],
       [`Weekend avg at ${fmtHour(hour)}`, `${fmtInt(avgOf(we))} vehicles/hr`],
     ];
-    setDetail({ title: `${DOW_FULL[dowIdx]} • ${fmtHour(hour)}`, subtitle: "Average entry volume for this hour-slot", rows, note: filtersNote });
+    setDetail({ title: `${DOW_FULL[dowIdx]} • ${fmtHour(hour)}`, subtitle: "Average vehicles for this hour-slot", rows, note: filtersNote });
   };
 
   const onPlazaClick = (p: { dataIndex: number }) => {
@@ -774,7 +808,7 @@ export default function TrafficPage() {
     const rank = 1 + data.byPlaza.findIndex((x) => x.plaza === r.plaza);
     setDetail({
       title: r.plaza,
-      subtitle: "Toll plaza entry volume",
+      subtitle: "Trips counted at this plaza (where they paid)",
       rows: [
         ["Volume in range", `${fmtInt(r.v)} vehicles`],
         ["Share of selected volume", `${share}%`],
@@ -801,7 +835,7 @@ export default function TrafficPage() {
         ["Fastest hour", `${fmtHour(fastest.hour)} · ${fastest.speed} km/h`],
         ["Slowest hour", `${fmtHour(slowest.hour)} · ${slowest.speed} km/h`],
       ],
-      note: "Jam data covers the whole expressway (not filterable by plaza or vehicle class).",
+      note: `Jam data covers the whole expressway (not filterable by plaza or vehicle class)${data.meta.jamTo ? ` and runs to ${data.meta.jamTo}` : ""}.`,
     });
   };
 
@@ -810,7 +844,7 @@ export default function TrafficPage() {
       title: e.label,
       subtitle: `${e.eventCount && e.eventCount > 1 ? `${e.eventCount} events` : "Event"} · ${weekdayOf(e.date)}, ${e.date}`,
       rows: [
-        [`${e.plaza ?? "Plaza"} entries that day`, `${fmtInt(e.dayVolume)} vehicles`],
+        [`Vehicles at ${e.plaza === "All arena exits" ? "all arena exits" : e.plaza ?? "the exit"} that day`, `${fmtInt(e.dayVolume)} vehicles`],
         ["Same-weekday baseline", `${fmtInt(e.baseline)} vehicles`],
         ["Deviation", e.deviationPct != null ? fmtPct(e.deviationPct) : "—"],
         ...(e.attendance ? ([["Reported attendance", `${fmtInt(e.attendance)}`]] as [string, string][]) : []),
@@ -821,9 +855,9 @@ export default function TrafficPage() {
         e.onHoliday
           ? "This date is also a public holiday, so the deviation reflects the holiday as much as the event. "
           : ""
-      }Baseline = average entries at ${e.plaza ?? "the same exit"} on the same weekday within ±45 days, excluding other event days and holidays. Figures are NLEX entries, so they capture traffic joining the expressway at ${
-        e.plaza === "All arena exits" ? "the four arena exits (CDV/PH Arena, Bocaue Interchange, Tambubong, Marilao)" : e.plaza === e.venueExit || !e.plaza ? "the venue's own exit" : `${e.plaza}, near the venue`
-      } rather than arrivals.`,
+      }Baseline = average vehicles at ${e.plaza === "All arena exits" ? "the four arena exits" : e.plaza ?? "the same exit"} on the same weekday within ±45 days, excluding other event days and holidays. Each trip is counted at the toll plaza where it paid${
+        e.plaza && PAID_AT[e.plaza] ? `: ${PAID_AT[e.plaza]}` : ", so a count can be vehicles leaving NLEX there or joining it"
+      }.`,
     });
   };
 
@@ -839,7 +873,7 @@ export default function TrafficPage() {
         ["Avg deviation (all years)", fmtPct(h.deviationPct)],
         ...yearly.map((y): [string, string] => [String(y.year), `${fmtPct(y.pct)} · ${fmtInt(y.volume)} vehicles`]),
       ],
-      note: "Each occurrence is compared with its own local baseline: the average volume on the same weekday within ±45 days of that date, excluding holidays and event days. Comparing locally rather than against all-history keeps the 2020–2021 pandemic period from distorting other years.",
+      note: `Each occurrence is compared with its own local baseline: the average volume on the same weekday within ±45 days of that date, excluding holidays and event days. Comparing locally, rather than with the whole record, keeps the growth in traffic from year to year out of the result. Covers every year of the record${data ? ` (${data.meta.minDate.slice(0, 4)} to ${data.meta.maxDate})` : ""}; the Range filter does not apply.`,
     });
   };
 
@@ -969,8 +1003,8 @@ export default function TrafficPage() {
 
   /* ---------- Active filters, as removable chips ----------
      Each × calls the filter's existing setter with its default value, the same
-     call the default button makes. Range and Weather set on Descriptive still
-     reach the volume forecast, so they are shown on Predictive too. */
+     call the default button makes. The chips sit in the filter bar, which only
+     Descriptive shows; Predictive takes neither Weather nor a custom range. */
   const RANGE_LABEL: Record<RangeMode, string> = { "3": "3 mo", "12": "12 mo", all: "All", custom: "Custom" };
   /* The Range is always shown, as the exact dates the data covers; any other filter only once it is moved off its
      default (user request: no "All weather" / "All classes" chips). */
@@ -1111,7 +1145,9 @@ export default function TrafficPage() {
             <div className={styles.kpiRow}>
               <article className={styles.kpiTile}>
                 <span className={styles.kpiIcon} aria-hidden="true"><Activity size={15} /></span>
-                <h3>Total Volume<InfoTooltip text="All vehicles counted at NLEX toll plazas over the selected Range, compared with the equivalent prior period." /></h3>
+                <h3>Total Volume<InfoTooltip text={derived?.byHour
+                  ? `Vehicles counted at NLEX toll plazas in the ${wxWord} hours of the selected Range only. The comparison is per ${wxWord} hour, against the equivalent prior period, so it does not depend on how many ${wxWord} hours each period had.`
+                  : "All vehicles counted at NLEX toll plazas over the selected Range, compared with the equivalent prior period."} /></h3>
                 <div className={styles.kpiValue} title={data ? `${fmtInt(data.kpis.totalVolume)} vehicles` : undefined}>
                   {kpiValue(data ? fmtCompact(data.kpis.totalVolume) : null)}
                 </div>
@@ -1119,14 +1155,24 @@ export default function TrafficPage() {
                   {derived ? (
                     <span className={derived.volumeDeltaPct == null ? undefined : derived.volumeDeltaPct >= 0 ? styles.deltaUp : styles.deltaDown}>{fmtPct(derived.volumeDeltaPct)}</span>
                   ) : "—"}{" "}
-                  vs previous period
+                  {derived?.byHour ? `per ${wxWord} hour vs previous period` : "vs previous period"}
                 </p>
               </article>
               <article className={styles.kpiTile}>
                 <span className={styles.kpiIcon} aria-hidden="true"><CalendarClock size={15} /></span>
-                <h3>Avg Daily Volume<InfoTooltip text="Total volume divided by the number of days in the Range — the corridor's typical day." /></h3>
-                <div className={styles.kpiValue}>{kpiValue(derived ? fmtInt(derived.curAdt) : null)}</div>
-                <p className={styles.kpiHint}>{data ? `vehicles a day, averaged over ${fmtInt(data.kpis.days)} day${data.kpis.days === 1 ? "" : "s"}` : "—"}</p>
+                {derived?.byHour ? (
+                  <>
+                    <h3>Avg per {wxWord === "wet" ? "Wet" : "Dry"} Hour<InfoTooltip text={`Vehicles counted in ${wxWord} hours divided by the number of ${wxWord} hours in the Range. A daily average would not mean much here: most days have only some ${wxWord} hours.`} /></h3>
+                    <div className={styles.kpiValue}>{kpiValue(fmtInt(derived.perHour))}</div>
+                    <p className={styles.kpiHint}>{data?.kpis.hours != null ? `vehicles an hour, over ${fmtInt(data.kpis.hours)} ${wxWord} hour${data.kpis.hours === 1 ? "" : "s"}` : "—"}</p>
+                  </>
+                ) : (
+                  <>
+                    <h3>Avg Daily Volume<InfoTooltip text="Total volume divided by the number of days in the Range — the corridor's typical day." /></h3>
+                    <div className={styles.kpiValue}>{kpiValue(derived ? fmtInt(derived.curAdt) : null)}</div>
+                    <p className={styles.kpiHint}>{data ? `vehicles a day, averaged over ${fmtInt(data.kpis.days)} day${data.kpis.days === 1 ? "" : "s"}` : "—"}</p>
+                  </>
+                )}
               </article>
               <article className={styles.kpiTile}>
                 <span className={styles.kpiIcon} aria-hidden="true"><Clock size={15} /></span>
@@ -1237,10 +1283,20 @@ export default function TrafficPage() {
               </div>
               <div className={styles.chartBody}>{chartFrame(trendOption, "No volume data for the selected filters", onTrendClick)}</div>
               {trendInsight && !error && (
-                <CardInsight lead={`Busiest day: ${trendInsight.hi.d}, with ${fmtCompact(trendInsight.hi.v)} entries.`}>
+                <CardInsight lead={`Busiest day: ${trendInsight.hi.d}, with ${fmtCompact(trendInsight.hi.v)} vehicles.`}>
                   Quietest: {trendInsight.lo.d} ({fmtCompact(trendInsight.lo.v)}). A typical day carries about {fmtCompact(trendInsight.median)}.
                 </CardInsight>
               )}
+              {splitDirection && !error && (() => {
+                const all = trendRows.reduce((s, r) => s + r.total, 0);
+                const notSplit = trendRows.reduce((s, r) => s + r.bothdir, 0);
+                if (all <= 0 || notSplit <= 0) return null;
+                return (
+                  <CardInsight lead={`${((notSplit / all) * 100).toFixed(1)}% of the traffic is at plazas not split by direction.`}>
+                    {direction === "Both" ? "They are drawn as the dashed line, so northbound plus southbound is not the whole corridor." : "They are not in this line."}
+                  </CardInsight>
+                );
+              })()}
             </article>
 
             {/* Breakdowns, two columns: by plaza, and against normal days. */}
@@ -1273,7 +1329,11 @@ export default function TrafficPage() {
                 <div className="nc-head-main">
                 <CardIcon icon={CalendarDays} />
                 <div className={styles.headText}>
-                  <h3>{impactMode === "Events" ? "Arena Event Impact" : "Holiday vs Normal Days"}<InfoTooltip text="How volume on Philippine Arena event days or public holidays compares with the normal days around them (±45-day local baseline). Toggle Events / Holidays above." /></h3>
+                  <h3>{impactMode === "Events" ? "Arena Event Impact" : "Holiday vs Normal Days"}<InfoTooltip text="How volume on arena event days or public holidays compares with the normal days around them (±45-day local baseline). Toggle Events / Holidays above. This card covers every year of the record, whatever the Range: each holiday falls once a year and events are few, so a short range would leave one or two days to compare." /></h3>
+                  {/* Deliberately not filtered by Range (17 Nov 2026): under the default 12 months each holiday is a single
+                      day, and a ±45-day baseline would be cut off at the range's edges. Said here, so the 2022-2026
+                      list under a 12-month Range is not read as a filter fault. */}
+                  {data && <p className={styles.subtitle}>All years of the record ({data.meta.minDate.slice(0, 4)} to {data.meta.maxDate}); the Range filter does not apply.</p>}
                 </div>
                 </div>
                 <div className="nct-head-tools">
@@ -1309,7 +1369,7 @@ export default function TrafficPage() {
                 </CardInsight>
               )}
               {data?.eventWeather && !error && (
-                <CardInsight lead={impactMode === "Events" ? `Only ${data.eventWeather.day} event days (${data.eventImpact.length}).` : "Holidays are not split by weather."}>
+                <CardInsight lead={impactMode === "Events" ? `Only ${data.eventWeather.day} event days (${eventRows.length}).` : "Holidays are not split by weather."}>
                   {impactMode === "Events"
                     ? <>Each is compared with {data.eventWeather.day} normal days.<InfoTooltip text={`${data.eventWeather.rule.charAt(0).toUpperCase()}${data.eventWeather.rule.slice(1)}.`} /></>
                     : <>Too few rainy holidays to compare.</>}
@@ -1362,7 +1422,11 @@ export default function TrafficPage() {
                 <div className="nc-head-main">
                 <CardIcon icon={Gauge} />
                 <div className={styles.headText}>
-                  <h3>Average Speed in Jams by Hour<InfoTooltip text="Mean speed reported inside Waze jams for each hour of the day — lower means slower-moving jams at that hour." /></h3>
+                  <h3>Average Speed in Jams by Hour<InfoTooltip text={`Mean speed reported inside Waze jams for each hour of the day — lower means slower-moving jams at that hour.${data?.meta.jamTo ? ` Waze jam data runs to ${data.meta.jamTo}.` : ""}`} /></h3>
+                  {/* Jam reports stop before the toll record does; said here as on the Congestion Index tile. */}
+                  {data?.meta.jamTo && data.range.to > data.meta.jamTo && (
+                    <p className={styles.subtitle}>Waze jam data runs to {data.meta.jamTo}; later days are not in this chart.</p>
+                  )}
                 </div>
                 </div>
               </div>
@@ -1412,11 +1476,12 @@ export default function TrafficPage() {
         {activeTab === "Predictive" && (
           <>
             <div className={styles.spanFull}>
+              {/* Only what this tab shows a control for (17 Nov 2026). The filter bar is hidden here, so a Wet/Dry
+                  choice or a custom range made on Descriptive used to filter the forecast's hourly view and history
+                  with nothing on screen to say so or undo it. The card's own Range pills stay. */}
               <PredictiveVolumeChart
                 months={rangeMode === "custom" ? "all" : rangeMode}
-                from={rangeMode === "custom" ? customFrom : undefined}
-                to={rangeMode === "custom" ? customTo : undefined}
-                weather={weather}
+                weather="all"
                 onMonthsChange={(m) => setRangeMode(m)}
               />
             </div>
@@ -1529,8 +1594,8 @@ export default function TrafficPage() {
                 <h3>{impactMode === "Events" ? "Arena Events — Full List" : "Holidays — Full List"}</h3>
                 <p>
                   {impactMode === "Events"
-                    ? `${eventsShown.length} event${eventsShown.length === 1 ? "" : "s"}${yearShown === "all" ? "" : ` in ${yearShown}`} · measured at ${EVENT_EXIT_VIEWS.find((v) => v.value === eventExit)?.label ?? "the venue exit"}${data.eventWeather ? ` · ${data.eventWeather.day} event days only, vs same-weekday ${data.eventWeather.day} days` : ""} · ${eventSorted.sort.key === "dist" ? "furthest from normal first" : "click a column to sort"}, a row for details`
-                    : `${data.holidayImpact.length} holidays${data.eventWeather ? " · all weather (not split by Dry/Wet)" : ""} · ${holidaySorted.sort.key === "dist" ? "furthest from normal first" : "click a column to sort"}, a row for details`}
+                    ? `${eventsShown.length} event${eventsShown.length === 1 ? "" : "s"}${yearShown === "all" ? " in every year of the record (the Range filter does not apply)" : ` in ${yearShown}`} · measured at ${EVENT_EXIT_VIEWS.find((v) => v.value === eventExit)?.label ?? "the venue exit"}${data.eventWeather ? ` · ${data.eventWeather.day} event days only, vs same-weekday ${data.eventWeather.day} days` : ""} · ${eventSorted.sort.key === "dist" ? "furthest from normal first" : "click a column to sort"}, a row for details`
+                    : `${data.holidayImpact.length} holidays, every year of the record (the Range filter does not apply)${data.eventWeather ? " · all weather (not split by Dry/Wet)" : ""} · ${holidaySorted.sort.key === "dist" ? "furthest from normal first" : "click a column to sort"}, a row for details`}
                 </p>
               </div>
               <button className={styles.detailClose} onClick={() => setImpactListOpen(false)} aria-label="Close">

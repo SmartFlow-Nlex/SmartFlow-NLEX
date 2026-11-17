@@ -322,6 +322,18 @@ export default function ClearanceResponsePanel({ months = "12", from, to }: Prop
           }
         />
 
+        {/* All and property-damage-only crashes (17 Nov 2026). With the 0-minute recording defaults left out, half
+            of them are still logged as cleared within about 5 minutes, so the rule checks at minute 5. Those short
+            times are not one repeated default (they cluster on whole and five-minute marks like hand-entered times,
+            and most have their own blockage time), so they are kept rather than cut at a chosen minimum; the card
+            says where the rule is dependable instead. */}
+        {at.type === "accident" && (at.severity === "all" || at.severity === "pdo") && q.p50 <= 10 && (
+          <p className="inc-caption">
+            Half of these crashes were logged as cleared within {fmtMin(q.p50)} of the report, mostly minor ones, so the
+            check comes very early. The rule is most dependable for injury and fatal crashes.
+          </p>
+        )}
+
         <p className="inc-curve-key" aria-hidden="true">
           <span><i className="is-esc" />Check at P50, {fmtMin(q.p50)}</span>
           <span><i className="is-q" />P80 {fmtMin(q.p80)}</span>

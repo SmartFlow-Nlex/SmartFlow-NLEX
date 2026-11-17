@@ -18,6 +18,16 @@ import { cachedJson } from "../../../lib/cached-json";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
+/** "Forecast made 5:00 PM, Mon 16 Nov" in Manila time, or the plain subtitle while the run time is unknown. */
+function forecastMadeLabel(baseTs: string | null | undefined): string {
+  const t = baseTs ? new Date(baseTs) : null;
+  if (!t || !Number.isFinite(t.getTime())) return "Predictive analysis";
+  const when = t.toLocaleString("en-PH", {
+    timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit", weekday: "short", day: "numeric", month: "short",
+  });
+  return `Forecast made ${when}`;
+}
+
 import { displayExitName, FALLBACK_EXITS, useNlexExits, type NlexExit } from "../../../lib/nlex-exits";
 import { corridorGuard, type LngLat } from "../../../lib/corridor-shape";
 import { fmtKm } from "../../../lib/km-post";
@@ -59,6 +69,8 @@ export default function MapComparisonPage() {
     /** What the warehouse can answer, which is not what the model could serve:
      *  the pipeline writes as many hours ahead as it was asked for. */
     maxHorizon: number | null;
+    /** When the forecast run was made (Manila time); the hourly refresh can be several hours old. */
+    baseTs?: string | null;
   } | null>(null);
 
   const [activeReports, setActiveReports] = useState<number | null>(null);
@@ -443,7 +455,7 @@ export default function MapComparisonPage() {
               <span className="mc-stat-value red">{activeReports ?? "\u2014"}</span>
             </div>
             <div className="mc-stat-item">
-              <span className="mc-stat-label">Avg Speed</span>
+              <span className="mc-stat-label" title="Average speed of the slow-moving queues Waze reports on NLEX now; free-flowing road is not part of it">Avg Speed in Jams</span>
               <span className="mc-stat-value orange">{avgSpeed == null ? "\u2014" : `${avgSpeed} km/h`}</span>
             </div>
           </div>
@@ -453,7 +465,9 @@ export default function MapComparisonPage() {
         <div className="mc-panel-wrapper lm-panel lm-panel-forecast">
           <TrafficMapPanel
             title="Forecasted Traffic"
-            subtitle="Predictive analysis"
+            /* When the run was made (17 Nov 2026, system audit): the "hourly" refresh runs on GitHub's schedule,
+               which in practice starts every 3-8 hours, and nothing on the map said how old the forecast was. */
+            subtitle={forecastMadeLabel(forecastModel?.baseTs)}
             badge={
               <>
                 <span className="lm-tag is-forecast">PREDICTED</span>
@@ -559,7 +573,7 @@ export default function MapComparisonPage() {
               <span className="mc-stat-value purple">20</span>
             </div>
             <div className="mc-stat-item">
-              <span className="mc-stat-label">ML Confidence</span>
+              <span className="mc-stat-label" title="Share of exit-hours the selected model got right in its latest test (held-out recent days)">Test Accuracy</span>
               <span className="mc-stat-value green">
                 {forecastModel?.accuracy == null
                   ? "\u2014"

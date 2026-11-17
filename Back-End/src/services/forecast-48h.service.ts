@@ -147,8 +147,23 @@ function shapeRun(run: Record<string, any>) {
       // the whole 48-hour window is already behind the clock: the record stops at the latest upload
       windowPast: hoursSince > 48 + 1,
     },
+    /* Two different periods (forecast_48h.py, evaluate.py; 17 Nov 2026). `comparison` is the VALIDATION year: every
+       candidate scored there, and the model in use was CHOSEN there. Everything else here is the TEST (`window`): the
+       chosen model, fitted only on days before it, forecast once and never used for a choice. The card used to label
+       the validation table "tested on 2025" and left the real test score out. */
     backtest: bt.series ? {
       window: info.test_window ? { first: info.test_window.first, last: info.test_window.last } : null,
+      validationWindow: info.selection?.first ? { first: info.selection.first, last: info.selection.last } : null,
+      // The test score: mean WAPE of hours 1-6, 7-24 and 25-48 ahead, so each stretch weighs the same.
+      testScore: bt.buckets?.score ?? null,
+      testBuckets: bt.buckets
+        ? { h1to6: bt.buckets["h1-6"] ?? null, h7to24: bt.buckets["h7-24"] ?? null, h25to48: bt.buckets["h25-48"] ?? null }
+        : null,
+      // The two baselines on the same test hours, scored the same way.
+      naiveTestScore: info.naive_backtest?.buckets?.score ?? null,
+      currentTestScore: info.current_method_backtest?.buckets?.score ?? null,
+      // The forecast in use is the chosen model refitted on every real day to this one.
+      servedDataTo: info.real_end ?? null,
       seriesWape: bt.series.all?.WAPE ?? null,
       seriesMae: bt.series.all?.MAE ?? null,
       corridorWape: bt.corridor?.all?.WAPE ?? null,
@@ -160,10 +175,12 @@ function shapeRun(run: Record<string, any>) {
       corridorBandCoverage: info.intervals?.coverage_corridor ?? null,
       trainedThrough: info.trained_through ?? null,
       why: info.why ?? null,
-      // Every learned candidate of the same 2025 test, for the forecast card's evidence table (forecast_48h.py).
+      // Every learned candidate on the VALIDATION year (the 2025 selection, not the test), for the forecast card's
+      // evidence table (forecast_48h.py). Only the model in use carries test scores.
       comparison: Array.isArray(info.comparison)
         ? info.comparison.map((c: Record<string, any>) => ({
             model: c.model, label: c.label, served: Boolean(c.served),
+            score: c.score ?? null, testScore: c.test_score ?? null, testWape: c.test_wape ?? null,
             wape: c.wape ?? null, corridorWape: c.corridor_wape ?? null,
             mase: c.mase ?? null, mae: c.mae ?? null, rmse: c.rmse ?? null, r2: c.r2 ?? null, mape: c.mape ?? null,
             byHorizon: c.by_horizon ?? {}, byCondition: c.by_condition ?? {},

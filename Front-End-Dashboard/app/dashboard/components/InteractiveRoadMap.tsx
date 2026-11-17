@@ -960,7 +960,7 @@ export default function InteractiveRoadMap() {
           </button>
         </div>
         <p>
-          Waze jam reports matched to the nearest exit; direction from jam bearing.
+          Waze jam reports on NLEX matched to the nearest exit; direction from the street name, or the jam&apos;s bearing where the name gives none.
           An exit with no report is flowing freely.
         </p>
       </footer>

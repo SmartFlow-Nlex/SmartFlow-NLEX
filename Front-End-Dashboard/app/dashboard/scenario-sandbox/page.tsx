@@ -7,7 +7,7 @@ import { lanesForSegment, laneSources } from "../../../lib/nlex-lanes";
 import { fmtKm, fmtKmRange, kmMeasured, kmPost } from "../../../lib/km-post";
 import { Car } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
-import ScenarioForecastPanel, { forecastHour, forecastIncidentsAt, forecastInflowAt, useScenarioForecast } from "../../../components/dashboard/ScenarioForecastPanel";
+import ScenarioForecastPanel, { forecastHour, forecastIncidentsAt, forecastScaleAt, useScenarioForecast } from "../../../components/dashboard/ScenarioForecastPanel";
 import ForecastDayPicker from "../../../components/dashboard/ForecastDayPicker";
 import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import filterStyles from "../traffic/traffic.module.css";
@@ -53,7 +53,7 @@ import { ASSUMPTIONS } from "./scenarios/assumptions";
 import { borrowedLanes, crossoverM, defaultStretch, planStretch, planZipper, REALLOCATION_NAME, zipperHolds, type ZipperState } from "./zipper";
 import { PAINT_WHITE, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint } from "./vehiclePaint";
 import { drawMotorcycle } from "./motorcycleArt";
-import { useDirectionSim, type DirectionApi, type SharedRoadInputs } from "./useDirectionSim";
+import { forecastInflowFor, inflowSliderRange, useDirectionSim, type DirectionApi, type SharedRoadInputs } from "./useDirectionSim";
 import { getRecommendation } from "./recommendation";
 import { REPLAY_HZ, ReplayBuffer } from "./replay";
 import {
@@ -629,6 +629,8 @@ const eventHasLane = (f: FamilyKey) => f !== "breakdown_shoulder" && f !== "rain
 const EVENT_MULTI_LANE = new Set<FamilyKey>(["multi_vehicle_collision", "overturned_vehicle", "flood", "scheduled_roadworks"]);
 
 const fmt = (n: number, d = 0) => n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+/** How far along a range slider a value sits, 0-100, for its filled track. */
+const rangePct = (v: number, r: { readonly min: number; readonly max: number }) => Math.max(0, Math.min(100, ((v - r.min) / Math.max(1, r.max - r.min)) * 100));
 /** "Overturned vehicle #3, Heavy rain #4 and 2 more": a list of events kept to a line. */
 const eventList = (events: readonly { name: string }[]): string => {
   const shown = events.slice(0, 2).map((e) => e.name);
@@ -1221,7 +1223,7 @@ export default function AiSandboxPage() {
   /* ── Event day (mock defense, 3 Nov 2026: "add what will happen if there is an event, base it on the Event
      Prediction"). Choosing an upcoming Philippine Arena event day runs the road as the Event Prediction says that
      day runs: every plaza's traffic at the hour is scaled by its exit's event-day ratio (useDirectionSim's
-     flowAt), and a loaded forecast's inflow by what that does to the traffic entering the stretch. The forecast for
+     flowAt), and a loaded forecast scales that event-day flow, so the event counts once. The forecast for
      the date is loaded when the forecast reaches it, and the clock moves to the hour the event adds the most. */
   const [eventDayData, setEventDayData] = useState<EventDayData | null>(null);
   const [eventDate, setEventDate] = useState<string | null>(null);
@@ -1330,7 +1332,7 @@ export default function AiSandboxPage() {
   }, [loadedForecast, forecastHourIncidents, forecastByExit, hourOfDay, fromKm, toKm]);
   const sharedRoadInputs: SharedRoadInputs = {
     BACKEND, fromKm, toKm, segLengthM, EXITS, nearestExit, segmentLanes, hourOfDay, proposeHourOfDay, classProfile, resetSimAccumulator,
-    forecastInflow: forecastInflowAt(loadedForecast, hourOfDay),
+    forecastScale: forecastScaleAt(loadedForecast, hourOfDay),
     forecastIncidents,
     forecastMix,
     reallocation: zipper,
@@ -3265,10 +3267,18 @@ export default function AiSandboxPage() {
         forecast={forecast}
         hour={hourOfDay}
         following={forecastFollowing}
-        // The forecast is one segment-level prediction, not one per carriageway (D2 §3), so it seeds every
-        // carriageway (each direction hook reads the same forecastInflow). Loading turns following on; the
-        // inflow itself arrives through the hook's dataAnchor, so it tracks the day and hour from here on.
-        // Each road's own Inflow slider can still move it afterwards, until the day or hour next changes.
+        // What loading gives the carriageway in focus: its own recorded flow for this stretch and hour, times the
+        // forecast's factor (the same sum the hook does once the day is loaded).
+        inflowHere={(() => {
+          const scale = forecastScaleAt(forecast.data, hourOfDay);
+          const rec = focused.recordAnchor;
+          if (!scale || !rec) return null;
+          return { vehPerHour: forecastInflowFor(rec.vehPerHour, scale.factor, focused.laneCount), where: `${focusDirection} at Km ${fmtKm(rec.km, 2)}` };
+        })()}
+        // The forecast is one corridor prediction with no direction (D2 §3), so it seeds every carriageway (each
+        // direction hook reads the same forecastScale) and each scales its own recorded flow by it. Loading turns
+        // following on; the inflow itself arrives through the hook's dataAnchor, so it tracks the day and hour from
+        // here on. Each road's own Inflow slider can still move it afterwards, until the day or hour next changes.
         onApplyInflow={() => setForecastFollowing(true)}
       />
 
@@ -3903,15 +3913,17 @@ export default function AiSandboxPage() {
               </InfoLabel>
               <span className="sandbox-slider-value" style={{ color: "var(--page-accent)" }}>{fmt(focused.inflow)} veh/hr</span>
             </div>
+            {/* Down to the quiet hours the record and the forecast give (100 veh/h) and up to what the lanes are given:
+                at 1,000-8,000 a night or forecast inflow below 1,000 sat the thumb at the end with the wrong value. */}
             <input
               type="range"
-              min={1000}
-              max={8000}
+              min={inflowSliderRange(focused.laneCount).min}
+              max={inflowSliderRange(focused.laneCount).max}
               step={100}
               value={focused.inflow}
               onChange={(e) => focused.setInflow(Number(e.target.value))}
               className="sandbox-range inflow"
-              style={{ "--range-pct": `${((focused.inflow - 1000) / 7000) * 100}%` } as React.CSSProperties}
+              style={{ "--range-pct": `${rangePct(focused.inflow, inflowSliderRange(focused.laneCount))}%` } as React.CSSProperties}
             />
           </div>
           {/* Both mode: the OTHER direction's inflow, right below the focused one's — D2.3's "show
@@ -3929,13 +3941,13 @@ export default function AiSandboxPage() {
               </div>
               <input
                 type="range"
-                min={1000}
-                max={8000}
+                min={inflowSliderRange(byDirection[focusDirection === "NB" ? "SB" : "NB"].laneCount).min}
+                max={inflowSliderRange(byDirection[focusDirection === "NB" ? "SB" : "NB"].laneCount).max}
                 step={100}
                 value={byDirection[focusDirection === "NB" ? "SB" : "NB"].inflow}
                 onChange={(e) => byDirection[focusDirection === "NB" ? "SB" : "NB"].setInflow(Number(e.target.value))}
                 className="sandbox-range inflow"
-                style={{ "--range-pct": `${((byDirection[focusDirection === "NB" ? "SB" : "NB"].inflow - 1000) / 7000) * 100}%` } as React.CSSProperties}
+                style={{ "--range-pct": `${rangePct(byDirection[focusDirection === "NB" ? "SB" : "NB"].inflow, inflowSliderRange(byDirection[focusDirection === "NB" ? "SB" : "NB"].laneCount))}%` } as React.CSSProperties}
               />
             </div>
           )}

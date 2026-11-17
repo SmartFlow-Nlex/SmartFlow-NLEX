@@ -200,7 +200,7 @@ export function metricHintFor(label: string, row?: ModelMetric | null): string {
           ? row.MAE / row.MASE
           : null;
       return (
-        "Mean Absolute Scaled Error\n= this model's MAE ÷ MAE of a naive “same day last week” forecast" +
+        "Mean Absolute Scaled Error\n= this model's MAE ÷ MAE, on the same days, of a naive forecast that repeats the last week before each forecast starts" +
         (naive != null
           ? `\n= ${row!.MAE!.toFixed(3)} ÷ ${naive.toFixed(3)} = ${row!.MASE!.toFixed(3)}`
           : "") +
@@ -226,7 +226,7 @@ export function modelHintFor(key: ModelKey): string {
   return HOW_IT_WORKS[key] ?? "";
 }
 
-/** MASE is a ratio against the seasonal-naive (lag-7) benchmark — never a percentage. */
+/** MASE is a ratio against the "repeat last week" benchmark on the same days — never a percentage. */
 function maseSentence(mase: number | null): string {
   if (mase == null || !isFinite(mase)) return "";
   const pct = Math.abs(1 - mase) * 100;

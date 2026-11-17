@@ -19,12 +19,14 @@
  *   - No Weather toggle. The volume module trained weather-free twins, so its
  *     toggle changes the forecast itself. No such twins exist for CO2, so a
  *     toggle here would be a control that does nothing.
- *   - Fewer Future widths. The run stores 90 days, but a width is offered only
- *     where the horizon study says the model beat the baseline; with the current
- *     run that is the 7-day validated horizon alone (see `horizons`).
+ *   - Future widths follow the test. The run stores 90 days, and a width is
+ *     offered only where the rolling-origin study tested that far and the model
+ *     beat the best baseline there (see `horizons`).
  *
- * HORIZON is 7 days, versus 14 for volume, per the modelling diagram. The two
- * sets of error metrics are therefore NOT directly comparable.
+ * HOW IT WAS TESTED is read from the payload (17 Nov 2026): the split label
+ * ("rolling origin 26 x 90 d") and the horizon table, whose four stretches
+ * (days 1-14, 15-30, 31-60, 61-90) the headline WMAPE is the mean of. The card
+ * used to say "7 days" and "seasonal-naive" from constants written here.
  */
 
 import type { EChartsOption } from "echarts";
@@ -45,7 +47,14 @@ import { Term } from "./emissionsTerms";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
-const VALIDATED_HORIZON = 7; // must match train_emissions.py HORIZON
+/* A stored baseline's name as a phrase: MASE is measured against the best of them, so the card names it. */
+const BASELINE_WORDS: Record<string, string> = {
+  "Baseline: last year (scaled)": "the same day last year (scaled)",
+  "Baseline: last week": "repeating last week",
+  "Baseline: weekday average": "the weekday average",
+};
+const baselineWords = (name?: string | null) =>
+  name ? BASELINE_WORDS[name] ?? name.replace(/^Baseline:\s*/, "") : "the best simple baseline";
 
 type Zone = "past" | "present" | "future";
 type ModelKey = "derived" | "gbr" | "polynomial" | "lstm";
@@ -91,7 +100,13 @@ type Payload = {
   /** Models the trainer could not separate from the leader. */
   coChampions: string[];
   weatherAtForecastTime: string;
-  horizonDays: number;
+  /** How far ahead the stored metrics were tested (the split label's days ahead); null when not recorded. */
+  horizonDays: number | null;
+  /** The test, as stored with the champion's metrics: "rolling origin 26 x 90 d, step 14, scored to 2026-05-24". */
+  protocol?: { splitLabel: string | null; origins: number | null; horizonDays: number | null; stepDays: number | null; scoredTo: string | null } | null;
+  /** The best of the stored baselines (MASE 1.000 by construction), and repeating last week. */
+  bestBaseline?: { model: string; wmape: number | null; mase: number | null } | null;
+  lastWeekBaseline?: { model: string; wmape: number | null; mase: number | null } | null;
   series: Point[];
   metrics: Metric[];
   split: {
@@ -124,13 +139,16 @@ const FROM_DB: Record<string, ModelKey> = { Derived: "derived", Polynomial: "pol
    state, so the emission models no longer use them. */
 const COLOR_LIGHT: Record<ModelKey, string> = { derived: "#2a78d6", polynomial: "#c2185b", gbr: "#0b8db0", lstm: "#7a5fe0" };
 const COLOR_DARK: Record<ModelKey, string> = { derived: "#3987e5", polynomial: "#d55181", gbr: "#169bb8", lstm: "#8c7ff0" };
+/* What each SERVED forecast is (17 Nov 2026, from emissions_study.py and train_emissions.py): each family's line is
+   its best weather-free variant, since no weather forecast covers a window that starts after the record ends. The
+   champion "Derived" is the study's "Derived + calendar ratio"; "LSTM" is its "LSTM + calendar". */
 const HOW_IT_WORKS: Record<ModelKey, string> = {
   derived:
-    "The volume panel's forecast (Prophet) × the corridor's CO₂ per vehicle on that weekday over the previous 8 weeks. CO₂ here is vehicles × km × a fixed factor per class, so forecasting it through the volume forecast keeps the two panels in agreement.",
+    "The volume forecast (Prophet with holidays) × a forecast of CO₂ per vehicle: a ridge regression of its logarithm on weekday, holiday and time-of-year terms over the last three years, set to the level of the last 8 weeks. CO₂ here is vehicles × km × a fixed factor per class, so forecasting it through the volume forecast keeps the two panels in agreement.",
   polynomial:
-    "Ridge regression on degree-2 terms over trend, the 7- and 28-day rolling means, lag-1, lag-7, day-of-week and rainfall.",
-  gbr: "Gradient-boosted trees over the same lag, calendar and weather features. Captures interactions a linear fit cannot.",
-  lstm: "Neural network over a 28-day window. Predicts one day at a time and feeds its own output back, so early errors compound.",
+    "Ridge regression on degree-2 terms of trend, the 7- and 28-day rolling means, lag-1, lag-7 and day of week, with weekday, time-of-year and holiday terms added as linear inputs. No weather input. Predicts one day at a time and feeds its own output back.",
+  gbr: "Gradient-boosted trees over trend, calendar (weekday, month, time of year, holidays) and lag features (1 to 28 days, 7- and 28-day means, heavy-vehicle share). No weather input. Predicts one day at a time and feeds its own output back.",
+  lstm: "Neural network over a 28-day window of CO₂, each step also given the next day's weekday, time of year and holidays. Predicts one day at a time and feeds its own output back, so early errors compound.",
 };
 
 const NARRATIVE_VOCAB: NarrativeVocab = {
@@ -351,31 +369,33 @@ export default function PredictiveEmissionChart() {
     }));
   }, [data]);
 
-  /* Which "Ahead" widths to offer: the validated horizon always, then each longer step only where the run
-     stores that many days and some stretch the step adds beat the baseline in the horizon study. Read
-     from the payload, so a retrain changes the control by itself. */
+  /* Which "Ahead" widths to offer: 7 days always, then each longer step only where the run stores that many
+     days, the rolling-origin study tested that far ahead, and some stretch the step adds beat the best
+     baseline there. Read from the payload, so a retrain changes the control by itself. */
+  const tested = data?.horizonDays ?? null;
+  const baselineName = baselineWords(data?.bestBaseline?.model);
   const horizons = useMemo(() => {
     const none = { offered: [] as { label: string; d: number }[], hidden: null as string | null, why: null as string | null };
     if (!data) return none;
-    const base = data.horizonDays;
-    const stored = data.split.futureDays > 0 ? data.split.futureDays : base;
+    const stored = data.split.futureDays > 0 ? data.split.futureDays : (tested ?? 7);
     const buckets = data.horizonAccuracy ?? [];
+    const first = Math.min(7, stored);
     const steps = [
-      { label: `${base} d`, d: Math.min(base, stored) },
-      ...[
-        { label: "2 wk", d: 14 },
-        { label: "1 mo", d: 28 },
-        { label: "2 mo", d: 60 },
-        { label: "3 mo", d: 90 },
-      ].filter((s) => s.d > base),
+      { label: `${first} d`, d: first },
+      { label: "2 wk", d: 14 },
+      { label: "1 mo", d: 28 },
+      { label: "2 mo", d: 60 },
+      { label: "3 mo", d: 90 },
     ];
     const offered: { label: string; d: number }[] = [];
     const dropped: string[] = [];
     let failedAt: HzBucket | null = null;
     let notStored = false;
+    let notTested = false;
     steps.forEach((s, i) => {
       if (i === 0) return void offered.push(s);
       if (s.d > stored) return void (notStored = true);
+      if (tested != null && s.d > tested) return void (notTested = true);
       // What this step adds beyond the previous one; offered if any of it is usable.
       const added = buckets.filter((bk) => bk.hHi > steps[i - 1].d && bk.hLo <= s.d);
       if (buckets.length === 0 || added.length === 0 || added.some((bk) => bk.usable)) return void offered.push(s);
@@ -385,21 +405,25 @@ export default function PredictiveEmissionChart() {
     if (offered.length === steps.length) return { ...none, offered };
     const f = failedAt as HzBucket | null;
     const why = f
-      ? `The run stores ${stored} days ahead, but tested on past data the model loses to simply repeating last week from day ${f.hLo}` +
+      ? `The run stores ${stored} days ahead, but tested on past data the model loses to ${baselineName} from day ${f.hLo}` +
         (f.wmape != null && f.baselineWmape != null ? ` (days ${f.hLo}–${f.hHi}: ${f.wmape.toFixed(1)}% error against ${f.baselineWmape.toFixed(1)}%)` : "") +
         `, so ${dropped.join(", ")} ${dropped.length === 1 ? "is" : "are"} not offered. They appear here by themselves once a retrained model beats that baseline.`
-      : notStored
-        ? `The published forecast stores only ${stored} days ahead.`
-        : null;
+      : notTested
+        ? `The model was tested only ${tested} days ahead, so longer ranges are not offered.`
+        : notStored
+          ? `The published forecast stores only ${stored} days ahead.`
+          : null;
     const hidden = f
       ? offered.length === 1
-        ? "longer ranges lose to repeating last week, so are not offered"
-        : `${dropped.join(", ")} not offered: ${dropped.length === 1 ? "it loses" : "they lose"} to repeating last week`
-      : notStored
-        ? `only ${stored} days stored`
-        : null;
+        ? `longer ranges lose to ${baselineName}, so are not offered`
+        : `${dropped.join(", ")} not offered: ${dropped.length === 1 ? "it loses" : "they lose"} to ${baselineName}`
+      : notTested
+        ? `tested to ${tested} days only`
+        : notStored
+          ? `only ${stored} days stored`
+          : null;
     return { offered, hidden, why };
-  }, [data]);
+  }, [data, tested, baselineName]);
 
   // Keep the drawn width on an offered step: the default (7) and the stored run can disagree.
   useEffect(() => {
@@ -891,6 +915,12 @@ export default function PredictiveEmissionChart() {
   const champMean = champVals.length ? champVals.reduce((s, v) => s + v, 0) / champVals.length : null;
   const champMetric = championKey ? metricFor(championKey) : null;
   const tiedLabels = tied.map((n) => (FROM_DB[n] ? LABEL[FROM_DB[n]] : n));
+  // The champion's rolling-origin stretches (gold.ml_horizon_accuracy), for the evidence and the error figure.
+  const hzBuckets = data.horizonAccuracy ?? [];
+  const hzMax = Math.max(0.0001, ...hzBuckets.map((b) => Math.max(b.wmape ?? 0, b.baselineWmape ?? 0)));
+  // Against repeating last week, the comparison a reader reaches for first.
+  const vsLastWeek =
+    champMetric?.wmape != null && data.lastWeekBaseline?.wmape ? champMetric.wmape / data.lastWeekBaseline.wmape : null;
 
   const modelToolbar = (
     <div className="nc-em-models">
@@ -947,7 +977,7 @@ export default function PredictiveEmissionChart() {
               <th className="num">MAE (t)</th>
               <th className="num">WMAPE</th>
               <th className="num">R² Score</th>
-              <th className="num" title="Error relative to a seasonal-naive forecast. Below 1.0 beats it; above 1.0 does not.">
+              <th className="num" title={`WMAPE relative to ${baselineName}, the best of the simple baselines (MASE 1.000). Below 1.0 beats it; above 1.0 does not.`}>
                 MASE
               </th>
               {showAllMetrics && (
@@ -1009,25 +1039,53 @@ export default function PredictiveEmissionChart() {
         {/* Named apart from ModelNarrative's own "How this is measured"
             (the CO2 caveat) further down the same card. */}
         <summary>How it was tested</summary>
-        {/* The climatology caveat is carried by quantityNote (ModelNarrative),
-            which is where the how-it-was-built detail belongs. What stays is
-            the scoring basis and the one comparison a reader could otherwise
-            get wrong. */}
+        {/* The test as stored with the metrics (17 Nov 2026: this said "364 held-out days at a 7-day horizon"):
+            the split label and the horizon table, whose stretches the WMAPE above is the mean of. */}
         <p>
-          Scored on {data.split.holdoutDays.toLocaleString()} held-out days at a {data.horizonDays}-day horizon · volume
-          validates at 14d, so the two are not directly comparable.
+          {data.protocol?.origins != null && tested != null ? (
+            <>
+              Rolling origin: {data.protocol.origins} forecasts made from past dates
+              {data.protocol.stepDays != null ? `, ${data.protocol.stepDays} days apart` : ""}, each {tested} days ahead,
+              scored on every day{data.protocol.scoredTo ? ` up to ${shortDate(data.protocol.scoredTo)}` : ""}.{" "}
+            </>
+          ) : data.protocol?.splitLabel ? (
+            <>Tested by {data.protocol.splitLabel}.{" "}</>
+          ) : null}
+          {hzBuckets.length > 0 && <>Each WMAPE is the mean of the {hzBuckets.length} stretches of days ahead below. </>}
+          MASE is a model&apos;s WMAPE over that of {baselineName}
+          {data.bestBaseline?.wmape != null ? ` (${data.bestBaseline.wmape.toFixed(2)}%)` : ""}, the best of the simple
+          baselines.
         </p>
+        {hzBuckets.length > 0 && (
+          <div className="nc-em-hz">
+            <span className="nc-em-hz-label">{championKey ? LABEL[championKey] : "Champion"}: typical error by days ahead</span>
+            {hzBuckets.map((b) => (
+              <span key={b.hLo} className={`nc-em-hz-row${b.usable ? "" : " is-weak"}`}>
+                <span>days {b.hLo}–{b.hHi}</span>
+                <span className="nc-em-inline-bar" aria-hidden="true">
+                  <i style={{ width: `${Math.max(2, ((b.wmape ?? 0) / hzMax) * 100)}%` }} />
+                </span>
+                <b>
+                  {b.wmape != null ? `${b.wmape.toFixed(2)}%` : "—"}
+                  {b.baselineWmape != null ? ` vs ${b.baselineWmape.toFixed(2)}%` : ""}
+                </b>
+              </span>
+            ))}
+          </div>
+        )}
       </details>
     </section>
   );
 
-  /* The summary column's second figure: the typical error at the range drawn, from the rolling-origin
-     horizon study (gold.ml_horizon_accuracy), falling back to the held-out WMAPE when no bucket covers it. */
-  const rangeBucket = (data.horizonAccuracy ?? []).find((b) => b.hLo <= futureDays && futureDays <= b.hHi);
+  /* The summary column's second figure: the typical error of the stretch that holds the last day drawn, from the
+     rolling-origin horizon study (gold.ml_horizon_accuracy), named by its days; the overall WMAPE when no stretch
+     covers it. */
+  const rangeBucket = hzBuckets.find((b) => b.hLo <= futureDays && futureDays <= b.hHi);
   const rangeErr =
     rangeBucket?.wmape != null ? `${rangeBucket.wmape.toFixed(1)}%`
     : champMetric?.wmape != null ? `${champMetric.wmape.toFixed(1)}%`
     : "—";
+  const rangeErrLabel = rangeBucket?.wmape != null ? `Typical error, days ${rangeBucket.hLo}–${rangeBucket.hHi}` : "Typical error";
 
   /* Layout (5 Nov 2026, same as the Traffic Volume Forecast card): the graph on the left with every
      control in one panel above it and the report button on its foot line; the answer and its validation
@@ -1063,7 +1121,7 @@ export default function PredictiveEmissionChart() {
                       onClick={() => setPastDays(wd.days)}
                       title={
                         wd.days >= ALL_PAST
-                          ? "All context back to 2022 — the 7-day forecast will be a sliver"
+                          ? "All context back to 2022 — a short forecast will be a sliver"
                           : `Show the last ${wd.label} of context before the scored window, so the forecast is legible`
                       }
                     >
@@ -1132,67 +1190,35 @@ export default function PredictiveEmissionChart() {
                   </div>
                 ) : (
                   <span className="nc-em-seg">
-                    <span className="nc-em-seg-fixed">{horizons.offered[0]?.label ?? `${data.horizonDays} d`}</span>
+                    <span className="nc-em-seg-fixed">{horizons.offered[0]?.label ?? "7 d"}</span>
                   </span>
                 )}
                 <span className="fc-note nc-em-hz-note" title={horizons.why ?? undefined}>
-                  validated at {data.horizonDays}d{horizons.hidden ? ` · ${horizons.hidden}` : ""}
+                  {tested != null ? `tested ${tested} days ahead` : "test horizon not recorded"}
+                  {horizons.hidden ? ` · ${horizons.hidden}` : ""}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Past the validated range the reader needs to know what they are looking
-              at. Figures come from gold.ml_horizon_accuracy, measured by rolling
-              origin out to 90 days - not extrapolated from the 7-day headline. */}
-          {futureDays > VALIDATED_HORIZON && data.horizonAccuracy?.length > 0 && (() => {
-            const shown = data.horizonAccuracy.filter((b) => b.hLo <= futureDays);
-            const weak = shown.filter((b) => !b.usable);
-            const maxWmape = Math.max(...shown.map((b) => b.wmape ?? 0), 0.0001);
+          {/* A warning only where the test found one (17 Nov 2026). This banner said "Only the first 7 days were
+              checked" for a forecast scored on every day out to 90; the per-stretch errors now sit under "How it
+              was tested". It appears only when a stretch drawn lost to the best baseline in gold.ml_horizon_accuracy. */}
+          {(() => {
+            const weak = hzBuckets.filter((b) => !b.usable && b.hLo <= futureDays);
+            if (!weak.length) return null;
+            const w = weak[0];
             return (
               <div className="nc-em-banner">
                 <TriangleAlert size={15} strokeWidth={2} aria-hidden="true" />
                 <span>
-                  <b>Only the first {VALIDATED_HORIZON} days were checked against what actually happened.</b>
-                  {weak.length > 0 && (
-                    <span className="nc-em-banner-line">
-                      <b
-                        className="nc-em-warn-ink"
-                        title={`MASE ${weak[0].mase?.toFixed(3)} — above 1.0 means it loses to a seasonal-naive benchmark (copy the same weekday from last week)`}
-                      >
-                        Days {weak[0].hLo}–{weak[0].hHi} are the least reliable — in that stretch you would do
-                        better just repeating last week
-                      </b>
-                      . It steadies again after day {weak[0].hHi + 1}.
-                    </span>
-                  )}
-                  <span
-                    className="nc-em-hz"
-                    title="WMAPE — total absolute error as a share of total actual CO₂, measured by rolling-origin over 9 origins"
-                  >
-                    <span className="nc-em-hz-label">Typical error</span>
-                    {shown.map((b) => (
-                      <span key={b.hLo} className={`nc-em-hz-row${b.usable ? "" : " is-weak"}`}>
-                        <span>days {b.hLo}–{b.hHi}</span>
-                        <span className="nc-em-inline-bar" aria-hidden="true">
-                          <i style={{ width: `${Math.max(2, ((b.wmape ?? 0) / maxWmape) * 100)}%` }} />
-                        </span>
-                        <b>{b.wmape?.toFixed(0)}% off</b>
-                      </span>
-                    ))}
-                  </span>
-                  <details className="nc-details">
-                    <summary>Details</summary>
-                    <p>
-                      Only the first <b>{VALIDATED_HORIZON} days</b> were
-                      checked against what actually happened. To predict a day, the model reads the days just before
-                      it — and past day {VALIDATED_HORIZON} those days are themselves still in the future, so it
-                      reads its own earlier forecasts instead of measurements. Nothing is invented: the measured
-                      history stays exactly as recorded, and no actual value is ever filled in for a future date.
-                      But forecasts built on forecasts drift, so from here the line describes the usual shape for
-                      that time of year rather than any particular day.
-                    </p>
-                  </details>
+                  <b className="nc-em-warn-ink">
+                    Days {w.hLo}–{w.hHi} lose to {baselineName} in the rolling-origin test
+                  </b>
+                  {w.wmape != null && w.baselineWmape != null
+                    ? ` (${w.wmape.toFixed(1)}% error against ${w.baselineWmape.toFixed(1)}%)`
+                    : ""}
+                  ; read that stretch of the line with care.
                 </span>
               </div>
             );
@@ -1230,7 +1256,7 @@ export default function PredictiveEmissionChart() {
           )}
           <div className="fc2-pair">
             <div>
-              <span className="fc2-k">{futureDays}-day typical error</span>
+              <span className="fc2-k">{rangeErrLabel}</span>
               <span className="fc2-v">{rangeErr}</span>
             </div>
             <div>
@@ -1250,19 +1276,31 @@ export default function PredictiveEmissionChart() {
             <div className="fc2-ev-head"><ShieldCheck size={17} aria-hidden="true" /><h5>Validation Evidence</h5></div>
             <dl>
               <div><dt>WMAPE</dt><dd>{champMetric?.wmape != null ? `${champMetric.wmape.toFixed(2)}%` : "—"}</dd></div>
-              <div title="Error relative to a seasonal-naive forecast. Below 1.0 beats it; above 1.0 does not.">
+              <div title={`WMAPE relative to ${baselineName}, the best of the simple baselines. Below 1.0 beats it; above 1.0 does not.`}>
                 <dt>MASE</dt>
                 <dd>
                   {champMetric?.mase != null ? champMetric.mase.toFixed(3) : "—"}
                   {champMetric?.mase != null && (
                     <span className={champMetric.mase < 1 ? "nct-ok" : "nct-bad"}>
-                      {champMetric.mase < 1 ? " · beats seasonal-naive" : " · loses to seasonal-naive"}
+                      {champMetric.mase < 1 ? ` · beats ${baselineName}` : ` · loses to ${baselineName}`}
                     </span>
                   )}
                 </dd>
               </div>
-              <div><dt>Scored days</dt><dd>{data.split.holdoutDays.toLocaleString()}</dd></div>
-              <div><dt>Horizon</dt><dd>{data.horizonDays} days</dd></div>
+              {vsLastWeek != null && (
+                <div title="The champion's WMAPE over that of repeating last week, in the same test.">
+                  <dt>Vs last week</dt>
+                  <dd>{vsLastWeek.toFixed(2)}× its error</dd>
+                </div>
+              )}
+              <div>
+                <dt>Tested</dt>
+                <dd>
+                  {data.protocol?.origins != null && tested != null
+                    ? `${data.protocol.origins} origins × ${tested} days ahead`
+                    : tested != null ? `${tested} days ahead` : "—"}
+                </dd>
+              </div>
               <div>
                 <dt>{tied.length > 1 ? "Co-champions" : "Champion"}</dt>
                 <dd>{tied.length > 1 ? tiedLabels.join(" = ") : championKey ? LABEL[championKey] : "none"}</dd>
@@ -1270,7 +1308,7 @@ export default function PredictiveEmissionChart() {
             </dl>
             {data.split.holdoutStart && data.split.holdoutEnd && (
               <p className="fc2-period">
-                Period: {shortDate(data.split.holdoutStart)} – {shortDate(data.split.holdoutEnd)}
+                Present band: {shortDate(data.split.holdoutStart)} – {shortDate(data.split.holdoutEnd)}, each origin&apos;s first two weeks
               </p>
             )}
             <button type="button" className="fc2-ev-btn" onClick={() => setEvidenceOpen(true)}>View validation details</button>
@@ -1282,7 +1320,7 @@ export default function PredictiveEmissionChart() {
       <EvidenceModal
         className="nc-em-ev"
         scopeClass="viz-emissions"
-        subtitle="CO₂ forecast: every model's scores on held-out days, and how it was tested."
+        subtitle="CO₂ forecast: every model's scores on the rolling-origin test, and how it was tested."
         hideTrigger
         open={evidenceOpen}
         onOpenChange={setEvidenceOpen}
@@ -1298,14 +1336,15 @@ export default function PredictiveEmissionChart() {
         scoredDays={data.split.holdoutDays}
         windowStart={data.split.holdoutStart}
         windowEnd={data.split.holdoutEnd}
-        horizonDays={data.horizonDays}
+        horizonDays={tested ?? futureDays}
         vocab={NARRATIVE_VOCAB}
         quantity="emissions"
         quantityNote={
           "CO₂ is not measured: it is derived from the same traffic series the volume forecast uses, times the per-class " +
           "EMEP/EEA Guidebook 2023 emission factors and the distance each trip drove, so the two panels reconcile by construction. " +
           "The factors are European fleet figures, not measured on NLEX, so an error in them shifts every tonnage without changing any accuracy figure. " +
-          "Weather over the forecast window is day-of-year climatology in both scoring and projection, never observation."
+          "The served models read no weather: the forecast starts after the record ends, where no weather forecast exists, " +
+          "so each was tested and is drawn without one."
         }
         compact
         open={reportOpen}

@@ -121,8 +121,8 @@ INPUTS = {
 CONGESTION = ROOT.parent / "All_Scripts" / "Predictive_Modeling"
 HOURLY_48H = WORK / "cache" / "traffic_hourly_48h"
 
-# The real record ends here (common/rolling_eval.REAL_END_VOLUME): the toll tables run to 30 June 2026, but 25 May -
-# 30 Jun is broken or synthetic, so every daily trainer stops on this day and forecasts from the next (user, 13 Nov
+# The real record ends here (common/rolling_eval.REAL_END_VOLUME). The toll tables ran to 30 June 2026 and were trimmed
+# to this day on 15 Nov 2026 (backups ml_backup.*_after_20260524) because 25 May - 30 Jun is broken or synthetic, so every daily trainer stops on this day and forecasts from the next (user, 13 Nov
 # 2026: "make sure all dates are all aligned"). The future checks below compare with it, not with the tables' end.
 REAL_END_SQL = "LEAST(max(date), DATE '2026-05-24')"
 VOLUME_PREDS = ("pred_lstm, pred_prophet, pred_xgboost, pred_holtwinters, pred_sarimax, "
@@ -353,9 +353,13 @@ GROUPS = [
         # The congestion map's recurrent models (adviser's dual-path family, since 2026-10-25). The hourly refresh
         # only LOADS them from dualpath_models/; this refits them on the newest live weeks and publishes once.
         # Last in the batch: it reads only the live Waze feed, and the hourly refresh steps aside while it runs.
+        # --with-history (16 Nov 2026, user: "train the LSTM with history still"), as the hourly refresh: every live
+        # origin plus history up to 60,000 samples, each model capped at 70 min (congestion_dualpath.py), so the
+        # group fits its own 6-hour cloud job (weekly-retrain.yml part 4). Uncapped it took 479 min on a laptop.
         "congestion", "Congestion forecast (dual-path LSTM family)",
         inputs=["waze_jams"],
-        steps=[Step(CONGESTION, ["train_congestion_horizon.py", "--fast", "--dualpath-train", "--severe-weight", "1.5"])],
+        steps=[Step(CONGESTION, ["train_congestion_horizon.py", "--fast", "--dualpath-train", "--severe-weight", "1.5",
+                                 "--with-history"])],
         tables=[("gold.ml_congestion_forecast", None), ("gold.ml_predictive_congestion", None),
                 ("gold.ml_model_metrics", "target = 'Congestion'"), ("gold.ml_congestion_horizon_accuracy", None),
                 ("gold.ml_congestion_eval", None)],

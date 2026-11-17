@@ -15,17 +15,3 @@ export async function triggerSimulationInDb(simulationId: string, parameters: an
     return null;
   }
 }
-
-// [DEV-03] Fetch Results
-export async function getSimulationResultsFromDb(simulationId: string) {
-  if (!db) return null;
-  try {
-    const { rows } = await db.query(`
-      SELECT * FROM sandbox_simulations WHERE simulation_id = $1
-    `, [simulationId]);
-    return rows[0];
-  } catch (error) {
-    console.error("Database query failed for simulation results:", error);
-    return null;
-  }
-}

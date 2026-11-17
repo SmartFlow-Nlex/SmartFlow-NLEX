@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { cachedJson } from "../../../lib/cached-json";
 import { authedJson } from "../../../lib/api";
 import { Activity, ClipboardList, Eye, Upload, Users } from "lucide-react";
@@ -11,6 +11,9 @@ import { logActivity } from "../../../lib/backend-auth";
 import { fmtKmRange } from "../../../lib/km-post";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
+
+/** Entries per request to the list; older pages load on request. */
+const PAGE_SIZE = 500;
 
 /** An entry as the backend stores it (Back-End/src/services/audit.ts). */
 type RawLog = {
@@ -57,6 +60,8 @@ type Insights = {
     dwell: { status: string; changes: number; avgMs: number | null; maxMs: number | null }[];
     turnaround: { completed: number; avgMs: number | null };
     open: number; overrunning: number; lateToStart: number;
+    /** Still "scheduled" after the whole planned window has ended (sent by the backend since 17 Nov 2026). */
+    overdue?: number;
     items: { id: string; title: string; status: string; since: string; flag: string | null }[];
   };
   models: {
@@ -239,6 +244,7 @@ function InsightsSection({ data, hourly }: { data: Insights; hourly: HourlyModel
           {m.turnaround.completed > 0 && <>Scheduled to completed: <b>{span(m.turnaround.avgMs)}</b> ({m.turnaround.completed}) · </>}{m.open} open
           {m.overrunning > 0 && <> · <b className="audit-warn">{m.overrunning} past planned end</b></>}
           {m.lateToStart > 0 && <> · <b className="audit-warn">{m.lateToStart} late to start</b></>}
+          {(m.overdue ?? 0) > 0 && <> · <b className="audit-warn">{m.overdue} overdue, needing an update</b></>}
         </p>
         {m.items.filter((i) => i.flag).slice(0, 3).map((i) => (
           <p key={i.id} className="audit-note audit-warn">{i.title}: {i.flag}, {status(i.status)} for {ago(i.since)}</p>
@@ -288,7 +294,13 @@ function InsightsSection({ data, hourly }: { data: Insights; hourly: HourlyModel
           <Bars rows={data.users.map((x) => ({ label: `${x.user}${x.role ? ` (${x.role})` : ""}`, value: x.actions }))} />
         )}
         {data.totals.unidentified > 0 && (
-          <p className="audit-note audit-muted">{n(data.totals.unidentified)} older actions have no user: they were logged before sign-in was recorded.</p>
+          /* These are recent, not old (17 Nov 2026 audit): mostly idle sign-outs, sign-ins and settings changes the page
+             reported without a sign-in the server could verify, such as after the session had already expired. */
+          <p className="audit-note audit-muted">
+            {n(data.totals.unidentified)} {data.totals.unidentified === 1 ? "action in this period has" : "actions in this period have"} no
+            verified user: the page reported them without a sign-in the server could confirm (for example, an idle sign-out
+            sent after the session had expired), so they are recorded as anonymous.
+          </p>
         )}
       </article>
     </div>
@@ -311,16 +323,48 @@ export default function AuditLogPage() {
   const [insights, setInsights] = useState<Insights | null>(null);
   const [insightsError, setInsightsError] = useState<string | null>(null);
 
-  useEffect(() => {
-    authedJson<{ success: boolean; message?: string; data: RawLog[] }>(
-      `${BACKEND}/api/audit-log/list?limit=500${showHourly ? "&include_hourly=1" : ""}`)
-      .then((json) => {
+  /* The list comes a page at a time, newest first (17 Nov 2026 audit: it loaded the newest 500 of about 600, so
+     "All Time" silently left the oldest out). While a page comes back full there may be older entries, and the
+     table says so and offers to load them. */
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const fetchPage = useCallback(
+    (before?: string) =>
+      authedJson<{ success: boolean; message?: string; data: RawLog[] }>(
+        `${BACKEND}/api/audit-log/list?limit=${PAGE_SIZE}${showHourly ? "&include_hourly=1" : ""}${before ? `&end_date=${encodeURIComponent(before)}` : ""}`,
+      ).then((json) => {
         if (!json.success) throw new Error(json.message ?? "Request failed");
-        setAuditLogs(json.data.map(mapLog));
+        return json.data;
+      }),
+    [showHourly],
+  );
+
+  useEffect(() => {
+    fetchPage()
+      .then((rows) => {
+        setAuditLogs(rows.map(mapLog));
+        setHasOlder(rows.length >= PAGE_SIZE);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"))
       .finally(() => setLoading(false));
-  }, [showHourly]);
+  }, [fetchPage]);
+
+  const loadOlder = () => {
+    const oldest = auditLogs.reduce<string | null>((o, l) => (!o || new Date(l.timestamp) < new Date(o) ? l.timestamp : o), null);
+    if (!oldest) return;
+    setLoadingOlder(true);
+    fetchPage(new Date(oldest).toISOString())
+      .then((rows) => {
+        // end_date is inclusive, so the oldest entry already shown comes back: keep each id once.
+        setAuditLogs((cur) => {
+          const seen = new Set(cur.map((l) => l.id));
+          return [...cur, ...rows.map(mapLog).filter((l) => !seen.has(l.id))];
+        });
+        setHasOlder(rows.length >= PAGE_SIZE);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"))
+      .finally(() => setLoadingOlder(false));
+  };
 
   useEffect(() => {
     setInsightsError(null);
@@ -550,6 +594,17 @@ export default function AuditLogPage() {
             </tbody>
           </table>
         </div>
+        {!loading && !error && hasOlder && (
+          <p className="audit-note audit-muted" style={{ padding: "10px 16px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <span>
+              Showing the newest {n(auditLogs.length)} entries. Older entries are not loaded yet, so the filters, including
+              &quot;All Time&quot;, do not cover them.
+            </span>
+            <button type="button" className="nc-pill" onClick={loadOlder} disabled={loadingOlder}>
+              {loadingOlder ? "Loading…" : "Load older entries"}
+            </button>
+          </p>
+        )}
       </section>
     </section>
   );

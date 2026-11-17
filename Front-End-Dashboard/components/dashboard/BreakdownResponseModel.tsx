@@ -45,6 +45,10 @@ type BreakdownResponseData = {
     champion?: string;
     cox_ph?: { concordance_index: number | null; mae_minutes: number | null; n: number; cox_n: number; cox_coverage_pct: number };
     xgboost?: { mae_minutes: number | null; r2: number | null; n: number };
+    /** The simple median lookups both models were scored against, on the same held-out dispatches. */
+    baselines?: Record<string, { mae_minutes: number | null }>;
+    /** The champion rule's outcome (honest_eval.pick_champion). */
+    selection?: { best_baseline?: string; champion?: string; champion_is_baseline?: boolean; vs_baseline_significant?: boolean | null };
   } | null;
   /** The held-out dispatches the predictions apply to, by event date. */
   holdoutWindow?: { from: string; to: string; n: number } | null;
@@ -185,6 +189,25 @@ export default function BreakdownResponseModel() {
           scoreValue: meta?.cox_ph?.concordance_index != null ? fmtNum(meta.cox_ph.concordance_index, 3) : null,
         };
 
+  /* How the model behind the card was chosen (17 Nov 2026). The tooltip said "whichever scores lower held-out
+     error"; the rule is a model is used only if its error is lower than the best simple median lookup's, the
+     simpler of two qualifying models wins a lead that is within chance, and with none qualifying the lookup is
+     shown. The current outcome is read from the training run. */
+  const sel = meta?.selection;
+  const baseName = sel?.best_baseline ? sel.best_baseline.replace(/\s*\(baseline\)\s*$/i, "").replace(/ x /g, " × ") : null;
+  const baseMae = sel?.best_baseline ? meta?.baselines?.[sel.best_baseline]?.mae_minutes ?? null : null;
+  const ruleOutcome =
+    sel?.champion_is_baseline && baseName
+      ? ` In this run neither model beat the ${baseName.toLowerCase()}, so that lookup is shown.`
+      : champion && championMetrics.mae != null && baseName && baseMae != null
+        ? ` In this run ${champion} was used: an average miss of ${championMetrics.mae.toFixed(1)} min against ${baseMae.toFixed(1)} min for the ${baseName.toLowerCase()}${sel?.vs_baseline_significant === false ? ", a gap within chance" : ""}.`
+        : "";
+  const modelRuleText =
+    "Predicted response time of a dispatched unit (AAP, Patrol Vehicle, RAMFA, and others), from dispatch to arrival at the scene, by cause or by service, from what is known before dispatch, scored against the measured times on the most recent held-out dispatches. " +
+    "A trained model (Cox PH or XGBoost) is used only if its error on those dispatches is lower than the best simple median lookup's; if both qualify and the better one's lead is within chance, the simpler one is used." +
+    ruleOutcome +
+    " The descriptive counterpart to this card (Descriptive tab) shows the same two groupings from measured history alone, with no model behind it.";
+
   // A group the model left without a prediction in this slot (EMS has one such dispatch) has no bar to draw.
   const rows = (view === "cause" ? data.byCause : data.byService).filter((r) => r.predictedMedianMin != null).slice(0, INLINE_LIMIT);
   const displayRows = [...rows].reverse(); // ECharts category axis draws bottom-up; reversed so the busiest group lands on top
@@ -250,7 +273,7 @@ export default function BreakdownResponseModel() {
         <div className="nct-head-text">
           <h3 className="nct-title">
             Expected Breakdown Response Time
-            <InfoTooltip text="Predicted dispatch response time (AAP, Patrol Vehicle, RAMFA, and others), by cause or by service -- a trained model (Cox PH vs XGBoost, whichever scores lower held-out error) predicting a deployment's response_time_min from pre-dispatch context, scored against the actual measured median on a chronological, event-grouped holdout. The descriptive counterpart to this card (Descriptive tab) shows the same two groupings from measured history alone, with no model behind it." />
+            <InfoTooltip text={modelRuleText} />
           </h3>
           {/* What the expectation is for (17 Oct 2026, testers IN-12; day and time since 19 Oct): the day and
               time chosen below, read off the model's predictions for held-out dispatches reported then. It is

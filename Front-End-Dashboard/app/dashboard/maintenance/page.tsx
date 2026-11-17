@@ -136,6 +136,15 @@ const STATUS_META: Record<Status, { label: string; badge: string }> = {
   cancelled: { label: "Cancelled", badge: "red" },
 };
 
+/* Still "scheduled" after its whole planned window has ended (17 Nov 2026 audit: every scheduled job was in this
+   state). It is no longer planned work: the public list leaves it out so the mobile app stops showing it as a
+   planned closure, and this page, which asks for it (include_overdue=1), shows it as needing an update so an
+   operator marks it completed, cancels it, or moves its dates. The row itself is never changed automatically. */
+const isOverdue = (s: Pick<Schedule, "status" | "ends_at">, now = Date.now()) =>
+  s.status === "scheduled" && new Date(s.ends_at).getTime() <= now;
+const OVERDUE_META = { label: "Overdue — needs an update", badge: "red" };
+const metaOf = (s: Pick<Schedule, "status" | "ends_at">, now?: number) => (isOverdue(s, now) ? OVERDUE_META : STATUS_META[s.status]);
+
 // What a row can transition to (mirrors the backend guard).
 // Reverts let operators undo mistakes: reopen a completed job, restore a
 // cancelled one, or send an in-progress job back to scheduled.
@@ -467,8 +476,10 @@ function StatusControl({
     };
   }, [open]);
 
-  const meta = STATUS_META[schedule.status];
+  const meta = metaOf(schedule);
   const live = schedule.status === "scheduled" || schedule.status === "in_progress";
+  // Overdue work can be closed out directly: the backend allows scheduled -> completed.
+  const actions = isOverdue(schedule) ? [...NEXT_ACTIONS.scheduled, { to: "completed" as Status, label: "Mark completed" }] : NEXT_ACTIONS[schedule.status];
   const choose = (fn: () => void) => () => {
     setOpen(false);
     fn();
@@ -498,7 +509,7 @@ function StatusControl({
           style={{ position: "fixed", left: pos.left, top: pos.top, bottom: pos.bottom, right: "auto" }}
         >
           <p className="nc-ops-menu-head">Actions</p>
-          {NEXT_ACTIONS[schedule.status].map((a) => (
+          {actions.map((a) => (
             <button key={a.to} type="button" role="menuitem" className={`${styles.customSelectOption} nc-ops-select-opt`} onClick={choose(() => onAdvance(a.to))}>
               {a.label}
             </button>
@@ -610,11 +621,13 @@ function analyse(list: Schedule[], now: number) {
 
     // Two live jobs conflict when they share a carriageway, a stretch of road
     // and a stretch of time. Touching at a single exit is not an overlap.
+    // Overdue work is left out: its window is over, and it is flagged on its own.
+    const planned = live.filter((s) => !isOverdue(s, now));
     const conflicts: [Schedule, Schedule, ConflictKind][] = [];
-    for (let i = 0; i < live.length; i++) {
-      for (let j = i + 1; j < live.length; j++) {
-        const a = live[i];
-        const b = live[j];
+    for (let i = 0; i < planned.length; i++) {
+      for (let j = i + 1; j < planned.length; j++) {
+        const a = planned[i];
+        const b = planned[j];
         if (a.direction !== b.direction && a.direction !== "Both" && b.direction !== "Both") continue;
         if (!(new Date(a.starts_at) < new Date(b.ends_at) && new Date(b.starts_at) < new Date(a.ends_at))) continue;
         const aLo = Math.min(a.start_km, a.end_km), aHi = Math.max(a.start_km, a.end_km);
@@ -739,7 +752,8 @@ export default function MaintenancePage() {
   const refresh = useCallback(async () => {
     const seq = ++readSeq.current;
     try {
-      const r = await apiFetch(`${BACKEND}/api/maintenance/list`, { cache: "no-store" });
+      // include_overdue=1: this page shows work whose window has ended so it can be closed out (the public list leaves it out).
+      const r = await apiFetch(`${BACKEND}/api/maintenance/list?include_overdue=1`, { cache: "no-store" });
       const json = await r.json();
       if (seq !== readSeq.current) return;
       if (!json.success) throw new Error(json.message ?? "Request failed");
@@ -772,7 +786,9 @@ export default function MaintenancePage() {
     const alerts: { key: string; text: string; reason: string; schedule: Schedule; ids: string[] }[] = [];
     for (const s of live) {
       const where = `${s.direction} ${kmRange(s)}`;
-      if (s.status === "scheduled" && new Date(s.starts_at).getTime() <= now)
+      if (isOverdue(s, now))
+        alerts.push({ key: `due-${s.id}`, schedule: s, ids: [s.id], reason: OVERDUE_META.label, text: `"${s.title}" (${where}) is still scheduled, but its whole window has ended: mark it completed, cancel it, or move its dates` });
+      else if (s.status === "scheduled" && new Date(s.starts_at).getTime() <= now)
         alerts.push({ key: `late-${s.id}`, schedule: s, ids: [s.id], reason: "Start overdue", text: `"${s.title}" (${where}) is still scheduled but its start time has passed` });
       if (s.status === "in_progress" && new Date(s.ends_at).getTime() <= now)
         alerts.push({ key: `over-${s.id}`, schedule: s, ids: [s.id], reason: "Past end time", text: `"${s.title}" (${where}) has run past its end time` });
@@ -900,7 +916,7 @@ export default function MaintenancePage() {
     onMouseLeave: () => setTip(null),
     onFocus: (e: React.FocusEvent<HTMLElement>) => showTip(s, e.currentTarget),
     onBlur: () => setTip(null),
-    "aria-label": `${s.title}, ${STATUS_META[s.status].label}, ${s.direction} ${kmRange(s)}, ${fmtWindow(s.starts_at, s.ends_at)}. Open details`,
+    "aria-label": `${s.title}, ${metaOf(s, now).label}, ${s.direction} ${kmRange(s)}, ${fmtWindow(s.starts_at, s.ends_at)}. Open details`,
   });
   useEffect(() => {
     if (!tip) return;
@@ -1761,7 +1777,7 @@ export default function MaintenancePage() {
           style={{ left: Math.min(Math.max(tip.x, 170), (typeof window !== "undefined" ? window.innerWidth : 1600) - 170), top: tip.y }}
         >
           <div className="nc-ops-tip-head">
-            <span className={`ms-badge ${STATUS_META[tip.s.status].badge}`}>{STATUS_META[tip.s.status].label}</span>
+            <span className={`ms-badge ${metaOf(tip.s, now).badge}`}>{metaOf(tip.s, now).label}</span>
             <span className={`nc-ops-dir is-${tip.s.direction}`}>{tip.s.direction}</span>
           </div>
           <p className="nc-ops-tip-title">{tip.s.title}</p>
@@ -1783,7 +1799,7 @@ export default function MaintenancePage() {
               <div className={styles.detailIcon}><Wrench size={18} aria-hidden="true" /></div>
               <div className={styles.detailTitles}>
                 <h3>{detail.title}</h3>
-                <p><span className={`ms-badge ${STATUS_META[detail.status].badge}`}>{STATUS_META[detail.status].label}</span></p>
+                <p><span className={`ms-badge ${metaOf(detail, now).badge}`}>{metaOf(detail, now).label}</span></p>
               </div>
               <button className={styles.detailClose} onClick={closeDetail} aria-label="Close">
                 <X size={18} />

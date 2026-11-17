@@ -39,6 +39,7 @@ import { placeFuelStations } from "../../../lib/nlex-fuel-stations";
 import { recentAverage, TrendLog } from "./trends";
 import { fmtKm, fmtKmRange } from "../../../lib/km-post";
 import { NoEventTwin } from "./eventTwin";
+import type { ForecastScale } from "../../../components/dashboard/ScenarioForecastPanel";
 
 /**
  * One carriageway's worth of simulation: its own TrafficSim, its own scenario
@@ -134,11 +135,12 @@ export type SharedRoadInputs = {
    */
   readonly resetSimAccumulator: () => void;
   /**
-   * The arrival rate (veh/h at the segment) the forecast gives for the chosen day and hour, once the operator has
-   * loaded a forecast. Null before that, and the observed hourly profile drives the inflow as it always did. Both
-   * carriageways get the same number: the forecast is one segment-level prediction, not one per direction.
+   * What the loaded forecast does at the chosen day and hour: how busy the corridor is forecast to be against how busy
+   * it usually is at that hour (ScenarioForecastPanel.forecastScaleAt). Null before a forecast is loaded, and the
+   * record drives the inflow as it always did. The forecast is one corridor total with no direction, so both
+   * carriageways get the same factor, and each multiplies its OWN recorded flow for this stretch and hour by it.
    */
-  readonly forecastInflow: number | null;
+  readonly forecastScale: ForecastScale | null;
   /**
    * The incident forecast for the loaded day and hour, put on this stretch (scenarios/forecastIncidents.ts):
    * each carriageway's expected count here, the per-exit figures that place them, and a key naming the day and
@@ -161,8 +163,8 @@ export type SharedRoadInputs = {
    * A Philippine Arena event day the operator chose (the Event day control), or null. `ratio` is what the Event
    * Prediction says that day does to an exit at an hour (1 = a normal day; exits it does not count as affected are
    * 1), from GET /api/ai-sandbox/event-day. Every plaza's entries and exits are scaled by it, so the mainline, the
-   * plazas and the southbound barrier count all carry the event, and a loaded forecast's inflow is scaled by what
-   * that does to the flow entering this stretch.
+   * plazas and the southbound barrier count all carry the event, and a loaded forecast scales that event-day flow
+   * (the forecast itself is a normal day's, so the event is counted once).
    */
   /** ratio: what the event does to an exit's entries or exits at an hour, in a direction (1 = nothing). The venue's own
       exit (CDV) has measured per-movement ratios; other affected exits share one ratio for both movements. */
@@ -184,11 +186,32 @@ function buildInterventions(lanes: number, len: number): Partial<Interventions> 
   };
 }
 
+/** The most a data-driven inflow puts on a carriageway, per lane (veh/h): every inflow worked out below is held to it. */
+export const INFLOW_PER_LANE_MAX = 2200;
+/** The least a data-driven inflow can be (veh/h): a forecast quiet hour really is quiet, so this only keeps the
+ *  engine from being asked for no traffic at all. */
+export const INFLOW_FLOOR = 100;
+
+/** A stretch's recorded flow for the hour, multiplied by the forecast's factor for it, held to what its lanes take. */
+export function forecastInflowFor(recordVehPerHour: number, factor: number, laneCount: number): number {
+  return Math.max(INFLOW_FLOOR, Math.min(laneCount * INFLOW_PER_LANE_MAX, Math.round(recordVehPerHour * factor)));
+}
+
+/** The Inflow slider's range on a carriageway: down to the least a data-driven inflow can be and up to the most its
+ *  lanes are given, or to 8,000 where that is more, so a narrow road can still be tried past what it carries. */
+export function inflowSliderRange(laneCount: number): { readonly min: number; readonly max: number } {
+  return { min: INFLOW_FLOOR, max: Math.max(8000, laneCount * INFLOW_PER_LANE_MAX) };
+}
+
 /** Seeds spaced widely, same reasoning and gap as replicate() (simulation.ts): adjacent seeds in mulberry32 can correlate, and NB/SB usually differ in config anyway so a shared seed buys nothing. */
 const SEED_BY_DIRECTION: Readonly<Record<Direction, number>> = { NB: 12345, SB: 12345 + 7919 };
 
 export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) {
-  const { BACKEND, fromKm, toKm, segLengthM, EXITS, nearestExit, segmentLanes, hourOfDay, proposeHourOfDay, classProfile, resetSimAccumulator, forecastInflow: forecastInflowBase, forecastIncidents, forecastMix, reallocation, eventDay } = shared;
+  const { BACKEND, fromKm, toKm, segLengthM, EXITS, nearestExit, segmentLanes, hourOfDay, proposeHourOfDay, classProfile, resetSimAccumulator, forecastScale, forecastIncidents, forecastMix, reallocation, eventDay } = shared;
+  // As primitives: a fresh object from the page each render must not re-run what depends on them.
+  const scaleFactor = forecastScale?.factor ?? null;
+  const scaleForecast = forecastScale?.corridorForecast ?? null;
+  const scaleTypical = forecastScale?.corridorTypical ?? null;
   const lentLanes = borrowedLanes(reallocation, direction);
 
   const simRef = useRef<TrafficSim | null>(null);
@@ -203,6 +226,10 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
 
   const [laneCount, setLaneCount] = useState(4);
   const [inflow, setInflow] = useState(4500);
+  // Read by the facility plan only where the record gives no flow to lay it out with: kept out of its dependencies,
+  // so moving the Inflow slider changes the running engines (the effect further down) and never rebuilds the run.
+  const inflowRef = useRef(inflow);
+  inflowRef.current = inflow;
   const [closedLanes, setClosedLanes] = useState<boolean[]>(Array(4).fill(false));
   const [speedLimit, setSpeedLimit] = useState<number | null>(null);
   const [incidentCount, setIncidentCount] = useState(0);
@@ -374,9 +401,6 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     }
     return normal > 0 ? withEvent / normal : 1;
   }, [eventDay, plazaFlows, hourOfDay, demand, direction, fromKm, toKm, EXITS, normalFlowAt]);
-  // A loaded forecast is a normal day's prediction (the volume model has no event input), so on an event day it is
-  // scaled by what the event does to the flow entering here.
-  const forecastInflow = forecastInflowBase == null ? null : Math.round(forecastInflowBase * eventLift);
 
   const [plazaVol, setPlazaVol] = useState<Record<string, number> | null>(null);
   const [volDays, setVolDays] = useState(365);
@@ -395,27 +419,44 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     return () => { cancelled = true; };
   }, [direction, BACKEND]);
 
-  const dataAnchor = useMemo(() => {
+  /* The traffic the record gives for this stretch, carriageway and hour, before any forecast: the flow along the
+     expressway where it can be worked out, else the volume at the nearest interchange, else an hourly figure from that
+     interchange's yearly total. `floor` is the least each is held to without a forecast. On an event day the first
+     already carries the event (flowAt). */
+  const recordAnchor = useMemo((): { readonly vehPerHour: number; readonly floor: number; readonly kind: "mainline" | "interchange"; readonly km: number } | null => {
     const hr = hourOfDay ?? demand?.peakHour ?? 8;
-    const ceiling = laneCount * 2200;
-    // A loaded forecast decides the inflow outright: the road shows what the forecast day and hour say, not the
-    // observed profile for that hour. The floor is lower than the observed one because a forecast quiet hour is quiet.
-    if (forecastInflow != null) return Math.max(100, Math.min(ceiling, forecastInflow));
     const entryKm = direction === "NB" ? fromKm : toKm;
     const mainline = mainlineAtKm(entryKm, hr);
-    if (mainline != null && mainline > 0) return Math.max(300, Math.min(ceiling, mainline));
-    if (activeHour) return Math.max(300, Math.min(ceiling, activeHour.vehPerHour));
+    if (mainline != null && mainline > 0) return { vehPerHour: mainline, floor: 300, kind: "mainline", km: entryKm };
+    if (activeHour) return { vehPerHour: activeHour.vehPerHour, floor: 300, kind: "interchange", km: entryKm };
     if (!plazaVol || !nearestExit) return null;
     const key = String(nearestExit.exit_name).toLowerCase();
     const total = plazaVol[key] ?? Object.entries(plazaVol).find(([k]) => k.includes(key) || key.includes(k))?.[1];
     if (!total) return null;
-    const peakHourly = Math.round((total / volDays / 24) * 1.6);
-    return Math.max(600, Math.min(ceiling, peakHourly));
-  }, [hourOfDay, demand, laneCount, direction, fromKm, toKm, mainlineAtKm, activeHour, plazaVol, nearestExit, volDays, forecastInflow]);
+    return { vehPerHour: Math.round((total / volDays / 24) * 1.6), floor: 600, kind: "interchange", km: entryKm };
+  }, [hourOfDay, demand, direction, fromKm, toKm, mainlineAtKm, activeHour, plazaVol, nearestExit, volDays]);
+  /* A loaded forecast moves that flow by how busy it says the corridor will be at the hour against how busy it usually
+     is then (17 Nov 2026). It used to replace it with one corridor-wide figure, the same on every stretch and both
+     carriageways. The forecast is a normal day's (the volume model has no event input); the event, if any, is already
+     in the recorded flow above. */
+  const forecastInflow = scaleFactor == null || recordAnchor == null ? null : forecastInflowFor(recordAnchor.vehPerHour, scaleFactor, laneCount);
+
+  const dataAnchor = useMemo(() => {
+    if (recordAnchor == null) return null;
+    // A loaded forecast decides the inflow outright. Its floor is lower than the record's because a forecast quiet hour is quiet.
+    if (forecastInflow != null) return forecastInflow;
+    return Math.max(recordAnchor.floor, Math.min(laneCount * INFLOW_PER_LANE_MAX, recordAnchor.vehPerHour));
+  }, [recordAnchor, forecastInflow, laneCount]);
 
   const normalInflowBasis = useMemo(() => {
-    if (forecastInflow != null) {
-      return "Inflow from the forecast for the chosen day and hour: the Traffic tab's hourly volume forecast at this segment's share of corridor volume — a prediction, not observed flow.";
+    if (forecastInflow != null && recordAnchor != null && scaleFactor != null) {
+      const vs = scaleForecast != null && scaleTypical != null
+        ? `the Traffic tab's corridor forecast for the hour, ${Math.round(scaleForecast).toLocaleString()} vehicles, against the ${Math.round(scaleTypical).toLocaleString()} the corridor averages at that hour in the record`
+        : "the Traffic tab's corridor forecast for the day against the corridor's average day in the record (the date has no hourly shape)";
+      const from = recordAnchor.kind === "mainline"
+        ? `this stretch's own ${direction === "NB" ? "northbound" : "southbound"} flow at Km ${fmtKm(recordAnchor.km, 2)} for the hour in the record`
+        : `the volume recorded at ${String(nearestExit?.exit_name ?? "the nearest interchange")} for the hour (an interchange figure, not a through-flow)`;
+      return `Inflow from the forecast for the chosen day and hour: ${from}, ${recordAnchor.vehPerHour.toLocaleString()} veh/h, times ${scaleFactor.toFixed(2)} — ${vs}. A prediction, not observed flow.`;
     }
     const hr = hourOfDay ?? demand?.peakHour ?? 8;
     const entryKm = direction === "NB" ? fromKm : toKm;
@@ -439,7 +480,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     const names = feeders.slice(0, 3).map((e) => String(e.exit_name)).join(" + ");
     const more = feeders.length > 3 ? ` +${feeders.length - 3} more` : "";
     return `Mainline flow at Km ${fmtKm(entryKm, 2)}: ${mainline.toLocaleString()} veh/h — entries minus exits upstream (${names}${more}).`;
-  }, [hourOfDay, demand, direction, fromKm, toKm, mainlineAtKm, EXITS, flowAt, activeHour, nearestExit, forecastInflow]);
+  }, [hourOfDay, demand, direction, fromKm, toKm, mainlineAtKm, EXITS, flowAt, activeHour, nearestExit, forecastInflow, recordAnchor, scaleFactor, scaleForecast, scaleTypical]);
   const inflowBasis = useMemo(() => {
     if (!eventDay || normalInflowBasis == null) return normalInflowBasis;
     const pct = (eventLift - 1) * 100;
@@ -452,18 +493,17 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
 
   /* Where the inflow now driving this carriageway came from, for the
      recommendation (recommendation.ts), which has to say how far to trust it.
-     dataAnchor tries the forecast, then the flow along the expressway, then the
-     volume at the nearest interchange; "interchange" is that last resort, a
+     dataAnchor takes the flow along the expressway, else the volume at the
+     nearest interchange, scaled by a loaded forecast when there is one;
+     "interchange" is that last resort, a
      slip-road figure standing in for the mainline. "assumed" is a stretch none
      of them covers: the slider still holds its starting default, or the
      operator's own figure. */
   const anchorKind = useMemo((): "forecast" | "mainline" | "interchange" | null => {
-    if (dataAnchor == null) return null;
+    if (dataAnchor == null || recordAnchor == null) return null;
     if (forecastInflow != null) return "forecast";
-    const hr = hourOfDay ?? demand?.peakHour ?? 8;
-    const mainline = mainlineAtKm(direction === "NB" ? fromKm : toKm, hr);
-    return mainline != null && mainline > 0 ? "mainline" : "interchange";
-  }, [dataAnchor, forecastInflow, hourOfDay, demand, mainlineAtKm, direction, fromKm, toKm]);
+    return recordAnchor.kind;
+  }, [dataAnchor, forecastInflow, recordAnchor]);
   const inflowFrom: InflowFrom =
     anchorKind == null ? "assumed"
       : inflow !== dataAnchor ? "operator"
@@ -546,9 +586,12 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
         return total ? (total / volDays / 24) * shape : null;
       },
       hour: hr,
-      inflow,
+      /* The flow entering the stretch, for an exit whose arriving traffic the record cannot give: the data's own
+         figure for the hour, not the slider's. An exit's share is a property of the hour; the slider is a what-if
+         on how much arrives, and the running engines take it without a rebuild (useEffect on inflow below). */
+      inflow: dataAnchor ?? inflowRef.current,
     });
-  }, [EXITS, stations, plazaVol, volDays, activeHour, demand, inflow, direction, fromKm, toKm, segLengthM, laneCount, hourOfDay, flowAt, peakAt, mainlineAtKm]);
+  }, [EXITS, stations, plazaVol, volDays, activeHour, demand, dataAnchor, direction, fromKm, toKm, segLengthM, laneCount, hourOfDay, flowAt, peakAt, mainlineAtKm]);
   const ramps = plan.ramps;
   const facilities = plan.facilities;
   // Every plaza and service area on this carriageway, for jumping the window to one.
@@ -559,7 +602,8 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
       {
         length: segLengthM,
         laneCount,
-        inflowVehPerHour: inflow,
+        // The slider as it stands now (a ref: the inflow is not a reason to rebuild, see inflowRef).
+        inflowVehPerHour: inflowRef.current,
         seed: SEED_BY_DIRECTION[direction],
         classProfile: effectiveClassProfile,
         ramps,
@@ -874,12 +918,16 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
    * numbering restarts, the operator's closure / speed-zone stretch positions and any armed placing tool are
    * put away, and the run is rebuilt (rebuild(): a new engine; hand-set closed lanes, speed limit, incidents and
    * the baseline cleared; a skip in progress cancelled). The route, lane count and inflow are the setup, not the
-   * run, and stay as they are.
+   * run, and stay as they are. The forecast's incidents go with the other events and are not drawn again, so what
+   * the last draw added is forgotten too: the note no longer counts them, and since numbering restarts, a later draw
+   * cannot lift out an operator's event that has been given one of their old ids.
    */
   const resetAll = useCallback(() => {
     scenarioEventsRef.current = [];
     setScenarioEvents([]);
     scenarioSeqRef.current = 0;
+    forecastAddedRef.current = [];
+    setForecastAdded(0);
     setClosureKm(null);
     setClosureEndKm(null);
     setZoneFromKm(null);
@@ -999,6 +1047,8 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     scenarioBinding,
     laneCount, setLaneCount,
     inflow, setInflow, dataAnchor, inflowBasis, inflowFrom,
+    /** The record's flow for this stretch and hour before any forecast (what a forecast's factor multiplies). */
+    recordAnchor,
     /** What the chosen event day does to the traffic entering this stretch at the hour (1 = no change). */
     eventLift,
     demand, hourOfDay, activeHour,

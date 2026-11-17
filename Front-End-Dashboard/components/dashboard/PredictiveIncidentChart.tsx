@@ -294,6 +294,21 @@ export default function PredictiveIncidentChart({
   // Same idea for rain_mm: when the pipeline stored a weather-free twin, the
   // Weather toggle can switch the forecast itself the same way Volume's does.
   const hasWeatherFreeTwin = daily.some((d) => d.modelsNoWeather != null);
+  /* Whether a Future day's forecast read any weather (17 Nov 2026): it did where the weather-aware line differs
+     from its weather-free twin. A day with no real weather forecast at training time is forecast weather-free
+     (train_incident_models.py), and in the 15 Nov run that was all 90. Recorded rain on those days is something
+     the forecast never saw, so it is not drawn over the Future band. With no twin stored there is no telling,
+     so the bars stay. */
+  const readsWeather = (d: (typeof fullDaily)[number]) =>
+    d.predictionType !== "future" ||
+    !d.modelsNoWeather ||
+    Object.entries(d.modelsNoWeather).some(([k, v]) => {
+      const withWx = d.models?.[k as ModelKey];
+      return v != null && withWx != null && Math.abs(withWx - v) > 1e-6;
+    });
+  const futureDayCount = fullDaily.length - fullFutureStart;
+  const futureWeatherDays = fullDaily.filter((d) => d.predictionType === "future" && d.modelsNoWeather && readsWeather(d)).length;
+  const rainShown = (d: (typeof daily)[number]) => (readsWeather(d) ? d.rainfallMm : null);
   const shown = selected.filter((k) => availableModels.some((m) => m.key === k));
   const activeModels = shown.length > 0 ? shown : availableModels.slice(0, 1).map((m) => m.key);
 
@@ -387,7 +402,7 @@ export default function PredictiveIncidentChart({
             __volumeF: daily.map((d) => (d.predictionType === "future" ? d.volumeForecast ?? null : null)),
             __accA: accA, __accP: accP, __bdA: bdA, __bdP: bdP,
           },
-          rainfall: daily.map((d) => d.rainfallMm),
+          rainfall: daily.map(rainShown),
           holdoutStart: validationStart,
           futureStart,
         });
@@ -396,7 +411,7 @@ export default function PredictiveIncidentChart({
   const effDates = agg ? agg.dates : dates;
   const effIso = agg ? agg.isoDates : daily.map((d) => d.date);
   const effActual = agg ? agg.baseActual : actualData;
-  const effRainfall = agg ? agg.rainfall : daily.map((d) => d.rainfallMm);
+  const effRainfall = agg ? agg.rainfall : daily.map(rainShown);
   const effModels: Record<AggKey, (number | null)[]> = agg ? agg.models : (modelsFlat as Record<AggKey, (number | null)[]>);
   const effAccA = agg ? agg.models.__accA : accA;
   const effAccP = agg ? agg.models.__accP : accP;
@@ -1110,7 +1125,14 @@ export default function PredictiveIncidentChart({
     ? `Scored on ${data.scoringWindow.n} validation day${data.scoringWindow.n === 1 ? "" : "s"} (${fmtDateFull(data.scoringWindow.start)} – ${fmtDateFull(data.scoringWindow.end)})`
     : `Full-holdout metrics from the last training run (${fmtTrainedAt(modelInfo.trainedAt)})`;
 
-  const championTitle = "Selected on the full holdout window when the model was trained, not on the currently visible Range/Weather slice";
+  /* The rule the champion was chosen by (17 Nov 2026). The table scores days 1-14 only, where another model can
+     have the lower error (XGBoost 14.41 against Random Forest 14.64 in the 15 Nov run), while the choice was made
+     on the average over the whole 90-day range (16.39 against 16.82), so the badge states the rule. */
+  const champScore = typeof modelInfo.metrics?.score_mae === "number" ? (modelInfo.metrics.score_mae as number) : null;
+  const championTitle =
+    "Chosen when the models were trained, on the average error over the whole 90-day forecast range (days 1–14, 15–30, 31–60 and 61–90" +
+    (champScore != null ? `: ${champScore.toFixed(2)} incidents a day for this model` : "") +
+    "), among models that beat the best simple baseline. This table scores days 1–14 only, so another model can show a lower error here. Not affected by the Range or Weather shown.";
 
   const metricsTable = (
     <div className="inc-panel">
@@ -1259,6 +1281,30 @@ export default function PredictiveIncidentChart({
   const champMase = champ?.MASE != null && isFinite(champ.MASE) ? champ.MASE : null;
   const futureFirst = futureAvailable > 0 ? fullDaily[fullFutureStart]?.date ?? null : null;
   const splitChampLabel = split?.championModel ? (META[split.championModel as ModelKey]?.label ?? split.championModel) : null;
+  /* The accident model against its best simple baseline, from its own training run (17 Nov 2026). It was a fixed
+     sentence from the 21 Sep run ("not clearly better than the historical average"), still shown after the 15 Nov
+     run found the opposite. */
+  const vsBase = (split?.metrics?.vs_baseline ?? null) as {
+    baseline: string; championIsBaseline: boolean; significant: boolean | null;
+    championScoreMae: number | null; baselineScoreMae: number | null; usesVolume: boolean; usesWeather: boolean;
+  } | null;
+  const accidentVerdict = (() => {
+    if (!vsBase) return null;
+    const base = vsBase.baseline.replace(/^Baseline:\s*/i, "");
+    if (vsBase.championIsBaseline) return `No accident model beat the ${base}, so the ${base} is shown.`;
+    const errs =
+      vsBase.championScoreMae != null && vsBase.baselineScoreMae != null
+        ? `: an average miss of ${vsBase.championScoreMae.toFixed(2)} accidents a day against ${vsBase.baselineScoreMae.toFixed(2)} over the 90-day range`
+        : "";
+    const inputs =
+      !vsBase.usesVolume && !vsBase.usesWeather ? " It uses no traffic volume or weather."
+        : !vsBase.usesVolume ? " It uses no traffic volume."
+        : !vsBase.usesWeather ? " It uses no weather."
+        : "";
+    return vsBase.significant
+      ? `The accident forecast beats the ${base}${errs}, a clear margin.${inputs}`
+      : `The accident forecast's error is lower than the ${base}${errs}, but the gap is within chance.${inputs}`;
+  })();
   // The model the summary names: the accident model in split view (the picker is off there), else the first line on the chart.
   const leadKey = activeModels[0] ?? null;
   const scoredDayCount = data.scoringWindow ? data.scoringWindow.n : presentScoredDays;
@@ -1398,7 +1444,7 @@ export default function PredictiveIncidentChart({
               {/* Says what the line is, now that it runs the whole window (see effVolume's doc comment). Shown only
                   with the toggle on: there is nothing to explain about an overlay that isn't drawn. */}
               {showVolume && (
-                <InfoTooltip text="The daily vehicle volume the volume-aware models read. Solid: recorded volume, through Past and Present (Present is held-out history, so the models saw the real day's traffic). Dashed: the traffic module's volume forecast, the input the models take for each Future day. Turn Volume off to see the same models fitted without it." />
+                <InfoTooltip text="The daily vehicle volume the volume-aware models read. Solid: recorded volume, through Past and Present (Present is held-out history, so the models saw the real day's traffic). Dashed: the traffic forecast the models were given for each Future day, from the traffic model chosen when they were trained. Turn Volume off to see the same models fitted without it." />
               )}
               {fc2Sep}
               {/* Rainfall, independent of Volume. Like Volume, it switches the forecast itself
@@ -1408,7 +1454,13 @@ export default function PredictiveIncidentChart({
                 title={
                   hasWeatherFreeTwin
                     ? showWeather
-                      ? "Weather ON: forecasts fitted WITH rainfall, recorded rain shown. Days past a real weather forecast (16 days) are forecast without weather either way: no forecast is fed guessed rain. Click to switch to the weather-free models."
+                      ? `Weather ON: forecasts fitted WITH rainfall, with recorded rain shown, for the Past and Present. ${
+                          futureDayCount === 0
+                            ? ""
+                            : futureWeatherDays === 0
+                              ? "The Future band uses no weather in this run: no real weather forecast reached its days, so every future day is forecast by the weather-free model and no rain is drawn there. "
+                              : `${futureWeatherDays} of the ${futureDayCount} future days had a real weather forecast and show rain; the rest are forecast without weather and show none. `
+                        }No forecast is fed guessed rain. Click to switch to the weather-free models.`
                       : "Weather OFF: forecasts fitted WITHOUT rainfall. Click to use the weather-aware models and show the overlay."
                     : showWeather
                       ? "Hide the rainfall overlay (this training run stored no weather-free models, so the forecast lines do not change)"
@@ -1504,7 +1556,7 @@ export default function PredictiveIncidentChart({
                 <div><dt>Breakdowns</dt><dd>blended − accidents</dd></div>
               </dl>
               <p className="fc2-period">
-                Accident skill is modest: not clearly better than the historical average without volume (re-measured 2026-09-21).
+                {accidentVerdict && <>{accidentVerdict} </>}
                 Validation evidence below is for the blended forecast.
               </p>
             </div>

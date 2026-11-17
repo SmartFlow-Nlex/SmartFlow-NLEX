@@ -2,33 +2,45 @@
   BREAKDOWN DISPATCH RESPONSE-TIME MODEL (per-deployment)
 ================================================================================
 
-  Cox PH — response-time survival
-    concordance index = 0.563
-    MAE (minutes)     = 16.71
-    n (holdout)       = 10724
-    trained+scored on = 51528 deployments with known daily volume (100.0%)
-    [SELECTED]
+  Holdout: 10311 dispatches 2025-08-15..2026-05-24 (every model and baseline on the same rows)
+    model                                     MAE min  test c-index
+    XGBoost                                    16.776         0.602  [SERVED]
+    Per cause x service median (baseline)      16.881         0.583
+    CoxPH                                      16.926         0.590
+    Per-service median (baseline)              16.936         0.565
+    Constant training median (baseline)        17.648         0.500
+    best baseline: Per cause x service median (baseline);  models that beat it: XGBoost
+    champion - best baseline, MAE: 95% interval [-0.217, +0.009] (NOT significant)
 
-  XGBoost regression — response-time
-    MAE (minutes) = 17.66
-    R^2           = 0.050
-    n (holdout)   = 10724
+  Cox PH — response-time survival
+    concordance index (test) = 0.590   (training: 0.561)
+    MAE (minutes)     = 16.93
+    n (holdout)       = 10311
+    trained+scored on = 49771 deployments with a real previous-week volume (100.0%)
     
 
+  XGBoost regression (absolute-error objective) — response-time
+    MAE (minutes) = 16.78
+    R^2           = 0.031
+    n (holdout)   = 10311
+    [SELECTED]
+
+  Served: XGBoost
+
   Actual vs Predicted median response (min), by cause
-    Engine                       actual=19.0  predicted=20.0  n=5076
-    Mechanical                   actual=22.0  predicted=23.0  n=2256
-    Tire                         actual=13.0  predicted=18.0  n=2028
-    Others                       actual=17.0  predicted=20.0  n=820
-    Fuel                         actual=19.0  predicted=21.0  n=544
+    Engine                       actual=19.0  predicted=20.3  n=4906
+    Mechanical                   actual=22.0  predicted=23.4  n=2190
+    Tire                         actual=14.0  predicted=17.8  n=1884
+    Others                       actual=17.0  predicted=20.3  n=825
+    Fuel                         actual=19.0  predicted=21.8  n=506
 
   Actual vs Predicted median response (min), by service
-    AAP                          actual=21.0  predicted=21.0  n=8627
-    Patrol Vehicle               actual=9.0  predicted=11.0  n=1598
-    RAMFA                        actual=10.0  predicted=17.0  n=389
-    Others                       actual=9.0  predicted=19.0  n=61
-    EMS                          actual=9.0  predicted=12.0  n=33
-    RSIG                         actual=16.0  predicted=19.0  n=9
-    Investigator                 actual=0.5  predicted=6.0  n=5
-    Mobile                       actual=3.75  predicted=13.5  n=2
+    AAP                          actual=20.0  predicted=21.5  n=8442
+    Patrol Vehicle               actual=9.0  predicted=9.7  n=1421
+    RAMFA                        actual=10.0  predicted=15.5  n=352
+    Others                       actual=10.0  predicted=18.6  n=53
+    EMS                          actual=8.0  predicted=12.6  n=30
+    RSIG                         actual=16.0  predicted=20.1  n=9
+    Investigator                 actual=9.0  predicted=7.4  n=3
+    Mobile                       actual=7.0  predicted=16.4  n=1
 ================================================================================

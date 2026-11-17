@@ -88,6 +88,8 @@ type RetrainGroup = {
 
 type RetrainRun = {
   id: number;
+  /** The rows of one run (the cloud batch writes one per part), oldest first; the backend merges them. */
+  parts?: number[];
   started_at: string;
   finished_at: string | null;
   trigger: string;
@@ -158,6 +160,10 @@ const formatSize = (bytes: number) =>
 const when = (iso: string) =>
   new Date(iso).toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
+
+/** "#29", or "#27–#29" for a run the cloud batch wrote in parts. */
+const runLabel = (r: RetrainRun) =>
+  r.parts && r.parts.length > 1 ? `#${r.parts[0]}–#${r.parts[r.parts.length - 1]}` : `#${r.id}`;
 
 /** Green: new models live. Amber: something to look at, last week's models kept. Red: the batch could not put things back. */
 function retrainPill(status: string): string {
@@ -603,7 +609,8 @@ export default function DataManagementPage() {
         body: formData, // fetch will automatically set the correct multipart boundary headers
       });
 
-      const payload = await response.json();
+      // A refusal from something in front of the backend may not be JSON; the status still says what happened.
+      const payload = await response.json().catch(() => ({}));
 
       if (response.status === 401 || response.status === 403) {
         throw new Error(
@@ -613,7 +620,12 @@ export default function DataManagementPage() {
       }
 
       if (!response.ok && !payload.data) {
-        throw new Error(payload.error || "An error occurred during upload.");
+        // A refused file (wrong type or name, over 500 MB) comes back 400 with the reason: show it.
+        throw new Error(
+          payload.error ||
+            payload.message ||
+            (response.status === 413 ? "The file is too large to upload." : `The upload was refused (HTTP ${response.status}).`),
+        );
       }
 
       setSuccess(payload.success);
@@ -832,7 +844,7 @@ export default function DataManagementPage() {
           <li>
             <span className="ds-step-icon"><CalendarClock size={18} aria-hidden="true" /></span>
             <b>Retrain weekly</b>
-            <span>Loading does not retrain the models. Every Sunday night one batch retrains and re-tests the models whose data changed, and keeps the new ones only if they pass.</span>
+            <span>Loading does not retrain the models. Once a week (scheduled for Sunday 10:00 PM) one batch retrains and re-tests the models whose data changed, and keeps the new ones only if they pass.</span>
           </li>
         </ol>
       )}
@@ -1077,9 +1089,11 @@ export default function DataManagementPage() {
       <div className="table-card" style={{ marginTop: 16 }}>
         <h3 style={{ padding: '16px 20px', margin: 0, borderBottom: '1px solid var(--border-default)' }}>Weekly model retraining</h3>
         <p className="muted" style={{ padding: "12px 20px 0", margin: 0 }}>
-          Uploads do not retrain the models. Every Sunday at 10:00 PM one batch retrains and re-tests each model group whose data
-          changed since it was last trained. New models go live only if they pass the tests; otherwise last week&apos;s stay.
-          {nextRetrain && <> Next batch: <b>{nextRetrain}</b>.</>}
+          Uploads do not retrain the models. Once a week one batch retrains and re-tests each model group whose data changed
+          since it was last trained. New models go live only if they pass the tests; otherwise last week&apos;s stay. The batch is
+          scheduled for Sunday 10:00 PM (Manila time); it runs on GitHub, which may start it a few hours later, and in parts,
+          shown here together as one batch.
+          {nextRetrain && <> Next batch scheduled for <b>{nextRetrain}</b>.</>}
         </p>
         {retraining === null ? (
           backendDown || retrainingError ? (
@@ -1092,7 +1106,8 @@ export default function DataManagementPage() {
         ) : (
           <>
             <p style={{ padding: "8px 20px 0", margin: 0 }}>
-              Last batch #{lastRetrain.id} · {when(lastRetrain.started_at)}
+              Last batch {runLabel(lastRetrain)}
+              {lastRetrain.parts && lastRetrain.parts.length > 1 && <> ({lastRetrain.parts.length} parts)</>} · {when(lastRetrain.started_at)}
               {lastRetrain.finished_at && <> to {clock(lastRetrain.finished_at)}</>} · {lastRetrain.trigger}{" "}
               <span className={`pill ${retrainPill(lastRetrain.status)}`}>{lastRetrain.status}</span>
               {lastRetrain.summary && <span className="muted"> · {lastRetrain.summary}</span>}
@@ -1107,17 +1122,30 @@ export default function DataManagementPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {lastRetrain.groups.map((g) => (
-                    <tr key={g.key}>
-                      <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>{g.title}</td>
-                      <td><span className={`pill ${retrainPill(g.status)}`}>{g.status}</span></td>
-                      <td style={{ whiteSpace: "normal", minWidth: 320 }}>
-                        {g.reason}
-                        {g.comparisons.map((c) => <div key={c} className="muted">{c}</div>)}
-                        {g.status !== "unchanged" && g.changes.slice(0, 2).map((c) => <div key={c} className="muted">Data: {c}</div>)}
-                      </td>
-                    </tr>
-                  ))}
+                  {lastRetrain.groups.map((latest) => {
+                    /* A group the last batch did not run shows its latest real result from an earlier batch, named,
+                       rather than "not selected" (17 Nov 2026 audit). */
+                    const earlier =
+                      latest.status === "not selected"
+                        ? retraining.runs
+                            .slice(1)
+                            .map((r) => ({ run: r, g: r.groups.find((x) => x.key === latest.key && x.status !== "not selected") }))
+                            .find((x) => x.g)
+                        : undefined;
+                    const g = earlier?.g ?? latest;
+                    return (
+                      <tr key={latest.key}>
+                        <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>{g.title}</td>
+                        <td><span className={`pill ${retrainPill(g.status)}`}>{g.status}</span></td>
+                        <td style={{ whiteSpace: "normal", minWidth: 320 }}>
+                          {earlier && <div className="muted">Not run in the last batch. Latest result, from batch {runLabel(earlier.run)} ({when(earlier.run.started_at)}):</div>}
+                          {g.reason}
+                          {(g.comparisons ?? []).map((c) => <div key={c} className="muted">{c}</div>)}
+                          {g.status !== "unchanged" && (g.changes ?? []).slice(0, 2).map((c) => <div key={c} className="muted">Data: {c}</div>)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1125,7 +1153,7 @@ export default function DataManagementPage() {
               <p className="muted" style={{ padding: "8px 20px 16px", margin: 0 }}>
                 Earlier:{" "}
                 {retraining.runs.slice(1).map((r, i) => (
-                  <span key={r.id}>{i > 0 && " · "}#{r.id} {when(r.started_at)} — {r.status}</span>
+                  <span key={r.id}>{i > 0 && " · "}{runLabel(r)} {when(r.started_at)} — {r.status}</span>
                 ))}
               </p>
             )}

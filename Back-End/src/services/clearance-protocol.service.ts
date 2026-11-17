@@ -390,9 +390,11 @@ async function loadClearanceSample(filters: ClearanceProtocolFilters): Promise<C
     lo = minDate;
     hi = maxDate;
   } else {
+    // 12 months back from the last day, counting both ends, is 365 days, hence the + 1 day: the same window as
+    // every other card (it started a day earlier here, 2025-05-24 against 2025-05-25, until 17 Nov 2026).
     hi = maxDate;
     lo = (
-      await db.query(`SELECT GREATEST(($1::date - ($2 || ' months')::interval)::date, $3::date)::text AS lo`, [hi, filters.months, minDate])
+      await db.query(`SELECT GREATEST(($1::date + interval '1 day' - ($2 || ' months')::interval)::date, $3::date)::text AS lo`, [hi, filters.months, minDate])
     ).rows[0].lo;
   }
 

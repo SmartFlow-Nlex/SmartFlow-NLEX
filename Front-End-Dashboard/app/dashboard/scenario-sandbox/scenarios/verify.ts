@@ -2788,13 +2788,13 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
       /<ScenarioPanel\s+key=\{scenarioFormKey\}/.test(pageSource),
   );
   check(
-    "reset: resetAll on each carriageway removes every scenario event and restarts the numbering, puts away the closure / zone stretch positions and any armed placing tool, then rebuilds the run",
-    /const resetAll = useCallback\(\(\) => \{\s*scenarioEventsRef\.current = \[\];\s*setScenarioEvents\(\[\]\);\s*scenarioSeqRef\.current = 0;\s*setClosureKm\(null\);\s*setClosureEndKm\(null\);\s*setZoneFromKm\(null\);\s*setZoneToKm\(null\);\s*setPlacingIncident\(false\);\s*setPlacingClosure\(false\);\s*setClosureDraftKm\(null\);\s*rebuild\(\);\s*\}, \[rebuild\]\);/.test(resetHookSource) && /\r?\n    resetAll,\r?\n/.test(resetHookSource),
+    "reset: resetAll on each carriageway removes every scenario event and restarts the numbering (forgetting which ones the forecast drew), puts away the closure / zone stretch positions and any armed placing tool, then rebuilds the run",
+    /const resetAll = useCallback\(\(\) => \{\s*scenarioEventsRef\.current = \[\];\s*setScenarioEvents\(\[\]\);\s*scenarioSeqRef\.current = 0;\s*forecastAddedRef\.current = \[\];\s*setForecastAdded\(0\);\s*setClosureKm\(null\);\s*setClosureEndKm\(null\);\s*setZoneFromKm\(null\);\s*setZoneToKm\(null\);\s*setPlacingIncident\(false\);\s*setPlacingClosure\(false\);\s*setClosureDraftKm\(null\);\s*rebuild\(\);\s*\}, \[rebuild\]\);/.test(resetHookSource) && /\r?\n    resetAll,\r?\n/.test(resetHookSource),
   );
   check(
     "focus: there is no separate Focus control in the toolbar — the one-road-at-a-time things (Add to, Commands apply to) carry their own NB / SB choice, all moving the same state; the forecast has no direction pick of its own and seeds every carriageway the Carriageway control shows",
     !/aria-label="Focused carriageway"/.test(pageSource) && !/>Focus<\/span>/.test(pageSource) && !/Load forecast into/.test(pageSource) && !/data-forecast="direction"/.test(pageSource) &&
-      /forecastInflow: forecastInflowAt\(loadedForecast, hourOfDay\)/.test(pageSource) && /Commands apply to/.test(pageSource) &&
+      /forecastScale: forecastScaleAt\(loadedForecast, hourOfDay\)/.test(pageSource) && /Commands apply to/.test(pageSource) &&
       !/aria-label="Carriageway the full-screen controls act on"/.test(pageSource) && /data-scn="direction-pick"/.test(panelSource) && (pageSource.match(/onClick=\{\(\) => chooseFocus\(dn\)\}/g) ?? []).length === 1,
   );
   check(

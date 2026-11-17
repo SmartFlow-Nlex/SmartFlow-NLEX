@@ -28,6 +28,9 @@ import { screenDays, type DayScreen, type DayWindow } from "./day-screen.js";
 import { aggregateTollHourly, loadCutoff, loadTollHourly, type TollHourlyAggregate } from "./toll-hourly.js";
 import { aggregateTir, isTirFile, readLevelAdjustment, type TirStats } from "./toll-tir.js";
 import type { ExtractionResult, SourceType } from "./extractors/types.js";
+import { attachUndo, expireOldUndo } from "./undo.js";
+import { saveUploadRecordInDb } from "../services/upload.service.js";
+import { scriptActor, writeAudit, type Actor } from "../services/audit.js";
 
 export interface PipelineResult {
   success: boolean;
@@ -61,6 +64,8 @@ export interface PipelineResult {
   profile: TollProfile | null;
   /** The committed load's undo journal (undo.ts); null for a check or a failed load. */
   undoBatch: number | null;
+  /** The data_uploads row a load (or a failed load) was recorded as; null for a check, or if it could not be saved. */
+  uploadId?: number | null;
   rejectedSample: { row: Record<string, any>; reason: string }[];
   loadErrors: string[];
   parseErrors: string[];
@@ -81,6 +86,13 @@ export interface PipelineOptions {
   dryRun?: boolean;
   /** Load only the days from..to (inclusive, YYYY-MM-DD); either end may be left open. */
   window?: DayWindow | null;
+  /** Who ran it, for the Audit Log: the signed-in user from the upload route, a script actor
+   *  (services/audit.ts scriptActor) from the command line. Left out, the running script is named. */
+  actor?: Actor;
+  /** Ties the entry to the request that ran it (services/audit.ts requestIdOf). */
+  requestId?: string;
+  /** More for the entry's details, e.g. { requested_by } from a script. */
+  auditDetails?: Record<string, unknown>;
 }
 
 const n = (v: number) => v.toLocaleString("en-US");
@@ -90,10 +102,117 @@ const rows = (v: number) => `${n(v)} ${v === 1 ? "row" : "rows"}`;
 // ── PIPELINE: File Upload ────────────────────────────────────────────
 
 /**
- * Run the full ETL pipeline on a manually uploaded file.
- * Source Layer → Extract Layer → Transform Layer → Load & Data Warehouse Layer
+ * Run the full ETL pipeline on a file, record a load in data_uploads with its undo journal, and write the
+ * Audit Log entry: upload.checked, upload.loaded or upload.failed.
+ *
+ * The record and the entry are written HERE, not by the caller (17 Nov 2026 audit). The upload route did
+ * both itself, so loads run from scripts bypassed them: uploads #59-62 and #67-70 (the 24 Oct reload) have
+ * no entry at all, and #71 was logged under a made-up "system:" user. Whoever calls this now gets the same
+ * record and entry as the page, under the actor passed in (the signed-in user from the route, a script actor
+ * from the command line; left out, the running script is named). Callers must not record the upload or
+ * write the entry again.
  */
 export async function runPipeline(filePath: string, originalFilename: string, opts: PipelineOptions = {}): Promise<PipelineResult> {
+  const actor = opts.actor ?? scriptActor();
+  const t0 = Date.now();
+  let result: PipelineResult;
+  try {
+    result = await runFilePipeline(filePath, originalFilename, opts);
+  } catch (e: any) {
+    // The attempt is recorded even when the pipeline itself throws; the error still reaches the caller.
+    await recordEntry(actor, opts, {
+      action: opts.dryRun ? "upload.checked" : "upload.failed",
+      entityId: null,
+      target: `file:${originalFilename}`,
+      toStatus: null,
+      outcome: "failed",
+      durationMs: Date.now() - t0,
+      details: { filename: originalFilename, reason: String(e?.message ?? e).replace(/[a-z0-9.-]+\.rds\.amazonaws\.com(:\d+)?/gi, "<database>").slice(0, 300) },
+    });
+    throw e;
+  }
+
+  // A check changes nothing, so it is not recorded as an upload.
+  let uploadId: number | null = null;
+  if (!opts.dryRun) {
+    const rec = await saveUploadRecordInDb(
+      originalFilename,
+      result.rowsInserted + result.rowsUpdated,
+      result.datasetType,
+      result.success ? "processed" : "failed",
+    );
+    uploadId = rec ? Number(rec.id) : null;
+    // The load's undo journal belongs to this upload; journals beyond the latest few are dropped.
+    if (uploadId && result.undoBatch) {
+      try {
+        await attachUndo(result.undoBatch, uploadId);
+        await expireOldUndo();
+      } catch (e: any) {
+        console.error("[ETL] Could not record the upload's undo journal:", e.message);
+      }
+    }
+  }
+
+  // The audit log: a check, a load or a failed upload, with what it did and how long it took.
+  const flagged = result.comparison?.kind === "toll" ? result.comparison.flagged : undefined;
+  const d = result.dayScreen;
+  await recordEntry(actor, opts, {
+    action: opts.dryRun ? "upload.checked" : result.success ? "upload.loaded" : "upload.failed",
+    entityId: uploadId,
+    target: uploadId ? `upload:${uploadId}` : `file:${originalFilename}`,
+    toStatus: opts.dryRun ? null : result.success ? "processed" : "failed",
+    outcome: result.success ? (opts.dryRun ? "passed" : "success") : "failed",
+    durationMs: result.durationMs,
+    details: {
+      filename: originalFilename,
+      layout: result.datasetType,
+      rows_in_file: result.totalRowsParsed,
+      rows_written: result.rowsInserted,
+      rows_updated: result.rowsUpdated,
+      rows_set_aside: result.rowsRejected,
+      rows_refused: result.rowsFailed,
+      ...(opts.window ? { dates_chosen: opts.window } : {}),
+      ...(d ? { days_loaded: d.loaded, days_held_back: d.held, days_missing: d.missing } : {}),
+      ...(flagged !== undefined ? { plaza_days_flagged: flagged } : {}),
+      ...(result.undoBatch ? { undo_batch: result.undoBatch } : {}),
+      ...(result.success ? {} : { reason: (result.parseErrors[0] ?? result.loadErrors[0] ?? result.classification.reason ?? "").slice(0, 300) }),
+    },
+  });
+  return { ...result, uploadId };
+}
+
+/** One upload entry in the Audit Log. Never fails the load it records: a failed write is only logged. */
+async function recordEntry(
+  actor: Actor,
+  opts: PipelineOptions,
+  e: { action: string; entityId: number | null; target: string; toStatus: string | null; outcome: string; durationMs: number; details: Record<string, unknown> },
+): Promise<void> {
+  try {
+    await writeAudit(
+      actor,
+      {
+        action: e.action,
+        module: "data_management",
+        entityType: "upload",
+        entityId: e.entityId,
+        target: e.target,
+        toStatus: e.toStatus,
+        outcome: e.outcome,
+        durationMs: e.durationMs,
+        details: { ...e.details, ...(opts.auditDetails ?? {}) },
+      },
+      opts.requestId,
+    );
+  } catch (err: any) {
+    console.error(`[audit] could not record ${e.action}:`, err?.message ?? err);
+  }
+}
+
+/**
+ * The pipeline itself: Source Layer → Extract Layer → Transform Layer → Load & Data Warehouse Layer.
+ * Only runPipeline calls it, so every file load is recorded and audited.
+ */
+async function runFilePipeline(filePath: string, originalFilename: string, opts: PipelineOptions): Promise<PipelineResult> {
   const start = Date.now();
   const gates: PipelineGateLog[] = [];
 

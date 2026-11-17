@@ -18,6 +18,11 @@ import { apiFetch } from "../../lib/api";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
+/* As AiModelInsight: the backend ends the whole call by 110 s (CHAT_DEADLINE_MS
+   in glm.client.ts), so the page waits 120 s and then stops, rather than showing
+   "Asking the model..." for as long as the connection stays open. */
+const TIMEOUT_MS = 120_000;
+
 type Briefing = {
   headline: string;
   points: string[];
@@ -40,25 +45,45 @@ export default function FeatureBriefing({
   const [data, setData] = useState<Briefing | null>(null);
   const [busy, setBusy] = useState(true);
   const [failed, setFailed] = useState(false);
+  /** Why the last attempt failed, in plain words. */
+  const [failReason, setFailReason] = useState("The explanation could not be generated.");
   const [showFacts, setShowFacts] = useState(false);
   const cancelled = useRef(false);
 
   const load = useCallback(() => {
     setBusy(true);
     setFailed(false);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    const fail = (reason: string) => {
+      if (cancelled.current) return;
+      setFailReason(reason);
+      setFailed(true);
+    };
     apiFetch(`${BACKEND}/api/ai-insight/explain`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ feature, months: months ?? "12" }),
+      signal: ctrl.signal,
     })
       .then((r) => r.json())
       .then((j) => {
         if (cancelled.current) return;
         if (j?.success) setData(j.data as Briefing);
-        else setFailed(true);
+        else if (typeof j?.message === "string" && /too long|timed? ?out/i.test(j.message)) fail("The AI provider did not answer in time. Try again in a moment.");
+        else fail("The explanation could not be generated.");
       })
-      .catch(() => !cancelled.current && setFailed(true))
-      .finally(() => !cancelled.current && setBusy(false));
+      .catch((e: unknown) =>
+        fail(
+          e instanceof DOMException && e.name === "AbortError"
+            ? "The AI provider did not answer within two minutes. Try again in a moment."
+            : "The explanation could not be generated.",
+        ),
+      )
+      .finally(() => {
+        clearTimeout(timer);
+        if (!cancelled.current) setBusy(false);
+      });
   }, [feature, months]);
 
   useEffect(() => {
@@ -119,7 +144,7 @@ export default function FeatureBriefing({
         </p>
       ) : failed && !data ? (
         <p style={{ margin: 0, fontSize: "0.82rem", lineHeight: 1.55, color: "#b54708", background: "#fffaeb", borderLeft: "3px solid #f79009", borderRadius: 8, padding: "9px 11px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ flex: "1 1 240px" }}>The explanation could not be generated.</span>
+          <span style={{ flex: "1 1 240px" }}>{failReason}</span>
           <button onClick={load} style={{ padding: "5px 13px", borderRadius: 999, cursor: "pointer", fontSize: "0.74rem", fontWeight: 600, border: "1px solid #f79009", background: "transparent", color: "#b54708" }}>
             Try again
           </button>

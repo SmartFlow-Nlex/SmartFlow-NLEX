@@ -7,8 +7,9 @@ import NarrativePanel, { NarrativeChip } from "./NarrativePanel";
  *
  * Its own endpoint, because a fleet-mix forecast is a COMPOSITION (three shares
  * that add up to 100%), ranked by Aitchison distance and accepted only when it
- * beats the better of two baselines (Climatology and Persistence). The forecast
- * narrative's MASE-against-last-week reading does not apply to it.
+ * beats the best of the stored baselines (the weekday average, the same day last
+ * year, last week). The forecast narrative's MASE-against-last-week reading does
+ * not apply to it.
  */
 
 export type FleetMixNarrativeModel = {
@@ -34,6 +35,7 @@ export default function FleetMixNarrative({
   projectionStart,
   projectionEnd,
   validatedDays,
+  baselineLabel = null,
   surgeDates,
   dataEnds,
   staleDays,
@@ -47,13 +49,16 @@ export default function FleetMixNarrative({
   projectionStart: string | null;
   projectionEnd: string | null;
   validatedDays: number;
+  /** The baseline SKILL is measured against, as a phrase ("the weekday average"); read from the metrics. */
+  baselineLabel?: string | null;
   surgeDates: string[];
   dataEnds: string | null;
   staleDays: number | null;
 }) {
   if (models.length === 0) return null;
   const champ = models.find((m) => m.rank === 1 && m.accepted) ?? null;
-  const beatsPersistence = champ?.skill != null && champ.skill < 1;
+  const beatsBaseline = champ?.skill != null && champ.skill < 1;
+  const baseline = baselineLabel ?? "the best simple baseline";
 
   return (
     <NarrativePanel
@@ -72,9 +77,9 @@ export default function FleetMixNarrative({
                 </span>
               )}
             </NarrativeChip>
-            <NarrativeChip tone={beatsPersistence ? "good" : "neutral"}>
+            <NarrativeChip tone={beatsBaseline ? "good" : "neutral"}>
               <span style={{ fontWeight: 600 }}>
-                {beatsPersistence ? "beats assuming the mix stays the same" : "no better than assuming the mix stays the same"}
+                {beatsBaseline ? `beats ${baseline}` : `no better than ${baseline}`}
               </span>
             </NarrativeChip>
           </>

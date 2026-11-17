@@ -8,7 +8,7 @@
   Volume input  : {'source': 'traffic_study', 'file': 'traffic_study.csv', 'model': 'Prophet + holidays', 'origins': 26, 'days_filled_after_score_end': 246, 'traffic_champion_is_baseline': False}
   Weather       : observed rain for days 1-14 (upper bound), weather-free twin after
   Not scored    : 2026-04-19 (no incident rows: a data gap); everything after 2026-05-24 (traffic volume not real)
-  Study run     : 2026-11-11T02:03:34 (code fd2707a3d88289da487f81956ff7f99cb77e2b48+uncommitted)
+  Study run     : 2026-11-15T10:01:47 (code 0e80bfc618e9d9874810e96b8f6a9eff14f3cd79+uncommitted)
   Note          : --holdout-days 294 ignored: EVALUATION_PROTOCOL fixes the origins, horizon, criterion and training window
 
   MAE (incidents/day) by horizon bucket; score = mean of buckets; WMAPE score alongside
@@ -30,9 +30,13 @@
   RandomForest (no volume, no weather)           4.37     4.42     4.58     4.76     4.53   32.76% (eligible)
   XGBoost                                        4.50     4.39     4.60     4.65     4.53   32.79% (eligible)
   GRU + calendar                                 4.41     4.52     4.60     4.76     4.57   33.07% (eligible)
+  Stacked_LSTM                                   4.38     4.45     4.59     4.88     4.58   33.08% (eligible)
   SARIMAX (no weather)                           4.51     4.43     4.57     4.81     4.58   33.11% (eligible)
   SARIMAX                                        4.52     4.43     4.57     4.81     4.58   33.12% (eligible)
+  Stacked_LSTM (no weather)                      4.48     4.45     4.59     4.88     4.60   33.25% (eligible)
   LSTM + calendar                                4.51     4.50     4.68     4.80     4.62   33.41% (eligible)
+  Stacked_LSTM (no volume, no weather)           4.54     4.56     4.75     5.04     4.72   34.15% (eligible)
+  Stacked_LSTM (no volume)                       4.58     4.56     4.75     5.04     4.74   34.22% (eligible)
   SARIMAX (no volume)                            4.52     4.71     4.92     5.10     4.81   34.78% (eligible)
   SARIMAX (no volume, no weather)                4.62     4.71     4.92     5.10     4.84   34.98% (eligible)
   Baseline: weekday average                      4.73     4.75     5.02     5.38     4.97   35.92%
@@ -44,7 +48,7 @@
   Baseline: last week                            5.81     6.29     6.38     6.85     6.33   45.77%
 
   Best baseline : Baseline: weekday average
-  Eligible      : Poisson_GLM (no volume), Poisson_GLM (no volume, no weather), NegBinomial_GLM (no volume), NegBinomial_GLM (no volume, no weather), RandomForest (no weather), RandomForest, NegBinomial_GLM (no weather), NegBinomial_GLM, Poisson_GLM (no weather), Poisson_GLM, XGBoost (no volume, no weather), XGBoost (no volume), XGBoost (no weather), RandomForest (no volume), RandomForest (no volume, no weather), XGBoost, GRU + calendar, SARIMAX (no weather), SARIMAX, LSTM + calendar, SARIMAX (no volume), SARIMAX (no volume, no weather)
+  Eligible      : Poisson_GLM (no volume), Poisson_GLM (no volume, no weather), NegBinomial_GLM (no volume), NegBinomial_GLM (no volume, no weather), RandomForest (no weather), RandomForest, NegBinomial_GLM (no weather), NegBinomial_GLM, Poisson_GLM (no weather), Poisson_GLM, XGBoost (no volume, no weather), XGBoost (no volume), XGBoost (no weather), RandomForest (no volume), RandomForest (no volume, no weather), XGBoost, GRU + calendar, Stacked_LSTM, SARIMAX (no weather), SARIMAX, Stacked_LSTM (no weather), LSTM + calendar, Stacked_LSTM (no volume, no weather), Stacked_LSTM (no volume), SARIMAX (no volume), SARIMAX (no volume, no weather)
   Champion vs best baseline: 95% interval -0.97 to -0.26 incidents/day (significant)
   Champion vs runner-up (Poisson_GLM (no volume)): 95% interval -0.00 to +0.01 (NOT significant)
   Note          : Poisson_GLM (no volume) led Poisson_GLM (no volume, no weather) without a significant margin; the simpler Poisson_GLM (no volume, no weather) wins the tie.

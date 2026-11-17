@@ -38,14 +38,24 @@ import { withAlpha } from "../../lib/chart-kit";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
-/** Must match HORIZON in train_fleet_mix.py — the stretch that was validated. */
 /* Days averaged on each side of the heavy-share comparison. Matched to the
  * projection length so like is compared with like, and long enough to span
  * several weekly cycles — the series is strongly day-of-week seasonal, so a
  * shorter window would just re-import the cherry-picking problem. */
 const HEAVY_WINDOW_DAYS = 30;
 
-const VALIDATED_HORIZON = 7;
+/* A stored baseline's name as a phrase: SKILL is measured against the best of them, so the card names it. */
+const BASELINE_WORDS: Record<string, string> = {
+  "Baseline: weekday average": "the weekday average",
+  "Baseline: last year (scaled)": "the same day last year (scaled)",
+  "Baseline: last week": "repeating last week",
+};
+const isBaseline = (name: string) => /^Baseline:/.test(name);
+/** The Aitchison distance a metrics row's diagnosis records ("Aitchison 0.0644 (mean of d1-7, ...)"). */
+const aitchisonOf = (m: { diagnosis: string | null } | null | undefined) => {
+  const hit = /Aitchison ([\d.]+)/.exec(m?.diagnosis ?? "");
+  return hit ? Number(hit[1]) : null;
+};
 
 type Row = {
   d: string;
@@ -72,6 +82,8 @@ type Payload = {
     updated_at: string | null;
   } | null;
   models: ModelRow[];
+  /** The champion's rolling-origin accuracy by stretch of days ahead (gold.ml_horizon_accuracy). */
+  horizonAccuracy?: { hLo: number; hHi: number; mase: number | null; usable: boolean }[];
 };
 
 /* Class colours match the simulation canvas and the Fleet Mix vs Pollution Load
@@ -198,10 +210,43 @@ export default function FleetMixForecastChart() {
     return { rows, dates, firstFuture, observed, projected, champ, surges, heavyObs, heavyProj, zoomMax };
   }, [data]);
 
+  /* How the forecast was tested, read from the stored metrics (17 Nov 2026: the card said "a 7-day horizon (rolling
+     origin, 42 runs)" and "a persistence baseline"; the run scored every one of 30 days ahead from 26 origins, and
+     SKILL is against the best baseline, the weekday average). */
+  const test = useMemo(() => {
+    if (!data) return null;
+    const champRow = data.models.find((m) => m.accepted && m.rank === 1) ?? null;
+    const size = /(\d+)\s*x\s*(\d+)\s*d\b/.exec(champRow?.split_label ?? "");
+    const buckets = data.horizonAccuracy ?? [];
+    const days = size ? Number(size[2]) : buckets.length ? Math.max(...buckets.map((b) => b.hHi)) : null;
+    const base =
+      data.models
+        .filter((m) => isBaseline(m.model_name) && m.mase != null)
+        .sort((a, b) => (a.mase as number) - (b.mase as number))[0] ?? null;
+    return {
+      origins: size ? Number(size[1]) : null,
+      days,
+      baseline: base ? BASELINE_WORDS[base.model_name] ?? base.model_name.replace(/^Baseline:\s*/, "") : "the best simple baseline",
+      baselineAitchison: aitchisonOf(base),
+      champAitchison: aitchisonOf(champRow),
+      buckets,
+    };
+  }, [data]);
+  const testedDays = test?.days ?? null;
+  const testLine = testedDays
+    ? ` Tested by rolling origin: ${test?.origins ?? "several"} forecasts made from past dates, each scored on every one of its ${testedDays} days ahead` +
+      (test?.champAitchison != null && test?.baselineAitchison != null
+        ? `, at an Aitchison distance of ${test.champAitchison.toFixed(3)} against ${test.baseline}'s ${test.baselineAitchison.toFixed(3)} (lower is better).`
+        : ".") +
+      (data?.split?.future_days && data.split.future_days > testedDays
+        ? " The dotted line marks where that tested stretch ends; past it the projection is an outlook, not a tested forecast."
+        : "")
+    : "";
+
   const head = (
     <h3 className="nct-title">
       Forecasted Fleet Composition
-      <InfoTooltip text="Share of corridor traffic by toll class, stacked to 100%. Solid is observed; the paler band past the dashed line is projected. Shares are a composition — a point gained by one class is lost by another — so they are modelled jointly rather than as three separate forecasts. Zoomed (the default) stops the axis just above the highest heavy-vehicle share so its movement shows; Heavy share draws the Class 2 + 3 share alone on an axis fitted to it; the slider under the chart narrows the dates. The markers flag the highest and lowest Class 2 + 3 share, observed and projected. The model was tested at a 7-day horizon (rolling origin, 42 runs); the dotted line marks where that tested stretch ends, and the projection past it carries the same weekly pattern forward as an outlook rather than a measured forecast." />
+      <InfoTooltip text={`Share of corridor traffic by toll class, stacked to 100%. Solid is observed; the paler band past the dashed line is projected. Shares are a composition — a point gained by one class is lost by another — so they are modelled jointly rather than as three separate forecasts. Zoomed (the default) stops the axis just above the highest heavy-vehicle share so its movement shows; Heavy share draws the Class 2 + 3 share alone on an axis fitted to it; the slider under the chart narrows the dates. The markers flag the highest and lowest Class 2 + 3 share, observed and projected.${testLine}`} />
     </h3>
   );
 
@@ -299,13 +344,14 @@ export default function FleetMixForecastChart() {
   /* The boundary between measured and projected, drawn once (on the first series) so it is not stamped
      three times. Shared by the stacked views and the Heavy share line. */
   /* Where the tested horizon ends inside the projection. The model was scored
-     at VALIDATED_HORIZON days (rolling-origin); everything drawn past this is
-     the same weekly pattern carried further, which is an outlook, not a
-     measured claim. -1 when the projection is no longer than the tested
-     stretch, in which case only the forecast boundary is drawn. */
+     out to testedDays (rolling origin, read from the stored split label);
+     anything drawn past that is an outlook, not a measured claim. -1 when the
+     projection is no longer than the tested stretch (the run of 15 Nov 2026
+     stores 30 days and tested all 30), in which case only the forecast
+     boundary is drawn. */
   const outlookStart =
-    firstFuture >= 0 && firstFuture + VALIDATED_HORIZON < dates.length
-      ? firstFuture + VALIDATED_HORIZON
+    firstFuture >= 0 && testedDays != null && firstFuture + testedDays < dates.length
+      ? firstFuture + testedDays
       : -1;
 
   const boundary =
@@ -335,7 +381,7 @@ export default function FleetMixForecastChart() {
                 ? [{
                     xAxis: outlookStart,
                     label: {
-                      formatter: `tested to here (${VALIDATED_HORIZON}d) →`,
+                      formatter: `tested to here (${testedDays}d) →`,
                       fontSize: 11, fontWeight: 600, color: T.ink, fontFamily: T.fontFamily,
                       position: "insideEndBottom" as const,
                       backgroundColor: T.tooltipBg, padding: [3, 6], borderRadius: 4, opacity: 0.95,
@@ -580,10 +626,13 @@ export default function FleetMixForecastChart() {
             {data.split?.future_days ? (
               <>
                 {" · "}
-                <b>{Math.min(VALIDATED_HORIZON, data.split.future_days)} days validated</b>
-                {data.split.future_days > VALIDATED_HORIZON ? (
-                  <>, {data.split.future_days - VALIDATED_HORIZON} more as outlook</>
-                ) : null}
+                {testedDays == null ? (
+                  <b>{data.split.future_days} days ahead</b>
+                ) : data.split.future_days > testedDays ? (
+                  <><b>{testedDays} days tested</b>, {data.split.future_days - testedDays} more as outlook</>
+                ) : (
+                  <b>all {data.split.future_days} days ahead tested</b>
+                )}
               </>
             ) : null}
             {lastObservedDate ? <> · data to <b>{lastObservedDate}</b></> : null}
@@ -661,10 +710,15 @@ export default function FleetMixForecastChart() {
         <EvidenceModal
           className="nc-em-ev"
           scopeClass="viz-emissions"
-          subtitle="Fleet composition forecast: every model's scores, ranked by Aitchison distance against a persistence baseline."
+          subtitle={`Fleet composition forecast: every model's scores, ranked by Aitchison distance; SKILL is against ${test?.baseline ?? "the best simple baseline"}.`}
           strip={<>
             <span className="nct-trust-pill"><span className="nct-trust-k">Champion</span>{champ ? champ.model_name : "none accepted"}</span>
-            <span className="nct-trust-pill"><span className="nct-trust-k">Validated at</span>{VALIDATED_HORIZON} days</span>
+            {testedDays != null && (
+              <span className="nct-trust-pill">
+                <span className="nct-trust-k">Tested</span>
+                {test?.origins != null ? `${test.origins} origins × ${testedDays} days` : `${testedDays} days ahead`}
+              </span>
+            )}
             {champ?.split_label ? <span className="nct-trust-pill"><span className="nct-trust-k">Protocol</span>{champ.split_label}</span> : null}
             {data.split?.updated_at ? <span className="nct-trust-pill"><span className="nct-trust-k">Trained</span>{data.split.updated_at.slice(0, 10)}</span> : null}
           </>}
@@ -689,7 +743,7 @@ export default function FleetMixForecastChart() {
                     {m.accepted
                       ? <span className="nc-em-status is-ok">accepted{m.rank === 1 ? " · champion" : ""}</span>
                       : <span className="nc-em-status is-muted" title={m.rejected_reason ?? m.diagnosis ?? undefined}>
-                          {m.rejected_reason ? "rejected" : "baseline"}
+                          {isBaseline(m.model_name) ? "baseline" : "rejected"}
                         </span>}
                   </td>
                   <td className="num">{m.mae?.toFixed(2) ?? "—"}</td>
@@ -708,8 +762,14 @@ export default function FleetMixForecastChart() {
             <p>
               Ranked by Aitchison distance, the standard metric for compositional data — MAPE divides by the actual
               value, so on a fleet that is ~79% Class 1 and ~9% Class 3 it scores the same absolute miss ten times
-              harder on the rarest class. <b>SKILL</b> is the ratio against a persistence baseline; below 1 means the
-              model beats assuming the mix does not change. {champ?.split_label ? `Protocol: ${champ.split_label}.` : ""}
+              harder on the rarest class. <b>SKILL</b> is a model&apos;s Aitchison distance over that of{" "}
+              {test?.baseline ?? "the best simple baseline"}
+              {test?.baselineAitchison != null ? ` (${test.baselineAitchison.toFixed(3)})` : ""}, the best of the simple
+              baselines; below 1 means the model beats it.
+              {testedDays != null && test?.buckets.length
+                ? ` Every one of the ${testedDays} days ahead was scored: ${test.buckets.map((b) => `days ${b.hLo}–${b.hHi} ${b.mase != null ? b.mase.toFixed(2) : "—"}`).join(", ")} (each stretch against its best baseline)${test.buckets.every((b) => b.usable) ? ", all below 1" : ""}.`
+                : ""}{" "}
+              {champ?.split_label ? `Protocol: ${champ.split_label}.` : ""}
             </p>
           </details>
           </div>
@@ -737,7 +797,8 @@ export default function FleetMixForecastChart() {
           projectionDays={data.split?.future_days ?? null}
           projectionStart={data.split?.future_start?.slice(0, 10) ?? null}
           projectionEnd={data.split?.future_end?.slice(0, 10) ?? null}
-          validatedDays={VALIDATED_HORIZON}
+          validatedDays={testedDays ?? data.split?.future_days ?? 0}
+          baselineLabel={test?.baseline ?? null}
           surgeDates={surges.map((x) => x.d.slice(0, 10))}
           dataEnds={lastObservedDate}
           staleDays={staleDays}

@@ -158,8 +158,11 @@ for rank, m in enumerate(order, start=1):
         diag += (f"; difference vs no adjustment {iv['vs_no_adjustment'][0]:+.2f} to {iv['vs_no_adjustment'][1]:+.2f}, "
                  f"vs flat {iv['vs_flat'][0]:+.2f} to {iv['vs_flat'][1]:+.2f} (95%, {iv['nights']} nights)")
     accepted = bool(iv and iv["vs_no_adjustment"][1] < 0 and iv["vs_flat"][1] < 0)
-    metrics.append((name, sc["near the venue"], rank, accepted or m == champ,
-                    None if (accepted or m == champ) else "does not beat both baselines with a 95% interval", diag))
+    # The served champion is accepted by the protocol. When it is the assembled one (20), `champ` was swapped to its
+    # base above, so the lead row was stored as not accepted and the card's pill read "Failed test" (15 Nov 2026).
+    served = m == champ or m == _lead
+    metrics.append((name, sc["near the venue"], rank, accepted or served,
+                    None if (accepted or served) else "does not beat both baselines with a 95% interval", diag))
 
 T = P[(P.m == int(S["champion_id"])) & P.near].groupby("date").agg(p=("pred", "sum"), a=("v", "sum"), n=("k", "size")).reset_index()
 T["err"] = (T.p - T.a).abs() / T.a * 100

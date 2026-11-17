@@ -79,10 +79,12 @@ export const createSchedule = async (req: Request, res: Response) => {
   res.status(201).json({ success: true, source: "database", data: dbRow });
 };
 
-// GET /api/maintenance/list?status=scheduled|in_progress|completed|cancelled|all
+// GET /api/maintenance/list?status=scheduled|in_progress|completed|cancelled|all[&include_overdue=1]
+// Work still "scheduled" after its whole window has ended is left out unless include_overdue=1: the mobile app
+// reads this list as planned closures, and that work is not planned any more (maintenance.service.ts, OVERDUE).
 export const listSchedules = async (req: Request, res: Response) => {
   const query = MaintenanceListQuerySchema.parse(req.query);
-  const dbRows = await getMaintenanceSchedulesFromDb(query.status);
+  const dbRows = await getMaintenanceSchedulesFromDb(query.status, { includeOverdue: query.include_overdue === "1" });
   if (!dbRows) {
     return res.status(503).json({ success: false, message: "Could not load schedules: database not reachable" });
   }

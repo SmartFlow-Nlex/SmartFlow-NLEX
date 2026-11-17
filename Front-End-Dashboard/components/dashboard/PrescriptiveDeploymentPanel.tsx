@@ -26,8 +26,8 @@ type PredictiveSlice = {
   corridorForecastDays: number;
   /** The champion's daily forecast for the Future days, oldest first, to sum over the validated window. */
   futureDaily: { date: string; predicted: number | null }[];
-  /** The rolling-origin study: which forecast ranges beat the benchmark. */
-  horizonAccuracy: { hLo: number; hHi: number; usable: boolean; mase: number | null }[];
+  /** The rolling-origin study: which forecast ranges beat the benchmark. `note` names the benchmark and both errors. */
+  horizonAccuracy: { hLo: number; hHi: number; usable: boolean; mase: number | null; note?: string | null }[];
 };
 
 /** An official km-post span, from measured ends: "Km 25–30". */
@@ -168,7 +168,7 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
   }, [months, from, to]);
 
   const hint =
-    "Where to place patrol and tow-truck units, in order: the first unit where the incident forecast expects the most incidents, the next at the second, and so on. Each line gives the share of all forecast incidents covered by the units placed so far, so you read off your own fleet size. Incidents count at their own exit (or km segment), split by each one's share of past incidents in the Range; the total is the forecast over the days where it beats repeating last week.";
+    "Where to place patrol and tow-truck units, in order: the first unit where the incident forecast expects the most incidents, the next at the second, and so on. Each line gives the share of all forecast incidents covered by the units placed so far, so you read off your own fleet size. Incidents count at their own exit (or km segment), split by each one's share of past incidents in the Range; the total is the forecast over the days where its error is lower than the best simple benchmark's.";
 
   if (loading && predictive === null) {
     return (
@@ -184,11 +184,15 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
      exact. With no passing bucket the full horizon stays, labelled as beyond the validated range. */
   const buckets = (predictive?.horizonAccuracy ?? []).slice().sort((a, b) => a.hLo - b.hLo);
   const firstOk = buckets.findIndex((b) => b.usable);
-  let win: { lo: number; hi: number; mase: number | null } | null = null;
+  /* "Usable" is the trainer's rule: the forecast's error in that range is lower than the best simple benchmark's
+     (17 Nov 2026: the card said "beats repeating last week (MASE 0.75)", which is a different benchmark). The
+     benchmark and both errors are read from the study's note, e.g. "(Baseline: weekday average, MAE 15.84 vs 14.64)". */
+  let win: { lo: number; hi: number; firstHi: number; base: string | null; baseMae: number | null; mae: number | null } | null = null;
   if (firstOk >= 0) {
     let hi = buckets[firstOk].hHi;
     for (let i = firstOk + 1; i < buckets.length && buckets[i].usable && buckets[i].hLo === hi + 1; i++) hi = buckets[i].hHi;
-    win = { lo: buckets[firstOk].hLo, hi, mase: buckets[firstOk].mase };
+    const m = /Baseline:\s*([^,()]+),\s*MAE\s*([\d.]+)\s*vs\s*([\d.]+)/i.exec(buckets[firstOk].note ?? "");
+    win = { lo: buckets[firstOk].hLo, hi, firstHi: buckets[firstOk].hHi, base: m ? m[1].trim() : null, baseMae: m ? Number(m[2]) : null, mae: m ? Number(m[3]) : null };
   }
   const future = predictive?.futureDaily ?? [];
   const sumDays = (lo: number, hi: number) => future.slice(lo - 1, hi).reduce((t, d) => t + (d.predicted ?? 0), 0);
@@ -276,8 +280,8 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
           {
             label: "When",
             value: validated
-              ? <>Days {win!.lo}–{win!.hi} ahead, where the forecast beats repeating last week{win!.mase != null ? ` (MASE ${win!.mase.toFixed(2)})` : ""}</>
-              : <>The full forecast: no stretch of it beats repeating last week</>,
+              ? <>Days {win!.lo}–{win!.hi} ahead, where the forecast&apos;s error is lower than {win!.base ? `the ${win!.base}'s` : "the best simple benchmark's"}{win!.mae != null && win!.baseMae != null ? ` (${win!.mae.toFixed(2)} against ${win!.baseMae.toFixed(2)} incidents a day${win!.firstHi < win!.hi ? ` on days ${win!.lo}–${win!.firstHi}` : ""})` : ""}</>
+              : <>The full forecast: no stretch of it beats the best simple benchmark</>,
           },
         ]}
         details={

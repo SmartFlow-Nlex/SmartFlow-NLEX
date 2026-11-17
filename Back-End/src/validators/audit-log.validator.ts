@@ -1,20 +1,5 @@
 import { z } from "zod";
 
-/** A full entry, for trusted writers (the authenticated /event endpoint). The user comes from the token, not from here. */
-export const AuditEventSchema = z.object({
-  user_id: z.string().min(1).optional(),
-  action: z.string().min(1).max(80),
-  target_resource: z.string().max(200).optional(),
-  module: z.string().max(40).optional(),
-  entity_type: z.string().max(40).optional(),
-  entity_id: z.string().max(120).optional(),
-  from_status: z.string().max(40).optional(),
-  to_status: z.string().max(40).optional(),
-  outcome: z.string().max(40).optional(),
-  duration_ms: z.number().int().min(0).optional(),
-  details: z.any().optional(),
-});
-
 /**
  * What any page may report about itself, signed in or not. A short allow-list,
  * so a page can say "this was viewed" or "I exported" but can never write an

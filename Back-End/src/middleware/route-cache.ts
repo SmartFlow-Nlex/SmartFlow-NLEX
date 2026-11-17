@@ -62,7 +62,10 @@ const SHORT_PREFIXES = ["/api/maintenance", "/api/audit-log", "/api/health"];
    the base_ts it was computed from. Ten minutes of that is a forecast map
    captioned with the wrong base hour; the read behind it is one horizon of
    nineteen rows, so a short TTL costs little. */
-const FORECAST_PREFIXES = ["/api/map-comparison/forecast"];
+/* /api/emissions/prescriptive too (17 Nov 2026): its Class 3 window and tolling cards follow the same hourly
+   congestion forecast, and a three-hour copy kept them on a forecast up to three runs old. The service keeps its
+   own ten-minute copy, so a refresh here reruns its heavy queries at most every ten minutes, and only while read. */
+const FORECAST_PREFIXES = ["/api/map-comparison/forecast", "/api/emissions/prescriptive"];
 
 /* Historical reads (2026-10-15): three hours, not ten minutes. The record they read changes only when an upload
    is published (which clears this cache, below) or a model is retrained (weekly), so a ten-minute lifetime made

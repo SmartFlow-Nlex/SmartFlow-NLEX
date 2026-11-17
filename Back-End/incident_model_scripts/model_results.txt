@@ -8,8 +8,8 @@
   Volume input  : {'source': 'traffic_study', 'file': 'traffic_study.csv', 'model': 'Prophet + holidays', 'origins': 26, 'days_filled_after_score_end': 246, 'traffic_champion_is_baseline': False}
   Weather       : observed rain for days 1-14 (upper bound), weather-free twin after
   Not scored    : 2026-04-19 (no incident rows: a data gap); everything after 2026-05-24 (traffic volume not real)
-  Study run     : 2026-11-11T02:02:12 (code fd2707a3d88289da487f81956ff7f99cb77e2b48+uncommitted)
-  Note          : incident days 2026-05-25..2026-06-30 left out of training and actuals: traffic volume is real only to 2026-05-24
+  Study run     : 2026-11-15T07:26:24 (code 0e80bfc618e9d9874810e96b8f6a9eff14f3cd79)
+  Note          : --holdout-days 294 ignored: EVALUATION_PROTOCOL fixes the origins, horizon, criterion and training window
 
   MAE (incidents/day) by horizon bucket; score = mean of buckets; WMAPE score alongside
   model                                         d1-14   d15-30   d31-60   d61-90    score    WMAPE
@@ -21,14 +21,18 @@
   RandomForest (no volume)                      15.23    17.47    17.68    18.46    17.21   13.90%
   RandomForest (no volume, no weather)          15.29    17.47    17.68    18.46    17.22   13.91%
   LSTM                                          15.84    16.69    18.32    19.16    17.50   14.13%
+  Stacked_LSTM                                  15.04    17.40    18.86    19.38    17.67   14.26%
   Poisson_GLM                                   14.68    16.78    18.62    20.65    17.68   14.27%
   NegBinomial_GLM                               14.61    16.80    18.65    20.67    17.68   14.27%
   Poisson_GLM (no weather)                      14.69    16.78    18.62    20.65    17.68   14.27%
   NegBinomial_GLM (no weather)                  14.63    16.80    18.65    20.67    17.69   14.27%
+  Stacked_LSTM (no weather)                     15.52    17.40    18.86    19.38    17.79   14.36%
   XGBoost (no volume)                           14.63    17.63    19.47    21.27    18.25   14.73%
   SARIMAX                                       15.01    17.33    19.24    21.61    18.30   14.76%
   SARIMAX (no weather)                          15.20    17.33    19.24    21.61    18.34   14.80%
+  Stacked_LSTM (no volume)                      16.14    18.26    19.65    19.91    18.49   14.93%
   XGBoost (no volume, no weather)               15.61    17.63    19.47    21.27    18.50   14.93%
+  Stacked_LSTM (no volume, no weather)          16.32    18.26    19.65    19.91    18.54   14.97%
   MSTL_ARIMA + holidays                         17.32    18.59    19.23    19.87    18.75   15.15%
   NegBinomial_GLM (no volume, no weather)       14.81    17.47    20.17    22.62    18.77   15.14%
   MSTL_ARIMA                                    17.34    18.62    19.23    19.91    18.78   15.17%

@@ -1,4 +1,6 @@
 import { chat, extractJson, GlmError } from "../lib/glm.client.js";
+import { db } from "../config/db.js";
+import { knownFigures, plainVerdict, unknownFigures } from "./ai-figure-check.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════
    AI INSIGHT — PLAIN-LANGUAGE READ-OUT OF A TRAINED MODEL'S METRICS
@@ -38,7 +40,7 @@ export type MetricInput = {
 export type InsightRequest = {
   quantity: Quantity;
   metrics: MetricInput[];
-  horizonDays: number;
+  horizonDays?: number | null;
   scoredDays?: number | null;
   windowStart?: string | null;
   windowEnd?: string | null;
@@ -89,31 +91,94 @@ OUTPUT SHAPE
 }
 
 HOW TO READ THE METRICS
-- WMAPE is percentage error. Lower is better. Do not call a WMAPE strong or weak by a fixed cut: judge it against the benchmark label below and, where the quantity has one, the project's design target (traffic volume: WMAPE 12% or less; corridor CO2: 15% or less). Say whether the target is met; for any other quantity, rely on the benchmark label alone.
-- MASE compares against simply repeating last week. Do not interpret the raw number yourself — each model is labelled BEATS-BENCHMARK, FAILS-BENCHMARK or LEVEL-WITH-BENCHMARK, and that label is authoritative.
+- WMAPE is percentage error. Lower is better. Do not call a WMAPE strong or weak by a fixed cut: judge it against the benchmark label below and, where the message gives one (TARGET), the project's design target. Say whether the target is met; where no TARGET is given, rely on the benchmark label alone.
+- MASE is a model's error divided by the benchmark's error on the same days; the message names the benchmark (BENCHMARK). Do not interpret the raw number yourself — each model is labelled BEATS-BENCHMARK, FAILS-BENCHMARK or LEVEL-WITH-BENCHMARK, and that label is authoritative.
 - R2 near 1 is good, near 0 means the model explains little, and negative means it is worse than predicting the average.
 - MAE and RMSE are in the quantity's own units. RMSE far above MAE means a few large misses rather than steady drift.
 
 RULES
-- Never state a number that was not given to you. Never estimate one.
+- Never state a number that was not given to you. Never estimate one. Quote figures as the message gives them, rounded if you like; never work out new ones (differences, ratios, or what a percentage comes to on a given day). A reply that quotes a figure not in the message is discarded.
 - Every claim must be traceable to a metric above. You know NOTHING about how these models were built, what data they saw, what weather or events they did or did not cover, or how they will behave in future. Do not speculate about any of it.
-- Repeat each model's benchmark label faithfully. A model marked FAILS-BENCHMARK did not beat simply repeating last week — say so plainly in its verdict whatever its other metrics look like, because burying that misleads the reader. Never say a BEATS-BENCHMARK model failed, or the reverse.
+- Repeat each model's benchmark label faithfully. A model marked FAILS-BENCHMARK did not beat the benchmark named in the message — say so plainly in its verdict whatever its other metrics look like, because burying that misleads the reader. Never say a BEATS-BENCHMARK model failed, or the reverse.
 - If a model was rejected, say so and give the stated reason.
 - A "diagnosis" beginning "tied with" means the model is not statistically separable from the named model. Say the two are level and that picking between them is not supported by these numbers. Do not rank one above the other.
-- Translate into consequences. "WMAPE 8% means a 10,000-vehicle day is typically read within about 800 vehicles" is useful; "WMAPE is 8%" alone is not.
+- Translate into consequences in words: what an error of this size means for someone planning staffing, lanes or reporting. "WMAPE is 8%" alone is not useful; say what it means for the reader's work.
 - Do not recommend retraining, more data, or model changes. The reader operates this system, they do not build it.
 - Plain English. No jargon that is not defined in the sentence that uses it.
 
 THE CAVEAT FIELD
 Use it ONLY for a limitation the supplied numbers themselves demonstrate — a short scoring window, a model that beat the others while failing the MASE benchmark, a wide gap between MAE and RMSE, a tie that makes the ranking arbitrary. If the numbers show no such problem, return null. Never invent a limitation about data coverage, weather, events, or anything else you were not told.`;
 
-function buildUserMessage(req: InsightRequest): string {
+/* How a model group was tested and what its MASE is divided by, read from the warehouse (17 Nov 2026 audit).
+ *
+ * The CO2 card sends horizonDays 7 and the fleet-mix card validatedDays 7, and this prompt told the model that
+ * MASE "compares against simply repeating last week". Neither is how those groups are tested: CO2 is scored on
+ * 26 rolling origins of 90 days and its MASE is divided by the best baseline (Baseline: last year (scaled));
+ * fleet mix on 26 origins of 30 days, its skill divided by the best baseline's (Baseline: weekday average).
+ * The trainers write that into gold.ml_model_metrics (split_label "rolling origin 26 x 90 d, ..." and the
+ * rejected rows' "does not beat the best baseline (<name>)"), so it is read from there, not restated here,
+ * and follows the next retrain. If it cannot be read, the prompt states no horizon rather than a wrong one. */
+type TestingProtocol = { origins: number; days: number; bestBaseline: string | null };
+const protocolCache = new Map<string, { at: number; value: TestingProtocol | null }>();
+
+/** "Baseline: last year (scaled)" out of "... does not beat the best baseline (Baseline: last year (scaled)) 7.32%". */
+export function bestBaselineIn(texts: (string | null | undefined)[]): string | null {
+  for (const t of texts) {
+    const m = t?.match(/best baseline \(((?:[^()]|\([^()]*\))+)\)/i);
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+
+async function testingProtocol(target: "Corridor CO2" | "Fleet Mix"): Promise<TestingProtocol | null> {
+  const hit = protocolCache.get(target);
+  if (hit && Date.now() - hit.at < (hit.value ? 10 : 1) * 60_000) return hit.value;
+  let value: TestingProtocol | null = null;
+  if (db) {
+    try {
+      const q = db.query(
+        `SELECT split_label, rejected_reason FROM gold.ml_model_metrics WHERE target = $1 ORDER BY updated_at DESC LIMIT 30`,
+        [target],
+      );
+      const { rows } = await Promise.race([
+        q,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timed out")), 3000)),
+      ]);
+      const split = (rows as { split_label: string | null }[]).map((r) => r.split_label?.match(/rolling origin (\d+) x (\d+) d/i)).find(Boolean);
+      if (split) {
+        value = {
+          origins: Number(split[1]),
+          days: Number(split[2]),
+          bestBaseline: bestBaselineIn((rows as { rejected_reason: string | null }[]).map((r) => r.rejected_reason)),
+        };
+      }
+    } catch (e) {
+      console.warn(`[ai-insight] could not read how ${target} was tested:`, e instanceof Error ? e.message : e);
+    }
+  }
+  protocolCache.set(target, { at: Date.now(), value });
+  return value;
+}
+
+function buildUserMessage(req: InsightRequest, protocol: TestingProtocol | null = null): string {
   const u = UNITS[req.quantity];
   const lines: string[] = [];
 
   lines.push(`QUANTITY FORECAST: ${u.noun}, measured in ${u.unit}.`);
   lines.push(`READER: ${u.audience}.`);
-  lines.push(`FORECAST HORIZON: ${req.horizonDays} days ahead.`);
+  if (req.quantity === "emissions") {
+    // The card's horizonDays is not how CO2 was tested (see testingProtocol): the protocol is said instead.
+    if (protocol) {
+      lines.push(
+        `HOW IT WAS TESTED: ${protocol.origins} forecasts of ${protocol.days} days each, every one made only from the days before it (rolling origin), so the scores cover forecasting up to ${protocol.days} days ahead.`,
+      );
+    }
+  } else if (req.horizonDays != null) {
+    lines.push(`FORECAST HORIZON: ${req.horizonDays} days ahead.`);
+  }
+  // The design targets (Chapter 1): stated in the message so a reply may quote them.
+  if (req.quantity === "volume") lines.push("TARGET: the project's design target for traffic volume is WMAPE 12% or less.");
+  if (req.quantity === "emissions") lines.push("TARGET: the project's design target for corridor CO2 is WMAPE 15% or less.");
 
   if (req.scoredDays != null && req.windowStart && req.windowEnd) {
     lines.push(
@@ -128,10 +193,19 @@ function buildUserMessage(req: InsightRequest): string {
     );
   }
 
-  if (req.naiveMase != null && Number.isFinite(req.naiveMase)) {
+  if (req.quantity === "emissions") {
+    const best = bestBaselineIn(req.metrics.flatMap((m) => [m.rejectedReason, m.diagnosis])) ?? protocol?.bestBaseline ?? null;
+    lines.push(
+      best
+        ? `BENCHMARK: the best of the simple baselines on these days, ${best}${/last year/i.test(best) ? " (the same day a year earlier, scaled to the recent level)" : ""}. Each MASE is a model's error divided by that baseline's, so below 1 beats it.`
+        : "BENCHMARK: the best of the simple baselines the models were tested against. Each MASE is a model's error divided by that baseline's, so below 1 beats it.",
+    );
+  } else if (req.naiveMase != null && Number.isFinite(req.naiveMase)) {
     lines.push(
       `BENCHMARK: simply repeating last week scored MASE ${req.naiveMase.toFixed(3)} on these same days, so a model beats it by scoring below that, not below 1. A MASE above 1 here means the scored days were harder than the training years, not that the model failed.`,
     );
+  } else {
+    lines.push("BENCHMARK: simply repeating last week. Each MASE is a model's error divided by that benchmark's, so below 1 beats it.");
   }
 
   lines.push("", "MODEL METRICS");
@@ -153,7 +227,8 @@ function buildUserMessage(req: InsightRequest): string {
     // The bar is the naive's own MASE on these days when the module supplies it: on 2026 traffic the scored
     // days were rougher than the training years, the naive itself scored 1.555, and "MASE < 1" told readers
     // that Prophet (1.203, 23% less error than the naive) failed.
-    const bar = req.naiveMase != null && Number.isFinite(req.naiveMase) ? req.naiveMase : 1;
+    // CO2's MASE is already divided by its best baseline, so its bar is 1 whatever the card sends.
+    const bar = req.quantity !== "emissions" && req.naiveMase != null && Number.isFinite(req.naiveMase) ? req.naiveMase : 1;
     if (m.mase != null && Number.isFinite(m.mase)) {
       parts.push(
         m.mase < bar * 0.995
@@ -228,6 +303,61 @@ export function validate(raw: unknown, req: InsightRequest): Insight {
       : null;
 
   return { summary, perModel, caveat };
+}
+
+const NO_SUMMARY = "No summary was produced.";
+
+/**
+ * The plain read-out: each roster item's figures exactly as the message sent to the model states them
+ * (ai-figure-check.ts plainVerdict), under a summary the caller composes from the same figures.
+ */
+export function plainInsight(
+  roster: string[],
+  user: string,
+  summary?: string | null,
+  verdicts: Record<string, string | null | undefined> = {},
+): Insight {
+  const perModel = roster.flatMap((model) => {
+    const verdict = verdicts[model] ?? plainVerdict(model, user);
+    return verdict ? [{ model, verdict }] : [];
+  });
+  return {
+    summary: summary?.trim() || "The recorded figures for each item are listed below.",
+    perModel,
+    caveat: null,
+    source: "template",
+  };
+}
+
+/**
+ * The figure check on a validated reply, for every narrative endpoint (17 Nov 2026 audit; the congestion
+ * read-out had it alone). Every figure the reply writes, in the summary, the verdicts, the caveat and the
+ * closing line, must be one the message `user` gave the model, to within the reply's own rounding
+ * (ai-figure-check.ts). A reply that fails, or that has no summary, is not shown: the plain read-out
+ * composed from the same message is served instead, so the panel never shows a figure that is not in
+ * the data it was given.
+ */
+export function checkFigures(
+  out: Insight,
+  ctx: {
+    endpoint: string;
+    user: string;
+    roster: string[];
+    /** Figures the prompt itself defines and a reply may quote, e.g. 0.5 as a coin toss. */
+    extra?: number[];
+    /** The plain read-out's headline, composed from the same figures. */
+    summary?: string | null;
+    /** Plain verdicts for roster names whose figures are not on a "- <name>: ..." line. */
+    verdicts?: Record<string, string | null | undefined>;
+  },
+): Insight {
+  const texts = [out.summary, out.caveat, out.meaning, ...out.perModel.map((p) => p.verdict)];
+  const bad = out.summary === NO_SUMMARY ? ["(no summary)"] : unknownFigures(texts, knownFigures(ctx.user, ctx.extra));
+  if (bad.length === 0) return { ...out, source: "ai" };
+  console.warn(
+    `[ai-insight] ${ctx.endpoint}: ${out.summary === NO_SUMMARY ? "the reply had no summary" : `the reply quoted ${bad.slice(0, 6).join(", ")}, not in its data`}; serving the plain read-out`,
+  );
+  return plainInsight(ctx.roster, ctx.user, ctx.summary, ctx.verdicts);
 }
 
 /* ── Congestion: a classifier, scored per hour ahead ──────────────────────── */
@@ -451,28 +581,15 @@ export function congestionTemplate(req: CongestionInsightRequest): Insight {
   };
 }
 
-/* A percentage in the reply that is not one of the request's (to within rounding) is a made-up number. */
-function quotesUnknownPercent(text: string, req: CongestionInsightRequest): boolean {
-  const known = [
-    ...req.models.map((m) => m.accuracy),
-    req.baseline?.accuracy,
-    ...(req.horizons ?? []).flatMap((h) => [h.accuracy, h.persistence]),
-  ].filter((v): v is number => v != null && Number.isFinite(v)).map((v) => v * 100);
-  for (const hit of text.matchAll(/(\d+(?:\.\d+)?)\s*%/g)) {
-    const n = Number(hit[1]);
-    if (!known.some((k) => Math.abs(k - n) <= 0.51)) return true;
-  }
-  return false;
-}
-
 export async function generateCongestionInsight(req: CongestionInsightRequest): Promise<Insight> {
   if (req.models.length === 0) {
     throw new GlmError("No model metrics were supplied.", "bad_model_output");
   }
+  const user = buildCongestionMessage(req);
   try {
     const content = await chat({
       system: CONGESTION_SYSTEM,
-      user: buildCongestionMessage(req),
+      user,
       json: true,
       maxTokens: 1400,
       temperature: 0.3,
@@ -485,12 +602,14 @@ export async function generateCongestionInsight(req: CongestionInsightRequest): 
     const meaning = said ? (/^what this means:/i.test(said) ? said : `What this means: ${said}`) : congestionTemplate(req).meaning;
     const all = [out.summary, out.caveat ?? "", meaning ?? "", ...out.perModel.map((p) => p.verdict)].join(" ");
     const { severe, heavy } = speedCuts(req);
-    // A speed other than the card's cuts, or a percentage it was not given, and the reply is not used.
+    // A speed other than the card's cuts, or any figure it was not given (the shared check, ai-figure-check.ts),
+    // and the reply is not used.
     const badSpeed = [...all.matchAll(/(\d+)\s*km\/h/gi)].some((h) => ![severe, heavy].includes(Number(h[1])));
     // So is one that names a date or clock time itself: the opening sentence below already does, correctly.
     const datesItself = /\b\d{1,2}\s?(?:AM|PM)\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}\b|\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/.test(all);
-    if (out.summary === "No summary was produced." || badSpeed || datesItself || quotesUnknownPercent(all, req)) {
-      console.warn("[ai-insight] congestion reply failed the figure check; serving the composed read-out");
+    const unknown = unknownFigures([all], knownFigures(user));
+    if (out.summary === NO_SUMMARY || badSpeed || datesItself || unknown.length > 0) {
+      console.warn(`[ai-insight] congestion reply failed the figure check${unknown.length ? ` (${unknown.slice(0, 6).join(", ")})` : ""}; serving the composed read-out`);
       return congestionTemplate(req);
     }
     const opening = congestionOpening(req);
@@ -620,17 +739,28 @@ export async function generateEventSurgeInsight(req: EventSurgeInsightRequest): 
   if (req.models.length === 0) {
     throw new GlmError("No model metrics were supplied.", "bad_model_output");
   }
+  const user = buildEventMessage(req);
   const content = await chat({
     system: EVENT_SYSTEM,
-    user: buildEventMessage(req),
+    user,
     json: true,
     maxTokens: 1400,
     temperature: 0.3,
   });
-  return validate(extractJson(content), {
+  const out = validate(extractJson(content), {
     quantity: "volume",
     metrics: req.models.map((m) => ({ model: m.model })),
     horizonDays: 1,
+  });
+  const s = req.situation;
+  return checkFigures(out, {
+    endpoint: "event-surge",
+    user,
+    roster: req.models.map((m) => m.model),
+    summary: s
+      ? `${s.mode === "upcoming" && s.eventTitle ? `For ${s.eventTitle}` : "On an average past Philippine Arena event day"}, the estimate adds ` +
+        `${s.totalAdded.toLocaleString("en-US", { maximumFractionDigits: 0 })} vehicles across the corridor; ${s.exitsMaterial} of ${s.exitsTotal} exits show a material rise.`
+      : null,
   });
 }
 
@@ -678,19 +808,19 @@ WHAT IS BEING FORECAST
 The SHARE of each NLEX toll class in a day's traffic: Class 1 (cars), Class 2 (buses and small trucks), Class 3 (large trucks). The three shares always add up to 100%. "Heavy share" means Class 2 plus Class 3. Heavy vehicles matter because each of their kilometres emits several times a car's CO2.
 
 HOW TO READ THE NUMBERS
-- MAE (pp) is the average miss in percentage points of share: 0.5 pp means a class forecast at 9.0% typically turns out between 8.5% and 9.5%.
+- MAE (pp) is the average miss in percentage points of share: an MAE of X pp means a class forecast typically turns out within about X points of its true share, either side.
 - MAPE and heavy WMAPE are percentage errors. MAPE punishes the small Class 3 share hardest, which is why the models are ranked by Aitchison distance instead (a measure made for shares that add up to 100%).
 - Heavy R2 near 1 is good, near 0 means the model explains little of the day-to-day movement in the heavy share, negative is worse than predicting the average.
-- SKILL compares each model with persistence: assuming tomorrow's mix is the same as the last one seen. Each model is labelled BEATS-PERSISTENCE, FAILS-PERSISTENCE or LEVEL-WITH-PERSISTENCE, and that label is authoritative. Do not reinterpret the raw number.
+- SKILL is a model's Aitchison distance divided by that of the BEST BASELINE named in the message, on the same test forecasts. Below 1 beats it. Each model is labelled BEATS-BEST-BASELINE, FAILS-BEST-BASELINE or LEVEL-WITH-BEST-BASELINE, and that label is authoritative. Do not reinterpret the raw number.
 
 HOW A MODEL IS ACCEPTED (this decides the verdicts)
-A candidate is accepted only if its Aitchison distance beats the BETTER of the two baselines, Climatology (the usual mix for that day of the week and month) and Persistence. Beating persistence alone is NOT enough. So a model can be labelled BEATS-PERSISTENCE and still be REJECTED, because Climatology is the harder bar: that is not a contradiction, say it plainly. Climatology and Persistence are baselines, not candidates; describe them as the yardsticks the candidates were measured against.
+The baselines are simple rules, not candidates: the rows marked BASELINE (for example the usual mix for that weekday, or the same day a year earlier). A candidate is accepted only if its Aitchison distance beats the best of them over the whole test AND over the first seven days of each forecast. So a model can beat the best baseline overall and still be REJECTED for the first week: that is not a contradiction, say it plainly with the stated reason. Describe the baselines as the yardsticks the candidates were measured against.
 
 RULES
-- Never state a number that was not given to you. Never estimate one.
+- Never state a number that was not given to you. Never estimate one. Quote figures as the message gives them, rounded if you like; never work out new ones. A reply that quotes a figure not in the message is discarded.
 - Every claim must be traceable to a fact above. You know NOTHING about how the models were built, what data they saw, or why the mix moves. Do not speculate about causes.
 - perModel must contain exactly one entry for EVERY model listed, using its name exactly as given.
-- Repeat each model's persistence label faithfully. If a model is marked rejected or as a baseline, say so and give the stated reason.
+- Repeat each model's best-baseline label faithfully. If a model is marked rejected or as a baseline, say so and give the stated reason.
 - If the heavy share is said to change by less than 1 percentage point, say there is no material change; do not describe it as a rise or a fall.
 - If the facts say the projection covers dates that have already passed, say so plainly in the summary: it is a check against what happened, not a look ahead.
 - Translate into consequences: what a heavy share at this level means for planning and for CO2.
@@ -698,9 +828,9 @@ RULES
 - Plain English. No jargon that is not defined in the sentence that uses it.
 
 THE CAVEAT FIELD
-Use it ONLY for a limitation the supplied facts demonstrate: a projection longer than the horizon the models were validated at, a projection over dates already passed, a champion that barely beats persistence, a low heavy R2. If none applies, return null. Never invent one.`;
+Use it ONLY for a limitation the supplied facts demonstrate: a projection longer than the horizon the models were tested at, a projection over dates already passed, a champion that barely beats the best baseline, a low heavy R2. If none applies, return null. Never invent one.`;
 
-function buildFleetMessage(req: FleetMixInsightRequest): string {
+function buildFleetMessage(req: FleetMixInsightRequest, protocol: TestingProtocol | null = null): string {
   const lines: string[] = [];
   const f = (v: number | null | undefined, dp: number) => (v == null || !Number.isFinite(v) ? null : v.toFixed(dp));
   lines.push(
@@ -720,9 +850,12 @@ function buildFleetMessage(req: FleetMixInsightRequest): string {
           : `- That is a change of ${d > 0 ? "+" : ""}${d.toFixed(2)} percentage points.`,
       );
     }
+    /* How far ahead the models were tested comes from the warehouse (testingProtocol), not from the card's
+       validatedDays, which still says 7 for a test of 26 forecasts of 30 days. */
     if (s.projectionDays) {
       lines.push(
-        `- The projection runs ${s.projectionDays} days${s.projectionStart && s.projectionEnd ? `, ${s.projectionStart} to ${s.projectionEnd}` : ""}. The models were validated at ${s.validatedDays} days ahead.`,
+        `- The projection runs ${s.projectionDays} days${s.projectionStart && s.projectionEnd ? `, ${s.projectionStart} to ${s.projectionEnd}` : ""}.` +
+          (protocol ? ` The models were tested on ${protocol.origins} forecasts of ${protocol.days} days each (rolling origin), so up to ${protocol.days} days ahead.` : ""),
       );
     }
     lines.push(
@@ -734,6 +867,13 @@ function buildFleetMessage(req: FleetMixInsightRequest): string {
       lines.push(`- The observed data ends ${s.dataEnds}, ${s.staleDays} days before today, so the projection covers dates that have ALREADY PASSED.`);
     }
   }
+  const best = bestBaselineIn(req.models.flatMap((m) => [m.rejectedReason, m.diagnosis])) ?? protocol?.bestBaseline ?? null;
+  lines.push(
+    "",
+    best
+      ? `BEST BASELINE: ${best}. SKILL is each model's Aitchison distance divided by this baseline's; below 1 beats it.`
+      : "BEST BASELINE: the best of the baselines listed below. SKILL is each model's Aitchison distance divided by that baseline's; below 1 beats it.",
+  );
   lines.push("", "MODEL SCORES ON HELD-OUT DAYS");
   for (const m of req.models) {
     const parts: string[] = [];
@@ -741,9 +881,10 @@ function buildFleetMessage(req: FleetMixInsightRequest): string {
     if (f(m.mape, 2)) parts.push(`MAPE ${f(m.mape, 2)}%`);
     if (f(m.heavyWmape, 2)) parts.push(`heavy WMAPE ${f(m.heavyWmape, 2)}%`);
     if (f(m.heavyR2, 3)) parts.push(`heavy R2 ${f(m.heavyR2, 3)}`);
-    // Decided here, not by the model: the same lesson as MASE on the forecast path.
+    // Decided here, not by the model: the same lesson as MASE on the forecast path. The skill is against the
+    // best baseline (train_fleet_mix.py: Aitchison over the best baseline's), not persistence as this said before.
     if (m.skill != null && Number.isFinite(m.skill)) {
-      parts.push(`skill ${m.skill.toFixed(3)}`, m.skill < 0.995 ? "BEATS-PERSISTENCE" : m.skill > 1.005 ? "FAILS-PERSISTENCE" : "LEVEL-WITH-PERSISTENCE");
+      parts.push(`skill ${m.skill.toFixed(3)}`, m.skill < 0.995 ? "BEATS-BEST-BASELINE" : m.skill > 1.005 ? "FAILS-BEST-BASELINE" : "LEVEL-WITH-BEST-BASELINE");
     }
     if (m.rank != null) parts.push(`rank ${m.rank}`);
     parts.push(m.accepted === false ? (m.rejectedReason ? "REJECTED" : "BASELINE (not a candidate)") : m.rank === 1 ? "accepted, CHAMPION" : "accepted");
@@ -763,18 +904,31 @@ export async function generateFleetMixInsight(req: FleetMixInsightRequest): Prom
   if (req.models.length === 0) {
     throw new GlmError("No model metrics were supplied.", "bad_model_output");
   }
+  const user = buildFleetMessage(req, await testingProtocol("Fleet Mix"));
   const content = await chat({
     system: FLEET_SYSTEM,
-    user: buildFleetMessage(req),
+    user,
     json: true,
     // Six models (four candidates and two baselines) take more reasoning than the other cards' rosters.
     maxTokens: 3200,
     temperature: 0.3,
   });
-  return validate(extractJson(content), {
+  const out = validate(extractJson(content), {
     quantity: "emissions",
     metrics: req.models.map((m) => ({ model: m.model })),
     horizonDays: 1,
+  });
+  const s = req.situation;
+  return checkFigures(out, {
+    endpoint: "fleet-mix",
+    user,
+    roster: req.models.map((m) => m.model),
+    // The shares add up to 100%, and a change under 1 point is called no material change: both stated in the prompt.
+    extra: [100],
+    summary:
+      s && s.heavyNowPct != null && s.heavyNextPct != null
+        ? `Heavy vehicles (Class 2 + Class 3) were ${s.heavyNowPct.toFixed(2)}% of traffic over the last ${s.windowDays} observed days and average ${s.heavyNextPct.toFixed(2)}% over the projection.${s.champion ? ` The forecast drawn is from ${s.champion}.` : ""}`
+        : null,
   });
 }
 
@@ -842,9 +996,10 @@ export async function generateRankingInsight(req: RankingInsightRequest): Promis
     throw new GlmError("No ranking rows were supplied.", "bad_model_output");
   }
 
+  const user = buildRankingMessage(req);
   const content = await chat({
     system: RANKING_SYSTEM,
-    user: buildRankingMessage(req),
+    user,
     json: true,
     maxTokens: 1800,
     temperature: 0.3,
@@ -854,11 +1009,26 @@ export async function generateRankingInsight(req: RankingInsightRequest): Promis
   // location label here, and validate() only checks it against the supplied
   // set (guarding hallucinated rows), it never assumes the value is an
   // algorithm name.
-  return validate(extractJson(content), {
+  const out = validate(extractJson(content), {
     quantity: "volume",
     metrics: req.rows.map((r) => ({ model: r.label })),
     horizonDays: req.horizonDays ?? 1,
   });
+  const top = req.rows[0];
+  return checkFigures(out, {
+    endpoint: "ranking",
+    user,
+    roster: req.rows.map((r) => r.label),
+    summary: plainVerdict(top.label, user) ? `Ranked first: ${top.label}, ${plainVerdict(top.label, user)}` : null,
+  });
+}
+
+/** The forecast card's plain read-out headline: the accepted model ranked first, with its WMAPE as sent. */
+function forecastSummary(req: InsightRequest): string {
+  const accepted = req.metrics.filter((m) => m.accepted !== false).sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
+  const lead = accepted[0];
+  if (!lead) return `None of the ${req.metrics.length} models shown was accepted.`;
+  return `Ranked first among the accepted models shown: ${lead.model}${lead.wmape != null && Number.isFinite(lead.wmape) ? `, WMAPE ${lead.wmape.toFixed(2)}` : ""}.`;
 }
 
 export async function generateInsight(req: InsightRequest): Promise<Insight> {
@@ -866,9 +1036,10 @@ export async function generateInsight(req: InsightRequest): Promise<Insight> {
     throw new GlmError("No model metrics were supplied.", "bad_model_output");
   }
 
+  const user = buildUserMessage(req, req.quantity === "emissions" ? await testingProtocol("Corridor CO2") : null);
   const content = await chat({
     system: SYSTEM,
-    user: buildUserMessage(req),
+    user,
     json: true,
     // Room for a summary plus one line per model, with headroom for the larger
     // rosters (the incident module scores seven).
@@ -878,5 +1049,19 @@ export async function generateInsight(req: InsightRequest): Promise<Insight> {
     temperature: 0.3,
   });
 
-  return validate(extractJson(content), req);
+  return checkFigures(validate(extractJson(content), req), {
+    endpoint: `model-narrative (${req.quantity})`,
+    user,
+    roster: req.metrics.map((m) => m.model),
+    summary: forecastSummary(req),
+  });
 }
+
+/** The messages exactly as the model receives them, for the offline figure check (scripts/ai-figure-check.ts). */
+export const messagesForCheck = {
+  forecast: buildUserMessage,
+  congestion: buildCongestionMessage,
+  eventSurge: buildEventMessage,
+  fleetMix: buildFleetMessage,
+  ranking: buildRankingMessage,
+};

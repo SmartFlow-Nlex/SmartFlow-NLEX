@@ -252,7 +252,7 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
                         under it and the panel behind it. */}
                     <span className="wz-kpi-value">{data ? corridorAlerts.length : "—"}</span>
                   </div>
-                  <div className="wz-kpi delay" title="Current delay caused by the jams on the corridor">
+                  <div className="wz-kpi delay" title="Delay from all current jams added together, both directions; one driver meets only the jams on their own route">
                     <span className="wz-kpi-label">Delay</span>
                     <span className="wz-kpi-value">
                       {delayMin == null ? "—" : delayMin >= 60 ? <>{Math.floor(delayMin / 60)}<em>h</em> {delayMin % 60}<em>min</em></> : <>{delayMin}<em>min</em></>}
@@ -268,7 +268,9 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
                 <div className="wz-density-scale" aria-hidden="true"><span>Free flow</span><span>Standstill</span></div>
                 <p className="wz-note">
                   {data && data.exits.length > 0
-                    ? `${data.jamCount} jams across ${data.exits.length} exits · worst is ${levelWord(data.exits[0].worstLevel).toLowerCase()}`
+                    /* The corridor's worst grade, not the grade of the exit listed first (which is the slowest on
+                       average): fixed 17 Nov 2026. */
+                    ? `${data.jamCount} jams across ${data.exits.length} exits · worst is ${levelWord(Math.max(...data.exits.map((e) => Number(e.worstLevel) || 0))).toLowerCase()}`
                     : "No jams reported on the corridor"}
                 </p>
 

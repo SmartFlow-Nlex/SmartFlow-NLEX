@@ -59,7 +59,7 @@ export const getIncidentAnalytics = async (req: Request, res: Response) => {
 // whichever model the pipeline last wrote to ml_training_metadata, not a fixed
 // one; the response carries champion_model so callers never assume.
 //
-// Anchors (data bounds, walk-forward split dates, the fixed MASE denominator)
+// Anchors (data bounds and walk-forward split dates)
 // are fetched once and used twice: to build a request-scoped Zod schema that
 // refines `from`/`to` against the real min/max data dates — a query-string
 // hack or a bookmarked URL can send an out-of-range date even though the UI

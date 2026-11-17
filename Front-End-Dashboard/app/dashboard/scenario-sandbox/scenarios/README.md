@@ -510,6 +510,19 @@ drawn over one another (touching counts). What that found, and what changed:
   picture; no sprite is drawn over another except at the instant of a crash's impact and for a frame as an
   ambulance crosses into a four-car pile-up (2.5 px).
 
+## Forecast inflow on the stretch
+
+A loaded forecast day moves each carriageway's own recorded flow; it does not replace it (17 Nov 2026).
+- **The old behaviour:** the hour's corridor forecast × the busiest plaza's share of corridor volume (Bocaue
+  Barrier, 18.4%) was the inflow of every stretch and both carriageways: 3,465 veh/h at 08:00 on 25 May 2026 at
+  Km 12 and at Km 86 alike, where the record has 2,755 NB / 4,407 SB at Km 12 and 1,059 / 126 at Km 86.
+- **Now:** inflow = this stretch's own recorded flow for the hour and direction (the mainline estimate,
+  `mainlineAtKm`, or its fallbacks) × the forecast corridor total for the hour ÷ the corridor's mean for that hour
+  over every day in the record (`hourlyScale` from `/api/ai-sandbox/scenario`), held to 100 – lanes × 2,200 veh/h.
+  The assumption is that a stretch's share of the corridor at an hour is the same on the forecast day as on an
+  average day. On an event day the recorded flow already carries the event, and the forecast (a normal day's)
+  scales it, so the event counts once.
+
 ## Forecast incidents on the stretch
 
 A loaded forecast day brings the hour's predicted incidents (`scenarios/forecastIncidents.ts`). The forecast

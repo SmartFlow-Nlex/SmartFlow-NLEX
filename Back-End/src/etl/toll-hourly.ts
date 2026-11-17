@@ -85,12 +85,14 @@ export interface TollHourlyAggregate {
 
 export type Cutoff = { date: string; why: "record end" | "today" };
 
-/* Where the corridor's record ends. The other datasets in the warehouse —
- * incidents, the emissions source — stop on 2026-06-30, and traffic is kept
- * to the same window so the models train on days every source covers (the
- * project owner's call, 2026-10-01). A row after it is held back, not loaded.
- * Move this date when the record is meant to grow. */
-export const RECORD_END = "2026-06-30";
+/* Where the corridor's record ends: 2026-05-24, the client's last complete real
+ * toll day (the 2026 export is broken or missing from 25 May; 25, 27 and 28 May
+ * and most of June were still synthetic). The project owner moved it from
+ * 2026-06-30 on 15 Nov 2026 so every graph and every model ends on the same day;
+ * traffic, emissions and incidents after it were moved to ml_backup.*_after_20260524
+ * (and CSVs in Downloads/SmartFlow_backup_trim_2026-11-15). A row after it is held
+ * back, not loaded. Move this date when the client re-extracts the later days. */
+export const RECORD_END = "2026-05-24";
 
 /** Today in Manila, as YYYY-MM-DD. */
 export function manilaToday(now = new Date()): string {

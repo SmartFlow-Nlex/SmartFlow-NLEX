@@ -108,7 +108,24 @@ WITH_HISTORY = "--with-history" in sys.argv
 # congested whichever hour it was first seen); --active-hours is still accepted and changes nothing. --first-hour-labels
 # turns it off (the old rule). A saved dual-path family records which rule it learned and is scored only under it.
 ACTIVE_HOURS = "--first-hour-labels" not in sys.argv
-LABELS = "active_hours" if ACTIVE_HOURS else "first_hour"
+# MAINLINE LABELS (17 Nov 2026, system audit): only jams ON THE EXPRESSWAY set an exit-hour's state -- the same rule
+# as the live map, the overview and corridor status (Back-End/src/utils/nlex-street.ts: ON/NEAR_CORRIDOR and a street
+# named NLEX / North Luzon, not a service road, crossing, exit road or connecting tollway). Before this, every jam
+# Waze tagged to an exit counted, and 76% of those (32,968 of 43,406 in 14 days to 16 Nov) were on local roads beside
+# the exits. The label then read High most often at midnight (24% of exit-hours, against 9-11% at 7-9 AM), because
+# the few jams at night were slow side-road queues, while on the expressway itself High peaks at 2-5 PM (28-30%) and
+# is rarest at night (9-12%); the two labels agreed on only 56% of exit-hours. The forecast map therefore predicted
+# side-road traffic under the live map's "under 10 km/h on NLEX" legend. The history keeps its on_corridor rows only
+# (it has no street names; on-corridor history gives about 14% High at night and 21% at 4 PM, in line with the live
+# expressway). --all-jams-labels restores the old rule for comparison. The label name changes, so a saved dual-path
+# family trained on the old labels is never scored under the new ones (see the dp_skip check).
+MAINLINE = "--all-jams-labels" not in sys.argv
+LABELS = ("active_hours" if ACTIVE_HOURS else "first_hour") + ("_mainline" if MAINLINE else "")
+_NLEX_EXCLUDED = ("service", "crossing", "exit rd", "halili", "dulalia", "tullahan", "libtong", "slex", "skyway",
+                  "sctex", "tplex", "cavitex")   # keep in step with Back-End/src/utils/nlex-street.ts EXCLUDED
+MAINLINE_SQL = ("(j.corridor_match IN ('ON_CORRIDOR', 'NEAR_CORRIDOR') AND (LOWER(j.street) LIKE '%nlex%' OR "
+                "LOWER(j.street) LIKE '%north luzon%') AND "
+                + " AND ".join(f"LOWER(j.street) NOT LIKE '%{w}%'" for w in _NLEX_EXCLUDED) + ")")
 # --dualpath-dir NAME: save and load the dual-path family in NAME/ instead of dualpath_models/, so a trial
 # (--dualpath-train with history) cannot replace the models the hourly refresh serves.
 if "--dualpath-dir" in sys.argv:
@@ -209,7 +226,7 @@ def _audit_refresh(outcome, to_status=None, details=None, from_status=None):
 
 def _audit_failure_hook(exc_type, exc, tb):
     _audit_refresh("failed", details={
-        "title": "Congestion forecast (hourly, live feed)",
+        "title": "Congestion forecast (hourly)",
         "reason": f"{exc_type.__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''} (during {_STEP_T0[0] or 'start-up'})",
         "host": __import__("socket").gethostname()})
     sys.__excepthook__(exc_type, exc, tb)
@@ -319,8 +336,32 @@ def banner_done():
 
 # ── 1. Data ─────────────────────────────────────────────────────────────────
 banner("STEP 1: Data")
-print(f"  labels: {'each jam in every hour it was on the road (active hours)' if ACTIVE_HOURS else 'each jam in its first hour only (--first-hour-labels)'}")
+print(f"  labels: {'each jam in every hour it was on the road (active hours)' if ACTIVE_HOURS else 'each jam in its first hour only (--first-hour-labels)'}"
+      f"{', expressway jams only (mainline)' if MAINLINE else ', every jam tagged to an exit (--all-jams-labels)'}")
 conn = psycopg2.connect(PG)
+
+
+def _read_retry(sql, what):
+    """pd.read_sql_query with up to 5 tries, reconnecting as needed. RETRIED (17 Nov 2026): the server dropped the
+    connection mid-query in the jam reads too (a 17 Nov test run died in the active-hours read), not only in the
+    history pull, and the reconnect itself can hit a name-lookup failure for a minute, so the reconnect is inside
+    the retry. A dropped connection is dead for every later query, hence the module-level conn is replaced."""
+    global conn
+    for attempt in range(1, 6):
+        try:
+            if conn is None or conn.closed:
+                conn = psycopg2.connect(PG)
+            return pd.read_sql_query(sql, conn)
+        except (psycopg2.OperationalError, psycopg2.InterfaceError, pd.errors.DatabaseError) as e:
+            if attempt == 5:
+                raise
+            print(f"  {what} read failed (attempt {attempt} of 5: {str(e).strip().splitlines()[-1][:120]}); "
+                  f"reconnecting in {30 * attempt} s", flush=True)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            _time_mod.sleep(30 * attempt)
 if SKIP_IF_BATCH:
     with conn.cursor() as _c:
         _busy = None
@@ -340,39 +381,46 @@ if SKIP_IF_BATCH:
         print(f"  weekly batch #{_busy[0]} is training (started {_busy[1]}); skipping this hour, the map keeps "
               "the previous forecast")
         _audit_refresh("skipped", details={
-            "title": "Congestion forecast (hourly, live feed)",
+            "title": "Congestion forecast (hourly)",
             "reason": f"weekly batch #{_busy[0]} was training on this machine; the map kept the previous forecast",
             "host": __import__("socket").gethostname()})
         conn.close()
         sys.exit(0)
-jams = pd.read_sql_query("""
+jams = _read_retry(f"""
     SELECT j.date_day::date AS d, j.hour_of_day::int AS h,
            COALESCE(e.exit_name,'id_'||j.nlex_exit_id::text) AS exit_name,
-           j.speed_kmh::float AS speed, j.length_meters::float AS len
+           j.speed_kmh::float AS speed, j.length_meters::float AS len,
+           COALESCE({MAINLINE_SQL}, FALSE) AS mainline
     FROM silver.fact_waze_jams j
     LEFT JOIN bronze.nlex_exits e ON e.id = j.nlex_exit_id
     WHERE j.speed_kmh IS NOT NULL
-""", conn)
+""", "jam")
 jams["wlen"] = jams["len"].clip(lower=1.0)
 jams["sp_w"] = jams["speed"] * jams["wlen"]
 if ACTIVE_HOURS:
-    _jl = pd.read_sql_query("""
+    _jl = _read_retry(f"""
         SELECT (t)::date AS d, EXTRACT(HOUR FROM t)::int AS h,
                COALESCE(e.exit_name,'id_'||j.nlex_exit_id::text) AS exit_name,
-               j.speed_kmh::float AS speed, j.length_meters::float AS len
+               j.speed_kmh::float AS speed, j.length_meters::float AS len,
+               COALESCE({MAINLINE_SQL}, FALSE) AS mainline
         FROM silver.fact_waze_jams j
         LEFT JOIN bronze.nlex_exits e ON e.id = j.nlex_exit_id
         CROSS JOIN LATERAL generate_series(date_trunc('hour', j.first_seen_at AT TIME ZONE 'Asia/Manila'),
                                            date_trunc('hour', COALESCE(j.cleared_at, j.last_seen_at, j.first_seen_at) AT TIME ZONE 'Asia/Manila'),
                                            interval '1 hour') AS t
         WHERE j.speed_kmh IS NOT NULL
-    """, conn)
+    """, "active-hours jam")
     _jl["wlen"] = _jl["len"].clip(lower=1.0)
     _jl["sp_w"] = _jl["speed"] * _jl["wlen"]
     print(f"  active hours: {len(jams):,} live jams counted in {len(_jl):,} jam-hours (each hour it was on the road)")
 else:
     _jl = jams
-# jams (one row per jam, at its first hour) still decides where collection stopped, below; _jl is what is labelled.
+if MAINLINE:
+    print(f"  mainline labels: {int(_jl.mainline.sum()):,} of {len(_jl):,} jam-hours are on the expressway itself "
+          f"({_jl.mainline.mean() * 100:.0f}%); the rest are side roads beside the exits and set no state")
+    _jl = _jl[_jl.mainline]
+# jams (one row per jam, at its first hour, ALL roads) still decides where collection stopped, below: it is about
+# whether the feed was collecting, not about the expressway. _jl is what is labelled.
 cell = (_jl.groupby(["d", "h", "exit_name"])
         .agg(sp_w=("sp_w", "sum"), wlen=("wlen", "sum"), n_jams=("speed", "size")).reset_index())
 cell["speed"] = cell.sp_w / cell.wlen
@@ -384,11 +432,16 @@ if WITH_HISTORY:
     # The stored summary splits each exit-hour by on_corridor / at_exit, so the
     # length-weighted speed is rebuilt from its parts rather than averaged again:
     # sum(len) = length_m_avg * jam_snapshots, sum(speed*len) = wavg * sum(len).
-    # All rows, whatever their distance, because the live branch above takes
-    # every jam assigned to the exit too; the two labels must mean one thing.
+    # The two labels must mean one thing: with mainline labels (the default since 17 Nov 2026) only on_corridor rows,
+    # as the live branch keeps only expressway jams; with --all-jams-labels every row, as the live branch then keeps
+    # every jam assigned to the exit.
     # Summed in the database, one row per exit-hour, so a quarter fewer rows
     # cross the network -- a million-row pull is the slow part of this run.
-    hist = pd.read_sql_query("""
+    # RETRIED (16 Nov 2026): the server dropped the connection during this pull in 2 of 7 runs on 15-16 Nov
+    # ("server closed the connection unexpectedly"), and the hourly map refresh now depends on it. A dropped
+    # connection is dead for every later query too, so each retry opens a fresh one.
+    # Mainline labels (17 Nov 2026): the expressway's own rows only (on_corridor), as the live branch above.
+    _HIST_SQL = f"""
         SELECT h.date_day::date AS d, h.hour_of_day::int AS h,
                COALESCE(e.exit_name,'id_'||h.nlex_exit_id::text) AS exit_name,
                SUM(h.length_m_avg * h.jam_snapshots)::real                    AS wlen,
@@ -396,9 +449,10 @@ if WITH_HISTORY:
                SUM(h.jams_distinct)::real                                     AS n_jams
           FROM silver.waze_jam_hourly_exit h
           LEFT JOIN bronze.nlex_exits e ON e.id = h.nlex_exit_id
-         WHERE h.speed_kmh_wavg IS NOT NULL
+         WHERE h.speed_kmh_wavg IS NOT NULL{" AND h.on_corridor" if MAINLINE else ""}
          GROUP BY 1, 2, 3
-    """, conn)
+    """
+    hist = _read_retry(_HIST_SQL, "history")
     hist_cell = (hist.groupby(["d", "h", "exit_name"])
                  .agg(sp_w=("sp_w", "sum"), wlen=("wlen", "sum"), n_jams=("n_jams", "sum")).reset_index())
     hist_cell["speed"] = hist_cell.sp_w / hist_cell.wlen
@@ -592,8 +646,12 @@ CAL_HR = int((cal_cut - G0) / pd.Timedelta(hours=1))
 
 def profile_arrays(until):
     """What each exit usually does at each hour of the day, weekday vs weekend, from hours before `until` only:
-    the share of each state [exit, hour, weekend, 3], its mean state, and the overall shares."""
-    h_ = df[df.ts < until]
+    the share of each state [exit, hour, weekend, 3], its mean state, and the overall shares.
+    From the LIVE weeks only, also with --with-history (16 Nov 2026). Built over four years of history the profile
+    described 2022-2026, not the road now: as the benchmark it fell from 0.61 to 0.51 (severe recall 40% -> 18%), so
+    any model "beat" it, and as a feature (prof_mean, prof_sev, tgt_prof_*) it told the models the wrong usual. The
+    benchmark must be the same whatever data the candidates learn from; history still enters every model's fit rows."""
+    h_ = df[(df.ts < until) & (df.ts >= pd.Timestamp(LIVE_FROM))]
     cnt = np.zeros((len(exits), 24, 2, 3))
     np.add.at(cnt, (h_.exit_code.to_numpy(), h_.h.to_numpy(), h_.is_weekend.to_numpy(), h_.y.to_numpy()), 1)
     overall = np.bincount(h_.y.to_numpy(), minlength=3) / max(len(h_), 1)
@@ -884,7 +942,7 @@ try:
         _cal_rows = pd.DataFrame({"ts": df.ts.to_numpy()[mtr["pos"][_calm]],
                                   "exit_name": df.exit_name.to_numpy()[mtr["pos"][_calm]], "horizon": mtr["hz"][_calm]})
         dp.train_all(_grid, exits, _prev, _next, cut, cal_cut, _cal_rows, Xtr[_calm].reset_index(drop=True),
-                     ytr[_calm], PG, WITH_HISTORY, LABELS)
+                     ytr[_calm], PG, WITH_HISTORY, LABELS, live_from=pd.Timestamp(LIVE_FROM))
     if dp_skip is None:
         dp_bundle = dp.load()
     if dp_bundle is not None and pd.Timestamp(dp_bundle["meta"]["cut"]) != cut:
@@ -1618,7 +1676,7 @@ _hz_acc = {r["horizon"]: r.get(champ_name) for r in per_h}
 _audit_refresh(
     "published", to_status=str(champ_name), from_status=_prev_champ,
     details={
-        "title": "Congestion forecast (hourly, live feed)",
+        "title": "Congestion forecast (hourly)",
         "reason": (f"{champ_name} mean bucket macro-F1 {champ.score:.4f} over {ND} test days "
                    f"(best baseline {best_base_name} {best_base:.4f}); forecast from {BASE_TS:%Y-%m-%d %H:00}"),
         "score": round(float(champ.score), 4), "accuracy": round(float(champ.accuracy), 4),

@@ -2,43 +2,73 @@
   WEATHER-ADJUSTED SPEED MODELS
 ================================================================================
 
-  Daily speed forecast — holdout comparison
-    XGBoost    MAE=3.523  RMSE=4.470  R2=0.275  n=90  [SELECTED]
-    SARIMAX    MAE=3.953  RMSE=4.795  R2=0.165  n=90  
-    LSTM       MAE=4.170  RMSE=5.400  R2=-0.059  n=90  
-    GRU        MAE=4.220  RMSE=5.489  R2=-0.094  n=90  
-    naive (predict training mean) MAE = 4.229
+  Daily jam speed (Waze) — rolling origins, known-in-advance inputs only (rain observed days 1-14 = upper bound)
+    model                                   d1-14   d15-30   d31-60   d61-90    score       RMSE      R2  WMAPE%
+    XGBoost (no rain input)                 3.075    3.262    3.128    3.166    3.158       4.24   0.304   16.72
+    SARIMAX                                 2.970    3.445    3.271    3.318    3.251       4.36   0.264   17.22  <- served
+    XGBoost                                 2.886    3.389    3.389    3.504    3.292      4.377   0.258   17.45
+    Baseline: weekday average               3.107    3.590    3.304    3.405    3.352      4.524   0.207   17.75
+    LSTM                                    3.687    3.878    3.563    3.638    3.692      5.309  -0.092   19.55
+    GRU                                     3.754    3.940    3.614    3.681    3.747      5.395  -0.127   19.84
+    Baseline: training mean (constant)      3.778    3.970    3.639    3.709    3.774      5.433  -0.143   19.98
+    Baseline: last year (scaled)            3.795    4.438    4.004    4.204    4.110      5.721  -0.268   21.77
+    Baseline: last week                     4.022    4.654    4.533    4.551    4.440      6.046  -0.416   23.52
+    (km/h; score = mean of the bucket MAEs; 13 origins 2025-04-05..2026-03-23)
+    best baseline: Baseline: weekday average;  eligible: XGBoost (no rain input), SARIMAX, XGBoost
+    champion - best baseline: 95% interval -0.101 to +0.070 (NOT significant)
+    champion - runner-up (XGBoost (no rain input)): 95% interval -0.064 to +0.265 (NOT significant)
+    note: XGBoost (no rain input) led SARIMAX without a significant margin; the simpler SARIMAX wins the tie.
+    served: SARIMAX
 
-  Road closure probability — logistic regression
-    AUC = 0.946
-    base rate = 3.3%  n=90
-    top driver = log_volume (effect size 1.077)  |  rain_mm significant at p<0.05: False (p=0.064)
-      rain=   0mm -> P(closure) = 0.029
-      rain=  10mm -> P(closure) = 0.035
-      rain=  30mm -> P(closure) = 0.050
-      rain=  60mm -> P(closure) = 0.086
-      rain= 100mm -> P(closure) = 0.169
-      volume= 275,354 -> P(closure) = 0.009
-      volume= 316,989 -> P(closure) = 0.023
-      volume= 345,316 -> P(closure) = 0.041
-      volume= 367,611 -> P(closure) = 0.061
-      volume= 393,546 -> P(closure) = 0.094
+  Daily corridor volume (weather pipeline) — same origins; volume is NOT among its own inputs any more
+    model                                   d1-14   d15-30   d31-60   d61-90    score       RMSE      R2  WMAPE%
+    Baseline: last year (scaled)            7.440    6.663    6.766    6.708    6.894  4.236e+04   0.140    6.89  <- served
+    Baseline: weekday average               7.046    7.960    7.844    8.293    7.786  4.149e+04   0.174    7.79
+    XGBoost                                 5.891    8.843    8.805   10.767    8.576  4.217e+04   0.147    8.58
+    XGBoost (no rain input)                 5.533    9.102   10.192   13.122    9.487   4.52e+04   0.020    9.49
+    Baseline: last week                     9.104   10.318   10.659   12.348   10.607  6.193e+04  -0.839   10.61
+    LSTM                                   12.175   11.992   11.795   12.217   12.044  5.141e+04  -0.268   12.04
+    GRU                                    12.131   12.392   12.322   12.700   12.386  5.238e+04  -0.316   12.39
+    Baseline: training mean (constant)     12.530   12.469   12.440   12.860   12.575  5.305e+04  -0.350   12.57
+    SARIMAX                                31.152   24.399   27.242   29.547   28.085  1.259e+05  -6.606   28.09
+    (vehicles/day; score = mean of the bucket WMAPEs; 13 origins 2025-04-05..2026-03-23)
+    best baseline: Baseline: last year (scaled);  eligible: none
+    note: No candidate beats the best baseline; the baseline is served.
+    served: Baseline: last year (scaled)  (a baseline: no model beat the best baseline)
 
-  Weather incident risk — logistic regression
-    AUC = 0.587
-    base rate = 46.7%  n=90
-    top driver = log_volume (effect size 1.164)  |  rain_mm significant at p<0.05: True (p=0.015)
-      rain=   0mm -> P(high-incident day) = 0.267
-      rain=  10mm -> P(high-incident day) = 0.229
-      rain=  30mm -> P(high-incident day) = 0.166
-      rain=  60mm -> P(high-incident day) = 0.098
-      rain= 100mm -> P(high-incident day) = 0.047
-      volume= 275,354 -> P(high-incident day) = 0.069
-      volume= 316,989 -> P(high-incident day) = 0.173
-      volume= 345,316 -> P(high-incident day) = 0.283
-      volume= 367,611 -> P(high-incident day) = 0.386
-      volume= 393,546 -> P(high-incident day) = 0.510
+  Gridlock (road closure) day — logistic regression (conditional on the day's rain, volume and calendar)
+    AUC = 0.825  95% interval [0.721, 0.910]  on 22 positive day(s) of 364 (2025-04-05..2026-04-19, refit every 28 days)
+    log-loss skill = +0.1573   Brier skill = +0.0952  (vs each block's training base rate (AUC 0.5))
+    top driver = log_volume (effect size 1.130)  |  rain_mm significant at p<0.05: True (p=0.049)
+      rain=   0mm -> P(gridlock) = 0.027
+      rain=  10mm -> P(gridlock) = 0.033
+      rain=  30mm -> P(gridlock) = 0.048
+      rain=  60mm -> P(gridlock) = 0.085
+      rain= 100mm -> P(gridlock) = 0.173
+      volume= 276,665 -> P(gridlock) = 0.008
+      volume= 318,406 -> P(gridlock) = 0.021
+      volume= 347,470 -> P(gridlock) = 0.039
+      volume= 369,819 -> P(gridlock) = 0.059
+      volume= 394,357 -> P(gridlock) = 0.091
 
-  Contour (exit x hour) — XGBoost holdout
-    MAE=10.430  R2=0.252  n=13397
+  High-incident day (weather incident risk) — logistic regression (conditional on the day's rain, volume and calendar)
+    AUC = 0.630  95% interval [0.566, 0.695]  on 136 positive day(s) of 364 (2025-04-05..2026-04-19, refit every 28 days)
+    log-loss skill = +0.0465   Brier skill = +0.0724  (vs each block's training base rate (AUC 0.5))
+    top driver = log_volume (effect size 1.032)  |  rain_mm significant at p<0.05: True (p=0.004)
+      rain=   0mm -> P(high-incident day) = 0.302
+      rain=  10mm -> P(high-incident day) = 0.254
+      rain=  30mm -> P(high-incident day) = 0.175
+      rain=  60mm -> P(high-incident day) = 0.094
+      rain= 100mm -> P(high-incident day) = 0.038
+      volume= 276,665 -> P(high-incident day) = 0.093
+      volume= 318,406 -> P(high-incident day) = 0.204
+      volume= 347,470 -> P(high-incident day) = 0.313
+      volume= 369,819 -> P(high-incident day) = 0.407
+      volume= 394,357 -> P(high-incident day) = 0.511
+
+  Contour (exit x hour jam speed) — XGBoost, conditional on the hour's rain and volume; last 90 days
+    MAE=10.439  R2=0.252  n=13397  (2026-01-19..2026-04-19)
+    Per exit x hour training mean (baseline)       MAE=10.964
+    Per exit x hour training median (baseline)     MAE=9.746
+    XGBoost does NOT beat the best baseline; XGBoost - exit x hour mean: 95% interval [-0.655, -0.401]
 ================================================================================

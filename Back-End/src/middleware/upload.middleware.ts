@@ -10,6 +10,7 @@ import os from "os";
 
 const ACCEPTED_MIMES = [
   "text/csv",
+  "text/tab-separated-values",            // .tsv: the parser reads it as CSV with a tab delimiter (etl/parser.ts)
   "text/plain",                           // Some systems send CSV as text/plain
   "application/json",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
@@ -19,7 +20,14 @@ const ACCEPTED_MIMES = [
 
 const ACCEPTED_EXTENSIONS = [".csv", ".tsv", ".json", ".xlsx", ".xls"];
 
-const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
+export const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
+
+/**
+ * A file this middleware refuses: wrong type, wrong name. The error handler answers it 400 with this message,
+ * which the Data Management page shows as is (it used to reach the generic handler and come back as
+ * 500 "Internal server error"; 17 Nov 2026 audit).
+ */
+export class UploadRefusedError extends Error {}
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -40,14 +48,14 @@ function fileFilter(
   const ext = path.extname(file.originalname).toLowerCase();
 
   if (!ACCEPTED_EXTENSIONS.includes(ext)) {
-    return cb(new Error(`Unsupported file type: ${ext}. Accepted: ${ACCEPTED_EXTENSIONS.join(", ")}`));
+    return cb(new UploadRefusedError(`This file type (${ext || "no extension"}) cannot be uploaded. Upload a ${ACCEPTED_EXTENSIONS.slice(0, -1).join(", ")} or ${ACCEPTED_EXTENSIONS[ACCEPTED_EXTENSIONS.length - 1]} file.`));
   }
   if (file.mimetype && !ACCEPTED_MIMES.includes(file.mimetype.toLowerCase())) {
-    return cb(new Error(`Unsupported content type: ${file.mimetype}. Upload a CSV, JSON or Excel file.`));
+    return cb(new UploadRefusedError(`This file's content type (${file.mimetype}) cannot be uploaded. Upload a CSV, TSV, JSON or Excel file.`));
   }
   // A name carrying a path (slashes or "..") or an absurd length is refused outright.
   if (/[\\/]|\.\./.test(file.originalname) || file.originalname.length > 200) {
-    return cb(new Error("Unsupported file name."));
+    return cb(new UploadRefusedError("This file name cannot be uploaded: rename it without slashes or \"..\", in 200 characters or fewer."));
   }
 
   cb(null, true);

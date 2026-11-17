@@ -2,27 +2,42 @@
   INCIDENT SPATIAL MODELS (per-exit)
 ================================================================================
 
-  GWR — cross-section over 20 exits, IN-SAMPLE fit (see fit_gwr docstring)
-    bandwidth (fixed, degrees) = 0.7000
-    MAE              = 2.080
-    Poisson_Deviance = 1.271
-    n                = 20
-    Leave-one-exit-out MAE = 2.846  (n=20 folds) — the honest generalization estimate; compare against the in-sample MAE above
-
+  GWR — cross-section over 20 exits (explanatory: the coefficient map)
+    bandwidth (fixed, degrees) = 0.7000  (full fit; in-sample MAE 2.061, deviance 1.259, n 20)
+    Leave-one-exit-out (20 folds, 0 failed; bandwidth re-chosen in every fold, 0.680-0.950), mean daily incidents per exit:
+      Mean of the 2 nearest exits (baseline)     MAE = 1.533
+      GWR                                        MAE = 2.850
+      Mean of the other exits (baseline)         MAE = 2.901
+      Global Poisson GLM                         MAE = 3.194
+    GWR does NOT beat the best baseline (Mean of the 2 nearest exits (baseline)); GWR - baseline 95% interval [+0.299, +2.294]
+    GWR - global Poisson GLM 95% interval [-1.676, +0.760] (does letting coefficients vary help?)
     20 of 60 non-intercept (exit, variable) coefficients are locally significant (|t| > 1.96)
 
-  Spatial LSTM — pooled across exits, genuine temporal holdout
-    MAE              = 2.166
-    Poisson_Deviance = 1.281
-    baseline MAE     = 2.318 (per-exit train mean)  6.560 (predict zero)
-    holdout n        = 1220 exit-days across 20 exits
-    epochs trained   = 31
+  Daily incidents per exit — tested as served
+    rolling origins every 14 days over the last 52 weeks of real volume, each a 28-day recursive rollout as served (rain 0, volume held at the last week's level); weights refitted every 4 origin(s) on data before that origin, early stopping on the 60 days before it
+    26 origins 2025-05-26..2026-05-11; scored days 2025-05-26..2026-05-24; 20 exits
 
-  Next-24h high-risk segments (top 5 of 28-day rollout, day 1):
-    #1  exit_id=3   predicted=12.733  last_observed=13
-    #2  exit_id=14  predicted=11.992  last_observed=9
-    #3  exit_id=13  predicted=11.902  last_observed=10
-    #4  exit_id=4   predicted=11.873  last_observed=12
-    #5  exit_id=1   predicted=10.309  last_observed=14
-  Day 28 top exit: exit_id=3 predicted=12.840 (recursive rollout -- compounded, treat with less confidence than day 1)
+  MAE by horizon, 26 origins (score = mean of buckets)
+  model                                    d1-7      d8-14     d15-28      score
+  Baseline: same weekday, trailing 52 weeks      2.16       2.06       2.12       2.12  <- champion
+  Baseline: trailing 365-day mean         2.20       2.09       2.15       2.15 
+  Baseline: weekday average               2.25       2.14       2.20       2.20 
+  Spatial LSTM (no rain input)            2.22       2.15       2.26       2.21 
+  Baseline: whole-history mean            2.26       2.19       2.23       2.23 
+  Spatial LSTM                            2.22       2.18       2.29       2.23 
+  Baseline: last week                     2.88       2.76       2.82       2.82 
+  Baseline: last year (scaled)            3.04       2.93       3.01       2.99 
+  Baseline: zero                          6.04       6.13       6.13       6.10 
+
+  best baseline: Baseline: same weekday, trailing 52 weeks;  eligible: none
+  note: No candidate beats the best baseline; the baseline is served.
+    served: Baseline: same weekday, trailing 52 weeks  (a baseline: no LSTM beat the best baseline)
+
+  Next-24h high-risk segments (top 5 of the 28-day forecast written, day 1):
+    #1  exit_id=13  predicted=12.827  last_observed=11
+    #2  exit_id=4   predicted=11.558  last_observed=6
+    #3  exit_id=14  predicted=11.385  last_observed=8
+    #4  exit_id=3   predicted=10.731  last_observed=9
+    #5  exit_id=15  predicted=9.615  last_observed=7
+  Day 28 top exit: exit_id=13 predicted=10.943
 ================================================================================

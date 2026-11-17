@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { getEmissionsIndexFromDb, getPeakPenaltyFromDb, getClimateResilienceFromDb, getEmissionsAnalyticsFromDb, getFleetMixForecast, getFleetProfile } from "../services/emissions.service.js";
+import { getEmissionsIndexFromDb, getPeakPenaltyFromDb, getClimateResilienceFromDb, getEmissionsAnalyticsFromDb, getFleetMixForecast, getFleetProfile, getForecastProtocol } from "../services/emissions.service.js";
 import { getEmissionForecast, getHorizonAccuracy } from "../services/traffic.service.js";
 import { getPrescriptiveStrategies } from "../services/emissions-prescriptive.service.js";
 
@@ -80,7 +80,7 @@ const EmissionForecastQuerySchema = z.object({
 });
 
 /**
- * GET /api/emissions/forecast — the served 7-day corridor CO2 forecast.
+ * GET /api/emissions/forecast — the served corridor CO2 forecast (90 days stored, each stretch tested by rolling origin).
  *
  * Public, matching /analytics: it is the predictive half of the same panel and
  * carries no more sensitivity than the descriptive half already exposed.
@@ -90,12 +90,15 @@ export const getEmissionsForecast = async (req: Request, res: Response) => {
 
   let data;
   let horizon;
+  let protocol;
   try {
-    [data, horizon] = await Promise.all([
+    [data, horizon, protocol] = await Promise.all([
       getEmissionForecast(months === "all" ? undefined : Number(months)),
-      // What each stretch of the 90-day projection is worth. The headline
-      // metrics are h=7; the panel now draws far beyond that.
+      // What each stretch of the 90-day projection is worth: the rolling-origin
+      // buckets the headline WMAPE is the mean of.
       getHorizonAccuracy("Corridor CO2"),
+      // How it was tested (origins x days ahead), from the stored split label.
+      getForecastProtocol("Corridor CO2"),
     ]);
   } catch (error) {
     const kind = (error as { kind?: string }).kind;
@@ -125,20 +128,31 @@ export const getEmissionsForecast = async (req: Request, res: Response) => {
   const coChampions = data.metrics
     .filter((m) => m.accepted && typeof m.diagnosis === "string" && m.diagnosis.startsWith("tied with"))
     .map((m) => m.model);
+  /* The baselines are stored beside the models. MASE is each model's WMAPE over the BEST baseline's (that row scores
+     1.000), so the card names that baseline rather than assuming one; "last week" is kept apart because it is the
+     comparison a reader reaches for first. */
+  const baselines = data.metrics
+    .filter((m) => /^Baseline:/.test(m.model) && m.wmape != null)
+    .sort((a, b) => (a.wmape as number) - (b.wmape as number));
+  const brief = (m: (typeof baselines)[number] | undefined) => (m ? { model: m.model, wmape: m.wmape, mase: m.mase } : null);
   res.json({
     success: true,
     source: "database",
     data: {
       ...data,
-      // Horizon differs from the volume module's 14 days, so it is stated rather
-      // than assumed by whoever reads the metrics next to it.
-      horizonDays: 7,
+      /* How far ahead the stored metrics were tested (17 Nov 2026: hard-coded 7 while the study scored every day out
+         to 90): the split label's days ahead, else the horizon table's last bucket. */
+      horizonDays: protocol?.horizonDays ?? (horizon?.length ? Math.max(...horizon.map((b) => b.hHi)) : null),
+      protocol,
+      bestBaseline: brief(baselines[0]),
+      lastWeekBaseline: brief(baselines.find((m) => m.model === "Baseline: last week")),
       champion,
       coChampions,
       horizonAccuracy: horizon ?? [],
-      // The forecast window is scored on day-of-year climatology, not observed
-      // weather, so these figures are achievable in deployment.
-      weatherAtForecastTime: "climatology",
+      /* The served models read no weather: no weather forecast covers a window that starts after the record ends,
+         so the trainer serves the weather-free variant of each family (uses_weather false) and rejects the weather
+         twins. Not "climatology": nothing stands in for the weather. */
+      weatherAtForecastTime: champion?.uses_weather ? "observed" : "none",
     },
   });
 };
@@ -150,10 +164,13 @@ const FleetMixQuerySchema = z.object({
   days: z.coerce.number().int().min(30).max(1500).optional().default(180),
 });
 
-// GET /api/emissions/fleet-mix — 7-day fleet composition forecast
+// GET /api/emissions/fleet-mix — fleet composition forecast, with its accuracy by stretch of days ahead
 export const getFleetMix = async (req: Request, res: Response) => {
   const { days } = FleetMixQuerySchema.parse(req.query);
-  const data = await getFleetMixForecast(days);
+  const [forecast, horizon] = await Promise.all([getFleetMixForecast(days), getHorizonAccuracy("Fleet Mix")]);
+  /* The rolling-origin buckets (days 1-7, 8-14, 15-30), so the card can say every projected day was scored rather
+     than "7 days validated" (17 Nov 2026). Empty when the table holds none. */
+  const data = forecast ? { ...forecast, horizonAccuracy: horizon ?? [] } : null;
 
   if (!data) {
     return res.status(503).json({

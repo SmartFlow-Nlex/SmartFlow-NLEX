@@ -87,6 +87,13 @@ const PROCLAIMED_OVERRIDES: PhHoliday[] = [
   // 2026. Added on that evidence; confirm the proclamation number before citing.
   { date: "2025-02-25", name: "EDSA People Power Anniversary", type: "Special", source: "proclamation", note: "observed non-working in source data — confirm proclamation" },
   { date: "2026-02-25", name: "EDSA People Power Anniversary", type: "Special", source: "proclamation", note: "observed non-working in source data — confirm proclamation" },
+
+  // ── 49th ASEAN Summit, Manila — special non-working days in NCR only ──
+  // Proc. 1447 s.2026 (signed 17 Sep 2026; PIA, 22 Sep 2026). NCR-only, but NLEX's south end is in NCR and its
+  // traffic is mostly trips to and from it, so the congestion model reads these as holidays (15 Nov 2026).
+  { date: "2026-11-16", name: "ASEAN Summit (NCR)", type: "Special", source: "proclamation", note: "Proc. 1447 s.2026 — NCR only" },
+  { date: "2026-11-17", name: "ASEAN Summit (NCR)", type: "Special", source: "proclamation", note: "Proc. 1447 s.2026 — NCR only" },
+  { date: "2026-11-18", name: "ASEAN Summit (NCR)", type: "Special", source: "proclamation", note: "Proc. 1447 s.2026 — NCR only" },
 ];
 
 /** Library entries that are not Philippine non-working holidays. */

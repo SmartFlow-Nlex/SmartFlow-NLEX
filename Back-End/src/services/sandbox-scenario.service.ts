@@ -5,7 +5,6 @@ import {
   getMLPredictiveVolumeHourly,
   getMLModelMetrics,
   getEmissionForecast,
-  getTrafficAnalyticsFromDb,
 } from "./traffic.service.js";
 import {
   getIncidentHourlyFromDb,
@@ -36,35 +35,39 @@ import {
 ══════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Daily corridor total to peak-hour arrivals AT ONE SEGMENT.
+ * A corridor forecast to the traffic on ONE STRETCH, in ONE DIRECTION (17 Nov 2026).
  *
- * Two conversions, and the second one matters more than it looks.
+ * The forecast is a corridor total: every vehicle once, at whichever plaza it paid. It is not the flow past any
+ * one point, and it has no direction. This used to load the busiest plaza's share of it (18.4%, Bocaue Barrier)
+ * as the inflow of every stretch and both carriageways alike: 3,465 veh/h at 08:00 on 25 May 2026 at Km 12, Km 50
+ * and Km 86, northbound and southbound, where the record puts 2,755 / 4,407 at Km 12 and 1,059 / 126 at Km 86.
  *
- * 1.6 is the peak-hour factor: the busiest hour carries more than 1/24th of the
- * day. It matches what the AI Sandbox page already used.
- *
- * The segment share is the part the page got wrong. `totalVolume` counts every
- * vehicle once, at whichever of the ~19 plazas it entered — it is a corridor
- * total, not a flow past a point. Feeding it whole into a single 4-lane stretch
- * implied 23,000 vehicles/hour, which is roughly three times what four lanes can
- * physically carry (~2,000/lane/hour), so the simulation simply saturated and
- * every scenario looked identically gridlocked regardless of the forecast.
- *
- * Without an origin-destination matrix the honest approximation is the busiest
- * plaza's share of corridor volume — the load at the heaviest point on the road,
- * which is where a closure is worth simulating. The share used is returned in
- * the payload so the assumption is visible rather than buried here.
+ * What the forecast can say honestly is how busy the corridor will be at an hour against how busy it usually is
+ * then. So this returns that ratio for each hour — the forecast's corridor total against the corridor's mean for
+ * the same hour over every day in the record (gold.fact_traffic_hourly, the same days the sandbox's per-stretch
+ * flows are averaged over) — and the sandbox multiplies each stretch's own recorded flow for that hour and
+ * direction by it (useDirectionSim). The stretch keeps its own level and its own direction; the forecast moves it.
+ * The assumption left is that a stretch's share of the corridor at an hour is the same on the forecast day as on
+ * an average day.
  */
-const PEAK_HOUR_FACTOR = 1.6;
 
-/** Bounds the sandbox simulation accepts. Mirrors the page's own inflow slider. */
-const INFLOW_MIN = 500;
-const INFLOW_MAX = 12_000;
-/**
- * Floor for a single hour's inflow. A quiet hour really is a fraction of the peak, so the peak's floor
- * (INFLOW_MIN) would overstate 03:00 several times over; this only keeps the engine from being asked for none.
- */
-const HOURLY_INFLOW_MIN = 100;
+/** Read once and kept, like the inputs below: the record changes only when toll data is reloaded. */
+async function getTypicalCorridorHourly(): Promise<number[] | null> {
+  if (!db) return null;
+  try {
+    const { rows } = await db.query(
+      `SELECT hour::int AS hour, AVG(v)::float AS v
+         FROM (SELECT date, hour, SUM(total) AS v FROM gold.fact_traffic_hourly WHERE total IS NOT NULL GROUP BY 1, 2) d
+        GROUP BY 1 ORDER BY 1`,
+    );
+    const out: number[] = Array(24).fill(0);
+    for (const r of rows as { hour: number; v: number }[]) if (r.hour >= 0 && r.hour < 24) out[r.hour] = Number(r.v) || 0;
+    return out.every((v) => v > 0) ? out : null;
+  } catch (error) {
+    console.error("Failed to read the corridor's typical hourly volume:", error);
+    return null;
+  }
+}
 
 export type ScenarioContext = {
   date: string;
@@ -73,20 +76,21 @@ export type ScenarioContext = {
   volume: {
     /** Corridor-wide daily total the champion predicts for this date. */
     dailyVehicles: number | null;
-    /** Busiest plaza's share of corridor volume, used to load one segment. */
-    segmentSharePct: number | null;
-    segmentName: string | null;
-    /** Derived arrival rate for the simulation, already clamped to its range. */
-    peakHourInflow: number | null;
     /**
      * Corridor-wide vehicles the champion predicts for each hour (0-23) of this date: the Traffic page's own
      * hourly drill-down for the same model — the day's prediction spread over this weekday's typical shape.
      * Null when no hourly shape exists for the date.
      */
     hourly: (number | null)[] | null;
-    /** `hourly` at one segment (× segmentSharePct), the arrival rate the simulation runs at that hour. */
-    hourlyInflow: (number | null)[] | null;
-    clamped: boolean;
+    /** The corridor's mean vehicles at each hour (0-23) over every day in the record (gold.fact_traffic_hourly). */
+    typicalHourly: number[] | null;
+    /**
+     * `hourly` / `typicalHourly`: how much busier (above 1) or quieter (below 1) the corridor is forecast to be at
+     * each hour than it usually is then. The sandbox multiplies each stretch's own recorded flow by it.
+     */
+    hourlyScale: (number | null)[] | null;
+    /** The forecast day's total against the record's mean daily total: the scale used when the date has no hourly shape. */
+    dayScale: number | null;
     model: string | null;
     wmape: number | null;
   };
@@ -201,7 +205,7 @@ const SCENARIO_INPUT_TTL_MS = 10 * 60_000;
 export async function getScenarioContext(date?: string): Promise<ScenarioContext | null> {
   const anchors = await cached("incident:anchors", SCENARIO_INPUT_TTL_MS, getIncidentPredictiveAnchors);
 
-  const [volumes, metrics, emissions, incidents, analytics] = await Promise.all([
+  const [volumes, metrics, emissions, incidents, typicalHourly] = await Promise.all([
     cached("scenario:volume", SCENARIO_INPUT_TTL_MS, () => getMLPredictiveVolume({ months: "all" })),
     cached("scenario:metrics", SCENARIO_INPUT_TTL_MS, () => getMLModelMetrics("80_20")),
     cached("scenario:emissions", SCENARIO_INPUT_TTL_MS, () => getEmissionForecast()),
@@ -210,7 +214,7 @@ export async function getScenarioContext(date?: string): Promise<ScenarioContext
     anchors
       ? cached(`scenario:incidents:${JSON.stringify(anchors)}`, SCENARIO_INPUT_TTL_MS, () => getIncidentPredictiveFromDb({ weather: "all" }, anchors))
       : Promise.resolve(null),
-    cached("scenario:analytics", SCENARIO_INPUT_TTL_MS, () => getTrafficAnalyticsFromDb({ months: "12" })),
+    cached("scenario:typical-hourly", SCENARIO_INPUT_TTL_MS, getTypicalCorridorHourly),
   ]);
 
   // Volume seeds the simulation and emissions define the offered range, so
@@ -273,31 +277,12 @@ export async function getScenarioContext(date?: string): Promise<ScenarioContext
   const col = champion ? COLUMN[champion.model] : undefined;
   const rawDaily = col && vRow?.[col] != null ? Number(vRow[col]) : null;
 
-  // Busiest plaza's share of corridor volume. Falls back to an even split
-  // across the plazas if the breakdown is unavailable, rather than silently
-  // reverting to the whole-corridor figure that saturates the simulation.
-  const byPlaza: any[] = (analytics as any)?.byPlaza ?? [];
-  const plazaTotal = byPlaza.reduce((sum, p) => sum + Number(p.v || 0), 0);
-  const busiest = byPlaza.reduce(
-    (best, p) => (Number(p.v || 0) > Number(best?.v || 0) ? p : best),
-    byPlaza[0],
-  );
-  const segmentShare =
-    plazaTotal > 0 && busiest
-      ? Number(busiest.v) / plazaTotal
-      : byPlaza.length > 0
-        ? 1 / byPlaza.length
-        : null;
-  const segmentName = busiest ? String(busiest.plaza) : null;
-
-  if (segmentShare == null) {
+  if (typicalHourly == null) {
     notes.push(
-      "The per-plaza breakdown was unavailable, so the segment load could not be apportioned from the corridor total.",
+      "The corridor's typical hourly volume could not be read, so the forecast cannot be compared with a usual day and is not loaded into the simulation.",
     );
   }
 
-  let peakHourInflow: number | null = null;
-  let clamped = false;
   /* Seeded from a model that was rejected — said plainly rather than hidden.
      The operator should know the level is indicative before they build a
      scenario on it. */
@@ -306,16 +291,7 @@ export async function getScenarioContext(date?: string): Promise<ScenarioContext
       `${champion.model} is the best-ranked volume model but did NOT pass its acceptance gate: it does not beat a seasonal-naive baseline on MASE. The scenario is seeded from it anyway — treat the level as indicative.`,
     );
   }
-  if (rawDaily != null && Number.isFinite(rawDaily) && segmentShare != null) {
-    const raw = Math.round(((rawDaily * segmentShare) / 24) * PEAK_HOUR_FACTOR);
-    peakHourInflow = Math.min(INFLOW_MAX, Math.max(INFLOW_MIN, raw));
-    clamped = peakHourInflow !== raw;
-    if (clamped) {
-      notes.push(
-        `The forecast implies ${raw.toLocaleString("en-US")} vehicles/hour at peak, outside the simulation's ${INFLOW_MIN}-${INFLOW_MAX} range; it has been clamped.`,
-      );
-    }
-  } else if (rawDaily == null) {
+  if (rawDaily == null) {
     /* Say which of the two it actually is. "The champion stored no prediction"
        was reported for BOTH a missing row and a missing champion, and it was
        always the second — which sent the reader hunting for absent data that
@@ -367,10 +343,13 @@ export async function getScenarioContext(date?: string): Promise<ScenarioContext
     );
   }
   const hourly = hourlyVol?.hours.some((h) => h.predicted != null) ? hourlyVol.hours.map((h) => h.predicted) : null;
-  const hourlyInflow =
-    hourly && segmentShare != null
-      ? hourly.map((v) => (v == null ? null : Math.min(INFLOW_MAX, Math.max(HOURLY_INFLOW_MIN, Math.round(v * segmentShare)))))
+  const round3 = (v: number) => Math.round(v * 1000) / 1000;
+  const hourlyScale =
+    hourly && typicalHourly
+      ? hourly.map((v, h) => (v == null || !(typicalHourly[h] > 0) ? null : round3(v / typicalHourly[h])))
       : null;
+  const typicalDay = typicalHourly ? typicalHourly.reduce((s, v) => s + v, 0) : 0;
+  const dayScale = rawDaily != null && Number.isFinite(rawDaily) && typicalDay > 0 ? round3(rawDaily / typicalDay) : null;
   const incChampion = (hourlyInc as any)?.models?.find((m: any) => m.isChampion) ?? null;
   const incHourly: number[] | null =
     incChampion && Array.isArray(incChampion.hours) && incChampion.hours.every((v: unknown) => typeof v === "number")
@@ -387,12 +366,10 @@ export async function getScenarioContext(date?: string): Promise<ScenarioContext
     availableDates,
     volume: {
       dailyVehicles: rawDaily,
-      segmentSharePct: segmentShare != null ? segmentShare * 100 : null,
-      segmentName,
-      peakHourInflow,
       hourly,
-      hourlyInflow,
-      clamped,
+      typicalHourly: typicalHourly ? typicalHourly.map((v) => Math.round(v)) : null,
+      hourlyScale,
+      dayScale,
       model: champion?.model ?? null,
       wmape: champion?.wmape ?? null,
     },
