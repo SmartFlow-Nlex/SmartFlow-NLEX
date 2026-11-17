@@ -64,7 +64,7 @@ export const PRESETS: Record<Difficulty, DifficultyPreset> = {
   rookie: {
     id: 'rookie',
     label: 'Rookie',
-    tagline: 'Learn the tracks. Rivals take it easy.',
+    tagline: 'Rivals go easy',
     changes: ['Rivals are slower and wait for you', 'Bends push you outward less', 'You start 4th, not last'],
     rivalPace: 0.86,
     rubberBand: 0.6,
@@ -75,7 +75,7 @@ export const PRESETS: Record<Difficulty, DifficultyPreset> = {
   easy: {
     id: 'easy',
     label: 'Easy',
-    tagline: 'A fair race with friendly rivals.',
+    tagline: 'Friendly rivals',
     changes: ['Rivals a little slower than you', 'Gentle bends', 'Nobody blocks'],
     rivalPace: 0.94,
     rubberBand: 0.35,
@@ -86,7 +86,7 @@ export const PRESETS: Record<Difficulty, DifficultyPreset> = {
   standard: {
     id: 'standard',
     label: 'Standard',
-    tagline: 'The race as designed.',
+    tagline: 'The real race',
     changes: ['Rivals match your pace in places', 'Some rivals block'],
     rivalPace: 1.0,
     rubberBand: 0.15,
@@ -97,7 +97,7 @@ export const PRESETS: Record<Difficulty, DifficultyPreset> = {
   pro: {
     id: 'pro',
     label: 'Pro',
-    tagline: 'Every tenth counts.',
+    tagline: 'Every tenth counts',
     changes: ['Fast rivals, no waiting', 'Stronger push in bends', 'Blocking rivals'],
     rivalPace: 1.05,
     rubberBand: 0,

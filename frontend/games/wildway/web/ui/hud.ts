@@ -9,8 +9,8 @@ import type { Portraits, HeroId } from '../models';
 
 export const HERO_INFO: Record<HeroId, { name: string; role: string; can: string }> = {
   dayo: { name: 'Dayo', role: 'Field Guardian', can: 'Moves obstacles, climbs, and builds restoration gear.' },
-  baging: { name: 'Baging', role: 'Rescue Partner', can: 'A vine sprite who stretches across gaps, reaches far things and carries two loads at once.' },
-  sukat: { name: 'Sukat', role: 'Eco Analyst', can: 'A weather-station robot who scans from a safe distance, compares plans and fills the Atlas.' },
+  baging: { name: 'Baging', role: 'Rescue Partner', can: 'A cheerful little elf helper in orange, with stretchy arms: reaches across gaps, grabs far things, carries two loads.' },
+  sukat: { name: 'Sukat', role: 'Eco Analyst', can: 'A pocket field console who scans from a safe distance, compares plans and fills the Atlas.' },
   awit: { name: 'Awit', role: 'Aerial Scout', can: 'Rides a kite to scout from above, and plays a bamboo flute for sound puzzles.' },
 };
 
@@ -47,6 +47,9 @@ export class Hud {
   private readonly abilityBtn: HTMLButtonElement;
   private readonly abilityFill: HTMLElement;
   private readonly noticeEl: HTMLElement;
+  /** A green tick that pops beside the objective when a step is done. */
+  private readonly checkEl: HTMLElement;
+  private shownObjective = '';
   private readonly speech: HTMLElement;
   private speechShownAt = 0;
   private readonly speechImg: HTMLImageElement;
@@ -74,11 +77,14 @@ export class Hud {
     this.guideDist = h('span', { class: 'guide-dist' });
     this.goBtn = h('button', { class: 'go-btn hidden', text: 'Go', label: 'Go most of the way there', attrs: { type: 'button' }, onClick: () => handlers.onGo() });
     this.guide = h('div', { class: 'guide' }, this.guideArrow, this.guideDist, this.goBtn);
+    /* Short news ("2 of 4") sits just under the objective, where the eye already is, never over the team. */
+    this.noticeEl = h('div', { class: 'notice hidden' });
+    this.checkEl = h('span', { class: 'objective-check hidden', html: ICONS.check, attrs: { 'aria-hidden': 'true' } });
     const top = h(
       'div',
       { class: 'hud-top' },
       h('button', { class: 'round-btn', label: 'Pause', attrs: { type: 'button' }, html: ICONS.pause, onClick: () => handlers.onPause() }),
-      h('div', { class: 'objective' }, h('div', { class: 'objective-top' }, this.missionName, this.steps), this.objective, this.guide),
+      h('div', { class: 'objective' }, h('div', { class: 'objective-top' }, this.missionName, this.steps), h('div', { class: 'objective-row' }, this.checkEl, this.objective), this.guide, this.noticeEl),
       h('button', { class: 'round-btn hint-btn', label: 'Ask Navie for a hint', attrs: { type: 'button' }, html: ICONS.info, onClick: () => handlers.onHint() }),
       h('button', { class: 'round-btn', label: 'Open the Wildlife Atlas', attrs: { type: 'button' }, html: ICONS.book, onClick: () => handlers.onAtlas() }),
     );
@@ -108,7 +114,6 @@ export class Hud {
     this.abilityFill = h('span', { class: 'ability-fill' });
     this.abilityBtn = h('button', { class: 'ability-btn hidden', label: 'Glide on the kite', attrs: { type: 'button' } }, this.abilityFill, h('span', { class: 'ability-text', text: 'Glide' }));
     hold(this.abilityBtn, handlers.onAbilityDown, handlers.onAbilityUp);
-    this.noticeEl = h('div', { class: 'notice hidden' });
     this.speechImg = h('img', { class: 'speech-img', attrs: { alt: '' } });
     this.speechName = h('div', { class: 'speech-name' });
     this.speechText = h('div', { class: 'speech-text' });
@@ -128,7 +133,6 @@ export class Hud {
       top,
       team,
       h('div', { class: 'hud-actions' }, this.abilityBtn, this.actionBtn),
-      this.noticeEl,
       this.bannerEl,
       this.speech,
       this.flashEl,
@@ -158,6 +162,11 @@ export class Hud {
       this.objective.classList.toggle('pop', ticked);
       if (ticked) {
         window.setTimeout(() => this.objective.classList.remove('pop'), 700);
+        /* A step done: a tick pops in beside the objective for a moment, then the next one takes over. */
+        this.checkEl.classList.remove('hidden', 'show');
+        void this.checkEl.offsetWidth;
+        this.checkEl.classList.add('show');
+        window.setTimeout(() => this.checkEl.classList.add('hidden'), 1500);
       }
     }
   }
@@ -170,9 +179,20 @@ export class Hud {
   }
 
   setObjective(text: string): void {
+    if (text === this.shownObjective) {
+      return;
+    }
+    /* The count going up ("2/4" to "3/4") gives the pill a small bump, so progress is felt. */
+    const counted = this.shownObjective !== '' && text !== '' && !this.objective.classList.contains('pop');
+    this.shownObjective = text;
     this.objective.classList.toggle('hidden', text === '');
     setText(this.objective, text);
     setText(this.live, text);
+    if (counted) {
+      this.objective.classList.remove('bump');
+      void this.objective.offsetWidth;
+      this.objective.classList.add('bump');
+    }
   }
 
   setGuide(angle: number | null, dist: number): void {
@@ -216,7 +236,9 @@ export class Hud {
   notice(text: string, seconds = 2.6): void {
     setText(this.noticeEl, text);
     setText(this.live, text);
-    this.noticeEl.classList.remove('hidden');
+    this.noticeEl.classList.remove('hidden', 'in');
+    void this.noticeEl.offsetWidth;
+    this.noticeEl.classList.add('in');
     this.noticeLeft = seconds;
   }
 
@@ -252,6 +274,11 @@ export class Hud {
     if (portrait !== '') {
       this.speechImg.src = this.portraits[portrait] ?? '';
     }
+    /* Navie bounces while speaking; every portrait pops in with a new line. */
+    this.speechImg.classList.toggle('navie', portrait.startsWith('navie-'));
+    this.speechImg.classList.remove('pop');
+    void this.speechImg.offsetWidth;
+    this.speechImg.classList.add('pop');
     this.speechImg.classList.toggle('hidden', portrait === '');
     this.speech.classList.remove('hidden');
     this.setHudHidden(true);

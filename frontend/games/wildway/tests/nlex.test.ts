@@ -212,9 +212,9 @@ test('missions: NLEX missions involve no species and claim no animal', () => {
   }
 });
 
-test('the line: stops run south to north, two have no mission yet, and the order of opening holds', () => {
-  assert.deepEqual(NLEX_STOPS.map((s) => s.id), ['balintawak', 'valenzuela', 'bocaue', 'san-fernando', 'angeles', 'dau']);
-  assert.equal(NLEX_STOPS.filter((s) => s.missionId === null && s.id !== 'balintawak').length, 2);
+test('the line: 18 stops run south to north, six have no playable mission yet, and the order of opening holds', () => {
+  assert.equal(NLEX_STOPS.length, 18);
+  assert.deepEqual(NLEX_STOPS.filter((s) => s.missionId === null).map((s) => s.id), ['marilao', 'ciudad-de-victoria', 'tabang', 'sta-rita', 'san-simon', 'dau']);
   const fresh = defaultSave();
   assert.ok(missionOpen(fresh, GRIDLOCK_MISSION.id) && missionOpen(fresh, HORNBILL_MISSION.id));
   assert.ok(!missionOpen(fresh, RIVER_MISSION.id) && !missionOpen(fresh, ECO_MISSION.id));

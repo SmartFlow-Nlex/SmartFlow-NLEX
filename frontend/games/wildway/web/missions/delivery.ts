@@ -216,7 +216,7 @@ export class DeliveryScript extends ScriptBase {
         this.dust = 0.14;
       }
       const lead = this.along(this.driving);
-      g.cameraTo([lead.x - 9, 6, lead.z + 8], [lead.x, 1, lead.z], 3);
+      g.chaseCamera(lead.x, lead.z, lead.yaw);
     }
     const s = g.zone.spots;
     const step = this.step();

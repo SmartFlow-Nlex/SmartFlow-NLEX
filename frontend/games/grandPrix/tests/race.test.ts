@@ -251,3 +251,110 @@ test('mini map: every track is one closed loop that never crosses itself, and po
     assert.ok(Math.hypot(start[0] - quarter[0], start[1] - quarter[1]) > 0.1, `${id}: a quarter lap moves the dot`);
   }
 });
+
+/* ---- Analog steering (touch, tilt, held buttons, keys), added 17 Nov 2026 ---- */
+
+/** A player-like driver on analog steering: leans toward the fast line in proportion, with a little lag. */
+function analogDriver(gain = 1.2, lag = 0.12): (sim: RaceSim) => RaceInput {
+  let steer = 0;
+  return (sim) => {
+    const s = sim.state;
+    const p = sim.player;
+    const want = Math.max(-1, Math.min(1, (idealLineFor(s, p.distance + 8) - p.x) * gain - p.vx * 0.15));
+    steer += (want - steer) * (1 - Math.exp(-STEP / lag));
+    return { axis: 0, targetX: null, steer, boost: s.boostMeter >= 1 / 3 && s.boostT <= 0, item: p.item !== null && p.itemRoll <= 0 };
+  };
+}
+
+function idealLineFor(s: RaceSim['state'], d: number): number {
+  return Math.max(-1.3, Math.min(1.3, -curveAt(s.track, d, s.length) * 0.9));
+}
+
+test('steering: letting go on a straight keeps the car on its line', () => {
+  const sim = new RaceSim(options({ mode: 'trial', track: 'palayan' }));
+  for (let t = 0; t < 1; t += STEP) {
+    sim.step(STEP, { axis: 0, targetX: null, steer: 0.6, boost: false });
+  }
+  for (let t = 0; t < 0.4; t += STEP) {
+    sim.step(STEP, { axis: 0, targetX: null, steer: 0, boost: false });
+  }
+  const x = sim.player.x;
+  for (let t = 0; t < 2; t += STEP) {
+    sim.step(STEP, { axis: 0, targetX: null, steer: 0, boost: false });
+  }
+  assert.ok(Math.abs(sim.player.x - x) < 0.02, `drifted ${(sim.player.x - x).toFixed(3)} on the straight`);
+});
+
+test('steering: proportional - a small lean crosses slowly, a full lean fast, and it answers quickly', () => {
+  const speed = (steer: number): { v: number; t90: number } => {
+    const sim = new RaceSim(options({ mode: 'trial', track: 'palayan' }));
+    let t90 = Infinity;
+    for (let t = 0; t < 0.6; t += STEP) {
+      sim.step(STEP, { axis: 0, targetX: null, steer, boost: false });
+      if (t90 === Infinity && Math.abs(sim.player.vx) >= Math.abs(steer) * 3.4 * 0.9) {
+        t90 = t;
+      }
+    }
+    return { v: Math.abs(sim.player.vx), t90 };
+  };
+  const small = speed(0.25);
+  const full = speed(1);
+  assert.ok(Math.abs(small.v / full.v - 0.25) < 0.05, `small/full lateral speed ${(small.v / full.v).toFixed(2)}`);
+  assert.ok(full.t90 < 0.12, `full lean reaches 90% in ${full.t90.toFixed(3)} s`);
+});
+
+test('steering: a long bend is held with a steady lean inward, no repeated swipes', () => {
+  for (const track of TRACKS_IN_CUP) {
+    const sim = new RaceSim(options({ mode: 'trial', track }));
+    const drive = analogDriver();
+    let offroad = 0;
+    let swaps = 0;
+    let last = 0;
+    for (let t = 0; t < 45; t += STEP) {
+      const input = drive(sim);
+      const st = input.steer ?? 0;
+      if (Math.abs(st) > 0.15 && Math.sign(st) !== Math.sign(last) && Math.abs(last) > 0.15) {
+        swaps += 1;
+      }
+      if (Math.abs(st) > 0.15) {
+        last = st;
+      }
+      sim.step(STEP, input);
+      if (sim.state.offroad) {
+        offroad += STEP;
+      }
+    }
+    assert.ok(offroad < 1.5, `${track}: ${offroad.toFixed(1)} s on the grass with analog steering`);
+    assert.ok(swaps < 40, `${track}: ${swaps} left-right swaps in 45 s`);
+  }
+});
+
+test('steering: bends still push an unsteered car wide; the assist takes a little under half of it', () => {
+  /* How far out the car is 30 m into Sierra's first hard bend (it starts at 100 m), and the furthest it goes. */
+  const outward = (assist: boolean): { at: number; max: number } => {
+    const sim = new RaceSim(options({ mode: 'trial', track: 'sierra', steerAssist: assist }));
+    let at = 0;
+    let max = 0;
+    for (let t = 0; t < 12; t += STEP) {
+      sim.step(STEP, { axis: 0, targetX: null, steer: 0, boost: false });
+      if (at === 0 && sim.player.distance >= 130) {
+        at = Math.abs(sim.player.x);
+      }
+      max = Math.max(max, Math.abs(sim.player.x));
+    }
+    return { at, max };
+  };
+  const plain = outward(false);
+  const helped = outward(true);
+  assert.ok(plain.max > TRACK_HALF, `unassisted pushed out to ${plain.max.toFixed(2)}`);
+  assert.ok(helped.at < plain.at * 0.75, `30 m in: assisted ${helped.at.toFixed(2)} vs ${plain.at.toFixed(2)}`);
+});
+
+test('steering: an analog player can finish every track on every difficulty', () => {
+  for (const track of TRACKS_IN_CUP) {
+    for (const difficulty of DIFFICULTIES) {
+      const { sim } = race({ track, difficulty, seed: 5 }, analogDriver());
+      assert.ok(sim.state.finished, `${track}/${difficulty} analog driver did not finish`);
+    }
+  }
+});

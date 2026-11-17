@@ -20,6 +20,11 @@ export class GameAudio {
   private nextBird = 0;
   private region: 'forest' | 'station' | 'none' = 'none';
   private hum: { gain: GainNode; osc: OscillatorNode } | null = null;
+  /** Quiet beds under the place: distant traffic by the expressway, running water by the creek. 0..1 each. */
+  private beds = { traffic: 0, water: 0 };
+  private trafficGain: GainNode | null = null;
+  private waterGain: GainNode | null = null;
+  private lastStep = 0;
 
   unlock(): void {
     if (this.ctx === null) {
@@ -59,6 +64,32 @@ export class GameAudio {
       gain.gain.value = 0.16;
       air.connect(filter).connect(gain).connect(this.ambience);
       air.start();
+      /* Traffic far off: a low rumble that swells and fades slowly. */
+      const road = ctx.createBufferSource();
+      road.buffer = this.noise;
+      road.loop = true;
+      road.playbackRate.value = 0.6;
+      const roadLow = ctx.createBiquadFilter();
+      roadLow.type = 'lowpass';
+      roadLow.frequency.value = 260;
+      this.trafficGain = ctx.createGain();
+      this.trafficGain.gain.value = 0;
+      road.connect(roadLow).connect(this.trafficGain).connect(this.ambience);
+      road.start();
+      /* Water: a bright band of noise with a quick, uneven flutter, like a stream over stones. */
+      const stream = ctx.createBufferSource();
+      stream.buffer = this.noise;
+      stream.loop = true;
+      stream.playbackRate.value = 1.7;
+      const band = ctx.createBiquadFilter();
+      band.type = 'bandpass';
+      band.frequency.value = 1300;
+      band.Q.value = 0.8;
+      this.waterGain = ctx.createGain();
+      this.waterGain.gain.value = 0;
+      stream.connect(band).connect(this.waterGain).connect(this.ambience);
+      stream.start();
+      this.applyBeds();
       this.timer = window.setInterval(() => this.tick(), 120);
     }
     if (this.ctx.state === 'suspended') {
@@ -77,8 +108,54 @@ export class GameAudio {
     }
   }
 
-  setRegion(region: 'forest' | 'station' | 'none'): void {
+  setRegion(region: 'forest' | 'station' | 'none', beds: { traffic?: number; water?: number } = {}): void {
     this.region = region;
+    this.beds = { traffic: beds.traffic ?? 0, water: beds.water ?? 0 };
+    this.applyBeds();
+  }
+
+  private applyBeds(): void {
+    const ctx = this.ctx;
+    if (ctx === null || this.trafficGain === null || this.waterGain === null) {
+      return;
+    }
+    this.trafficGain.gain.setTargetAtTime(this.beds.traffic * 0.22, ctx.currentTime, 0.6);
+    this.waterGain.gain.setTargetAtTime(this.beds.water * 0.05, ctx.currentTime, 0.6);
+  }
+
+  /** One soft footstep: a short tap of filtered noise, its colour set by what is underfoot. */
+  footstep(surface: 'grass' | 'hard' | 'wood' | 'water'): void {
+    const ctx = this.ctx;
+    if (ctx === null || ctx.state !== 'running' || this.master === null || this.noise === null) {
+      return;
+    }
+    const t = ctx.currentTime;
+    if (t - this.lastStep < 0.12) {
+      return;
+    }
+    this.lastStep = t;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.playbackRate.value = 0.8 + Math.random() * 0.5;
+    const f = ctx.createBiquadFilter();
+    const shape: Record<typeof surface, { type: BiquadFilterType; freq: number; gain: number; len: number }> = {
+      grass: { type: 'bandpass', freq: 1800, gain: 0.05, len: 0.07 },
+      hard: { type: 'bandpass', freq: 900, gain: 0.07, len: 0.05 },
+      wood: { type: 'lowpass', freq: 600, gain: 0.11, len: 0.07 },
+      water: { type: 'highpass', freq: 1400, gain: 0.07, len: 0.12 },
+    };
+    const sh = shape[surface];
+    f.type = sh.type;
+    f.frequency.value = sh.freq * (0.9 + Math.random() * 0.2);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(sh.gain, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + sh.len);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(t, Math.random() * 1.5, sh.len + 0.03);
+    if (surface === 'wood') {
+      this.tone(170 + Math.random() * 30, t, 0.06, 0.04, 'triangle');
+    }
   }
 
   suspend(): void {
@@ -121,6 +198,12 @@ export class GameAudio {
       return;
     }
     const now = ctx.currentTime;
+    if (this.waterGain !== null && this.beds.water > 0) {
+      this.waterGain.gain.setTargetAtTime(this.beds.water * (0.035 + Math.random() * 0.03), now, 0.05);
+    }
+    if (this.trafficGain !== null && this.beds.traffic > 0) {
+      this.trafficGain.gain.setTargetAtTime(this.beds.traffic * (0.16 + 0.08 * Math.sin(now * 0.35)), now, 0.4);
+    }
     if (this.nextBeat < now) {
       this.nextBeat = now + 0.1;
     }

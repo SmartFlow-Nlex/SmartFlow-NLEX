@@ -27,7 +27,9 @@ export type RaceSfx =
   | 'tap'
   | 'deny'
   | 'buy'
-  | 'trophy';
+  | 'trophy'
+  | 'first'
+  | 'whoosh';
 
 export class RaceAudio {
   private ctx: AudioContext | null = null;
@@ -112,6 +114,12 @@ export class RaceAudio {
 
   dispose(): void {
     this.stopEngine();
+    try {
+      this.tyreSrc?.stop();
+    } catch {
+      // Already stopped.
+    }
+    this.tyreSrc = null;
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
@@ -144,23 +152,23 @@ export class RaceAudio {
     osc.stop(start + duration + 0.02);
   }
 
-  private hiss(duration: number, gain: number, filter: number, when = 0): void {
+  private hiss(duration: number, gain: number, filter: number, when = 0, dest: GainNode | null = this.effects, type: BiquadFilterType = 'lowpass'): void {
     const ctx = this.ctx;
-    if (ctx === null || this.noise === null || this.effects === null || this.suspended) {
+    if (ctx === null || this.noise === null || dest === null || this.suspended) {
       return;
     }
     const start = ctx.currentTime + when;
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
     const f = ctx.createBiquadFilter();
-    f.type = 'lowpass';
+    f.type = type;
     f.frequency.value = filter;
     const env = ctx.createGain();
     env.gain.setValueAtTime(gain, start);
     env.gain.exponentialRampToValueAtTime(0.0001, start + duration);
     src.connect(f);
     f.connect(env);
-    env.connect(this.effects);
+    env.connect(dest);
     src.start(start);
     src.stop(start + duration + 0.02);
   }
@@ -242,7 +250,43 @@ export class RaceAudio {
       case 'trophy':
         [523, 659, 784, 1047, 1319].forEach((f, i) => this.tone(f, 0.35, 'triangle', 0.12, i * 0.14));
         break;
+      case 'first':
+        /* Into the lead: a quick bright fanfare. */
+        [784, 988, 1175, 1568].forEach((f, i) => this.tone(f, 0.14, 'square', 0.05, i * 0.06));
+        this.tone(1568, 0.3, 'triangle', 0.08, 0.24);
+        break;
+      case 'whoosh':
+        this.hiss(0.35, 0.25, 3000, 0, this.effects, 'bandpass');
+        break;
     }
+  }
+
+  private tyreGain: GainNode | null = null;
+  private tyreSrc: AudioBufferSourceNode | null = null;
+
+  /** Tyres scrubbing in a hard bend (0 quiet .. 1 hard): a soft band of noise, never a screech. */
+  setTyres(load: number): void {
+    const ctx = this.ctx;
+    if (ctx === null || this.effects === null || this.noise === null) {
+      return;
+    }
+    if (this.tyreSrc === null) {
+      this.tyreSrc = ctx.createBufferSource();
+      this.tyreSrc.buffer = this.noise;
+      this.tyreSrc.loop = true;
+      const band = ctx.createBiquadFilter();
+      band.type = 'bandpass';
+      band.frequency.value = 1700;
+      band.Q.value = 1.4;
+      this.tyreGain = ctx.createGain();
+      this.tyreGain.gain.value = 0;
+      this.tyreSrc.connect(band);
+      band.connect(this.tyreGain);
+      this.tyreGain.connect(this.effects);
+      this.tyreSrc.start();
+    }
+    const level = this.suspended ? 0 : Math.max(0, Math.min(1, load));
+    this.tyreGain?.gain.setTargetAtTime(level * level * 0.05, ctx.currentTime, 0.12);
   }
 
   /** The engine: pitch follows speed, a little brighter while boosting; 0 turns it off. */
@@ -336,6 +380,25 @@ export class RaceAudio {
         this.tone(note(chord[0] - 12), eighth * 1.8, 'triangle', 0.2, when, this.music);
       }
       this.tone(note(chord[[0, 1, 2, 1, 2, 1, 0, 2][step]] + 12), eighth * 0.8, 'square', 0.04, when, this.music);
+      /* Drums: kick on 1 and 3, snare on 2 and 4, a hi-hat on every off-beat. */
+      if (step === 0 || step === 4) {
+        this.tone(150, 0.16, 'sine', 0.22, when, this.music, 45);
+      }
+      if (step === 2 || step === 6) {
+        this.hiss(0.12, 0.16, 1800, when, this.music, 'bandpass');
+      }
+      if (step % 2 === 1) {
+        this.hiss(0.04, 0.07, 7000, when, this.music, 'highpass');
+      }
+      /* A cheerful lead line over every other four bars. */
+      const bar = Math.floor(this.beat / 8);
+      if (bar % 8 >= 4) {
+        const LEAD = [12, -1, 16, -1, 19, 16, 14, -1, 12, -1, 9, -1, 7, 9, 12, -1];
+        const n = LEAD[(this.beat % 16)];
+        if (n >= 0) {
+          this.tone(note(n + 12), eighth * 0.9, 'triangle', 0.06, when, this.music);
+        }
+      }
       this.nextBeat += eighth;
       this.beat += 1;
     }

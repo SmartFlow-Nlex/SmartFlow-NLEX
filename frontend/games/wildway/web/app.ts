@@ -2,7 +2,7 @@ import { HINTS, HUB_LINES, NLEX_LINES, OBJECTIVES } from '../core/content';
 import { savings } from '../core/emissions';
 import { DEPOT_BEFORE, facilityDay } from '../core/facility';
 import { chosenUpgrades, currentStep, DELIVERY_CHOICES, DELIVERY_DEPARTURE, DELIVERY_MISSION, DELIVERY_ROUTE, depotRepairs, ECO_MISSION, GRIDLOCK_MISSION, HORNBILL_MISSION, isFinished, missionById, missionTransport, MISSIONS, newRun, RIVER_MISSION, setFlag, type MissionDef, type MissionRun } from '../core/mission';
-import { missionOpen, NLEX_STOPS, progress } from '../core/nlex';
+import { missionOpen, NLEX_STOPS, progress, stopCleared } from '../core/nlex';
 import { allModeSets, BOCAUE_PLAZA, plazaSolved, simulatePlaza } from '../core/plaza';
 import { ACHIEVEMENTS, COLLECTIBLES, DISCOVERIES, GEAR, GEAR_EFFECT, SIDE_QUESTS } from '../core/progression';
 import { CIRCUITS, DIALS, LOADS } from '../core/puzzles';
@@ -26,7 +26,9 @@ import { achievementGallery, navieMenu, noticeBoard, quizScreen, workshopScreen 
 import { circuitPuzzle, dialPuzzle, loadPuzzle, type PuzzleHandle } from './ui/puzzles';
 import { RiverScript } from './missions/river';
 import { NAVIE_ART } from './navieArt';
-import { depotHow, energyPlanner, lanePuzzle, missionBriefing, nlexResults, opsBoardScreen, plazaHow, progressDashboard, vehicleChooser } from './ui/nlex';
+import { adventureMap, depotHow, ecoChoiceBoard, ecoHowSheet, energyPlanner, lanePuzzle, missionBriefing, nlexResults, plazaHow, progressDashboard, vehicleChooser } from './ui/nlex';
+import { choiceOf, ECO_RUNS, ecoOutcome } from '../core/ecoRuns';
+import { ecoConfig, EcoRunScript } from './missions/ecoRun';
 import type { Host } from './host';
 import { InputController } from './input';
 import { makeAwit, makeBaging, makeChief, makeDayo, makeDriver, makeHornbill, makeOfficer, makeRanger, makeResident, makeSpecialist, makeSukat, makeVet, type HeroId, type Portraits } from './models';
@@ -63,6 +65,8 @@ export class WildwayApp {
   private canvas!: HTMLCanvasElement;
   private overlayRoot!: HTMLElement;
   private fadeEl!: HTMLElement;
+  /** Rain drawn over the world, on while the place's weather says so. */
+  private rainEl!: HTMLElement;
   private portraits: Portraits = {};
   private script: MissionScript | null = null;
   /** The Command Center's living parts, between missions. */
@@ -126,7 +130,8 @@ export class WildwayApp {
     this.canvas = h('canvas', { attrs: { id: 'world', 'aria-hidden': 'true' } });
     this.overlayRoot = h('div', { class: 'overlays' });
     this.fadeEl = h('div', { class: 'fade' });
-    root.append(this.canvas);
+    this.rainEl = h('div', { class: 'rain-fx', attrs: { 'aria-hidden': 'true' } });
+    root.append(this.canvas, this.rainEl);
     try {
       this.renderer = new Renderer(this.canvas);
     } catch {
@@ -139,6 +144,15 @@ export class WildwayApp {
     this.fitCanvas();
     this.bakePortraits();
     this.navieArt();
+    /* A place takes a moment to build: Navie bobs on the dark screen meanwhile, so it never looks stuck. */
+    this.fadeEl.append(
+      h(
+        'div',
+        { class: 'fade-load', attrs: { 'aria-hidden': 'true' } },
+        h('img', { class: 'fade-navie', attrs: { src: this.portraits[navieKey('hello')] ?? '', alt: '' } }),
+        h('div', { class: 'fade-dots' }, h('span'), h('span'), h('span')),
+      ),
+    );
     this.hud = new Hud(this.portraits, {
       onPause: () => this.showPause(),
       onHero: (id) => this.game.switchHero(id),
@@ -165,6 +179,7 @@ export class WildwayApp {
     this.input.onPause = () => this.showPause();
     this.game = new Game(this.renderer, this.audio, this.input);
     this.game.onNotice = (t) => this.hud.notice(t);
+    this.game.onStep = (surface) => this.audio.footstep(surface);
     this.makeTextures();
     this.applySettings();
     this.resizeObserver = new ResizeObserver(() => this.fitCanvas());
@@ -365,7 +380,9 @@ export class WildwayApp {
     const shot = (make: () => { ch: ReturnType<typeof makeDayo>; kind: HeroId | 'person' | 'bird' }, eye: Vec3, target: Vec3): string => {
       const { ch, kind } = make();
       const a = newActor(kind, ch, 0, 0, 0);
+      /* A calm moment: eyes open, no fidget in progress. */
       a.t = 1;
+      a.seed = 0.2;
       return r.portrait(160, () => {
         r.begin(eye, target, 0.6, env, 0);
         if (kind === 'bird') {
@@ -377,13 +394,14 @@ export class WildwayApp {
         r.draw(ch.mesh, { model: placement(model, 0, 0, 0), bones });
       });
     };
-    const face: Vec3 = [0.5, 1.5, 2.6];
-    const faceAt: Vec3 = [0, 1.28, 0];
+    const face: Vec3 = [0.34, 1.24, 1.95];
+    const faceAt: Vec3 = [0, 1.02, 0];
     this.portraits = {
-      dayo: shot(() => ({ ch: makeDayo(r), kind: 'dayo' }), [0.6, 1.7, 3], [0, 1.34, 0]),
-      baging: shot(() => ({ ch: makeBaging(r), kind: 'baging' }), [0.45, 1.05, 2.6], [0, 0.72, 0]),
-      sukat: shot(() => ({ ch: makeSukat(r), kind: 'sukat' }), [0.45, 1, 2.5], [0, 0.72, 0]),
-      awit: shot(() => ({ ch: makeAwit(r), kind: 'awit' }), face, faceAt),
+      dayo: shot(() => ({ ch: makeDayo(r), kind: 'dayo' }), [0.4, 1.36, 2.2], [0, 1.08, 0]),
+      baging: shot(() => ({ ch: makeBaging(r), kind: 'baging' }), [0.4, 1.25, 2.45], [0, 0.95, 0]),
+      sukat: shot(() => ({ ch: makeSukat(r), kind: 'sukat' }), [0.3, 0.86, 1.62], [0, 0.66, 0]),
+      /* A step back, so Awit's twin tails fit in the frame. */
+      awit: shot(() => ({ ch: makeAwit(r), kind: 'awit' }), [0.36, 1.36, 2.3], [0, 1.1, 0]),
       ranger: shot(() => ({ ch: makeRanger(r), kind: 'person' }), face, faceAt),
       vet: shot(() => ({ ch: makeVet(r), kind: 'person' }), face, faceAt),
       joy: shot(() => ({ ch: makeResident(r, '#ef6c8f', '#3a4a7a'), kind: 'person' }), face, faceAt),
@@ -505,25 +523,28 @@ export class WildwayApp {
     x.moveTo(70, 190);
     x.lineTo(W - 70, 190);
     x.stroke();
+    let cleared = 0;
     NLEX_STOPS.forEach((stop, i) => {
       const cx = 70 + (i * (W - 140)) / (NLEX_STOPS.length - 1);
       const def = stop.missionId === null ? null : missionById(stop.missionId);
-      const done = def !== null && this.save.missions[def.id] !== undefined;
+      const done = stopCleared(this.save, stop.id);
       const open = def !== null && missionOpen(this.save, def.id);
-      x.fillStyle = done ? '#2fae6b' : open ? '#ffc32d' : stop.id === 'balintawak' ? '#7fd0ff' : '#5b6f94';
+      cleared += done ? 1 : 0;
+      x.fillStyle = done ? '#2fae6b' : open ? '#ffc32d' : def === null ? '#3d4e70' : '#5b6f94';
       x.beginPath();
-      x.arc(cx, 190, 22, 0, Math.PI * 2);
+      x.arc(cx, 190, 11, 0, Math.PI * 2);
       x.fill();
-      x.fillStyle = '#ffffff';
-      x.font = '800 21px ui-rounded, system-ui, sans-serif';
-      x.save();
-      x.translate(cx, i % 2 === 0 ? 248 : 140);
-      x.fillText(stop.name, 0, 0);
-      x.restore();
     });
+    x.fillStyle = '#ffffff';
+    x.font = '800 22px ui-rounded, system-ui, sans-serif';
+    x.fillText('Balintawak', 92, 236);
+    x.fillText('Dau', W - 80, 236);
+    x.font = '900 30px "Nunito Black", ui-rounded, system-ui, sans-serif';
+    x.fillStyle = '#ffc32d';
+    x.fillText(`${cleared} of ${NLEX_STOPS.length} stops cleared`, W / 2, 128);
     x.fillStyle = '#c9d8f2';
     x.font = '700 20px ui-rounded, system-ui, sans-serif';
-    x.fillText('Green: done   Yellow: open   Blue: briefing', W / 2, 322);
+    x.fillText('Green: cleared   Yellow: open   Dark: coming soon', W / 2, 322);
     const prog = document.createElement('canvas');
     prog.width = W;
     prog.height = H;
@@ -537,7 +558,7 @@ export class WildwayApp {
     y.fillText('ENVIRONMENTAL PROGRESS', W / 2, 50);
     const tiles: [string, string][] = [
       [`${p.savedKg >= 100 ? p.savedKg.toFixed(0) : p.savedKg.toFixed(1)} kg`, 'CO2 less (simulated)'],
-      [`${p.nlexDone}/${p.nlexTotal}`, 'NLEX missions'],
+      [`${p.stopsCleared}/${p.stopsTotal}`, 'NLEX stops cleared'],
       [String(p.animals), 'animals helped'],
     ];
     tiles.forEach(([v, label], i) => {
@@ -614,6 +635,7 @@ export class WildwayApp {
     if (r.lost) {
       return;
     }
+    this.rainEl.classList.toggle('on', this.inWorld && this.game.rain > 0 && !this.save.settings.reduceMotion);
     if (this.autoplay) {
       this.autoDrive();
     }
@@ -791,10 +813,12 @@ export class WildwayApp {
   private showOpsBoard(back: () => void): void {
     const render = (): void =>
       this.showScreen(
-        opsBoardScreen({
+        adventureMap({
           save: this.save,
           navie: NAVIE_ART.hello.uri,
-          onMission: (def) => {
+          navieHappy: NAVIE_ART.clear.uri,
+          reduce: this.save.settings.reduceMotion,
+          onPlay: (def) => {
             this.audio.play('tap');
             this.showBriefing(def, render);
           },
@@ -1021,6 +1045,43 @@ export class WildwayApp {
             () => close(null),
           );
         }),
+      ecoChoice: () =>
+        new Promise<boolean>((resolve) => {
+          const eco = ECO_RUNS[this.mission.id];
+          if (eco === undefined) {
+            resolve(false);
+            return;
+          }
+          this.game.busy = true;
+          const close = (picked: string | null): void => {
+            this.game.busy = false;
+            this.showScreen(null, null);
+            if (picked === null) {
+              resolve(false);
+              return;
+            }
+            this.audio.play('ok');
+            if (eco.transport !== undefined) {
+              this.run = { ...(this.run as MissionRun), plan: eco.transport.plan(picked) };
+            }
+            this.flag(`choice:${picked}`);
+            const out = eco.outcome(picked);
+            const saved = out.baselineKg - out.planKg;
+            const amount = Math.abs(saved) >= 100 ? Math.abs(saved).toFixed(0) : Math.abs(saved).toFixed(1);
+            this.hud.notice(Math.abs(saved) < 0.05 ? 'About the same CO₂ as the usual way. Simulated.' : `${amount} kg ${saved > 0 ? 'less' : 'more'} CO₂ than the usual way. Simulated.`, 3.2);
+            this.flag('decided');
+            resolve(true);
+          };
+          const how = (id: string): void => {
+            const shut = (): void => this.overlay(null);
+            if (eco.transport !== undefined) {
+              this.overlay(howCalculated(eco.transport.problem, comparePlan(eco.transport.problem, eco.transport.plan(id)), shut));
+            } else if (eco.how !== undefined) {
+              this.overlay(ecoHowSheet('How this was calculated', eco.how(id), shut));
+            }
+          };
+          this.showScreen(ecoChoiceBoard({ run: eco, navie: NAVIE_ART.thinking.uri, onPick: (id) => close(id), onBack: () => close(null), onHow: how }), () => close(null));
+        }),
       collect: (id) => {
         const r = collect(this.save, id);
         if (r.added) {
@@ -1093,19 +1154,38 @@ export class WildwayApp {
     }
   }
 
+  /**
+   * Fades to dark, runs `fn` (often building a whole place), and fades back. The loading mark is shown
+   * and painted before the build starts, because the build holds the page until it is done; the dark
+   * hold then only lasts as long as the build did not already. Errors are not hidden: `fn` throws as before.
+   */
   private fade(fn: () => void, seconds: number): Promise<void> {
     return new Promise((resolve) => {
       this.fadeEl.classList.add('on');
       window.setTimeout(() => {
-        fn();
-        this.game.snapCamera();
-        window.setTimeout(() => {
-          this.fadeEl.classList.remove('on');
-          window.setTimeout(resolve, 280);
-        }, seconds * 400);
+        this.fadeEl.classList.add('busy');
+        const run = (): void => {
+          const t0 = performance.now();
+          try {
+            fn();
+            this.game.snapCamera();
+          } finally {
+            const took = performance.now() - t0;
+            this.lastBuildMs = took;
+            window.setTimeout(() => {
+              this.fadeEl.classList.remove('on', 'busy');
+              window.setTimeout(resolve, 300);
+            }, Math.max(60, seconds * 400 - took));
+          }
+        };
+        /* Two frames: the first lays out the loading mark, the second paints it. */
+        requestAnimationFrame(() => requestAnimationFrame(run));
       }, 300);
     });
   }
+
+  /** How long the last fade's work took (for tests and the debug build). */
+  lastBuildMs = 0;
 
   private startMission(def: MissionDef): void {
     this.hub = null;
@@ -1135,6 +1215,10 @@ export class WildwayApp {
   }
 
   private makeScript(def: MissionDef, ctx: MissionContext): MissionScript {
+    const eco = ecoConfig(def.id);
+    if (eco !== null) {
+      return new EcoRunScript(ctx, eco);
+    }
     switch (def.id) {
       case GRIDLOCK_MISSION.id:
         return new GridlockScript(ctx);
@@ -1276,6 +1360,16 @@ export class WildwayApp {
   private outcomeParts(def: MissionDef, run: MissionRun): (SimPart & { lines: string[]; c?: Comparison })[] {
     const parts: (SimPart & { lines: string[]; c?: Comparison })[] = [];
     const h1 = (v: number): string => (v >= 100 ? v.toFixed(0) : v.toFixed(1));
+    /* An Eco Run: its one choice, worked out again from the run. */
+    const eco = ECO_RUNS[def.id];
+    if (eco !== undefined) {
+      const out = ecoOutcome(run);
+      if (out !== null) {
+        const c = eco.transport !== undefined ? comparePlan(eco.transport.problem, eco.transport.plan(out.choiceId)) : undefined;
+        parts.push({ id: 'eco', label: eco.partLabel, baselineKg: out.baselineKg, planKg: out.planKg, lines: out.lines, c });
+      }
+      return parts;
+    }
     if (def.id === GRIDLOCK_MISSION.id) {
       const jam = simulatePlaza(BOCAUE_PLAZA, BOCAUE_PLAZA.jammed);
       const mine = simulatePlaza(plazaFor(run.flags), lanesFromFlags(run.flags) ?? BOCAUE_PLAZA.jammed);
@@ -1313,7 +1407,7 @@ export class WildwayApp {
     const parts = this.outcomeParts(def, run);
     const baselineKg = parts.reduce((a, p) => a + p.baselineKg, 0);
     const planKg = parts.reduce((a, p) => a + p.planKg, 0);
-    const choice = def.id === GRIDLOCK_MISSION.id ? (lanesFromFlags(run.flags) ?? []).join(',') : def.id === ECO_MISSION.id ? chosenUpgrades(run).join(',') : null;
+    const choice = def.id === GRIDLOCK_MISSION.id ? (lanesFromFlags(run.flags) ?? []).join(',') : def.id === ECO_MISSION.id ? chosenUpgrades(run).join(',') : ECO_RUNS[def.id] !== undefined ? choiceOf(run) : null;
     const { save, report } = completeMission(this.save, def, run, { baselineKg, planKg, savings: savings(baselineKg, planKg), choice, parts: parts.map(({ id, label, baselineKg: b, planKg: p }) => ({ id, label, baselineKg: b, planKg: p })) });
     const awarded = awardAchievements(save);
     this.persist(awarded.save);
@@ -1358,6 +1452,15 @@ export class WildwayApp {
             this.overlay(plazaHow(simulatePlaza(plazaFor(run.flags), lanesFromFlags(run.flags) ?? BOCAUE_PLAZA.jammed), close));
           } else if (id === 'depot') {
             this.overlay(depotHow(chosenUpgrades(run), close));
+          } else if (id === 'eco') {
+            const eco = ECO_RUNS[def.id];
+            const part = parts.find((x) => x.id === 'eco');
+            const picked = choiceOf(run);
+            if (eco?.transport !== undefined && part?.c !== undefined) {
+              this.overlay(howCalculated(eco.transport.problem, part.c, close));
+            } else if (eco?.how !== undefined && picked !== null) {
+              this.overlay(ecoHowSheet('How this was calculated', eco.how(picked), close));
+            }
           } else {
             const part = parts.find((p) => p.id === id);
             const problem = missionTransport(def, run);

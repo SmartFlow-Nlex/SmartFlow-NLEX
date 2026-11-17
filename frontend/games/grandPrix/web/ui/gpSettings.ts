@@ -1,8 +1,9 @@
 import { button, h } from '../../../roadTrip/web/ui/dom';
 import { PRESETS } from '../../core/config';
 import { bumpRevision, defaultSave } from '../../core/save';
-import { DIFFICULTIES, type Settings } from '../../core/types';
+import { DIFFICULTIES, type Settings, type SteeringMode } from '../../core/types';
 import type { GpApi } from '../appApi';
+import { requestTilt, tiltOf, tiltSupported } from '../input';
 
 /**
  * Grand Prix settings, saved with progress the moment they change. A new
@@ -38,6 +39,59 @@ function toggle(label: string, value: boolean, onFlip: (v: boolean) => void, hel
   return h('div', { class: 'field row' }, [h('div', {}, [h('div', { class: 'field-label', text: label }), help ? h('p', { class: 'help', text: help }) : null]), sw]);
 }
 
+/** Steering: the mode (tilt only where the phone has it), how touchy it is, the assist, tilt's level. */
+function steeringSection(app: GpApi, set: <K extends keyof Settings>(key: K, value: Settings[K]) => void): HTMLElement {
+  const s = app.save.settings;
+  const modes: { value: SteeringMode; label: string }[] = [
+    { value: 'wheel', label: 'Wheel' },
+    { value: 'buttons', label: 'Buttons' },
+    ...(tiltSupported() ? [{ value: 'tilt' as SteeringMode, label: 'Tilt' }] : []),
+    { value: 'lanes', label: 'Lanes' },
+  ];
+  const help = h('p', { class: 'help', text: STEER_HELP[s.steering] });
+  const tiltRow = h('div', { class: `field row${s.steering === 'tilt' ? '' : ' hidden'}` });
+  const tiltNote = h('p', { class: 'help', text: `Level: ${s.tiltZero.toFixed(0)}°` });
+  const level = button('Set level', () => {
+    void requestTilt().then((ok) => {
+      if (!ok) {
+        tiltNote.textContent = 'No tilt on this phone. The wheel will be used.';
+        return;
+      }
+      /* Read the next tilt reading and call it straight ahead. */
+      const once = (e: DeviceOrientationEvent): void => {
+        window.removeEventListener('deviceorientation', once);
+        const t = tiltOf(e);
+        if (t !== null && Number.isFinite(t)) {
+          const zero = Math.max(-45, Math.min(45, t));
+          set('tiltZero', zero);
+          tiltNote.textContent = `Level: ${zero.toFixed(0)}°`;
+        }
+      };
+      window.addEventListener('deviceorientation', once);
+      window.setTimeout(() => window.removeEventListener('deviceorientation', once), 2000);
+    });
+  }, { variant: 'ghost', class: 'small' });
+  tiltRow.append(h('div', {}, [h('div', { class: 'field-label', text: 'Tilt level' }), tiltNote]), level);
+  const mode = segmented('Steering', s.steering, modes, (v) => {
+    set('steering', v);
+    help.textContent = STEER_HELP[v];
+    tiltRow.classList.toggle('hidden', v !== 'tilt');
+    if (v === 'tilt') {
+      void requestTilt();
+    }
+  });
+  return h('section', { class: 'card soft' }, [
+    h('h3', { text: 'Controls' }),
+    mode,
+    help,
+    tiltRow,
+    segmented('Steering feel', s.steerFeel, [{ value: 'easy', label: 'Easy' }, { value: 'normal', label: 'Normal' }, { value: 'advanced', label: 'Advanced' }], (v) => set('steerFeel', v), 'Easy: gentle and forgiving.'),
+    toggle('Steering assist', s.steerAssist, (v) => set('steerAssist', v), 'Softer bends, steadier car.'),
+    segmented('Boost button', s.boostSide, [{ value: 'right', label: 'Right' }, { value: 'left', label: 'Left' }], (v) => set('boostSide', v), 'The wheel goes on the other side.'),
+    h('p', { class: 'help', text: 'Keys: ← → steer · Space boost · X item · Esc pause' }),
+  ]);
+}
+
 function slider(label: string, value: number, min: number, max: number, step: number, format: (v: number) => string, onSet: (v: number) => void): HTMLElement {
   const id = `gp-rng-${label.replace(/\W+/g, '-').toLowerCase()}`;
   const out = h('span', { class: 'value', text: format(value) });
@@ -50,6 +104,13 @@ function slider(label: string, value: number, min: number, max: number, step: nu
   });
   return h('div', { class: 'field' }, [h('label', { class: 'field-label', attrs: { for: id } }, [label, out]), input]);
 }
+
+const STEER_HELP: Record<SteeringMode, string> = {
+  wheel: 'Rotate the wheel to steer.',
+  buttons: 'Hold ◀ or ▶ to steer.',
+  tilt: 'Tilt the phone. Tap "Set level" first.',
+  lanes: 'Each tap moves one lane.',
+};
 
 export function gpSettingsPanel(app: GpApi, options: { inRace: boolean; onChange?: () => void }): HTMLElement {
   const set = <K extends keyof Settings>(key: K, value: Settings[K]): void => {
@@ -72,7 +133,6 @@ export function gpSettingsPanel(app: GpApi, options: { inRace: boolean; onChange
       h('button', { class: 'diff-card', attrs: { role: 'radio' }, onClick: () => { set('difficulty', id); paint(id); } }, [
         h('span', { class: 'diff-name', text: preset.label }),
         h('span', { class: 'diff-tag', text: preset.tagline }),
-        h('ul', {}, preset.changes.map((c) => h('li', { text: c }))),
       ]),
     );
   }
@@ -80,23 +140,17 @@ export function gpSettingsPanel(app: GpApi, options: { inRace: boolean; onChange
   const sections: HTMLElement[] = [
     h('section', { class: 'card soft' }, [
       h('div', { class: 'field-label', id: 'gp-diff', text: 'Difficulty' }),
-      h('p', { class: 'help', text: options.inRace ? 'Applies from the next race. Progress is never lost.' : 'Change any time - progress is never lost.' }),
+      h('p', { class: 'help', text: options.inRace ? 'From the next race.' : 'Progress is never lost.' }),
       cards,
     ]),
     h('section', { class: 'card soft' }, [
       h('h3', { text: 'Assists' }),
-      toggle('Auto-steer in bends', s.autoSteer, (v) => set('autoSteer', v), 'The car leans into bends by itself - you only pick your line.'),
-      toggle('Show the fast line', s.showLine, (v) => set('showLine', v), 'Dots on the track: green on straights, amber where the line hugs a bend.'),
-      toggle('Items in Cup races', s.items, (v) => set('items', v), "Gift boxes on the track give an item - boosts, shields, and harmless spin-outs for rivals. Off: a pure race. Time Trial never has items."),
-      segmented('Game speed', s.gameSpeed, [{ value: 1, label: '100%' }, { value: 0.85, label: '85%' }, { value: 0.7, label: '70%' }], (v) => set('gameSpeed', v), 'Slower everything: more time to steer.'),
+      toggle('Auto-steer in bends', s.autoSteer, (v) => set('autoSteer', v), 'Bends steer themselves.'),
+      toggle('Show the fast line', s.showLine, (v) => set('showLine', v), 'Dots show the best line.'),
+      toggle('Items in Cup races', s.items, (v) => set('items', v), 'Gift boxes with boosts and tricks.'),
+      segmented('Game speed', s.gameSpeed, [{ value: 1, label: '100%' }, { value: 0.85, label: '85%' }, { value: 0.7, label: '70%' }], (v) => set('gameSpeed', v), 'Slower = more time to steer.'),
     ]),
-    h('section', { class: 'card soft' }, [
-      h('h3', { text: 'Controls' }),
-      segmented('Steering', s.steering, [{ value: 'drag', label: 'Drag pad' }, { value: 'lanes', label: 'Line buttons' }], (v) => set('steering', v), 'Drag: slide a finger in the pad under the car. Line buttons: one tap moves one racing line.'),
-      slider('Drag sensitivity', s.sensitivity, 0.5, 2, 0.1, (v) => `${v.toFixed(1)}x`, (v) => set('sensitivity', v)),
-      segmented('Boost button', s.boostSide, [{ value: 'right', label: 'Right hand' }, { value: 'left', label: 'Left hand' }], (v) => set('boostSide', v)),
-      h('p', { class: 'help', text: 'Keyboard: ← → or A D to steer, Space / Shift / ↑ to boost, Esc or P to pause.' }),
-    ]),
+    steeringSection(app, set),
     h('section', { class: 'card soft' }, [
       h('h3', { text: 'Sound' }),
       slider('Master volume', s.master, 0, 1, 0.05, pct, (v) => set('master', v)),
@@ -106,14 +160,14 @@ export function gpSettingsPanel(app: GpApi, options: { inRace: boolean; onChange
     h('section', { class: 'card soft' }, [
       h('h3', { text: 'Display' }),
       segmented('Text size', s.textScale, [{ value: 1, label: '100%' }, { value: 1.2, label: '120%' }, { value: 1.4, label: '140%' }], (v) => set('textScale', v)),
-      toggle('Reduce motion', s.reduceMotion, (v) => set('reduceMotion', v), 'No shake or speed lines, gentler road bends, fewer particles.'),
+      toggle('Reduce motion', s.reduceMotion, (v) => set('reduceMotion', v), 'Less shake and effects.'),
     ]),
   ];
   if (!options.inRace) {
     const area = h('div', {});
     const resetBtn = button('Reset progress', () => {
       area.replaceChildren(
-        h('p', { class: 'help', text: 'Erase all Grand Prix progress, Bolts, records and upgrades on this account? Settings are kept.' }),
+        h('p', { class: 'help', text: 'Erase all progress, Bolts, records and upgrades? Settings stay.' }),
         h('div', { class: 'actions' }, [
           button('Yes, erase', () => {
             app.update({ ...defaultSave(), revision: app.save.revision + 1, settings: app.save.settings });

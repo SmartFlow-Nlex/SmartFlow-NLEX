@@ -46,12 +46,19 @@ export interface RaceOptions {
   laps?: number;
   /** Item boxes and items (Cup races only; Settings can switch them off). */
   items?: boolean;
+  /** Steering assist: takes some of the bends' push and settles the car when the steering lets go. */
+  steerAssist?: boolean;
 }
 
 export interface RaceInput {
   /** -1..1 held steering; ignored while targetX is set. */
   axis: number;
   targetX: number | null;
+  /**
+   * -1..1 analog steering (touch, tilt, held buttons, keys): how fast the car crosses the road, as a
+   * share of its steering speed. The bend's push still acts on top. Ignored while targetX is set.
+   */
+  steer?: number | null;
   /** True on the step the boost button was pressed. */
   boost: boolean;
   /** True on the step the item button was pressed. */
@@ -332,27 +339,42 @@ export class RaceSim {
     // Bends push outward, growing with the square of speed. The push builds up a
     // "slide" on where the car is heading, so holding still in a bend drifts wide
     // and the player steers into it; on straights the slide fades away again.
-    // Auto-steer leans in for the player.
+    // Auto-steer leans in for the player; the steering assist takes a little under half the push.
     const push = curve * c.drift * (p.speed / c.top) ** 2;
-    const lean = this.options.autoSteer ? push * 0.88 : 0;
+    const lean = this.options.autoSteer ? push * 0.88 : this.options.steerAssist === true ? push * 0.45 : 0;
+    const analog = input.targetX === null && input.steer !== undefined && input.steer !== null ? Math.max(-1, Math.min(1, input.steer)) : null;
     p.slide -= (push - lean) * dt;
     if (Math.abs(curve) < 0.05) {
       p.slide -= Math.sign(p.slide) * Math.min(Math.abs(p.slide), 1.2 * dt);
     }
     p.slide = Math.max(-2.5, Math.min(2.5, p.slide));
 
-    // Steering: the same seek-a-target model as Road Trip, aimed at target + slide.
-    if (input.targetX !== null) {
-      p.targetX = Math.max(-WALL_X, Math.min(WALL_X, input.targetX));
-    } else if (input.axis !== 0) {
-      p.targetX = p.x - p.slide + input.axis * 3;
-    } else if (this.keyHeldLast) {
-      p.targetX = p.x - p.slide;
+    let desired: number;
+    if (analog !== null) {
+      // Analog steering: the lean of the thumb (or the phone, or a held button) sets how fast the car
+      // crosses the road, in proportion, so a small movement makes a small correction. The bend still
+      // pushes outward at its own rate, so a long bend is held with a small, steady lean inward - no
+      // repeated swipes - and letting go on a straight leaves the car on its line.
+      p.slide = 0;
+      p.targetX = p.x;
+      this.keyHeldLast = false;
+      desired = Math.max(-c.lateral * 1.15, Math.min(c.lateral * 1.15, analog * c.lateral - (push - lean)));
+    } else {
+      // Steering: the same seek-a-target model as Road Trip, aimed at target + slide.
+      if (input.targetX !== null) {
+        p.targetX = Math.max(-WALL_X, Math.min(WALL_X, input.targetX));
+      } else if (input.axis !== 0) {
+        p.targetX = p.x - p.slide + input.axis * 3;
+      } else if (this.keyHeldLast) {
+        p.targetX = p.x - p.slide;
+      }
+      this.keyHeldLast = input.targetX === null && input.axis !== 0;
+      const aim = Math.max(-WALL_X, Math.min(WALL_X, p.targetX + p.slide));
+      desired = Math.max(-c.lateral, Math.min(c.lateral, (aim - p.x) * 10));
     }
-    this.keyHeldLast = input.targetX === null && input.axis !== 0;
-    const aim = Math.max(-WALL_X, Math.min(WALL_X, p.targetX + p.slide));
-    const desired = Math.max(-c.lateral, Math.min(c.lateral, (aim - p.x) * 10));
-    p.vx += Math.max(-38 * dt, Math.min(38 * dt, desired - p.vx));
+    // The assist settles a car that is barely being steered a little faster, so it never weaves.
+    const grip = analog !== null && this.options.steerAssist === true && Math.abs(analog) < 0.05 ? 52 : 38;
+    p.vx += Math.max(-grip * dt, Math.min(grip * dt, desired - p.vx));
     p.x += p.vx * dt;
     if (Math.abs(p.x) > WALL_X) {
       p.x = Math.sign(p.x) * WALL_X;

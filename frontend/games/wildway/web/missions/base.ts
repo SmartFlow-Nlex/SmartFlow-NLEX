@@ -2,7 +2,7 @@ import type { Upgrade } from '../../core/facility';
 import { currentStep, hasFlag, type MissionDef, type MissionRun, type ZoneId } from '../../core/mission';
 import type { LaneMode, PlazaProblem } from '../../core/plaza';
 import { COLLECTIBLES, discoveryFor, type FaunaKind, type GearId } from '../../core/progression';
-import type { Actor } from '../anim';
+import { react, type Actor } from '../anim';
 import type { Agent } from '../fauna';
 import { wildlifeFor } from '../world/wildlife';
 import type { Game, HeroAction, Interaction, Prop } from '../game';
@@ -33,6 +33,8 @@ export interface MissionContext {
   loadVan: (levelId: string, hint: string) => Promise<boolean>;
   /** Eco Delivery Rush's vehicle choice: sets the run's plan. False if the player backs out. */
   chooseVehicle: () => Promise<boolean>;
+  /** An Eco Run's choice board: sets the run's choice (and plan, for transport). False if the player backs out. */
+  ecoChoice: () => Promise<boolean>;
   /** Patches and wildlife: each counted once, ever. True if it was new. */
   collect: (id: string) => boolean;
   discover: (id: string) => boolean;
@@ -190,10 +192,15 @@ export function addExtras(ctx: MissionContext, flagOn: (flag: string) => boolean
       if (!fresh) {
         ctx.hud.notice(`Photo: ${d.name}`, 1.6);
       }
+      /* A new animal is a surprise; then everyone is pleased. */
+      g.reactTeam(fresh ? 'surprised' : 'happy', 1.1, 'active');
       await ctx.wait(ctx.reduceMotion() ? 0.3 : 0.6);
       g.releaseCamera();
       g.photoCut = false;
       g.busy = false;
+      if (fresh) {
+        g.reactTeam('happy', 1.4);
+      }
       opts.onPhoto?.(kind, a);
     };
     const label = `Photo: ${d.name}`;
@@ -341,10 +348,8 @@ export abstract class ScriptBase implements MissionScript {
   protected faceAndFrame(n: Actor): void {
     const g = this.ctx.game;
     const h = g.heroes[g.active];
-    const toHero = Math.atan2(h.x - n.x, h.z - n.z);
-    n.yaw = toHero;
-    const view = toHero + 0.75;
-    g.cameraTo([n.x + Math.sin(view) * 5.4, n.y + 2.1, n.z + Math.cos(view) * 5.4], [n.x, n.y + 0.55, n.z], 5);
+    n.yaw = Math.atan2(h.x - n.x, h.z - n.z);
+    g.frameTalk(n);
   }
 
   /** Picks up something small: a hero carries one, Baging two. */
@@ -363,10 +368,14 @@ export abstract class ScriptBase implements MissionScript {
 
   /** The first moment in a place: the camera on whoever greets the team, one short line, then play. */
   protected async greet(n: Actor | null, speaker: string, portrait: string, text: string): Promise<void> {
+    /* A rescue starts with worried faces; anywhere else, curious ones. */
+    const rescue = this.def.id === 'hornbill-homecoming' || this.def.id === 'nlex-river';
+    this.ctx.game.reactTeam(rescue ? 'worried' : 'curious', 4);
     await this.scene(async () => {
       if (n !== null) {
         this.faceAndFrame(n);
         n.pose = 'wave';
+        react(n, 'happy', 3);
       }
       await this.say(speaker, portrait, text);
       if (n !== null) {
@@ -380,6 +389,7 @@ export abstract class ScriptBase implements MissionScript {
     const g = this.ctx.game;
     g.burst('sparkle', x, y, z, 10);
     g.audio.play('star');
+    g.victory();
   }
 
   /** Points the guide at a named spot when the step is in this zone. */

@@ -12,6 +12,9 @@ export interface GpApi {
   commitRace: (result: RaceResult) => CommitOutcome;
   goTitle: () => void;
   goMenu: () => void;
+  openCup: () => void;
+  openTrial: () => void;
+  openRecords: () => void;
   openPit: (back: () => void) => void;
   openSettings: (back: () => void) => void;
   startRace: (mode: RaceMode, track: TrackId) => void;

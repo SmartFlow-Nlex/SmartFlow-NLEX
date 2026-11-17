@@ -137,6 +137,13 @@ export const CIRCUITS: Record<string, CircuitLevel> = {
     seed: 5,
     solution: ['P6PAP6K8', 'S2PAPD.0', 'P3P5P3K8'],
   },
+  /* Night Shift Guardians: the lighting controller, on the scanner's proven layout with its own shuffle. */
+  lighting: {
+    id: 'lighting',
+    title: 'Repair the lighting controller',
+    seed: 6,
+    solution: ['P3P6PAPC', 'S2P9PAP5', 'P3PAPCK1'],
+  },
 };
 
 /* ---- Dials ---- */
@@ -147,10 +154,18 @@ export interface DialLevel {
   /** How many settings each dial has. */
   options: number;
   target: readonly number[];
+  /** What each setting is called on the dial face; letters if not given. */
+  faces?: readonly string[];
+  /** A unit printed small under each face, such as psi. */
+  unit?: string;
+  /** The test button's words; 'Test the sensor' if not given. */
+  action?: string;
 }
 
 export const DIALS: Record<string, DialLevel> = {
   sensor: { id: 'sensor', title: 'Calibrate the toll sensor', options: 4, target: [2, 0, 3] },
+  /* Fuel Saver: every tyre starts low; the door sticker gives the pressures. */
+  tyres: { id: 'tyres', title: 'Set the tyre pressures', options: 4, target: [3, 3, 2, 2], faces: ['26', '29', '32', '35'], unit: 'psi', action: 'Check the tyres' },
 };
 
 /** How many dials are on the right setting: the only feedback, like a code lock. */
@@ -259,6 +274,21 @@ export const LOADS: Record<string, LoadLevel> = {
       { id: 'rope', label: 'rope and tools', cells: [[0, 0]], kg: 25 },
       { id: 'water', label: 'water jugs', cells: [[0, 0]], kg: 20, keepFrom: ['electronics'] },
       { id: 'generator', label: 'spare generator', cells: [[0, 0], [1, 0]], kg: 150, required: false, leaveBecause: 'The field station has power. It would only add weight.' },
+    ],
+  },
+  /* Eco Cargo Challenge: the work-site load. Cement dust must not touch the survey kit. */
+  cargo: {
+    id: 'cargo',
+    title: 'Pack the cargo',
+    w: 4,
+    h: 3,
+    maxKg: 700,
+    items: [
+      { id: 'pipes', label: 'drain pipes', cells: [[0, 0], [1, 0], [2, 0]], kg: 260 },
+      { id: 'cement', label: 'cement bags', cells: [[0, 0], [1, 0], [0, 1], [1, 1]], kg: 200, tag: 'dusty' },
+      { id: 'survey', label: 'survey kit', cells: [[0, 0]], kg: 25, keepFrom: ['dusty'] },
+      { id: 'tarp', label: 'rain tarp', cells: [[0, 0]], kg: 10 },
+      { id: 'mixer', label: 'old cement mixer', cells: [[0, 0], [1, 0]], kg: 180, required: false, leaveBecause: 'The site has a mixer. It would only add weight.' },
     ],
   },
 };

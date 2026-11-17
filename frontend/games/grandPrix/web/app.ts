@@ -1,3 +1,4 @@
+import { preload } from '../../roadTrip/web/art/clay';
 import { focusFirst, h } from '../../roadTrip/web/ui/dom';
 import { commitRace, type CommitOutcome } from '../core/progression';
 import { loadSave, serializeSave } from '../core/save';
@@ -6,7 +7,7 @@ import type { GpApi, Scene } from './appApi';
 import { RaceAudio } from './audio';
 import type { Host, InMessage } from './host';
 import { RaceRunner } from './raceRunner';
-import { menuScreen, pitScreen, settingsScreen, titleScreen, type Screen } from './ui/gpScreens';
+import { cupScreen, pitScreen, recordsScreen, settingsScreen, titleScreen, trialScreen, type Screen } from './ui/gpScreens';
 
 /**
  * The Grand Prix page shell: the save, one canvas, the current screen and
@@ -46,6 +47,8 @@ export class GpApp implements GpApi {
     if (loaded.issues.includes('empty')) {
       this.save = { ...this.save, settings: { ...this.save.settings, reduceMotion: host.boot.reduceMotion } };
     }
+    /* Navie's pictures start decoding at once, so the start screen and the race have them ready. */
+    void preload(['h.navie.qR', 'h.navie.frontR', 'h.navie.q2R', 'h.navie.front', 'h.navie.rear', 'h.navie.mid', 'h.navie.midR', 'h.navie.turn', 'h.navie.turnR']);
     if (loaded.issues.some((i) => i === 'not-json' || i === 'not-object' || i === 'newer-version')) {
       host.send({ type: 'log', level: 'warn', message: `Grand Prix save could not be read (${loaded.issues.join(', ')}); started fresh.` });
     }
@@ -97,6 +100,9 @@ export class GpApp implements GpApi {
         go: (where: string, a?: string, b?: string) => {
           if (where === 'race') this.startRace((a ?? 'cup') as RaceMode, (b ?? 'palayan') as TrackId);
           else if (where === 'pit') this.openPit(() => this.goMenu());
+          else if (where === 'cup') this.openCup();
+          else if (where === 'trial') this.openTrial();
+          else if (where === 'records') this.openRecords();
           else if (where === 'settings') this.openSettings(() => this.goMenu());
           else if (where === 'menu') this.goMenu();
           else this.goTitle();
@@ -251,8 +257,21 @@ export class GpApp implements GpApi {
     this.show(titleScreen(this, this.storageOk));
   }
 
+  /** "The menu" is the start screen now: everything is one tap from there. */
   goMenu(): void {
-    this.show(menuScreen(this));
+    this.goTitle();
+  }
+
+  openCup(): void {
+    this.show(cupScreen(this));
+  }
+
+  openTrial(): void {
+    this.show(trialScreen(this));
+  }
+
+  openRecords(): void {
+    this.show(recordsScreen(this));
   }
 
   openPit(back: () => void): void {

@@ -118,7 +118,7 @@ export function dialPuzzle(o: { level: DialLevel; kicker: string; names: readonl
   const history: { guess: number[]; right: number }[] = [];
   let finished = false;
   const hintText = h('p', { class: 'hint-text', text: o.hint });
-  const row = h('div', { class: 'dial-row' });
+  const row = h('div', { class: `dial-row ${o.level.target.length >= 4 ? 'many' : ''}` });
   const log = h('div', { class: 'dial-log', attrs: { 'aria-live': 'polite' } });
   const finish = (ok: boolean): void => {
     if (!finished) {
@@ -126,7 +126,7 @@ export function dialPuzzle(o: { level: DialLevel; kicker: string; names: readonl
       o.onDone(ok);
     }
   };
-  const label = (v: number): string => String.fromCharCode(65 + v);
+  const label = (v: number): string => o.level.faces?.[v] ?? String.fromCharCode(65 + v);
   const render = (): void => {
     row.replaceChildren(
       ...dials.map((v, i) =>
@@ -134,7 +134,7 @@ export function dialPuzzle(o: { level: DialLevel; kicker: string; names: readonl
           'button',
           {
             class: 'dial',
-            attrs: { type: 'button', 'aria-label': `${o.names[i]}: ${label(v)}. Tap to change.` },
+            attrs: { type: 'button', 'aria-label': `${o.names[i]}: ${label(v)}${o.level.unit !== undefined ? ' ' + o.level.unit : ''}. Tap to change.` },
             onClick: () => {
               if (!finished) {
                 dials[i] = (dials[i] + 1) % o.level.options;
@@ -143,7 +143,7 @@ export function dialPuzzle(o: { level: DialLevel; kicker: string; names: readonl
             },
           },
           h('span', { class: 'dial-name', text: o.names[i] }),
-          h('span', { class: 'dial-face', text: label(v) }),
+          h('span', { class: 'dial-face' }, h('span', { text: label(v) }), o.level.unit !== undefined ? h('span', { class: 'dial-unit', text: o.level.unit }) : null),
         ),
       ),
     );
@@ -168,7 +168,7 @@ export function dialPuzzle(o: { level: DialLevel; kicker: string; names: readonl
   };
   render();
   const el = shell(o.kicker, o.level.title, o.navie, hintText, h('div', {}, row, log), [
-    button('Test the sensor', test, { class: 'big', iconName: 'check' }),
+    button(o.level.action ?? 'Test the sensor', test, { class: 'big', iconName: 'check' }),
     h('div', { class: 'title-row' }, button('Not now', () => finish(false), { class: 'secondary', iconName: 'back' })),
   ]);
   return {

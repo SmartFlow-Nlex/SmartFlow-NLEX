@@ -2,7 +2,9 @@ import { DONE_LINES, NLEX_LINES as L } from '../../core/content';
 import { FACTORS, VEHICLES } from '../../core/emissions';
 import { ASSUMPTIONS, crewHours, CREW_HOURS, facilityDay, UPGRADE_OPTIONS, type Upgrade } from '../../core/facility';
 import { HORNBILL_MISSION, MISSIONS, type MissionDef } from '../../core/mission';
-import { missionOpen, NLEX_STOPS, progress } from '../../core/nlex';
+import { bonusFound, missionOpen, missionState, progress, type MissionState } from '../../core/nlex';
+import { ECO_RUNS, type EcoHow, type EcoRun } from '../../core/ecoRuns';
+import { NLEX_EXITS, plannedById, type ExitStop, type Landmark } from '../../core/route';
 import { allModeSets, BOCAUE_PLAZA, plazaSolved, simulatePlaza, type LaneMode, type PlazaProblem, type PlazaResult } from '../../core/plaza';
 import { evaluatePlan, type TransportProblem, type Violation } from '../../core/transport';
 import { UPGRADES, upgradeUnlocked, type CompletionReport, type SaveData, type SimPart } from '../../core/save';
@@ -26,76 +28,282 @@ const GOAL: Record<string, string> = {
   'hornbill-homecoming': 'Help a hurt hornbill home',
 };
 
-/** Each stop's simulated condition, before and after its mission. Made-up, like the places. */
-const CONDITION: Record<string, [string, string]> = {
-  'nlex-gridlock': ['Toll plaza jammed', 'Toll plaza flowing'],
-  'nlex-river': ['Creek blocked', 'Creek flowing'],
-  'nlex-eco': ['Solar roof off', 'Solar roof on'],
-  'nlex-delivery': ['Supplies waiting', 'Supplies sent'],
-};
-
 export type MissionStatus = 'done' | 'open' | 'locked';
 const statusOf = (save: SaveData, def: MissionDef): MissionStatus => (save.missions[def.id] !== undefined ? 'done' : missionOpen(save, def.id) ? 'open' : 'locked');
 
-/* ---- The NLEX Operations Board ---- */
+/* ---- The NLEX Eco Adventure map ---- */
 
-export function opsBoardScreen(o: { save: SaveData; navie: string; onMission: (def: MissionDef) => void; onBriefing: () => void; onBack: () => void }): HTMLElement {
-  const missionCard = (def: MissionDef): HTMLElement => {
-    const st = statusOf(o.save, def);
-    const best = o.save.missions[def.id];
-    return h(
-      'button',
-      { class: `ops-mission ${st}`, attrs: { type: 'button', 'aria-disabled': String(st === 'locked') }, onClick: () => (st !== 'locked' ? o.onMission(def) : undefined) },
-      h('span', { class: 'ops-mission-title', text: def.title }),
-      h('span', { class: 'ops-mission-goal', text: GOAL[def.id] ?? '' }),
-      h(
-        'span',
-        { class: `ops-pill ${st}` },
-        st === 'done' ? icon('check') : st === 'locked' ? icon('lock') : icon('play'),
-        h('span', { text: st === 'done' ? (best.bestSavedKg > 0.05 ? `Done · ${kg(best.bestSavedKg)} less CO₂` : 'Done') : st === 'locked' ? 'After the Gridlock' : 'Play' }),
-      ),
-    );
-  };
-  /* North at the top: Dau first, Balintawak last. */
-  const stops = [...NLEX_STOPS].reverse().map((stop) => {
-    const def = stop.missionId === null ? null : MISSIONS.find((m) => m.id === stop.missionId) ?? null;
-    let body: HTMLElement;
-    if (stop.id === 'balintawak') {
-      body = h('button', { class: 'ops-mission open', attrs: { type: 'button' }, onClick: () => o.onBriefing() }, h('span', { class: 'ops-mission-title', text: 'Navie’s welcome' }), h('span', { class: 'ops-mission-goal', text: 'What the Command Center does' }));
-    } else if (def !== null) {
-      body = missionCard(def);
-    } else {
-      body = h('div', { class: 'ops-mission soon' }, h('span', { class: 'ops-mission-title', text: stop.theme }), h('span', { class: 'ops-pill locked' }, icon('lock'), h('span', { text: 'Coming soon' })));
+const LANDMARK_ICON: Record<Landmark, Parameters<typeof icon>[0]> = {
+  city: 'city',
+  route: 'route',
+  parcel: 'box',
+  creek: 'drop',
+  crate: 'box',
+  scanner: 'plaza',
+  arena: 'arena',
+  plaza: 'plaza',
+  wrench: 'wrench',
+  tyre: 'tyre',
+  box: 'box',
+  signal: 'signal',
+  rain: 'drop',
+  cargo: 'truck',
+  sun: 'sun',
+  patrol: 'car',
+  moon: 'moon',
+  flag: 'flag',
+};
+
+interface MapMission {
+  id: string;
+  title: string;
+  summary: string;
+  tasks: readonly string[];
+  state: MissionState;
+  def: MissionDef | null;
+}
+
+const mapMissions = (save: SaveData, stop: ExitStop): MapMission[] =>
+  stop.missions.map((id) => {
+    const def = MISSIONS.find((m) => m.id === id) ?? null;
+    const plan = plannedById(id);
+    return {
+      id,
+      title: def?.title ?? plan?.title ?? id,
+      summary: def?.summary ?? plan?.summary ?? '',
+      tasks: def?.requiredTasks ?? plan?.tasks ?? [],
+      state: missionState(save, id),
+      def,
+    };
+  });
+
+/** What a stop's card leads with: a mission to play or replay, else the first planned one. */
+const leadMission = (list: MapMission[]): MapMission => list.find((m) => m.state === 'open') ?? list.find((m) => m.state === 'done') ?? list.find((m) => m.state === 'locked') ?? list[0];
+
+const STATE_LABEL: Record<MissionState, string> = { done: 'Completed', open: 'Available', locked: 'Locked', dev: 'In development' };
+/** In a stop's panel: something to play first, planned missions last. */
+const STATE_ORDER: Record<MissionState, number> = { open: 0, done: 1, locked: 2, dev: 3 };
+
+/** A stop's best simulated result, in a few words. */
+function bestText(save: SaveData, id: string): string | null {
+  const r = save.missions[id];
+  if (r === undefined || Math.abs(r.bestSavedKg) < 0.05) {
+    return null;
+  }
+  return r.bestSavedKg > 0 ? `${kg(r.bestSavedKg)} less CO₂` : `${kg(-r.bestSavedKg)} more CO₂`;
+}
+
+export function adventureMap(o: { save: SaveData; navie: string; navieHappy: string; reduce: boolean; onPlay: (def: MissionDef) => void; onBriefing: () => void; onBack: () => void }): HTMLElement {
+  const save = o.save;
+  const p = progress(save, []);
+  const chip = (name: Parameters<typeof icon>[0], text: string, cls = ''): HTMLElement => h('div', { class: `eco-chip ${cls}` }, icon(name), h('span', { text }));
+  const strip = h(
+    'div',
+    { class: 'eco-strip', attrs: { role: 'group', 'aria-label': 'Progress' } },
+    chip('star', `${p.stopsCleared}/${p.stopsTotal} stops`),
+    chip('leaf', `${kg(p.savedKg)} CO₂ less`, 'sim'),
+    chip('paw', `${p.animals} animals`),
+    chip('tree', `${p.habitats} habitats`),
+    chip('check', `${p.achievements} badges`),
+  );
+  const navieImg = h('img', { class: 'navie-img eco-navie', attrs: { src: o.navie, alt: 'Navie' } });
+  /* Until the Gridlock is done, Bocaue is the only open stop: say so. */
+  const idle = save.missions['nlex-gridlock'] === undefined ? 'Start at Bocaue!' : 'Pick a stop!';
+  const bubble = h('p', { class: 'eco-bubble', text: idle });
+  const detail = h('div', { class: 'eco-detail hidden', attrs: { role: 'dialog', 'aria-label': 'Stop' } });
+  let selected: string | null = null;
+  const cards = new Map<string, HTMLElement>();
+
+  const openStop = (stop: ExitStop): void => {
+    selected = stop.id;
+    for (const [id, el] of cards) {
+      el.classList.toggle('picked', id === stop.id);
     }
-    const done = def !== null && o.save.missions[def.id] !== undefined;
-    return h(
-      'div',
-      { class: 'ops-stop' },
-      h('div', { class: `ops-dot ${done ? 'done' : def !== null || stop.id === 'balintawak' ? 'live' : ''}` }),
+    const list = mapMissions(save, stop);
+    const lead = leadMission(list);
+    bubble.textContent = lead.state === 'dev' ? 'Coming soon!' : lead.summary;
+    navieImg.src = lead.state === 'dev' ? o.navie : o.navieHappy;
+    if (!o.reduce) {
+      navieImg.classList.remove('hop');
+      void navieImg.offsetWidth;
+      navieImg.classList.add('hop');
+    }
+    detail.replaceChildren(
       h(
         'div',
-        { class: 'ops-stop-body' },
-        h('div', { class: 'ops-stop-name', text: stop.name }),
-        h('div', { class: 'ops-stop-theme', text: stop.theme }),
-        def !== null && CONDITION[def.id] !== undefined ? h('div', { class: `ops-condition ${done ? 'good' : 'bad'}` }, h('span', { text: CONDITION[def.id][done ? 1 : 0] }), h('span', { class: 'sim-tag tiny', text: 'Simulated' })) : null,
-        body,
+        { class: 'eco-detail-top' },
+        h('div', {}, h('div', { class: 'kicker', text: `${stop.province} · ${stop.theme}` }), h('h2', { text: stop.name })),
+        h('button', { class: 'round-btn', label: 'Close', attrs: { type: 'button' }, onClick: () => close() }, icon('cross')),
       ),
+      ...[...list].sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state]).map((m) => {
+        const best = bestText(save, m.id);
+        const bonus = ECO_RUNS[m.id] !== undefined ? bonusFound(save, m.id) : null;
+        const action =
+          m.state === 'dev'
+            ? h('div', { class: 'eco-soon' }, icon('hat'), h('span', { text: 'In development' }))
+            : m.state === 'locked'
+              ? h('div', { class: 'eco-soon' }, icon('lock'), h('span', { text: 'Finish the Gridlock first' }))
+              : button(m.state === 'done' ? 'Replay' : 'Play', () => (m.def !== null ? o.onPlay(m.def) : undefined), { class: 'big', iconName: 'play' });
+        return h(
+          'div',
+          { class: `eco-mission ${m.state}` },
+          h('h3', { text: m.title }),
+          h('p', { class: 'eco-mission-line', text: m.summary }),
+          h('ol', { class: 'eco-tasks' }, ...m.tasks.slice(0, 3).map((t, i) => h('li', {}, h('span', { class: 'brief-num', text: String(i + 1) }), h('span', { text: t })))),
+          best !== null || bonus !== null
+            ? h('div', { class: 'eco-mission-best' }, best !== null ? h('span', { class: 'eco-best' }, icon('leaf'), h('span', { text: best }), h('span', { class: 'sim-tag tiny', text: 'Simulated' })) : null, bonus !== null ? h('span', { class: 'eco-bonus' }, icon('star'), h('span', { text: `Bonus ${bonus}/3` })) : null)
+            : null,
+          action,
+        );
+      }),
     );
+    detail.classList.remove('hidden');
+  };
+  const close = (): void => {
+    selected = null;
+    detail.classList.add('hidden');
+    for (const el of cards.values()) {
+      el.classList.remove('picked');
+    }
+    bubble.textContent = idle;
+    navieImg.src = o.navie;
+  };
+
+  const stops: HTMLElement[] = [];
+  let province: string | null = null;
+  NLEX_EXITS.forEach((stop, i) => {
+    if (stop.province !== province) {
+      province = stop.province;
+      stops.push(h('div', { class: 'eco-province' }, h('span', { text: stop.province })));
+    }
+    const list = mapMissions(save, stop);
+    const lead = leadMission(list);
+    const cleared = list.some((m) => m.state === 'done');
+    const state: MissionState = cleared ? 'done' : lead.state;
+    const card = h(
+      'button',
+      { class: `eco-card ${state}`, attrs: { type: 'button', 'aria-label': `${stop.name}: ${lead.title}, ${STATE_LABEL[state]}` }, onClick: () => (selected === stop.id ? close() : openStop(stop)) },
+      h('span', { class: 'eco-landmark' }, icon(LANDMARK_ICON[stop.landmark])),
+      h('span', { class: 'eco-card-text' }, h('span', { class: 'eco-name', text: stop.name }), h('span', { class: 'eco-title', text: lead.title })),
+      h(
+        'span',
+        { class: `eco-pill ${state}` },
+        icon(state === 'done' ? 'star' : state === 'open' ? 'play' : state === 'locked' ? 'lock' : 'hat'),
+        h('span', { text: STATE_LABEL[state] }),
+      ),
+      list.length > 1 ? h('span', { class: 'eco-more', text: `+${list.length - 1}` }) : null,
+    );
+    cards.set(stop.id, card);
+    stops.push(h('div', { class: `eco-stop ${state} ${i % 2 === 0 ? 'l' : 'r'}` }, h('span', { class: `eco-marker ${state}` }, h('span', { text: String(i + 1) })), card));
   });
+
+  const road = h(
+    'div',
+    { class: 'eco-road', attrs: { 'aria-hidden': 'true' } },
+    ...(o.reduce ? [] : [0, 1, 2].map((k) => h('span', { class: `eco-car c${k}` }, icon('car')))),
+    ...[8, 23, 38, 54, 70, 86].map((t, k) => {
+      const tree = h('span', { class: `eco-tree ${k % 2 === 0 ? 'a' : 'b'}` }, icon('tree'));
+      tree.style.top = `${t}%`;
+      return tree;
+    }),
+  );
+
   const hornbill = HORNBILL_MISSION;
-  return page(
-    'NLEX Operations Board',
+  const hst = statusOf(save, hornbill);
+  const root = page(
+    'NLEX Eco Adventure',
     o.onBack,
-    h('div', { class: 'navie-row' }, h('img', { class: 'navie-img', attrs: { src: o.navie, alt: 'Navie' } }), h('p', { class: 'lead-line', text: L.idle })),
-    h('p', { class: 'muted small-text', text: 'Made-up missions. All numbers are simulated.' }),
-    h('div', { class: 'ops-line' }, ...stops),
+    strip,
+    h('div', { class: 'navie-row eco-navie-row' }, navieImg, bubble, h('button', { class: 'text-btn', text: 'Welcome', attrs: { type: 'button' }, onClick: () => o.onBriefing() })),
+    h('div', { class: 'eco-compass muted small-text' }, icon('next'), h('span', { text: 'Northbound: Balintawak to Dau. Made-up missions, simulated numbers.' })),
+    h('div', { class: 'eco-map' }, road, ...stops),
     h(
       'div',
       { class: 'card' },
-      h('div', { class: 'kicker', text: 'Wildlife missions' }),
-      missionCard(hornbill),
+      h('div', { class: 'kicker', text: 'Wildlife mission' }),
+      h(
+        'button',
+        { class: `ops-mission ${hst}`, attrs: { type: 'button' }, onClick: () => o.onPlay(hornbill) },
+        h('span', { class: 'ops-mission-title', text: hornbill.title }),
+        h('span', { class: 'ops-mission-goal', text: GOAL[hornbill.id] ?? '' }),
+        h('span', { class: `ops-pill ${hst}` }, icon(hst === 'done' ? 'check' : 'play'), h('span', { text: hst === 'done' ? 'Done' : 'Play' })),
+      ),
     ),
   );
+  root.classList.add('eco-map-screen');
+  root.append(detail);
+  return root;
+}
+
+/* ---- An Eco Run's choice board ---- */
+
+/** A little route drawing for a route option. */
+function routeSketch(points: readonly (readonly [number, number])[]): HTMLElement {
+  const d = points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x} ${y}`).join(' ');
+  const stops = points
+    .slice(1)
+    .filter(([x, y], i, all) => !(x === points[0][0] && y === points[0][1]) && all.findIndex(([a, b]) => a === x && b === y) === i)
+    .map(([x, y]) => `<circle cx="${x}" cy="${y}" r="6" fill="#ffc32d" stroke="#17233f" stroke-width="3"/>`)
+    .join('');
+  const [bx, by] = points[0];
+  return h('span', {
+    class: 'eco-sketch',
+    html: `<svg viewBox="0 0 100 100" aria-hidden="true"><path d="${d}" fill="none" stroke="#1464e8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>${stops}<rect x="${bx - 7}" y="${by - 7}" width="14" height="14" rx="3" fill="#2fae6b" stroke="#17233f" stroke-width="3"/></svg>`,
+  });
+}
+
+export function ecoChoiceBoard(o: { run: EcoRun; navie: string; onPick: (id: string) => void; onBack: () => void; onHow: (id: string) => void }): HTMLElement {
+  const options = o.run.options();
+  const greenest = options.filter((x) => x.co2Kg !== null).sort((a, b) => (a.co2Kg as number) - (b.co2Kg as number))[0]?.id ?? null;
+  let picked: string | null = null;
+  const list = h('div', { class: 'vehicle-list eco-options' });
+  const go = button('Choose', () => (picked !== null ? o.onPick(picked) : undefined), { class: 'big', iconName: 'check' });
+  const render = (): void => {
+    list.replaceChildren(
+      ...options.map((op) =>
+        h(
+          'button',
+          {
+            class: `vehicle-card eco-option ${picked === op.id ? 'on' : ''} ${op.co2Kg === null ? 'no' : ''}`,
+            attrs: { type: 'button', 'aria-pressed': String(picked === op.id), 'aria-disabled': String(op.co2Kg === null) },
+            onClick: () => {
+              if (op.co2Kg !== null) {
+                picked = op.id;
+                render();
+              }
+            },
+          },
+          op.sketch !== undefined ? routeSketch(op.sketch) : null,
+          h('span', { class: 'vehicle-name', text: op.label }),
+          op.sub !== '' ? h('span', { class: 'eco-option-sub', text: op.sub }) : null,
+          op.co2Kg !== null ? h('span', { class: 'vehicle-kg', text: `${kg(op.co2Kg)} CO₂` }) : h('span', { class: 'vehicle-why', text: op.refused ?? '' }),
+          op.id === greenest ? h('span', { class: 'vehicle-badge' }, icon('leaf'), h('span', { text: 'Greenest' })) : null,
+        ),
+      ),
+    );
+    go.disabled = picked === null;
+  };
+  render();
+  return h(
+    'div',
+    { class: 'screen menu board eco-choice' },
+    h('div', { class: 'board-top' }, h('div', { class: 'kicker', text: o.run.choiceKicker }), h('h2', { text: o.run.choiceTitle })),
+    h('div', { class: 'scroll' }, h('div', { class: 'navie-row hint' }, h('img', { class: 'navie-img small', attrs: { src: o.navie, alt: 'Navie' } }), h('p', { class: 'hint-text', text: 'Less CO₂ is greener!' })), list, h('p', { class: 'muted small-text center', text: 'Simulated CO₂ for each choice.' })),
+    h('div', { class: 'board-foot' }, h('div', { class: 'title-row' }, button('Back', () => o.onBack(), { class: 'secondary', iconName: 'back' }), h('button', { class: 'text-btn', text: 'See the numbers', attrs: { type: 'button' }, onClick: () => o.onHow(picked ?? greenest ?? options[0].id) })), go),
+  );
+}
+
+/** How a non-transport Eco Run was worked out: the sums and the assumptions. */
+export function ecoHowSheet(title: string, how: EcoHow, onClose: () => void): HTMLElement {
+  return sheet(title, onClose, [
+    h('p', { class: 'sim-tag', text: 'Simulated' }),
+    h('p', { text: how.intro }),
+    h('h3', { text: 'The sums' }),
+    ...how.sums.map((t) => h('p', { class: 'muted', text: t })),
+    h('table', { class: 'facts-table' }, h('tbody', {}, ...how.rows.map(([a, b, c]) => row(a, b, c)))),
+    h('p', { class: 'muted small-text', text: how.sources }),
+    h('p', { class: 'muted small-text', text: 'Kg CO₂ only, not CO₂e. Emissions, animal rescues and habitat work are separate results.' }),
+  ]);
 }
 
 /* ---- A briefing, for any mission ---- */
@@ -416,6 +624,72 @@ export function progressDashboard(o: { save: SaveData; ecoUpgrades: readonly str
 
 /* ---- Results for an NLEX mission ---- */
 
+/** The short cheer for a real saving, per mission. Only shown when the result really is lower. */
+const GOOD_LINES: Record<string, string> = {
+  'nlex-gridlock': 'Less idling, less CO₂!',
+  'nlex-eco': 'Sunshine instead of grid power!',
+  'nlex-delivery': 'A greener way to deliver!',
+};
+
+/**
+ * Counts a number up from zero for show, then settles on exactly the text it would have shown anyway:
+ * the animation never changes a value. Reduced motion shows the final text at once.
+ */
+function countUp(el: HTMLElement, target: number, fmt: (v: number) => string, delayMs: number): void {
+  const final = fmt(target);
+  const still = document.documentElement.classList.contains('reduce-motion') || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
+  if (still || !Number.isFinite(target)) {
+    el.textContent = final;
+    return;
+  }
+  el.textContent = fmt(0);
+  const dur = 700;
+  let start = -1;
+  const step = (now: number): void => {
+    if (start < 0) {
+      start = now + delayMs;
+    }
+    const k = Math.min(1, Math.max(0, (now - start) / dur));
+    const e = 1 - (1 - k) ** 3;
+    el.textContent = k >= 1 ? final : fmt(target * e);
+    if (k < 1 && el.isConnected !== false) {
+      requestAnimationFrame(step);
+    } else {
+      el.textContent = final;
+    }
+  };
+  requestAnimationFrame(step);
+}
+
+/** Baseline, result, saving and percentage, worked out from the mission's own parts. */
+function carbonCard(def: MissionDef, parts: readonly SimPart[]): HTMLElement {
+  if (parts.length === 0) {
+    return h('div', { class: 'card carbon-card none' }, icon('info'), h('p', { text: 'No CO₂ is claimed here: this mission is about the place itself, not a trip or energy.' }));
+  }
+  const base = parts.reduce((a, p) => a + p.baselineKg, 0);
+  const plan = parts.reduce((a, p) => a + p.planKg, 0);
+  const saved = base - plan;
+  const pct = base > 0 ? (saved / base) * 100 : null;
+  const line = saved > 0.05 ? (ECO_RUNS[def.id]?.goodLine ?? GOOD_LINES[def.id] ?? 'Less CO₂ than the usual way!') : saved < -0.05 ? 'More CO₂ than the usual way this time.' : 'About the same as the usual way.';
+  let order = 0;
+  /* Each tile pops in a beat after the last, and its number counts up to the simulated value. */
+  const cell = (label: string, value: number, fmt: (v: number) => string, cls = ''): HTMLElement => {
+    const num = h('div', { class: 'carbon-value', text: fmt(value) });
+    const tile = h('div', { class: `carbon-cell ${cls}` }, num, h('div', { class: 'carbon-label', text: label }));
+    tile.style.setProperty('--i', String(order));
+    countUp(num, value, fmt, 250 + order * 140);
+    order += 1;
+    return tile;
+  };
+  const savedFmt = (v: number): string => (saved >= 0 ? kg(v) : `−${kg(v)}`);
+  return h(
+    'div',
+    { class: `card carbon-card ${saved < -0.05 ? 'worse' : ''}` },
+    h('div', { class: 'carbon-grid' }, cell('Baseline CO₂', base, kg), cell('Your CO₂', plan, kg, 'you'), cell('CO₂ saved', Math.abs(saved), savedFmt, 'saved'), pct !== null ? cell('Saved', pct, (v) => `${v.toFixed(0)}%`, 'saved') : null),
+    h('div', { class: 'carbon-foot' }, h('p', { class: 'carbon-line', text: line }), h('span', { class: 'sim-tag tiny', text: 'Simulated' })),
+  );
+}
+
 export function nlexResults(o: { def: MissionDef; report: CompletionReport; parts: (SimPart & { lines: string[] })[]; navie: string; achievements?: readonly string[]; next?: string | null; onHow: (id: string) => void; onNext: () => void }): HTMLElement {
   const { def, report } = o;
   const column = (label: string, value: number, max: number, cls: string): HTMLElement => {
@@ -423,7 +697,6 @@ export function nlexResults(o: { def: MissionDef; report: CompletionReport; part
     fill.style.setProperty('--grow', String(Math.max(0.03, value / Math.max(max, 0.001))));
     return h('div', { class: 'col' }, h('div', { class: 'col-value', text: kg(value) }), h('div', { class: 'col-track' }, fill), h('div', { class: 'col-label', text: label }));
   };
-  const saved = o.parts.reduce((a, p) => a + p.baselineKg - p.planKg, 0);
   const chip = (name: Parameters<typeof icon>[0], text: string, sim = false): HTMLElement => h('div', { class: 'result-chip' }, icon(name), h('span', { text }), sim ? h('span', { class: 'sim-tag tiny', text: 'Simulated' }) : null);
   /* The full breakdown, one tap away. */
   const details = h(
@@ -458,11 +731,11 @@ export function nlexResults(o: { def: MissionDef; report: CompletionReport; part
       'div',
       { class: 'scroll no-top' },
       h('div', { class: 'result-head' }, h('div', { class: 'kicker light', text: def.title }), h('h2', { text: 'Mission complete!' }), h('img', { class: 'result-bird navie-result', attrs: { src: o.navie, alt: 'Navie' } }), h('p', { class: 'result-cheer', text: DONE_LINES[def.id] ?? L.celebrate })),
+      carbonCard(def, o.parts),
       h(
         'div',
         { class: 'result-chips' },
         ...def.environmentObjectives.slice(0, 1).map((ob) => chip('leaf', ob.label)),
-        o.parts.length > 0 ? chip('truck', Math.abs(saved) < 0.05 ? 'Same CO₂ as before' : `${kg(Math.abs(saved))} ${saved > 0 ? 'less' : 'more'} CO₂`, true) : null,
         chip('star', report.points > 0 ? `+${report.points} points` : 'Already counted'),
         ...(o.achievements ?? []).map((t) => chip('check', t)),
       ),

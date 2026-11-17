@@ -1,3 +1,4 @@
+import { ECO_RUN_MISSIONS } from './ecoRuns';
 import { UPGRADE_OPTIONS, type Upgrade } from './facility';
 import { DELIVERY_TRANSPORT, depotTransport, HORNBILL_TRANSPORT, RIVER_TRANSPORT, type DepotCargo, type Plan, type TransportProblem } from './transport';
 
@@ -230,7 +231,8 @@ export const DELIVERY_MISSION: MissionDef = {
   ],
 };
 
-export const MISSIONS: readonly MissionDef[] = [GRIDLOCK_MISSION, HORNBILL_MISSION, RIVER_MISSION, ECO_MISSION, DELIVERY_MISSION];
+/** The first five, then the Eco Runs of the NLEX campaign (core/ecoRuns.ts). */
+export const MISSIONS: readonly MissionDef[] = [GRIDLOCK_MISSION, HORNBILL_MISSION, RIVER_MISSION, ECO_MISSION, DELIVERY_MISSION, ...ECO_RUN_MISSIONS];
 
 /** The upgrades a depot run chose, from its flags. */
 export const chosenUpgrades = (run: MissionRun): Upgrade[] => {

@@ -266,19 +266,8 @@ input[type="range"] { width: 100%; height: 44px; accent-color: var(--blue); }
 .meter .pip.on { background: var(--part, #21b3a2); border-color: #0b4a43; }
 .spark-pip { width: 20px; height: 20px; opacity: 0.3; filter: grayscale(1); }
 .spark-pip.on { opacity: 1; filter: none; }
-.toast { position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%) scale(0.9); background: rgba(16, 40, 76, 0.92); color: #fff; font-weight: 900; padding: 0.5rem 0.9rem; border-radius: 14px; opacity: 0; transition: opacity 0.2s, transform 0.2s; }
-.toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 .countdown { position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%); font: 900 5.5rem/1 var(--brand); color: #fff; text-shadow: 0 6px 0 var(--blue-dark), 0 10px 20px rgba(0, 0, 0, 0.35); opacity: 0; }
 .countdown.show { opacity: 1; }
-.controls { position: relative; margin-top: auto; height: 24vh; min-height: 150px; }
-.pad { position: absolute; left: 0; right: 0; bottom: 0; top: 0; pointer-events: auto; touch-action: none; display: flex; align-items: flex-end; justify-content: center; padding-bottom: calc(0.8rem + var(--safe-bottom)); background: linear-gradient(to top, rgba(10, 22, 41, 0.28), rgba(10, 22, 41, 0)); }
-.pad-hint { color: rgba(255, 255, 255, 0.92); font-weight: 800; font-size: 0.85rem; border: 2px dashed rgba(255, 255, 255, 0.6); border-radius: 999px; padding: 0.35rem 0.9rem; }
-.lane-btn { position: absolute; bottom: calc(0.8rem + var(--safe-bottom)); width: 84px; height: 84px; border-radius: 26px; border: 0; background: rgba(255, 255, 255, 0.94); color: var(--navy); box-shadow: 0 5px 0 rgba(16, 40, 76, 0.3); touch-action: none; }
-.lane-btn .chev { font: 900 3rem/1 var(--ui); }
-.lane-btn.left { left: 0.8rem; }
-.lane-btn.right { right: 0.8rem; }
-.right-handed .lane-btn.right { right: 7.2rem; }
-.left-handed .lane-btn.left { left: 7.2rem; }
 .ability-btn { position: absolute; bottom: calc(0.8rem + var(--safe-bottom) + 96px); width: 92px; min-height: 92px; border-radius: 24px; border: 0; background: rgba(255, 255, 255, 0.95); box-shadow: 0 5px 0 rgba(16, 40, 76, 0.3); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0.3rem; touch-action: none; }
 .lanes-mode .ability-btn { bottom: calc(0.8rem + var(--safe-bottom)); }
 .ability-btn.right { right: 0.8rem; }
@@ -301,7 +290,6 @@ input[type="range"] { width: 100%; height: 44px; accent-color: var(--blue); }
 /* Landscape: HUD beside the road, controls at the sides. */
 @media (orientation: landscape) and (max-height: 560px) {
   .hud-mid { position: fixed; left: calc(0.6rem + var(--safe-left)); top: 4.2rem; width: 32vw; }
-  .controls { height: 34vh; }
   .sheet { max-height: 96vh; border-radius: 22px; margin-bottom: 0.5rem; }
   .title-block { margin-top: 1vh; }
   .game-title span:last-child { font-size: 2.6rem; }
@@ -312,31 +300,8 @@ input[type="range"] { width: 100%; height: 44px; accent-color: var(--blue); }
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation: none !important; transition: none !important; }
 
 /* ---- Grand Prix additions ---------------------------------------------- */
-.gp-box { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 0.6rem; background: rgba(16, 40, 76, 0.85); color: #fff; border-radius: 14px; padding: 0.3rem 0.7rem; }
-.gp-place { font: 900 1.6rem/1 var(--brand); color: var(--yellow); white-space: nowrap; }
-.gp-place .p-of { font-size: 0.9rem; color: #fff; opacity: 0.8; }
-.gp-box-text { display: flex; flex-direction: column; min-width: 0; }
-.gp-lap { font-weight: 900; font-size: 0.9rem; }
-.gp-time { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 0.85rem; opacity: 0.9; }
 .gp-best { align-self: flex-start; background: rgba(255, 255, 255, 0.92); color: var(--navy); font-weight: 800; font-size: 0.82rem; border-radius: 10px; padding: 0.25rem 0.55rem; font-variant-numeric: tabular-nums; }
 .gp-best.ahead { background: #dff5e7; color: #1e6b3a; }
-.gp-lights { position: fixed; left: 50%; top: 34%; transform: translate(-50%, -50%); display: none; align-items: center; gap: 0.6rem; background: rgba(16, 40, 76, 0.92); border-radius: 22px; padding: 0.7rem 1rem; }
-.gp-lights.show { display: flex; }
-.gp-lights .lamp { width: 34px; height: 34px; border-radius: 50%; background: #2b323e; border: 3px solid #0a1220; }
-.gp-lights .lamp.red { background: #e23b3b; }
-.gp-lights .lamp.green { background: #2ead5b; }
-.gp-lights .lights-text { color: #fff; font: 900 1.4rem var(--brand); min-width: 4.5rem; text-align: center; }
-.gp-boost { position: absolute; bottom: calc(0.8rem + var(--safe-bottom) + 96px); width: 96px; min-height: 84px; border-radius: 24px; border: 0; background: rgba(255, 255, 255, 0.95); box-shadow: 0 5px 0 rgba(16, 40, 76, 0.3); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.35rem; touch-action: none; pointer-events: auto; }
-.lanes-mode .gp-boost { bottom: calc(0.8rem + var(--safe-bottom)); }
-.gp-boost.right { right: 0.8rem; }
-.gp-boost.left { left: 0.8rem; }
-.gp-boost.ready { box-shadow: 0 5px 0 #b07b00; }
-.gp-boost.active { background: #fff3c4; }
-.gp-boost-label { font: 900 0.95rem var(--brand); color: var(--navy); }
-.gp-meter { display: flex; gap: 4px; }
-.gp-seg { position: relative; width: 22px; height: 12px; border-radius: 4px; background: #d5e1f2; overflow: hidden; border: 2px solid #9aa6b6; }
-.gp-seg::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--fill, 0%); background: var(--yellow); }
-.gp-seg.full { border-color: #b07b00; }
 .cup-tracks { margin: 0.4rem 0 0.6rem; padding-left: 1.3rem; line-height: 1.6; }
 .cup-tracks li.done { color: #1e6b3a; }
 .cup-tracks li.done::marker { content: "\2713  "; }
@@ -351,27 +316,310 @@ input[type="range"] { width: 100%; height: 44px; accent-color: var(--blue); }
 .gp-title .game-title span:first-child { font-size: 2.6rem; }
 
 /* Mini map (top right, under the bolts): the whole circuit and every car. */
-.gp-minimap { position: absolute; right: calc(0.6rem + var(--safe-right)); top: calc(var(--safe-top) + 4.6rem); width: 96px; height: 96px; border-radius: 16px; box-shadow: 0 3px 10px rgba(10, 22, 41, 0.35); pointer-events: none; will-change: transform; }
-@media (max-width: 360px) {
-  .gp-minimap { width: 78px !important; height: 78px !important; }
-}
-@media (orientation: landscape) and (max-height: 560px) {
-  .gp-minimap { top: calc(var(--safe-top) + 3.6rem); }
-}
+
 
 /* Item button: opposite the boost (drag pad) or above it (lane buttons). */
-.gp-item { position: absolute; bottom: calc(0.8rem + var(--safe-bottom) + 96px); width: 84px; min-height: 84px; border-radius: 24px; border: 3px solid transparent; background: rgba(255, 255, 255, 0.95); box-shadow: 0 5px 0 rgba(16, 40, 76, 0.3); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.1rem; padding: 0.2rem; touch-action: none; pointer-events: auto; will-change: transform; }
-.gp-item.left { left: 0.8rem; }
-.gp-item.right { right: 0.8rem; }
-.lanes-mode .gp-item { bottom: calc(0.8rem + var(--safe-bottom) + 96px); }
-.gp-item-icon { width: 52px; height: 52px; }
-.gp-item-name { font: 900 0.68rem/1.1 var(--brand); color: var(--navy); text-align: center; }
-.gp-item.empty { background: rgba(255, 255, 255, 0.55); border: 3px dashed rgba(16, 40, 76, 0.45); box-shadow: none; }
-.gp-item.empty .gp-item-name { color: rgba(16, 40, 76, 0.75); }
-.gp-item.ready { border-color: var(--yellow); box-shadow: 0 5px 0 #b07b00; }
-.gp-item.ready::after { content: ""; position: absolute; inset: -8px; border-radius: 30px; border: 3px solid rgba(255, 195, 45, 0.7); animation: gp-item-ring 1.2s ease-in-out infinite; pointer-events: none; }
-@keyframes gp-item-ring { 0%, 100% { opacity: 0.9; transform: scale(0.97); } 50% { opacity: 0.2; transform: scale(1.05); } }
 
 /* "Sipa Ball from #7!" - a short warning under the top bar. */
 .gp-warn { position: fixed; left: 50%; top: calc(var(--safe-top) + 4.8rem); transform: translateX(-50%); background: #b8322a; color: #fff; font: 900 0.95rem var(--brand); border-radius: 999px; padding: 0.35rem 0.9rem; opacity: 0; transition: opacity 0.15s; pointer-events: none; white-space: nowrap; }
 .gp-warn.show { opacity: 1; }
+
+/* ---- Arcade race HUD (17 Nov 2026) ---------------------------------------------------- */
+.toast { position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%) scale(0.9); background: linear-gradient(180deg, #1d5fd8, #10284c); color: #fff; font: 900 1rem var(--brand); padding: 0.5rem 1rem; border-radius: 999px; border: 3px solid #fff; box-shadow: 0 4px 0 rgba(6, 16, 31, 0.5); opacity: 0; transition: opacity 0.18s, transform 0.18s cubic-bezier(0.3, 1.6, 0.5, 1); white-space: nowrap; max-width: 92vw; overflow: hidden; text-overflow: ellipsis; }
+.toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.gp-hud .hud-top { gap: 0.45rem; align-items: center; }
+/* Place: a big chunky badge; gold, silver and bronze on the podium. */
+.gp-pos { position: relative; display: inline-flex; align-items: flex-start; min-width: 4.6rem; padding: 0.1rem 0.6rem 0.2rem; border-radius: 18px; background: linear-gradient(180deg, #2a7bff, #1146b8); border: 3px solid #fff; box-shadow: 0 4px 0 #0a2a6e, 0 6px 14px rgba(6, 16, 31, 0.35); color: #fff; font-family: var(--brand); line-height: 1; }
+.gp-pos[data-rank="1"] { background: linear-gradient(180deg, #ffe066, #ffb400); color: #5a3a00; box-shadow: 0 4px 0 #a86a00, 0 6px 14px rgba(6, 16, 31, 0.35); }
+.gp-pos[data-rank="2"] { background: linear-gradient(180deg, #f3f6fa, #b9c4d2); color: #2c3a4e; box-shadow: 0 4px 0 #7d8899, 0 6px 14px rgba(6, 16, 31, 0.35); }
+.gp-pos[data-rank="3"] { background: linear-gradient(180deg, #ffc08a, #d9772e); color: #4e2400; box-shadow: 0 4px 0 #8f4510, 0 6px 14px rgba(6, 16, 31, 0.35); }
+.gp-pos.trial { font-size: 1.2rem; padding: 0.45rem 0.7rem; }
+.gp-pos-num { font-size: 2.5rem; font-weight: 900; letter-spacing: -0.02em; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.18); }
+.gp-pos-suf { font-size: 1rem; font-weight: 900; margin: 0.35rem 0 0 0.08rem; }
+.gp-pos-arrow { position: absolute; right: -0.55rem; top: -0.55rem; width: 1.5rem; height: 1.5rem; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; color: #fff; border: 2px solid #fff; opacity: 0; transform: scale(0.4); }
+.gp-pos-arrow.up { background: var(--green); }
+.gp-pos-arrow.down { background: var(--red); }
+.gp-pos-arrow.show { animation: gp-arrow 1.1s ease-out both; }
+@keyframes gp-arrow { 0% { opacity: 0; transform: scale(0.4); } 15% { opacity: 1; transform: scale(1.15); } 70% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(0.9) translateY(-4px); } }
+.gp-pos.pop { animation: gp-pop 0.45s cubic-bezier(0.3, 1.8, 0.5, 1); }
+@keyframes gp-pop { 0% { transform: scale(1); } 35% { transform: scale(1.22) rotate(-3deg); } 100% { transform: scale(1); } }
+.gp-pos.first::after { content: ""; position: absolute; inset: -18px; border-radius: 50%; background: conic-gradient(from 0deg, rgba(255, 224, 102, 0.95) 0 8deg, transparent 8deg 30deg, rgba(255, 255, 255, 0.95) 30deg 38deg, transparent 38deg 60deg, rgba(255, 224, 102, 0.95) 60deg 68deg, transparent 68deg 90deg, rgba(255, 255, 255, 0.95) 90deg 98deg, transparent 98deg 120deg, rgba(255, 224, 102, 0.95) 120deg 128deg, transparent 128deg 150deg, rgba(255, 255, 255, 0.95) 150deg 158deg, transparent 158deg 180deg, rgba(255, 224, 102, 0.95) 180deg 188deg, transparent 188deg 210deg, rgba(255, 255, 255, 0.95) 210deg 218deg, transparent 218deg 240deg, rgba(255, 224, 102, 0.95) 240deg 248deg, transparent 248deg 270deg, rgba(255, 255, 255, 0.95) 270deg 278deg, transparent 278deg 300deg, rgba(255, 224, 102, 0.95) 300deg 308deg, transparent 308deg 330deg, rgba(255, 255, 255, 0.95) 330deg 338deg, transparent 338deg 360deg); -webkit-mask: radial-gradient(circle, transparent 42%, #000 44%); mask: radial-gradient(circle, transparent 42%, #000 44%); animation: gp-rays 0.9s ease-out both; pointer-events: none; }
+@keyframes gp-rays { 0% { opacity: 0; transform: scale(0.6) rotate(0); } 30% { opacity: 1; } 100% { opacity: 0; transform: scale(1.4) rotate(40deg); } }
+/* Lap: LAP 2/3 in a rounded navy panel; amber on the final lap. */
+.gp-lapbox { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: center; background: rgba(16, 40, 76, 0.88); color: #fff; border-radius: 16px; border: 2px solid rgba(255, 255, 255, 0.85); padding: 0.25rem 0.65rem 0.3rem; box-shadow: 0 3px 0 rgba(6, 16, 31, 0.45); }
+.gp-lap { display: flex; align-items: baseline; gap: 0.2rem; font-family: var(--brand); line-height: 1; }
+.gp-lap-word { font-size: 0.78rem; font-weight: 900; color: var(--yellow); letter-spacing: 0.06em; }
+.gp-lap-n { font-size: 1.45rem; font-weight: 900; }
+.gp-lap-of { font-size: 0.95rem; font-weight: 900; opacity: 0.8; }
+.gp-lap.final .gp-lap-n, .gp-lap.final .gp-lap-word { color: #ffb020; }
+.gp-lap.pop { animation: gp-pop 0.45s cubic-bezier(0.3, 1.8, 0.5, 1); }
+.gp-time { font-variant-numeric: tabular-nums; font-weight: 800; font-size: 0.8rem; opacity: 0.88; margin-top: 0.1rem; }
+.hud-stats .stat .n.pop { animation: gp-pop 0.35s ease-out; display: inline-block; }
+/* Mini map: bigger, rounded, yellow-rimmed, top right under the Bolts. */
+.gp-minimap { position: absolute; right: calc(0.6rem + var(--safe-right)); top: calc(var(--safe-top) + 4.4rem); width: 112px; height: 112px; border-radius: 20px; box-shadow: 0 4px 12px rgba(6, 16, 31, 0.4); pointer-events: none; will-change: transform; }
+@media (max-width: 360px) { .gp-minimap { width: 92px; height: 92px; } .gp-pos-num { font-size: 2.1rem; } }
+@media (orientation: landscape) and (max-height: 560px) { .gp-minimap { top: calc(var(--safe-top) + 3.6rem); } }
+/* Banners: FINAL LAP!, and the finishing place. */
+.gp-banner { position: fixed; left: 50%; top: 30%; transform: translate(-50%, -50%); padding: 0.45rem 1.4rem; border-radius: 18px; font: 900 2rem/1.1 var(--brand); color: #fff; background: linear-gradient(180deg, #ff7a3d, #e23b3b); border: 4px solid #fff; box-shadow: 0 6px 0 rgba(6, 16, 31, 0.45); white-space: nowrap; opacity: 0; pointer-events: none; }
+.gp-banner.finish { background: linear-gradient(180deg, #2a7bff, #1146b8); font-size: 2.4rem; }
+.gp-banner.first { background: linear-gradient(180deg, #ffe066, #ffb400); color: #5a3a00; font-size: 2.6rem; }
+.gp-banner.show { animation: gp-banner 1.7s cubic-bezier(0.3, 1.4, 0.5, 1) both; }
+.gp-banner.finish.show, .gp-banner.first.show { animation-duration: 2.4s; }
+@keyframes gp-banner { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.3) rotate(-8deg); } 14% { opacity: 1; transform: translate(-50%, -50%) scale(1.12) rotate(2deg); } 24% { transform: translate(-50%, -50%) scale(1) rotate(0); } 82% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -60%) scale(0.96); } }
+/* Start: three lamps on a little gantry, and a big number that pops with each one. */
+.gp-lights { position: fixed; left: 50%; top: 24%; transform: translate(-50%, -50%); display: none; align-items: center; gap: 0.55rem; background: linear-gradient(180deg, #1b2c4a, #0a1629); border: 3px solid #fff; border-radius: 22px; padding: 0.55rem 0.9rem; box-shadow: 0 5px 0 rgba(6, 16, 31, 0.5); }
+.gp-lights.show { display: flex; }
+.gp-lights .lamp { width: 30px; height: 30px; border-radius: 50%; background: #2b323e; border: 3px solid #05090f; box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.5); }
+.gp-lights .lamp.red { background: radial-gradient(circle at 40% 35%, #ff9b8f, #e23b3b 55%); box-shadow: 0 0 14px rgba(255, 70, 60, 0.85); }
+.gp-lights .lamp.green { background: radial-gradient(circle at 40% 35%, #a6ffbf, #2ead5b 55%); box-shadow: 0 0 16px rgba(60, 230, 120, 0.9); }
+.gp-count { position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%); font: 900 6rem/1 var(--brand); color: #fff; -webkit-text-stroke: 4px #10284c; paint-order: stroke fill; text-shadow: 0 6px 0 #10284c, 0 12px 20px rgba(0, 0, 0, 0.35); opacity: 0; pointer-events: none; white-space: nowrap; }
+.gp-count.ready { font-size: 2.8rem; }
+.gp-count.go { color: #ffd34d; font-size: 6.5rem; }
+.gp-count.show { animation: gp-count 0.8s cubic-bezier(0.3, 1.6, 0.5, 1) both; }
+.gp-count.go.show { animation-duration: 0.75s; }
+@keyframes gp-count { 0% { opacity: 0; transform: translate(-50%, -50%) scale(2.2); } 25% { opacity: 1; transform: translate(-50%, -50%) scale(0.92); } 40% { transform: translate(-50%, -50%) scale(1); } 85% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -50%) scale(1.05); } }
+/* Controls: everything is placed from the bottom of the screen. */
+.controls { position: absolute; left: 0; right: 0; bottom: 0; height: 1px; margin: 0; min-height: 0; }
+/* Tilt: a bubble level at the bottom centre. */
+.gp-level { position: absolute; left: 50%; bottom: calc(1.4rem + var(--safe-bottom)); width: 120px; height: 26px; margin-left: -60px; border-radius: 999px; background: rgba(16, 40, 76, 0.65); border: 2px solid rgba(255, 255, 255, 0.8); }
+.gp-level-mid { position: absolute; left: 50%; top: 3px; bottom: 3px; width: 2px; margin-left: -1px; background: rgba(255, 255, 255, 0.7); }
+.gp-level-bubble { position: absolute; left: 50%; top: 2px; width: 18px; height: 18px; margin-left: -9px; border-radius: 50%; background: #5fd3ff; box-shadow: 0 0 8px rgba(95, 211, 255, 0.9); }
+/* Hold-to-steer and line buttons: big round buttons for the steering thumb. */
+.steer-btn { position: absolute; bottom: calc(1rem + var(--safe-bottom)); width: 86px; height: 86px; border-radius: 50%; border: 4px solid #fff; background: linear-gradient(180deg, #2a7bff, #1146b8); color: #fff; box-shadow: 0 5px 0 #0a2a6e, 0 8px 16px rgba(6, 16, 31, 0.35); touch-action: none; -webkit-user-select: none; user-select: none; pointer-events: auto; }
+.steer-btn .chev { font: 900 2rem/1 var(--ui); }
+.steer-btn:active { transform: translateY(3px); box-shadow: 0 2px 0 #0a2a6e; background: linear-gradient(180deg, #4b93ff, #1d5fd8); }
+.right-handed .steer-btn.left { left: calc(0.8rem + var(--safe-left)); }
+.right-handed .steer-btn.right { left: calc(0.8rem + var(--safe-left) + 98px); }
+.left-handed .steer-btn.left { right: calc(0.8rem + var(--safe-right) + 98px); }
+.left-handed .steer-btn.right { right: calc(0.8rem + var(--safe-right)); }
+/* Boost: a big round button, three energy cells, a draining ring while it burns. */
+.gp-boost { position: absolute; bottom: calc(1rem + var(--safe-bottom)); width: 104px; height: 104px; border-radius: 50%; border: 4px solid #fff; background: radial-gradient(circle at 40% 30%, #8a96a8, #4f5a6b 70%); color: #fff; box-shadow: 0 5px 0 #2b3442, 0 8px 18px rgba(6, 16, 31, 0.4); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.1rem; padding: 0; touch-action: none; -webkit-user-select: none; user-select: none; pointer-events: auto; }
+.gp-boost.right { right: calc(0.8rem + var(--safe-right)); }
+.gp-boost.left { left: calc(0.8rem + var(--safe-left)); }
+.gp-boost-bolt { font-size: 1.5rem; line-height: 1; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.25)); }
+.gp-boost-label { font: 900 0.95rem/1 var(--brand); letter-spacing: 0.04em; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25); }
+.gp-cells { display: flex; gap: 4px; margin-top: 0.2rem; }
+.gp-cell { position: relative; width: 18px; height: 9px; border-radius: 5px; background: rgba(0, 0, 0, 0.35); overflow: hidden; border: 1.5px solid rgba(255, 255, 255, 0.75); }
+.gp-cell-fill { position: absolute; left: 0; top: 0; bottom: 0; width: var(--fill, 0%); background: linear-gradient(90deg, #ffe066, #ff9d00); }
+.gp-cell.full .gp-cell-fill { width: 100%; animation: gp-cell 1.2s ease-in-out infinite; }
+@keyframes gp-cell { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+/* Ready: a warm button and a soft ring that breathes outward (opacity and scale only, so it never repaints the page). */
+.gp-boost.ready { background: radial-gradient(circle at 40% 30%, #ffd34d, #ff8a00 70%); color: #5a2a00; box-shadow: 0 5px 0 #a35200, 0 8px 18px rgba(6, 16, 31, 0.4); }
+.gp-boost.ready::after { content: ""; position: absolute; left: -6px; top: -6px; right: -6px; bottom: -6px; border-radius: 50%; border: 4px solid rgba(255, 180, 0, 0.8); animation: gp-ready 1.3s ease-out infinite; pointer-events: none; }
+.gp-boost.ready .gp-boost-label { text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5); }
+@keyframes gp-ready { 0% { opacity: 0.9; transform: scale(0.96); } 100% { opacity: 0; transform: scale(1.18); } }
+.gp-boost.ready.charged { animation: gp-pop 0.45s cubic-bezier(0.3, 1.8, 0.5, 1); }
+.gp-boost.active { background: radial-gradient(circle at 40% 30%, #c8f4ff, #29b6f6 70%); color: #053a5a; box-shadow: 0 5px 0 #0b6a99, 0 0 22px rgba(95, 211, 255, 0.9); }
+.gp-boost.active.flash { animation: gp-flash 0.35s ease-out; }
+@keyframes gp-flash { 0% { transform: scale(1); filter: brightness(2); } 40% { transform: scale(1.14); } 100% { transform: scale(1); filter: brightness(1); } }
+.gp-boost-ring { position: absolute; left: -9px; top: -9px; right: -9px; bottom: -9px; border-radius: 50%; background: conic-gradient(#5fd3ff var(--deg, 0deg), transparent 0); -webkit-mask: radial-gradient(circle, transparent 58%, #000 60%); mask: radial-gradient(circle, transparent 58%, #000 60%); opacity: 0; pointer-events: none; }
+.gp-boost.active .gp-boost-ring { opacity: 1; }
+.gp-boost:active { transform: translateY(3px); }
+/* Item slot: a chunky rounded box; a dashed "?" when empty, a jittering roulette, a glowing ready item. */
+.gp-item { position: absolute; bottom: calc(1rem + var(--safe-bottom)); width: 88px; height: 88px; border-radius: 26px; border: 4px solid #fff; background: linear-gradient(180deg, #ffffff, #dfe9f7); box-shadow: 0 5px 0 #8a99ad, 0 8px 16px rgba(6, 16, 31, 0.35); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; padding: 0.15rem; touch-action: none; -webkit-user-select: none; user-select: none; pointer-events: auto; will-change: transform; }
+.gp-item.left { left: calc(0.8rem + var(--safe-left)); }
+.gp-item.right { right: calc(0.8rem + var(--safe-right)); }
+.gp-item.stacked { bottom: calc(1rem + var(--safe-bottom) + 116px); }
+.gp-item.stacked.right { right: calc(0.8rem + var(--safe-right) + 8px); }
+.gp-item.stacked.left { left: calc(0.8rem + var(--safe-left) + 8px); }
+.gp-item-icon { width: 56px; height: 56px; }
+.gp-item-q { display: none; font: 900 2.1rem/1 var(--brand); }
+.gp-item-name { font: 900 0.66rem/1.1 var(--brand); color: var(--navy); text-align: center; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp-item.empty { background: rgba(255, 255, 255, 0.28); border: 3px dashed rgba(255, 255, 255, 0.95); box-shadow: none; }
+.gp-item.empty .gp-item-q { display: block; color: #fff; text-shadow: 0 2px 0 rgba(16, 40, 76, 0.6); }
+.gp-item.empty .gp-item-icon { display: none; }
+.gp-item.empty .gp-item-name { color: #fff; text-shadow: 0 1px 0 rgba(16, 40, 76, 0.7); }
+.gp-item.rolling { background: linear-gradient(180deg, #fff7d6, #ffe08a); }
+.gp-item.rolling .gp-item-icon { animation: gp-roll 0.18s linear infinite; }
+@keyframes gp-roll { 0% { transform: translateY(-4px); } 50% { transform: translateY(4px); } 100% { transform: translateY(-4px); } }
+.gp-item.got { animation: gp-pop 0.4s cubic-bezier(0.3, 1.8, 0.5, 1); }
+.gp-item.ready { border-color: #ffc32d; background: linear-gradient(180deg, #fffdf2, #fff0b8); box-shadow: 0 5px 0 #b07b00, 0 0 18px rgba(255, 195, 45, 0.7); }
+.gp-item.ready::after { content: ""; position: absolute; left: -9px; top: -9px; right: -9px; bottom: -9px; border-radius: 32px; border: 3px solid rgba(255, 195, 45, 0.75); animation: gp-ring 1.2s ease-in-out infinite; pointer-events: none; }
+.gp-item.landed { animation: gp-flash 0.4s ease-out; }
+@keyframes gp-ring { 0%, 100% { opacity: 0.9; transform: scale(0.97); } 50% { opacity: 0.2; transform: scale(1.06); } }
+.gp-best { margin-top: 0.15rem; }
+@media (max-width: 360px) { .gp-boost { width: 92px; height: 92px; } .gp-item { width: 78px; height: 78px; } .steer-btn { width: 76px; height: 76px; } .right-handed .steer-btn.right { left: calc(0.8rem + 86px); } .left-handed .steer-btn.left { right: calc(0.8rem + 86px); } .gp-item.stacked { bottom: calc(1rem + var(--safe-bottom) + 102px); } }
+@media (orientation: landscape) and (max-height: 560px) { .gp-count { font-size: 4.5rem; } }
+
+/* Briefing: a colourful card - the circuit, where, how long, how hard, one line; the rules behind a fold. */
+.brief-card { display: flex; align-items: center; gap: 0.8rem; padding: 0.7rem; border-radius: 22px; background: linear-gradient(135deg, #dff4ff, #e8fbe5); border: 3px solid #fff; box-shadow: 0 4px 0 rgba(16, 40, 76, 0.18); }
+.brief-card.sunset { background: linear-gradient(135deg, #ffe3c8, #ffd1dc); }
+.brief-card.night { background: linear-gradient(135deg, #1d2a5c, #3a2a66); color: #fff; }
+.brief-card.night .lead, .brief-card.night .brief-place { color: #fff; }
+.track-preview { flex: none; width: 132px; height: 132px; border-radius: 22px; box-shadow: 0 3px 0 rgba(16, 40, 76, 0.25); }
+.brief-facts { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.brief-place { margin: 0; font-weight: 800; font-size: 0.86rem; color: var(--muted); }
+.brief-blurb { margin: 0; font-size: 0.95rem; line-height: 1.3; }
+.chip.stars { background: var(--yellow); color: #5a3a00; letter-spacing: 0.05em; }
+.how-to { border-radius: 16px; background: var(--soft); border: 1px solid rgba(20, 100, 232, 0.12); padding: 0.2rem 0.9rem; }
+.how-to summary { min-height: 44px; display: flex; align-items: center; font-weight: 900; color: var(--blue); cursor: pointer; }
+.how-to[open] { padding-bottom: 0.7rem; }
+@media (max-width: 360px) { .track-preview { width: 104px; height: 104px; } }
+/* Results: a big medal-coloured place, Navie hopping on a podium, the time, Bolts that count up. */
+.results-hero { display: flex; align-items: center; gap: 0.7rem; }
+.result-pos { flex: none; display: inline-flex; align-items: flex-start; padding: 0.2rem 0.7rem 0.35rem; border-radius: 22px; border: 4px solid #fff; background: linear-gradient(180deg, #2a7bff, #1146b8); color: #fff; font-family: var(--brand); line-height: 1; box-shadow: 0 5px 0 #0a2a6e; animation: gp-pop 0.6s cubic-bezier(0.3, 1.8, 0.5, 1) 0.15s both; }
+.result-pos[data-rank="1"] { background: linear-gradient(180deg, #ffe066, #ffb400); color: #5a3a00; box-shadow: 0 5px 0 #a86a00; }
+.result-pos[data-rank="2"] { background: linear-gradient(180deg, #f3f6fa, #b9c4d2); color: #2c3a4e; box-shadow: 0 5px 0 #7d8899; }
+.result-pos[data-rank="3"] { background: linear-gradient(180deg, #ffc08a, #d9772e); color: #4e2400; box-shadow: 0 5px 0 #8f4510; }
+.rp-num { font-size: 3.2rem; font-weight: 900; }
+.rp-suf { font-size: 1.2rem; font-weight: 900; margin: 0.45rem 0 0 0.1rem; }
+.rp-word { font-size: 1.4rem; font-weight: 900; padding: 0.6rem 0.2rem; }
+.results-face { width: 84px; height: 84px; flex: none; }
+.results-hero.happy .results-face { transform-origin: 50% 90%; animation: gp-hop 0.55s ease-out 0.3s 3 both; }
+@keyframes gp-hop { 0%, 100% { transform: translateY(0) scale(1, 1); } 40% { transform: translateY(-14px) scale(0.96, 1.05); } 70% { transform: translateY(0) scale(1.05, 0.95); } }
+.results-text { min-width: 0; }
+.results-text .lead { margin: 0; }
+.result-time { margin: 0; font: 900 1.5rem/1.1 var(--brand); color: var(--navy); font-variant-numeric: tabular-nums; }
+.standings { list-style: none; padding-left: 0; }
+.standings li { align-items: center; gap: 0.5rem; padding: 0.25rem 0.3rem; border-radius: 10px; }
+.standings li.me { background: #e8f0ff; }
+.st-rank { flex: none; width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--navy); color: #fff; font: 900 0.8rem/1.6rem var(--brand); text-align: center; }
+.standings li:nth-child(1) .st-rank { background: #ffb400; color: #5a3a00; }
+.standings li:nth-child(2) .st-rank { background: #b9c4d2; color: #2c3a4e; }
+.standings li:nth-child(3) .st-rank { background: #d9772e; color: #fff; }
+.st-swatch { flex: none; width: 22px; height: 22px; border-radius: 7px; border: 2px solid #10284c; }
+.st-face { flex: none; width: 28px; height: 28px; }
+.st-name { flex: 1; min-width: 0; }
+@media (max-width: 360px) { .rp-num { font-size: 2.6rem; } .results-face { width: 64px; height: 64px; } }
+
+/* ---- Steering wheel and a cleaner race HUD (17 Nov 2026, second pass) ------------------------------ */
+/* Top: pause and place on the left, lap and time in the middle, the mini map on the right. Nothing else. */
+.gp-hud .hud-top { align-items: flex-start; gap: 0.45rem; padding: 0.5rem 0.6rem 0.3rem; }
+.gp-top-left { flex: none; display: flex; align-items: center; gap: 0.45rem; }
+.gp-hud .gp-lapbox { flex: 1 1 0; min-width: 0; max-width: 8.6rem; margin: 0.3rem auto 0; padding: 0.25rem 0.4rem 0.3rem; align-items: center; text-align: center; }
+.gp-hud .gp-pos { min-width: 0; padding: 0.1rem 0.5rem 0.2rem; }
+.gp-hud .gp-pos-num { font-size: 2.2rem; }
+.gp-hud .gp-pos-suf { font-size: 0.9rem; margin-top: 0.3rem; }
+.gp-hud .gp-lap { justify-content: center; }
+.gp-hud .gp-minimap { position: static; flex: none; width: 100px; height: 100px; border-radius: 20px; }
+.gp-hud .hud-mid { align-items: center; }
+@media (max-width: 360px) { .gp-hud .gp-minimap { width: 84px; height: 84px; } .gp-hud .gp-lap-n { font-size: 1.25rem; } .gp-hud .gp-pos-num { font-size: 2rem; } }
+
+/* The steering wheel: bottom corner, opposite the boost. A touch area a little bigger than the wheel, so a thumb that
+   slips off the rim keeps steering (the pointer is captured anyway). Only the picture turns, with a transform. */
+.gp-steer-zone { --wheel: clamp(124px, min(38vw, 20vh), 156px); position: absolute; bottom: calc(0.3rem + var(--safe-bottom)); width: calc(var(--wheel) + 28px); height: calc(var(--wheel) + 28px); display: flex; align-items: center; justify-content: center; pointer-events: auto; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.gp-steer-zone.left { left: calc(0.1rem + var(--safe-left)); }
+.gp-steer-zone.right { right: calc(0.1rem + var(--safe-right)); }
+.gp-wheel { position: relative; width: var(--wheel); height: var(--wheel); transition: transform 0.12s ease-out; }
+.gp-wheel.held { transform: scale(1.04); }
+.gp-wheel-shadow { position: absolute; left: 6%; right: 6%; bottom: -8%; height: 24%; border-radius: 50%; background: radial-gradient(closest-side, rgba(6, 16, 31, 0.5), rgba(6, 16, 31, 0)); }
+.gp-wheel-spin { position: absolute; inset: 0; will-change: transform; }
+.gp-wheel-art, .gp-wheel-art svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.gp-wheel::after { content: ""; position: absolute; inset: -7px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, 0.85); opacity: 0; transition: opacity 0.12s; pointer-events: none; }
+.gp-wheel.held::after { opacity: 1; }
+.gp-steer-hint { position: absolute; left: 50%; bottom: calc(100% - 4px); transform: translateX(-50%); display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; background: rgba(16, 40, 76, 0.85); color: #fff; font: 900 0.82rem/1 var(--brand); padding: 0.35rem 0.75rem 0.35rem 0.5rem; border-radius: 999px; border: 2px solid rgba(255, 255, 255, 0.85); transition: opacity 0.4s; pointer-events: none; }
+.gp-steer-hint.gone { opacity: 0; }
+.gp-steer-hint-ico { display: inline-flex; width: 18px; height: 18px; }
+.gp-steer-hint-ico svg, .gp-ico svg { display: block; width: 100%; height: 100%; }
+
+/* Boost in the other corner, the item just beside it and a little higher: both under the same thumb. */
+.gp-item.beside { width: 76px; height: 76px; border-radius: 24px; bottom: calc(1rem + var(--safe-bottom) + 34px); }
+.gp-item.beside.right { right: calc(0.8rem + var(--safe-right) + 114px); }
+.gp-item.beside.left { left: calc(0.8rem + var(--safe-left) + 114px); }
+.gp-item.beside .gp-item-icon { width: 48px; height: 48px; }
+@media (max-width: 360px) { .gp-item.beside { width: 70px; height: 70px; } .gp-item.beside.right { right: calc(0.8rem + var(--safe-right) + 100px); } .gp-item.beside.left { left: calc(0.8rem + var(--safe-left) + 100px); } }
+/* Very narrow phones: the item goes above the boost so it never meets the wheel. */
+@media (max-width: 340px) { .gp-item.beside { bottom: calc(1rem + var(--safe-bottom) + 102px); } .gp-item.beside.right { right: calc(0.8rem + var(--safe-right) + 8px); } .gp-item.beside.left { left: calc(0.8rem + var(--safe-left) + 8px); } }
+
+/* ---- Start screen and menus (17 Nov 2026, second pass): pictures and big buttons, a few words ---------- */
+.gp-ico { display: inline-flex; width: 24px; height: 24px; flex: none; }
+.gp-ico.big { width: 30px; height: 30px; }
+.gp-ico.huge { width: 44px; height: 44px; }
+.bolts-pill .gp-ico { width: 22px; height: 22px; }
+.gp-home { align-items: stretch; text-align: center; padding-bottom: calc(var(--safe-bottom) + 0.45rem); }
+.gp-home .safety { margin: 0.45rem 0.8rem 0; padding: 0.4rem 0.8rem; font-size: 0.8rem; }
+.home-top { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; padding: 0.45rem 0.7rem 0; }
+.icon-btn.round { width: 46px; height: 46px; border-radius: 50%; background: rgba(255, 255, 255, 0.95); box-shadow: 0 3px 0 rgba(16, 40, 76, 0.25); }
+.home-title { flex: 1; min-width: 0; align-items: center; }
+.gp-home .home-title span:first-child { font-size: 1.8rem; }
+.gp-home .home-title span:last-child { font-size: 2.6rem; }
+/* The empty middle where Navie stands (drawn on the canvas behind); a tap makes Navie hop. */
+.home-stage { flex: 1 1 auto; min-height: 150px; cursor: pointer; }
+.home-bottom { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 0 0.9rem; }
+.next-race { display: inline-flex; align-items: center; gap: 0.55rem; min-height: 52px; max-width: 100%; padding: 0.25rem 0.95rem 0.25rem 0.3rem; border-radius: 999px; border: 3px solid #fff; background: rgba(16, 40, 76, 0.9); color: #fff; box-shadow: 0 4px 0 rgba(6, 16, 31, 0.35); cursor: pointer; font: inherit; }
+.track-preview.next-thumb { width: 44px; height: 44px; border-radius: 50%; box-shadow: none; flex: none; }
+.next-text { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; line-height: 1.1; }
+.next-no { font: 900 0.72rem var(--brand); color: var(--yellow); letter-spacing: 0.04em; }
+.next-text strong { font: 900 0.98rem var(--brand); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.mini-stars { color: var(--yellow); font-size: 0.85rem; letter-spacing: 0.04em; flex: none; }
+.btn.start-race { width: min(380px, 100%); min-height: 66px; gap: 0.6rem; border: 3px solid #fff; border-radius: 22px; background: linear-gradient(180deg, #ffd84d, #ffaf00); color: #4a2a00; font: 900 1.45rem/1 var(--brand); letter-spacing: 0.02em; box-shadow: 0 6px 0 #a86a00, 0 10px 22px rgba(6, 16, 31, 0.35); }
+.btn.start-race .gp-ico { width: 30px; height: 30px; background: #10284c; border-radius: 50%; padding: 4px; box-sizing: border-box; }
+.btn.start-race:active { transform: translateY(3px); box-shadow: 0 3px 0 #a86a00; }
+.home-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.55rem; width: min(380px, 100%); }
+.home-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.3rem; min-height: 76px; padding: 0.4rem 0.2rem; border: 3px solid #fff; border-radius: 20px; background: linear-gradient(180deg, #2a7bff, #1146b8); color: #fff; font: 900 0.92rem/1.1 var(--brand); box-shadow: 0 4px 0 #0a2a6e; cursor: pointer; }
+.home-tile .gp-ico { width: 34px; height: 34px; padding: 5px; box-sizing: border-box; border-radius: 50%; background: #fff; box-shadow: 0 2px 0 rgba(6, 16, 31, 0.25); }
+.home-tile:active { transform: translateY(2px); box-shadow: 0 2px 0 #0a2a6e; }
+.home-foot { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; width: min(380px, 100%); }
+.pill-btn { display: inline-flex; align-items: center; gap: 0.35rem; min-height: 44px; padding: 0 0.95rem 0 0.6rem; border-radius: 999px; border: 0; background: rgba(255, 255, 255, 0.94); color: var(--navy); font: 900 0.92rem var(--brand); box-shadow: 0 3px 0 rgba(16, 40, 76, 0.25); cursor: pointer; }
+.home-safe { margin: 0; color: #fff; font-weight: 800; font-size: 0.78rem; line-height: 1.25; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+.gp-home .home-top, .gp-home .home-bottom, .gp-home .safety { transition: opacity 0.3s ease, transform 0.3s ease; }
+.gp-home.leaving .home-top, .gp-home.leaving .home-bottom, .gp-home.leaving .safety { opacity: 0; transform: translateY(14px); }
+@media (max-height: 700px) { .gp-home .home-title span:first-child { font-size: 1.45rem; } .gp-home .home-title span:last-child { font-size: 2.1rem; } .btn.start-race { min-height: 58px; font-size: 1.3rem; } .home-tile { min-height: 66px; } .home-tile .gp-ico { width: 30px; height: 30px; } .gp-home .safety { font-size: 0.74rem; padding: 0.3rem 0.7rem; } .home-bottom { gap: 0.42rem; } }
+
+/* Cup and Time Trial rows: a little picture of the circuit, the name, the stars, one tag. */
+.tagline { margin: 0 0 0.3rem; font-family: var(--brand); font-weight: 900; color: var(--blue); }
+.track-rows { list-style: none; margin: 0.3rem 0 0.7rem; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.track-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.35rem 0.45rem 0.35rem 0.35rem; border-radius: 16px; background: var(--soft); }
+.card > .track-row + .track-row { margin-top: 0.4rem; }
+.track-row.next { background: #fff6d6; box-shadow: inset 0 0 0 2px var(--yellow); }
+.track-preview.row-thumb { width: 48px; height: 48px; border-radius: 12px; box-shadow: none; flex: none; }
+.track-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem; text-align: left; }
+.track-row-text .mini-stars { color: #e6a300; }
+.row-tag { flex: none; min-width: 2.6rem; text-align: center; font: 900 0.85rem var(--brand); color: var(--muted); }
+.row-tag.next { color: #5a3a00; background: var(--yellow); border-radius: 999px; padding: 0.25rem 0.6rem; }
+.row-tag.done { color: #1e6b3a; font-size: 1.15rem; }
+
+/* Garage: an icon, the name and one line, the level, a price with a bolt. */
+.garage-note { margin: 0 0.2rem; color: #fff; font-weight: 800; font-size: 0.85rem; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+.upgrade-row { display: flex; align-items: center; gap: 0.7rem; }
+.upgrade-ico { flex: none; width: 48px; height: 48px; border-radius: 14px; background: var(--soft); display: flex; align-items: center; justify-content: center; font-size: 1.7rem; }
+.upgrade-text { flex: 1; min-width: 0; }
+.upgrade-text p { margin: 0.1rem 0; }
+.btn.buy { flex: none; min-width: 84px; gap: 0.25rem; padding: 0.4rem 0.7rem; }
+.btn.buy .gp-ico { width: 20px; height: 20px; }
+
+/* Records. */
+.records-top { display: flex; align-items: center; justify-content: space-around; gap: 0.6rem; text-align: center; }
+.records-top p { margin: 0; }
+.records-big { font: 900 1.5rem var(--brand); color: var(--navy); }
+.record-row { display: flex; align-items: center; gap: 0.7rem; }
+.track-preview.row-thumb.big, .record-row .track-preview.row-thumb { width: 56px; height: 56px; }
+.record-body { flex: 1; min-width: 0; }
+.record-name { font: 900 1rem var(--brand); }
+.rec-cells { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; margin-top: 0.25rem; }
+.rec-cell { display: flex; flex-direction: column; background: var(--soft); border-radius: 10px; padding: 0.2rem 0.3rem; text-align: center; }
+.rec-cell strong { font-variant-numeric: tabular-nums; font-size: 0.92rem; }
+
+/* Briefing: how to steer in one row; the rules as a short list behind the fold. */
+.brief-steer { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0.6rem; border-radius: 16px; background: var(--soft); border: 1px solid rgba(20, 100, 232, 0.12); }
+.brief-steer-text { flex: 1; min-width: 0; display: flex; flex-direction: column; text-align: left; }
+.brief-best { margin: 0; font-weight: 900; color: var(--blue); }
+.brief-card.night .brief-best { color: #ffd34d; }
+.how-to summary { gap: 0.45rem; }
+.how-list { margin: 0.1rem 0 0.4rem; padding-left: 1.15rem; line-height: 1.5; font-size: 0.9rem; }
+
+/* Results: Bolts as one big number with its short lines beside it. */
+.bolts-card { display: flex; align-items: center; gap: 0.8rem; }
+.bolts-total { flex: none; display: flex; align-items: center; gap: 0.3rem; font: 900 1.9rem/1 var(--brand); color: #8a5a00; }
+.bolts-word { font-size: 0.85rem; color: var(--muted); }
+.bolts-lines { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0; font-size: 0.86rem; }
+.bolts-lines li { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.1rem 0; }
+@media (max-width: 360px) { .bolts-card { flex-direction: column; align-items: stretch; } .bolts-total { justify-content: center; } }
+
+/* Start screen held sideways: Navie on the left half, the buttons on the right. */
+@media (orientation: landscape) and (max-height: 560px) {
+  .gp-home { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto 1fr; column-gap: 0.6rem; }
+  .gp-home .safety, .gp-home .home-top { grid-column: 1 / -1; }
+  .gp-home .safety { justify-self: center; margin-top: 0.3rem; padding: 0.25rem 0.8rem; }
+  .gp-home .home-top { padding-top: 0.2rem; }
+  .gp-home .home-title span:first-child { font-size: 1.2rem; }
+  .gp-home .home-title span:last-child { font-size: 1.8rem; }
+  .home-stage { grid-column: 1; grid-row: 3; min-height: 0; }
+  .home-bottom { grid-column: 2; grid-row: 3; justify-content: center; gap: 0.38rem; padding-bottom: 0.2rem; }
+  .btn.start-race { min-height: 52px; font-size: 1.2rem; }
+  .home-tile { min-height: 58px; font-size: 0.82rem; }
+  .home-tile .gp-ico { width: 26px; height: 26px; padding: 4px; }
+  .next-race { min-height: 46px; }
+  .track-preview.next-thumb { width: 38px; height: 38px; }
+}
+

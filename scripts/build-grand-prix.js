@@ -78,6 +78,25 @@ function fontFace() {
   return `@font-face{font-family:"Nunito Black";src:url(data:font/ttf;base64,${data}) format("truetype");font-weight:900;font-display:block;}`;
 }
 
+/**
+ * Navie's finished pictures, read (never changed) from Tollbound Heroes' baked art: the same
+ * approved model from every side, so the start screen and the race show one Navie. Only Navie's
+ * views are inlined; Road Trip's clay.ts reads them from window.__TB_ART__ and decodes on first use.
+ */
+function artScript() {
+  const dir = path.join(repo, 'frontend', 'games', 'roadTrip', 'assets', 'art');
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+  const out = {};
+  for (const [name, meta] of Object.entries(manifest.sprites)) {
+    if (!name.startsWith('h.navie.')) {
+      continue;
+    }
+    const { hash, bytes, ...rest } = meta;
+    out[name] = { ...rest, u: `data:image/webp;base64,${fs.readFileSync(path.join(dir, `${name}.webp`)).toString('base64')}` };
+  }
+  return `<script>window.__TB_ART__=${JSON.stringify(out)};</script>`;
+}
+
 function page({ dev }) {
   const { code, files } = bundle(entry);
   const css = fs.readFileSync(path.join(game, 'web', 'styles.css'), 'utf8');
@@ -92,6 +111,7 @@ function page({ dev }) {
 </head>
 <body>
 <div id="app"></div>
+${artScript()}
 ${devBoot}<script>${code}</script>
 </body>
 </html>`;

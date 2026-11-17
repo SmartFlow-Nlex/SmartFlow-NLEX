@@ -193,6 +193,7 @@ export class HubScript {
               g.audio.play('ok');
               this.ctx.discover('d-butterfly');
               this.hooks.sideStep(`bfly:${n}`);
+              g.reactTeam('happy', 1.2, 'active');
               const seen = [1, 2, 3].filter((k) => this.flagOn(`bfly:${k}`)).length;
               if (seen < 3) {
                 this.ctx.hud.notice(`Butterfly Watch: ${seen}/3`, 2);
@@ -221,6 +222,7 @@ export class HubScript {
           g.burst('leaf', bx, 1.2, bz, 12);
           this.hooks.sideStep('bird:found');
           this.ctx.discover('d-fantail');
+          g.reactTeam('surprised', 1.4);
           this.ctx.hud.notice(H.birdFound, 2.6);
         },
       }),

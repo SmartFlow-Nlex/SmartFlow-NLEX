@@ -63,13 +63,16 @@ export interface Environment {
   fogFar: number;
   shadowTint: Vec3;
   lightTint: Vec3;
+  /** Optional light for skinned meshes (people and animals), so a dark mood keeps faces readable. */
+  skinShadowTint?: Vec3;
+  skinLightTint?: Vec3;
 }
 
 const TOON_VERT = (skin: boolean): string => `
 attribute vec3 aPos; attribute vec3 aNor; attribute vec3 aCol; attribute float aBone; attribute float aSway;
 uniform mat4 uVP; uniform mat4 uModel; uniform float uTime;
 ${skin ? `uniform mat4 uBones[${MAX_BONES}];` : ''}
-varying vec3 vN; varying vec3 vC; varying vec3 vW;
+varying vec3 vN; varying vec3 vC; varying vec3 vW; varying float vS;
 void main() {
   vec4 p = vec4(aPos, 1.0);
   vec4 n = vec4(aNor, 0.0);
@@ -82,21 +85,26 @@ void main() {
   vN = (uModel * n).xyz;
   vC = aCol;
   vW = w.xyz;
+  vS = aSway;
   gl_Position = uVP * w;
 }`;
 
-const TOON_FRAG = `
+const TOON_FRAG = (soft: boolean): string => `
 precision mediump float;
 uniform vec3 uSun; uniform vec3 uFog; uniform float uFogNear; uniform float uFogFar; uniform vec3 uEye;
 uniform vec3 uShadow; uniform vec3 uLight; uniform vec4 uTint;
-varying vec3 vN; varying vec3 vC; varying vec3 vW;
-uniform vec3 uCutA; uniform vec3 uCutB; uniform float uCutR;
+varying vec3 vN; varying vec3 vC; varying vec3 vW; varying float vS;
+uniform vec3 uCutA; uniform vec3 uCutB; uniform float uCutR; uniform float uNear; uniform float uFade;
 void cutOut(vec3 world) {
-  if (uCutR <= 0.0) { return; }
-  vec3 ab = uCutB - uCutA;
-  float t = clamp(dot(world - uCutA, ab) / max(dot(ab, ab), 0.01), 0.0, 1.0);
-  float d = length(world - (uCutA + ab * t));
-  float fade = (1.0 - smoothstep(uCutR * 0.6, uCutR, d)) * (1.0 - smoothstep(0.86, 0.98, t));
+  float fade = uFade;
+  if (uCutR > 0.0) {
+    vec3 ab = uCutB - uCutA;
+    float t = clamp(dot(world - uCutA, ab) / max(dot(ab, ab), 0.01), 0.0, 1.0);
+    float d = length(world - (uCutA + ab * t));
+    fade = max(fade, (1.0 - smoothstep(uCutR * 0.6, uCutR, d)) * (1.0 - smoothstep(0.86, 0.98, t)));
+    /* Right beside the lens: thinned out whichever way it lies. */
+    if (uNear > 0.0) { fade = max(fade, 1.0 - smoothstep(uNear * 0.55, uNear, length(world - uCutA))); }
+  }
   if (fade <= 0.0) { return; }
   float a = mod(floor(gl_FragCoord.x), 4.0);
   float b = mod(floor(gl_FragCoord.y), 4.0);
@@ -107,12 +115,33 @@ void main() {
   cutOut(vW);
   vec3 n = normalize(vN);
   float d = dot(n, uSun);
-  float upper = smoothstep(0.42, 0.46, d);
-  float lower = smoothstep(-0.02, 0.02, d);
-  vec3 col = vC * mix(uShadow, mix(mix(uShadow, vec3(1.0), 0.62), uLight, upper), lower);
+${
+  soft
+    ? `  /* Characters and animals: the same bands, but wide and gentle, so faces and bodies turn softly from light to shade. */
+  float upper = smoothstep(0.22, 0.72, d);
+  float lower = smoothstep(-0.28, 0.22, d);
+  /* Shadow sides lifted a touch, so faces stay readable turned away from the sun. */
+  vec3 shade = mix(uShadow, vec3(1.0), 0.31);
+  vec3 col = vC * mix(shade, mix(mix(shade, vec3(1.0), 0.6), uLight, upper), lower);
+  vec3 v = normalize(uEye - vW);
+  /* A soft light rim all round the silhouette: it lifts the team off busy ground and leaves. */
+  float rim = smoothstep(0.5, 0.86, 1.0 - max(dot(n, v), 0.0));
+  col += rim * 0.12 * (0.55 + 0.45 * lower);
+  /* A soft satin sheen where the light glances off: broad and faint, so nothing looks like plastic. */
+  vec3 hv = normalize(uSun + v);
+  float sheen = smoothstep(0.8, 0.97, max(dot(n, hv), 0.0)) * lower;
+  col += sheen * 0.075 * (vec3(1.0) - col * 0.45);`
+    : `  /* Leaves and petals (anything that sways) are shaded softly, so crowns and bushes read round; the rest keeps crisp bands. */
+  float leaf = step(0.05, vS);
+  float upper = mix(smoothstep(0.4, 0.48, d), smoothstep(0.26, 0.66, d), leaf);
+  float lower = mix(smoothstep(-0.04, 0.04, d), smoothstep(-0.24, 0.2, d), leaf);
+  /* Shadow sides are lifted a little, so walls facing away from the sun stay warm rather than turning blue. */
+  vec3 shade = mix(mix(uShadow, vec3(1.0), 0.16), mix(uShadow, vec3(1.0), 0.28), leaf);
+  vec3 col = vC * mix(shade, mix(mix(shade, vec3(1.0), 0.62), uLight, upper), lower);
   vec3 v = normalize(uEye - vW);
   float rim = smoothstep(0.62, 0.72, 1.0 - max(dot(n, v), 0.0)) * lower;
-  col += rim * 0.07;
+  col += rim * (0.07 + 0.05 * leaf);`
+}
   col = mix(col, uTint.rgb, uTint.a);
   float f = clamp((length(uEye - vW) - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
   gl_FragColor = vec4(mix(col, uFog, f * f), 1.0);
@@ -141,6 +170,8 @@ void main() {
   c.xy += dir * uWidth * uPixel * c.w * clamp(16.0 / c.w, 0.3, 1.0);
   c.z += 0.0004 * c.w;
   gl_Position = c;
+  /* Fine face details (brows, smiles, glints, glasses) are marked with a negative sway: no contour for them. */
+  if (aSway < -0.5) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }
   vC = aCol;
   vD = c.w;
   vW = w.xyz;
@@ -150,13 +181,17 @@ const OUTLINE_FRAG = `
 precision mediump float;
 uniform vec3 uFog; uniform float uFogNear; uniform float uFogFar;
 varying vec3 vC; varying float vD; varying vec3 vW;
-uniform vec3 uCutA; uniform vec3 uCutB; uniform float uCutR;
+uniform vec3 uCutA; uniform vec3 uCutB; uniform float uCutR; uniform float uNear; uniform float uFade;
 void cutOut(vec3 world) {
-  if (uCutR <= 0.0) { return; }
-  vec3 ab = uCutB - uCutA;
-  float t = clamp(dot(world - uCutA, ab) / max(dot(ab, ab), 0.01), 0.0, 1.0);
-  float d = length(world - (uCutA + ab * t));
-  float fade = (1.0 - smoothstep(uCutR * 0.6, uCutR, d)) * (1.0 - smoothstep(0.86, 0.98, t));
+  float fade = uFade;
+  if (uCutR > 0.0) {
+    vec3 ab = uCutB - uCutA;
+    float t = clamp(dot(world - uCutA, ab) / max(dot(ab, ab), 0.01), 0.0, 1.0);
+    float d = length(world - (uCutA + ab * t));
+    fade = max(fade, (1.0 - smoothstep(uCutR * 0.6, uCutR, d)) * (1.0 - smoothstep(0.86, 0.98, t)));
+    /* Right beside the lens: thinned out whichever way it lies. */
+    if (uNear > 0.0) { fade = max(fade, 1.0 - smoothstep(uNear * 0.55, uNear, length(world - uCutA))); }
+  }
   if (fade <= 0.0) { return; }
   float a = mod(floor(gl_FragCoord.x), 4.0);
   float b = mod(floor(gl_FragCoord.y), 4.0);
@@ -365,22 +400,24 @@ export class Renderer {
   private cutA: Vec3 = [0, 0, 0];
   private cutB: Vec3 = [0, 0, 1];
   private cutR = 0;
+  private cutNear = 0;
 
-  /** Anything drawn with `cut` is stippled away around this segment, so scenery never hides the hero. */
-  setCut(a: Vec3, b: Vec3, radius: number): void {
+  /** Anything drawn with `cut` is stippled away around this segment, and within `near` of its start (the lens), so scenery never hides the hero. */
+  setCut(a: Vec3, b: Vec3, radius: number, near = 0): void {
     this.cutA = a;
     this.cutB = b;
     this.cutR = radius;
+    this.cutNear = near;
   }
 
   private setup(): void {
     const gl = this.gl;
     const attrs = ['aPos', 'aNor', 'aCol', 'aBone', 'aSway'];
-    const toonU = ['uVP', 'uModel', 'uTime', 'uBones', 'uSun', 'uFog', 'uFogNear', 'uFogFar', 'uEye', 'uShadow', 'uLight', 'uTint', 'uCutA', 'uCutB', 'uCutR'];
-    const lineU = ['uVP', 'uModel', 'uTime', 'uBones', 'uPixel', 'uWidth', 'uFog', 'uFogNear', 'uFogFar', 'uCutA', 'uCutB', 'uCutR'];
+    const toonU = ['uVP', 'uModel', 'uTime', 'uBones', 'uSun', 'uFog', 'uFogNear', 'uFogFar', 'uEye', 'uShadow', 'uLight', 'uTint', 'uCutA', 'uCutB', 'uCutR', 'uNear', 'uFade'];
+    const lineU = ['uVP', 'uModel', 'uTime', 'uBones', 'uPixel', 'uWidth', 'uFog', 'uFogNear', 'uFogFar', 'uCutA', 'uCutB', 'uCutR', 'uNear', 'uFade'];
     this.programs = {
-      toon: this.program(TOON_VERT(false), TOON_FRAG, toonU, attrs),
-      toonSkin: this.program(TOON_VERT(true), TOON_FRAG, toonU, attrs),
+      toon: this.program(TOON_VERT(false), TOON_FRAG(false), toonU, attrs),
+      toonSkin: this.program(TOON_VERT(true), TOON_FRAG(true), toonU, attrs),
       line: this.program(OUTLINE_VERT(false), OUTLINE_FRAG, lineU, attrs),
       lineSkin: this.program(OUTLINE_VERT(true), OUTLINE_FRAG, lineU, attrs),
       sky: this.program(SKY_VERT, SKY_FRAG, ['uTop', 'uBottom'], ['aPos']),
@@ -548,7 +585,7 @@ export class Renderer {
   }
 
   /** Draws a mesh with its contour. `bones` makes it follow a skeleton; `tint` washes it with a colour. */
-  draw(mesh: Mesh, opts: { model?: Mat4; bones?: Float32Array; tint?: [number, number, number, number]; noOutline?: boolean; cut?: boolean } = {}): void {
+  draw(mesh: Mesh, opts: { model?: Mat4; bones?: Float32Array; tint?: [number, number, number, number]; noOutline?: boolean; cut?: boolean; fade?: number } = {}): void {
     const gl = this.gl;
     const env = this.env;
     const skinned = opts.bones !== undefined;
@@ -563,12 +600,14 @@ export class Renderer {
     gl.uniform1f(p.u.uFogNear, env.fogNear);
     gl.uniform1f(p.u.uFogFar, env.fogFar);
     gl.uniform3fv(p.u.uEye, this.eye);
-    gl.uniform3fv(p.u.uShadow, env.shadowTint);
-    gl.uniform3fv(p.u.uLight, env.lightTint);
+    gl.uniform3fv(p.u.uShadow, skinned ? (env.skinShadowTint ?? env.shadowTint) : env.shadowTint);
+    gl.uniform3fv(p.u.uLight, skinned ? (env.skinLightTint ?? env.lightTint) : env.lightTint);
     gl.uniform4fv(p.u.uTint, opts.tint ?? [0, 0, 0, 0]);
     gl.uniform3fv(p.u.uCutA, this.cutA);
     gl.uniform3fv(p.u.uCutB, this.cutB);
     gl.uniform1f(p.u.uCutR, opts.cut === true ? this.cutR : 0);
+    gl.uniform1f(p.u.uNear, this.cutNear);
+    gl.uniform1f(p.u.uFade, opts.fade ?? 0);
     if (skinned) {
       gl.uniformMatrix4fv(p.u.uBones, false, opts.bones as Float32Array);
     }
@@ -584,10 +623,13 @@ export class Renderer {
       gl.uniformMatrix4fv(l.u.uModel, false, model);
       gl.uniform1f(l.u.uTime, this.time);
       gl.uniform2f(l.u.uPixel, 2 / this.width, 2 / this.height);
-      gl.uniform1f(l.u.uWidth, this.outlinePx * this.dpr);
+      /* Characters and animals (skinned) get a slightly finer contour than the scenery: cleaner, softer edges. */
+      gl.uniform1f(l.u.uWidth, this.outlinePx * this.dpr * (skinned ? 0.86 : 1));
       gl.uniform3fv(l.u.uCutA, this.cutA);
       gl.uniform3fv(l.u.uCutB, this.cutB);
       gl.uniform1f(l.u.uCutR, opts.cut === true ? this.cutR : 0);
+      gl.uniform1f(l.u.uNear, this.cutNear);
+      gl.uniform1f(l.u.uFade, opts.fade ?? 0);
       gl.uniform3fv(l.u.uFog, env.fog);
       gl.uniform1f(l.u.uFogNear, env.fogNear);
       gl.uniform1f(l.u.uFogFar, env.fogFar);

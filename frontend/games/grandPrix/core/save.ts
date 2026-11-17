@@ -1,4 +1,4 @@
-import { DIFFICULTIES, TRACKS_IN_CUP, UPGRADES, type SaveData, type Settings, type TrackRecord } from './types';
+import { DIFFICULTIES, STEERING_MODES, TRACKS_IN_CUP, UPGRADES, type SaveData, type Settings, type TrackRecord } from './types';
 
 /**
  * Navie Grand Prix's save: one JSON object per account, written whole, with
@@ -17,8 +17,11 @@ export const DEFAULT_SETTINGS: Settings = {
   autoSteer: false,
   showLine: true,
   items: true,
-  steering: 'drag',
+  steering: 'wheel',
   sensitivity: 1,
+  steerFeel: 'easy',
+  steerAssist: true,
+  tiltZero: 0,
   boostSide: 'right',
   master: 0.8,
   music: 0.5,
@@ -64,8 +67,11 @@ function readSettings(raw: unknown): Settings {
     autoSteer: typeof r.autoSteer === 'boolean' ? r.autoSteer : d.autoSteer,
     showLine: typeof r.showLine === 'boolean' ? r.showLine : d.showLine,
     items: typeof r.items === 'boolean' ? r.items : d.items,
-    steering: oneOf(r.steering, ['drag', 'lanes'] as const, d.steering),
+    steering: oneOf(r.steering, STEERING_MODES, d.steering),
     sensitivity: num(r.sensitivity, d.sensitivity, 0.5, 2),
+    steerFeel: oneOf(r.steerFeel, ['easy', 'normal', 'advanced'] as const, d.steerFeel),
+    steerAssist: typeof r.steerAssist === 'boolean' ? r.steerAssist : d.steerAssist,
+    tiltZero: num(r.tiltZero, d.tiltZero, -45, 45),
     boostSide: oneOf(r.boostSide, ['left', 'right'] as const, d.boostSide),
     master: num(r.master, d.master, 0, 1),
     music: num(r.music, d.music, 0, 1),

@@ -11,7 +11,16 @@ export type RaceMode = 'cup' | 'trial';
 export type UpgradeId = 'engine' | 'tyres' | 'turbo' | 'stripes';
 export const UPGRADES: readonly UpgradeId[] = ['engine', 'tyres', 'turbo', 'stripes'];
 
-export type SteeringMode = 'drag' | 'lanes';
+/**
+ * 'wheel' is the on-screen steering wheel (the default: turn it with a thumb); 'buttons' hold-to-steer;
+ * 'tilt' the phone; 'lanes' one racing line per tap. The old slide control ('drag', until 17 Nov 2026)
+ * is gone: a save that still says 'drag' reads as 'wheel'.
+ */
+export type SteeringMode = 'wheel' | 'buttons' | 'tilt' | 'lanes';
+export const STEERING_MODES: readonly SteeringMode[] = ['wheel', 'buttons', 'tilt', 'lanes'];
+
+/** How touchy steering is: Easy needs more thumb for the same turn and never turns as sharply. */
+export type SteerFeel = 'easy' | 'normal' | 'advanced';
 
 export interface Settings {
   difficulty: Difficulty;
@@ -25,6 +34,12 @@ export interface Settings {
   items: boolean;
   steering: SteeringMode;
   sensitivity: number;
+  /** Steering feel for touch, tilt, buttons and keys. */
+  steerFeel: SteerFeel;
+  /** Assist: takes some of the bends' push and settles the car when steering lets go. */
+  steerAssist: boolean;
+  /** Tilt steering: the phone's left-right tilt, in degrees, that counts as straight ahead. */
+  tiltZero: number;
   boostSide: 'left' | 'right';
   master: number;
   music: number;

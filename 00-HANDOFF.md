@@ -18,7 +18,7 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - They work from **mockup screenshots** and expect the app to match them closely ("make it identical"), then send phone screenshots of what is wrong.
 
 ### How Ysa wants things done
-- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-16**, so next is **Ysa-Commit-17**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
+- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-17**, so next is **Ysa-Commit-18**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
 - **"Make the server up":** start Metro from the **repo root**, then give the `exp://` address and a QR code (see §1). Check the phone can really load the bundle, not just the manifest.
 - Never commit `.env` (it holds keys; it is in `.gitignore`).
 - Use real data only — no mock traffic data, no fake posts.
@@ -44,6 +44,9 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 | **No art inside the Corridor road panel** (behind the two carriageways) — it stays plain white | "can u not put the background here", 7 Oct. |
 | Settings gear (top right) replaced the avatar and opens Profile; the tab-bar peek mascot is retired; the Dashboard's "Heaviest right now" row opens Corridor; the Assistant shows the spec's four quick questions in one sideways row | Redesign, 7 Oct. |
 | Alerts are **in-app only** (banner + badge), polled every minute — no push | Ysa's choice, 6 Oct. |
+| **Navie Grand Prix steers with an on-screen wheel** (bottom left, turned with the thumb). The earlier slide control was removed; Buttons, Tilt and Lanes stay in Settings. | "replace the current steering slider with an actual interactive steering wheel… I do not like this steering method", 17 Nov. |
+| **Grand Prix's Navie is Tollbound Heroes' finished model**, read from its baked art (never redrawn, no Road Trip file changed), on the start screen, in the race and on results. | "Use the existing Navie from Tollbound Heroes as a reference", but **not** a copy of that game's start screen, 17 Nov. |
+| **Game screens keep words to a minimum** (a title, a number or one line); details go behind an info fold. Both safety lines stay. | Asked again for Grand Prix, 17 Nov ("make the game less wordy"), as for Wildway and Tollbound Heroes. |
 
 ### Code map (the redesign)
 - `frontend/components/ui/ScreenShell.tsx` — the frame every tab uses: scene behind a see-through header that frosts blue on scroll, white status bar while a tab is focused, scroll content in a 20 pt gutter, optional footer/keyboard handling (Assistant).
@@ -278,6 +281,22 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - **Remember me** starts unticked. Sign-up no longer remembers the account silently either, since it has no box to opt in with.
 - **Wording:** the wrong-code message (`mfa.ts`) and the reset-link message (`forgot-password.tsx`) use the panel's exact text. "TRAFFIC INTELLIGENCE" is gone from the tab header.
 - **Welcome email:** `sendWelcomeEmail` (`frontend/auth/welcomeEmail.ts`) runs once `register` succeeds, and calls a Google Apps Script running as navie.smartflow@gmail.com (`supabase/welcome-email.gs`, which has the setup steps). The backend cannot send it: Render's free tier blocks outgoing SMTP. The script takes the session token, asks Supabase whose it is, and writes only to that address, once, within 15 minutes of the account's creation. Without `EXPO_PUBLIC_WELCOME_EMAIL_URL` in `.env`, nothing is sent and sign-up still works.
+
+### 9–17 Nov — Ysa-Commit-17 (Wildway Guardians cast, world and polish; Navie Grand Prix wheel, start screen, arcade HUD)
+- **Wildway Guardians** (`frontend/games/wildway/`, README sections from 9 Nov on):
+  - **Cast:** a cute chibi cast with face bones. Dayo is Navie as a boy; Awit was redrawn as Amihan as a girl (sky-blue dress, twin tails), and the kite that floated above her head is gone at Ysa's request. Baging is an original little elf helper in an orange cap and tunic, and Sukat a pocket console.
+  - **World:** greener and cosier, with plants, cosy houses and dressed buildings.
+  - **Missions:** all 18 NLEX exits on an Eco Adventure map, and 8 Eco Run missions, of which 7 are marked In development.
+  - **14 Nov polish:** eased movement, followers that steer, see-through camera fades, clearer talk shots, pickups that fly in, a loading mark and footsteps.
+  - **Checks:** 127 unit tests pass.
+- **Navie Grand Prix** (`frontend/games/grandPrix/`, README sections "Arcade polish" and "Steering wheel, Navie's start screen, fewer words"):
+  - **Steering:** a real steering wheel (it follows the thumb's angle, turns up to 110° each way, springs back when let go, and works alongside boost), plus Easy, Normal and Advanced feel and a steering assist. Old saves switch to the wheel.
+  - **Race screen and camera:** an arcade HUD (place badge, LAP x/3 and FINAL LAP!, mini map, item slot, boost button with cells), a lower camera, NLEX-style signs, an overpass and streetlights, and each track's own horizon.
+  - **Start screen:** a pit-stop scene with Navie animated in front.
+  - **Menus:** Cup, Time Trial, Garage and Records screens, and far fewer words everywhere.
+  - **Navie:** Tollbound Heroes' model, read-only; the build inlines only Navie's pictures (about 150 KB, page 829 KB).
+  - **Checks:** 29 unit tests pass, and every steering mode was driven with touch events on all three tracks in headless Chrome at five phone sizes. Frames got faster on the night track.
+- **Not yet checked on a real phone:** how the wheel feels in the hand, and tilt on an iPhone (it falls back to the wheel).
 
 ### 8 Nov — Ysa-Commit-16 (Wildway Guardians: simpler missions, more animals)
 - From the professor's feedback, "more animals, less reading, simpler missions", with the NLEX missions kept as a major part (Ysa's request):

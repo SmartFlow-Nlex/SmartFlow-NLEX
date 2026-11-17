@@ -35,12 +35,12 @@ export function computePayout(save: SaveData, result: RaceResult): Payout {
   }
   const record = save.tracks[result.track] ?? emptyRecord();
   if (result.boltsCollected > 0) {
-    lines.push({ label: 'Bolts picked up', amount: result.boltsCollected, note: 'Collected on the track' });
+    lines.push({ label: 'Track Bolts', amount: result.boltsCollected, note: 'Picked up' });
   }
   if (result.mode === 'cup') {
-    lines.push({ label: `Finished ${ordinal(result.place)}`, amount: PLACE_BOLTS[result.place - 1] ?? 0, note: `${POINTS[result.place - 1] ?? 0} cup points` });
+    lines.push({ label: `${ordinal(result.place)} place · ${POINTS[result.place - 1] ?? 0} pts`, amount: PLACE_BOLTS[result.place - 1] ?? 0, note: `${POINTS[result.place - 1] ?? 0} cup points` });
     if (result.place <= 3 && !record.podiumPaid) {
-      lines.push({ label: 'First podium here', amount: PODIUM_BONUS, note: `${TRACKS[result.track].name}, paid once` });
+      lines.push({ label: 'First podium', amount: PODIUM_BONUS, note: `${TRACKS[result.track].name}, paid once` });
     }
     // Last race of the cup: the trophy.
     if (save.cup.raced === 2) {
@@ -52,13 +52,13 @@ export function computePayout(save: SaveData, result: RaceResult): Payout {
         lines.push({ label: `${['Gold', 'Silver', 'Bronze'][rank - 1]} trophy`, amount: bonus, note: first ? 'Best trophy yet' : 'Repeat trophy' });
         notes.push(`Fiesta Grand Prix: ${['GOLD', 'SILVER', 'BRONZE'][rank - 1]}!`);
       } else {
-        notes.push(`Cup finished ${ordinal(rank)} overall - try again for a trophy.`);
+        notes.push(`Cup: ${ordinal(rank)} overall`);
       }
     }
   } else {
-    lines.push({ label: 'Time trial finished', amount: TRIAL_BOLTS, note: `${formatTime(result.totalTime)} over 3 laps` });
+    lines.push({ label: 'Time trial', amount: TRIAL_BOLTS, note: `${formatTime(result.totalTime)} over 3 laps` });
     if (record.bestTotal === null || result.totalTime < record.bestTotal) {
-      notes.push(record.bestTotal === null ? 'First time set - your ghost will race you next time.' : `New best time! (was ${formatTime(record.bestTotal)})`);
+      notes.push(record.bestTotal === null ? 'First time set!' : 'New best time!');
     }
     if (record.bestLap === null || result.bestLap < record.bestLap) {
       notes.push(`Best lap ${formatTime(result.bestLap)}`);

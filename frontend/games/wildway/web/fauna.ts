@@ -16,6 +16,8 @@ interface Model {
   mesh: Mesh;
   pivots: Vec3[];
   parents: number[];
+  /** The eyes' own bone, for blinking. Fish and geckos have none: they cannot blink. */
+  eyes?: number;
 }
 
 type Mode = 'ground' | 'perch' | 'fly' | 'hop' | 'loop' | 'soar' | 'wade' | 'hover' | 'dart' | 'swim' | 'leap' | 'sit' | 'walk' | 'hide' | 'flutter' | 'land';
@@ -110,12 +112,13 @@ const SIZE: Record<FaunaKind, number> = {
 
 /* ---- Models ---- */
 
-/** A big, friendly cartoon eye: white, a dark pupil looking forward, and a glint. */
+/** A big, friendly cartoon eye: white, a dark pupil looking forward, and two glints. */
 function eye(b: MeshBuilder, x: number, y: number, z: number, r: number): void {
   const side = Math.sign(x) || 1;
-  b.ball(x, y, z, r, '#ffffff', 4, 7);
-  b.ball(x + side * r * 0.32, y + r * 0.05, z + r * 0.62, r * 0.6, '#1f1a17', 4, 6);
-  b.ball(x + side * r * 0.45, y + r * 0.42, z + r * 0.92, r * 0.2, '#ffffff', 2, 4);
+  b.ball(x, y, z, r, '#ffffff', 5, 8);
+  b.ball(x + side * r * 0.3, y + r * 0.02, z + r * 0.6, r * 0.64, '#1f1a17', 5, 7);
+  b.ball(x + side * r * 0.4, y + r * 0.38, z + r * 0.98, r * 0.24, '#ffffff', 3, 4);
+  b.ball(x + side * r * 0.62, y - r * 0.2, z + r * 0.9, r * 0.11, '#ffffff', 2, 4);
 }
 
 interface BirdLook {
@@ -159,8 +162,8 @@ function songbird(r: Renderer, L: BirdLook): Model {
     b.ellipsoid(sx * 0.033, 0.01, 0.042, 0.017, 0.008, 0.03, L.legs, { rows: 2, cols: 5 });
   }
   b.bone = 0;
-  b.ellipsoid(0, 0.17, -0.005, 0.08, 0.078, 0.105, L.back, { rows: 6, cols: 10 });
-  b.ellipsoid(0, 0.15, 0.025, 0.066, 0.064, 0.08, L.belly, { rows: 5, cols: 8 });
+  b.ellipsoid(0, 0.17, -0.005, 0.082, 0.08, 0.105, L.back, { rows: 8, cols: 11 });
+  b.ellipsoid(0, 0.15, 0.025, 0.068, 0.066, 0.08, L.belly, { rows: 6, cols: 9 });
   if (L.vent !== undefined) {
     b.ellipsoid(0, 0.125, -0.07, 0.045, 0.032, 0.045, L.vent, { rows: 3, cols: 6 });
   }
@@ -168,9 +171,11 @@ function songbird(r: Renderer, L: BirdLook): Model {
   const hr = L.headR;
   const hy = 0.27;
   const hz = 0.07;
-  b.ball(0, hy, hz, hr, L.head, 6, 10);
-  eye(b, -hr * 0.6, hy + hr * 0.18, hz + hr * 0.62, hr * 0.36);
-  eye(b, hr * 0.6, hy + hr * 0.18, hz + hr * 0.62, hr * 0.36);
+  b.ball(0, hy, hz, hr, L.head, 8, 11);
+  b.bone = 6;
+  eye(b, -hr * 0.6, hy + hr * 0.18, hz + hr * 0.6, hr * 0.4);
+  eye(b, hr * 0.6, hy + hr * 0.18, hz + hr * 0.6, hr * 0.4);
+  b.bone = 1;
   b.tube([0, hy - hr * 0.1, hz + hr * 0.85], [0, hy - hr * 0.22, hz + hr * 0.85 + L.billLen], hr * 0.3, 0.004, L.bill, 6, true);
   if (L.crest !== undefined) {
     b.tube([0, hy + hr * 0.8, hz - hr * 0.1], [0, hy + hr * 1.55, hz - hr * 0.55], hr * 0.42, 0.005, L.crest, 6, true);
@@ -216,7 +221,7 @@ function songbird(r: Renderer, L: BirdLook): Model {
   } else {
     b.ellipsoid(0, 0.165, tz, 0.034, 0.011, L.tailLen * 0.5, L.tail, { rows: 3, cols: 6 });
   }
-  return { mesh: r.mesh(b, true), pivots: BIRD_PIVOTS, parents: [-1, 0, 0, 0, 0, -1] };
+  return { mesh: r.mesh(b, true), pivots: [...BIRD_PIVOTS, [0, hy + hr * 0.18, hz]], parents: [-1, 0, 0, 0, 0, -1, 1], eyes: 6 };
 }
 
 function egretModel(r: Renderer): Model {
@@ -233,8 +238,10 @@ function egretModel(r: Renderer): Model {
   b.tube([0, 0.62, 0.12], [0, 0.78, 0.16], 0.048, 0.042, white, 7, false);
   b.tube([0, 0.78, 0.16], [0, 0.9, 0.13], 0.042, 0.04, white, 7, false);
   b.ball(0, 0.93, 0.15, 0.07, white, 6, 9);
-  eye(b, -0.042, 0.95, 0.19, 0.024);
-  eye(b, 0.042, 0.95, 0.19, 0.024);
+  b.bone = 6;
+  eye(b, -0.042, 0.95, 0.19, 0.026);
+  eye(b, 0.042, 0.95, 0.19, 0.026);
+  b.bone = 1;
   b.tube([0, 0.925, 0.2], [0, 0.912, 0.37], 0.022, 0.004, '#f2b632', 6, true);
   for (const [bone, sx] of [[2, -1], [3, 1]] as [number, number][]) {
     b.bone = bone;
@@ -251,8 +258,10 @@ function egretModel(r: Renderer): Model {
       [0.12, 0.6, 0.02],
       [0, 0.55, -0.2],
       [0, 0.47, 0],
+      [0, 0.95, 0.15],
     ],
-    parents: [-1, 0, 0, 0, 0, -1],
+    parents: [-1, 0, 0, 0, 0, -1, 1],
+    eyes: 6,
   };
 }
 
@@ -271,8 +280,10 @@ function eagleModel(r: Renderer): Model {
     const a = -0.6 + i * 0.3;
     b.tube([Math.sin(a) * 0.08, 0.16, 0.36], [Math.sin(a) * 0.16, 0.27, 0.22], 0.04, 0.006, '#b88a52', 5, true);
   }
-  eye(b, -0.085, 0.1, 0.5, 0.035);
-  eye(b, 0.085, 0.1, 0.5, 0.035);
+  b.bone = 6;
+  eye(b, -0.085, 0.1, 0.5, 0.036);
+  eye(b, 0.085, 0.1, 0.5, 0.036);
+  b.bone = 1;
   b.tube([0, 0.06, 0.55], [0, 0.0, 0.7], 0.065, 0.014, '#8796a8', 7, true);
   for (const [bone, sx] of [[2, -1], [3, 1]] as [number, number][]) {
     b.bone = bone;
@@ -291,8 +302,10 @@ function eagleModel(r: Renderer): Model {
       [0.16, 0.02, 0.04],
       [0, 0, -0.32],
       [0, -0.1, 0],
+      [0, 0.1, 0.44],
     ],
-    parents: [-1, 0, 0, 0, 0, 0],
+    parents: [-1, 0, 0, 0, 0, 0, 1],
+    eyes: 6,
   };
 }
 
@@ -313,8 +326,10 @@ function owlModel(r: Renderer): Model {
   for (const sx of [-1, 1]) {
     b.tube([sx * 0.07, 0.66, 0], [sx * 0.12, 0.79, -0.03], 0.038, 0.006, '#6f4d30', 5, true);
   }
-  eye(b, -0.055, 0.57, 0.13, 0.044);
-  eye(b, 0.055, 0.57, 0.13, 0.044);
+  b.bone = 6;
+  eye(b, -0.055, 0.57, 0.13, 0.046);
+  eye(b, 0.055, 0.57, 0.13, 0.046);
+  b.bone = 1;
   b.tube([0, 0.53, 0.15], [0, 0.49, 0.185], 0.022, 0.004, '#3a3330', 5, true);
   for (const [bone, sx] of [[2, -1], [3, 1]] as [number, number][]) {
     b.bone = bone;
@@ -331,12 +346,14 @@ function owlModel(r: Renderer): Model {
       [0.15, 0.38, 0],
       [0, 0.16, -0.1],
       [0, 0.08, 0.04],
+      [0, 0.57, 0.1],
     ],
-    parents: [-1, 0, 0, 0, 0, -1],
+    parents: [-1, 0, 0, 0, 0, -1, 1],
+    eyes: 6,
   };
 }
 
-function butterflyModel(r: Renderer, fore: string, hind: string, spot: string): Model {
+function butterflyModel(r: Renderer, fore: string, hind: string, spot: string, edge: string): Model {
   const b = new MeshBuilder();
   b.bone = 0;
   b.tube([0, 0, -0.075], [0, 0, 0.07], 0.02, 0.014, '#3a2a1c', 5, true);
@@ -347,9 +364,11 @@ function butterflyModel(r: Renderer, fore: string, hind: string, spot: string): 
   }
   for (const [bone, sx] of [[1, -1], [2, 1]] as [number, number][]) {
     b.bone = bone;
-    b.ellipsoid(sx * 0.105, 0, 0.035, 0.105, 0.007, 0.08, fore, { rows: 3, cols: 8, yaw: sx * 0.35 });
-    b.ellipsoid(sx * 0.08, -0.002, -0.05, 0.075, 0.007, 0.058, hind, { rows: 3, cols: 7, yaw: -sx * 0.3 });
-    b.ellipsoid(sx * 0.13, 0.005, 0.05, 0.028, 0.008, 0.022, spot, { rows: 2, cols: 5 });
+    b.ellipsoid(sx * 0.108, -0.003, 0.036, 0.115, 0.006, 0.09, edge, { rows: 3, cols: 10, yaw: sx * 0.35 });
+    b.ellipsoid(sx * 0.105, 0, 0.035, 0.105, 0.007, 0.08, fore, { rows: 3, cols: 10, yaw: sx * 0.35 });
+    b.ellipsoid(sx * 0.08, -0.002, -0.05, 0.075, 0.007, 0.058, hind, { rows: 3, cols: 8, yaw: -sx * 0.3 });
+    b.ellipsoid(sx * 0.13, 0.005, 0.05, 0.028, 0.008, 0.022, spot, { rows: 3, cols: 6 });
+    b.ellipsoid(sx * 0.085, 0.004, -0.06, 0.02, 0.008, 0.016, spot, { rows: 3, cols: 6 });
   }
   return {
     mesh: r.mesh(b, false),
@@ -406,10 +425,17 @@ function frogModel(r: Renderer): Model {
   b.ellipsoid(0, 0.1, 0, 0.115, 0.085, 0.13, green, { rows: 6, cols: 9 });
   b.ellipsoid(0, 0.075, 0.03, 0.085, 0.055, 0.09, '#e8f5c8', { rows: 4, cols: 7 });
   b.bone = 1;
-  b.ellipsoid(0, 0.135, 0.1, 0.1, 0.065, 0.075, green, { rows: 5, cols: 8 });
-  eye(b, -0.055, 0.19, 0.1, 0.038);
-  eye(b, 0.055, 0.19, 0.1, 0.038);
-  b.ellipsoid(0, 0.122, 0.168, 0.05, 0.006, 0.012, '#2f7a3a', { rows: 2, cols: 5 });
+  b.ellipsoid(0, 0.135, 0.1, 0.1, 0.065, 0.075, green, { rows: 8, cols: 10 });
+  b.bone = 5;
+  eye(b, -0.055, 0.19, 0.1, 0.04);
+  eye(b, 0.055, 0.19, 0.1, 0.04);
+  b.bone = 1;
+  /* A wide, gentle smile. */
+  for (let i = 0; i < 4; i += 1) {
+    const u0 = i / 4 - 0.5;
+    const u1 = (i + 1) / 4 - 0.5;
+    b.tube([u0 * 0.11, 0.122 + u0 * u0 * 0.05, 0.168 - u0 * u0 * 0.06], [u1 * 0.11, 0.122 + u1 * u1 * 0.05, 0.168 - u1 * u1 * 0.06], 0.005, 0.005, '#2f7a3a', 4, true);
+  }
   b.bone = 4;
   b.ellipsoid(0, 0.095, 0.13, 0.055, 0.035, 0.04, '#f2f8d8', { rows: 3, cols: 6 });
   return {
@@ -420,8 +446,10 @@ function frogModel(r: Renderer): Model {
       [0, 0.07, -0.06],
       [0, 0.07, 0.07],
       [0, 0.1, 0.12],
+      [0, 0.19, 0.08],
     ],
-    parents: [-1, 0, 0, 0, 0],
+    parents: [-1, 0, 0, 0, 0, 1],
+    eyes: 5,
   };
 }
 
@@ -496,14 +524,19 @@ function macaqueModel(r: Renderer): Model {
     b.ball(sx * 0.12, 0.23, 0.09, 0.032, dark, 3, 5);
   }
   b.bone = 2;
-  b.ball(0, 0.56, 0.04, 0.1, fur, 6, 9);
+  b.ball(0, 0.56, 0.04, 0.1, fur, 9, 12);
   b.ellipsoid(0, 0.54, 0.11, 0.075, 0.07, 0.04, face, { rows: 4, cols: 7 });
   b.ellipsoid(0, 0.51, 0.14, 0.042, 0.032, 0.03, face, { rows: 3, cols: 6 });
   for (const sx of [-1, 1]) {
-    b.ball(sx * 0.03, 0.565, 0.145, 0.017, '#2a1f18', 3, 5);
-    b.ball(sx * 0.034, 0.572, 0.158, 0.005, '#ffffff', 2, 3);
-    b.ball(sx * 0.092, 0.565, 0.03, 0.026, face, 3, 5);
+    b.ball(sx * 0.092, 0.565, 0.03, 0.026, face, 4, 6);
   }
+  b.bone = 8;
+  for (const sx of [-1, 1]) {
+    b.ball(sx * 0.031, 0.565, 0.145, 0.02, '#2a1f18', 6, 8);
+    b.ball(sx * 0.031 - 0.006, 0.573, 0.162, 0.0065, '#ffffff', 3, 4);
+    b.ball(sx * 0.031 + 0.006, 0.559, 0.162, 0.003, '#ffffff', 2, 3);
+  }
+  b.bone = 2;
   b.ellipsoid(0, 0.64, 0.02, 0.06, 0.028, 0.06, '#7a6a50', { rows: 3, cols: 6 });
   return {
     mesh: r.mesh(b, true),
@@ -516,8 +549,10 @@ function macaqueModel(r: Renderer): Model {
       [-0.08, 0.2, 0.02],
       [0.08, 0.2, 0.02],
       [0, 0.18, -0.1],
+      [0, 0.565, 0.12],
     ],
-    parents: [-1, 0, 1, 1, 1, 0, 0, 0],
+    parents: [-1, 0, 1, 1, 1, 0, 0, 0, 2],
+    eyes: 8,
   };
 }
 
@@ -531,11 +566,11 @@ function buildModels(r: Renderer): Record<string, Model> {
   m.egret = egretModel(r);
   m.eagle = eagleModel(r);
   m.owl = owlModel(r);
-  m.butterfly0 = butterflyModel(r, '#ff9a3c', '#ffd24a', '#3a2a1c');
-  m.butterfly1 = butterflyModel(r, '#3d8bff', '#9fd0ff', '#ffffff');
-  m.butterfly2 = butterflyModel(r, '#ffe14a', '#fff3a6', '#ff9a3c');
-  m.butterfly3 = butterflyModel(r, '#ffffff', '#f2f2f2', '#2a2a30');
-  m.butterfly4 = butterflyModel(r, '#ff6fae', '#ffc2dc', '#ffffff');
+  m.butterfly0 = butterflyModel(r, '#ff9a3c', '#ffd24a', '#3a2a1c', '#3a2a1c');
+  m.butterfly1 = butterflyModel(r, '#3d8bff', '#9fd0ff', '#ffffff', '#1d3f8a');
+  m.butterfly2 = butterflyModel(r, '#ffe14a', '#fff3a6', '#ff9a3c', '#8a5a1c');
+  m.butterfly3 = butterflyModel(r, '#ffffff', '#f2f2f2', '#2a2a30', '#2a2a30');
+  m.butterfly4 = butterflyModel(r, '#ff6fae', '#ffc2dc', '#ffffff', '#a8306a');
   m.dragonfly0 = dragonflyModel(r, '#1e88e5');
   m.dragonfly1 = dragonflyModel(r, '#e2452f');
   m.frog = frogModel(r);
@@ -1248,7 +1283,7 @@ export class Fauna {
     const noticed = a.noticed > 0 ? Math.sin((1.4 - a.noticed) * 9) * Math.min(1, a.noticed) : 0;
     switch (a.kind) {
       case 'butterfly': {
-        const beat = a.mode === 'land' ? (Math.sin(t * 2.2) * 0.5 + 0.5) * 0.9 + 0.4 : Math.abs(Math.sin(t * 16)) * 1.25 + 0.1;
+        const beat = a.mode === 'land' ? (Math.sin(t * 2.2) * 0.5 + 0.5) * 0.9 + 0.4 : (1 - Math.cos(t * 32)) * 0.62 + 0.1;
         r.turn(1, 0, 0, -beat);
         r.turn(2, 0, 0, beat);
         r.turn(0, a.mode === 'land' ? 0 : -0.25, 0, 0);
@@ -1301,7 +1336,8 @@ export class Fauna {
         /* Sitting: now and then a scratch behind the ear. */
         const groom = walking === 0 ? Math.max(0, Math.sin(t * 0.5) - 0.6) * 2.5 : 0;
         r.turn(4, -2.2 * groom, 0, -0.4 * groom);
-        r.turn(2, 0.1 * groom - noticed * 0.2, a.look * (1 - walking), 0);
+        const wonder = walking === 0 ? Math.max(0, Math.sin(t * 0.7 + a.id)) ** 6 * 0.35 + Math.abs(noticed) * 0.3 : 0;
+        r.turn(2, 0.1 * groom - noticed * 0.2, a.look * (1 - walking), wonder);
         r.size(1, 1, 1 + breathe, 1);
         break;
       }
@@ -1329,8 +1365,6 @@ export class Fauna {
       }
       case 'owl': {
         r.turn(1, noticed * 0.2, a.look * 1.2, Math.sin(t * 0.37) * 0.12);
-        const blink = Math.sin(t * 1.7) > 0.985 ? 0.6 : 1;
-        r.size(1, 1, blink * 0.12 + 0.88, 1);
         r.size(0, 1 + breathe * 2, 1 + breathe * 2, 1);
         break;
       }
@@ -1349,7 +1383,9 @@ export class Fauna {
           r.size(5, 1, 1 - 0.5 * flying, 1);
         }
         r.turn(0, 0.55 * a.peck - 0.1 * flying, 0, 0);
-        r.turn(1, 0.5 * a.peck - noticed * 0.25, a.look * (1 - flying), 0);
+        /* Now and then the little sideways head tilt of a curious bird. */
+        const tilt = (Math.max(0, Math.sin(t * 0.9 + a.id * 1.7)) ** 6 * 0.5 + Math.abs(noticed) * 0.25) * (1 - flying) * (1 - a.peck);
+        r.turn(1, 0.5 * a.peck - noticed * 0.25, a.look * (1 - flying), (a.id % 2 === 0 ? 1 : -1) * tilt);
         r.turn(4, 0.5 * a.flick, 0, 0);
         if (a.kind === 'fantail') {
           r.size(4, 1 + a.flick * 0.8, 1, 1);
@@ -1357,6 +1393,14 @@ export class Fauna {
         r.size(0, 1 + sq * 0.15, 1 - sq * 0.18 + breathe, 1 + sq * 0.1);
         break;
       }
+    }
+    if (a.model.eyes !== undefined) {
+      /* A quick blink every few seconds; the owl's is slow and sleepy. */
+      const per = a.kind === 'owl' ? 4.5 : 2.6 + (a.id % 5) * 0.55;
+      const len = a.kind === 'owl' ? 0.42 : 0.13;
+      const ph = (t + a.id * 1.37) % per;
+      const blink = ph < len ? Math.sin((ph / len) * Math.PI) : 0;
+      r.size(a.model.eyes, 1, 1 - blink * 0.88, 1);
     }
   }
 

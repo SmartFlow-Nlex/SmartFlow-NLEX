@@ -2,7 +2,8 @@ import { MeshBuilder } from '../gl/builder';
 import { hex, seeded, smooth, type Vec3 } from '../gl/math';
 import type { Environment, Mesh, Renderer } from '../gl/renderer';
 import type { ZoneId } from '../../core/mission';
-import { bamboo, buildTerrain, bush, clouds, distToPath, fern, flower, groundColor, mix3, nearLine, paint, palm, rock, roundTree, Scatter, stump, tallTree, tuft, type Collider, type ZoneGeometry } from './scenery';
+import { awningAt, clearOf, doorAt, Frame, hipRoof, lanternAt, windowAt } from './buildings';
+import { bamboo, bench, buildTerrain, bush, clouds, distToPath, fern, flower, flowerBed, groundColor, hedge, lamp, mix3, mushroom, nearLine, paint, palm, planter, reeds, rock, roundTree, Scatter, stump, tallTree, tuft, vary, vine, type Collider, type ZoneGeometry } from './scenery';
 
 /**
  * The two places in this slice: Malaya Ridge (a fictional forest in the Sierra Madre
@@ -198,6 +199,30 @@ export function buildForest(r: Renderer): Zone {
       tuft(s, x, y, z, rand);
     } else {
       flower(s, x, y, z, rand);
+    }
+  }
+  /* Reeds at the stream's edge, both banks, clear of the crossing and the paths. */
+  for (let x = -58; x <= 58; x += 3.4) {
+    for (const side of [-1, 1]) {
+      for (let k = 2.2; k < 7; k += 0.25) {
+        const z = creekZ(x) + side * k;
+        if (height(x, z) > FOREST_WATER_Y + 0.08) {
+          if (Math.abs(x) > 5 && distToPath(x, z, FOREST_PATH) > 3 && !nearSpot(x, z, 3) && vary(x, z, 130) < 0.7) {
+            reeds(s, x, height(x, z), z, side);
+          }
+          break;
+        }
+      }
+    }
+  }
+  /* Little mushrooms on the forest floor. */
+  for (let i = 0; i < 45; i += 1) {
+    const x = -55 + vary(i, 1, 131) * 110;
+    const z = -65 + vary(i, 2, 132) * 130;
+    const y = height(x, z);
+    if (distToPath(x, z, FOREST_PATH) > 3 && y > FOREST_WATER_Y + 0.6 && Math.abs(y) < 7 && !nearSpot(x, z, 2.5)) {
+      mushroom(s, x, y, z, 1.2);
+      mushroom(s, x + 0.22, y, z + 0.12, 0.8);
     }
   }
   /* The gap the old road cut through the canopy: stumps and bare soil to replant. */
@@ -465,11 +490,182 @@ export const stationHeight = (x: number, z: number): number => {
 };
 
 const roof = (b: MeshBuilder, x: number, y: number, z: number, w: number, d: number, h: number, color: string, ridge: string): void => {
-  b.quad([x - w, y, z + d], [x + w, y, z + d], [x, y + h, z + d * 0.4], [x - w, y, z + d], color);
-  b.quad([x + w, y, z - d], [x - w, y, z - d], [x, y + h, z - d * 0.4], [x + w, y, z - d], color);
+  /* The end slopes: the apex is split a hair apart, so each face has a proper normal to light it by. */
+  b.quad([x - w, y, z + d], [x + w, y, z + d], [x + 0.0001, y + h, z + d * 0.4], [x - 0.0001, y + h, z + d * 0.4], color);
+  b.quad([x + w, y, z - d], [x - w, y, z - d], [x - 0.0001, y + h, z - d * 0.4], [x + 0.0001, y + h, z - d * 0.4], color);
   b.quad([x - w, y, z - d], [x - w, y, z + d], [x, y + h, z + d * 0.4], [x, y + h, z - d * 0.4], ridge);
   b.quad([x + w, y, z + d], [x + w, y, z - d], [x, y + h, z - d * 0.4], [x, y + h, z + d * 0.4], ridge);
 };
+
+/**
+ * The Command Center's finishing touches: windows, doors and awnings on its buildings,
+ * benches and lamps round the plaza, planters and flower beds by the entrances, hedges
+ * behind, vines up the tower, and flowers along the paths. All of it after the zone's
+ * own layout, with its own random numbers, and only where it blocks nothing.
+ */
+function dressStation(s: Scatter, colliders: Collider[], spots: Record<string, [number, number]>, nearAnyPath: (x: number, z: number) => number): void {
+  const rand = seeded(5150);
+  const clear = clearOf(spots, colliders, nearAnyPath);
+  /* Benches sit at the plaza's edge between the paths, beside them rather than on them. */
+  const clearBeside = clearOf(spots, colliders);
+  const put = (x: number, z: number, r: number, fn: () => void, near?: number): boolean => {
+    if (clear(x, z, r, near)) {
+      fn();
+      colliders.push({ x, z, r });
+      return true;
+    }
+    return false;
+  };
+  const at = (x: number, z: number): { solid: MeshBuilder; soft: MeshBuilder } => s.cell(x, z);
+  /* Specialist care: a door and awning on the end facing the plaza, windows down both sides, a paw sign. */
+  {
+    const f = new Frame(14, 0, -16, 0.5);
+    const c = at(14, -16);
+    const front = f.sub(-3.5, 0, 0, -Math.PI / 2);
+    doorAt(c, front.sub(0.9, 0, 0), '#3fa7c4', '#ffffff', 1.1, 2.1);
+    awningAt(c, front.sub(0.9, 0, 0), 1.7, 2.5, '#3fa7c4', '#ffffff');
+    lanternAt(c, front.sub(0.9, 0, 0), -0.95, 1.8);
+    for (const side of [-1, 1]) {
+      const wall = f.sub(0, 0, side * 2.7, side > 0 ? 0 : Math.PI);
+      for (const lx of [-1.6, 1.6]) {
+        windowAt(c, wall.sub(lx, 1.6, 0), 1.1, 0.85, '#ffffff', { flowers: side > 0 });
+      }
+    }
+    /* The paw: a big pad and three toes, in the clinic's red. */
+    const paw = front.sub(-1.57, 2.2, 0.05);
+    const [px, py, pz] = paw.p(0, -0.12, 0);
+    c.solid.ellipsoid(px, py, pz, 0.32, 0.26, 0.06, '#e2452f', { rows: 4, cols: 10, yaw: paw.yaw });
+    for (const [tx, ty] of [[-0.28, 0.22], [0, 0.33], [0.28, 0.22]] as [number, number][]) {
+      const [qx, qy, qz] = paw.p(tx, ty, 0);
+      c.solid.ellipsoid(qx, qy, qz, 0.11, 0.13, 0.05, '#e2452f', { rows: 3, cols: 8, yaw: paw.yaw });
+    }
+    const [hx0, , hz0] = f.p(4.3, 0, -2.0);
+    const [hx1, , hz1] = f.p(4.3, 0, 2.0);
+    hedge(s, hx0, hz0, hx1, hz1, 0, 0.9, 1);
+    colliders.push({ x: (hx0 + hx1) / 2, z: (hz0 + hz1) / 2, r: 1.3 });
+    const [qx, , qz] = f.p(-4.1, 0, -2.6);
+    put(qx, qz, 0.5, () => planter(s, qx, 0, qz, 'shrub', '#3fa7c4', 1));
+  }
+  /* The workshop: a wide double door on the end facing the plaza, windows on the sides, vines up one corner. */
+  {
+    const f = new Frame(-16, 0, -14, -0.6);
+    const c = at(-16, -14);
+    const front = f.sub(3.5, 0, 0, Math.PI / 2);
+    doorAt(c, front.sub(-0.55, 0, 0), '#8a5a2c', '#5a3f28', 1.0, 2.3);
+    doorAt(c, front.sub(0.55, 0, 0), '#8a5a2c', '#5a3f28', 1.0, 2.3);
+    awningAt(c, front, 2.9, 2.75, '#8a4a22', '#ffc32d');
+    for (const side of [-1, 1]) {
+      const wall = f.sub(0, 0, side * 2.7, side > 0 ? 0 : Math.PI);
+      for (const lx of [-1.5, 1.5]) {
+        windowAt(c, wall.sub(lx, 1.9, 0), 1.0, 0.9, '#fff0d4', { shutters: '#2fae6b', flowers: true });
+      }
+    }
+    vine(s, f.p(-3.55, 0, 2.75), f.p(-3.55, 3.2, 2.75), 1);
+    vine(s, f.p(-3.55, 0, -2.75), f.p(-3.55, 3.0, -2.75), 2);
+  }
+  /* The Atlas hut: round windows all round, a framed door, and a ring of flowering bushes (open towards the door). */
+  {
+    const c = at(22, -2);
+    for (let i = 0; i < 6; i += 1) {
+      const a = (i / 6) * Math.PI * 2 + 0.5;
+      if (Math.cos(a) < -0.6) {
+        continue;
+      }
+      const yaw = Math.atan2(Math.cos(a), Math.sin(a));
+      const [wx, , wz] = [22 + Math.cos(a) * 3.55, 0, -2 + Math.sin(a) * 3.55];
+      c.solid.ellipsoid(wx, 1.8, wz, 0.55, 0.55, 0.08, '#2fae6b', { rows: 4, cols: 12, yaw });
+      c.solid.ellipsoid(wx + Math.cos(a) * 0.03, 1.8, wz + Math.sin(a) * 0.03, 0.42, 0.42, 0.07, '#a8dcf5', { rows: 4, cols: 12, yaw });
+    }
+    const door = new Frame(18.36, 0, -1.8, -Math.PI / 2);
+    doorAt(c, door, '#8a6341', '#2fae6b', 1.4, 2.1);
+    for (let i = 0; i < 10; i += 1) {
+      const a = (i / 10) * Math.PI * 2;
+      if (Math.cos(a) < -0.45) {
+        continue;
+      }
+      const x = 22 + Math.cos(a) * 4.5;
+      const z = -2 + Math.sin(a) * 4.5;
+      put(x, z, 0.6, () => flowerBed(s, x, 0, z, 1.2, 0.7, Math.atan2(Math.cos(a), Math.sin(a))));
+    }
+  }
+  /* The briefing pavilion: lanterns at its front corners, planters outside the posts. */
+  {
+    const c = at(0, 22);
+    for (const x of [-4.6, 4.6]) {
+      c.solid.tube([x, 3.45, 17.75], [x, 3.0, 17.75], 0.02, 0.02, '#2f3b52', 4, false);
+      c.solid.ball(x, 2.85, 17.75, 0.18, '#ffe9a8', 5, 8);
+      put(x * 1.2, 18.4, 0.55, () => planter(s, x * 1.2, 0, 18.4, 'flowers', '#1e5bb8', 1.1));
+    }
+    for (const x of [-6.8, 6.8]) {
+      put(x, 24, 1.1, () => flowerBed(s, x, 0, 24, 1.3, 2.2));
+    }
+  }
+  /* The community space: paper lanterns under the roof and planters at its back corners. */
+  {
+    const c = at(-22, 2);
+    for (const [x, z] of [[-24.5, -0.5], [-19.5, -0.5], [-24.5, 4.5], [-19.5, 4.5]] as [number, number][]) {
+      c.solid.tube([x, 3.0, z], [x, 2.6, z], 0.015, 0.015, '#2f3b52', 4, false);
+      c.solid.ellipsoid(x, 2.4, z, 0.2, 0.26, 0.2, ['#ff7a6b', '#ffd24a'][Math.abs(Math.round(x)) % 2], { rows: 5, cols: 8 });
+    }
+    for (const z of [-2.4, 6.4]) {
+      put(-26.4, z, 0.55, () => planter(s, -26.4, 0, z, 'palm', '#c8452e', 1.1));
+    }
+  }
+  /* Vines up the observation tower's front legs. */
+  vine(s, [-14.4, 0, 14.4], [-14.4, 5.6, 14.4], 3);
+  vine(s, [-17.6, 0, 14.4], [-17.6, 5.2, 14.4], 4);
+  /* Round the plaza: benches facing the middle, each with a flower pot, and lamps. */
+  let benches = 0;
+  for (let deg = 10; deg < 360 && benches < 5; deg += 15) {
+    const a = (deg * Math.PI) / 180;
+    const x = Math.sin(a) * 7.6;
+    const z = Math.cos(a) * 7.6;
+    const px = x + Math.cos(a) * 1.35;
+    const pz = z - Math.sin(a) * 1.35;
+    if (nearAnyPath(x, z) < 2.6 || nearAnyPath(px, pz) < 2.4 || !clearBeside(px, pz, 0.45, 1.5) || !clearBeside(x, z, 0.95, 1.5)) {
+      continue;
+    }
+    bench(s, x, 0, z, Math.atan2(-x, -z));
+    planter(s, px, 0, pz, 'flowers', '#e09a4a', 0.8);
+    colliders.push({ x, z, r: 0.95 }, { x: px, z: pz, r: 0.45 });
+    benches += 1;
+    deg += 30;
+  }
+  for (const deg of [50, 140, 230, 320]) {
+    const a = (deg * Math.PI) / 180;
+    for (const rr of [9.2, 18]) {
+      const x = Math.sin(a) * rr;
+      const z = Math.cos(a) * rr;
+      const side = 2.9;
+      const lx = x + Math.cos(a) * side;
+      const lz = z - Math.sin(a) * side;
+      put(lx, lz, 0.35, () => lamp(s, lx, 0, lz));
+    }
+  }
+  /* Flowers, grass and pebbles lining the paths, and a few more bushes and flower beds in the open. */
+  for (let i = 0; i < 700; i += 1) {
+    const x = -34 + rand() * 68;
+    const z = -34 + rand() * 68;
+    const d = nearAnyPath(x, z);
+    const k = rand();
+    if (Math.hypot(x, z) < 7 || Math.hypot(x, z) > 33) {
+      continue;
+    }
+    if (d > 2.2 && d < 3.1 && Object.values(spots).every(([sx, sz]) => Math.hypot(x - sx, z - sz) > 2) && colliders.every((c) => Math.hypot(x - c.x, z - c.z) > c.r + 0.2)) {
+      if (k < 0.45) {
+        flower(s, x, 0, z, rand);
+      } else if (k < 0.8) {
+        tuft(s, x, 0, z, rand);
+      } else {
+        s.cell(x, z).soft.ellipsoid(x, 0.03, z, 0.18, 0.08, 0.15, '#c9c2b4', { rows: 3, cols: 5, yaw: k * 9 });
+      }
+    } else if (d > 4.5 && k < 0.05) {
+      put(x, z, 0.8, () => bush(s, x, 0, z, 0.7 + vary(x, z, 120) * 0.3, rand));
+    } else if (d > 4 && k < 0.08) {
+      put(x, z, 1, () => flowerBed(s, x, 0, z, 1.6, 1, vary(x, z, 121) * 3));
+    }
+  }
+}
 
 export function buildStation(r: Renderer, upgrades: readonly string[]): Zone {
   const rand = seeded(4711);
@@ -594,9 +790,9 @@ export function buildStation(r: Renderer, upgrades: readonly string[]): Zone {
   /* Temporary specialist care: a quiet white building with a paw sign. */
   {
     const b = solidAt(14, -16);
-    b.rbox(14, 1.5, -16, 7, 3, 5.4, '#f7fafc', 0.32, 0.5);
-    roof(b, 14, 2.9, -16, 3.9, 3.2, 1.3, '#3fa7c4', '#2a8aa6');
-    b.ball(11.6, 2.2, -12.9, 0.42, '#e2452f', 4, 8);
+    b.rbox(14, 1.5, -16, 7, 3, 5.4, '#f7fafc', 0.12, 0.5);
+    /* The roof turns with the building: its ridge along the long side. */
+    hipRoof(b, new Frame(14, 0, -16, 0.5 + Math.PI / 2), 2.7, 3.5, 2.95, 1.35, 0.45, '#3fa7c4', '#2a8aa6', '#ffffff');
     colliders.push({ x: 14, z: -16, r: 4.6 });
   }
   /* Native demonstration garden. */
@@ -609,8 +805,11 @@ export function buildStation(r: Renderer, upgrades: readonly string[]): Zone {
       for (let k = 0; k < 4; k += 1) {
         const z = -26 + k * 1.3;
         b.sway = 0.1;
-        b.ellipsoid(x + (k % 2 === 0 ? -0.5 : 0.5), 0.95, z, 0.5, 0.42, 0.5, k % 2 === 0 ? '#5ebf56' : '#3f9f4d', { rows: 4, cols: 6 });
-        b.ball(x + (k % 2 === 0 ? -0.5 : 0.5), 1.4, z, 0.13, ['#ffd24a', '#ff8fb5', '#ff9d3c'][k % 3], 3, 5);
+        b.ellipsoid(x + (k % 2 === 0 ? -0.5 : 0.5), 0.95, z, 0.5, 0.42, 0.5, k % 2 === 0 ? '#5ebf56' : '#3f9f4d', { rows: 5, cols: 8 });
+        /* A real flower on top: five petals round a yellow eye. */
+        const fx = x + (k % 2 === 0 ? -0.5 : 0.5);
+        s.cell(fx, z).soft.petals(fx, 1.38, z, 0.2, 5, ['#ffd24a', '#ff8fb5', '#ff9d3c'][k % 3], k);
+        s.cell(fx, z).soft.ball(fx, 1.4, z, 0.06, k % 3 === 0 ? '#ff9d3c' : '#ffd24a', 3, 5);
         s.flowers.push([x + (k % 2 === 0 ? -0.5 : 0.5), 1.5, z]);
         b.sway = 0;
       }
@@ -627,9 +826,8 @@ export function buildStation(r: Renderer, upgrades: readonly string[]): Zone {
   /* Restoration workshop. */
   {
     const b = solidAt(-16, -14);
-    b.rbox(-16, 1.7, -14, 7, 3.4, 5.4, '#f0a24a', 0.3, -0.6);
-    roof(b, -16, 3.3, -14, 4, 3.3, 1.3, '#8a4a22', '#6f3a1a');
-    b.rbox(-13.8, 1.2, -11.3, 2.2, 2.2, 0.1, '#5a3f28', 0.2, -0.6);
+    b.rbox(-16, 1.7, -14, 7, 3.4, 5.4, '#f0a24a', 0.12, -0.6);
+    hipRoof(b, new Frame(-16, 0, -14, -0.6 + Math.PI / 2), 2.7, 3.5, 3.35, 1.35, 0.45, '#8a4a22', '#6f3a1a', '#fff0d4');
     for (const [x, z] of [[-11, -9], [-10, -11]] as [number, number][]) {
       b.rbox(x, 0.34, z, 0.8, 0.66, 0.8, '#c79a5c', 0.28);
       colliders.push({ x, z, r: 0.6 });
@@ -780,6 +978,7 @@ export function buildStation(r: Renderer, upgrades: readonly string[]): Zone {
     }
   }
 
+  dressStation(s, colliders, spots, nearAnyPath);
   const terrain = buildTerrain(r, {
     minX: -80,
     maxX: 80,

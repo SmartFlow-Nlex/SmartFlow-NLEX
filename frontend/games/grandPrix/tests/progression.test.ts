@@ -94,6 +94,19 @@ test('save: corrupt, newer and odd values are handled', () => {
   assert.equal(save.settings.difficulty, 'easy');
 });
 
+test('save: the steering wheel is the default, and an old slide-steering save opens with the wheel (progress kept)', () => {
+  assert.equal(defaultSave().settings.steering, 'wheel');
+  const old = loadSave(JSON.stringify({ version: 1, bolts: 120, trophy: 2, settings: { steering: 'drag', steerFeel: 'normal', boostSide: 'left' } })).save;
+  assert.equal(old.settings.steering, 'wheel');
+  assert.equal(old.settings.steerFeel, 'normal');
+  assert.equal(old.settings.boostSide, 'left');
+  assert.equal(old.bolts, 120);
+  assert.equal(old.trophy, 2);
+  for (const mode of ['buttons', 'tilt', 'lanes'] as const) {
+    assert.equal(loadSave(JSON.stringify({ version: 1, settings: { steering: mode } })).save.settings.steering, mode);
+  }
+});
+
 test('flow: duplicate events ignored; resume goes through the countdown; one commit per race', () => {
   const flow = createFlow();
   flow.send('start');

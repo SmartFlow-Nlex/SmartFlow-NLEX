@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Runs NLEX: Wildway Guardians tests: compiles frontend/games/wildway/core and tests with
+ * Runs NLEX: Wildway Guardians tests: compiles frontend/games/wildway/core, web and tests with
  * the repo's TypeScript (no extra test framework), then runs every test registered
  * through tests/harness.ts.
  *
@@ -39,6 +39,10 @@ function compileDir(dir) {
 }
 
 compileDir('core');
+/* The characters, their animation and the scenery kit are tested too: plain maths, no GPU needed. */
+compileDir('web');
+compileDir('web/gl');
+compileDir('web/world');
 compileDir('tests');
 
 function plans() {

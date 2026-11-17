@@ -1,20 +1,21 @@
+import { portraitEl } from '../../roadTrip/web/art/clay';
 import { announce, button, h } from '../../roadTrip/web/ui/dom';
-import { portrait } from '../../roadTrip/web/ui/icons';
 import { createRaceBot } from '../core/bot';
 import { LAPS, MAX_FRAME, PRESETS, STEP } from '../core/config';
 import { createFlow, type Flow } from '../core/flow';
 import { ITEM_DEFS } from '../core/items';
 import { formatTime, nextCupTrack, ordinal, standings, type CommitOutcome } from '../core/progression';
-import { NO_RACE_INPUT, RaceSim, type RaceEvent } from '../core/race';
+import { NO_RACE_INPUT, RIVALS, RaceSim, type RaceEvent } from '../core/race';
 import { newRunId, newSeed } from '../core/rng';
-import { TRACKS } from '../core/tracks';
-import type { RaceMode, TrackId } from '../core/types';
+import { TRACKS, curveAt } from '../core/tracks';
+import type { RaceMode, SteeringMode, TrackId } from '../core/types';
 import type { GpApi, Scene } from './appApi';
-import { RaceInputController } from './input';
+import { RaceInputController, requestTilt } from './input';
 import { RaceRenderer } from './render/raceRenderer';
+import { gpIcon } from './ui/gpIcons';
 import { gpSettingsPanel } from './ui/gpSettings';
 import { carName, rivalList } from './ui/gpScreens';
-import { RaceHud } from './ui/raceHud';
+import { RaceHud, trackPreview } from './ui/raceHud';
 
 /**
  * One race, briefing to results, through the flow state machine. The race is
@@ -38,6 +39,9 @@ export class RaceRunner implements Scene {
   private outcome: CommitOutcome | null = null;
   private disposed = false;
   private readonly bot = createRaceBot();
+  /** The steering used this race: the setting, unless tilt turned out to be unavailable. */
+  private steeringNow: SteeringMode = 'wheel';
+  private tiltFailed = false;
 
   constructor(private readonly app: GpApi, private readonly mode: RaceMode, private readonly track: TrackId) {
     this.flow = createFlow();
@@ -49,6 +53,12 @@ export class RaceRunner implements Scene {
       laneWidthPx: () => this.renderer.laneAt(0),
       onPause: () => this.pause(),
       onActivity: () => this.app.audio.unlock(),
+      onTiltUnavailable: () => {
+        /* No tilt from this phone (or no permission): steer with the wheel for the rest of the race. */
+        this.tiltFailed = true;
+        this.rebuildControls();
+        this.hud?.toast('No tilt here - use the wheel');
+      },
     });
     this.showBriefing();
   }
@@ -62,6 +72,7 @@ export class RaceRunner implements Scene {
       seed: this.seed,
       upgrades: save.upgrades,
       autoSteer: save.settings.autoSteer,
+      steerAssist: save.settings.steerAssist,
       items: this.mode === 'cup' && save.settings.items,
       ghost: this.mode === 'trial' ? save.tracks[this.track]?.ghost ?? null : null,
     });
@@ -107,7 +118,15 @@ export class RaceRunner implements Scene {
     });
     const racing = state === 'racing' || state === 'finished';
     this.app.audio.setEngine(racing ? this.sim.player.speed : 0, s.boostT > 0);
+    /* Tyres scrub softly in hard bends at speed. */
+    const p = this.sim.player;
+    this.app.audio.setTyres(racing ? Math.abs(curveAt(s.track, p.distance, s.length)) * (p.speed / 28) ** 2 * 1.4 : 0);
+    this.renderer.setIntro(state === 'countdown' && this.countdown > 0 && !settings.reduceMotion ? Math.min(1, this.countdown / 3.4) : 0);
     this.hud?.update(s, this.ghostDelta(), state === 'paused' ? 0 : dt);
+    if (state !== 'racing' || this.app.autoplay) {
+      this.input.settle(dt);
+    }
+    this.hud?.steer(this.input.wheelAngle, state === 'racing' && this.input.gripped, this.input.steerValue);
   }
 
   dispose(): void {
@@ -116,6 +135,7 @@ export class RaceRunner implements Scene {
     }
     this.disposed = true;
     this.app.audio.setEngine(0, false);
+    this.app.audio.setTyres(0);
     this.input.detach();
     this.renderer.dispose();
     this.root.replaceChildren();
@@ -145,34 +165,43 @@ export class RaceRunner implements Scene {
     const settings = this.app.save.settings;
     const preset = PRESETS[settings.difficulty];
     const record = this.app.save.tracks[this.track];
-    const start = button('Start', () => this.begin(), { icon: '▶' });
+    const start = button('Start', () => this.begin(), { icon: '▶', class: 'big' });
     start.setAttribute('data-autofocus', '');
     const cupNo = this.mode === 'cup' ? this.app.save.cup.raced + 1 : 0;
+    /* The rules live behind a fold, one short line each; the card itself is pictures and chips. */
+    const how = h('details', { class: 'how-to' }, [
+      h('summary', {}, [gpIcon('info', 'gp-ico'), h('span', { text: 'How to race' })]),
+      h('ul', { class: 'how-list' }, [
+        h('li', { text: 'Steer into bends. Grass is slow.' }),
+        h('li', { text: 'Turbo cells fill BOOST. Blue arrows boost for free.' }),
+        h('li', { text: 'Stay close behind a car to draft.' }),
+        this.mode === 'cup'
+          ? h('li', { text: settings.items ? 'Drive through ? boxes, then tap ITEM.' : 'Items are off.' })
+          : h('li', { text: record?.bestTotal ? 'The see-through Navie is your best run.' : 'Your best run comes back as a ghost.' }),
+      ]),
+      this.mode === 'cup' ? rivalList() : null,
+    ]);
+    const facts = h('div', { class: 'brief-facts' }, [
+      h('p', { class: 'brief-place', text: `📍 ${def.place}` }),
+      h('div', { class: 'chips' }, [
+        h('span', { class: 'chip on', text: this.mode === 'cup' ? `Race ${cupNo}/3` : 'Time Trial' }),
+        h('span', { class: 'chip', text: `${LAPS} laps` }),
+        h('span', { class: 'chip stars', text: '★'.repeat(def.rating) + '☆'.repeat(3 - def.rating), attrs: { 'aria-label': `Difficulty ${def.rating} of 3` } }),
+        this.mode === 'cup' ? h('span', { class: 'chip next', text: `Start ${ordinal(preset.gridSlot)}` }) : null,
+      ]),
+      h('p', { class: 'lead brief-blurb', text: def.blurb }),
+      this.mode === 'trial' && record?.bestTotal ? h('p', { class: 'brief-best', text: `Best ${formatTime(record.bestTotal)}` }) : null,
+    ]);
+    const steerText: Record<SteeringMode, string> = { wheel: 'Rotate to steer', buttons: 'Hold ◀ ▶ to steer', tilt: 'Tilt to steer', lanes: 'Tap ◀ ▶ to change lane' };
     this.setOverlay(
       this.sheet(def.name, [
-        h('div', { class: 'chips' }, [
-          h('span', { class: 'chip on', text: this.mode === 'cup' ? `Cup race ${cupNo} of 3` : 'Time Trial' }),
-          h('span', { class: 'chip', text: `${LAPS} laps · ${'★'.repeat(def.rating)}` }),
-        ]),
-        h('p', { class: 'lead', text: def.blurb }),
-        h('p', { class: 'muted', text: def.place }),
-        this.mode === 'cup'
-          ? h('div', { class: 'card soft' }, [
-              h('h3', { text: `You start ${ordinal(preset.gridSlot)} of 6` }),
-              h('p', { class: 'small-text', text: 'Bends push you outward - steer into them. Grass is slow. Drive close behind a rival to draft. Turbo cells charge the BOOST button; blue chevrons boost you for free.' }),
-              settings.items
-                ? h('p', { class: 'small-text', text: 'Items are on: drive through a ? gift box, then tap ITEM (or X). Boosts and shields help you; oil, coconuts, sipa balls and red lights spin or slow the rivals - and they can do it to you. The mini map (top right) shows where everyone is.' })
-                : h('p', { class: 'small-text', text: 'Items are off (Settings). The mini map (top right) shows where everyone is.' }),
-              rivalList(),
-            ])
-          : h('div', { class: 'card soft' }, [
-              h('p', { text: record?.bestTotal ? `Your best: ${formatTime(record.bestTotal)} (lap ${formatTime(record.bestLap ?? 0)}). The see-through Navie is your best run.` : 'First run on this track: set a time, and next time your ghost races you.' }),
-            ]),
-        h('div', { class: 'card soft row-title' }, [
-          h('div', {}, [h('h3', { text: `Difficulty: ${preset.label}` }), h('p', { class: 'muted small-text', text: `${settings.autoSteer ? 'Auto-steer ON' : 'Auto-steer off'} · ${settings.showLine ? 'fast line shown' : 'fast line hidden'}` })]),
+        h('div', { class: `brief-card ${def.time}` }, [trackPreview(def), facts]),
+        h('div', { class: 'brief-steer' }, [
+          gpIcon('wheel', 'gp-ico big'),
+          h('div', { class: 'brief-steer-text' }, [h('strong', { text: steerText[settings.steering] }), h('span', { class: 'muted small-text', text: `${preset.label}${settings.steerAssist ? ' · Assist on' : ''}` })]),
           button('Change', () => this.app.openSettings(() => this.app.startRace(this.mode, this.track)), { variant: 'ghost', class: 'small' }),
         ]),
-        h('p', { class: 'muted small-text', text: settings.steering === 'drag' ? 'Steer: drag in the pad under your car (or ← →). Boost: the BOOST button (or Space). Pause: Esc.' : 'Steer: tap ‹ › to change racing line (or ← →). Boost: the BOOST button (or Space). Pause: Esc.' }),
+        how,
         h('div', { class: 'actions' }, [start, button('Back', () => { if (this.flow.send('quit') !== null) { this.app.goMenu(); } }, { variant: 'secondary' })]),
       ]),
     );
@@ -189,13 +218,16 @@ export class RaceRunner implements Scene {
     this.outcome = null;
     this.setOverlay(null);
     const settings = this.app.save.settings;
-    const hud = new RaceHud(this.mode, settings.steering, settings.boostSide, () => this.pause());
-    this.hud = hud;
-    this.root.prepend(hud.root);
-    this.input.configure(settings.steering, settings.sensitivity);
+    this.tiltFailed = false;
+    this.steeringNow = settings.steering;
+    if (settings.steering === 'tilt') {
+      /* The Start tap is the gesture an iPhone needs before it shares the tilt. */
+      void requestTilt();
+    }
+    this.mountControls();
     this.input.reset();
-    this.input.attach({ pad: hud.pad, left: hud.left, right: hud.right, boost: hud.boost, item: hud.item });
-    this.reserve();
+    /* Draw every rival, pick-up and prop once now, behind the lights, so nothing stalls mid-race. */
+    this.renderer.prewarm(this.sim.state);
     this.app.audio.playMusic(true);
     this.startLights();
   }
@@ -221,7 +253,9 @@ export class RaceRunner implements Scene {
     if (this.countdown <= 0) {
       this.flow.send('go');
       this.input.setEnabled(true);
+      this.renderer.hop();
       setTimeout(() => this.hud?.setLights(''), 600);
+      setTimeout(() => this.hud?.hideHint(), 6000);
     }
   }
 
@@ -254,12 +288,12 @@ export class RaceRunner implements Scene {
       switch (e.type) {
         case 'lap':
           audio.sfx('lap');
-          this.hud?.toast(`Lap ${e.lap + 1}${e.best ? ' · best lap!' : ''}`);
+          this.hud?.toast(e.best ? `Lap ${e.lap + 1} · Best lap!` : `Lap ${e.lap + 1}`);
           announce(`Lap ${e.lap + 1} of ${LAPS}. Last lap ${formatTime(e.time)}.`);
           break;
         case 'finalLap':
           audio.sfx('finalLap');
-          this.hud?.toast('Final lap!');
+          this.hud?.showBanner('FINAL LAP!', 'final');
           break;
         case 'bump':
           audio.sfx('bump');
@@ -270,7 +304,7 @@ export class RaceRunner implements Scene {
           this.renderer.kick(7);
           break;
         case 'grass':
-          this.hud?.toast('Grass is slow - back to the track!');
+          this.hud?.toast('Grass is slow!');
           break;
         case 'pad':
           audio.sfx('pad');
@@ -287,11 +321,11 @@ export class RaceRunner implements Scene {
           break;
         case 'boostEmpty':
           audio.sfx('deny');
-          this.hud?.toast('No turbo - grab a turbo cell or draft');
+          this.hud?.toast('No turbo yet');
           break;
         case 'place':
           if (e.gained) {
-            audio.sfx('up');
+            audio.sfx(e.place === 1 ? 'first' : 'up');
           }
           announce(`Now ${ordinal(e.place)}`);
           break;
@@ -315,7 +349,8 @@ export class RaceRunner implements Scene {
           if (e.who === 'navie') {
             audio.sfx('spin');
             this.renderer.kick(8);
-            this.hud?.toast(`Spun out by ${e.by === 'navie' ? 'your own' : carName(e.by) + "'s"} ${ITEM_DEFS[e.cause].name}!`);
+            this.hud?.toast('Spun out!');
+            announce(`Spun out by ${e.by === 'navie' ? 'your own' : carName(e.by) + "'s"} ${ITEM_DEFS[e.cause].name}.`);
           } else if (e.by === 'navie') {
             audio.sfx('up');
             this.hud?.toast(`Hit ${carName(e.who)}!`);
@@ -324,28 +359,30 @@ export class RaceRunner implements Scene {
         case 'blocked':
           if (e.who === 'navie') {
             audio.sfx('shieldBlock');
-            this.hud?.toast('Bubble Shield blocked it!');
+            this.hud?.toast('Blocked!');
           }
           break;
         case 'incoming':
           audio.sfx('incoming');
-          this.hud?.warn(`Sipa Ball from ${carName(e.by)}!`);
+          this.hud?.warn('Sipa Ball incoming!');
           announce(`Warning: a sipa ball from ${carName(e.by)} is coming.`);
           break;
         case 'redLight':
           if (e.by === 'navie') {
-            this.hud?.toast('Red light! Everyone ahead slows down');
+            this.hud?.toast('Red light!');
           } else if (e.navieSlowed) {
             audio.sfx('deny');
-            this.hud?.toast(`Red light from ${carName(e.by)} - slowed!`);
+            this.hud?.toast('Red light - slowed!');
           }
           break;
         case 'finish':
           audio.sfx('finish');
           this.input.setEnabled(false);
           if (this.flow.send('finish') !== null) {
-            this.endT = 2;
-            this.hud?.toast(this.mode === 'cup' ? `Finished ${ordinal(e.place)}!` : 'Finished!');
+            this.endT = 2.6;
+            /* A big banner, confetti over the line, and Navie hops for joy on a podium. */
+            this.hud?.showBanner(this.mode === 'cup' ? `${ordinal(e.place)}!` : 'FINISH!', this.mode === 'cup' && e.place === 1 ? 'first' : 'finish');
+            this.renderer.celebrate(this.mode === 'trial' || e.place <= 3, this.app.save.settings.reduceMotion);
           }
           break;
       }
@@ -360,6 +397,7 @@ export class RaceRunner implements Scene {
     this.input.setEnabled(false);
     this.hud?.setLights('');
     this.app.audio.setEngine(0, false);
+    this.app.audio.setTyres(0);
     const resume = button('Resume', () => {
       if (this.flow.send('resume') !== null) {
         this.setOverlay(null);
@@ -376,27 +414,36 @@ export class RaceRunner implements Scene {
           button('Restart', () => { if (this.flow.send('restart') !== null) { this.seed = newSeed(); this.sim = this.makeSim(); this.showBriefing(); } }, { variant: 'secondary' }),
           button('Quit to menu', () => { if (this.flow.send('quit') !== null) { this.app.goMenu(); } }, { variant: 'ghost' }),
         ]),
-        h('p', { class: 'muted small-text', text: this.mode === 'cup' ? 'Quitting gives up this race (no points). The cup waits for you.' : 'Quitting keeps your old best time.' }),
+        h('p', { class: 'muted small-text', text: this.mode === 'cup' ? 'Quit = no points this race.' : 'Your best time is kept.' }),
         button('Settings', () => settingsHolder.replaceChildren(gpSettingsPanel(this.app, { inRace: true, onChange: () => this.rebuildControls() })), { variant: 'ghost', class: 'small' }),
         settingsHolder,
       ]),
     );
   }
 
-  /** Steering mode or boost side changed in the pause menu. */
+  /** Builds the HUD and controls for the steering in use, and wires the input to them. */
+  private mountControls(): void {
+    const s = this.app.save.settings;
+    this.hud?.root.remove();
+    this.input.detach();
+    const hud = new RaceHud(this.mode, this.steeringNow, s.boostSide, () => this.pause());
+    this.hud = hud;
+    this.root.prepend(hud.root);
+    this.input.configure(this.steeringNow, s.sensitivity, s.steerFeel, s.steerAssist, s.tiltZero);
+    this.input.attach({ wheelZone: hud.wheelZone, wheel: hud.wheel, left: hud.left, right: hud.right, boost: hud.boost, item: hud.item });
+    this.reserve();
+  }
+
+  /** Steering mode, feel or boost side changed in the pause menu (or tilt fell back to touch). */
   private rebuildControls(): void {
     if (this.hud === null) {
       return;
     }
-    const s = this.app.save.settings;
-    this.hud.root.remove();
-    this.input.detach();
-    const hud = new RaceHud(this.mode, s.steering, s.boostSide, () => this.pause());
-    this.hud = hud;
-    this.root.prepend(hud.root);
-    this.input.configure(s.steering, s.sensitivity);
-    this.input.attach({ pad: hud.pad, left: hud.left, right: hud.right, boost: hud.boost, item: hud.item });
-    this.reserve();
+    const chosen = this.app.save.settings.steering;
+    this.steeringNow = chosen === 'tilt' && this.tiltFailed ? 'wheel' : chosen;
+    const enabled = this.flow.state === 'racing';
+    this.mountControls();
+    this.input.setEnabled(enabled);
   }
 
   hostPause(): void {
@@ -416,11 +463,10 @@ export class RaceRunner implements Scene {
     this.app.audio.playMusic(false);
     const out = this.outcome!;
     const payout = out.payout;
-    const s = this.sim.state;
     const save = this.app.save;
-    const title = this.mode === 'cup' ? `${ordinal(result.place)} place!` : `Time ${formatTime(result.totalTime)}`;
+    const title = this.mode === 'cup' ? (result.place === 1 ? 'You win!' : result.place <= 3 ? 'Podium!' : 'Finished!') : 'Time Trial';
     const cont = button(
-      this.mode === 'cup' ? (out.cupFinished ? 'Cup results' : `Next: ${TRACKS[nextCupTrack(save)].name}`) : 'Back to menu',
+      this.mode === 'cup' ? (out.cupFinished ? 'Cup results' : `Next: ${TRACKS[nextCupTrack(save)].name}`) : 'Menu',
       () => {
         if (this.flow.send('leave') === null) {
           return;
@@ -436,33 +482,66 @@ export class RaceRunner implements Scene {
     if (out.cupFinished && out.cupRank !== null && out.cupRank <= 3) {
       this.app.audio.sfx('trophy');
     }
+    const colourOf = (id: string): string => (id === 'navie' ? '#3A8CF4' : RIVALS.find((r) => String(r.number) === id)?.colour ?? '#9aa6b6');
     const table =
       this.mode === 'cup'
         ? h('div', { class: 'card soft' }, [
-            h('h3', { text: out.cupFinished ? 'Final cup standings' : `Cup standings after race ${save.cup.raced}` }),
-            h('ol', { class: 'standings' }, standings(save).map(([id, pts]) => h('li', { class: id === 'navie' ? 'me' : '' }, [h('span', { text: carName(id) }), h('strong', { text: `${pts} pts` })]))),
+            h('h3', { text: out.cupFinished ? 'Final standings' : `Standings · ${save.cup.raced}/3` }),
+            h(
+              'ol',
+              { class: 'standings' },
+              standings(save).map(([id, pts], i) =>
+                h('li', { class: id === 'navie' ? 'me' : '' }, [
+                  h('span', { class: 'st-rank', text: String(i + 1) }),
+                  id === 'navie' ? portraitEl('st-face', 'navie', 28, 'character', { expr: 'happy', crop: true }) : h('span', { class: 'st-swatch', attrs: { style: `background:${colourOf(id)}` } }),
+                  h('span', { class: 'st-name', text: carName(id) }),
+                  h('strong', { text: `${pts} pts` }),
+                ]),
+              ),
+            ),
           ])
         : null;
+    /* The total counts up for show; it settles on exactly the amount paid. */
+    const totalEl = h('span', { text: `+${payout.total}` });
+    if (!this.app.save.settings.reduceMotion && payout.total > 0) {
+      let t0 = -1;
+      const tick = (now: number): void => {
+        if (t0 < 0) {
+          t0 = now + 300;
+        }
+        const k = Math.min(1, Math.max(0, (now - t0) / 800));
+        totalEl.textContent = `+${k >= 1 ? payout.total : Math.round(payout.total * (1 - (1 - k) ** 3))}`;
+        if (k < 1 && !this.disposed) {
+          requestAnimationFrame(tick);
+        }
+      };
+      totalEl.textContent = '+0';
+      requestAnimationFrame(tick);
+    }
+    const rank = this.mode === 'cup' ? result.place : 0;
+    const badge = h('div', { class: 'result-pos', attrs: { 'data-rank': rank >= 1 && rank <= 3 ? String(rank) : 'n' } }, this.mode === 'cup'
+      ? [h('span', { class: 'rp-num', text: String(result.place) }), h('span', { class: 'rp-suf', text: ordinal(result.place).replace(/^\d+/, '') })]
+      : [h('span', { class: 'rp-word', text: 'TIME' })]);
     this.setOverlay(
       this.sheet(title, [
-        h('div', { class: 'results-hero' }, [
-          h('img', { class: 'results-face', attrs: { src: portrait('navie', 96, result.place <= 3 ? 'happy' : 'idle'), alt: '' } }),
-          h('div', {}, [
-            h('p', { class: 'lead', text: this.mode === 'cup' ? `${TRACKS[this.track].name}` : TRACKS[this.track].name }),
-            h('p', { class: 'muted', text: `Total ${formatTime(result.totalTime)} · best lap ${formatTime(result.bestLap)}` }),
+        h('div', { class: `results-hero${result.place <= 3 || this.mode === 'trial' ? ' happy' : ''}` }, [
+          badge,
+          portraitEl('results-face', 'navie', 96, 'character', { expr: result.place <= 3 || this.mode === 'trial' ? 'celebrate' : 'happy' }),
+          h('div', { class: 'results-text' }, [
+            h('p', { class: 'lead', text: TRACKS[this.track].name }),
+            h('p', { class: 'result-time', text: formatTime(result.totalTime) }),
+            h('p', { class: 'muted small-text', text: `Best lap ${formatTime(result.bestLap)}` }),
             ...payout.notes.map((n) => h('p', { class: 'trophy-note', text: n })),
           ]),
         ]),
-        h('div', { class: 'card soft' }, [
-          h('h3', { text: 'Bolts earned' }),
-          h('table', { class: 'payout' }, payout.lines.map((l) => h('tr', {}, [h('th', { attrs: { scope: 'row' } }, [l.label, h('span', { class: 'note', text: l.note })]), h('td', { text: `+${l.amount}` })]))),
-          h('div', { class: 'total' }, [h('span', { text: `Total +${payout.total} Bolts` })]),
+        h('div', { class: 'card soft bolts-card' }, [
+          h('div', { class: 'bolts-total' }, [gpIcon('bolt', 'gp-ico big'), totalEl, h('span', { class: 'bolts-word', text: 'Bolts' })]),
+          h('ul', { class: 'bolts-lines' }, payout.lines.map((l) => h('li', {}, [h('span', { text: l.label }), h('strong', { text: `+${l.amount}` })]))),
         ]),
         table,
-        h('p', { class: 'muted small-text', text: `Laps: ${s.lapTimes.map((t) => formatTime(t)).join(' · ')}. Each race is paid once.` }),
         h('div', { class: 'actions' }, [
           cont,
-          button(this.mode === 'cup' ? 'Practise this track' : 'Race again', () => {
+          button(this.mode === 'cup' ? 'Practice' : 'Race again', () => {
             if (this.mode === 'cup') {
               // A cup race is not re-run inside the cup; "again" starts this track as a time trial.
               if (this.flow.send('leave') !== null) {

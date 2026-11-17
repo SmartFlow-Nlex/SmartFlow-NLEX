@@ -259,10 +259,8 @@ export class HornbillScript implements MissionScript {
   private faceAndFrame(n: Actor): void {
     const g = this.ctx.game;
     const h = g.heroes[g.active];
-    const toHero = Math.atan2(h.x - n.x, h.z - n.z);
-    n.yaw = toHero;
-    const view = toHero + 0.75;
-    g.cameraTo([n.x + Math.sin(view) * 5.4, n.y + 2.1, n.z + Math.cos(view) * 5.4], [n.x, n.y + 0.55, n.z], 5);
+    n.yaw = Math.atan2(h.x - n.x, h.z - n.z);
+    g.frameTalk(n);
   }
 
   private async line(portrait: string, speaker: string, text: string): Promise<void> {

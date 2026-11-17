@@ -16,6 +16,12 @@ export class MeshBuilder {
   verts: number[] = [];
   indices: number[] = [];
   bone = 0;
+  /**
+   * Finer subdivision for big shapes, above 1: characters use it so heads, bodies and limbs read
+   * smooth, while scenery keeps 1. Small parts (fewer than 6 rows or 7 sides) are left as they are.
+   */
+  detail = 1;
+  /** How much the vertices sway in the wind; -1 marks fine detail that gets no contour. */
   sway = 0;
   private readonly m: Mat4 = mat4();
   private readonly stack: Mat4[] = [];
@@ -79,8 +85,9 @@ export class MeshBuilder {
 
   /** An egg: rx, ry, rz are its radii. `tilt` leans it about X then Z. */
   ellipsoid(cx: number, cy: number, cz: number, rx: number, ry: number, rz: number, color: Color, opts: { rows?: number; cols?: number; tiltX?: number; tiltZ?: number; yaw?: number } = {}): this {
-    const rows = opts.rows ?? 8;
-    const cols = opts.cols ?? 10;
+    const fine = this.detail !== 1 && (opts.rows ?? 8) >= 6;
+    const rows = fine ? Math.round((opts.rows ?? 8) * this.detail) : (opts.rows ?? 8);
+    const cols = fine ? Math.round((opts.cols ?? 10) * this.detail) : (opts.cols ?? 10);
     const c = rgb(color);
     const base = this.vertexCount;
     const sx = Math.sin(opts.tiltX ?? 0);
@@ -121,8 +128,8 @@ export class MeshBuilder {
 
   /** A soft-cornered box: `round` from 0 (nearly sharp) to 1 (a ball). */
   rbox(cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, color: Color, round = 0.45, yaw = 0): this {
-    const rows = 8;
-    const cols = 12;
+    const rows = Math.round(8 * this.detail);
+    const cols = Math.round(12 * this.detail);
     const c = rgb(color);
     const base = this.vertexCount;
     const e = Math.max(0.12, round);
@@ -154,6 +161,9 @@ export class MeshBuilder {
 
   /** A tube from a to b, tapering from r1 to r2, with rounded ends. For limbs, trunks and poles. */
   tube(a: Vec3, b: Vec3, r1: number, r2: number, color: Color, sides = 8, ends = true): this {
+    if (this.detail !== 1 && sides >= 7) {
+      sides = Math.round(sides * this.detail);
+    }
     const c = rgb(color);
     const dx = b[0] - a[0];
     const dy = b[1] - a[1];
@@ -187,8 +197,12 @@ export class MeshBuilder {
     }
     this.grid(1, sides, base);
     if (ends) {
-      this.ball(a[0], a[1], a[2], r1, c, 4, sides);
-      this.ball(b[0], b[1], b[2], r2, c, 4, sides);
+      /* The rounded ends match the tube's sides, so they are not subdivided again. */
+      const keep = this.detail;
+      this.detail = 1;
+      this.ball(a[0], a[1], a[2], r1, c, keep !== 1 && sides >= 9 ? 6 : 4, sides);
+      this.ball(b[0], b[1], b[2], r2, c, keep !== 1 && sides >= 9 ? 6 : 4, sides);
+      this.detail = keep;
     }
     return this;
   }
@@ -235,6 +249,46 @@ export class MeshBuilder {
       this.vertex(x + Math.cos(a) * r, y, z + Math.sin(a) * r, 0, 1, 0, c);
     }
     for (let k = 0; k < sides; k += 1) {
+      this.indices.push(centre, ring + k + 1, ring + k);
+    }
+    return this;
+  }
+
+  /**
+   * A plain box with flat sides: 12 triangles, where a soft box costs 192. For small
+   * details (window frames, steps, slats) that are too small to show rounded corners.
+   */
+  box(cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, color: Color, yaw = 0): this {
+    const hx = sx / 2;
+    const hy = sy / 2;
+    const hz = sz / 2;
+    const c = Math.cos(yaw);
+    const n = Math.sin(yaw);
+    const p = (x: number, y: number, z: number): Vec3 => [cx + x * c + z * n, cy + y, cz - x * n + z * c];
+    const v = [p(-hx, -hy, -hz), p(hx, -hy, -hz), p(hx, hy, -hz), p(-hx, hy, -hz), p(-hx, -hy, hz), p(hx, -hy, hz), p(hx, hy, hz), p(-hx, hy, hz)];
+    /* Each side's corners, counter-clockwise seen from outside. */
+    this.quad(v[4], v[5], v[6], v[7], color);
+    this.quad(v[1], v[0], v[3], v[2], color);
+    this.quad(v[5], v[1], v[2], v[6], color);
+    this.quad(v[0], v[4], v[7], v[3], color);
+    this.quad(v[7], v[6], v[2], v[3], color);
+    this.quad(v[0], v[1], v[5], v[4], color);
+    return this;
+  }
+
+  /** A flat flower face looking up: `petals` round lobes round a centre, as one small fan. */
+  petals(x: number, y: number, z: number, r: number, count: number, color: Color, turn = 0): this {
+    const col = rgb(color);
+    const centre = this.vertex(x, y, z, 0, 1, 0, col);
+    const steps = count * 3;
+    const ring = this.vertexCount;
+    for (let k = 0; k <= steps; k += 1) {
+      const a = turn + (k / steps) * Math.PI * 2;
+      /* Lobes: the edge swells out at each petal's middle. */
+      const lobe = 0.62 + 0.38 * Math.abs(Math.cos((a - turn) * count * 0.5));
+      this.vertex(x + Math.cos(a) * r * lobe, y, z + Math.sin(a) * r * lobe, 0, 1, 0, col);
+    }
+    for (let k = 0; k < steps; k += 1) {
       this.indices.push(centre, ring + k + 1, ring + k);
     }
     return this;

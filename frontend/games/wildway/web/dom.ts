@@ -68,6 +68,21 @@ export const ICONS = {
   star: svg('<path d="M12 3.200l2.700 5.700 6.200.8-4.600 4.300 1.200 6.200-5.500-3-5.500 3 1.200-6.200-4.600-4.300 6.200-.8z" fill="currentColor" stroke-width="1.400"/>'),
   info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.800v.1"/>'),
   people: svg('<circle cx="9" cy="8" r="3.200"/><circle cx="17" cy="9" r="2.400"/><path d="M3 20c.5-4 3-6 6-6s5.500 2 6 6M15.500 14.200c2.500-.5 4.800 1.300 5.500 4.800"/>'),
+  /* The NLEX map's landmarks. */
+  city: svg('<path d="M3 21V9l5-3v15M8 21V4h8v17M16 21v-9l5 2v7"/><path d="M11 8h2M11 12h2M11 16h2"/>'),
+  route: svg('<circle cx="6" cy="18" r="2.200"/><circle cx="18" cy="6" r="2.200"/><path d="M8 18h6a3 3 0 0 0 0-6h-4a3 3 0 0 1 0-6h6"/>'),
+  box: svg('<path d="M3 8l9-4 9 4v9l-9 4-9-4z"/><path d="M3 8l9 4 9-4M12 12v9"/>'),
+  drop: svg('<path d="M12 3c3.500 4.500 6 7.800 6 11a6 6 0 0 1-12 0c0-3.200 2.500-6.500 6-11z"/>'),
+  plaza: svg('<path d="M3 20V9h18v11"/><path d="M3 9l9-5 9 5M8 20v-6h3v6M13 14h3"/>'),
+  arena: svg('<path d="M3 18c0-6 4-10 9-10s9 4 9 10z"/><path d="M3 18h18M12 8V4M9 13h6"/>'),
+  wrench: svg('<path d="M14.500 6.500a4 4 0 0 0 5 5L12 19a2.100 2.100 0 0 1-3-3l7.500-7.500a4 4 0 0 0-2-2z"/>'),
+  tyre: svg('<circle cx="12" cy="12" r="8.500"/><circle cx="12" cy="12" r="3.500"/>'),
+  signal: svg('<rect x="8" y="2.500" width="8" height="19" rx="3"/><circle cx="12" cy="7" r="1.500" fill="currentColor"/><circle cx="12" cy="12" r="1.500"/><circle cx="12" cy="17" r="1.500"/>'),
+  sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2.500v2.500M12 19v2.500M2.500 12H5M19 12h2.500M5.300 5.300l1.800 1.800M16.900 16.900l1.800 1.800M18.700 5.300l-1.800 1.800M7.100 16.900l-1.800 1.800"/>'),
+  car: svg('<path d="M4 16v-3l2-5h12l2 5v3z"/><circle cx="7.500" cy="16.500" r="1.800"/><circle cx="16.500" cy="16.500" r="1.800"/><path d="M6 11h12"/>'),
+  moon: svg('<path d="M20 14.500A8 8 0 1 1 9.500 4a6.500 6.500 0 0 0 10.500 10.500z"/>'),
+  flag: svg('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
+  hat: svg('<path d="M3 17h18M5 17a7 7 0 0 1 14 0"/><path d="M10 10V7h4v3"/>'),
 };
 
 export const icon = (name: keyof typeof ICONS, cls = ''): HTMLSpanElement => h('span', { class: `icon ${cls}`.trim(), html: ICONS[name] });

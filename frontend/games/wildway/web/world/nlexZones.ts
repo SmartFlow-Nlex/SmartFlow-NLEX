@@ -1,7 +1,8 @@
 import { MeshBuilder } from '../gl/builder';
 import { hex, seeded, smooth } from '../gl/math';
 import type { Mesh, Renderer } from '../gl/renderer';
-import { buildTerrain, bush, clouds, flower, groundColor, mix3, palm, paint, roundTree, Scatter, tallTree, tuft, type Collider } from './scenery';
+import { awningAt, clearOf, cuteHouse, Frame, lanternAt, windowAt } from './buildings';
+import { bench, buildTerrain, bush, clouds, flower, flowerBed, groundColor, hedge, lamp, mix3, palm, paint, planter, roundTree, Scatter, tallTree, tuft, vary, type Collider } from './scenery';
 import { DAY, type Zone, type ZoneImage } from './zones';
 
 /**
@@ -28,17 +29,258 @@ function boxColliders(colliders: Collider[], x0: number, z0: number, x1: number,
 }
 
 const roofPitched = (b: MeshBuilder, x: number, y: number, z: number, w: number, d: number, h: number, color: string, ridge: string): void => {
-  b.quad([x - w, y, z + d], [x + w, y, z + d], [x, y + h, z + d * 0.4], [x - w, y, z + d], color);
-  b.quad([x + w, y, z - d], [x - w, y, z - d], [x, y + h, z - d * 0.4], [x + w, y, z - d], color);
+  /* The end slopes: the apex is split a hair apart, so each face has a proper normal to light it by. */
+  b.quad([x - w, y, z + d], [x + w, y, z + d], [x + 0.0001, y + h, z + d * 0.4], [x - 0.0001, y + h, z + d * 0.4], color);
+  b.quad([x + w, y, z - d], [x - w, y, z - d], [x - 0.0001, y + h, z - d * 0.4], [x + 0.0001, y + h, z - d * 0.4], color);
   b.quad([x - w, y, z - d], [x - w, y, z + d], [x, y + h, z + d * 0.4], [x, y + h, z - d * 0.4], ridge);
   b.quad([x + w, y, z + d], [x + w, y, z - d], [x, y + h, z - d * 0.4], [x, y + h, z + d * 0.4], ridge);
 };
 
-function house(b: MeshBuilder, x: number, z: number, w: number, d: number, wall: string, roofColor: string, facing: 1 | -1): void {
-  b.rbox(x, 1.4, z, w, 2.8, d, wall, 0.25);
-  roofPitched(b, x, 2.7, z, w / 2 + 0.4, d / 2 + 0.4, 1.4, roofColor, roofColor);
-  b.rbox(x, 0.95, z + (facing * d) / 2, 0.9, 1.7, 0.08, '#6b4a2f', 0.2);
-  b.rbox(x - w / 4, 1.7, z + (facing * d) / 2, 0.9, 0.7, 0.08, '#9fd6f2', 0.2);
+/** One of three cosy house styles, picked by where the house stands: mostly tiled roofs, now and then a nipa hut. */
+const houseStyle = (x: number, z: number): 0 | 1 | 2 => {
+  const v = vary(x, z, 110);
+  return v < 0.18 ? 2 : v < 0.6 ? 1 : 0;
+};
+
+/**
+ * Finishing touches for the NLEX places, after each one's own layout and with its own
+ * random numbers: windows, awnings, planters, flower beds, hedges, lamps and benches, only
+ * where they block no button, collider or way.
+ */
+function dresser(s: Scatter, colliders: Collider[], spots: Record<string, [number, number]>, seed: number) {
+  const rand = seeded(seed);
+  const clear = clearOf(spots, colliders);
+  const put = (x: number, z: number, r: number, fn: () => void, near?: number): boolean => {
+    if (clear(x, z, r, near)) {
+      fn();
+      colliders.push({ x, z, r });
+      return true;
+    }
+    return false;
+  };
+  /** A hedge along a line, blocking like one. */
+  const hedgeLine = (x0: number, z0: number, x1: number, z1: number, tone = 0): void => {
+    const len = Math.hypot(x1 - x0, z1 - z0);
+    const n = Math.max(1, Math.round(len / 1.2));
+    hedge(s, x0, z0, x1, z1, 0, 0.9, tone);
+    for (let i = 0; i <= n; i += 1) {
+      colliders.push({ x: x0 + ((x1 - x0) * i) / n, z: z0 + ((z1 - z0) * i) / n, r: 0.7 });
+    }
+  };
+  return { rand, clear, put, hedgeLine, c: (x: number, z: number) => s.cell(x, z) };
+}
+
+function dressPlaza(s: Scatter, colliders: Collider[], spots: Record<string, [number, number]>): void {
+  const { put, c } = dresser(s, colliders, spots, 6101);
+  /* Little potted plants at the ends of the lane islands, where no one walks. */
+  for (const x of PLAZA_ISLANDS) {
+    for (const z of [-4.55, 4.55]) {
+      planter(s, x, 0.4, z, Math.abs(x) % 2 < 1 ? 'flowers' : 'shrub', '#1e5bb8', 0.75);
+    }
+  }
+  /* The control room: windows with flower boxes on both long walls, an awning and lamp at its door. */
+  {
+    const cc = c(25, 9);
+    for (const [z, turn] of [[6, Math.PI], [12, 0]] as [number, number][]) {
+      const wall = new Frame(25.5, 0, z, turn);
+      for (const lx of [-1.8, 1.8]) {
+        windowAt(cc, wall.sub(lx, 2.3, 0), 1.3, 1.0, '#ffffff', { flowers: true });
+      }
+    }
+    const door = new Frame(21.95, 0, 9, -Math.PI / 2);
+    awningAt(cc, door, 1.8, 2.45, '#1e5bb8', '#ffc32d');
+    lanternAt(cc, door, 1.0, 1.9);
+  }
+  /* The service shed's door gets a frame and a lamp. */
+  {
+    const cc = c(30, 3);
+    const door = new Frame(29.28, 0, 2.6, -Math.PI / 2);
+    awningAt(cc, door, 1.9, 2.3, '#1e5bb8');
+  }
+  /* Along the outer edge of each walkway: lamps, and flower beds and bushes just beyond it. */
+  for (const side of [-1, 1]) {
+    for (let z = -48; z <= 48; z += 12) {
+      put(side * 32.2, z, 0.35, () => lamp(s, side * 32.2, 0, z, 2.8));
+      const bz = z + 6;
+      put(side * 34.6, bz, 1.0, () => flowerBed(s, side * 34.6, 0, bz, 1.2, 2.6));
+    }
+  }
+  put(30.6, -30.5, 0.95, () => bench(s, 30.6, 0, -30.5, -Math.PI / 2), 1.8);
+}
+
+function dressRiver(s: Scatter, colliders: Collider[], spots: Record<string, [number, number]>): void {
+  const { put, c } = dresser(s, colliders, spots, 6202);
+  /* The barangay hall: windows with flower boxes either side of the door, lanterns, planters at its corners. */
+  {
+    const cc = c(-14, 13);
+    const front = new Frame(-14, 0, 11, Math.PI);
+    for (const lx of [-3.4, 3.4]) {
+      windowAt(cc, front.sub(lx, 1.9, 0), 1.4, 1.0, '#ffffff', { shutters: '#1e5bb8', flowers: true });
+    }
+    for (const lx of [-1.25, 1.25]) {
+      lanternAt(cc, front, lx, 1.9);
+    }
+    for (const x of [-19.8, -8.2]) {
+      put(x, 10.3, 0.5, () => planter(s, x, 0, 10.3, 'shrub', '#c8452e', 1.1), 1.6);
+    }
+  }
+  /* Benches by the north bank path, facing the creek, and lamps along it. */
+  for (const x of [-30, -6, 20]) {
+    const z = riverZ(x) + 8.6;
+    put(x, z, 0.95, () => bench(s, x, 0, z, Math.PI), 1.8);
+  }
+  for (let x = -38; x <= 30; x += 17) {
+    const z = riverZ(x) + 8.9;
+    put(x + 4, z, 0.35, () => lamp(s, x + 4, 0, z), 1.6);
+  }
+}
+
+/**
+ * Paint on a yard floor, and a little green at the fence foot: slab joints, parking bays where the
+ * vans stand, a yellow walkway from the gate, an arrow to the way out. All flat or tiny, with no
+ * colliders, so nothing here can block a path or a button; its own random numbers, so nothing else moves.
+ */
+function floorPaint(s: Scatter, o: { half: [number, number]; bays: { x: number; z: number; step: number; n: number }; walk: readonly [number, number][]; arrow: [number, number]; seed: number; skip: (x: number, z: number) => boolean }): void {
+  const rand = seeded(o.seed);
+  const [hx, hz] = o.half;
+  const flat = (x: number, z: number, w: number, d: number, color: string, yaw = 0, y = 0.021): void => {
+    s.cell(x, z).soft.box(x, y, z, w, 0.018, d, color, yaw);
+  };
+  /* Expansion joints every 6 m: faint lines that give the big floor a grain. */
+  for (let x = -hx + 6; x < hx; x += 6) {
+    for (let z = -hz; z < hz - 0.5; z += 6) {
+      if (!o.skip(x, z + 3)) {
+        flat(x, z + 3, 0.07, 5.6, '#a3a8b1');
+      }
+    }
+  }
+  for (let z = -hz + 6; z < hz; z += 6) {
+    for (let x = -hx; x < hx - 0.5; x += 6) {
+      if (!o.skip(x + 3, z)) {
+        flat(x + 3, z, 5.6, 0.07, '#a3a8b1');
+      }
+    }
+  }
+  /* Parking bays: white lines between the vans' places, and a yellow kerb line behind them. */
+  const { x: bx, z: bz, step, n } = o.bays;
+  for (let i = 0; i <= n; i += 1) {
+    flat(bx - step / 2 + i * step, bz, 0.14, 5.4, '#f4f4ef', 0, 0.024);
+  }
+  flat(bx + (step * (n - 1)) / 2, bz + 2.9, Math.abs(step * n) + 0.14, 0.18, '#ffc32d', 0, 0.024);
+  /* A walkway from the gate: two dashed yellow lines either side of the route. */
+  for (let i = 0; i < o.walk.length - 1; i += 1) {
+    const [ax, az] = o.walk[i];
+    const [cx, cz] = o.walk[i + 1];
+    const len = Math.hypot(cx - ax, cz - az);
+    const yaw = Math.atan2(cx - ax, cz - az);
+    const nx = Math.cos(yaw);
+    const nz = -Math.sin(yaw);
+    for (let d = 0.6; d < len - 0.4; d += 1.6) {
+      const px = ax + ((cx - ax) * d) / len;
+      const pz = az + ((cz - az) * d) / len;
+      for (const side of [-1.2, 1.2]) {
+        flat(px + nx * side, pz + nz * side, 0.16, 0.9, '#ffc32d', yaw, 0.023);
+      }
+    }
+  }
+  /* A big white arrow on the way out. */
+  {
+    const [ax, az] = o.arrow;
+    const c = s.cell(ax, az).soft;
+    c.box(ax, 0.024, az + 0.9, 0.5, 0.018, 2.2, '#f4f4ef');
+    c.quad([ax - 0.9, 0.034, az - 0.2], [ax, 0.034, az - 1.5], [ax + 0.9, 0.034, az - 0.2], [ax, 0.034, az - 0.2001], '#f4f4ef');
+  }
+  /* Tufts of grass and the odd flower where the floor meets the fence. */
+  for (let i = 0; i < 70; i += 1) {
+    const edge = Math.floor(rand() * 3);
+    const t = rand() * 2 - 1;
+    const x = edge === 2 ? t * (hx - 1.5) : (edge === 0 ? -1 : 1) * (hx - 0.55);
+    const z = edge === 2 ? hz - 0.55 : t * (hz - 1.5);
+    const r2 = rand();
+    if (o.skip(x, z)) {
+      continue;
+    }
+    if (r2 < 0.75) {
+      tuft(s, x, 0, z, rand);
+    } else {
+      flower(s, x, 0, z, rand);
+    }
+  }
+}
+
+/** A zebra crossing painted just inside a gate. */
+function zebra(s: Scatter, z: number): void {
+  for (let i = 0; i < 6; i += 1) {
+    s.cell(0, z).soft.box(-3.5 + i * 1.4, 0.025, z, 0.7, 0.03, 2.2, '#f2f2ee');
+  }
+}
+
+function dressDepot(s: Scatter, colliders: Collider[], spots: Record<string, [number, number]>): void {
+  const { put, hedgeLine, c } = dresser(s, colliders, spots, 6303);
+  zebra(s, -24.6);
+  /* The workshop: a row of high windows either side of the big door. */
+  {
+    const cc = c(-10, 13);
+    const front = new Frame(-10, 0, 7.96, Math.PI);
+    for (const lx of [-8, -5, 5, 8]) {
+      windowAt(cc, front.sub(lx, 3.8, 0), 1.6, 1.0, '#ffffff');
+    }
+  }
+  /* The office: framed windows with flower boxes, an awning at the door, planters by the corners. */
+  {
+    const cc = c(16, 15);
+    const front = new Frame(16, 0, 11.5, Math.PI);
+    for (const lx of [-3, 3]) {
+      windowAt(cc, front.sub(lx, 2.2, 0), 2.0, 1.0, '#ffffff', { flowers: true });
+    }
+    awningAt(cc, front, 2.0, 2.55, '#1e5bb8', '#ffffff');
+    for (const [x, z] of [[10.2, 9.6], [21.8, 9.6], [10, 13], [22, 13]] as [number, number][]) {
+      put(x, z, 0.5, () => planter(s, x, 0, z, 'shrub', '#1e5bb8', 1.1), 1.6);
+    }
+  }
+  /* Hedges inside the back fence, flower beds along the side fences, and potted trees in the open yard. */
+  hedgeLine(-32.4, 26.4, -12, 26.4, 0);
+  hedgeLine(-8, 26.4, 32.4, 26.4, 1);
+  for (const x of [-32.3, 32.3]) {
+    for (let z = -22; z <= 2; z += 6) {
+      put(x, z, 0.9, () => flowerBed(s, x, 0, z, 1.0, 3.0));
+    }
+  }
+  for (const [x, z] of [[-26, -12], [28, -2], [-14, -18], [26, 20]] as [number, number][]) {
+    put(x, z, 0.8, () => planter(s, x, 0, z, 'palm', '#c9714a', 1.7));
+  }
+}
+
+function dressYard(s: Scatter, colliders: Collider[], spots: Record<string, [number, number]>): void {
+  const { put, hedgeLine, c } = dresser(s, colliders, spots, 6404);
+  zebra(s, -20.8);
+  /* The warehouse: high windows either side of the door. */
+  {
+    const cc = c(-12, 15);
+    const front = new Frame(-12, 0, 9.96, Math.PI);
+    for (const lx of [-9.5, -6, 6, 9.5]) {
+      windowAt(cc, front.sub(lx, 4.0, 0), 1.6, 0.9, '#ffffff');
+    }
+  }
+  /* The yard office: windows with flower boxes, an awning and planters at the door. */
+  {
+    const cc = c(22, 12);
+    const front = new Frame(22.5, 0, 8, Math.PI);
+    for (const lx of [-2.7, 2.7]) {
+      windowAt(cc, front.sub(lx, 2.2, 0), 1.6, 1.0, '#ffffff', { flowers: true });
+    }
+    awningAt(cc, front, 1.9, 2.5, '#1e5bb8', '#ffffff');
+    for (const [x, z] of [[19.6, 6.8], [25.4, 6.8], [17, 10], [28, 10]] as [number, number][]) {
+      put(x, z, 0.5, () => planter(s, x, 0, z, 'flowers', '#e09a4a', 1.0), 1.6);
+    }
+  }
+  hedgeLine(-28.4, 22.4, -2, 22.4, 2);
+  hedgeLine(2, 22.4, 28.4, 22.4, 0);
+  for (const x of [-28.3, 28.3]) {
+    for (let z = -18; z <= 6; z += 6) {
+      put(x, z, 0.9, () => flowerBed(s, x, 0, z, 1.0, 3.0));
+    }
+  }
 }
 
 /* ---- The Great NLEX Gridlock: a toll plaza ---- */
@@ -83,7 +325,7 @@ export function buildPlaza(r: Renderer): Zone {
     b.rbox(x, 0.18, 0, 1.6, 0.36, 10, '#ffd54a', 0.25);
     b.rbox(x, 0.2, 0, 1.2, 0.42, 9.6, '#e8eaee', 0.3);
     if (Math.abs(x) < 15.5) {
-      b.rbox(x, 1.45, -1.2, 1.25, 2.3, 2.2, '#f4f6f8', 0.3);
+      b.rbox(x, 1.45, -1.2, 1.25, 2.3, 2.2, '#f4f6f8', 0.18);
       b.rbox(x, 1.75, -1.2, 1.32, 0.8, 1.9, '#9fd6f2', 0.25);
       b.rbox(x, 2.7, -1.2, 1.5, 0.22, 2.5, '#1e5bb8', 0.25);
     }
@@ -133,7 +375,7 @@ export function buildPlaza(r: Renderer): Zone {
     }
     /* Well north of the control room, so there is a wide path between them. */
     const tb = s.cell(side * 21, 19).solid;
-    tb.rbox(side * 21.3, 1.3, 19, 3.4, 2.6, 3, '#aeb4bd', 0.25);
+    tb.rbox(side * 21.3, 1.3, 19, 3.4, 2.6, 3, '#aeb4bd', 0.12);
     tb.rbox(side * 19.55, 1.05, 19, 0.08, 2, 1.5, '#2b303a', 0.15);
     tb.rbox(side * 21.3, 2.75, 19, 3.6, 0.3, 3.2, '#1e5bb8', 0.2);
     colliders.push({ x: side * 21.6, z: 19, r: 1.6 });
@@ -141,7 +383,7 @@ export function buildPlaza(r: Renderer): Zone {
   /* Control room. */
   {
     const b = s.cell(25, 9).solid;
-    b.rbox(25.5, 2, 9, 7, 4, 6, '#f2f5f8', 0.3);
+    b.rbox(25.5, 2, 9, 7, 4, 6, '#f2f5f8', 0.12);
     b.rbox(25.5, 4.2, 9, 7.6, 0.4, 6.6, '#1e5bb8', 0.25);
     b.rbox(21.95, 1.15, 9, 0.08, 2.1, 1.3, '#3d5a80', 0.15);
     b.rbox(21.95, 2.6, 7, 0.08, 1, 2.4, '#9fd6f2', 0.15);
@@ -172,7 +414,7 @@ export function buildPlaza(r: Renderer): Zone {
   /* The service shed, east, with spare power cells. */
   {
     const b = s.cell(30, 3).solid;
-    b.rbox(30.6, 1.3, 2.6, 2.6, 2.6, 3, '#aeb4bd', 0.25);
+    b.rbox(30.6, 1.3, 2.6, 2.6, 2.6, 3, '#aeb4bd', 0.12);
     b.rbox(30.6, 2.75, 2.6, 2.9, 0.25, 3.3, '#1e5bb8', 0.2);
     b.rbox(29.28, 1.05, 2.6, 0.08, 2, 1.5, '#2b303a', 0.15);
     colliders.push({ x: 30.6, z: 2.6, r: 1.6 });
@@ -224,6 +466,7 @@ export function buildPlaza(r: Renderer): Zone {
       flower(s, x, height(x, z), z, rand);
     }
   }
+  dressPlaza(s, colliders, spots);
   const terrain = buildTerrain(r, {
     minX: -64,
     maxX: 64,
@@ -321,7 +564,7 @@ export function buildRiver(r: Renderer): Zone {
   /* The barangay hall, with the sorting bins out front. */
   {
     const b = s.cell(-14, 13).solid;
-    b.rbox(-14, 1.8, 14, 11, 3.6, 6, '#f6ecd6', 0.3);
+    b.rbox(-14, 1.8, 14, 11, 3.6, 6, '#f6ecd6', 0.12);
     roofPitched(b, -14, 3.5, 14, 6.2, 3.6, 1.6, '#c8452e', '#a83622');
     b.rbox(-14, 1.1, 10.95, 1.4, 2.2, 0.08, '#6b4a2f', 0.2);
     b.rbox(-14, 3.05, 10.92, 4.6, 0.55, 0.06, '#1e5bb8', 0.15);
@@ -343,13 +586,13 @@ export function buildRiver(r: Renderer): Zone {
       continue;
     }
     const zN = 19 + rand() * 2;
-    house(s.cell(x, zN).solid, x, zN, 6, 4.5, walls[Math.floor(rand() * walls.length)], roofs[Math.floor(rand() * roofs.length)], -1);
+    cuteHouse(s, x, 0, zN, { w: 6, d: 4.5, wall: walls[Math.floor(rand() * walls.length)], roof: roofs[Math.floor(rand() * roofs.length)], style: houseStyle(x, zN), facing: -1 });
     boxColliders(colliders, x - 3, zN - 2.3, x + 3, zN + 2.3);
     if (Math.abs(x - 28) < 6) {
       continue;
     }
     const zS = -17 - rand() * 2;
-    house(s.cell(x, zS).solid, x, zS, 6, 4.5, walls[Math.floor(rand() * walls.length)], roofs[Math.floor(rand() * roofs.length)], 1);
+    cuteHouse(s, x, 0, zS, { w: 6, d: 4.5, wall: walls[Math.floor(rand() * walls.length)], roof: roofs[Math.floor(rand() * roofs.length)], style: houseStyle(x, zS), facing: 1 });
     boxColliders(colliders, x - 3, zS - 2.3, x + 3, zS + 2.3);
   }
   /* The footbridge. */
@@ -419,6 +662,7 @@ export function buildRiver(r: Renderer): Zone {
       flower(s, x, y, z, rand);
     }
   }
+  dressRiver(s, colliders, spots);
   const terrain = buildTerrain(r, {
     minX: -60,
     maxX: 60,
@@ -531,7 +775,7 @@ export function buildDepot(r: Renderer): Zone {
   /* Workshop with a flat roof, for the panels later. */
   {
     const b = s.cell(-10, 13).solid;
-    b.rbox(-10, 3, 13, 20, 6, 10, '#c3cfdc', 0.25);
+    b.rbox(-10, 3, 13, 20, 6, 10, '#c3cfdc', 0.1);
     b.rbox(-10, 6.15, 13, 20.6, 0.3, 10.6, '#5e6b7c', 0.2);
     b.rbox(-10, 2.3, 7.96, 6, 4.4, 0.08, '#3d4756', 0.15);
     b.rbox(-10, 4.9, 7.94, 6.2, 0.3, 0.08, '#ffc32d', 0.15);
@@ -549,11 +793,9 @@ export function buildDepot(r: Renderer): Zone {
   /* Office. */
   {
     const b = s.cell(16, 15).solid;
-    b.rbox(16, 1.9, 15, 10, 3.8, 7, '#f7fafc', 0.3);
+    b.rbox(16, 1.9, 15, 10, 3.8, 7, '#f7fafc', 0.12);
     b.rbox(16, 3.55, 11.45, 10.2, 0.5, 0.1, '#1e5bb8', 0.15);
     b.rbox(16, 1.1, 11.46, 1.2, 2.2, 0.08, '#3d5a80', 0.15);
-    b.rbox(13, 2.2, 11.46, 2, 1, 0.08, '#9fd6f2', 0.15);
-    b.rbox(19, 2.2, 11.46, 2, 1, 0.08, '#9fd6f2', 0.15);
     boxColliders(colliders, 11, 11.6, 21, 18.4);
   }
   /* Compressor shed. */
@@ -642,6 +884,15 @@ export function buildDepot(r: Renderer): Zone {
       bush(s, x, y, z, 0.9, rand);
     }
   }
+  dressDepot(s, colliders, spots);
+  floorPaint(s, {
+    half: [33.6, 27.6],
+    bays: { x: -6.5, z: -15, step: -4.2, n: 3 },
+    walk: [[0, -26.5], [0, -8], [14, -8], [16, 9.5]],
+    arrow: [-3.6, -21.5],
+    seed: 7720 + 404,
+    skip: (x, z) => (x > -21.8 && x < 1.8 && z > 6.2 && z < 19.8) || (x > 9.2 && x < 22.8 && z > 10.4 && z < 20.2),
+  });
   const terrain = buildTerrain(r, {
     minX: -76,
     maxX: 76,
@@ -780,11 +1031,17 @@ export function buildNlexProps(r: Renderer): Record<string, Mesh> {
     }
   });
   make('reeds', (b) => {
-    for (let i = 0; i < 7; i += 1) {
-      const x = -0.6 + i * 0.2;
-      b.tube([x, 0, 0], [x + 0.05, 1 + (i % 3) * 0.25, 0.05 * (i % 2)], 0.035, 0.02, '#4aa24c', 4, false);
+    b.sway = 0.3;
+    for (let i = 0; i < 9; i += 1) {
+      const x = -0.65 + i * 0.16;
+      const h = 0.95 + (i % 3) * 0.28;
+      b.cone(x, 0, 0.06 * (i % 2), 0.06, h, '#4f9a45', 3, '#9ad85e');
+      if (i % 3 === 1) {
+        b.tube([x, h * 0.72, 0.06 * (i % 2)], [x, h * 1.02, 0.06 * (i % 2)], 0.045, 0.04, '#8a5a2c', 5, true);
+      }
     }
-    b.ellipsoid(0, 0.15, 0, 0.6, 0.2, 0.3, '#6cc152', { rows: 3, cols: 7 });
+    b.ellipsoid(0, 0.15, 0, 0.65, 0.2, 0.32, '#6cc152', { rows: 4, cols: 8 });
+    b.sway = 0;
   });
   /* The depot. */
   make('lampOn', (b) => b.rbox(0, 0, 0, 1.5, 0.22, 0.8, '#fff3a6', 0.15), false);
@@ -1045,7 +1302,7 @@ export function buildYard(r: Renderer): Zone {
   /* The warehouse, with a gutter along the front. */
   {
     const b = s.cell(-12, 15).solid;
-    b.rbox(-12, 3, 15, 24, 6, 10, '#d9c9a8', 0.25);
+    b.rbox(-12, 3, 15, 24, 6, 10, '#d9c9a8', 0.1);
     b.rbox(-12, 6.15, 15, 24.6, 0.3, 10.6, '#8a4a22', 0.2);
     b.tube([-24.2, 5.95, 9.75], [0.2, 5.95, 9.75], 0.12, 0.12, '#8b98ad', 6, false);
     b.rbox(-12, 2.2, 9.96, 6, 4.4, 0.08, '#5a3f28', 0.15);
@@ -1070,10 +1327,9 @@ export function buildYard(r: Renderer): Zone {
   /* The yard office. */
   {
     const b = s.cell(22, 12).solid;
-    b.rbox(22.5, 1.8, 12, 9, 3.6, 8, '#f7fafc', 0.3);
+    b.rbox(22.5, 1.8, 12, 9, 3.6, 8, '#f7fafc', 0.12);
     b.rbox(22.5, 3.75, 12, 9.4, 0.3, 8.4, '#1e5bb8', 0.2);
     b.rbox(22.5, 1.1, 7.96, 1.2, 2.2, 0.08, '#3d5a80', 0.15);
-    b.rbox(19.8, 2.2, 7.96, 2, 1, 0.08, '#9fd6f2', 0.15);
     boxColliders(colliders, 18, 8, 27, 16);
   }
   /* A locked cage: the specialist kit inside, reachable through the mesh. */
@@ -1141,7 +1397,22 @@ export function buildYard(r: Renderer): Zone {
   for (let i = 0; i < 4; i += 1) {
     s.cell(0 + i * 4, -14).soft.rbox(1 + i * 4, 0.03, -14, 0.18, 0.04, 6, '#f2f2ee', 0.1);
   }
-  /* Trees and houses outside. */
+  dressYard(s, colliders, spots);
+  floorPaint(s, {
+    half: [29.6, 23.6],
+    bays: { x: YARD_VAN[0], z: YARD_VAN[1], step: 4.6, n: 3 },
+    walk: [[0, -22.5], [0, -4.5], [17, -4.5], [21, 4.5]],
+    arrow: [3.4, -18.6],
+    seed: 7404,
+    /* Not inside the buildings, the racks or the cage. */
+    skip: (x, z) => (x > -24.5 && x < 0.5 && z > 9.5 && z < 20.5) || (x > 4.5 && x < 15.5 && z > 15.5 && z < 18.5) || (x > 17.5 && x < 27.5 && z > 7.5 && z < 16.5) || (x > -28.5 && x < -20.5 && z > -10.5 && z < -1.5),
+  });
+  /* Trees and houses outside: four cosy houses across the lane behind the back fence. */
+  const outside: [number, number][] = [[-22, 33.5], [-8, 34], [8, 33.5], [22, 34]];
+  outside.forEach(([x, z], i) => {
+    cuteHouse(s, x, height(x, z - 2.2), z, { w: 6, d: 4.5, wall: ['#ffd9a8', '#e0f5d8', '#cfe8ff', '#ffe3ec'][i], roof: ['#c8452e', '#2b6fd6', '#2fae6b', '#8a4a22'][i], style: houseStyle(x, z), facing: -1 });
+    boxColliders(colliders, x - 3, z - 2.3, x + 3, z + 2.3);
+  });
   for (let i = 0; i < 200; i += 1) {
     const x = -66 + rand() * 132;
     const z = -66 + rand() * 132;
@@ -1150,6 +1421,11 @@ export function buildYard(r: Renderer): Zone {
     }
     const y = height(x, z);
     const k = rand();
+    /* Not on a house: the plant's own random number is still drawn, so nothing else moves. */
+    if (outside.some(([hx, hz]) => Math.abs(x - hx) < 5 && Math.abs(z - hz) < 4.5)) {
+      rand();
+      continue;
+    }
     if (k < 0.4) {
       tallTree(s, x, y, z, 0.85 + rand() * 0.4, rand, Math.floor(rand() * 3));
     } else if (k < 0.65) {
