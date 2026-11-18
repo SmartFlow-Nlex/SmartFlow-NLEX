@@ -7,9 +7,9 @@ import { useTheme } from '../../theme';
 
 /*
  * The same loop at two sizes. For each: the packed video (see AlphaVideo), one
- * half of which is `width` x `height` pixels; his first frame, upright, before
- * the wave; and `rest`, where he stands in that frame - it is larger than the
- * car, because it has to hold him leaning over with a wheel in the air.
+ * half of which is `width` x `height` pixels; the first frame, upright, before
+ * the wave; and `rest`, where the upright car stands in that frame - the frame is
+ * larger than the car, to hold the lean, the raised wheel and the wave lines.
  *
  * Two, because a frame drawn much larger than it was made goes soft, and one
  * drawn much smaller loses detail unevenly (the player does not average when
@@ -20,33 +20,32 @@ const SMALL = {
   video: require('../../assets/mascot-waving.mp4'),
   still: require('../../assets/mascot-waving.png'),
   width: 340,
-  height: 314,
-  rest: { x: 15, y: 13, width: 318, height: 297 },
+  height: 304,
+  rest: { x: 12, y: 3, width: 300, height: 297 },
 };
 const LARGE = {
   video: require('../../assets/mascot-waving-large.mp4'),
   still: require('../../assets/mascot-waving-large.png'),
-  width: 560,
-  height: 517,
-  rest: { x: 25, y: 22, width: 525, height: 489 },
+  width: 534,
+  height: 476,
+  rest: { x: 16, y: 3, width: 475, height: 470 },
 };
 
 /** Drawn taller than this many screen pixels, the small video would be stretched too far. */
 const SMALL_UP_TO_PX = 340;
 
 /**
- * Navie waving - the designer's `waving.mp4`, cut out and looped: a blink, a
- * lean, a wave of the wheel, and back.
+ * Navie waving - the designer's `waving.mp4`, cut out and looped from one rest
+ * pose back to the same pose: a squint, a wink, a lean and a wave of the mirror.
  *
- * `size` is his height standing upright, and the space he takes in the layout
- * is that upright car - the same footprint as the still HeroMascot it
- * replaced, so a hero placed for one fits the other. The lean and the raised
- * wheel spill a few points past that box, to the left and above, where the
- * page keeps clear sky.
+ * `size` is the car's height standing upright, and the space it takes in the
+ * layout is that upright car - the same footprint as the still HeroMascot it
+ * replaced, so a hero placed for one fits the other. The lean, the raised wheel
+ * and the wave lines spill a few points past that box to either side.
  *
  * Only the tab on screen runs the video. Tabs stay mounted behind one another,
  * and a decoder waving at nobody on each of them is how the phone gets warm;
- * the others hold his first frame, which is also what anyone who has asked the
+ * the others hold the first frame, which is also what anyone who has asked the
  * phone to reduce motion sees.
  */
 const WavingMascot: React.FC<{ size: number }> = ({ size }) => {
@@ -68,8 +67,8 @@ const WavingMascot: React.FC<{ size: number }> = ({ size }) => {
 
   return (
     <View style={{ width, height: size, pointerEvents: 'none' }}>
-      {/* A soft shadow on the road beneath him. */}
-      <View style={[styles.shadow, { width: width * 0.66, left: width * 0.2, height: size * 0.08 }]} />
+      {/* A soft shadow on the road beneath the car, which now faces straight ahead. */}
+      <View style={[styles.shadow, { width: width * 0.66, left: width * 0.17, height: size * 0.08 }]} />
       <View style={frame}>
         {focused && !reduceMotion ? (
           <AlphaVideo

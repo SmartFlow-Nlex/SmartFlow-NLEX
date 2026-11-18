@@ -18,7 +18,7 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - They work from **mockup screenshots** and expect the app to match them closely ("make it identical"), then send phone screenshots of what is wrong.
 
 ### How Ysa wants things done
-- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-17**, so next is **Ysa-Commit-18**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
+- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-18**, so next is **Ysa-Commit-19**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
 - **"Make the server up":** start Metro from the **repo root**, then give the `exp://` address and a QR code (see §1). Check the phone can really load the bundle, not just the manifest.
 - Never commit `.env` (it holds keys; it is in `.gitignore`).
 - Use real data only — no mock traffic data, no fake posts.
@@ -281,6 +281,11 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - **Remember me** starts unticked. Sign-up no longer remembers the account silently either, since it has no box to opt in with.
 - **Wording:** the wrong-code message (`mfa.ts`) and the reset-link message (`forgot-password.tsx`) use the panel's exact text. "TRAFFIC INTELLIGENCE" is gone from the tab header.
 - **Welcome email:** `sendWelcomeEmail` (`frontend/auth/welcomeEmail.ts`) runs once `register` succeeds, and calls a Google Apps Script running as navie.smartflow@gmail.com (`supabase/welcome-email.gs`, which has the setup steps). The backend cannot send it: Render's free tier blocks outgoing SMTP. The script takes the session token, asks Supabase whose it is, and writes only to that address, once, within 15 minutes of the account's creation. Without `EXPO_PUBLIC_WELCOME_EMAIL_URL` in `.env`, nothing is sent and sign-up still works.
+
+### 18 Nov — Ysa-Commit-18 (new mascot animations)
+- **Assistant replies:** Ysa's new Happy, Thinking and Traffic Alert videos replace the clear, thinking and traffic moods in `MoodMascot.tsx`. The **alert mood keeps its old animation on purpose**. The new frames have spare room for hops and leans (`room`), so the car stays the same size as alert and the messages do not move.
+- **Waving:** the new `waving.mp4` replaces `WavingMascot.tsx` on the Dashboard, Community, Alerts and the empty Assistant chat. It is a 2.5 s loop (squint, wink, mirror wave) from one rest pose back to the same pose.
+- Checked on the decoded videos: no sudden jumps, smooth loop joins, clean in light and dark. Not checked on a real phone by Claude.
 
 ### 9–17 Nov — Ysa-Commit-17 (Wildway Guardians cast, world and polish; Navie Grand Prix wheel, start screen, arcade HUD)
 - **Wildway Guardians** (`frontend/games/wildway/`, README sections from 9 Nov on):
