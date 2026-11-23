@@ -54,6 +54,11 @@ services:
       # two values as the app's EXPO_PUBLIC_SUPABASE_URL / _ANON_KEY. The anon
       # key opens nothing by itself: posts are readable by signed-in users only,
       # so each question is read with the asker's own sign-in, sent by the app.
+      # These two also switch on the sign-in check for Navie (/api/assistant/*):
+      # without them anyone could call the assistant and spend the model credit.
+      # Optional: ASSISTANT_REQUIRE_SIGN_IN=false or ASSISTANT_REQUIRE_AAL2=false to
+      # relax it; ASSISTANT_LIMIT_CHAT_PER_MIN (default 12) and the TRANSLATE (40)
+      # and GREETING (8) equivalents change the per-user limits.
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY

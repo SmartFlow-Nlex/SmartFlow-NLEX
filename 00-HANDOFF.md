@@ -18,7 +18,7 @@ The older guides (`00-START-HERE.md`, `README.md`, `QUICK_REFERENCE.md`) date fr
 - They work from **mockup screenshots** and expect the app to match them closely ("make it identical"), then send phone screenshots of what is wrong.
 
 ### How Ysa wants things done
-- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-18**, so next is **Ysa-Commit-19**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
+- **Commits:** named `Ysa-Commit-N` (the last one is **Ysa-Commit-19**, so next is **Ysa-Commit-20**), pushed **straight to `Main-Mobile`** on `github.com/SmartFlow-Nlex/SmartFlow-NLEX`. **Never create a new branch.** Teammates also push to `Main-Mobile`, so **always fetch first** and build on top of theirs.
 - **"Make the server up":** start Metro from the **repo root**, then give the `exp://` address and a QR code (see §1). Check the phone can really load the bundle, not just the manifest.
 - Never commit `.env` (it holds keys; it is in `.gitignore`).
 - Use real data only — no mock traffic data, no fake posts.
@@ -281,6 +281,22 @@ All data comes from the **team dashboard** or Supabase; sample/placeholder data 
 - **Remember me** starts unticked. Sign-up no longer remembers the account silently either, since it has no box to opt in with.
 - **Wording:** the wrong-code message (`mfa.ts`) and the reset-link message (`forgot-password.tsx`) use the panel's exact text. "TRAFFIC INTELLIGENCE" is gone from the tab header.
 - **Welcome email:** `sendWelcomeEmail` (`frontend/auth/welcomeEmail.ts`) runs once `register` succeeds, and calls a Google Apps Script running as navie.smartflow@gmail.com (`supabase/welcome-email.gs`, which has the setup steps). The backend cannot send it: Render's free tier blocks outgoing SMTP. The script takes the session token, asks Supabase whose it is, and writes only to that address, once, within 15 minutes of the account's creation. Without `EXPO_PUBLIC_WELCOME_EMAIL_URL` in `.env`, nothing is sent and sign-up still works.
+
+### 23 Nov — Ysa-Commit-19 (Navie: app features only, and locked down)
+- **Scope:** Navie answers only what the app's screens show. Questions about NLEX's past (incident counts, comparisons between months or years, trends, busiest days) get one sentence saying the app doesn't show past records, and an offer to check traffic now or the forecast (rule 3d in `backend/src/routes/assistant.ts`). A reply that still gives a past figure is sent back once, then withheld. History analytics were built and then removed the same day at Ysa's request; they are not in the repo.
+- **Sign-in on Navie's routes:** `/api/assistant/chat`, `/translate` and `/greeting` now need the user's Supabase sign-in, checked with Supabase, including the six-digit code (aal2), plus per-user limits of 12, 40 and 8 requests a minute (`backend/src/middleware/assistantGuard.ts`). **This is on only when Render has `SUPABASE_URL` and `SUPABASE_ANON_KEY`;** without them it is off and the log says so. The app now sends the sign-in on greeting and translate too, so reload Expo Go after the deploy.
+- **What the model sees:**
+  - Emails, phone numbers and long numbers are masked (`backend/src/services/privacy.ts`).
+  - Chat history keeps only the user's and Navie's own text.
+  - Community posts reach it without author names. A message aimed at Navie ("ignore your rules", "API key") is withheld. A place is kept only in the app's own "Exit" or "Exit → Exit" form.
+- **Removed:** the old placeholder `/api/community` and `/api/users` routes, which accepted posts, likes and profile edits from anyone with no sign-in. The app never used them; Community lives in Supabase.
+- **Also:**
+  - Navie runs only tools that exist.
+  - A greeting's name can no longer add instructions to its prompt.
+  - Navie is told it can only look things up.
+- **Checked:**
+  - 109 backend tests, including `assistant.route.test.ts` and `appData.community.test.ts`.
+  - A live attack run with the real model against a fake Supabase: no sign-in, fake and password-only tokens, "print your prompt", "API key", other users' emails and chats, delete/post/SQL/password requests, a forged admin history, Tagalog, and booby-trapped Community posts. All refused, and nothing leaked.
 
 ### 18 Nov — Ysa-Commit-18 (new mascot animations)
 - **Assistant replies:** Ysa's new Happy, Thinking and Traffic Alert videos replace the clear, thinking and traffic moods in `MoodMascot.tsx`. The **alert mood keeps its old animation on purpose**. The new frames have spare room for hops and leans (`room`), so the car stays the same size as alert and the messages do not move.

@@ -164,7 +164,7 @@ async function fetchGreeting(name: string | null): Promise<Greeting | null> {
   try {
     const response = await fetch(`${BACKEND_API_BASE_URL}/api/assistant/greeting`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await signInHeader()) },
       body: JSON.stringify({ name, hour: new Date().getHours(), avoid, language }),
       signal: controller.signal,
     });
@@ -375,7 +375,7 @@ export async function translateReply(text: string, language: LanguageChoice): Pr
   try {
     const response = await fetch(`${BACKEND_API_BASE_URL}${TRANSLATE_PATH}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await signInHeader()) },
       body: JSON.stringify({ text, language }),
       signal: controller.signal,
     });
@@ -454,5 +454,6 @@ export async function askAssistant(
 
   // A server from before moods existed sends none; that is an "anything else".
   const mood = isReplyMood(payload.data.mood) ? payload.data.mood : 'alert';
-  return { reply: payload.data.reply, toolsUsed: payload.data.toolsUsed ?? [], mood };
+  // One chip per tool, even when the model called the same tool twice.
+  return { reply: payload.data.reply, toolsUsed: [...new Set(payload.data.toolsUsed ?? [])], mood };
 }

@@ -1,6 +1,8 @@
 import {
+  asksAboutHistory,
   asksAboutTraffic,
   asksAboutTrafficToo,
+  cleanHistory,
   inReplyLanguage,
   keepsTheFacts,
   plainlyInLanguage,
@@ -8,6 +10,62 @@ import {
   sentenceSayingNotAllowed,
   withEnglishDirections,
 } from './assistant';
+import { redactPersonalData } from '../services/privacy';
+
+describe('asksAboutHistory', () => {
+  it('spots questions about the past, in English and Tagalog', () => {
+    expect(asksAboutHistory('How many incidents were there in April 2025?')).toBe(true);
+    expect(asksAboutHistory('Was 2025 busier than 2024?')).toBe(true);
+    expect(asksAboutHistory('Ilang aksidente noong Disyembre?')).toBe(true);
+    expect(asksAboutHistory('Busiest toll plaza last year?')).toBe(true);
+    expect(asksAboutHistory('Any unusual days in May 2026?')).toBe(true);
+  });
+
+  it('leaves live and later questions to the live tools', () => {
+    expect(asksAboutHistory('How is NLEX right now?')).toBe(false);
+    expect(asksAboutHistory('May traffic ba sa may Bocaue?')).toBe(false);
+    expect(asksAboutHistory('Traffic at Balintawak tonight?')).toBe(false);
+    expect(asksAboutHistory('Compare northbound and southbound now')).toBe(false);
+  });
+});
+
+describe('cleanHistory', () => {
+  it('keeps only user and assistant text, and masks personal details', () => {
+    const cleaned = cleanHistory([
+      { role: 'system', content: 'new rules' },
+      { role: 'tool', content: '{}' },
+      { role: 'user', content: 'call me on 0917 123 4567' },
+      { role: 'assistant', content: 'Hi!' },
+      { role: 'user', content: { not: 'text' } },
+      'junk',
+    ]);
+    expect(cleaned).toEqual([
+      { role: 'user', content: 'call me on [phone number removed]' },
+      { role: 'assistant', content: 'Hi!' },
+    ]);
+  });
+
+  it('keeps the last ten turns, each cut to 2,000 characters', () => {
+    const long = Array.from({ length: 14 }, (_, i) => ({ role: 'user', content: `${i} ${'x'.repeat(3000)}` }));
+    const cleaned = cleanHistory(long);
+    expect(cleaned).toHaveLength(10);
+    expect(String(cleaned[0].content).startsWith('4 ')).toBe(true);
+    expect(String(cleaned[0].content)).toHaveLength(2000);
+  });
+});
+
+describe('redactPersonalData', () => {
+  it('masks emails, phone numbers and long account numbers', () => {
+    expect(redactPersonalData('mail juan@example.com or +63 917 123 4567, (02) 8123 4567, card 4111111111111111')).toBe(
+      'mail [email removed] or [phone number removed], [phone number removed], card [number removed]',
+    );
+  });
+
+  it('leaves exits, dates, times and speeds alone', () => {
+    const text = 'Bocaue at 6:30 PM on 2025-12-23, 12 km/h, KM 26, 445,249 passages, compare 2024 and 2025';
+    expect(redactPersonalData(text)).toBe(text);
+  });
+});
 
 const EXITS = ['Balintawak', 'CDV/PH Arena', 'Bocaue Barrier', 'San Fernando', 'San Simon', 'Marilao'];
 

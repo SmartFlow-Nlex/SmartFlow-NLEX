@@ -12,13 +12,15 @@ import trafficRoutes from './routes/traffic';
 import segmentsRoutes from './routes/segments';
 import forecastsRoutes from './routes/forecasts';
 import hotspotsRoutes from './routes/hotspots';
-import communityRoutes from './routes/community';
-import usersRoutes from './routes/users';
 import assistantRoutes from './routes/assistant';
 import corridorRoutes from './routes/corridor';
 
 const app: Application = express();
 const PORT: number = parseInt(process.env.PORT || '3000', 10);
+
+// Render puts one proxy in front of the app; trusting it makes req.ip the
+// caller's address, which the assistant's per-minute limit is counted by.
+app.set('trust proxy', 1);
 
 // ============================================================================
 // MIDDLEWARE
@@ -61,8 +63,6 @@ app.use('/api/v1/traffic', trafficRoutes);
 app.use('/api/v1/segments', segmentsRoutes);
 app.use('/api/v1/forecasts', forecastsRoutes);
 app.use('/api/v1/hotspots', hotspotsRoutes);
-app.use('/api/v1/community', communityRoutes);
-app.use('/api/v1/users', usersRoutes);
 app.use('/api/assistant', assistantRoutes);
 /*
  * Mirrors the dashboard's own path, so the app switches to this backend by
@@ -70,8 +70,13 @@ app.use('/api/assistant', assistantRoutes);
  * the numbers now come from here instead of straight from the dashboard.
  */
 app.use('/api/dashboard', corridorRoutes);
-app.use('/api/community', communityRoutes);
-app.use('/api/users', usersRoutes);
+/*
+ * No /api/community or /api/users here any more. They were early placeholders that
+ * accepted posts, likes and profile edits from anyone, with no sign-in, into a list
+ * in this server's memory. The app never used them - Community lives in Supabase,
+ * where row-level security decides who may write what - so they were only an
+ * unguarded way in. Removed 23 Nov 2026.
+ */
 
 // ============================================================================
 // ERROR HANDLING
