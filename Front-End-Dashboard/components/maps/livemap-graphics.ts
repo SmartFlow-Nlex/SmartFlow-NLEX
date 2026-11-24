@@ -174,8 +174,28 @@ export function carriagewayShift(zoom: number, dir: "NB" | "SB" | null): number 
 /* Jam callouts                                                              */
 /* ------------------------------------------------------------------------ */
 
-type Box = { x0: number; x1: number; y0: number; y1: number };
+export type Box = { x0: number; x1: number; y0: number; y1: number };
 const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+
+/** The panel's own furniture over the map -- legend, rain pill, Mapbox controls, logo and attribution -- as boxes in
+ *  the map element's pixels, so exit names and queue chips can keep out from under them (16 Nov 2026: the legend sat
+ *  on CDV/PH Arena and the attribution on Paso de Blas). */
+export function overlayBoxes(mapEl: HTMLElement): Box[] {
+  const root = mapEl.closest(".map-canvas-container") ?? mapEl.parentElement ?? mapEl;
+  const o = mapEl.getBoundingClientRect();
+  const out: Box[] = [];
+  root
+    .querySelectorAll<HTMLElement>(
+      ".mc-legend-card, .wz-legend, .lm-rain-pill, .mapboxgl-ctrl-top-right .mapboxgl-ctrl, " +
+        ".mapboxgl-ctrl-bottom-right .mapboxgl-ctrl, .mapboxgl-ctrl-bottom-left .mapboxgl-ctrl",
+    )
+    .forEach((n) => {
+      const r = n.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      out.push({ x0: r.left - o.left - 4, x1: r.right - o.left + 4, y0: r.top - o.top - 4, y1: r.bottom - o.top + 4 });
+    });
+  return out;
+}
 
 /**
  * A small leader-line label per queue: its real length, delay and direction,
@@ -196,6 +216,11 @@ export function createJamCallouts(
     dir: "NB" | "SB";
     prio: number;
     w: number;
+    level: string;
+    /** The chip's own text, and that text without its direction (to find an NB/SB twin). */
+    text: string;
+    base: string;
+    node: Text;
   };
   let items: Item[] = [];
 
@@ -224,14 +249,12 @@ export function createJamCallouts(
       lead.className = "lm-callout-lead";
       const plate = document.createElement("span");
       plate.className = "lm-callout-plate";
-      /* A solid chip in the queue's colour with a clock (13 Nov 2026): it was a white plate like the exit
-         names, so "456 m · +2 min · SB" and "Pulilan Km 45" read as the same kind of thing. A place is a
-         white label; a condition is a coloured chip. The icon is static markup; the text is a text node. */
-      const icon = document.createElement("span");
-      icon.className = "lm-callout-ico";
-      icon.innerHTML =
-        '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
-      plate.append(icon, document.createTextNode(text));
+      /* A chip in the queue's colour (13 Nov 2026): it was a white plate like the exit names, so
+         "456 m · +2 min · SB" and "Pulilan Km 45" read as the same kind of thing. A place is a white label; a
+         condition is a coloured chip. Text only since 16 Nov 2026: the clock, then car, icon said nothing the
+         text does not. */
+      const node = document.createTextNode(text);
+      plate.append(node);
       el.append(lead, plate);
       const at = (f.geometry as GeoJSON.Point).coordinates as [number, number];
       const marker = new Marker({ element: el, anchor: "center" }).setLngLat(at).addTo(map);
@@ -243,6 +266,10 @@ export function createJamCallouts(
         dir,
         prio: lvl * 100000 + Number(p.length_m ?? 0),
         w: 0,
+        level: levelWord(lvl),
+        text,
+        base: text.replace(/ · (NB|SB)$/, ""),
+        node,
       });
     }
     layout();
@@ -254,7 +281,7 @@ export function createJamCallouts(
     const crect = container.getBoundingClientRect();
     const width = container.clientWidth;
     const height = container.clientHeight;
-    const obstacles: Box[] = [];
+    const obstacles: Box[] = overlayBoxes(container);
     container.querySelectorAll<HTMLElement>(".custom-toll-marker .toll-pin-name").forEach((n) => {
       const r = n.getBoundingClientRect();
       if (r.width === 0) return;
@@ -264,22 +291,52 @@ export function createJamCallouts(
     /* Worst first, and only a few across the whole corridor: at corridor
        zoom a dozen labels bury the road they describe. Zooming in lifts the
        cap; every queue keeps its glow and its card either way. */
-    const cap = zoom < 10.5 ? 4 : zoom < 12 ? 8 : Infinity;
+    const cap = zoom < 10.5 ? 3 : zoom < 12 ? 8 : Infinity;
     let shown = 0;
-    for (const it of [...items].sort((a, b) => b.prio - a.prio)) {
+    /* The same queue reported on both carriageways at one spot (San Simon NB and SB, 16 Nov 2026) was two identical
+       chips side by side. When the two heads are within 40 px and the chips say the same apart from direction, the
+       first one shown says "NB+SB" and its twin stands down; both numbers are still on each queue's hover card. */
+    const sorted = [...items].sort((a, b) => b.prio - a.prio);
+    const at = new Map(sorted.map((it) => [it, map.project(it.at)]));
+    const consumed = new Set<Item>();
+    for (const it of sorted) {
+      if (it.node.data !== it.text) {
+        it.node.data = it.text;
+        it.w = 0;
+      }
+    }
+    for (const it of sorted) {
       const shift = carriagewayShift(zoom, it.dir);
       it.marker.setOffset([shift, 0]);
+      if (consumed.has(it)) {
+        it.el.style.visibility = "hidden";
+        continue;
+      }
+      const p = at.get(it)!;
+      const twin = sorted.find((o) => {
+        if (o === it || consumed.has(o) || o.dir === it.dir || o.level !== it.level || o.base !== it.base) return false;
+        const q = at.get(o)!;
+        return Math.hypot(q.x - p.x, q.y - p.y) < 40;
+      });
+      if (twin) {
+        it.node.data = `${it.base} · NB+SB`;
+        it.w = 0;
+      }
       if (!it.w) it.w = it.plate.offsetWidth || 90;
-      const p = map.project(it.at);
       const x = p.x + shift;
       const east = it.dir === "NB";
       const box: Box = east
-        ? { x0: x + 16, x1: x + 16 + it.w, y0: p.y - 40, y1: p.y - 18 }
-        : { x0: x - 16 - it.w, x1: x - 16, y0: p.y - 40, y1: p.y - 18 };
+        ? { x0: x + 16, x1: x + 16 + it.w, y0: p.y - 42, y1: p.y - 14 }
+        : { x0: x - 16 - it.w, x1: x - 16, y0: p.y - 42, y1: p.y - 14 };
       const off = box.x0 < 2 || box.x1 > width - 2 || box.y0 < 2 || p.y > height + 8;
       const hit = placed.some((b) => overlaps(box, b)) || obstacles.some((b) => overlaps(box, b));
       const show = !off && !hit && shown < cap;
       if (show) shown++;
+      if (show && twin) consumed.add(twin);
+      if (!show && twin) {
+        it.node.data = it.text;
+        it.w = 0;
+      }
       it.el.style.visibility = show ? "visible" : "hidden";
       if (show) placed.push({ x0: box.x0 - 4, x1: box.x1 + 4, y0: box.y0 - 3, y1: box.y1 + 3 });
     }

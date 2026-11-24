@@ -177,7 +177,6 @@ const PAD_L = 66;
    is centred on it — at the old 18px half of "2,301 t" fell off the card. */
 const PAD_R = 46;
 
-const CHART_H = 450;
 
 const fmt = (v: number | null, d = 1) =>
   v == null ? "—" : v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -204,7 +203,9 @@ export default function PredictiveEmissionChart() {
   const [showAllMetrics, setShowAllMetrics] = useState(false);
   // How much of the stored 90-day projection to draw. Defaults to the validated
   // 7 days so the panel opens on the range the diagram specifies.
-  const [futureDays, setFutureDays] = useState<number>(7);
+  // 1 month by default, as the Traffic and Incident forecasts (20 Nov 2026); the effect below steps down to the
+  // longest offered horizon when the run cannot back a month.
+  const [futureDays, setFutureDays] = useState<number>(28);
   // Starts on the champion the API reports, so a retrain that changes the winner
   // changes this panel with no code edit.
   const [selected, setSelected] = useState<ModelKey[]>([]);
@@ -427,7 +428,10 @@ export default function PredictiveEmissionChart() {
 
   // Keep the drawn width on an offered step: the default (7) and the stored run can disagree.
   useEffect(() => {
-    if (horizons.offered.length && !horizons.offered.some((h) => h.d === futureDays)) setFutureDays(horizons.offered[0].d);
+    if (horizons.offered.length && !horizons.offered.some((h) => h.d === futureDays)) {
+      const upTo = horizons.offered.filter((h) => h.d <= futureDays);
+      setFutureDays((upTo.length ? upTo[upTo.length - 1] : horizons.offered[0]).d);
+    }
   }, [horizons, futureDays]);
 
   const option: EChartsOption | null = useMemo(() => {
@@ -502,11 +506,18 @@ export default function PredictiveEmissionChart() {
       formatter: text,
     });
 
+    const spansYears = view.dates.length > 0 && view.dates[0].slice(0, 4) !== view.dates[view.dates.length - 1].slice(0, 4);
     const label = (iso: string) => {
       const d = new Date(iso + "T00:00:00");
       if (granularity === "Monthly") return d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
       if (granularity === "Yearly") return String(d.getFullYear());
-      return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const md = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      return spansYears ? `${md} ’${String(d.getFullYear()).slice(2)}` : md;
+    };
+    // The forecast panel is a few weeks: day and month, no year, so its first label does not run into the main axis.
+    const panelLabel = (iso: string) => {
+      const d = new Date(iso + "T00:00:00");
+      return granularity === "Monthly" ? d.toLocaleDateString("en-US", { month: "short", year: "2-digit" }) : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
     };
 
     // Zone bands, plus a hatch over any horizon stretch the study could not
@@ -689,7 +700,7 @@ export default function PredictiveEmissionChart() {
           type: "category",
           data: dates,
           boundaryGap: false,
-          axisLabel: { hideOverlap: true, formatter: label },
+          axisLabel: { hideOverlap: true, formatter: label, showMaxLabel: false },
           axisTick: { show: false },
         },
         ...(hasPanel
@@ -698,7 +709,7 @@ export default function PredictiveEmissionChart() {
               type: "category" as const,
               data: panelDates,
               boundaryGap: false,
-              axisLabel: { hideOverlap: true, fontSize: 10, formatter: label },
+              axisLabel: { hideOverlap: true, fontSize: 10, formatter: panelLabel },
               axisTick: { show: false },
             }]
           : []),
@@ -918,9 +929,6 @@ export default function PredictiveEmissionChart() {
   // The champion's rolling-origin stretches (gold.ml_horizon_accuracy), for the evidence and the error figure.
   const hzBuckets = data.horizonAccuracy ?? [];
   const hzMax = Math.max(0.0001, ...hzBuckets.map((b) => Math.max(b.wmape ?? 0, b.baselineWmape ?? 0)));
-  // Against repeating last week, the comparison a reader reaches for first.
-  const vsLastWeek =
-    champMetric?.wmape != null && data.lastWeekBaseline?.wmape ? champMetric.wmape / data.lastWeekBaseline.wmape : null;
 
   const modelToolbar = (
     <div className="nc-em-models">
@@ -1169,7 +1177,7 @@ export default function PredictiveEmissionChart() {
               </div>
               <span className="fc2-sep" aria-hidden="true" />
               <div className="fc-group">
-                <span className="fc-label">Ahead</span>
+                <span className="fc-label" title={[tested != null ? `Tested ${tested} days ahead` : "Test horizon not recorded", horizons.why].filter(Boolean).join(". ")}>Ahead</span>
                 {/* Only the horizons the published forecast can back (17 Oct 2026, testers EM-9). A step is
                     offered only if the run stores that many days AND some stretch it adds beat the baseline in
                     gold.ml_horizon_accuracy. With one horizon left there is nothing to choose, so it is stated
@@ -1193,10 +1201,9 @@ export default function PredictiveEmissionChart() {
                     <span className="nc-em-seg-fixed">{horizons.offered[0]?.label ?? "7 d"}</span>
                   </span>
                 )}
-                <span className="fc-note nc-em-hz-note" title={horizons.why ?? undefined}>
-                  {tested != null ? `tested ${tested} days ahead` : "test horizon not recorded"}
-                  {horizons.hidden ? ` · ${horizons.hidden}` : ""}
-                </span>
+                {horizons.hidden && (
+                  <span className="fc-note nc-em-hz-note" title={horizons.why ?? undefined}>{horizons.hidden}</span>
+                )}
               </div>
             </div>
           </div>
@@ -1224,8 +1231,9 @@ export default function PredictiveEmissionChart() {
             );
           })()}
 
-          <div style={{ height: `${CHART_H}px`, width: "100%" }}>
-            <DashboardChart option={option} height={CHART_H} />
+          {/* Fills the height the summary column gives the card, CHART_H at least, as on Traffic (20 Nov 2026). */}
+          <div className="fc2-chart">
+            <DashboardChart option={option} height="100%" />
           </div>
 
           <div className="fc2-foot">
@@ -1247,7 +1255,7 @@ export default function PredictiveEmissionChart() {
           </div>
           {championKey && champMean != null && champFuture.length > 0 && (
             <div className="fc2-answer">
-              <span className="fc2-answer-label">Forecast daily average · next {champFuture.length} days</span>
+              <span className="fc2-answer-label">Forecast daily average · {champFuture.length}-day window</span>
               <span className="fc2-answer-value">{fmt(champMean, 0)}</span>
               <span className="fc2-answer-unit">
                 t CO₂/day · whole corridor · {shortDate(champFuture[0].date)} – {shortDate(champFuture[champFuture.length - 1].date)}
@@ -1259,15 +1267,14 @@ export default function PredictiveEmissionChart() {
               <span className="fc2-k">{rangeErrLabel}</span>
               <span className="fc2-v">{rangeErr}</span>
             </div>
-            <div>
-              <span className="fc2-k">{tied.length > 1 ? "Co-champions" : "Forecast model"}</span>
-              {tied.length > 1 ? (
-                <span className="fc2-v fc2-v-sm">{tiedLabels.join(" = ")}</span>
-              ) : championKey ? (
+            <div title={tied.length > 1 ? `${tiedLabels.join(" and ")} are within the run-to-run jitter of each other` : undefined}>
+              <span className="fc2-k">Selected model</span>
+              {championKey ? (
                 <span className="fc2-v fc2-model"><i style={{ background: COLOR[championKey] }} />{LABEL[championKey]}</span>
               ) : (
                 <span className="fc2-v fc2-v-sm">None</span>
               )}
+              {tied.length > 1 && <span className="fc2-tie">tied with {tiedLabels.filter((l) => !championKey || l !== LABEL[championKey]).join(", ")}</span>}
             </div>
           </div>
           {champMetric && !champMetric.accepted && <p className="fc2-note-warn">This model failed acceptance; it is shown for comparison.</p>}
@@ -1287,12 +1294,6 @@ export default function PredictiveEmissionChart() {
                   )}
                 </dd>
               </div>
-              {vsLastWeek != null && (
-                <div title="The champion's WMAPE over that of repeating last week, in the same test.">
-                  <dt>Vs last week</dt>
-                  <dd>{vsLastWeek.toFixed(2)}× its error</dd>
-                </div>
-              )}
               <div>
                 <dt>Tested</dt>
                 <dd>
@@ -1301,16 +1302,7 @@ export default function PredictiveEmissionChart() {
                     : tested != null ? `${tested} days ahead` : "—"}
                 </dd>
               </div>
-              <div>
-                <dt>{tied.length > 1 ? "Co-champions" : "Champion"}</dt>
-                <dd>{tied.length > 1 ? tiedLabels.join(" = ") : championKey ? LABEL[championKey] : "none"}</dd>
-              </div>
             </dl>
-            {data.split.holdoutStart && data.split.holdoutEnd && (
-              <p className="fc2-period">
-                Present band: {shortDate(data.split.holdoutStart)} – {shortDate(data.split.holdoutEnd)}, each origin&apos;s first two weeks
-              </p>
-            )}
             <button type="button" className="fc2-ev-btn" onClick={() => setEvidenceOpen(true)}>View validation details</button>
           </div>
         </aside>

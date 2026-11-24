@@ -552,3 +552,13 @@
 .ev-card .ev-banner .ev-date > span { margin: 0; font-size: 10.5px; font-weight: 750; font-style: normal; letter-spacing: 1.2px; text-transform: uppercase; line-height: 1.1; color: var(--page-accent, var(--action)); }
 .ev-card .ev-banner .ev-date > b { margin: 0; font-size: 26px; font-weight: 800; line-height: 1; color: var(--text-primary); }
 .ev-card .ev-banner .ev-date > em { margin: 0; font-size: 11px; font-weight: 600; font-style: normal; letter-spacing: 0; text-transform: none; line-height: 1.1; color: var(--text-muted); white-space: nowrap; }
+
+/* The forecast graph fills its column (20 Nov 2026): the summary column sets the card's height, and a fixed-height
+   graph left a blank band under the key. The chart is pinned to the slot so it never feeds its own height back. */
+/* One minimum for every Predictive tab's first graph (Traffic, Incident, Emissions), so the three read alike; a card
+   whose summary column runs taller grows its graph past it. */
+.fc2-chart { position: relative; flex: 1 1 auto; width: 100%; min-height: 560px; }
+.fc2-chart > div { position: absolute !important; inset: 0; }
+
+/* A tied champion, as a short note under the model name (21 Nov 2026; the joined names used to wrap the tile). */
+.fc2-tie { display: block; margin-top: 3px; font-size: 0.74rem; color: var(--text-muted); }

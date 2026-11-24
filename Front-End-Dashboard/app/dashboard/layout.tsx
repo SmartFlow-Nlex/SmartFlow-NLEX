@@ -524,7 +524,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           <div className="ds-topbar-right">
-            {!onLiveMap && <EffectsToggle />}
+            {/* On every page, the Map tab too (17 Nov 2026, user report): it was hidden there when that page had no
+                background effects, but the daylight theme's drifting clouds and sun glow run behind it as well. The
+                grid lines stay off on the Map tab. */}
+            <EffectsToggle />
             <ThemeToggle />
             {/* Live clock differs between server render and first client tick;
                 suppress the expected hydration text mismatch on these nodes. */}

@@ -1338,6 +1338,9 @@ type ComputedModelMetrics = {
   wmape: number | null;
   mase: number | null;
   r2: number | null;
+  mape: number | null;
+  smape: number | null;
+  rmsse: number | null;
   n: number;
 };
 
@@ -1355,7 +1358,7 @@ function computeModelMetricsForModel(rows: AlignedValidationRow[], modelKey: str
     .filter((p): p is { actual: number; predicted: number; naive: number | null } => p.predicted != null);
 
   const n = pairs.length;
-  if (n === 0) return { mae: null, rmse: null, wmape: null, mase: null, r2: null, n: 0 };
+  if (n === 0) return { mae: null, rmse: null, wmape: null, mase: null, r2: null, mape: null, smape: null, rmsse: null, n: 0 };
 
   const absErr = pairs.reduce((s, p) => s + Math.abs(p.actual - p.predicted), 0);
   const sqErr = pairs.reduce((s, p) => s + (p.actual - p.predicted) ** 2, 0);
@@ -1372,6 +1375,18 @@ function computeModelMetricsForModel(rows: AlignedValidationRow[], modelKey: str
   const scaled = pairs.filter((p): p is { actual: number; predicted: number; naive: number } => p.naive != null);
   const naiveAbs = scaled.reduce((s, p) => s + Math.abs(p.actual - p.naive), 0);
   const modelAbsOnScaled = scaled.reduce((s, p) => s + Math.abs(p.actual - p.predicted), 0);
+  /* The secondary measures the Traffic table shows (20 Nov 2026), on the same days: MAPE over days with at least one
+     incident (a zero day has no percentage), sMAPE over all, and RMSSE against the same last-week forecast MASE uses. */
+  const pos = pairs.filter((p) => p.actual > 0);
+  const mape = pos.length ? (pos.reduce((s, p) => s + Math.abs(p.actual - p.predicted) / p.actual, 0) / pos.length) * 100 : null;
+  const smapeTerms = pairs.map((p) => {
+    const d = Math.abs(p.actual) + Math.abs(p.predicted);
+    return d > 0 ? (2 * Math.abs(p.actual - p.predicted)) / d : 0;
+  });
+  const smape = (smapeTerms.reduce((s, v) => s + v, 0) / n) * 100;
+  const naiveSq = scaled.reduce((s, p) => s + (p.actual - p.naive) ** 2, 0);
+  const modelSqOnScaled = scaled.reduce((s, p) => s + (p.actual - p.predicted) ** 2, 0);
+  const rmsse = naiveSq > 0 ? Math.sqrt(modelSqOnScaled / naiveSq) : null;
 
   return {
     mae,
@@ -1381,6 +1396,9 @@ function computeModelMetricsForModel(rows: AlignedValidationRow[], modelKey: str
     // Guarded rather than left to swing on a handful of days — see
     // MIN_R2_SAMPLE_SIZE.
     r2: n < MIN_R2_SAMPLE_SIZE ? null : ssTot > 0 ? 1 - sqErr / ssTot : null,
+    mape,
+    smape,
+    rmsse,
     n,
   };
 }
@@ -1927,6 +1945,9 @@ export function buildIncidentPredictiveResponse(
           WMAPE: computed.wmape,
           MASE: computed.mase,
           R2: computed.r2,
+          MAPE: computed.mape,
+          sMAPE: computed.smape,
+          RMSSE: computed.rmsse,
           // Train R² and Gap describe the fitted model, not the window: they come
           // from the training run (Gap = Train R² − full-holdout R²) and read the
           // same in every Range/Weather slice, as on the Traffic table. Adjusted
@@ -1950,6 +1971,9 @@ export function buildIncidentPredictiveResponse(
         WMAPE: numOrNull(fallback?.WMAPE),
         MASE: numOrNull(fallback?.MASE),
         R2: numOrNull(fallback?.R2),
+        MAPE: numOrNull(fallback?.MAPE),
+        sMAPE: numOrNull(fallback?.sMAPE),
+        RMSSE: numOrNull(fallback?.RMSSE),
         Adjusted_R2: numOrNull(fallback?.Adjusted_R2),
         Train_R2: numOrNull(fallback?.Train_R2),
         Gap: numOrNull(fallback?.Gap),

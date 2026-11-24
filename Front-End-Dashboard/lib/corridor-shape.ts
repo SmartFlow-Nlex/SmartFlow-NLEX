@@ -264,6 +264,140 @@ function despike(line: LngLat[], maxOffsetM = 14, passes = 3): LngLat[] {
 }
 
 /**
+ * Straightens the mainline through interchanges (14 Nov 2026, the professor's review: "the shape of the road is
+ * not right" at San Fernando, where the drawn NLEX looped like a ramp).
+ *
+ * At several interchanges the OSM file has a gap in the mainline itself, so the only points the passes can find
+ * there belong to the ramps, and the line follows them: at San Fernando a full S-loop around the toll plaza, and
+ * hooks of 100-300 m at CDV, Sta. Rita, Pulilan, Angeles and Dau. despike() cannot help, because these are smooth
+ * detours over many vertices, not single spikes.
+ *
+ * A hook shows as path length the road does not cover: over 600 m of line (300 m each way) a motorway curve of
+ * 700 m radius, tighter than any on NLEX, runs 3.1% longer than the straight chord between its ends, while the
+ * San Fernando loop ran 85% longer. So any vertex whose 600 m window is more than 4% longer than its chord is in a
+ * hook. Each run of such vertices is widened by 200 m either side, into road the passes did fit, and replaced by a
+ * cubic Hermite curve that leaves and rejoins the line along its own heading there. Where the mainline is straight
+ * that is a straight line; where it really curves the curve is kept, because the two headings say so.
+ *
+ * Km posts are unaffected: corridor-km.ts pins every exit to its own km and interpolates between them, so a
+ * shorter line between two exits only rescales that stretch.
+ */
+function unhook(line: LngLat[], halfWindowM = 300, maxStretch = 1.04, marginM = 200, tangentM = 150): LngLat[] {
+  let out = line;
+  for (let pass = 0; pass < 3; pass++) {
+    const xy = out.map(toXY);
+    const cum: number[] = [0];
+    for (let i = 1; i < xy.length; i++) cum.push(cum[i - 1] + Math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1]));
+    const total = cum[cum.length - 1];
+    const indexAt = (s: number) => {
+      let lo = 0;
+      let hi = cum.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (cum[mid] < s) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo;
+    };
+
+    // Runs of hooked vertices, as [from, to] distances along the line.
+    const runs: [number, number][] = [];
+    let j0 = 0;
+    let j1 = 0;
+    for (let i = 0; i < xy.length; i++) {
+      while (cum[i] - cum[j0] > halfWindowM) j0++;
+      while (j1 < xy.length - 1 && cum[j1] - cum[i] < halfWindowM) j1++;
+      const chord = Math.hypot(xy[j1][0] - xy[j0][0], xy[j1][1] - xy[j0][1]);
+      if (chord > 0 && (cum[j1] - cum[j0]) / chord > maxStretch) {
+        const from = Math.max(0, cum[i] - marginM);
+        const to = Math.min(total, cum[i] + marginM);
+        const last = runs[runs.length - 1];
+        if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+        else runs.push([from, to]);
+      }
+    }
+    if (runs.length === 0) break;
+
+    const next: LngLat[] = [];
+    let k = 0;
+    for (const [from, to] of runs) {
+      const iA = indexAt(from);
+      const iB = Math.max(iA + 1, indexAt(to));
+      while (k < iA) next.push(out[k++]);
+      const A = xy[iA];
+      const B = xy[iB];
+      const chord = Math.hypot(B[0] - A[0], B[1] - A[1]);
+      // Headings taken from the fitted road either side, outside the hook.
+      const pA = xy[indexAt(Math.max(0, cum[iA] - tangentM))];
+      const pB = xy[indexAt(Math.min(total, cum[iB] + tangentM))];
+      const unit = (dx: number, dy: number, fx: number, fy: number): XY => {
+        const n = Math.hypot(dx, dy);
+        return n > 1 ? [dx / n, dy / n] : [fx / (chord || 1), fy / (chord || 1)];
+      };
+      const tA = unit(A[0] - pA[0], A[1] - pA[1], B[0] - A[0], B[1] - A[1]);
+      const tB = unit(pB[0] - B[0], pB[1] - B[1], B[0] - A[0], B[1] - A[1]);
+      const steps = Math.max(2, Math.ceil(chord / 40));
+      for (let s = 0; s < steps; s++) {
+        const t = s / steps;
+        const t2 = t * t;
+        const t3 = t2 * t;
+        const h00 = 2 * t3 - 3 * t2 + 1;
+        const h10 = t3 - 2 * t2 + t;
+        const h01 = -2 * t3 + 3 * t2;
+        const h11 = t3 - t2;
+        next.push(fromXY([
+          h00 * A[0] + h10 * chord * tA[0] + h01 * B[0] + h11 * chord * tB[0],
+          h00 * A[1] + h10 * chord * tA[1] + h01 * B[1] + h11 * chord * tB[1],
+        ]));
+      }
+      k = iB;
+    }
+    while (k < out.length) next.push(out[k++]);
+    out = next;
+  }
+  return out;
+}
+
+/**
+ * A Gaussian smoothing along the line (sigma 60 m), ends held fixed (14 Nov 2026).
+ *
+ * After unhook() the line sits within ~20 m of the basemap's motorway everywhere, but south of Dau it still
+ * wobbled a few metres either way every couple of hundred metres, which an offset ribbon turns into a visible
+ * zigzag. A 60 m kernel damps a 200 m wobble to under a fifth, while a 700 m-radius curve -- tighter than any on
+ * NLEX -- moves inward by only sigma^2 / 2R, about 2.6 m.
+ */
+function smoothAlong(line: LngLat[], sigmaM = 60): LngLat[] {
+  if (line.length < 3) return line;
+  const xy = line.map(toXY);
+  const cum: number[] = [0];
+  for (let i = 1; i < xy.length; i++) cum.push(cum[i - 1] + Math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1]));
+  const reach = 3 * sigmaM;
+  const out: LngLat[] = [line[0]];
+  let lo = 0;
+  let hi = 0;
+  for (let i = 1; i < xy.length - 1; i++) {
+    while (cum[i] - cum[lo] > reach) lo++;
+    while (hi < xy.length - 1 && cum[hi + 1] - cum[i] <= reach) hi++;
+    // Near either end the window is cut short on one side; shrink it on both so the end is not pulled inward.
+    const r = Math.min(reach, cum[i], cum[cum.length - 1] - cum[i]);
+    let w = 0;
+    let x = 0;
+    let y = 0;
+    for (let j = lo; j <= hi; j++) {
+      const d = cum[j] - cum[i];
+      if (Math.abs(d) > r) continue;
+      const k = Math.exp(-(d * d) / (2 * sigmaM * sigmaM));
+      w += k;
+      x += k * xy[j][0];
+      y += k * xy[j][1];
+    }
+    out.push(w > 0 ? fromXY([x / w, y / w]) : line[i]);
+  }
+  out.push(line[line.length - 1]);
+  return out;
+}
+
+/**
  * One resampling pass: raw points, measured against `reference`.
  *
  * Each bin is reduced to a single number -- how far the road sits to the left
@@ -354,6 +488,10 @@ function buildCentrelineUncached(raw: LngLat[], exits: LngLat[]) {
 
   // The passes fit the road well on average and leave spikes at interchanges.
   line = despike(line);
+  // ...and, where the mainline itself is missing from the OSM file, hooks into the ramps.
+  line = unhook(line);
+  // And the last few metres of bin-to-bin wobble, which read as a zigzag over straight tarmac.
+  line = smoothAlong(line);
 
   // Where each exit sits on the finished line.
   const ref = measured(line);

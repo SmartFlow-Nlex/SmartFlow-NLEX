@@ -14,6 +14,7 @@ import { FALLBACK_EXITS, accessLabel, displayExitName, plazaLabel } from "../../
 import { makePredictedQueues, shownForecastState } from "../../lib/predicted-queues";
 import { useChartTheme } from "../../lib/chart-theme";
 import { mapPalette } from "../../lib/map-palette";
+import { paintBasemap } from "../../lib/map-basemap";
 import { isDisputedReport, isReportType, isUnconfirmedReport } from "../../lib/waze-reports";
 import { lookOf, isFloodSubtype } from "../../lib/waze-report-look";
 import { useRainEffect } from "../../lib/rain-effect";
@@ -23,7 +24,7 @@ import { nearExitsText } from "../../lib/exit-lookup";
 import { corridorKm } from "./corridor-km";
 import { useActiveClosures, type Closure } from "./useActiveClosures";
 import {
-  STATIC_DASH, addNightCorridorImages, buildSnapshot, carriagewayShift, createJamCallouts,
+  STATIC_DASH, addNightCorridorImages, buildSnapshot, carriagewayShift, createJamCallouts, overlayBoxes,
   dashAt, dashPhase, type CorridorSnapshot, type StripAlert,
 } from "./livemap-graphics";
 
@@ -42,7 +43,10 @@ const RAIN_RANK: Record<string, number> = { light: 1, moderate: 2, heavy: 3, int
 
 type Props = {
   title: string;
-  subtitle: string;
+  /** A line under the title: plain text, or the Map tab's freshness line. */
+  subtitle: React.ReactNode;
+  /** The title's tooltip (the Map tab moved its old subtitle here, 16 Nov 2026). */
+  titleHint?: string;
   badge?: React.ReactNode;
   /** Hides the panel's own header — used when a parent supplies one. */
   chromeless?: boolean;
@@ -280,7 +284,7 @@ const reportDetailOf = (props: Record<string, unknown>, coords: [number, number]
 };
 
 export default function TrafficMapPanel({
-  title, subtitle, badge, endpoint, layerColor, tone, children, chromeless = false, paused = false,
+  title, subtitle, titleHint, badge, endpoint, layerColor, tone, children, chromeless = false, paused = false,
   pitched = false, highlight = null, onSnapshot, onHoverKm, selectedExit,
 }: Props) {
   // Reuses the charts' theme hook, so the map switches with everything else.
@@ -413,6 +417,8 @@ export default function TrafficMapPanel({
         pitch: 0, // Flat (2D)
         bearing: 0, // North up
         attributionControl: false,
+        // The logo sits with the attribution, bottom-right, clear of the legend (16 Nov 2026).
+        logoPosition: "bottom-right",
         /* Dark basemap only: its labels are drawn locally in the interface
            face rather than fetched from CARTO's glyph server, which does not
            serve every font the style names (each miss was a console error). */
@@ -450,11 +456,16 @@ export default function TrafficMapPanel({
       }
     });
 
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+    /* A round "N" compass over the zoom pair (16 Nov 2026, user reference). The maps stay north-up; if a reader
+       twists one with a right-drag, the compass turns with it and a click sets north back. */
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: true, visualizePitch: false }), "top-right");
     /* The basemap's attribution, always visible: the dark style is CARTO's
        free Dark Matter, whose terms ask for "© CARTO, © OpenStreetMap
        contributors" on the map; the light Mapbox style names its own. */
-    map.addControl(new mapboxgl.AttributionControl({ compact: false }), "bottom-right");
+    /* Compact on the cards, full in the expanded views (17 Nov 2026, user request): the credit line crowded the
+       small maps. Collapsed to Mapbox's "i" button, which opens it, so it is still one click away as the Mapbox and
+       CARTO terms require; the Mapbox logo stays, which Mapbox's terms also require. */
+    map.addControl(new mapboxgl.AttributionControl({ compact: !chromeless }), "bottom-right");
 
     /* Motion is decoration here, so it stops for readers who ask for less of
        it, and whenever nobody can see the map (scrolled away, or another tab). */
@@ -528,6 +539,8 @@ export default function TrafficMapPanel({
 
     // Hide all other roads from the base map so ONLY the NLEX corridor is visible
     map.on("style.load", () => {
+      // The Map tab's pastel / navy basemap and hill shading (lib/map-basemap.ts).
+      paintBasemap(map, isDark);
       const layers = map.getStyle().layers;
       if (layers) {
         layers.forEach((layer) => {
@@ -625,6 +638,7 @@ export default function TrafficMapPanel({
     let disposed = false;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let rainTimer: ReturnType<typeof setInterval> | null = null;
+    let removeClouds: (() => void) | null = null;
     /* Set once the Night Corridor graphics exist; tears them down with the map. */
     let cleanupGraphics: (() => void) | null = null;
 
@@ -983,8 +997,9 @@ export default function TrafficMapPanel({
          18.5 km of on- and off-ramps drawn at near corridor weight, which read
          as breakage rather than as detail. */
       /* The lit ribbon's outer light: wider and fainter than the halo, the
-         glow the corridor throws on the ground around it, in both themes. */
-      map.addLayer({
+         glow the corridor throws on the ground around it, in both themes.
+         Not on the Map tab's look (16 Nov 2026 review): a bloom round the road is decoration. */
+      if (PALETTE.look !== "map-tab") map.addLayer({
         id: "lm-ribbon-glow",
         type: "line",
         source: "nlex-corridor",
@@ -1163,10 +1178,13 @@ export default function TrafficMapPanel({
          because the pulse has to travel north on one and south on the other.
          Three tiers because the speed is the message — a free stretch races and
          a standstill crawls, so the eye reads rate the way it reads colour. */
+      /* Quieter on the Map tab's light look (16 Nov 2026 review): white dashes at three-quarters strength over the
+         bright lanes made the road busier than the traffic on it. */
+      const calm = PALETTE.look === "map-tab" && !isDark;
       const FLOW_TIERS = [
-        { id: "fast", levels: [0, 1], cycleMs: 1400, opacity: 0.78 },
-        { id: "mid",  levels: [2, 3], cycleMs: 3000, opacity: 0.72 },
-        { id: "slow", levels: [4, 5], cycleMs: 6500, opacity: 0.66 },
+        { id: "fast", levels: [0, 1], cycleMs: 1400, opacity: calm ? 0.5 : 0.78 },
+        { id: "mid",  levels: [2, 3], cycleMs: 3000, opacity: calm ? 0.46 : 0.72 },
+        { id: "slow", levels: [4, 5], cycleMs: 6500, opacity: calm ? 0.42 : 0.66 },
       ] as const;
 
       const PW = 32;   // pattern length in texels; repeat is scaled to line width
@@ -1396,8 +1414,10 @@ export default function TrafficMapPanel({
             PALETTE.noData,
           ],
           "line-width": ["interpolate", ["linear"], ["zoom"], 8, 5, 12, 9, 16, 11, 18, 18],
-          "line-opacity": 0.55,
-          "line-dasharray": [1.2, 1],
+          /* Solid dashes in the queue's colour (17 Nov 2026, user: "what are these faded colors"): at 55% over the
+             green road the amber turned olive and read as a fourth state. The legend names it. */
+          "line-opacity": 1,
+          "line-dasharray": [1, 1.1],
           "line-offset": OFFSET,
         },
       });
@@ -1558,8 +1578,8 @@ export default function TrafficMapPanel({
             "circle-color": markColour,
             // A red dot on an orange road needs the ring more than the fill:
             // the white edge is what separates it from what it stands on.
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 7, 11, 8.5, 11.8, 7, 13.2, 0],
-            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 11.8, 3, 13.2, 0],
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 5.5, 11, 6.5, 11.8, 5.5, 13.2, 0],
+            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 8, 2, 11.8, 2, 13.2, 0],
             "circle-stroke-color": PALETTE.casing,
             // Handed over to the line by z13.2. The marker exists to make a
             // short queue findable across 78 km of corridor, and it stops
@@ -1748,9 +1768,30 @@ export default function TrafficMapPanel({
             const side: "left" | "right" = px.x < map.getCanvas().clientWidth / 2 ? "left" : "right";
             const h = map.getCanvas().clientHeight;
             const anchor: Anchor = px.y < h * 0.34 ? `top-${side}` : px.y > h * 0.66 ? `bottom-${side}` : side;
-            const target = popupFor(anchor);
+            let target = popupFor(anchor);
             for (const pp of popups.values()) if (pp !== target) pp.remove();
-            target.setLngLat(lngLat).setHTML(html).addTo(map);
+            target.setOffset(18).setLngLat(lngLat).setHTML(html).addTo(map);
+            /* Kept inside the map (17 Nov 2026, user report: the forecast card was cropped). Measured once drawn; if
+               it runs past the top or bottom, it opens beside the point instead and slides up or down until it fits,
+               because on a short map a tall card fits neither above nor below a point near the middle. */
+            const frame = map.getContainer().getBoundingClientRect();
+            const box = target.getElement()?.getBoundingClientRect();
+            const M = 6;
+            if (box && (box.top < frame.top + M || box.bottom > frame.bottom - M)) {
+              const dx = side === "left" ? 18 : -18;
+              if (anchor !== side) {
+                target.remove();
+                target = popupFor(side);
+              }
+              target.setOffset([dx, 0]).setLngLat(lngLat).setHTML(html).addTo(map);
+              const b2 = target.getElement()?.getBoundingClientRect();
+              if (b2) {
+                const dy = b2.height > frame.height - 2 * M || b2.top < frame.top + M
+                  ? frame.top + M - b2.top
+                  : b2.bottom > frame.bottom - M ? frame.bottom - M - b2.bottom : 0;
+                if (dy) target.setOffset([dx, dy]);
+              }
+            }
           },
           remove() {
             pair.remove();
@@ -1856,7 +1897,15 @@ export default function TrafficMapPanel({
         const f = e.features?.[0];
         if (!f) return;
         map.getCanvas().style.cursor = "pointer";
-        const p = (f.properties ?? {}) as Record<string, unknown>;
+        let p = (f.properties ?? {}) as Record<string, unknown>;
+        /* The dashed "may extend to" tail answers with its own queue's card (17 Nov 2026): it carries the queue's
+           figures but not its place on the corridor, so hovering it gave a thinner card than the queue beside it. */
+        if (p.feature_type === "jam_tail" && typeof p.uuid === "string") {
+          const own = map.querySourceFeatures("traffic", {
+            filter: ["==", ["get", "uuid"], p.uuid.replace("forecast-tail-", "forecast-")],
+          })[0];
+          if (own?.properties) p = own.properties as Record<string, unknown>;
+        }
         const lvl = Number(p.level ?? 0);
         const len = p.length_m == null ? null : Number(p.length_m);
         const delay = p.delay_seconds == null ? null : Number(p.delay_seconds);
@@ -1885,48 +1934,31 @@ export default function TrafficMapPanel({
           // at 100% jammed 86% of the time. Same wording as the congestion card.
           const pc = p.p_congested == null ? null : Number(p.p_congested);
           const chance = pc == null ? null : pc >= 0.95 ? ">95" : pc <= 0.05 ? "<5" : String(Math.round(pc * 100));
-          const basis =
-            p.jam_basis === "hour" ? "Typical for this exit at this hour, from Waze jams 2022–2026"
-            : p.jam_basis === "exit" ? "Typical for this exit at any hour, from Waze jams 2022–2026"
-            : "Corridor-wide typical; this exit has too little history of its own";
+          /* Trimmed for a hover (17 Nov 2026, user: "isn't it too much information?"): the answer, the queue, where
+             it starts, how likely, and one line on where the figures come from. The side-drawing rule,
+             the jam-hour counts and the typical volume went: they explain how the map is drawn, not the traffic. */
+          const basisNote =
+            p.jam_basis === "hour" ? "Typical for this exit at this hour · Waze jams 2022–2026"
+            : p.jam_basis === "exit" ? "Typical for this exit · Waze jams 2022–2026"
+            : "Corridor-wide typical · too little history at this exit";
+          const lenText = len != null
+            ? `~${km(len)}${p.length_p75_m != null && Number(p.length_p75_m) > len ? `, up to ~${km(Number(p.length_p75_m))}` : ""}`
+            : null;
+          const dir = p.direction === "NB" || p.direction === "SB" ? String(p.direction) : "";
           jamCard.show(
             e.lngLat,
             `<div class="mjp">
                <div class="mjp-head is-${lvl >= 3 ? "congested" : "slow"}">
                  Predicted &middot; ${lvl >= 3 ? "Congested" : "Slow"}
-                 <span>${p.rel_km == null ? "" : `km ${fmtKm(Number(p.rel_km), 0)}`}</span>
+                 <span>${[dir, p.rel_km == null ? "" : `km ${fmtKm(Number(p.rel_km), 0)}`].filter(Boolean).join(" &middot; ")}</span>
                </div>
-               ${/* Night Corridor order of importance: the delay answers first,
-                    then the queue and where it is, then confidence and its
-                    basis, then traffic volume. Same values, same words. */ ""}
                ${delay != null && delay > 0 ? answerRow("Est. delay", `~${mins(delay)}`) : ""}
-               ${len != null ? row("Queue length", `~${km(len)}`) : ""}
-               ${p.length_p75_m != null ? row("May extend to", `~${km(Number(p.length_p75_m))}`) : ""}
+               ${lenText ? row("Queue length", lenText) : ""}
                <div class="mjp-where">${where ?? esc(p.nearest_exit ?? "NLEX")}</div>
-               ${speed != null && speed > 0 ? row("Speed", `~${speed} km/h`) : ""}
+               ${/* No speed row: it was the typical speed of past jams here (e.g. ~6 km/h under a "Slow" forecast),
+                    which contradicted the state's own band in the legend (Slow = 10-20 km/h). */ ""}
                ${chance != null ? row("Chance of a jam", `${chance}%`) : ""}
-               ${/* The basis and the side rule as labelled rows rather than a
-                    paragraph: same facts, same numbers, fewer words. */ ""}
-               ${row("Basis",
-                 p.jam_basis === "hour" ? "This exit, this hour"
-                 : p.jam_basis === "exit" ? "This exit, any hour"
-                 : "Corridor-wide (too little history here)")}
-               ${p.jam_basis === "hour" || p.jam_basis === "exit" ? row("Source", "Waze jams 2022–2026") : ""}
-               ${p.side_share != null
-                 ? row("This side", `${Math.round(Number(p.side_share) * 100)}% of jams at this time${
-                     p.dir_jam_hours != null ? ` (${Number(p.dir_jam_hours)} live jam-hours)` : ""}`)
-                 : ""}
-               <div class="mjp-where mjp-basis">${
-                 p.side_share != null
-                   ? "The other side is drawn only at 40% or more."
-                   : "No live jams here yet to pick a side, so both are drawn."}</div>
-
-               ${p.vol_median != null && p.vol_rel != null
-                 ? row("Typical traffic", `~${Math.round(Number(p.vol_median) / 10) * 10} veh/h · ${Number(p.vol_rel).toFixed(1)}×`)
-                 : ""}
-               ${p.vol_rel != null && Number(p.vol_rel) < 0.7
-                 ? `<div class="mjp-where mjp-warn">A jam in a quiet hour is usually an incident or roadworks.</div>`
-                 : ""}
+               <div class="mjp-where mjp-basis">${basisNote}</div>
              </div>`,
           );
           return;
@@ -2041,73 +2073,13 @@ export default function TrafficMapPanel({
         if (disposed) return;
         ringOn = h ?? null;
         placeRing();
-        placeClock();
       };
 
-      /* The forecast finish, part 3: a clock badge on the selected forecast
-         segment -- the one the strip points at, else one clicked on the map,
-         else the exit picked in the header, else the segment of the likeliest
-         predicted jam. Forecast map only. */
-      const clockEl = document.createElement("div");
-      clockEl.className = "lm-clock";
-      clockEl.setAttribute("aria-hidden", "true");
-      const clock = new mapboxgl.Marker({ element: clockEl, anchor: "center" });
-      let clickedOrder: number | null = null;
-      let exitOrder: number | null = null;
-      let defaultOrder: number | null = null;
-      let clockHours: number | null = null;
-      const orderAtKm = (km: number) => {
-        for (let i = 1; i < exitKmByOrder.length; i++) if (km <= exitKmByOrder[i]) return i;
-        return exitKmByOrder.length - 1;
-      };
-      const forecastDefault = (fc: GeoJSON.FeatureCollection) => {
-        let best: { order: number; rank: number; pc: number } | null = null;
-        let hours: number | null = null;
-        for (const f of fc.features ?? []) {
-          const q = f.properties as Record<string, unknown> | null;
-          if (q?.feature_type !== "forecast") continue;
-          if (q.hours_ahead != null && Number.isFinite(Number(q.hours_ahead))) hours = Number(q.hours_ahead);
-          const state = shownForecastState(q);
-          const rank = state === "High" ? 2 : state === "Med" ? 1 : 0;
-          if (!rank) continue;
-          const hit = corridorBase.features.find(
-            (c) => (c.properties as { segment_name: string }).segment_name === q.corridor_segment,
-          );
-          if (!hit) continue;
-          const pc = Number(q.p_congested ?? 0);
-          const order = (hit.properties as { segment_order: number }).segment_order;
-          if (!best || rank > best.rank || (rank === best.rank && pc > best.pc)) best = { order, rank, pc };
-        }
-        defaultOrder = best?.order ?? null;
-        clockHours = hours;
-      };
-      const placeClock = () => {
-        if (isRealtimeEndpoint) return;
-        const order = ringOn ? orderAtKm(ringOn.km) : clickedOrder ?? exitOrder ?? defaultOrder;
-        const part = order != null ? corridorParts[order - 1] : null;
-        if (!part || part.length < 2 || clockHours == null) {
-          clock.remove();
-          return;
-        }
-        clockEl.innerHTML = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>+${clockHours} h</span>`;
-        clock.setLngLat(part[Math.floor(part.length / 2)] as [number, number]).addTo(map);
-      };
-      if (!isRealtimeEndpoint) {
-        forecastDefault(data);
-        map.on("click", "carriageway", (e: mapboxgl.MapLayerMouseEvent) => {
-          const o = Number((e.features?.[0]?.properties as { segment_order?: number } | undefined)?.segment_order);
-          if (Number.isFinite(o)) {
-            clickedOrder = o;
-            placeClock();
-          }
-        });
-      }
+      /* (The forecast map's clock badge -- the forecast hour stamped on its likeliest jam -- was removed on 17 Nov
+         2026 at the user's request: it covered the road, and the hour is already in the band under the map and in
+         the expanded view's header.) */
       applyExitRef.current = (name) => {
         if (disposed) return;
-        const i = name ? CORRIDOR_BY_KM.findIndex((x) => x.exit_name.toLowerCase().trim() === name.toLowerCase().trim()) : -1;
-        exitOrder = i < 0 ? null : Math.min(i + 1, CORRIDOR_BY_KM.length - 1);
-        if (name) clickedOrder = null;
-        placeClock();
         markSelectedPin?.(name);
       };
       let markSelectedPin: ((name: string | undefined) => void) | null = null;
@@ -2713,6 +2685,8 @@ export default function TrafficMapPanel({
           const obstacles: Box[] = reportPins
             .map((c) => map.project(c))
             .map((c) => ({ x0: c.x - 13, x1: c.x + 13, y0: c.y - 13, y1: c.y + 13 }));
+          // And the panel's own furniture: legend, controls, logo and attribution (16 Nov 2026).
+          obstacles.push(...overlayBoxes(map.getContainer()));
 
           /* The rings are held separately because a callout starts AT its own
              ring and so overlaps it by definition. Lumping them in with
@@ -3069,14 +3043,11 @@ export default function TrafficMapPanel({
         });
       };
       noteMotion(data);
-      /* Live rain (set up further down): while any exit has rain, the drops
-         fall on the same frame clock, even when no queue is moving. */
-      let rainOn = false;
-      let stepRain: ((now: number) => void) | null = null;
+      /* Live rain (set up further down) animates itself in CSS: its clouds are HTML markers. */
       let animRaf = 0;
       let lastFrame = 0;
       const shouldRun = () =>
-        !disposed && (hasMotion || rainOn) && !reducedRef.current && visibleRef.current && !pausedRef.current && !document.hidden;
+        !disposed && hasMotion && !reducedRef.current && visibleRef.current && !pausedRef.current && !document.hidden;
       const frame = (now: number) => {
         animRaf = 0;
         if (!shouldRun()) return;
@@ -3090,7 +3061,6 @@ export default function TrafficMapPanel({
             }
           }
           map.setPaintProperty("lm-jam-pulse", "line-opacity", 0.14 + 0.26 * (0.5 + 0.5 * Math.sin((now / 2400) * Math.PI * 2)));
-          if (rainOn) stepRain?.(now);
         }
         animRaf = requestAnimationFrame(frame);
       };
@@ -3112,35 +3082,43 @@ export default function TrafficMapPanel({
          its fallback); each exit owns the corridor halfway to its neighbours,
          so a raining exit tints exactly that stretch. Two things are drawn: a
          soft cyan wash under the road, stronger with heavier rain (PAGASA's
-         light / moderate / heavy / intense bands), and drops falling over it,
-         denser and larger with heavier rain. Hovering the wash gives the
+         light / moderate / heavy / intense bands), and small cartoon clouds
+         beside it raining onto the road, greyer and wetter with heavier rain
+         and flashing lightning in a thunderstorm. Hovering the wash gives the
          reading. Nothing is drawn while it is dry. */
       if (isRealtime) {
         const RANK: Record<string, number> = { light: 1, moderate: 2, heavy: 3, intense: 4 };
-        const drops = (() => {
-          const c = document.createElement("canvas");
-          c.width = 36; c.height = 46;
-          const ctx = c.getContext("2d");
-          if (!ctx) return null;
-          const [r, g, b] = PALETTE.rainDrop;
-          ctx.strokeStyle = `rgba(${r},${g},${b},0.95)`;
-          ctx.lineCap = "round";
-          ctx.lineWidth = 2.6;
-          // Four short slanted streaks, staggered so a row of icons reads as rain, not as a pattern.
-          for (const [x, y, len] of [[9, 3, 14], [27, 8, 15], [17, 21, 14], [32, 28, 13]] as const) {
-            ctx.beginPath();
-            ctx.moveTo(x, y);
-            ctx.lineTo(x - len * 0.32, y + len);
-            ctx.stroke();
-          }
-          return ctx.getImageData(0, 0, c.width, c.height);
-        })();
-        if (drops && !map.hasImage("lm-rain-drops")) map.addImage("lm-rain-drops", drops, { pixelRatio: 2 });
 
         map.addSource("lm-rain", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-        const intensityOpacity = [
-          "match", ["get", "intensity"], "light", 0.34, "moderate", 0.48, "heavy", 0.6, 0.7,
-        ] as unknown as mapboxgl.ExpressionSpecification;
+        /* The wash (14 Nov 2026, user feedback): it was a very wide blurred line, and on a tight bend (the San
+           Fernando hairpin) the line's own joins burst out as blue spikes. It is now a heatmap of points every
+           50 m along the raining stretch, which can only ever make a soft, rounded cloud. The intensity follows
+           zoom so the band's centre reads the same at every scale: a run of points spaced s px apart under a
+           kernel of radius R sums to about 0.33 x weight x intensity x R / s, so intensity is ~2.7 s / R (s doubles
+           per zoom step, R grows by 2^0.25, hence the 1.68 base). Heavier rain weighs more, so it reads deeper. */
+        const [cr, cg, cb] = (() => {
+          const h = PALETTE.rain.replace("#", "");
+          return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+        })();
+        const rgba = (a: number) => `rgba(${cr},${cg},${cb},${a})`;
+        map.addLayer({
+          id: "lm-rain-cloud",
+          type: "heatmap",
+          source: "lm-rain",
+          filter: ["==", ["get", "kind"], "dot"],
+          paint: {
+            "heatmap-weight": ["match", ["get", "intensity"], "light", 0.55, "moderate", 0.72, "heavy", 0.88, 1] as unknown as mapboxgl.ExpressionSpecification,
+            "heatmap-radius": ["interpolate", ["exponential", 1.189], ["zoom"], 8, 34, 16, 136, 18, 192],
+            // Three times the paper estimate: measured in the browser, the band read a third as strong as computed.
+            "heatmap-intensity": ["interpolate", ["exponential", 1.68], ["zoom"], 8, 0.026, 16, 1.6, 18, 4.5],
+            "heatmap-color": [
+              "interpolate", ["linear"], ["heatmap-density"],
+              0, rgba(0), 0.1, rgba(0.1), 0.3, rgba(0.22), 0.55, rgba(0.32), 0.8, rgba(0.4), 1, rgba(0.46),
+            ],
+            "heatmap-opacity": PALETTE.rainOpacity,
+          },
+        }, map.getLayer("lm-road-edge") ? "lm-road-edge" : undefined);
+        // The hover target only: the same stretches as an invisible band, so hovering the cloud still opens the card.
         map.addLayer({
           id: "lm-rain-veil",
           type: "line",
@@ -3149,65 +3127,93 @@ export default function TrafficMapPanel({
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
             "line-color": PALETTE.rain,
-            // Wider than the road and its glow, so the wash shows either side of the corridor at every zoom.
-            "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 8, 56, 12, 120, 16, 240],
-            "line-blur": ["interpolate", ["linear"], ["zoom"], 8, 18, 12, 40, 16, 80],
-            "line-opacity": ["*", PALETTE.rainOpacity, intensityOpacity] as unknown as mapboxgl.ExpressionSpecification,
+            "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 8, 40, 12, 90, 16, 180],
+            "line-opacity": 0,
           },
         }, map.getLayer("lm-road-edge") ? "lm-road-edge" : undefined);
 
-        const dropOpacity = [
-          "match", ["get", "intensity"], "light", 0.7, "moderate", 0.82, "heavy", 0.92, 1,
-        ];
-        const dropLayer = (id: string, minRank: number, offset: [number, number], spacing: number) =>
-          map.addLayer({
-            id,
-            type: "symbol",
-            source: "lm-rain",
-            filter: ["all", ["==", ["get", "kind"], "run"], [">=", ["get", "rank"], minRank]],
-            layout: {
-              "symbol-placement": "line",
-              "symbol-spacing": spacing,
-              "icon-image": "lm-rain-drops",
-              "icon-size": ["interpolate", ["linear"], ["zoom"],
-                8, ["*", 0.75, ["get", "dropScale"]], 12, ["*", 0.95, ["get", "dropScale"]], 16, ["*", 1.25, ["get", "dropScale"]]],
-              "icon-offset": offset,
-              "icon-allow-overlap": true,
-              "icon-ignore-placement": true,
-              "icon-rotation-alignment": "viewport",
-              "icon-pitch-alignment": "viewport",
-            } as mapboxgl.SymbolLayerSpecification["layout"],
-            paint: { "icon-opacity": dropOpacity as unknown as mapboxgl.ExpressionSpecification },
-          });
-        /* Files of drops either side of the road and over it, offset across the
-           corridor in screen pixels so the rain covers a band about as wide as
-           the wash at every zoom. Light rain: two files; moderate: three;
-           heavy and intense: four. */
-        const DROP_FILES: { id: string; minRank: number; offset: [number, number]; spacing: number; phase: number }[] = [
-          { id: "lm-rain-drops-a", minRank: 1, offset: [-30, 0], spacing: 24, phase: 0 },
-          { id: "lm-rain-drops-b", minRank: 1, offset: [26, -12], spacing: 28, phase: 0.5 },
-          { id: "lm-rain-drops-c", minRank: 2, offset: [-4, -22], spacing: 32, phase: 0.25 },
-          { id: "lm-rain-drops-d", minRank: 3, offset: [48, 10], spacing: 36, phase: 0.75 },
-        ];
-        for (const f of DROP_FILES) dropLayer(f.id, f.minRank, f.offset, f.spacing);
+        /* CLOUDS (14 Nov 2026, user request: "use clouds and rain ... if thunderstorm there should be thunder,
+           make it cute"). The falling streaks are gone; each raining stretch now carries small cartoon clouds
+           floating beside the road, one per ~2 km, each dropping its own rain. Heavier rain means a darker
+           cloud, more drops and a faster fall; a thunderstorm adds a lightning bolt and a flash. They are HTML
+           markers animated in CSS (nlex-daylight.css, .lm-cloud), so the map's frame loop does no work for them.
 
-        /* The fall: each file slides down a few pixels and fades in and out on
-           a 0.7 s cycle, the files out of step with one another. Paint
-           properties only, so nothing is re-laid out per frame. */
-        const fall = (id: string, p: number) => {
-          const fade = Math.sin(Math.PI * p);
-          map.setPaintProperty(id, "icon-translate", [2.4 - 4.8 * p, -8 + 16 * p]);
-          map.setPaintProperty(id, "icon-opacity", ["*", fade, dropOpacity] as unknown as mapboxgl.ExpressionSpecification);
-        };
-        stepRain = (now: number) => {
-          const p = (now % 700) / 700;
-          for (const f of DROP_FILES) fall(f.id, (p + f.phase) % 1);
-        };
-        const staticRain = () => {
-          for (const { id } of DROP_FILES) {
-            map.setPaintProperty(id, "icon-translate", [0, 0]);
-            map.setPaintProperty(id, "icon-opacity", dropOpacity as unknown as mapboxgl.ExpressionSpecification);
+           They sit beside the road rather than on it, alternating sides, set off across the road's on-screen
+           direction so they stay clear of the ribbons at any rotation, and are thinned on every move so no two
+           land closer than CLOUD_GAP_PX. They are slotted in just above the canvas, under every other marker, so
+           plaza labels and jam chips stay on top. pointer-events are off: the wash underneath keeps its card. */
+        type Cloud = { km: number; side: number; marker: mapboxgl.Marker; el: HTMLDivElement; inner: HTMLDivElement };
+        let clouds: Cloud[] = [];
+        const CLOUD_EVERY_KM = 2;
+        const CLOUD_GAP_PX = 120;
+        const DROPS: Record<string, number> = { light: 3, moderate: 4, heavy: 6, intense: 8 };
+        const FALL_S: Record<string, number> = { light: 1.25, moderate: 1.0, heavy: 0.78, intense: 0.6 };
+        const cloudSvg = (thunder: boolean) => `
+          <svg class="lm-cloud-body" viewBox="0 0 64 40" aria-hidden="true">
+            <path class="lm-cloud-shape" d="M14 36 A10 10 0 0 1 13.4 16 A13 13 0 0 1 37.9 9.6 A11 11 0 0 1 55 18.5 A9 9 0 0 1 54 36 Z"/>
+            <circle class="lm-cloud-eye" cx="28" cy="25.5" r="1.7"/><circle class="lm-cloud-eye" cx="40" cy="25.5" r="1.7"/>
+            <circle class="lm-cloud-cheek" cx="23.8" cy="29.2" r="2.4"/><circle class="lm-cloud-cheek" cx="44.2" cy="29.2" r="2.4"/>
+            ${thunder
+              ? '<ellipse class="lm-cloud-mouth is-o" cx="34" cy="30.4" rx="1.6" ry="1.9"/>'
+              : '<path class="lm-cloud-mouth" d="M31.4 29.2 q2.6 2.6 5.2 0"/>'}
+          </svg>`;
+        const boltSvg = `
+          <svg class="lm-bolt" viewBox="0 0 20 30" aria-hidden="true">
+            <path d="M12 1 L3 16 h6 l-3 13 L17 11 h-6.5 L14 1 Z"/>
+          </svg>`;
+        const makeCloud = (km: number, side: number, intensity: string, thunder: boolean, seed: number): Cloud => {
+          const el = document.createElement("div");
+          el.className = `lm-cloud is-${intensity}${thunder ? " is-thunder" : ""}${isDark ? " is-dark" : ""}${reducedRef.current ? " is-still" : ""}`;
+          el.setAttribute("aria-hidden", "true");
+          const n = DROPS[intensity] ?? 3;
+          const fall = FALL_S[intensity] ?? 1;
+          let drops = "";
+          for (let i = 0; i < n; i++) {
+            const x = 12 + ((i + 0.5) / n) * 36 + (((seed + i * 7) % 5) - 2); // spread under the cloud, a little uneven
+            const delay = -(((seed * 13 + i * 29) % 100) / 100) * fall; // already mid-fall when it appears
+            drops += `<span class="lm-drop" style="--x:${x.toFixed(1)}px;--d:${delay.toFixed(2)}s;--fall:${fall}s"></span>`;
           }
+          const boltDelay = (-((seed * 37) % 100) / 100) * 5;
+          el.innerHTML = `<div class="lm-cloud-in"><div class="lm-cloud-float" style="--bob:${(3.4 + (seed % 7) * 0.25).toFixed(2)}s;--bd:${boltDelay.toFixed(2)}s">${drops}${thunder ? boltSvg : ""}${cloudSvg(thunder)}</div></div>`;
+          const marker = new mapboxgl.Marker({ element: el, anchor: "center" }).setLngLat(K.pointAtKm(km)).addTo(map);
+          // Under every other marker: straight after the canvas in the container's paint order.
+          const canvas = map.getCanvas();
+          canvas.parentElement?.insertBefore(el, canvas.nextSibling);
+          return { km, side, marker, el, inner: el.firstElementChild as HTMLDivElement };
+        };
+        const placeClouds = () => {
+          if (!clouds.length) return;
+          const z = map.getZoom();
+          const scale = Math.max(0.7, Math.min(1.25, 0.7 + (z - 8.5) * 0.11));
+          const off = 64 * scale;
+          const kept: [number, number][] = [];
+          for (const c of clouds) {
+            const a = map.project(K.pointAtKm(Math.max(K.kmStart, c.km - 0.3)));
+            const b = map.project(K.pointAtKm(Math.min(K.kmEnd, c.km + 0.3)));
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const len = Math.hypot(dx, dy) || 1;
+            // Across the road on screen, and a little up, so the rain falls toward the road.
+            const ox = (-dy / len) * off * c.side;
+            const oy = (dx / len) * off * c.side - 10 * scale;
+            c.marker.setOffset([ox, oy]);
+            c.inner.style.setProperty("--cs", scale.toFixed(3));
+            const at = map.project(K.pointAtKm(c.km));
+            const x = at.x + ox;
+            const y = at.y + oy;
+            const show = kept.every(([kx, ky]) => Math.hypot(kx - x, ky - y) >= CLOUD_GAP_PX * scale);
+            c.el.style.display = show ? "" : "none";
+            if (show) kept.push([x, y]);
+          }
+        };
+        const clearClouds = () => {
+          for (const c of clouds) c.marker.remove();
+          clouds = [];
+        };
+        map.on("moveend", placeClouds);
+        removeClouds = () => {
+          map.off("moveend", placeClouds);
+          clearClouds();
         };
 
         const rainWord = (k: string) =>
@@ -3230,21 +3236,10 @@ export default function TrafficMapPanel({
             .sort((a, b) => a.km - b.km);
           const lo = (i: number) => (i === 0 ? K.kmStart : (located[i - 1].km + located[i].km) / 2);
           const hi = (i: number) => (i === located.length - 1 ? K.kmEnd : (located[i].km + located[i + 1].km) / 2);
-          const scale = (k: string) => ({ light: 0.85, moderate: 1, heavy: 1.15, intense: 1.3 } as Record<string, number>)[k] ?? 1;
           const features: GeoJSON.Feature[] = [];
-          let run: { from: number; to: number; rank: number; intensity: string } | null = null;
-          const closeRun = () => {
-            if (run && Math.abs(run.to - run.from) > 0.05) {
-              features.push({
-                type: "Feature",
-                properties: { kind: "run", rank: run.rank, intensity: run.intensity, dropScale: scale(run.intensity) },
-                geometry: { type: "LineString", coordinates: K.sliceKm(run.from, run.to) },
-              });
-            }
-            run = null;
-          };
+          const stretches: { from: number; to: number; intensity: string; thunder: boolean }[] = [];
           located.forEach((p, i) => {
-            if (!p.raining) { closeRun(); return; }
+            if (!p.raining) return;
             const a = lo(i), b = hi(i);
             if (Math.abs(b - a) > 0.05) {
               features.push({
@@ -3255,21 +3250,36 @@ export default function TrafficMapPanel({
                 },
                 geometry: { type: "LineString", coordinates: K.sliceKm(a, b) },
               });
+              // The cloud's points: every 50 m along the stretch (see lm-rain-cloud).
+              const [from, to] = a < b ? [a, b] : [b, a];
+              for (let km = from; km <= to + 1e-9; km += 0.05) {
+                features.push({
+                  type: "Feature",
+                  properties: { kind: "dot", intensity: p.intensity },
+                  geometry: { type: "Point", coordinates: K.pointAtKm(Math.min(km, to)) },
+                });
+              }
             }
-            const r = RANK[p.intensity] ?? 1;
-            if (run) { run.to = b; if (r > run.rank) { run.rank = r; run.intensity = p.intensity; } }
-            else run = { from: a, to: b, rank: r, intensity: p.intensity };
+            stretches.push({ from: Math.min(a, b), to: Math.max(a, b), intensity: p.intensity, thunder: Boolean(p.thunder) });
           });
-          closeRun();
           (map.getSource("lm-rain") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features });
           rainAsOf = d?.asOf ?? "";
           rainInterval = d?.intervalMin ?? 15;
-          rainOn = features.length > 0;
+          // One cloud per ~2 km of each raining stretch, centred in it, alternating sides of the road.
+          clearClouds();
+          let k = 0;
+          for (const st of stretches) {
+            const n = Math.max(1, Math.round((st.to - st.from) / CLOUD_EVERY_KM));
+            for (let i = 0; i < n; i++) {
+              const km = st.from + ((i + 0.5) / n) * (st.to - st.from);
+              clouds.push(makeCloud(km, k % 2 === 0 ? 1 : -1, st.intensity, st.thunder, Math.round(km * 7) % 97));
+              k++;
+            }
+          }
+          placeClouds();
           setRainNow(d && d.rainingCount > 0
             ? { asOf: d.asOf, preview: Boolean(d.preview), exits: located.filter((p) => p.raining).map((p) => ({ name: p.name, intensity: p.intensity, thunder: p.thunder })) }
             : null);
-          if (reducedRef.current) staticRain();
-          kickRef.current?.();
           map.triggerRepaint();
         };
 
@@ -3376,7 +3386,6 @@ export default function TrafficMapPanel({
       };
       if (pitchedRef.current) applyPitchRef.current(true);
 
-      placeClock();
       if (highlightRef.current) applyHighlightRef.current?.(highlightRef.current);
       if (selectedExitRef.current) applyExitRef.current?.(selectedExitRef.current);
 
@@ -3390,10 +3399,6 @@ export default function TrafficMapPanel({
           callouts.set(fresh.features ?? []);
           noteMotion(fresh);
           kickRef.current?.();
-          if (!isRealtimeEndpoint) {
-            forecastDefault(fresh);
-            placeClock();
-          }
         }
         const feedAt = String((fresh as { feed?: { newestAt?: string } }).feed?.newestAt ?? "");
         if (feedChanged || corridorChanged || feedAt !== lastFeedAt) emitSnapshot(fresh, corridorNow);
@@ -3401,7 +3406,6 @@ export default function TrafficMapPanel({
       cleanupGraphics = () => {
         callouts.clear();
         ring.remove();
-        clock.remove();
         if (layoutRaf) cancelAnimationFrame(layoutRaf);
         if (animRaf) cancelAnimationFrame(animRaf);
         if (hoverRaf) cancelAnimationFrame(hoverRaf);
@@ -3469,6 +3473,8 @@ export default function TrafficMapPanel({
         clearInterval(rainTimer);
         rainTimer = null;
       }
+      removeClouds?.();
+      removeClouds = null;
       setRainNow(null);
       resizeObserver.disconnect();
       if (flowFrameRef.current != null) {
@@ -3493,7 +3499,8 @@ export default function TrafficMapPanel({
       map.remove();
       mapRef.current = null;
     };
-  }, [endpoint, layerColor, isDark]);
+    // chromeless is fixed per panel (card or expanded view); listed because the attribution style reads it.
+  }, [endpoint, layerColor, isDark, chromeless]);
 
   return (
     <article className={`map-card${chromeless ? " chromeless" : ""}`} data-kind={endpoint.includes("real-time") ? "live" : "forecast"}>
@@ -3502,7 +3509,7 @@ export default function TrafficMapPanel({
       {!chromeless && (
         <header className={`map-head ${tone}`}>
           <div>
-            <h3>{title}</h3>
+            <h3 title={titleHint}>{title}</h3>
             <p>{subtitle}</p>
           </div>
           <span>{badge}</span>

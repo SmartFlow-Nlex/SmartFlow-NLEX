@@ -329,7 +329,10 @@ export type VizTab = "traffic" | "incident" | "emissions";
    light end >= 2:1 (2.03-3.99:1). */
 const SERIES_RAMPS: Record<VizTab, { light: [string, string, string]; dark: [string, string, string] }> = {
   traffic:   { light: ["#8ab6f5", "#3f7ad9", "#1d3f8f"], dark: ["#a8c8f8", "#5b8fe6", "#2f5fba"] },
-  incident:  { light: ["#b4a7f2", "#7a5fe0", "#45299e"], dark: ["#d0c6ff", "#9d87f5", "#6a50d4"] },
+  /* Incidents back on the tab's own orange (19 Nov 2026, user: "the graphs should have the orange or yellow shades
+     because that is the theme of the Incident tab"). Burnt orange, not the lane-signal amber (#f5b400): the light
+     end is 2.2:1 on white, the steps fall in lightness, one hue. */
+  incident:  { light: ["#eb9a5c", "#cf6a1c", "#8a3c08"], dark: ["#ffd2a8", "#f7a86b", "#d9772c"] },
   emissions: { light: ["#5fbcc6", "#1f97a5", "#0a5862"], dark: ["#a6edf2", "#3cc3cf", "#1c8a96"] },
 };
 
@@ -364,7 +367,9 @@ const SERIES_RAMPS: Record<VizTab, { light: [string, string, string]; dark: [str
    validated set, led by their nearest hue. */
 const NOMINAL_TRIPLES: Record<VizTab, { light: [string, string, string]; dark: [string, string, string] }> = {
   traffic:   { light: ["#0b8db0", "#4a3aa7", "#c2185b"], dark: ["#169bb8", "#8c7ff0", "#d55181"] },
-  incident:  { light: ["#4a3aa7", "#0b8db0", "#c2185b"], dark: ["#8c7ff0", "#169bb8", "#d55181"] },
+  /* Incidents (19 Nov 2026): accidents deep orange, breakdowns gold, apart in lightness as well as hue so they
+     still separate under colour-vision deficiency; teal stays the third. */
+  incident:  { light: ["#a8470a", "#0b8db0", "#d99a06"], dark: ["#f08a3e", "#169bb8", "#f7d27a"] },
   emissions: { light: ["#0b8db0", "#4a3aa7", "#c2185b"], dark: ["#169bb8", "#8c7ff0", "#d55181"] },
 };
 

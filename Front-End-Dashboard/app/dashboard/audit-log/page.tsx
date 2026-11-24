@@ -1,11 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { cachedJson } from "../../../lib/cached-json";
 import { authedJson } from "../../../lib/api";
 import { Activity, ClipboardList, Eye, Upload, Users } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
 import StateNote from "../../../components/stage/StateNote";
+import CustomSelect from "../../../components/dashboard/CustomSelect";
+import InfoTooltip from "../../../components/dashboard/InfoTooltip";
+import DashboardChart from "../../../components/dashboard/DashboardChart";
+import { useThemeTokens } from "../../../components/dashboard/useThemeTokens";
+import { withAlpha } from "../../../lib/chart-kit";
+import type { EChartsOption } from "echarts";
 import { SortableTh, useTableSort } from "../../../lib/table-sort";
 import { logActivity } from "../../../lib/backend-auth";
 import { fmtKmRange } from "../../../lib/km-post";
@@ -156,7 +162,10 @@ function mapLog(r: RawLog): LogRow {
     user: r.user_id,
     role: r.actor_role ?? null,
     category,
-    action: r.outcome && !["success", "passed"].includes(r.outcome) ? `${action} (${r.outcome})` : action,
+    action:
+      r.outcome && !["success", "passed"].includes(r.outcome) && r.outcome.toLowerCase() !== action.toLowerCase()
+        ? `${action} (${r.outcome})`
+        : action,
     details: bits.filter(Boolean).join(" · ") || r.target_resource,
     severity,
   };
@@ -179,6 +188,42 @@ function Bars({ rows }: { rows: { label: string; value: number; text?: string }[
   );
 }
 
+/** Label / value rows for the insight cards (21 Nov 2026: replaces run-on sentences). */
+function KV({ rows }: { rows: ({ k: string; v: ReactNode; sub?: ReactNode; warn?: boolean } | null | false)[] }) {
+  return (
+    <dl className="audit-kv">
+      {rows.filter(Boolean).map((r) => {
+        const row = r as { k: string; v: ReactNode; sub?: ReactNode; warn?: boolean };
+        return (
+          <div key={row.k} className={row.warn ? "is-warn" : undefined}>
+            <dt>{row.k}</dt>
+            <dd>
+              {row.v}
+              {row.sub && <small>{row.sub}</small>}
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
+
+/** A details cell kept to two lines, with More / Less when the text runs longer. */
+function DetailCell({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 110;
+  return (
+    <div className={`audit-detail${long && !open ? " is-clamped" : ""}`}>
+      <span title={long && !open ? text : undefined}>{text}</span>
+      {long && (
+        <button type="button" className="audit-more" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          {open ? "Less" : "More"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** Every day of the period, oldest first, with the quiet ones as zeros: a gap is information too. */
 function everyDay(data: Insights): { day: string; actions: number; views: number }[] {
   const byDay = new Map(data.daily.map((d) => [d.day, d]));
@@ -198,95 +243,146 @@ function dayLabel(day: string): string {
 /** The congestion model the hourly refresh trains, as /api/map-comparison/forecast reports it. */
 type HourlyModel = { name: string | null; trainedAt: string | null; maxHorizon: number | null };
 
+/** "Fri, Nov 14" for a yyyy-mm-dd day, for the chart's tooltip. */
+function dayLong(day: string): string {
+  const d = new Date(`${day}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? day : d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+/** Actions and page views per day, stacked: dated axis, a total over each day, and a tooltip (21 Nov 2026). */
+function ActivityChart({ days }: { days: { day: string; actions: number; views: number }[] }) {
+  const T = useThemeTokens();
+  // ECharts draws on canvas, so the CSS tokens are read as literals.
+  const css = (name: string, fb: string) =>
+    typeof window === "undefined" ? fb : getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fb;
+  const actionInk = T.accent;
+  const viewInk = withAlpha(css("--color-purple", "#8b7cf6"), T.isDark ? 0.7 : 0.55);
+  const option: EChartsOption = {
+    grid: { left: 8, right: 8, top: 22, bottom: 4, containLabel: true },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      formatter: (params: unknown) => {
+        const i = (params as { dataIndex: number }[])[0]?.dataIndex ?? 0;
+        const d = days[i];
+        if (!d) return "";
+        const dot = (c: string) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};margin-right:6px"></span>`;
+        return `<b>${dayLong(d.day)}</b><br/>${dot(actionInk)}Actions <b>${n(d.actions)}</b><br/>${dot(viewInk)}Page views <b>${n(d.views)}</b><br/><span style="color:var(--text-muted)">Total ${n(d.actions + d.views)}</span>`;
+      },
+    },
+    xAxis: {
+      type: "category",
+      data: days.map((d) => dayLabel(d.day)),
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: T.chartSplit } },
+      axisLabel: { color: T.chartText, fontSize: 11, interval: Math.max(0, Math.ceil(days.length / 10) - 1) },
+    },
+    yAxis: {
+      type: "value",
+      minInterval: 1,
+      axisLabel: { color: T.chartText, fontSize: 11 },
+      splitLine: { lineStyle: { color: T.chartSplit } },
+    },
+    series: [
+      { name: "Page views", type: "bar", stack: "day", barWidth: "62%", data: days.map((d) => d.views), itemStyle: { color: viewInk } },
+      {
+        name: "Actions",
+        type: "bar",
+        stack: "day",
+        data: days.map((d) => d.actions),
+        itemStyle: { color: actionInk, borderRadius: [3, 3, 0, 0] },
+        // The day's total over its bar; quiet days stay unlabelled.
+        label: {
+          show: true,
+          position: "top",
+          color: T.textSecondary,
+          fontSize: 10,
+          formatter: (p: unknown) => {
+            const d = days[(p as { dataIndex: number }).dataIndex];
+            const t = d ? d.actions + d.views : 0;
+            return t > 0 ? String(t) : "";
+          },
+        },
+      },
+    ],
+  };
+  return <DashboardChart option={option} height={220} />;
+}
+
 function InsightsSection({ data, hourly }: { data: Insights; hourly: HourlyModel | null }) {
   const days = everyDay(data);
-  const peak = Math.max(1, ...days.map((d) => d.actions + d.views));
   const m = data.maintenance;
   const u = data.uploads;
+  // Only the upload outcomes that happened: "0 failed · 0 undone · 0 checked" said nothing.
+  const uploadBits = [
+    u.failed > 0 && `${n(u.failed)} failed`,
+    u.undone > 0 && `${n(u.undone)} undone`,
+    u.checked > 0 && `${n(u.checked)} checked`,
+  ].filter(Boolean).join(" · ");
   return (
-    <div className="audit-insights">
-      <article className="audit-card">
+    /* Planned rows (21 Nov 2026): the daily chart across the top, then pages, maintenance and uploads (similar
+       heights), then module and users. The overdue job list and the model results were dropped from here: the
+       Maintenance and Data Management pages show them in full. */
+    <div className="audit-insights is-rows">
+      <article className="audit-card is-wide">
         <h3 className="audit-card-head">
           Activity per day
           <span className="audit-legend"><span className="audit-key actions" /> actions <span className="audit-key views" /> page views</span>
         </h3>
-        {data.daily.length === 0 ? (
-          <p className="audit-empty">Nothing recorded yet.</p>
-        ) : (
-          <div className="audit-days" role="img" aria-label="Actions and page views per day">
-            {days.map((d) => (
-              <span key={d.day} className="audit-day" title={`${d.day}: ${d.actions} actions, ${d.views} page views`}>
-                <span className="audit-day-views" style={{ height: `${(d.views / peak) * 100}%` }} />
-                <span className="audit-day-actions" style={{ height: `${(d.actions / peak) * 100}%` }} />
-              </span>
-            ))}
-          </div>
-        )}
-        {data.daily.length > 0 && (
-          <p className="audit-axis"><span>{dayLabel(days[0].day)}</span><span>{dayLabel(days[days.length - 1].day)}</span></p>
-        )}
+        {data.daily.length === 0 ? <p className="audit-empty">Nothing recorded yet.</p> : <ActivityChart days={days} />}
       </article>
 
-      <article className="audit-card">
-        <h3>Activity by module</h3>
-        <Bars rows={data.modules.map((x) => ({ label: MODULE_LABEL[x.module] ?? cap(x.module), value: x.actions }))} />
-      </article>
-
-      <article className="audit-card">
+      <article className="audit-card is-third">
         <h3>Most-used pages</h3>
         <Bars rows={data.pages.map((p) => ({ label: PAGE_LABEL[p.path] ?? p.path, value: p.views, text: `${n(p.views)} · ${p.users} ${p.users === 1 ? "user" : "users"}` }))} />
       </article>
 
-      <article className="audit-card">
+      <article className="audit-card is-third">
         <h3>Where maintenance waits</h3>
         <Bars rows={m.dwell.map((d) => ({ label: cap(status(d.status)), value: d.avgMs ?? 0, text: `${span(d.avgMs)} avg` }))} />
-        <p className="audit-note">
-          {m.turnaround.completed > 0 && <>Scheduled to completed: <b>{span(m.turnaround.avgMs)}</b> ({m.turnaround.completed}) · </>}{m.open} open
-          {m.overrunning > 0 && <> · <b className="audit-warn">{m.overrunning} past planned end</b></>}
-          {m.lateToStart > 0 && <> · <b className="audit-warn">{m.lateToStart} late to start</b></>}
-          {(m.overdue ?? 0) > 0 && <> · <b className="audit-warn">{m.overdue} overdue, needing an update</b></>}
-        </p>
-        {m.items.filter((i) => i.flag).slice(0, 3).map((i) => (
-          <p key={i.id} className="audit-note audit-warn">{i.title}: {i.flag}, {status(i.status)} for {ago(i.since)}</p>
-        ))}
+        <KV
+          rows={[
+            m.turnaround.completed > 0 && { k: "Scheduled → completed", v: <b>{span(m.turnaround.avgMs)}</b>, sub: `${m.turnaround.completed} jobs` },
+            { k: "Open", v: <b>{n(m.open)}</b> },
+            (m.overdue ?? 0) > 0 && { k: "Overdue", v: <b>{n(m.overdue)}</b>, warn: true },
+            m.overrunning > 0 && { k: "Past planned end", v: <b>{n(m.overrunning)}</b>, warn: true },
+            m.lateToStart > 0 && { k: "Late to start", v: <b>{n(m.lateToStart)}</b>, warn: true },
+          ]}
+        />
       </article>
 
-      <article className="audit-card">
+      <article className="audit-card is-third">
         <h3>Uploads &amp; retraining</h3>
-        <p className="audit-line"><b>{n(u.loaded)}</b> loaded · {n(u.failed)} failed · {n(u.undone)} undone · {n(u.checked)} checked</p>
-        {u.avgLoadMs != null && <p className="audit-line">Average load: <b>{span(u.avgLoadMs)}</b></p>}
-        <p className="audit-line">
-          Waiting for the weekly retrain: <b>{n(u.waitingForRetrain)}</b>
-          {u.oldestWaiting && <> (oldest {ago(u.oldestWaiting)})</>} · next {when(u.nextRetrain)}
-        </p>
-        {data.models.lastBatch ? (
-          <p className="audit-line">Last batch {when(data.models.lastBatch.started_at)}: <b>{data.models.lastBatch.status}</b></p>
-        ) : (
-          <p className="audit-line audit-muted">No weekly batch has run yet.</p>
-        )}
-        {data.models.hourly?.last ? (
-          /* From the refresh's own audit entries: how many of the last 24 clock hours have a published
-             run, and the newest entry. A refresh that never started leaves no entry, so it shows as a gap. */
-          <p className={`audit-line${data.models.hourly.hoursPublished < 20 || data.models.hourly.failed > 0 ? " audit-warn" : ""}`}>
-            Hourly congestion refresh: <b>{data.models.hourly.hoursPublished} of the last 24 hours</b> trained, tested and published
-            {data.models.hourly.failed > 0 && <> · {data.models.hourly.failed} failed</>}
-            {" "}· last {when(data.models.hourly.last.at)}: {data.models.hourly.last.outcome}
-            {data.models.hourly.last.model && <>, {data.models.hourly.last.model}</>}
-            {data.models.hourly.last.accuracy && <> {(Number(data.models.hourly.last.accuracy) * 100).toFixed(1)}%</>}
-          </p>
-        ) : hourly?.trainedAt ? (
-          <p className="audit-line">
-            Hourly traffic model: <b>{hourly.name ?? "model"}</b> trained {when(hourly.trainedAt)}
-            {hourly.maxHorizon != null && <>, forecasting {hourly.maxHorizon} h ahead</>}
-            <span className="audit-muted"> (its runs are not in the audit log yet)</span>
-          </p>
-        ) : null}
-        {data.models.groups.slice(0, 4).map((g) => (
-          <p key={g.group} className="audit-line audit-muted">{g.title ?? g.group}: {g.outcome}, {when(g.at)}</p>
-        ))}
+        <KV
+          rows={[
+            { k: "Uploads loaded", v: <b>{n(u.loaded)}</b>, sub: uploadBits || undefined, warn: u.failed > 0 },
+            u.avgLoadMs != null && { k: "Average load", v: <b>{span(u.avgLoadMs)}</b> },
+            { k: "Next weekly retrain", v: <b>{when(u.nextRetrain)}</b>, sub: u.waitingForRetrain > 0 ? `${n(u.waitingForRetrain)} uploads waiting${u.oldestWaiting ? `, oldest ${ago(u.oldestWaiting)}` : ""}` : undefined },
+            data.models.lastBatch
+              ? { k: "Last batch", v: <b>{cap(data.models.lastBatch.status)}</b>, sub: when(data.models.lastBatch.started_at) }
+              : { k: "Last batch", v: <span className="audit-muted">none yet</span> },
+            data.models.hourly?.last
+              ? {
+                  /* From the refresh's own audit entries: how many of the last 24 clock hours have a published run. A
+                     refresh that never started leaves no entry, so it shows as a gap. */
+                  k: "Hourly refresh",
+                  v: <b>{data.models.hourly.hoursPublished} of 24 h{data.models.hourly.failed > 0 ? ` · ${data.models.hourly.failed} failed` : ""}</b>,
+                  sub: `Last ${when(data.models.hourly.last.at)}`,
+                  warn: data.models.hourly.hoursPublished < 20 || data.models.hourly.failed > 0,
+                }
+              : hourly?.trainedAt
+                ? { k: "Hourly traffic model", v: <b>{hourly.name ?? "model"}</b>, sub: `trained ${when(hourly.trainedAt)}` }
+                : null,
+          ]}
+        />
       </article>
 
-      <article className="audit-card">
+      <article className="audit-card is-half">
+        <h3>Activity by module</h3>
+        <Bars rows={data.modules.map((x) => ({ label: MODULE_LABEL[x.module] ?? cap(x.module), value: x.actions }))} />
+      </article>
+
+      <article className="audit-card is-half">
         <h3>Most active users</h3>
         {data.users.length === 0 ? (
           <p className="audit-empty">No signed-in activity yet.</p>
@@ -296,10 +392,9 @@ function InsightsSection({ data, hourly }: { data: Insights; hourly: HourlyModel
         {data.totals.unidentified > 0 && (
           /* These are recent, not old (17 Nov 2026 audit): mostly idle sign-outs, sign-ins and settings changes the page
              reported without a sign-in the server could verify, such as after the session had already expired. */
-          <p className="audit-note audit-muted">
-            {n(data.totals.unidentified)} {data.totals.unidentified === 1 ? "action in this period has" : "actions in this period have"} no
-            verified user: the page reported them without a sign-in the server could confirm (for example, an idle sign-out
-            sent after the session had expired), so they are recorded as anonymous.
+          <p className="audit-note audit-muted audit-anon">
+            + {n(data.totals.unidentified)} anonymous {data.totals.unidentified === 1 ? "action" : "actions"}
+            <InfoTooltip text="Sent by the page without a sign-in the server could confirm, for example an idle sign-out sent after the session had expired, so they are recorded as anonymous." />
           </p>
         )}
       </article>
@@ -454,13 +549,18 @@ export default function AuditLogPage() {
       <PageHeader
         icon={ClipboardList}
         title="Audit Log"
-        subtitle="Who did what, when, and how the work moves through the system"
+        subtitle="Who did what, and when"
         actions={
-          <select aria-label="Insights period" value={days} onChange={(e) => setDays(Number(e.target.value))}>
-            <option value={7}>Last 7 days</option>
-            <option value={30}>Last 30 days</option>
-            <option value={90}>Last 90 days</option>
-          </select>
+          <CustomSelect
+            value={String(days)}
+            onChange={(v) => setDays(Number(v))}
+            prefix="Insights"
+            options={[
+              { label: "Last 7 days", value: "7" },
+              { label: "Last 30 days", value: "30" },
+              { label: "Last 90 days", value: "90" },
+            ]}
+          />
         }
       />
       <div className="tab-stat-grid compact audit-kpis">
@@ -511,32 +611,47 @@ export default function AuditLogPage() {
             value={searchText}
             onChange={(event) => setSearchText(event.target.value)}
           />
-          <select aria-label="Category" value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
-            <option value="All">All Categories</option>
-            {categories.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
-          <select aria-label="Severity" value={selectedSeverity} onChange={(event) => setSelectedSeverity(event.target.value)}>
-            <option value="All">All Severities</option>
-            <option value="Info">Info</option>
-            <option value="Warning">Warning</option>
-            <option value="Critical">Critical</option>
-          </select>
-          <select aria-label="Date range" value={selectedDateRange} onChange={(event) => setSelectedDateRange(event.target.value)}>
-            <option value="All Time">All Time</option>
-            <option value="Today">Today</option>
-            <option value="Last 7 Days">Last 7 Days</option>
-            <option value="Last 30 Days">Last 30 Days</option>
-          </select>
-
-          <label className="audit-toggle" style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-            <input type="checkbox" checked={showHourly} onChange={(e) => setShowHourly(e.target.checked)} />
-            Show hourly model refreshes
-          </label>
+          <CustomSelect
+            value={selectedCategory}
+            onChange={setSelectedCategory}
+            options={[{ label: "All categories", value: "All" }, ...categories.map((c) => ({ label: c, value: c }))]}
+          />
+          <CustomSelect
+            value={selectedSeverity}
+            onChange={setSelectedSeverity}
+            options={[
+              { label: "All severities", value: "All" },
+              { label: "Info", value: "Info" },
+              { label: "Warning", value: "Warning" },
+              { label: "Critical", value: "Critical" },
+            ]}
+          />
+          <CustomSelect
+            value={selectedDateRange}
+            onChange={setSelectedDateRange}
+            options={[
+              { label: "All time", value: "All Time" },
+              { label: "Today", value: "Today" },
+              { label: "Last 7 days", value: "Last 7 Days" },
+              { label: "Last 30 days", value: "Last 30 Days" },
+            ]}
+          />
+          {/* The hourly congestion refresh writes 24 entries a day, so it is opt-in: a switch, not a bare checkbox. */}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showHourly}
+            className={`audit-switch${showHourly ? " is-on" : ""}`}
+            onClick={() => setShowHourly((v) => !v)}
+            title="Include the hourly congestion model refreshes (24 a day)"
+          >
+            <i aria-hidden="true" />
+            Hourly refreshes
+          </button>
+          <span className="audit-toolbar-gap" />
           <button className="nc-pill audit-export" onClick={exportJSON}>Export JSON</button>
           <button
-            className="btn-danger"
+            className="btn-muted audit-reset"
             onClick={() => {
               setSearchText("");
               setSelectedCategory("All");
@@ -545,7 +660,7 @@ export default function AuditLogPage() {
               setShowHourly(false);
             }}
           >
-            Clear
+            Reset
           </button>
         </div>
         <div className="table-scroll">
@@ -569,7 +684,7 @@ export default function AuditLogPage() {
                 <tr><td colSpan={7} className="audit-state-cell"><StateNote kind="error" size={44}>Live data unavailable — is the backend running on port 4000?</StateNote></td></tr>
               )}
               {!loading && !error && visibleLogs.length === 0 && (
-                <tr><td colSpan={7} className="audit-state-cell"><StateNote kind="nodata" size={44}>No audit events yet — actions like scheduling maintenance will appear here.</StateNote></td></tr>
+                <tr><td colSpan={7} className="audit-state-cell"><StateNote kind="nodata" size={44}>{auditLogs.length > 0 ? "No entries match these filters." : "No audit events yet."}</StateNote></td></tr>
               )}
               {visibleLogs.map((log) => (
                 <tr key={log.id}>
@@ -587,7 +702,7 @@ export default function AuditLogPage() {
                     </span>
                   </td>
                   <td>{log.action}</td>
-                  <td>{log.details}</td>
+                  <td><DetailCell text={log.details} /></td>
                   <td><span className={`pill ${log.severity === "Critical" ? "red" : log.severity === "Warning" ? "amber" : "blue"}`}>{log.severity}</span></td>
                 </tr>
               ))}
@@ -596,10 +711,7 @@ export default function AuditLogPage() {
         </div>
         {!loading && !error && hasOlder && (
           <p className="audit-note audit-muted" style={{ padding: "10px 16px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <span>
-              Showing the newest {n(auditLogs.length)} entries. Older entries are not loaded yet, so the filters, including
-              &quot;All Time&quot;, do not cover them.
-            </span>
+            <span>Showing the newest {n(auditLogs.length)} entries; filters cover only these.</span>
             <button type="button" className="nc-pill" onClick={loadOlder} disabled={loadingOlder}>
               {loadingOlder ? "Loading…" : "Load older entries"}
             </button>

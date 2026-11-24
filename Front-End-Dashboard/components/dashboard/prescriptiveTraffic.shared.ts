@@ -109,6 +109,10 @@ export function championValue(row: VolumeRow, champion: string | null): number |
 }
 
 let cache: Promise<ForecastPayload> | null = null;
+let cacheAt = 0;
+/* Kept for 15 minutes, not for the life of the tab (19 Nov 2026): a page left open kept the first answer, so a
+   new event or forecast run never showed until a reload. Open panels ask again on that cycle (useAutoRefresh). */
+export const FORECAST_TTL_MS = 15 * 60 * 1000;
 
 /* Retried before giving up (17 Oct 2026, testers TR-12): right after the backend starts, the first
    request can fail or time out while the database wakes up, and the panel used to sit on that error
@@ -132,7 +136,8 @@ export async function fetchJsonWithRetry(url: string, label: string, tries = 3):
 }
 
 export function loadForecast(): Promise<ForecastPayload> {
-  if (!cache) {
+  if (!cache || Date.now() - cacheAt > FORECAST_TTL_MS) {
+    cacheAt = Date.now();
     // No cache:"no-store" -- the server now sets a cache and gzips, and the
     // browser is allowed to keep the response for the same reasons.
     cache = fetchJsonWithRetry(`${BACKEND}/api/traffic/forecast?months=all`, "forecast")
@@ -267,9 +272,14 @@ export type TrafficPrescriptive = {
 
 /* One answer for both panels: there are no dials, so nothing to key a cache on. */
 let prescriptiveCache: Promise<TrafficPrescriptive> | null = null;
+let prescriptiveAt = 0;
+/* Five minutes, the server's own cache for the congestion read (19 Nov 2026). It was kept for the life of the
+   tab, so a new hourly forecast run never reached a page left open. */
+export const PRESCRIPTIVE_TTL_MS = 5 * 60 * 1000;
 
 export function loadPrescriptive(): Promise<TrafficPrescriptive> {
-  if (prescriptiveCache) return prescriptiveCache;
+  if (prescriptiveCache && Date.now() - prescriptiveAt < PRESCRIPTIVE_TTL_MS) return prescriptiveCache;
+  prescriptiveAt = Date.now();
   const req = fetchJsonWithRetry(`${BACKEND}/api/traffic/prescriptive`, "prescriptive")
     .then((j) => {
       if (!j?.success) throw new Error(j?.message ?? "request failed");

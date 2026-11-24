@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { fmtInt } from "./incidentPredictive.shared";
-import { Truck } from "lucide-react";
-import { Shell, Empty, ActionCard, SourceBadge } from "./prescriptiveShell";
+import { BarChart3, CalendarDays, ChevronDown, ChevronRight, Layers, ListOrdered, MapPin, PieChart, Target, Truck } from "lucide-react";
+import { Shell, Empty, SourceBadge } from "./prescriptiveShell";
 // km arrives MEASURED (exits and segment midpoints); shown as the official km post.
 import { fmtKm, kmMeasured, KM_POST_END, KM_POST_START } from "../../lib/km-post";
 
@@ -55,14 +55,14 @@ function placementOrder(rows: Row[]): Placed[] {
     });
 }
 
-/* The plan on one line of road: the corridor from the first to the last km post, a bar at each exit or segment for
-   its forecast incidents, and the first `marked` places as numbered markers. Positions are MEASURED km; the ticks are
-   labelled with the official posts. */
+/* The plan on one line of road (reference layout, 20 Nov 2026): the corridor from the first to the last km post, a bar
+   at each exit or segment for its forecast incidents, and the first `marked` places as numbered pins with their names
+   above. Positions are MEASURED km; ticks are labelled with the official posts. */
 function CorridorStrip({ rows, placed, marked }: { rows: Row[]; placed: Placed[]; marked: number }) {
   const W = 1000;
-  const H = 128;
-  const padX = 18;
-  const base = 92;
+  const H = 150;
+  const padX = 24;
+  const base = 112;
   const lo = Math.min(kmMeasured(KM_POST_START), ...rows.map((r) => r.lo));
   const hi = Math.max(kmMeasured(KM_POST_END), ...rows.map((r) => r.hi));
   const x = (km: number) => padX + ((km - lo) / Math.max(hi - lo, 1)) * (W - 2 * padX);
@@ -71,39 +71,49 @@ function CorridorStrip({ rows, placed, marked }: { rows: Row[]; placed: Placed[]
   for (let post = Math.ceil(KM_POST_START / 10) * 10; post <= KM_POST_END; post += 10) ticks.push(kmMeasured(post));
   const first = placed.slice(0, marked);
   const firstKeys = new Set(first.map((p) => p.key));
-  // Left to right, so neighbouring labels alternate rows instead of overlapping.
+  // Left to right; a name sits on the higher row when it would touch the one before it.
   const byKm = first.slice().sort((a, b) => a.km - b.km);
+  const pillW = (label: string) => Math.min(150, label.length * 6.4 + 22);
+  let lastRight = [-Infinity, -Infinity];
+  const pins = byKm.map((p) => {
+    const w = pillW(p.label);
+    const cx = Math.min(W - 4 - w / 2, Math.max(4 + w / 2, x(p.km)));
+    const row = cx - w / 2 > lastRight[1] + 6 ? 1 : 0;
+    lastRight = row === 1 ? [lastRight[0], cx + w / 2] : [cx + w / 2, lastRight[1]];
+    return { p, w, cx, y: row === 1 ? 40 : 8 };
+  });
   return (
-    <figure className="inc-strip">
+    <figure className="px-strip">
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Placement order: ${first.map((p) => `${p.order}. ${p.label}`).join(", ")}`}>
-        <line className="inc-strip-road" x1={x(lo)} x2={x(hi)} y1={base} y2={base} />
+        <line className="px-strip-road" x1={x(lo)} x2={x(hi)} y1={base} y2={base} />
         {rows.map((r) => {
-          const h = Math.max(2, (r.predictedIncidents / top) * 50);
-          const w = r.hi - r.lo > 0.05 ? Math.max(3, x(r.hi) - x(r.lo) - 1) : 4;
+          const h = Math.max(2, (r.predictedIncidents / top) * 44);
+          const w = r.hi - r.lo > 0.05 ? Math.max(3, x(r.hi) - x(r.lo) - 1) : 6;
           return (
-            <rect key={r.key} className={`inc-strip-bar${firstKeys.has(r.key) ? " is-staffed" : ""}`} x={r.hi - r.lo > 0.05 ? x(r.lo) : x(r.km) - 2} y={base - h} width={w} height={h}>
+            <rect key={r.key} className={`px-strip-bar${firstKeys.has(r.key) ? " is-staffed" : ""}`} x={r.hi - r.lo > 0.05 ? x(r.lo) : x(r.km) - 3} y={base - h} width={w} height={h} rx={1.5}>
               <title>{`${r.label} · ${kmSpan(r.lo, r.hi)} · ${Math.round(r.predictedIncidents).toLocaleString()} forecast incidents`}</title>
             </rect>
           );
         })}
-        {byKm.map((p, i) => (
-          <g key={`unit-${p.key}`} className="inc-strip-unit">
-            <circle cx={x(p.km)} cy={base} r={9} />
-            <text className="inc-strip-order" x={x(p.km)} y={base + 4} textAnchor="middle">{p.order}</text>
-            <text x={x(p.km)} y={i % 2 === 0 ? 12 : 30} textAnchor="middle">{p.label}</text>
+        {/* Stems first, so a name on the lower row sits over a neighbour's stem rather than under it. */}
+        {pins.map(({ p, y }) => (
+          <line key={`stem-${p.key}`} className="px-strip-stem" x1={x(p.km)} x2={x(p.km)} y1={y + 24} y2={base - 11} />
+        ))}
+        {pins.map(({ p, w, cx, y }) => (
+          <g key={`unit-${p.key}`} className="px-strip-pin">
+            <rect className="px-strip-pill" x={cx - w / 2} y={y} width={w} height={24} rx={12} />
+            <text className="px-strip-name" x={cx} y={y + 16} textAnchor="middle">{p.label}</text>
+            <circle className="px-strip-dot" cx={x(p.km)} cy={base} r={11} />
+            <text className="px-strip-num" x={x(p.km)} y={base + 4.5} textAnchor="middle">{p.order}</text>
           </g>
         ))}
         {ticks.map((t) => (
-          <g key={`t-${t}`} className="inc-strip-tick">
-            <line x1={x(t)} x2={x(t)} y1={base + 4} y2={base + 9} />
-            <text x={x(t)} y={base + 24} textAnchor="middle">Km {fmtKm(t, 0)}</text>
+          <g key={`t-${t}`} className="px-strip-tick">
+            <line x1={x(t)} x2={x(t)} y1={base + 12} y2={base + 17} />
+            <text x={x(t)} y={base + 32} textAnchor="middle">Km {fmtKm(t, 0)}</text>
           </g>
         ))}
       </svg>
-      <figcaption className="inc-strip-key">
-        <span><i className="is-unit" aria-hidden="true" />Placement order (first {marked})</span>
-        <span><i className="is-bar" aria-hidden="true" />Forecast incidents</span>
-      </figcaption>
     </figure>
   );
 }
@@ -233,6 +243,9 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
   const unitWord = useKmView ? "segment" : "exit";
   const modelName = predictive.corridorForecastModel ? `${predictive.corridorForecastModel} ` : "";
 
+  const staged = placed.slice(0, 3).map((p) => p.label).join(", ") + (placed.length > 3 ? ", …" : "");
+  const n3 = Math.min(3, placed.length);
+  const n5 = Math.min(5, placed.length);
   return (
     <Shell
       title="Resource Staging & Patrol Repositioning"
@@ -258,80 +271,138 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
     >
       {error && (
         <div role="alert" style={{ fontSize: "0.78rem", color: "var(--color-warning)" }}>
-          Couldn&apos;t refresh with the current Range ({error}) — showing the last loaded result.
+          Couldn&apos;t refresh ({error}) — showing the last loaded result.
         </div>
       )}
 
-      <ActionCard
-        lead
-        icon={Truck}
-        title={`Place units in this order: ${placed.slice(0, 3).map((p) => p.label).join(", ")}${placed.length > 3 ? "…" : ""}`}
-        tag={<SourceBadge kind="forecast" detail={`The ${modelName}incident forecast for ${winLabel}, split by each ${unitWord}'s share of past incidents`} />}
-        facts={[
-          {
-            label: "Effect",
-            value: (
-              <>
-                3 units: <b>{(at(3).cumShare * 100).toFixed(0)}%</b> · 5 units: <b>{(at(5).cumShare * 100).toFixed(0)}%</b> of {fmtInt(total)} forecast incidents
-              </>
-            ),
-          },
-          { label: "Half of them", value: <>needs <b>{unitsFor(0.5)}</b> {unitWord}s staffed</> },
-          {
-            label: "When",
-            value: validated
-              ? <>Days {win!.lo}–{win!.hi} ahead, where the forecast&apos;s error is lower than {win!.base ? `the ${win!.base}'s` : "the best simple benchmark's"}{win!.mae != null && win!.baseMae != null ? ` (${win!.mae.toFixed(2)} against ${win!.baseMae.toFixed(2)} incidents a day${win!.firstHi < win!.hi ? ` on days ${win!.lo}–${win!.firstHi}` : ""})` : ""}</>
-              : <>The full forecast: no stretch of it beats the best simple benchmark</>,
-          },
-        ]}
-        details={
-          <p style={{ margin: 0 }}>
-            Incidents count at their own {unitWord}: the {modelName}forecast for {winLabel}, split by each {unitWord}&apos;s share of
-            incidents in the Range. Units go busiest first, and each line&apos;s cumulative share is the forecast incidents at the{" "}
-            {unitWord}s staffed so far. Nothing here is set by hand: no fleet size or coverage distance is assumed, so the
-            order holds for any fleet.
-          </p>
-        }
-      />
-
-      <CorridorStrip rows={rows} placed={placed} marked={Math.min(5, placed.length)} />
-
-      <div className="inc-table-wrap">
-        <table className="inc-table inc-place">
-          <thead>
-            <tr>
-              <th>Unit</th>
-              <th>{useKmView ? "Segment" : "Exit"}</th>
-              <th>Km post</th>
-              <th>Forecast incidents</th>
-              <th>Covered with units 1–n</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((p) => (
-              <tr key={p.key} className={p.order <= 3 ? "is-staffed" : undefined}>
-                <td className="inc-place-order">{p.order}</td>
-                <td style={{ whiteSpace: "nowrap" }}>{p.label}</td>
-                {/* Official km post (lib/km-post.ts). */}
-                <td className="is-muted" style={{ whiteSpace: "nowrap" }}>{kmSpan(p.lo, p.hi).replace("Km ", "")}</td>
-                <td style={{ fontWeight: 600 }}>{fmtInt(p.predictedIncidents)}</td>
-                <td>
-                  <span className="inc-place-cum">
-                    <span className="inc-place-bar" aria-hidden="true"><i style={{ width: `${(p.cumShare * 100).toFixed(1)}%` }} /></span>
-                    <b>{(p.cumShare * 100).toFixed(0)}%</b>
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* The answer (reference layout, 20 Nov 2026): the order, what the first units cover, and the total. The
+          reference's "units to stage / reposition" are what these figures are: the share covered by the first 3 and
+          the first 5 units placed. */}
+      <div className="px-sum">
+        <div className="px-sum-item px-sum-lead">
+          <span className="px-icon is-ring" aria-hidden="true"><Target size={22} strokeWidth={2.2} /></span>
+          <span>
+            <small>Recommended staging order</small>
+            <b title={placed.slice(0, 5).map((p) => `${p.order}. ${p.label}`).join(", ")}>{staged}</b>
+          </span>
+        </div>
+        <div className="px-sum-item">
+          <span className="px-icon" aria-hidden="true"><Truck size={20} strokeWidth={2} /></span>
+          <span>
+            <small>First {n3} {unitWord}s staffed</small>
+            <b>cover {(at(n3).cumShare * 100).toFixed(0)}%</b>
+          </span>
+        </div>
+        <div className="px-sum-item">
+          <span className="px-icon" aria-hidden="true"><PieChart size={20} strokeWidth={2} /></span>
+          <span>
+            <small>First {n5} {unitWord}s staffed</small>
+            <b>cover {(at(n5).cumShare * 100).toFixed(0)}%</b>
+          </span>
+        </div>
+        <div className="px-sum-item">
+          <span className="px-icon" aria-hidden="true"><Layers size={20} strokeWidth={2} /></span>
+          <span>
+            <small>Forecast incidents</small>
+            <b>{fmtInt(total)}</b>
+          </span>
+        </div>
+        <SourceBadge kind="forecast" detail={`The ${modelName}incident forecast for ${winLabel}, split by each ${unitWord}'s share of past incidents`} />
       </div>
 
-      {placed.length > TOP_ROWS && (
-        <button onClick={() => setShowAll((v) => !v)} className="inc-ghost-btn" aria-expanded={showAll}>
-          {showAll ? `Show the first ${TOP_ROWS}` : `Show all ${placed.length} ${useKmView ? "segments" : "exits"}`}
-        </button>
-      )}
+      <div className="px-sum is-warm">
+        <div className="px-sum-item">
+          <span className="px-icon is-warm" aria-hidden="true"><CalendarDays size={20} strokeWidth={2} /></span>
+          <span>
+            <small>Timeframe</small>
+            <b>{validated ? `Days ${win!.lo}–${win!.hi} ahead` : "The full forecast"}</b>
+            <em>
+              {validated
+                ? <>Where the forecast&apos;s error is lower than {win!.base ? `the ${win!.base}'s` : "the best simple benchmark's"}{win!.mae != null && win!.baseMae != null ? ` (${win!.mae.toFixed(2)} vs ${win!.baseMae.toFixed(2)} incidents a day)` : ""}</>
+                : <>No stretch of it beats the best simple benchmark</>}
+            </em>
+          </span>
+        </div>
+        <div className="px-sum-item">
+          <span className="px-icon is-warm" aria-hidden="true"><BarChart3 size={20} strokeWidth={2} /></span>
+          <span>
+            <small>Half of the forecast</small>
+            <b>{unitsFor(0.5)} {unitWord}s staffed</b>
+            <em>busiest first, from the top of the order</em>
+          </span>
+        </div>
+        <div className="px-sum-item">
+          <span className="px-icon is-warm" aria-hidden="true"><ListOrdered size={20} strokeWidth={2} /></span>
+          <span>
+            <small>Three quarters of it</small>
+            <b>{unitsFor(0.75)} {unitWord}s staffed</b>
+            <em>no fleet size is assumed: read your own off the table</em>
+          </span>
+        </div>
+      </div>
+
+      <section className="px-panel">
+        <div className="px-panel-head">
+          <span className="px-chip" aria-hidden="true"><MapPin size={17} strokeWidth={2.2} /></span>
+          <h4>Recommended Unit Placement Along NLEX</h4>
+          <div className="px-legend">
+            <span><i className="is-unit" />Placement order (1st–{ordinal(Math.min(5, placed.length))})</span>
+            <span><i className="is-bar" />Forecast incidents</span>
+          </div>
+        </div>
+        <CorridorStrip rows={rows} placed={placed} marked={Math.min(5, placed.length)} />
+      </section>
+
+      <section className="px-panel">
+        <div className="px-panel-head">
+          <span className="px-chip" aria-hidden="true"><ListOrdered size={17} strokeWidth={2.2} /></span>
+          <h4>{useKmView ? "Segment" : "Exit"} Prioritization &amp; Coverage</h4>
+        </div>
+        <div className="px-table-wrap">
+          <table className="px-table">
+            <thead>
+              <tr>
+                <th className="is-num">#</th>
+                <th>{useKmView ? "Segment" : "Exit"}</th>
+                <th className="is-c">Km post</th>
+                <th className="is-c">Forecast incidents</th>
+                <th>Coverage with units 1–n</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((p) => (
+                <tr key={p.key} className={p.order === 1 ? "is-first" : undefined}>
+                  <td className="is-num"><span className={`px-order${p.order <= 5 ? " is-top" : ""}`}>{p.order}</span></td>
+                  <td className="px-name">{p.label}</td>
+                  {/* Official km post (lib/km-post.ts). */}
+                  <td className="is-c is-muted">{kmSpan(p.lo, p.hi).replace("Km ", "")}</td>
+                  <td className="is-c px-strong">{fmtInt(p.predictedIncidents)}</td>
+                  <td>
+                    <span className="px-cov">
+                      <span className="px-cov-bar" aria-hidden="true"><i style={{ width: `${(p.cumShare * 100).toFixed(1)}%` }} /></span>
+                      <b>{(p.cumShare * 100).toFixed(0)}%</b>
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {placed.length > TOP_ROWS && (
+          <button type="button" onClick={() => setShowAll((v) => !v)} className="px-more" aria-expanded={showAll}>
+            {showAll ? `Show the first ${TOP_ROWS}` : `Show all ${placed.length} ${useKmView ? "segments" : "exits"}`}
+            {showAll ? <ChevronDown size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
+          </button>
+        )}
+      </section>
     </Shell>
   );
+}
+
+function ordinal(n: number): string {
+  const j = n % 10, k = n % 100;
+  if (j === 1 && k !== 11) return `${n}st`;
+  if (j === 2 && k !== 12) return `${n}nd`;
+  if (j === 3 && k !== 13) return `${n}rd`;
+  return `${n}th`;
 }

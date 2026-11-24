@@ -550,7 +550,7 @@ export default function InteractiveRoadMap() {
   /** One carriageway. Both are built from the same markup so they read as one
       road split down the middle rather than two unrelated strips. */
   const { isDark } = useChartTheme();
-  const palette = mapPalette(isDark);
+  const palette = mapPalette(isDark, "classic");
 
   /* The coloured band on one block: how much of it is queued, and in what
      condition. Read BOTH by the band that is drawn and by the car that has to

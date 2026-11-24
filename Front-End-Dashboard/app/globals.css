@@ -9106,15 +9106,120 @@ details[open] > .evidence-summary .evidence-close-label { display: inline; }
 .lm-rain-pill.is-moderate { background: #0369a1; }
 .lm-rain-pill.is-heavy { background: #1e40af; }
 .lm-rain-pill.is-intense { background: #4c1d95; }
-.wz-rain-swatch {
-  width: 22px;
-  height: 10px;
-  border-radius: 5px;
-  flex: none;
-  opacity: 0.75;
-  background-image: repeating-linear-gradient(110deg, rgba(255, 255, 255, 0.85) 0 1.5px, transparent 1.5px 5px) !important;
-  background-blend-mode: normal;
+/* The legends must not cover the pill (14 Nov 2026, user feedback). The pill sits above them, and while it is
+   showing the legends make room: the expanded map's legend (top left, like the pill) starts below it, and the
+   panel's legend (bottom left, opening upwards) stops short of it and scrolls instead. */
+.lm-rain-pill { z-index: 12; }
+
+/* Rain clouds over the live map (14 Nov 2026, user request: "use clouds and rain ... thunder ... make it cute").
+   One marker per ~2 km of raining road, beside it (TrafficMapPanel places and thins them). Heavier rain: a
+   greyer cloud, more drops, a faster fall. A thunderstorm: an "o" mouth, a bolt and a flash. */
+.lm-cloud {
+  --cf: #ffffff; --ce: #b9cde4; --ck: #4a5f7d; --cc: #ffb3c1; --cd: #4aa8f0;
+  width: 64px;
+  height: 64px;
+  pointer-events: none;
 }
+.lm-cloud.is-moderate { --cf: #f0f4fa; --ce: #a6bbd3; --ck: #44597a; --cd: #3897e6; }
+.lm-cloud.is-heavy { --cf: #d3dde9; --ce: #8b9fb8; --ck: #37475f; --cc: #f7a7b6; --cd: #2b85d6; }
+.lm-cloud.is-intense { --cf: #b4c2d4; --ce: #73879f; --ck: #2b394d; --cc: #f39aab; --cd: #1f73c4; }
+.lm-cloud.is-dark { --cf: #e6edf7; --ce: rgba(255, 255, 255, 0.6); --ck: #33445e; --cd: #7cc4ff; }
+.lm-cloud.is-dark.is-moderate { --cf: #cdd8e6; }
+.lm-cloud.is-dark.is-heavy { --cf: #a9b8cb; --ck: #26354b; }
+.lm-cloud.is-dark.is-intense { --cf: #8a9ab0; --ck: #1d293b; }
+.lm-cloud-in { width: 64px; height: 64px; transform: scale(var(--cs, 1)); transform-origin: 50% 50%; }
+.lm-cloud-float {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  animation: lm-cloud-bob var(--bob, 3.6s) ease-in-out infinite alternate;
+}
+.lm-cloud-body {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 56px;
+  height: 35px;
+  overflow: visible;
+  filter: drop-shadow(0 4px 5px rgba(15, 23, 42, 0.16));
+}
+.lm-cloud-shape { fill: var(--cf); stroke: var(--ce); stroke-width: 1.6; stroke-linejoin: round; }
+.lm-cloud-eye { fill: var(--ck); }
+.lm-cloud-cheek { fill: var(--cc); opacity: 0.55; }
+.lm-cloud-mouth { fill: none; stroke: var(--ck); stroke-width: 1.5; stroke-linecap: round; }
+.lm-cloud-mouth.is-o { fill: var(--ck); stroke: none; }
+.lm-drop {
+  position: absolute;
+  top: 31px;
+  left: calc(var(--x) + 4px);
+  width: 5px;
+  height: 5px;
+  opacity: 0;
+  animation: lm-drop-fall var(--fall, 1s) linear var(--d, 0s) infinite;
+}
+/* A teardrop: a square with one sharp corner, turned so the point is up. */
+.lm-drop::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--cd);
+  border-radius: 0 50% 50% 50%;
+  transform: rotate(45deg);
+}
+.lm-bolt {
+  position: absolute;
+  top: 29px;
+  left: 26px;
+  width: 15px;
+  height: 22px;
+  opacity: 0;
+  overflow: visible;
+  animation: lm-bolt 5s linear var(--bd, 0s) infinite;
+}
+.lm-bolt path { fill: #ffd43b; stroke: #e8590c; stroke-width: 1.3; stroke-linejoin: round; }
+.lm-cloud.is-thunder .lm-cloud-shape { animation: lm-cloud-flash 5s linear var(--bd, 0s) infinite; }
+
+@keyframes lm-cloud-bob { from { transform: translateY(-2px); } to { transform: translateY(2px); } }
+@keyframes lm-drop-fall {
+  0% { transform: translateY(0); opacity: 0; }
+  15% { opacity: 1; }
+  80% { opacity: 0.9; }
+  100% { transform: translateY(26px); opacity: 0; }
+}
+@keyframes lm-bolt {
+  0%, 82% { opacity: 0; transform: scale(0.85); }
+  84% { opacity: 1; transform: scale(1); }
+  86% { opacity: 0.25; }
+  88% { opacity: 1; }
+  94%, 100% { opacity: 0; transform: scale(1); }
+}
+@keyframes lm-cloud-flash {
+  0%, 82% { fill: var(--cf); }
+  84% { fill: #fff6c2; }
+  86% { fill: var(--cf); }
+  88% { fill: #fff6c2; }
+  94%, 100% { fill: var(--cf); }
+}
+/* Still for readers who ask for less motion: the drops hang under the cloud and a storm keeps its bolt. */
+.lm-cloud.is-still *,
+.lm-cloud.is-still *::before { animation: none !important; }
+.lm-cloud.is-still .lm-drop { opacity: 0.85; transform: translateY(9px); }
+.lm-cloud.is-still .lm-bolt { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .lm-cloud *, .lm-cloud *::before { animation: none !important; }
+  .lm-cloud .lm-drop { opacity: 0.85; transform: translateY(9px); }
+  .lm-cloud .lm-bolt { opacity: 1; }
+}
+.map-canvas-container:has(> .lm-rain-pill) > details.wz-legend {
+  top: 54px;
+  max-height: calc(100% - 68px);
+  overflow-y: auto;
+}
+.map-canvas-container:has(> .lm-rain-pill) > .mc-legend-card { max-height: calc(100% - 100px); }
+/* The legend's rain and thunderstorm keys: the map's clouds in miniature, standing still. */
+.lm-cloud.wz-cloud-swatch { width: 26px; height: 21px; flex: none; display: block; }
+.lm-cloud.wz-cloud-swatch svg { display: block; overflow: visible; }
+.lm-cloud.wz-cloud-swatch .lm-cloud-shape { animation: none; stroke-width: 2.4; }
 
 /* Only shown where the description says something the name and the town do
    not, so it is a footnote rather than a third restatement. */
@@ -13559,14 +13664,17 @@ button.chart-card:hover {
   height: 2px;
   background: repeating-linear-gradient(to right, rgba(244, 241, 234, 0.5) 0 18px, transparent 18px 40px);
 }
-/* Clear: a green shoulder line with a soft wash spilling onto the outer lane. */
-.ds-rd-way.dir-sb .ds-rd-seg.seg-green {
-  background: linear-gradient(180deg, rgba(47, 191, 107, 0.16), transparent 40%);
-  box-shadow: inset 0 2px 0 var(--signal-clear);
-}
+/* Clear: plain asphalt with its white edge line (20 Nov 2026, user: the green shoulder line "doesn't look good").
+   It ran along nearly the whole road, since most stretches are clear, and read as a stray border; slow and
+   congested stretches stand out on bare asphalt by themselves. The legend's Clear swatch is that asphalt. */
+.ds-rd-way.dir-sb .ds-rd-seg.seg-green,
 .ds-rd-way.dir-nb .ds-rd-seg.seg-green {
-  background: linear-gradient(0deg, rgba(47, 191, 107, 0.16), transparent 40%);
-  box-shadow: inset 0 -2px 0 var(--signal-clear);
+  background: transparent;
+  box-shadow: none;
+}
+.ds-rd-legend i.seg-green {
+  background: #141b29;
+  box-shadow: inset 0 0 0 1px rgba(244, 241, 234, 0.35);
 }
 .ds-rd-seg.no-ramp { background: repeating-linear-gradient(135deg, rgba(244, 241, 234, 0.05) 0 6px, transparent 6px 12px); }
 .ds-rd-jam { border-radius: 4px; }

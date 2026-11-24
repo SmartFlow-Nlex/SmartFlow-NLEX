@@ -2,11 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
-import { useThemeTokens } from "./useThemeTokens";
+import { ArrowLeft, ArrowLeftRight, ArrowRight, CalendarDays, Flame, History, Lightbulb, ListOrdered, MapPin, Network, TrendingDown, TrendingUp, X } from "lucide-react";
 import InfoTooltip from "./InfoTooltip";
+import type { EChartsOption } from "echarts";
+import DashboardChart from "./DashboardChart";
+import { useThemeTokens } from "./useThemeTokens";
+import { withAlpha } from "../../lib/chart-kit";
 import CorridorRiskNarrative from "./CorridorRiskNarrative";
-import { fmtInt, fmtNum, fmtDate, fmtDateFull } from "./incidentPredictive.shared";
+import { fmtInt, fmtNum, fmtDate, fmtDateFull, fmtDateRange } from "./incidentPredictive.shared";
 import { useNlexExits, accessLabel, displayExitName } from "../../lib/nlex-exits";
 import { corridorKmFromPost } from "../../lib/exit-lookup";
 import { fmtKm as fmtKmPost } from "../../lib/km-post";
@@ -89,7 +92,7 @@ function riskBandFor(value: number, sortedPool: number[]): RiskKey {
 }
 
 // km arrives MEASURED (the API and the exit list); shown as the official km post (lib/km-post.ts).
-const fmtKm = (km: number) => fmtKmPost(km);
+const fmtKm = (km: number, digits = 1) => fmtKmPost(km, digits);
 
 function ordinal(n: number): string {
   const j = n % 10, k = n % 100;
@@ -137,8 +140,9 @@ export default function PredictiveCorridorChart() {
   // modal closes, so a reader can see what they last looked at) so closing
   // the modal doesn't also clear the highlight.
   const [drillDownOpen, setDrillDownOpen] = useState(false);
-  const T = useThemeTokens();
   const { exits: nlexExits } = useNlexExits();
+  // Chart text and tooltip colours for the pop-up's day chart (ECharts needs literal colours, not var()).
+  const T = useThemeTokens();
 
   useEffect(() => {
     let cancelled = false;
@@ -297,13 +301,11 @@ export default function PredictiveCorridorChart() {
   const nlexExitFor = (exitName: string) =>
     nlexExits.find((e) => e.exit_name.toLowerCase().trim() === exitName.toLowerCase().trim());
 
-  const accessSummaryFor = (exitName: string): string | null => {
+  const accessOf = (exitName: string, dir: "NB" | "SB"): string | null => {
     const match = nlexExitFor(exitName);
     if (!match) return null;
-    if (match.node_type === "toll-barrier") return "Toll barrier — through-traffic only, no interchange access";
-    const nb = accessLabel(match, "NB");
-    const sb = accessLabel(match, "SB");
-    return `NB: ${nb ?? "No access"} · SB: ${sb ?? "No access"}`;
+    if (match.node_type === "toll-barrier") return "Toll barrier, through traffic only";
+    return accessLabel(match, dir) ?? "No access";
   };
 
   // Raw entry/exit flags, with one override: a toll-barrier node (Bocaue
@@ -344,9 +346,6 @@ export default function PredictiveCorridorChart() {
   const lstmMeta = data.metadata?.spatial_lstm;
   const served = hotspotServed(lstmMeta);
   const gwrMeta = data.metadata?.gwr;
-  const accentInk = T.isDark
-    ? "color-mix(in srgb, var(--page-accent, #4f46e5) 36%, #ffffff)"
-    : "color-mix(in srgb, var(--page-accent, #4f46e5) 72%, #0b1020)";
 
   // No default -- the drill-down only shows an exit once the reader clicks
   // one, rather than opening on the top hotspot by itself.
@@ -354,6 +353,12 @@ export default function PredictiveCorridorChart() {
   const hoveredRow = corridorOrder.find((r) => r.exitId === hoveredExitId) ?? null;
   const detailRank = detailRow ? rankedRows.findIndex((r) => r.exitId === detailRow.exitId) : -1;
   const detailCoefs = detailRow ? sigByExit.get(detailRow.exitId) ?? [] : [];
+  // The selected exit's own forecast, day by day over the window (the pop-up's small chart).
+  const detailDays = detailRow
+    ? data.segmentRisk
+        .filter((r) => r.exitId === detailRow.exitId && r.horizonDay <= effectiveHorizon)
+        .sort((x, y) => x.horizonDay - y.horizonDay)
+    : [];
 
   /* The hover rail is cleared when a dialog opens (19 Oct 2026, testers IN-11: "hover stays stuck"). The
      dialog covers the strip under a still pointer, so no mouseleave ever reached the exit that was hovered,
@@ -369,128 +374,144 @@ export default function PredictiveCorridorChart() {
 
   const maxRanked = Math.max(...rankedRows.map((r) => r.sumPredicted), 1e-9);
 
-  const renderHotspotRow = (row: ExitRow, rank: number) => {
+  /* Layout from the user's reference (20 Nov 2026): a header with the horizon on the right, a summary strip (the
+     window, the corridor's total, one computed insight), the corridor as two direction strips with the risk colour
+     running along each, and the ranking as two side-by-side panels. Every figure is read off this response: the
+     reference's "vs previous 7 days" change is left out (this payload carries no per-exit history for the days before
+     the forecast), and the ranking is one list split 1-5 / 6-10, because the model forecasts one value per exit, not
+     per direction, so a separate southbound and northbound ranking would be invented. */
+  const corridorTotal = rankedRows.reduce((s, r) => s + r.sumPredicted, 0);
+  const top5Share = corridorTotal > 0 ? (rankedRows.slice(0, 5).reduce((s, r) => s + r.sumPredicted, 0) / corridorTotal) * 100 : null;
+  const highCount = rankedRows.filter((r) => riskBandFor(r.sumPredicted, riskPool) === "high").length;
+  // The window by its length, not "next": the forecast starts the day after the last recorded one, which is past by
+  // now when the data has not been refreshed (audit 20 Nov 2026). The dates sit beside it.
+  const windowLabel = effectiveHorizon === 1 ? "Forecast day 1" : `${effectiveHorizon}-day forecast window`;
+  const windowDates = horizonDateRange
+    ? horizonDateRange.start === horizonDateRange.end
+      ? fmtDateFull(horizonDateRange.start)
+      : fmtDateRange(horizonDateRange.start, horizonDateRange.end)
+    : null;
+  const topRow = rankedRows[0] ?? null;
+  const bandMovesText =
+    bandMoves == null
+      ? ""
+      : bandMoves === 0
+        ? ` Over ${effectiveHorizon} days the totals grow, but no exit changes colour from the first forecast day: the model forecasts each exit almost flat day to day.`
+        : ` ${bandMoves} exit${bandMoves === 1 ? "" : "s"} change colour from the first forecast day over ${effectiveHorizon} days.`;
+
+  const renderRankRow = (row: ExitRow, rank: number) => {
     const pct = maxRanked > 0 ? Math.max((row.sumPredicted / maxRanked) * 100, 2) : 0;
     const risk = riskOf(row);
     const isSelected = detailRow?.exitId === row.exitId;
     return (
-      <div
+      <button
+        type="button"
         key={row.exitId}
+        className={`hs-row${isSelected ? " is-on" : ""}${hoveredExitId === row.exitId ? " is-hover" : ""}`}
+        style={{ ["--rc" as string]: risk.color }}
         onClick={() => openDrillDown(row.exitId)}
         onMouseEnter={() => setHoveredExitId(row.exitId)}
         onMouseLeave={() => setHoveredExitId((k) => (k === row.exitId ? null : k))}
-        style={{
-          display: "grid", gridTemplateColumns: "26px minmax(120px, 220px) 1fr 64px", columnGap: "10px",
-          alignItems: "center", padding: "4px 8px", borderRadius: "8px", cursor: "pointer",
-          background: isSelected ? "color-mix(in srgb, var(--page-accent, #4f46e5) 9%, transparent)" : hoveredExitId === row.exitId ? "color-mix(in srgb, var(--page-accent) 6%, transparent)" : "transparent",
-        }}
       >
-        <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-muted)", textAlign: "right" }}>{rank}</span>
-        <span title={`${displayExitName(row.exitName)} — Km ${fmtKm(row.km)} (${corridorKmFromPost(row.km)} from Balintawak)`} style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {displayExitName(row.exitName)} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· Km {fmtKm(row.km)} <span style={{ display: "block", fontSize: "0.75rem" }} title="Distance from Balintawak, the scale the Incident hotspot chart uses">{corridorKmFromPost(row.km)} from Balintawak</span></span>
+        <span className="hs-rank">{rank}</span>
+        <span className="hs-name" title={`${displayExitName(row.exitName)}, Km ${fmtKm(row.km)} (${corridorKmFromPost(row.km)} from Balintawak)`}>
+          {displayExitName(row.exitName)} <span className="hs-name-km">– Km {fmtKm(row.km, 0)}</span>
         </span>
-        <div style={{ height: 14, borderRadius: "999px", background: "var(--bg-surface-hover)", overflow: "hidden" }}>
-          {/* transform: scaleX, not width -- the bar is always full-width and
-              laid out once; only its paint scales on rank/horizon changes, so
-              this animates on the compositor instead of triggering layout. */}
-          {/* The bar wears its exit's risk band, the same colour that exit has on the strip above
-              (testers IN-11: "colours do not vary per exit"). It used to be one accent gradient on every
-              row, so the list and the strip could not be matched by eye. A hue per exit was not used:
-              twenty categorical hues cannot be told apart, and the colour here means risk, not identity
-              (the name beside it is the identity). */}
-          <div
-            style={{
-              height: "100%", width: "100%", borderRadius: "999px",
-              background: risk.color,
-              transform: `scaleX(${pct / 100})`, transformOrigin: "left", transition: "transform 0.2s ease",
-            }}
-          />
+        {/* The bar wears its exit's risk band, the colour that exit has on the strips (testers IN-11). */}
+        <span className="hs-bar" aria-hidden="true">
+          <i style={{ transform: `scaleX(${pct / 100})` }} />
+        </span>
+        <span className="hs-val" title={`${fmtNum(row.sumPredicted, 2)} expected incidents (exact)`}>{fmtInt(row.sumPredicted)}</span>
+        <span className="hs-badge">{risk.label}</span>
+      </button>
+    );
+  };
+
+  const rankHead = (
+    <div className="hs-row hs-row-head" aria-hidden="true">
+      <span className="hs-rank">#</span>
+      <span className="hs-name">Exit</span>
+      <span />
+      <span className="hs-val">{effectiveHorizon}d</span>
+      <span className="hs-badge-head">Risk</span>
+    </div>
+  );
+
+  const legend = (
+    <div className="hs-legend">
+      {RISK_BANDS.map((b) => (
+        <span key={b.key}><i style={{ background: b.color }} />{b.label}</span>
+      ))}
+      <span><i style={{ background: NO_DATA_COLOR }} />No history{noDataCount > 0 ? ` (${noDataCount})` : ""}</span>
+      <InfoTooltip text={`Each exit's colour is its quarter of this window's forecast against the other exits, recomputed per horizon, not a fixed threshold.${bandMovesText} The forecast gives one value per exit, not per direction, so an exit is the same colour on both strips; what differs is access: a hollow grey dot means no on/off ramp that way (Bocaue Barrier is southbound only).`} />
+    </div>
+  );
+
+  // One direction: the risk colour runs along the road, blending from exit to exit, with a stop at each exit.
+  // Exits are spaced evenly, not by true km (several sit under a km apart), as Live Corridor Status spaces them.
+  const renderStrip = (dir: "NB" | "SB") => {
+    const n = corridorOrder.length;
+    const stops = corridorOrder.map((row, i) => `${riskOf(row).color} ${(((i + 0.5) / n) * 100).toFixed(2)}%`).join(", ");
+    return (
+      <div className="hs-dir">
+        <div className="hs-dir-head">
+          <span className={`hs-dir-chip is-${dir.toLowerCase()}`} aria-hidden="true">
+            {dir === "SB" ? <ArrowLeft size={18} strokeWidth={2.4} /> : <ArrowRight size={18} strokeWidth={2.4} />}
+          </span>
+          <h4>{dir === "SB" ? "Southbound (SB) – to Metro Manila" : "Northbound (NB) – to Central Luzon"}</h4>
+          {dir === "SB" && legend}
         </div>
-        <span style={{ justifySelf: "end", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1 }}>
-          <span title={`${fmtNum(row.sumPredicted, 2)} expected incidents (exact)`} style={{ fontSize: "0.76rem", fontWeight: 700, color: accentInk }}>{fmtInt(row.sumPredicted)}</span>
-          <span style={{ fontSize: "0.75rem", fontWeight: 700, color: risk.color }}>{risk.label}</span>
-        </span>
+        <div className="hs-track-wrap">
+          <div className="hs-track" style={{ background: `linear-gradient(to right, ${stops})` }} />
+          <div className="hs-stops" style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}>
+            {corridorOrder.map((row) => {
+              const risk = riskOf(row);
+              const ok = hasAccess(row.exitName, dir);
+              const isSelected = detailRow?.exitId === row.exitId;
+              return (
+                <button
+                  type="button"
+                  key={`${dir}-${row.exitId}`}
+                  className={`hs-stop${ok ? "" : " is-noramp"}${isSelected ? " is-on" : ""}${hoveredExitId === row.exitId ? " is-hover" : ""}`}
+                  style={{ ["--rc" as string]: risk.color }}
+                  onClick={() => openDrillDown(row.exitId)}
+                  onMouseEnter={() => setHoveredExitId(row.exitId)}
+                  onMouseLeave={() => setHoveredExitId((k) => (k === row.exitId ? null : k))}
+                  aria-label={`${displayExitName(row.exitName)} ${dir}, Km ${fmtKm(row.km)}, ${ok ? `${risk.label}${risk.label !== "No data" ? " risk" : ""}` : "no ramp this direction"}`}
+                >
+                  <i className="hs-dot" />
+                  <span className="hs-stop-km">Km {fmtKm(row.km, 0)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
     );
   };
 
-  const inlineRanked = rankedRows.slice(0, INLINE_LIMIT);
-  const restRanked = rankedRows.slice(INLINE_LIMIT);
-
-  // One carriageway, built the same way InteractiveRoadMap.tsx (the Home
-  // tab's "Live Corridor Status") builds its own: dark asphalt base, white
-  // shoulder lines, equal-width columns (that component spaces exits evenly
-  // on purpose -- several sit under a km apart, so a true-to-scale axis
-  // piles labels at the Metro Manila end and leaves the rest empty -- see
-  // its own "Exits are spaced evenly rather than by true km" comment), and
-  // dashed lane dividers drawn OVER the colour so the road still reads as a
-  // road under the forecast rather than a row of flat chips.
-  //
-  // Risk is color-mixed INTO the asphalt rather than painted as a flat
-  // fill -- a tint on the tarmac, not a solid block -- and only the
-  // selected exit gets an outline; nothing is enlarged.
-  const ASPHALT = "#2c313a";
-  const renderCarriageway = (dir: "NB" | "SB") => (
-    <div style={{ position: "relative", height: "40px", overflow: "hidden", background: ASPHALT, borderRadius: dir === "SB" ? "10px 10px 0 0" : "0 0 10px 10px" }}>
-      <div style={{ position: "absolute", left: 0, right: 0, top: "4px", height: "2px", background: "rgba(255,255,255,0.5)", zIndex: 3 }} />
-      <div style={{ position: "absolute", left: 0, right: 0, bottom: "4px", height: "2px", background: "rgba(255,255,255,0.5)", zIndex: 3 }} />
-
-      <div style={{ position: "absolute", inset: "6px 0", display: "grid", gridTemplateColumns: `repeat(${corridorOrder.length}, minmax(0, 1fr))` }}>
-        {corridorOrder.map((row) => {
-          const risk = riskOf(row);
-          const ok = hasAccess(row.exitName, dir);
-          const isSelected = detailRow?.exitId === row.exitId;
-          return (
-            <button
-              key={`${dir}-${row.exitId}`}
-              onClick={() => openDrillDown(row.exitId)}
-              onMouseEnter={() => setHoveredExitId(row.exitId)}
-              onMouseLeave={() => setHoveredExitId((k) => (k === row.exitId ? null : k))}
-              aria-label={`${displayExitName(row.exitName)} ${dir}, ${ok ? `${risk.label}${risk.label !== "No data" ? " risk" : ""}` : "no ramp this direction"}`}
-              style={{
-                position: "relative", border: "none", padding: 0, cursor: "pointer",
-                background: ok
-                  ? `color-mix(in srgb, ${risk.color} 58%, ${ASPHALT})`
-                  : `repeating-linear-gradient(45deg, rgba(255,255,255,0.05), rgba(255,255,255,0.05) 4px, transparent 4px, transparent 8px)`,
-                boxShadow: isSelected ? "inset 0 0 0 2px #fff, inset 0 0 0 4px var(--page-accent, #4f46e5)" : "none",
-                transition: "background 140ms ease",
-              }}
-            />
-          );
-        })}
-      </div>
-
-      {/* Lane dashes, above the tint -- two dividers, matching the live
-          carriageway's own three-lane spacing scaled to this road's height. */}
-      <div style={{ position: "absolute", inset: "6px 0", zIndex: 3, pointerEvents: "none" }}>
-        <div style={{ position: "absolute", left: 0, right: 0, top: "33%", height: "2px", background: "repeating-linear-gradient(to right, rgba(255,255,255,0.85) 0 14px, transparent 14px 30px)" }} />
-        <div style={{ position: "absolute", left: 0, right: 0, top: "66%", height: "2px", background: "repeating-linear-gradient(to right, rgba(255,255,255,0.85) 0 14px, transparent 14px 30px)" }} />
-      </div>
-    </div>
-  );
-
   return (
-    <article className="chart-card wide" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
-        <div>
-          <h3 style={{ fontSize: "1.05rem", color: "var(--text-primary)", fontWeight: 700, margin: 0, letterSpacing: "-0.01em" }}>
-            Predicted Incident Hotspots
-            <InfoTooltip
-              text={
-                served.isBaseline
-                  ? `A per-exit forecast, held out in time — not an apportionment of the day-level forecast by historical share. The Spatial LSTM and simpler baselines were scored on rolling origins over the last 52 weeks; none of the models beat each exit's ${served.name.toLowerCase()}${served.lstmMae != null && served.mae != null ? ` (MAE ${served.mae.toFixed(3)} vs the Spatial LSTM's ${served.lstmMae.toFixed(3)})` : ""}, so that baseline is what this map shows.`
-                  : "A genuine per-exit forecast from the Spatial LSTM (trained on each exit's own history plus its neighbors', held out in time) — not an apportionment of the day-level forecast by historical share. Day 1 is the real next-24h output; later days in a longer window are a recursive rollout, so treat them as a shape rather than a commitment."
-              }
-            />
-          </h3>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "4px 0 0 0" }}>
-            Forecast where incidents are most likely to occur along NLEX.
-            {data.trainedAt ? ` Last trained ${new Date(data.trainedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.` : ""}
-          </p>
+    <article className="chart-card wide nct-card hs-card">
+      <div className="nct-card-head-split">
+        <div className="nc-head-main">
+          <div className="nct-head-text">
+            <h3 className="nct-title">
+              Predicted Incident Hotspots
+              <InfoTooltip
+                text={
+                  (served.isBaseline
+                    ? `A per-exit forecast, held out in time — not an apportionment of the day-level forecast by historical share. The Spatial LSTM and simpler baselines were scored on rolling origins over the last 52 weeks; none of the models beat each exit's ${served.name.toLowerCase()}${served.lstmMae != null && served.mae != null ? ` (MAE ${served.mae.toFixed(3)} vs the Spatial LSTM's ${served.lstmMae.toFixed(3)})` : ""}, so that baseline is what this map shows.`
+                    : "A genuine per-exit forecast from the Spatial LSTM (trained on each exit's own history plus its neighbors', held out in time) — not an apportionment of the day-level forecast by historical share. Day 1 is the real next-24h output; later days in a longer window are a recursive rollout, so treat them as a shape rather than a commitment.") +
+                  " One value per exit per day: there are no hourly predictions. A model forecast, so the page's Range does not change it." +
+                  (data.trainedAt ? ` Last trained ${new Date(data.trainedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.` : "")
+                }
+              />
+            </h3>
+          </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
-          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600, display: "flex", alignItems: "center" }}>
-            Horizon
+        <div className="hs-horizon">
+          <span className="hs-horizon-label">
+            Forecast Horizon
             <InfoTooltip
               text={
                 served.isBaseline
@@ -499,14 +520,17 @@ export default function PredictiveCorridorChart() {
               }
             />
           </span>
-          <div style={{ display: "inline-flex", gap: "2px", padding: "3px", background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "999px" }}>
+          <div className="nct-pills" role="group" aria-label="Forecast horizon">
             {HORIZON_PRESETS.map((d) => {
               const disabled = d > availableDays;
               const active = effectiveHorizon === d;
               return (
                 <button
                   key={d}
+                  type="button"
                   disabled={disabled}
+                  aria-pressed={active}
+                  className={`nct-pill-btn${active ? " is-on" : ""}`}
                   onClick={() => { setHorizonDays(d); setHoveredExitId(null); }}
                   title={
                     disabled
@@ -515,14 +539,8 @@ export default function PredictiveCorridorChart() {
                         ? `The first forecast day${horizonDateRange ? `, ${fmtDateFull(horizonDateRange.start)}` : ""}${served.isBaseline ? "" : " — the model's own next-day forecast, not a rollout day"}`
                         : undefined
                   }
-                  style={{
-                    padding: "4px 12px", borderRadius: "999px", border: "none", cursor: disabled ? "not-allowed" : "pointer",
-                    background: active ? "var(--page-accent, #4f46e5)" : "transparent",
-                    color: disabled ? "var(--text-muted)" : active ? "var(--text-on-dark)" : "var(--text-secondary)",
-                    fontWeight: 600, fontSize: "0.8rem", opacity: disabled ? 0.5 : 1,
-                  }}
                 >
-                  {d === 1 ? (horizonDateRange ? fmtDate(horizonDateRange.start) : "Day 1") : `${d}d`}
+                  {d === 1 ? "1d" : `${d}d`}
                 </button>
               );
             })}
@@ -530,214 +548,88 @@ export default function PredictiveCorridorChart() {
         </div>
       </div>
 
-      {/* The calendar date(s) this forecast applies to, stated plainly rather
-          than left as only the relative "7d"/"Today" label above -- feature-
-          test feedback asked for this explicitly. Daily resolution is also
-          stated here, in the UI itself rather than only a tooltip: the
-          Spatial LSTM forecasts one value per exit per DAY, nothing finer,
-          so there is no hour-level prediction to filter by, and saying so
-          plainly rules that out rather than leaving a reader to assume it
-          exists and go looking for it. */}
-      {horizonDateRange && (
-        <p style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap", margin: 0, fontSize: "0.76rem", color: "var(--text-secondary)" }}>
+      {/* The window, the corridor's total over it, and one computed insight. */}
+      <div className="hs-summary">
+        <div className="hs-sum-item">
+          <span className="hs-sum-icon" aria-hidden="true"><CalendarDays size={22} strokeWidth={2} /></span>
           <span>
-            Applies to{" "}
-            <strong style={{ color: "var(--text-primary)" }}>
-              {horizonDateRange.start === horizonDateRange.end
-                ? fmtDateFull(horizonDateRange.start)
-                : `${fmtDateFull(horizonDateRange.start)} – ${fmtDateFull(horizonDateRange.end)}`}
-            </strong>
+            <b className="hs-sum-value">{windowDates ?? "—"}</b>
+            <span className="hs-sum-label">{windowLabel}</span>
           </span>
-          <span style={{ color: "var(--text-muted)" }}>· daily resolution — no hourly predictions exist for this model</span>
-        </p>
-      )}
-
-      {/* Reserved info rail -- hover facts land here instead of in a floating
-          tooltip. A tooltip positioned above its anchor got clipped by the
-          scroll container's overflowY: hidden (needed so the corridor only
-          scrolls sideways) whenever there wasn't enough room above it; the
-          Home tab's Live Corridor Status solves the same problem the same
-          way, with a reserved rail rather than a floating box. */}
-      <div
-        style={{
-          minHeight: "46px", display: "flex", alignItems: "center", padding: "8px 12px",
-          borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)",
-        }}
-      >
-        {hoveredRow ? (
-          <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap", fontSize: "0.78rem" }}>
-            <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>
-              {displayExitName(hoveredRow.exitName)} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· Km {fmtKm(hoveredRow.km)} ({corridorKmFromPost(hoveredRow.km)} from Balintawak)</span>
-            </span>
-            <span style={{ fontWeight: 800, color: riskOf(hoveredRow).color }}>
-              {riskOf(hoveredRow).label}{riskOf(hoveredRow).label !== "No data" ? " risk" : ""}
-            </span>
-            {hoveredRow.hasData ? (
-              <>
-                <span title={`${fmtNum(hoveredRow.sumPredicted, 2)} (exact)`} style={{ color: "var(--text-secondary)" }}>
-                  {fmtInt(hoveredRow.sumPredicted)} expected · next {effectiveHorizon}d
-                  {horizonDateRange && ` (through ${fmtDateFull(horizonDateRange.end)})`}
-                </span>
-                {hoveredRow.lastObserved != null && (
-                  <span style={{ color: "var(--text-muted)" }}>Last observed day: {fmtInt(hoveredRow.lastObserved)}</span>
-                )}
-              </>
-            ) : (
-              <span style={{ color: "var(--text-muted)" }}>No incident history — forecast uninformative</span>
-            )}
-          </div>
-        ) : (
-          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-            Hover an exit for its forecast, or click for full details.
+        </div>
+        <div className="hs-sum-item">
+          <span>
+            <b className="hs-sum-value hs-sum-accent" title={`${fmtNum(corridorTotal, 2)} (exact)`}>{fmtInt(corridorTotal)}</b>
+            <span className="hs-sum-label">expected incidents across {rankedRows.length} exits</span>
           </span>
+        </div>
+        {topRow && (
+          <p className="hs-sum-insight">
+            <Lightbulb size={20} strokeWidth={2} aria-hidden="true" />
+            <span>
+              <b>{displayExitName(topRow.exitName)}</b> leads with {fmtInt(topRow.sumPredicted)} expected
+              {top5Share != null ? <>; the top 5 exits carry <b>{Math.round(top5Share)}%</b> of the corridor&apos;s total</> : null}
+              {highCount > 0 ? <>, {highCount} in the High band</> : null}.
+            </span>
+          </p>
         )}
       </div>
 
-      {/* Corridor strip -- the hero, styled as the same divided highway as
-          the Home tab's Live Corridor Status: southbound lane on top,
-          northbound below, km markers in the median, exit names under the
-          whole diagram. Exits ordered by true km position, columns aligned
-          across all four rows so a given exit sits at the same x in each.
-
-          The lanes are NOT two independent readings, unlike the live map's:
-          the Spatial LSTM forecasts one risk value per EXIT, not per
-          direction, so a given exit's two lane-blocks always share the same
-          colour. What genuinely differs lane to lane is ACCESS -- Bocaue
-          Barrier, for instance, really is southbound-only -- and that's
-          real data (nb/sb entry/exit flags), not a fabricated split, so a
-          hatched block marks "no ramp this way" rather than a risk colour. */}
-      {/* Leaving the whole strip clears the rail too: per-exit mouseleave alone could miss a fast exit
-          through the scrollbar or the gaps between rows. */}
-      <div style={{ overflowX: "auto", overflowY: "hidden", paddingBottom: "6px" }} onMouseLeave={clearHover}>
-        {/* 940px, the same track width Live Corridor Status scrolls its own
-            20 exits at -- so this reads as the same corridor at the same
-            scale, not a wider or narrower one. */}
-        <div style={{ minWidth: "940px" }}>
-          <p style={{ display: "flex", alignItems: "center", gap: "8px", margin: "0 0 7px 0", fontSize: "0.82rem", fontWeight: 700, letterSpacing: "0.02em", color: "var(--text-secondary)", justifyContent: "flex-end" }}>
-            Southbound (SB) · to Metro Manila <span aria-hidden="true" style={{ fontSize: "1.25em", fontWeight: 800, color: "var(--page-accent, #4f46e5)" }}>←</span>
-            <InfoTooltip text="The forecast gives one risk value per exit, not per direction — a given exit's SB and NB lane blocks are always the same colour. Where the two lanes genuinely differ is access: a hatched block means this exit has no on/off ramp in that direction (e.g. Bocaue Barrier is southbound-only), which is real road structure, not a forecast." />
-          </p>
-          {renderCarriageway("SB")}
-
-          {/* Median -- one set of km markers serving both lanes, same grid as
-              the carriageways above and below it so a marker sits exactly
-              under the stretch of road it names. */}
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${corridorOrder.length}, minmax(0, 1fr))`, background: "var(--bg-surface-hover)", borderLeft: "1px solid var(--border-default)", borderRight: "1px solid var(--border-default)" }}>
-            {corridorOrder.map((row) => {
-              const risk = riskOf(row);
-              const isSelected = detailRow?.exitId === row.exitId;
-              return (
-                <button
-                  key={`km-${row.exitId}`}
-                  onClick={() => openDrillDown(row.exitId)}
-                  onMouseEnter={() => setHoveredExitId(row.exitId)}
-                  onMouseLeave={() => setHoveredExitId((k) => (k === row.exitId ? null : k))}
-                  aria-label={`${displayExitName(row.exitName)}, Km ${fmtKm(row.km)} (${corridorKmFromPost(row.km)} from Balintawak), ${risk.label}${risk.label !== "No data" ? " risk" : ""}`}
-                  style={{
-                    display: "flex", flexDirection: "column", alignItems: "center", gap: "1px", width: "100%",
-                    position: "relative", background: "none", border: "none", cursor: "pointer", padding: "5px 0 6px",
-                  }}
-                >
-                  <span style={{ display: "grid", placeItems: "center", width: 22, height: 22, color: isSelected ? "var(--page-accent, #4f46e5)" : risk.color, transform: isSelected ? "scale(1.16)" : "none", transition: "color 150ms ease, transform 150ms ease" }}>
-                    <svg width="19" height="19" viewBox="0 0 32 32" aria-hidden="true">
-                      <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" fill="var(--bg-surface)" stroke="currentColor" strokeWidth="3" />
-                    </svg>
-                  </span>
-                  <span style={{ fontSize: "0.75rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: isSelected ? "var(--text-primary)" : "var(--text-muted)" }}>{fmtKm(row.km)}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {renderCarriageway("NB")}
-          <p style={{ display: "flex", alignItems: "center", gap: "8px", margin: "7px 0 0 0", fontSize: "0.82rem", fontWeight: 700, letterSpacing: "0.02em", color: "var(--text-secondary)" }}>
-            <span aria-hidden="true" style={{ fontSize: "1.25em", fontWeight: 800, color: "var(--page-accent, #4f46e5)" }}>→</span> Northbound (NB) · to Central Luzon
-          </p>
-
-          {/* Names under the whole diagram, shared by both lanes -- upright
-              rather than angled, same as the live corridor, so twenty fit
-              however long the names are without colliding. */}
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${corridorOrder.length}, minmax(0, 1fr))`, margin: "8px 0 0" }}>
-            {corridorOrder.map((row) => {
-              const isSelected = detailRow?.exitId === row.exitId;
-              return (
-                <div key={`lbl-${row.exitId}`} style={{ display: "flex", justifyContent: "center", minWidth: 0 }}>
-                  <button
-                    type="button"
-                    onClick={() => openDrillDown(row.exitId)}
-                    onMouseEnter={() => setHoveredExitId(row.exitId)}
-                    onMouseLeave={() => setHoveredExitId((k) => (k === row.exitId ? null : k))}
-                    style={{
-                      writingMode: "vertical-rl", transform: "rotate(180deg)", height: "128px", padding: 0, border: "none", background: "none",
-                      font: "inherit", fontSize: "0.78rem", fontWeight: isSelected ? 800 : 600,
-                      color: isSelected ? "var(--page-accent, #4f46e5)" : "var(--text-secondary)",
-                      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer",
-                    }}
-                  >
-                    {displayExitName(row.exitName)}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+      {/* The corridor, one strip per direction. Leaving the panel clears the hover line, which a fast pointer
+          leaving through a gap could otherwise miss. */}
+      <div className="hs-panel" onMouseLeave={clearHover}>
+        <div className="hs-strips">
+          {renderStrip("SB")}
+          {renderStrip("NB")}
         </div>
+        <p className="hs-readout" aria-live="polite">
+          {hoveredRow ? (
+            <>
+              <b>{displayExitName(hoveredRow.exitName)}</b>
+              <span className="hs-readout-dim">Km {fmtKm(hoveredRow.km)} ({corridorKmFromPost(hoveredRow.km)} from Balintawak)</span>
+              <b style={{ color: riskOf(hoveredRow).color }}>{riskOf(hoveredRow).label}{riskOf(hoveredRow).label !== "No data" ? " risk" : ""}</b>
+              {hoveredRow.hasData ? (
+                <span title={`${fmtNum(hoveredRow.sumPredicted, 2)} (exact)`}>
+                  {fmtInt(hoveredRow.sumPredicted)} expected {effectiveHorizon === 1 ? "on forecast day 1" : `over the ${effectiveHorizon}-day window`}
+                  {hoveredRow.lastObserved != null ? ` · last observed day: ${fmtInt(hoveredRow.lastObserved)}` : ""}
+                </span>
+              ) : (
+                <span className="hs-readout-dim">No incident history — forecast uninformative</span>
+              )}
+            </>
+          ) : (
+            <span className="hs-readout-dim">Point at an exit for its forecast; click it for the full detail.</span>
+          )}
+        </p>
       </div>
 
-      {/* Legend -- rect swatches to match Live Corridor Status's own key,
-          labeled as risk rather than reusing its Congested/Slow/Clear
-          wording, which describes live traffic, not a forecast. */}
-      <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)" }}>
-        <span style={{ fontWeight: 700, color: "var(--text-muted)" }}>Predicted incident risk</span>
-        {RISK_BANDS.map((b) => (
-          <span key={b.key} style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-            <i style={{ width: 15, height: 7, borderRadius: 2, background: b.color, display: "inline-block" }} />
-            {b.label}
-          </span>
-        ))}
-        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-          <i style={{ width: 15, height: 7, borderRadius: 2, background: NO_DATA_COLOR, display: "inline-block" }} />
-          No history{noDataCount > 0 ? ` (${noDataCount})` : ""}
-        </span>
-        <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>· quartiles of this window&apos;s forecast, recomputed per horizon — not fixed thresholds</span>
-      </div>
-      <p style={{ margin: "-6px 0 0", fontSize: "0.8rem", lineHeight: 1.5, color: "var(--text-muted)" }}>
-        {bandMoves == null
-          ? "Colours rank each exit against the others. The ranked bars below wear the same colour as the exit's block on the strip."
-          : bandMoves === 0
-            ? `Over ${effectiveHorizon} days the totals grow, but no exit changes colour from the first forecast day: the model forecasts each exit almost flat day to day, so the ranking holds.`
-            : `${bandMoves} exit${bandMoves === 1 ? "" : "s"} change colour from the first forecast day over ${effectiveHorizon} days; the rest hold their rank because the model forecasts each exit almost flat day to day.`}{" "}
-        A model forecast, so the page&apos;s Range does not change it.
-      </p>
-
-      {/* Top predicted hotspots */}
-      <div>
-        <div style={{ display: "flex", alignItems: "center", fontSize: "0.75rem", fontWeight: 800, color: "var(--page-accent, #4f46e5)", letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: "6px" }}>
-          Top predicted hotspots
-          <InfoTooltip text="Each number is the exit's expected incidents — the model's statistical average, not a discrete tally — summed across all the selected horizon's days and rounded for display. Hover a number for the exact figure." />
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "26px minmax(120px, 220px) 1fr 64px", columnGap: "10px", padding: "0 8px 2px" }}>
-          <span />
-          <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.03em" }}>Exit</span>
-          <span />
-          <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.03em", textAlign: "right" }}>
-            Expected, {effectiveHorizon}d
-          </span>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "1px" }} onMouseLeave={clearHover}>
-          {inlineRanked.map((row, i) => renderHotspotRow(row, i + 1))}
-        </div>
-        {restRanked.length > 0 && (
-          <button
-            type="button"
-            onClick={() => { setSeeMoreOpen(true); setHoveredExitId(null); }}
-            style={{
-              marginTop: "10px", width: "100%", padding: "8px 12px", borderRadius: "8px",
-              border: "1px dashed var(--border-default)", background: "var(--bg-surface-hover)",
-              color: accentInk, fontWeight: 600, fontSize: "0.78rem", cursor: "pointer",
-            }}
-          >
-            See {restRanked.length} more exit{restRanked.length === 1 ? "" : "s"}
-          </button>
+      {/* The ranking, one list in two panels (ranks 1-5 and 6-10); View All opens every ranked exit. */}
+      <div className={`hs-ranks${rankedRows.length > INLINE_LIMIT ? "" : " is-single"}`} onMouseLeave={clearHover}>
+        <section className="hs-panel">
+          <div className="hs-panel-head">
+            <span className="hs-dir-chip" aria-hidden="true"><Flame size={18} strokeWidth={2.2} /></span>
+            <h4>
+              Top Predicted Hotspots
+              <InfoTooltip text="Each number is the exit's expected incidents — the model's statistical average, not a discrete tally — summed across the selected horizon's days and rounded. Hover a number for the exact figure; click a row for the exit's detail." />
+            </h4>
+            {rankedRows.length > INLINE_LIMIT && (
+              <button type="button" className="hs-viewall" onClick={() => { setSeeMoreOpen(true); setHoveredExitId(null); }}>
+                View All ({rankedRows.length})
+              </button>
+            )}
+          </div>
+          {rankHead}
+          {rankedRows.slice(0, INLINE_LIMIT).map((row, i) => renderRankRow(row, i + 1))}
+        </section>
+        {rankedRows.length > INLINE_LIMIT && (
+          <section className="hs-panel">
+            <div className="hs-panel-head">
+              <span className="hs-dir-chip is-quiet" aria-hidden="true"><ListOrdered size={18} strokeWidth={2.2} /></span>
+              <h4>Next {Math.min(INLINE_LIMIT, rankedRows.length - INLINE_LIMIT)} Hotspots</h4>
+            </div>
+            {rankHead}
+            {rankedRows.slice(INLINE_LIMIT, INLINE_LIMIT * 2).map((row, i) => renderRankRow(row, i + INLINE_LIMIT + 1))}
+          </section>
         )}
       </div>
 
@@ -786,7 +678,7 @@ export default function PredictiveCorridorChart() {
       />
 
       {seeMoreOpen && typeof document !== "undefined" && createPortal(
-        <div className="viz-incident">
+        <div className="viz-incident hs-card">
         <div
           role="dialog" aria-modal="true" aria-label="All ranked exits" onClick={() => setSeeMoreOpen(false)}
           className="ds-modal-backdrop"
@@ -804,7 +696,7 @@ export default function PredictiveCorridorChart() {
               <div>
                 <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>All exits, ranked</h3>
                 <p style={{ margin: "4px 0 0 0", fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                  Ranks {INLINE_LIMIT + 1}–{rankedRows.length} of {rankedRows.length} · expected incidents, summed over the next {effectiveHorizon} day{effectiveHorizon === 1 ? "" : "s"}, rounded (hover a number for the exact figure)
+                  {rankedRows.length} exits · expected incidents, summed over the {effectiveHorizon}-day forecast window, rounded (hover a number for the exact figure)
                   {noDataCount > 0 ? ` · ${noDataCount} exit${noDataCount === 1 ? "" : "s"} with no history not ranked` : ""}
                 </p>
               </div>
@@ -816,115 +708,210 @@ export default function PredictiveCorridorChart() {
               </button>
             </div>
             <div style={{ overflowY: "auto", padding: "10px 22px 20px" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: "1px" }}>
-                {restRanked.map((row, i) => renderHotspotRow(row, i + INLINE_LIMIT + 1))}
+              <div className="hs-modal-list" onMouseLeave={clearHover}>
+                {rankHead}
+                {rankedRows.map((row, i) => renderRankRow(row, i + 1))}
               </div>
             </div>
           </div>
         </div>
       </div>, document.body)}
 
-      {/* Drill-down -- opens only on click (corridor segment, km marker,
-          exit name, or a ranked-list row), replacing the panel that used to
-          sit permanently open on the top hotspot. */}
+      {/* Exit detail (20 Nov 2026, user: "improve the pop up"): the name with its risk, the road facts as chips, the
+          window's figures as four even tiles, the exit's own forecast day by day (the totals are sums of these),
+          and the reasons as an icon list. Same figures as before, from the same response. */}
       {drillDownOpen && detailRow && typeof document !== "undefined" && createPortal(
-        <div className="viz-incident">
+        <div className="viz-incident hs-card">
         <div
           role="dialog" aria-modal="true" aria-label={`${displayExitName(detailRow.exitName)} detail`} onClick={() => setDrillDownOpen(false)}
           className="ds-modal-backdrop"
           style={{ position: "fixed", inset: 0, zIndex: 200, display: "grid", placeItems: "center", padding: 24 }}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "min(560px, 100%)", maxHeight: "84vh", display: "flex", flexDirection: "column",
-              background: "var(--bg-raised)", borderRadius: "var(--radius-xl)", border: "1px solid var(--border-default)",
-              boxShadow: "var(--shadow-lg)", overflow: "hidden",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "18px 22px", borderBottom: "1px solid var(--border-default)" }}>
-              <div>
-                <h3 style={{ margin: "2px 0 0 0", fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>{displayExitName(detailRow.exitName)}</h3>
-                <p style={{ margin: "2px 0 0 0", fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                  Km {fmtKm(detailRow.km)} ({corridorKmFromPost(detailRow.km)} from Balintawak){accessSummaryFor(detailRow.exitName) ? ` · ${accessSummaryFor(detailRow.exitName)}` : ""}
-                </p>
-              </div>
-              <button
-                onClick={() => setDrillDownOpen(false)} aria-label="Close"
-                style={{ flex: "none", width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border-default)", background: "var(--bg-surface)", color: "var(--text-secondary)", cursor: "pointer", display: "grid", placeItems: "center", fontSize: "1rem", lineHeight: 1 }}
-              >
-                <X size={16} aria-hidden="true" />
-              </button>
-            </div>
-
-            <div style={{ overflowY: "auto", padding: "16px 22px 20px", display: "flex", flexDirection: "column", gap: "12px" }}>
-              <span
-                style={{
-                  alignSelf: "flex-start", padding: "4px 12px", borderRadius: "999px", fontSize: "0.75rem", fontWeight: 800,
-                  color: riskOf(detailRow).color,
-                  background: `color-mix(in srgb, ${riskOf(detailRow).color} 14%, transparent)`,
-                  border: `1px solid color-mix(in srgb, ${riskOf(detailRow).color} 40%, transparent)`,
-                }}
-              >
-                {riskOf(detailRow).label.toUpperCase()}{riskOf(detailRow).label !== "No data" ? " RISK" : ""}
-              </span>
-
-              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                <div style={{ flex: "1 1 150px", padding: "10px 12px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", display: "flex", alignItems: "center", gap: "2px" }}>
-                    Expected incidents · {effectiveHorizon}d
-                    <InfoTooltip text="Sum of each day's forecast over the window. Each day's own number is a statistical expectation, not a whole-number tally, so the sum stays fractional even though it's not an average — rounded here for readability; hover the number for the exact figure." />
+          {(() => {
+            const risk = riskOf(detailRow);
+            const accessNB = accessOf(detailRow.exitName, "NB");
+            const accessSB = accessOf(detailRow.exitName, "SB");
+            const dayAvg = detailDays.length ? detailDays.reduce((s, d) => s + d.predictedIncidents, 0) / detailDays.length : null;
+            const peakIdx = detailDays.reduce((best, d, i) => (d.predictedIncidents > detailDays[best].predictedIncidents ? i : best), 0);
+            const lowIdx = detailDays.reduce((best, d, i) => (d.predictedIncidents < detailDays[best].predictedIncidents ? i : best), 0);
+            /* A chart, not bare bars: a zero-based axis with values, the dates along the bottom, the window's average
+               as a dashed line, the busiest day in the full risk colour, and a hover reading for every day. The bars
+               were unlabelled and, for an exit forecast almost flat (Mexico 6-7.5 a day), read as one block. */
+            const cssVar = (c: string) => {
+              const m = /^var\((--[^),\s]+)/.exec(c);
+              if (!m || typeof window === "undefined") return c;
+              return getComputedStyle(document.documentElement).getPropertyValue(m[1]).trim() || T.accent;
+            };
+            const barInk = cssVar(risk.color);
+            const n = detailDays.length;
+            const dayOption: EChartsOption = {
+              grid: { left: 34, right: 58, top: 16, bottom: 26 },
+              xAxis: {
+                type: "category",
+                data: detailDays.map((d) => fmtDate(d.forecastDate)),
+                axisTick: { show: false },
+                axisLine: { lineStyle: { color: T.chartAxis } },
+                axisLabel: { color: T.chartText, fontSize: 11, interval: n > 14 ? 6 : n > 7 ? 1 : 0 },
+              },
+              yAxis: {
+                type: "value", min: 0, splitNumber: 3,
+                axisLabel: { color: T.chartText, fontSize: 11 },
+                splitLine: { lineStyle: { color: T.chartSplit } },
+              },
+              tooltip: {
+                trigger: "axis",
+                axisPointer: { type: "none" },
+                backgroundColor: T.tooltipBg,
+                borderColor: T.border,
+                textStyle: { color: T.tooltipText },
+                formatter: (params: unknown) => {
+                  const i = (params as { dataIndex: number }[])[0]?.dataIndex ?? 0;
+                  const d = detailDays[i];
+                  if (!d) return "";
+                  const note = i === peakIdx ? " · busiest day" : i === lowIdx ? " · quietest day" : "";
+                  return `<b>${fmtDateFull(d.forecastDate)}</b>${note}<br/>${fmtNum(d.predictedIncidents, 1)} expected incidents` +
+                    (i === 0 && !served.isBaseline ? `<br/><span style="opacity:.75">The model's own next-day forecast</span>` : "");
+                },
+              },
+              series: [{
+                type: "bar",
+                barMaxWidth: 30,
+                data: detailDays.map((d, i) => ({
+                  value: Number(d.predictedIncidents.toFixed(2)),
+                  itemStyle: { color: i === peakIdx ? barInk : withAlpha(barInk, T.isDark ? 0.6 : 0.62), borderRadius: [4, 4, 0, 0] },
+                })),
+                emphasis: { focus: "self" },
+                blur: { itemStyle: { opacity: 0.45 } },
+                markLine: dayAvg == null ? undefined : {
+                  silent: true, symbol: "none",
+                  lineStyle: { type: "dashed", color: T.textMuted, width: 1.5 },
+                  label: { position: "end", formatter: `avg ${fmtNum(dayAvg, 1)}`, color: T.textMuted, fontSize: 11 },
+                  data: [{ yAxis: dayAvg }],
+                },
+              }],
+            };
+            return (
+              <div className="hs-dd" onClick={(e) => e.stopPropagation()} style={{ ["--rc" as string]: risk.color }}>
+                <header className="hs-dd-head">
+                  <span className="hs-dd-icon" aria-hidden="true"><MapPin size={20} strokeWidth={2.2} /></span>
+                  <div className="hs-dd-title">
+                    <h3>
+                      {displayExitName(detailRow.exitName)}
+                      <span className="hs-badge">{risk.label}{risk.label !== "No data" ? " risk" : ""}</span>
+                    </h3>
+                    <p>Km {fmtKm(detailRow.km)} · {corridorKmFromPost(detailRow.km)} km from Balintawak</p>
                   </div>
-                  <div title={detailRow.hasData ? `${fmtNum(detailRow.sumPredicted, 2)} (exact)` : undefined} style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{detailRow.hasData ? fmtInt(detailRow.sumPredicted) : "—"}</div>
-                  {horizonDateRange && (
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                      {horizonDateRange.start === horizonDateRange.end ? fmtDateFull(horizonDateRange.start) : `${fmtDateFull(horizonDateRange.start)} – ${fmtDateFull(horizonDateRange.end)}`}
+                  <button type="button" className="hs-dd-close" onClick={() => setDrillDownOpen(false)} aria-label="Close">
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </header>
+
+                <div className="hs-dd-body">
+                  {(accessNB || accessSB) && (
+                    <div className="hs-dd-chips">
+                      {accessNB === accessSB ? (
+                        <span className="hs-dd-chip"><ArrowLeftRight size={14} aria-hidden="true" />{accessNB}</span>
+                      ) : (
+                        <>
+                          <span className="hs-dd-chip"><ArrowRight size={14} aria-hidden="true" />NB: {accessNB}</span>
+                          <span className="hs-dd-chip"><ArrowLeft size={14} aria-hidden="true" />SB: {accessSB}</span>
+                        </>
+                      )}
                     </div>
                   )}
-                </div>
-                <div style={{ flex: "1 1 150px", padding: "10px 12px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Expected · next 24h</div>
-                  <div title={detailRow.day1Predicted != null ? `${fmtNum(detailRow.day1Predicted, 2)} (exact)` : undefined} style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{detailRow.day1Predicted != null ? fmtInt(detailRow.day1Predicted) : "—"}</div>
-                  {horizonDateRange?.start && <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{fmtDateFull(horizonDateRange.start)}</div>}
-                </div>
-                <div style={{ flex: "1 1 150px", padding: "10px 12px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Last observed day</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{detailRow.lastObserved != null ? fmtInt(detailRow.lastObserved) : "—"}</div>
-                </div>
-                <div style={{ flex: "1 1 150px", padding: "10px 12px", borderRadius: "10px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-default)" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Rank this window</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{detailRank >= 0 ? `#${detailRank + 1} of ${rankedRows.length}` : "—"}</div>
+
+                  <div className="hs-dd-stats">
+                    <div className="hs-dd-stat">
+                      <span className="hs-dd-k">
+                        Expected · {effectiveHorizon === 1 ? "24h" : `${effectiveHorizon}d`}
+                        <InfoTooltip text="Sum of each day's forecast over the window. Each day's number is a statistical expectation, not a whole-number tally, so the sum is rounded here; hover the number for the exact figure." />
+                      </span>
+                      <b title={detailRow.hasData ? `${fmtNum(detailRow.sumPredicted, 2)} (exact)` : undefined}>{detailRow.hasData ? fmtInt(detailRow.sumPredicted) : "—"}</b>
+                      <small>{windowDates ?? "—"}</small>
+                    </div>
+                    <div className="hs-dd-stat">
+                      <span className="hs-dd-k">Forecast day 1</span>
+                      <b title={detailRow.day1Predicted != null ? `${fmtNum(detailRow.day1Predicted, 2)} (exact)` : undefined}>{detailRow.day1Predicted != null ? fmtInt(detailRow.day1Predicted) : "—"}</b>
+                      <small>{horizonDateRange?.start ? fmtDateFull(horizonDateRange.start) : "—"}</small>
+                    </div>
+                    <div className="hs-dd-stat">
+                      <span className="hs-dd-k">Last observed day</span>
+                      <b>{detailRow.lastObserved != null ? fmtInt(detailRow.lastObserved) : "—"}</b>
+                      <small>incidents logged</small>
+                    </div>
+                    <div className="hs-dd-stat">
+                      <span className="hs-dd-k">Rank this window</span>
+                      <b>{detailRank >= 0 ? `#${detailRank + 1}` : "—"}</b>
+                      <small>of {rankedRows.length} exits</small>
+                    </div>
+                  </div>
+
+                  {detailDays.length > 1 && (
+                    <section className="hs-dd-section hs-dd-chart">
+                      <div className="hs-dd-chart-head">
+                        <h4>Expected incidents per day</h4>
+                        <div className="hs-dd-facts">
+                          <span><i className="is-peak" />Busiest <b>{fmtDate(detailDays[peakIdx].forecastDate)}</b> · {fmtNum(detailDays[peakIdx].predictedIncidents, 1)}</span>
+                          <span>Quietest <b>{fmtDate(detailDays[lowIdx].forecastDate)}</b> · {fmtNum(detailDays[lowIdx].predictedIncidents, 1)}</span>
+                          {dayAvg != null && <span><i className="is-avg" />Average <b>{fmtNum(dayAvg, 1)}</b></span>}
+                        </div>
+                      </div>
+                      <DashboardChart option={dayOption} height={170} />
+                    </section>
+                  )}
+
+                  {!detailRow.hasData && (
+                    <p className="hs-dd-warn">
+                      The model has no logged incident history at this exit — its forecast number is uninformative, not a sign the exit is actually safe.
+                    </p>
+                  )}
+
+                  <section className="hs-dd-section">
+                    <h4>Why this rating</h4>
+                    <ul className="hs-dd-why">
+                      {detailRow.historyEventCount != null && (
+                        <li>
+                          <span className="hs-dd-why-icon" aria-hidden="true"><History size={16} strokeWidth={2.2} /></span>
+                          <span>
+                            <b>{fmtInt(detailRow.historyEventCount)}</b> incidents logged here since records began
+                            {historyRank.has(detailRow.exitId) ? <>, the <b>{ordinal(historyRank.get(detailRow.exitId)!)}</b> busiest of {historyRank.size} exits.</> : "."}
+                          </span>
+                        </li>
+                      )}
+                      {served.isBaseline && detailCoefs.length > 0 && (
+                        <li>
+                          <span className="hs-dd-why-icon" aria-hidden="true"><Network size={16} strokeWidth={2.2} /></span>
+                          <span>The number is this exit&apos;s <b>{served.name.toLowerCase()}</b>, which beat the trained models in the rolling test.</span>
+                        </li>
+                      )}
+                      {detailCoefs.length > 0 ? (
+                        detailCoefs.map((c) => (
+                          <li key={c.variable}>
+                            <span className="hs-dd-why-icon" aria-hidden="true">
+                              {c.coefficient > 0 ? <TrendingUp size={16} strokeWidth={2.2} /> : <TrendingDown size={16} strokeWidth={2.2} />}
+                            </span>
+                            <span>
+                              <b>{VARIABLE_LABEL[c.variable] ?? c.variable}</b> is linked to {c.coefficient > 0 ? "more" : "fewer"} incidents at this exit ({c.coefficient > 0 ? "+" : ""}{fmtNum(c.coefficient, 2)}
+                              in the GWR map, a separate descriptive fit{served.isBaseline ? ", not an input to the forecast shown" : ""}).
+                            </span>
+                          </li>
+                        ))
+                      ) : (
+                        <li>
+                          <span className="hs-dd-why-icon" aria-hidden="true"><Network size={16} strokeWidth={2.2} /></span>
+                          <span>
+                            {served.isBaseline
+                              ? <>The number is this exit&apos;s <b>{served.name.toLowerCase()}</b>, which beat the trained models in the rolling test; no road trait stands out here in the GWR map.</>
+                              : <>No single road trait stands out here in the GWR map: the forecast follows this exit&apos;s own incident history and its neighbours&apos; recent counts.</>}
+                          </span>
+                        </li>
+                      )}
+                    </ul>
+                  </section>
                 </div>
               </div>
-
-              {!detailRow.hasData && (
-                <div style={{ padding: "8px 12px", borderRadius: "8px", background: `color-mix(in srgb, ${NO_DATA_COLOR} 14%, transparent)`, border: `1px solid color-mix(in srgb, ${NO_DATA_COLOR} 40%, transparent)`, fontSize: "0.78rem", color: "var(--text-secondary)" }}>
-                  The model has no logged incident history at this exit — its forecast number is uninformative, not a sign the exit is actually safe.
-                </div>
-              )}
-
-              <div>
-                <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "4px" }}>Why is this exit flagged?</div>
-                <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "0.78rem", color: "var(--text-muted)", lineHeight: 1.6 }}>
-                  {detailRow.historyEventCount != null && (
-                    <li>
-                      Logged <strong style={{ color: "var(--text-secondary)" }}>{fmtInt(detailRow.historyEventCount)}</strong> incidents at this exit since records began
-                      {historyRank.has(detailRow.exitId) ? ` — ${ordinal(historyRank.get(detailRow.exitId)!)} busiest of ${historyRank.size} exits by lifetime count.` : "."}
-                    </li>
-                  )}
-                  {detailCoefs.length > 0 ? (
-                    detailCoefs.map((c) => (
-                      <li key={c.variable}>
-                        {VARIABLE_LABEL[c.variable] ?? c.variable} is locally significant here ({c.coefficient > 0 ? "+" : ""}{fmtNum(c.coefficient, 2)}) — {c.coefficient > 0 ? "higher values are associated with more incidents" : "higher values are associated with fewer incidents"} at this specific exit in the GWR fit.
-                      </li>
-                    ))
-                  ) : (
-                    <li>No locally significant structural factor for this exit in the GWR fit — its risk here tracks its own incident history and its neighbors&apos; recent counts (the Spatial LSTM&apos;s own inputs), not one measured corridor trait.</li>
-                  )}
-                </ul>
-              </div>
-            </div>
-          </div>
+            );
+          })()}
         </div>
       </div>, document.body)}
     </article>

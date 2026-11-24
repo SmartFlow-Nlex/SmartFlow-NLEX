@@ -492,7 +492,9 @@ export default function IncidentPage() {
 
     // Laid out in the chart's own pixels so the three panels divide the height
     // evenly whatever the card is given.
-    const TOP = 22, BOTTOM = 34, GAP = 30;
+    // TOP was 22: with the controls moved into a strip above the chart (19 Nov 2026), the first panel's title sat
+    // right under the strip's rule, so it gets a little more room.
+    const TOP = 38, BOTTOM = 34, GAP = 30;
     const panelH = Math.max(46, (384 - TOP - BOTTOM - GAP * (PANELS.length - 1)) / PANELS.length);
     const topOf = (i: number) => TOP + i * (panelH + GAP);
     const last = PANELS.length - 1;
@@ -535,7 +537,7 @@ export default function IncidentPage() {
           link: [{ xAxisIndex: "all" }],
           label: { formatter: (o) => bucketLabelFor(grain)(String((o as { value: unknown }).value)) },
         },
-        valueFormatter: (v) => (v == null ? "—" : fmtInt(Number(v))),
+        valueFormatter: (v) => (v == null ? "—" : `${fmtInt(Number(v))} incidents`),
       },
       axisPointer: { link: [{ xAxisIndex: "all" }] },
       series: PANELS.map((p, i) => ({
@@ -567,34 +569,43 @@ export default function IncidentPage() {
     const valueOf = (r: Analytics["hotspots"][number]) => (perKm ? (r.per_km as number) : r.total);
     const display = hotspotSort === "desc" ? [...top].reverse() : [...top];
     const maxV = top[0] ? valueOf(top[0]) : 1;
+    const located = data.hotspots.reduce((s, r) => s + r.total, 0);
+    const labelInk = chartTheme.isDark ? "#e6edf9" : "#10213f";
     return {
       rows: display,
       option: {
-        grid: { left: 168, right: 46, top: 8, bottom: 18 },
-        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => fmtInt(v) } },
+        /* Laid out like Traffic's Volume by Plaza (19 Nov 2026): one line per stretch (the km range, then the exit
+           it sits nearest in a second, muted column), a track behind each bar and its figure printed at the end,
+           so no value axis. The two-line labels it replaced were crowded into each other. */
+        grid: { left: 238, right: 140, top: 4, bottom: 4 },
+        xAxis: { type: "value", axisLabel: { show: false }, splitLine: { show: false }, axisLine: { show: false }, axisTick: { show: false } },
         yAxis: {
           type: "category",
           data: display.map((r) => kmLabel(r.km_bin)),
-          // Two lines per segment: the km range, then the exit it sits nearest.
+          axisLine: { show: false },
+          axisTick: { show: false },
           axisLabel: {
             interval: 0,
-            lineHeight: 15,
+            align: "left",
+            margin: 230,
             formatter: (_v: string, i: number) => {
               const r = display[i];
               const n = exitAt.nameForBin(r.km_bin) ?? "";
-              return `{k|${kmLabelBoth(r.km_bin)}}\n{n|${n.length > 22 ? `${n.slice(0, 21)}…` : n}}`;
+              return `{k|${kmLabelBoth(r.km_bin)}}{n|${n.length > 24 ? `${n.slice(0, 23)}…` : n}}`;
             },
-            rich: { k: { fontSize: 12, fontWeight: 600, color: chartTheme.ink, lineHeight: 15 }, n: { fontSize: 11, lineHeight: 15 } },
+            rich: { k: { width: 74, fontSize: 12.5, fontWeight: 700, color: labelInk }, n: { fontSize: 12, color: chartTheme.text } },
           },
-          axisTick: { show: false },
         },
         tooltip: {
-          axisPointer: { type: "shadow" },
+          trigger: "axis",
+          axisPointer: { type: "none" },
           formatter: (p) => {
-            const i = (p as { dataIndex: number }).dataIndex;
+            const i = (Array.isArray(p) ? p[0] : (p as { dataIndex: number })).dataIndex;
             const r = display[i];
-            const rate = r.per_km != null && r.length_km != null ? `${fmtInt(r.per_km)} incidents per km (${fmt1(r.length_km)} km of road)<br/>` : "";
-            return `<b>${segLabel(r.km_bin)}</b><br/>${rate}${fmtInt(r.total)} incidents · ${fmtInt(r.injuries)} injured · ${fmtInt(r.fatalities)} fatalities`;
+            if (!r) return "";
+            const rate = r.per_km != null ? `Per km: <b>${fmtInt(r.per_km)}</b> incidents<br/>` : "";
+            const len = r.length_km != null ? `Road length: <b>${fmt1(r.length_km)} km</b><br/>` : "";
+            return `<b>${segLabel(r.km_bin)}</b><br/>${rate}Total: <b>${fmtInt(r.total)}</b> incidents<br/>${len}Injured: <b>${fmtInt(r.injuries)}</b> · Fatal: <b>${fmtInt(r.fatalities)}</b>`;
           },
         },
         /* No legend: one series, and the axis already says these are incidents
@@ -607,10 +618,28 @@ export default function IncidentPage() {
             type: "bar",
             data: display.map((r) => ({
               value: valueOf(r),
-              itemStyle: { color: SEQ[Math.min(3, 1 + Math.floor((valueOf(r) / maxV) * 2.99))], borderRadius: [0, 4, 4, 0] },
+              itemStyle: { color: SEQ[Math.min(3, 1 + Math.floor((valueOf(r) / maxV) * 2.99))], borderRadius: [0, 6, 6, 0] },
             })),
-            barMaxWidth: 12,
-            barCategoryGap: "25%",
+            barWidth: 14,
+            // Hover: this bar stays, the others fade (it replaced a cropped grey band, 19 Nov 2026).
+            emphasis: { focus: "self" },
+            blur: { itemStyle: { opacity: 0.4 } },
+            showBackground: true,
+            backgroundStyle: { color: chartTheme.isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(16, 33, 63, 0.05)", borderRadius: 6 },
+            label: {
+              show: true,
+              position: "right",
+              distance: 8,
+              formatter: (p) => {
+                const r = display[(p as { dataIndex: number }).dataIndex];
+                /* The figure alone (19 Nov 2026, user request): the stretch's total is in its hover card and
+                   click-through. Unranked by count, the share is shown instead. */
+                const tail = perKm ? "" : located > 0 ? `${((r.total / located) * 100).toFixed(1)}%` : "";
+                return `{v|${fmtInt(Number(p.value))}${perKm ? "/km" : ""}}{p|${tail}}`;
+              },
+              // The share gets its own left padding: plain spaces between rich runs are collapsed.
+              rich: { v: { fontSize: 12.5, fontWeight: 700, color: labelInk }, p: { fontSize: 12, color: chartTheme.text, padding: [0, 0, 0, 6] } },
+            },
           },
         ],
       },
@@ -634,18 +663,32 @@ export default function IncidentPage() {
     if (src.length === 0) return null;
     const top = src.slice(0, 9);
     const display = causeSort === "desc" ? [...top].reverse() : [...top];
+    // Shares of every incident in the ranking, as the card's insight counts them.
+    const total = src.reduce((s, r) => s + r.total, 0);
+    const maxV = Math.max(1, ...top.map((r) => r.total));
+    const labelInk = chartTheme.isDark ? "#e6edf9" : "#10213f";
     return {
       rows: display,
       option: {
-        grid: { left: 160, right: 42, top: 8, bottom: 18 },
-        xAxis: { type: "value", splitNumber: 3, axisLabel: { formatter: (v: number) => fmtInt(v) } },
-        yAxis: { type: "category", data: display.map((r) => (r.label.length > 24 ? `${r.label.slice(0, 24)}…` : r.label)), axisLabel: { interval: 0 }, axisTick: { show: false } },
+        // Laid out like Traffic's Volume by Plaza (19 Nov 2026): a wider name column, tracks, figures on the bars.
+        grid: { left: 196, right: 104, top: 4, bottom: 4 },
+        xAxis: { type: "value", axisLabel: { show: false }, splitLine: { show: false }, axisLine: { show: false }, axisTick: { show: false } },
+        yAxis: {
+          type: "category",
+          data: display.map((r) => r.label),
+          axisLine: { show: false },
+          axisTick: { show: false },
+          axisLabel: { interval: 0, fontSize: 12.5, fontWeight: 600, color: labelInk, width: 182, overflow: "truncate", margin: 12 },
+        },
         tooltip: {
-          axisPointer: { type: "shadow" },
+          trigger: "axis",
+          axisPointer: { type: "none" },
           formatter: (p) => {
-            const i = (p as { dataIndex: number }).dataIndex;
+            const i = (Array.isArray(p) ? p[0] : (p as { dataIndex: number })).dataIndex;
             const r = display[i];
-            return `<b>${r.label}</b><br/>${fmtInt(r.total)} incidents · ${fmtInt(r.injuries)} injured · ${fmtInt(r.fatalities)} fatalities`;
+            if (!r) return "";
+            const share = total > 0 ? ` (${((r.total / total) * 100).toFixed(1)}%)` : "";
+            return `<b>${r.label}</b><br/>Incidents: <b>${fmtInt(r.total)}</b>${share}<br/>Injured: <b>${fmtInt(r.injuries)}</b> · Fatal: <b>${fmtInt(r.fatalities)}</b>`;
           },
         },
         /* No legend: one series named "Incidents" on a chart titled the same,
@@ -654,9 +697,26 @@ export default function IncidentPage() {
           {
             name: "Incidents",
             type: "bar",
-            data: display.map((r) => ({ value: r.total, itemStyle: { color: RAMP[1], borderRadius: [0, 4, 4, 0] } })),
-            barMaxWidth: 12,
-            barCategoryGap: "25%",
+            data: display.map((r) => ({
+              value: r.total,
+              itemStyle: { color: SEQ[Math.min(3, 1 + Math.floor((r.total / maxV) * 2.99))], borderRadius: [0, 6, 6, 0] },
+            })),
+            barWidth: 14,
+            // Hover: this bar stays, the others fade (it replaced a cropped grey band, 19 Nov 2026).
+            emphasis: { focus: "self" },
+            blur: { itemStyle: { opacity: 0.4 } },
+            showBackground: true,
+            backgroundStyle: { color: chartTheme.isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(16, 33, 63, 0.05)", borderRadius: 6 },
+            label: {
+              show: true,
+              position: "right",
+              distance: 8,
+              formatter: (p) => {
+                const v = Number(p.value);
+                return total > 0 ? `{v|${fmtInt(v)}}{p|${((v / total) * 100).toFixed(1)}%}` : fmtInt(v);
+              },
+              rich: { v: { fontSize: 12.5, fontWeight: 700, color: labelInk }, p: { fontSize: 12, color: chartTheme.text, padding: [0, 0, 0, 6] } },
+            },
           },
         ],
       },
@@ -699,45 +759,6 @@ export default function IncidentPage() {
   // Rate per day of that weather (× 24) or, under an hour filter, per hour of it.
   const wxRate = (n: number, hours: number, perHour: boolean) => (hours > 0 ? (n / hours) * (perHour ? 1 : 24) : null);
 
-  const weatherChart = useMemo<EChartsOption | null>(() => {
-    if (!data || !derived || !weatherSlot) return null;
-    const w = weatherSlot;
-    if (w.wetHours === 0 && w.dryHours === 0) return null;
-    const cats = ["Accidents", "Breakdowns"] as const;
-    const keys = ["accident", "breakdown"] as const;
-    const unit = w.perHour ? "per hour" : "per day";
-    // Per day of that weather = incidents / hours-of-exposure × 24, so rare wet
-    // hours compare fairly against abundant dry hours.
-    const rate = (n: number, hours: number) => {
-      const r = wxRate(n, hours, w.perHour);
-      return r == null ? null : Number(r.toFixed(w.perHour ? 2 : 1));
-    };
-    return {
-      grid: { left: 52, right: 16, top: 24, bottom: 68 },
-      xAxis: { type: "category", data: [...cats], axisLabel: { interval: 0, fontSize: 12 }, axisTick: { show: false } },
-      yAxis: { type: "value", name: w.perHour ? "avg incidents / hour" : "avg incidents / day", nameGap: 10, nameTextStyle: { align: "left" }, splitNumber: 3 },
-      tooltip: {
-        trigger: "axis",
-        axisPointer: { type: "shadow" },
-        formatter: (p) => {
-          const items = p as { seriesName: string; dataIndex: number; value: number | null }[];
-          const i = items[0].dataIndex;
-          const k = keys[i];
-          const v = (name: string) => items.find((x) => x.seriesName === name)?.value;
-          const fmtV = (x: number | null | undefined) => (x == null ? "no hours of it" : `${x} ${unit}`);
-          return `<b>${cats[i]}</b>${wxSlotPhrase ? ` · ${wxSlotPhrase}` : ""}<br/>Dry weather: ${fmtV(v("Dry weather"))}, ${fmtInt(w.dry[k])} incidents over ${fmtInt(w.dryHours)} dry hrs<br/>Wet weather: ${fmtV(v("Wet weather"))}, ${fmtInt(w.wet[k])} incidents over ${fmtInt(w.wetHours)} wet hrs`;
-        },
-      },
-      legend: { show: true, bottom: 0, left: "center", padding: 0, textStyle: { fontSize: 12 } },
-      /* Thicker bars (testers IN-7: "make the bars thicker"): two categories in a half-width card left the
-         26 px cap looking like hairlines in a wide plot. A value label on each so the pair reads without
-         hovering, and a sliver of surface between the two bars of a pair so they read as two marks. */
-      series: [
-        { name: "Dry weather", type: "bar", data: keys.map((k) => rate(w.dry[k], w.dryHours)), itemStyle: { color: RAMP[2], borderRadius: [4, 4, 0, 0] }, barMaxWidth: 64, barGap: "4%", barCategoryGap: "30%", label: { show: true, position: "top", fontSize: 12, fontWeight: 600, color: chartTheme.ink } },
-        { name: "Wet weather", type: "bar", data: keys.map((k) => rate(w.wet[k], w.wetHours)), itemStyle: { color: RAMP[0], borderRadius: [4, 4, 0, 0] }, barMaxWidth: 64, label: { show: true, position: "top", fontSize: 12, fontWeight: 600, color: chartTheme.ink } },
-      ],
-    };
-  }, [data, derived, weatherSlot, wxSlotPhrase, chartTheme]);
 
   /* Quick insights, one per chart card, each computed from what that card draws (same rows, same toggles).
      Nothing fixed or fetched: with no data a memo returns null and its strip is not rendered. */
@@ -920,7 +941,7 @@ export default function IncidentPage() {
     });
   };
 
-  const onWeatherClick = (p: { dataIndex: number; seriesName?: string }) => {
+  const onWeatherClick = (p: { dataIndex: number }) => {
     if (!data || !derived || !weatherSlot) return;
     const keys = ["accident", "breakdown"] as const;
     const k = keys[p.dataIndex];
@@ -1003,6 +1024,8 @@ export default function IncidentPage() {
      from/to, and the forecast card waited forever for a range it would never get (19 Oct 2026). Those tabs
      read 12 mo instead, and show it, until a preset is pressed; Descriptive keeps the custom dates. */
   const presetRange: "3" | "12" | "all" = rangeMode === "custom" ? "12" : rangeMode;
+  // The Prescriptive panels' window: the last 12 months, the Range's default, with no bar on that tab to change it.
+  const PRESCRIPTIVE_MONTHS = "12" as const;
   const shownRange = activeTab === "Descriptive" ? rangeMode : presetRange;
 
   const rangeFilter = (
@@ -1168,17 +1191,7 @@ export default function IncidentPage() {
     const all = acc + brk;
     if (all === 0) return null;
     const pct = (n: number) => `${((n / all) * 100).toFixed(1)}%`;
-    // Per km of road, like the hotspot chart, so a longer stretch does not win on length alone.
-    const topSeg = (key: "accident" | "breakdown") => {
-      const rate = (h: Analytics["hotspots"][number]) => (h.length_km != null && h.length_km > 0 ? h[key] / h.length_km : null);
-      const pool = data.hotspots.some((h) => rate(h) != null) ? data.hotspots.filter((h) => rate(h) != null) : data.hotspots;
-      const h = [...pool].sort((a, b) => (rate(b) ?? b[key]) - (rate(a) ?? a[key]))[0];
-      return h && h[key] > 0 ? h : null;
-    };
-    const segAcc = topSeg("accident");
-    const segBrk = topSeg("breakdown");
     const topType = data.types[0];
-    const topAccCause = data.accidentCauses[0];
     const topBrkCause = data.breakdownCauses[0];
     return (
       <div className="inc-mix">
@@ -1197,10 +1210,8 @@ export default function IncidentPage() {
               <span className="inc-mix-name">Accidents</span>
               <span className="inc-mix-count">{fmtInt(acc)} · {pct(acc)}</span>
               <p className="inc-mix-facts">
-                {topType && <>Most common type <b>{topType.label}</b> ({fmtInt(topType.total)}). </>}
-                {topAccCause && <>Top cause <b>{topAccCause.label}</b> ({fmtInt(topAccCause.total)}). </>}
-                <b>{fmtInt(data.kpis.injuries)}</b> injured, <b>{fmtInt(data.kpis.fatalities)}</b> fatal.
-                {segAcc && <> Busiest per km near <b>{exitAt.nameForBin(segAcc.km_bin) ?? kmLabel(segAcc.km_bin)}</b> ({kmLabelBoth(segAcc.km_bin)}).</>}
+                {topType && <>Mostly <b>{topType.label}</b> ({fmtInt(topType.total)}) · </>}
+                <b>{fmtInt(data.kpis.injuries)}</b> injured, <b>{fmtInt(data.kpis.fatalities)}</b> fatal
               </p>
             </div>
           )}
@@ -1209,10 +1220,11 @@ export default function IncidentPage() {
               <i style={{ background: TYPE_HUES[2] }} aria-hidden="true" />
               <span className="inc-mix-name">Breakdowns</span>
               <span className="inc-mix-count">{fmtInt(brk)} · {pct(brk)}</span>
-              <p className="inc-mix-facts">
-                {topBrkCause && <>Top fault <b>{topBrkCause.label}</b> ({fmtInt(topBrkCause.total)}). </>}
-                {segBrk && <>Busiest per km near <b>{exitAt.nameForBin(segBrk.km_bin) ?? kmLabel(segBrk.km_bin)}</b> ({kmLabelBoth(segBrk.km_bin)}).</>}
-              </p>
+              {topBrkCause && (
+                <p className="inc-mix-facts">
+                  Mostly <b>{topBrkCause.label}</b> ({fmtInt(topBrkCause.total)})
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -1229,14 +1241,17 @@ export default function IncidentPage() {
       {/* Sticky filter bar, as on the Traffic tab: Predictive and Prescriptive take the Range presets only;
           Descriptive adds Custom, Weather, Incident type and the "Updating…" note. The forecast card
           carries its own Weather toggle (models fitted with or without rainfall). */}
-      <div className={styles.filterRow}>
+      {/* No filter bar on Predictive (19 Nov 2026, as on Traffic): its Range lives in the forecast card, the only
+          chart there it affects. None on Prescriptive either (20 Nov 2026, user): its panels read a fixed 12 months
+          (PRESCRIPTIVE_MONTHS), so a Range picked on Descriptive cannot change them unseen. */}
+      {activeTab === "Descriptive" && <div className={styles.filterRow}>
         {rangeFilter}
         {activeTab === "Descriptive" && weatherFilter}
         {activeTab === "Descriptive" && sourceFilter}
         {activeTab === "Descriptive" && loading && data && <span className={styles.updating}>Updating…</span>}
         <span className={styles.spacer} />
         {filterChips}
-      </div>
+      </div>}
 
       <div className={styles.modeStage} key={activeTab}>
         {activeTab === "Predictive" && (
@@ -1244,6 +1259,7 @@ export default function IncidentPage() {
             <div className={styles.spanFull}>
               <PredictiveIncidentChart
                 months={presetRange}
+                onMonthsChange={(m) => setRangeMode(m)}
                 weather="all"
                 onDataBoundsChange={setPredictiveDataBounds}
                 onWeatherApplicableChange={setWeatherApplicable}
@@ -1262,17 +1278,17 @@ export default function IncidentPage() {
           <>
             <div className={styles.spanFull}>
               <PrescriptiveDeploymentPanel
-                months={presetRange}
+                months={PRESCRIPTIVE_MONTHS}
               />
             </div>
             <div className={styles.spanFull}>
               <PatrolAlertWindowPanel
-                months={presetRange}
+                months={PRESCRIPTIVE_MONTHS}
               />
             </div>
             <div className={styles.spanFull}>
               <ClearanceResponsePanel
-                months={presetRange}
+                months={PRESCRIPTIVE_MONTHS}
               />
             </div>
           </>
@@ -1343,14 +1359,17 @@ export default function IncidentPage() {
                 <span className={styles.kpiIcon} aria-hidden="true"><Timer size={15} /></span>
                 <h3>
                   Avg Response Time
-                  {kpiInfo("Breakdowns only: average minutes from the first unit being dispatched to that unit arriving at the scene. Accidents have no per-dispatch record to measure this from, so they aren't included.")}
+                  {kpiInfo(`Breakdowns only: average minutes from the first unit being dispatched to that unit arriving at the scene. Accidents have no per-dispatch record to measure this from, so they aren't included.${
+                    data?.kpis.avgTimeToFirstResponder.min != null
+                      ? ` In this Range: ${data.kpis.avgTimeToFirstResponder.p90Min != null ? `90% within ${data.kpis.avgTimeToFirstResponder.p90Min} min; ` : ""}${fmtInt(data.kpis.avgTimeToFirstResponder.n)} of ${fmtInt(data.kpis.avgTimeToFirstResponder.totalBreakdowns)} breakdowns have a response logged.`
+                      : ""}`)}
                 </h3>
                 <div className={styles.kpiValue}>
                   {kpiValue(data?.kpis.avgTimeToFirstResponder.min != null ? `${data.kpis.avgTimeToFirstResponder.min} min` : null)}
                 </div>
                 <p className={styles.kpiHint}>
                   {data && data.kpis.avgTimeToFirstResponder.min != null
-                    ? `${data.kpis.avgTimeToFirstResponder.medianMin != null ? `median ${data.kpis.avgTimeToFirstResponder.medianMin} · p90 ${data.kpis.avgTimeToFirstResponder.p90Min} min · ` : ""}breakdowns only · ${fmtInt(data.kpis.avgTimeToFirstResponder.n)} of ${fmtInt(data.kpis.avgTimeToFirstResponder.totalBreakdowns)} logged`
+                    ? `${data.kpis.avgTimeToFirstResponder.medianMin != null ? `median ${data.kpis.avgTimeToFirstResponder.medianMin} min · ` : ""}breakdowns only`
                     : data && source === "accident"
                       ? "Breakdowns only: Incident type is set to Accidents"
                       : data && data.kpis.avgTimeToFirstResponder.totalBreakdowns === 0
@@ -1367,53 +1386,29 @@ export default function IncidentPage() {
                 <span className={styles.kpiIcon} aria-hidden="true"><Timer size={15} /></span>
                 <h3>
                   Avg Time to Clear
-                  {kpiInfo("Minutes from an incident being reported until the road was cleared: accidents from their recorded clearance time, breakdowns until the last responding unit left. A clearance logged at 0 minutes (cleared at the same minute it was reported) is a recording default, so it counts as not recorded, as in the Clearance Response Protocol; so do times over 24 hours. The headline is the mean of both, weighted by how many of each have times; the hint gives the median and 90th percentile by type, since a few very long clearances pull the mean up.")}
+                  {kpiInfo(`Minutes from an incident being reported until the road was cleared: accidents from their recorded clearance time, breakdowns until the last responding unit left. A clearance logged at 0 minutes (cleared at the same minute it was reported) is a recording default, so it counts as not recorded, as in the Clearance Response Protocol; so do times over 24 hours. The headline is the mean of both, weighted by how many of each have times; the line under it gives the median by type, since a few very long clearances pull the mean up.${
+                    data?.kpis.mttc
+                      ? ` In this Range: ${[
+                          data.kpis.mttc.accident?.p90Min != null ? `90% of accidents cleared within ${data.kpis.mttc.accident.p90Min} min` : "",
+                          data.kpis.mttc.breakdown?.p90Min != null ? `90% of breakdowns within ${data.kpis.mttc.breakdown.p90Min} min` : "",
+                          data.kpis.mttc.coverage.pctValid != null ? `${data.kpis.mttc.coverage.pctValid}% of incidents have times` : "",
+                        ].filter(Boolean).join("; ")}.`
+                      : ""}`)}
                 </h3>
                 <div className={styles.kpiValue}>
                   {kpiValue(data?.kpis.mttc?.overallMin != null ? `${data.kpis.mttc.overallMin} min` : null)}
                 </div>
                 <p className={styles.kpiHint}>
                   {data?.kpis.mttc
-                    ? [
-                        data.kpis.mttc.accident?.medianMin != null ? `accidents median ${data.kpis.mttc.accident.medianMin} · p90 ${data.kpis.mttc.accident.p90Min}` : "",
-                        data.kpis.mttc.breakdown?.medianMin != null ? `breakdowns median ${data.kpis.mttc.breakdown.medianMin} · p90 ${data.kpis.mttc.breakdown.p90Min}` : "",
-                        data.kpis.mttc.coverage.pctValid != null ? `${data.kpis.mttc.coverage.pctValid}% have times` : "",
-                      ].filter(Boolean).join(" min · ") || "No clearance times in this Range"
+                    ? ((parts) => (parts.length ? `median: ${parts.join(" · ")} min` : "No clearance times in this Range"))([
+                        data.kpis.mttc.accident?.medianMin != null ? `accidents ${data.kpis.mttc.accident.medianMin}` : "",
+                        data.kpis.mttc.breakdown?.medianMin != null ? `breakdowns ${data.kpis.mttc.breakdown.medianMin}` : "",
+                      ].filter(Boolean))
                     : pendingHint}
                 </p>
               </article>
-              <article className={styles.kpiTile}>
-                <span className={styles.kpiIcon} aria-hidden="true"><MapPin size={15} /></span>
-                <h3>
-                  Top Hotspot
-                  {kpiInfo("The stretch of road with the most incidents per km in the Range, among incidents whose location could be resolved. Stretches follow the official km posts in steps of five, but they are not all the same length (Km 12–14, where the expressway starts, is shorter), so they are compared per km of road.")}
-                </h3>
-                <div className={styles.kpiValue}>{kpiValue(derived?.topHotspot ? kmLabel(derived.topHotspot.km_bin) : null)}</div>
-                <p className={styles.kpiHint}>
-                  {derived?.topHotspot && derived.hotspotTotal > 0
-                    ? `${kmLabel(derived.topHotspot.km_bin)} · near ${exitAt.nameForBin(derived.topHotspot.km_bin) ?? "—"} · ${derived.topHotspot.per_km != null ? `${fmtInt(derived.topHotspot.per_km)} per km · ` : ""}${((derived.topHotspot.total / derived.hotspotTotal) * 100).toFixed(1)}% of located incidents`
-                    : data
-                      ? "No incident in this Range and Weather has a resolved location"
-                      : pendingHint}
-                </p>
-              </article>
-              <article className={styles.kpiTile}>
-                <span className={styles.kpiIcon} aria-hidden="true"><CloudRain size={15} /></span>
-                <h3>
-                  Crash Rate in Rain
-                  {kpiInfo("Crashes in rainy hours against what those same hours of the day usually see when dry. Each wet hour is compared with the dry crash rate of that hour of the day, because rain falls mostly in the busy afternoon. Above 1× means rain adds crashes beyond the time of day. Always compares both weathers, so the Weather filter does not change it.")}
-                </h3>
-                <div className={styles.kpiValue}>{kpiValue(derived?.rainMultiplier != null ? `${derived.rainMultiplier.toFixed(2)}×` : null)}</div>
-                <p className={styles.kpiHint}>
-                  {derived
-                    ? derived.rainMultiplier != null
-                      ? `${derived.rainSameHour && derived.sameHourWetRate != null && derived.sameHourDryRate != null
-                          ? `${derived.sameHourWetRate.toFixed(1)} vs ${derived.sameHourDryRate.toFixed(1)} crashes/day, rain vs dry at the same hours`
-                          : `${derived.wetRate.toFixed(1)} vs ${derived.dryRate.toFixed(1)} crashes/day, wet vs dry`}${derived.rainLo != null && derived.rainHi != null ? ` · 95% CI ${derived.rainLo.toFixed(2)}–${derived.rainHi.toFixed(2)}×` : ""}${weather !== "all" ? " · always both weathers" : ""}`
-                      : derived.rainEmptyReason
-                    : pendingHint}
-                </p>
-              </article>
+              {/* Top Hotspot and Crash Rate in Rain were removed (19 Nov 2026, user request): each repeated the card
+                  below it, the hotspot chart's headline and the weather card's main finding (the same multiplier). */}
             </div>
 
             {/* Main time series, full width */}
@@ -1428,9 +1423,13 @@ export default function IncidentPage() {
                     </h3>
                   </div>
                 </div>
+              </div>
+              {/* The controls in their own strip under the title, as on the Traffic tab's Volume Trend (19 Nov 2026,
+                  user request). */}
+              <div className={`${styles.heroFilters} nct-hero-filters`}>
                 <div className={styles.heroFilterGroup}>
                   <span className={styles.heroFilterLabel}>Granularity</span>
-                  <div className={styles.segmentedSmall}>
+                  <div className={`${styles.segmentedSmall} nct-wrap`}>
                     {(["daily", "weekly", "monthly"] as const).map((g) => (
                       <button
                         key={g}
@@ -1456,8 +1455,10 @@ export default function IncidentPage() {
               )}
             </article>
 
-            {/* Breakdowns, two columns */}
-            <article className={`${styles.chartCard} inc-half`}>
+            {/* Breakdowns, two columns, laid out like Traffic's Volume by Plaza and Holiday cards (19 Nov 2026, user
+                request): a title row with the controls on its right, the chart, the insight; the chart takes the spare
+                height, so the two charts and the two insights line up. */}
+            <article className={`${styles.chartCard} inc-half inc-fill-card`}>
               <div className={styles.chartHead}>
                 <div className="nc-head-main">
                   <CardIcon icon={MapPin} />
@@ -1468,6 +1469,7 @@ export default function IncidentPage() {
                     </h3>
                   </div>
                 </div>
+                <div className="nct-head-tools">
                 <button
                   type="button"
                   className={styles.sortBtn}
@@ -1481,6 +1483,7 @@ export default function IncidentPage() {
                   View all
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </button>
+                </div>
               </div>
               <div className={styles.chartBody}>{chartFrame(hotspotChart?.option ?? null, "No located incidents in range", onHotspotClick)}</div>
               {hotspotInsight && !error && (
@@ -1496,7 +1499,7 @@ export default function IncidentPage() {
               )}
             </article>
 
-            <article className={`${styles.chartCard} inc-half`}>
+            <article className={`${styles.chartCard} inc-half inc-fill-card`}>
               <div className={styles.chartHead}>
                 <div className="nc-head-main">
                   <CardIcon icon={ListOrdered} />
@@ -1507,10 +1510,14 @@ export default function IncidentPage() {
                         : causeMode === "Breakdown causes"
                           ? "Top Breakdown Causes"
                           : "Top Accident Types"}
-                      <InfoTooltip text="Top 9 logged causes or collision types by incident count in the Range, with injuries and fatalities on hover. Toggle between Causes and Types on the right. Accident causes and types count accidents only, and breakdown causes count breakdowns only, so the Incident type filter empties the rankings of the other type." />
+                      <InfoTooltip text="Top 9 logged causes or collision types by incident count in the Range, with injuries and fatalities on hover. Choose accident causes, breakdown causes or types in the menu on the right. Accident causes and types count accidents only, and breakdown causes count breakdowns only, so the Incident type filter empties the rankings of the other type." />
                     </h3>
                   </div>
                 </div>
+                {/* What to rank, as a dropdown beside the sort button (19 Nov 2026, user request): three pills under
+                    the title pushed this chart below its neighbour's. */}
+                <div className="nct-head-tools">
+                {/* Sort first, then the menu (user request), as the sort sits before View all on the other cards. */}
                 <button
                   type="button"
                   className={styles.sortBtn}
@@ -1520,12 +1527,11 @@ export default function IncidentPage() {
                 >
                   {causeSort === "desc" ? <ArrowDownWideNarrow size={15} /> : <ArrowUpNarrowWide size={15} />}
                 </button>
-                <div className={styles.segmentedSmall} style={{ flexBasis: "100%" }}>
-                  {CAUSE_MODES.map((m) => (
-                    <button key={m} className={causeMode === m ? "active" : ""} aria-pressed={causeMode === m} onClick={() => setCauseMode(m)}>
-                      {m}
-                    </button>
-                  ))}
+                <CustomSelect
+                  value={causeMode}
+                  options={CAUSE_MODES.map((m) => ({ label: m, value: m }))}
+                  onChange={(v) => setCauseMode(v as CauseMode)}
+                />
                 </div>
               </div>
               <div className={styles.chartBody}>{chartFrame(causeChart?.option ?? null, "No data for the selected filters", onCauseClick)}</div>
@@ -1540,21 +1546,30 @@ export default function IncidentPage() {
               )}
             </article>
 
-            <article className={`${styles.chartCard} inc-half`}>
+            <article className={`${styles.chartCard} inc-half inc-wx-card`}>
               <div className={styles.chartHead}>
                 <div className="nc-head-main">
                   <CardIcon icon={CloudRain} />
                   <div className={styles.headText}>
                     <h3>
-                      Dry vs Wet: Incidents per Day
+                      {/* Was "Dry vs Wet: Incidents per Day" (19 Nov 2026): the unit is printed above the bars now, and it
+                          reads per hour under an Hour filter. */}
+                      Dry vs Wet Weather
                       <InfoTooltip text="Average incidents per day by type, dry vs. wet hours — normalized by hours of exposure (× 24) so rare wet hours compare fairly against far more abundant dry ones, not raw counts. Day and Hour narrow both sides to the same slots; choosing an hour reads per hour of that weather instead of per day." />
                     </h3>
                   </div>
                 </div>
-                {/* Day and Hour (testers IN-7). Card-local: they narrow this comparison only, never the tab. */}
-                <div className={styles.heroFilterGroup} style={{ flexWrap: "wrap", rowGap: 6 }}>
-                  <span className={styles.heroFilterLabel}>Day</span>
+                {/* Day and Hour (testers IN-7). Card-local: they narrow this comparison only, never the tab. Each menu
+                    carries its own label inside, as "Measured at" does on Traffic (19 Nov 2026, user request), and
+                    Reset shows only while one of them is narrowed. */}
+                <div className="nct-head-tools inc-wx-filters">
+                  {(wxDay !== "all" || wxHour !== "all") && (
+                    <button type="button" className="inc-wx-reset" onClick={() => { setWxDay("all"); setWxHour("all"); }}>
+                      Reset
+                    </button>
+                  )}
                   <CustomSelect
+                    prefix="Day"
                     value={wxDay}
                     onChange={(v) => setWxDay(v as WxDay)}
                     disabled={weatherSlot?.available === false}
@@ -1566,8 +1581,8 @@ export default function IncidentPage() {
                       ...DOW_ORDER.map((d, i) => ({ label: DOW_LABELS[i], value: String(d) })),
                     ]}
                   />
-                  <span className={styles.heroFilterLabel}>Hour</span>
                   <CustomSelect
+                    prefix="Hour"
                     value={wxHour}
                     onChange={(v) => setWxHour(v as WxHour)}
                     disabled={weatherSlot?.available === false}
@@ -1581,7 +1596,72 @@ export default function IncidentPage() {
                   Only {fmtInt(weatherSlot.wetHours)} wet hours fall in this slot, so the wet rate rests on few hours and moves a lot with each incident.
                 </p>
               )}
-              <div className={styles.chartBody}>{chartFrame(weatherChart, "No weather data in range", onWeatherClick)}</div>
+              {/* Each type as its own pair of bars (19 Nov 2026, user request: cleaner). On one shared axis, accidents
+                  (about 13 a day) sat as stubs under breakdowns (about 109) and the bars filled the card. Each pair is
+                  scaled to its own larger value, and the figures are printed, so nothing is read off an axis. */}
+              <div className={`${styles.chartBody} inc-wx`}>
+                {loading && !data ? (
+                  <ChartSkeleton />
+                ) : error ? (
+                  <div className={styles.placeholder}>Live data unavailable — is the backend running on port 4000?</div>
+                ) : !weatherSlot || weatherSlot.wetHours + weatherSlot.dryHours <= 0 ? (
+                  <div className={styles.placeholder}>No weather data in range</div>
+                ) : (() => {
+                  const w = weatherSlot;
+                  const unit = w.perHour ? "per hour" : "per day";
+                  const rate = (n: number, hrs: number) => wxRate(n, hrs, w.perHour);
+                  const show = (r: number | null) => (r == null ? "—" : r.toFixed(w.perHour ? 2 : 1));
+                  const wetPct = (w.wetHours / (w.wetHours + w.dryHours)) * 100;
+                  return (
+                    <>
+                      <p className="inc-wx-unit">Average incidents {unit} of each weather{wxSlotPhrase ? ` · ${wxSlotPhrase}` : ""}</p>
+                      {(["accident", "breakdown"] as const).map((k, i) => {
+                        const dry = rate(w.dry[k], w.dryHours);
+                        const wet = rate(w.wet[k], w.wetHours);
+                        const top = Math.max(dry ?? 0, wet ?? 0, 0.0001);
+                        return (
+                          <button key={k} type="button" className="inc-wx-row" onClick={() => onWeatherClick({ dataIndex: i })}>
+                            <span className="inc-wx-head">
+                              <b>{SOURCE_LABEL[k]}</b>
+                              <span>{fmtInt(w.dry[k] + w.wet[k])} incidents</span>
+                            </span>
+                            {([["Dry", dry, w.dry[k], w.dryHours, RAMP[2]], ["Wet", wet, w.wet[k], w.wetHours, RAMP[0]]] as const).map(([name, r, n, hrs, color]) => (
+                              <span key={name} className="inc-wx-bar inc-tip">
+                                {/* The hover card, in the charts' tooltip layout (19 Nov 2026). */}
+                                <span className="inc-tip-card" role="tooltip">
+                                  <b>{SOURCE_LABEL[k]} · {name.toLowerCase()} weather</b>
+                                  <span>Rate: <b>{show(r)}</b> {unit}</span>
+                                  <span>Incidents: <b>{fmtInt(n)}</b></span>
+                                  <span>Hours of {name.toLowerCase()} weather: <b>{fmtInt(hrs)}</b></span>
+                                </span>
+                                <i>{name}</i>
+                                <span className="inc-wx-track"><span style={{ width: `${((r ?? 0) / top) * 100}%`, background: color }} /></span>
+                                <b>{show(r)}</b>
+                              </span>
+                            ))}
+                          </button>
+                        );
+                      })}
+                      <div className="inc-wx-hours inc-tip">
+                        <span className="inc-tip-card" role="tooltip">
+                          <b>Hours in view</b>
+                          <span>Dry: <b>{fmtInt(w.dryHours)}</b> hours ({(100 - wetPct).toFixed(1)}%)</span>
+                          <span>Wet: <b>{fmtInt(w.wetHours)}</b> hours ({wetPct.toFixed(1)}%)</span>
+                        </span>
+                        <span className="inc-wx-hours-label">Hours in view</span>
+                        <span className="inc-wx-split" role="img" aria-label={`${(100 - wetPct).toFixed(1)}% dry, ${wetPct.toFixed(1)}% wet`}>
+                          <span style={{ width: `${100 - wetPct}%`, background: RAMP[2] }} />
+                          <span style={{ width: `${wetPct}%`, background: RAMP[0] }} />
+                        </span>
+                        <span className="inc-wx-hours-key">
+                          <span><i style={{ background: RAMP[2] }} />Dry {(100 - wetPct).toFixed(1)}%</span>
+                          <span><i style={{ background: RAMP[0] }} />Wet {wetPct.toFixed(1)}%</span>
+                        </span>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
               {weatherInsight && !error && (
                 <CardInsight
                   lead={
@@ -1635,6 +1715,7 @@ export default function IncidentPage() {
                 months={rangeMode === "custom" ? "all" : rangeMode}
                 from={rangeMode === "custom" ? customFrom : undefined}
                 to={rangeMode === "custom" ? customTo : undefined}
+                onPick={setDetail}
               />
             </div>
           </>

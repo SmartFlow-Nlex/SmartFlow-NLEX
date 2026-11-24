@@ -24,10 +24,12 @@ import { WAZE_REPORT_TYPES } from "../../lib/waze-reports";
 /* The forecast's three states, in the colours the forecast map draws them.
    The live map has its own rows below: it colours queues rather than segments,
    so the two keys genuinely differ and a shared list would misdescribe one. */
+/* `hint` is the class cut the trainer labels with (train_congestion_horizon.py, SEVERE_KMH 10 / HEAVY_KMH 20, on the
+   exit-hour's length-weighted Waze jam speed); an hour with no jam reported counts as clear. */
 export const FORECAST_KEY = [
-  { state: "Low", label: "Clear", status: "clear" as const },
-  { state: "Med", label: "Slow", status: "slow" as const },
-  { state: "High", label: "Congested", status: "congested" as const },
+  { state: "Low", label: "Clear", status: "clear" as const, hint: "20 km/h or more, or no queue" },
+  { state: "Med", label: "Slow", status: "slow" as const, hint: "10 to 20 km/h" },
+  { state: "High", label: "Congested", status: "congested" as const, hint: "Under 10 km/h" },
 ];
 
 /* What each colour means, on BOTH maps (15 Nov 2026). The live map used Waze's grade, whose "slow" was mostly
@@ -48,8 +50,8 @@ export default function MapLegend({ variant = "live" }: { variant?: "live" | "fo
         <h4>Predicted congestion</h4>
         {FORECAST_KEY.map((k) => (
           <div key={k.state} className="wz-legend-row">
-            <span className="wz-line" style={{ background: palette.status[k.status] }} /> {k.label}
-            <span className="wz-legend-sub">&middot; {SPEED_RANGE[k.status]}</span>
+            <span className="wz-line" style={{ background: palette.status[k.status] }} />
+            <span className="wz-legend-text">{k.label}<small>{k.hint}</small></span>
           </div>
         ))}
         {/* Grey is a stretch nobody forecast, which the forecast map draws. */}
@@ -63,6 +65,15 @@ export default function MapLegend({ variant = "live" }: { variant?: "live" | "fo
           Speeds of queues on NLEX itself. An hour is coloured if the queue is expected at any time in that hour.
         </p>
         <h4 className="wz-legend-gap">On the map</h4>
+        {/* The two textures on the forecast road (17 Nov 2026, user asked what they were). */}
+        <div className="wz-legend-row">
+          <span className="wz-line wz-line-hatch" style={{ backgroundColor: palette.status.clear }} aria-hidden="true" />
+          <span className="wz-legend-text">Striped road<small>A forecast, not a measurement</small></span>
+        </div>
+        <div className="wz-legend-row">
+          <span className="wz-line wz-line-dash" style={{ color: palette.status.slow }} aria-hidden="true" />
+          <span className="wz-legend-text">Dashed end<small>How far a queue may reach; 1 in 4 run longer</small></span>
+        </div>
         <div className="wz-legend-row">
           <span className="mc-legend-pin" aria-hidden="true" /> NLEX exit
         </div>
@@ -82,8 +93,7 @@ export default function MapLegend({ variant = "live" }: { variant?: "live" | "fo
       {(["clear", "slow", "congested"] as const).map((k) => (
         <div key={k} className="wz-legend-row">
           <span className="wz-line" style={{ background: palette.status[k] }} />
-          {{ clear: "Clear", slow: "Slow", congested: "Congested" }[k]}
-          <span className="wz-legend-sub">&middot; {SPEED_RANGE[k]}</span>
+          <span className="wz-legend-text">{{ clear: "Clear", slow: "Slow", congested: "Congested" }[k]}<small>{SPEED_RANGE[k]}</small></span>
         </div>
       ))}
 
@@ -98,14 +108,28 @@ export default function MapLegend({ variant = "live" }: { variant?: "live" | "fo
         );
       })}
 
-      {/* Live rain: the cyan wash and falling drops TrafficMapPanel draws over
-          the stretch around each exit where rain is falling now, in the same
-          colour the map paints it. */}
+      {/* Live rain: the wash and the little rain clouds TrafficMapPanel draws beside the stretch around each
+          exit where rain is falling now, drawn here with the same shapes and colours (14 Nov 2026). */}
       <h4 className="wz-legend-gap">Weather</h4>
-      <div className="wz-legend-row">
-        <span className="wz-rain-swatch" style={{ background: palette.rain }} aria-hidden="true" />
-        Rain falling now (darker = heavier)
-      </div>
+      {([["moderate", false, "Rain now (greyer cloud = heavier)"], ["intense", true, "Thunderstorm"]] as const).map(
+        ([level, thunder, label]) => (
+          <div className="wz-legend-row" key={label}>
+            <span className={`lm-cloud wz-cloud-swatch is-${level}${thunder ? " is-thunder" : ""}${isDark ? " is-dark" : ""}`} aria-hidden="true">
+              <svg viewBox="0 0 64 52" width="26" height="21">
+                <path className="lm-cloud-shape" d="M14 36 A10 10 0 0 1 13.4 16 A13 13 0 0 1 37.9 9.6 A11 11 0 0 1 55 18.5 A9 9 0 0 1 54 36 Z" />
+                <circle className="lm-cloud-eye" cx="28" cy="25.5" r="2.2" />
+                <circle className="lm-cloud-eye" cx="40" cy="25.5" r="2.2" />
+                {thunder ? (
+                  <path d="M33 37 L27 46 h4.5 l-2 6 L38 43 h-4.5 L36 37 Z" fill="#ffd43b" stroke="#e8590c" strokeWidth="1.4" strokeLinejoin="round" />
+                ) : (
+                  [22, 34, 46].map((x) => <ellipse key={x} cx={x} cy={44} rx="2.6" ry="3.4" fill="var(--cd)" />)
+                )}
+              </svg>
+            </span>
+            {label}
+          </div>
+        ),
+      )}
     </div>
   );
 }

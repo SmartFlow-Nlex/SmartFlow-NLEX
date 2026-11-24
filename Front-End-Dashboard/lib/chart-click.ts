@@ -26,6 +26,7 @@ type MinimalChart = {
   };
   containPixel: (finder: Record<string, unknown>, pixel: number[]) => boolean;
   convertFromPixel: (finder: Record<string, unknown>, pixel: number[]) => number | number[];
+  getOption?: () => { yAxis?: { type?: string }[] | { type?: string } };
 };
 
 type ZrEvent = { offsetX: number; offsetY: number };
@@ -80,8 +81,11 @@ export function attachCategoryClick(
       }
       if (converted == null) return;
 
-      // On a category axis this is [categoryIndex, value].
-      const raw = Array.isArray(converted) ? converted[0] : converted;
+      // [x, y] in data terms. The category is x on a column chart and y on a sideways bar chart (19 Nov 2026: a
+      // click beside a horizontal bar used to read the bar's value as an index, and opened nothing).
+      const y = chart.getOption?.().yAxis;
+      const sideways = (Array.isArray(y) ? y[0] : y)?.type === "category";
+      const raw = Array.isArray(converted) ? converted[sideways ? 1 : 0] : converted;
       if (!Number.isFinite(raw)) return;
 
       let dataIndex = Math.round(raw);

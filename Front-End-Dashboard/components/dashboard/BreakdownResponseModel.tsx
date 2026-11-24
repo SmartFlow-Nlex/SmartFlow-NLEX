@@ -5,7 +5,8 @@ import type { EChartsOption } from "echarts";
 import { useThemeTokens } from "./useThemeTokens";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
-import NarrativePanel from "./NarrativePanel";
+import NarrativePanel, { GenerateReportButton } from "./NarrativePanel";
+import { CalendarDays, Car, Clock, Info, Layers } from "lucide-react";
 import StateNote from "../stage/StateNote";
 import { fmtNum, fmtTrainedAt, fmtDateRange } from "./incidentPredictive.shared";
 import { fetchJsonWithRetry } from "./prescriptiveTraffic.shared";
@@ -75,14 +76,6 @@ function manilaNow(): { dow: number; block: number; date: Date } {
   return { dow, block: Math.floor(hour / 3), date: new Date(`${get("year")}-${get("month")}-${get("day")}T00:00:00`) };
 }
 
-/** "Fri 24 Oct": the next calendar day (today included) that falls on dow, in Manila. */
-function nextDateFor(dow: number): string {
-  const now = manilaNow();
-  const d = new Date(now.date);
-  d.setDate(d.getDate() + ((dow - now.dow + 7) % 7));
-  return d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" });
-}
-
 // The same "this is the forward-looking one" green PredictiveIncidentChart's
 // Forecast line and Future-zone furniture use — kept identical rather than a
 // second hand-picked green, so "predicted" reads as one consistent color
@@ -103,6 +96,8 @@ export default function BreakdownResponseModel() {
   // Retry, slow note and Try again (17 Oct 2026, testers TR-12): the first read on a cold backend can be slow.
   const [attempt, setAttempt] = useState(0);
   const [slow, setSlow] = useState(false);
+  // The report opens from the foot row (reference layout, 20 Nov 2026).
+  const [reportOpen, setReportOpen] = useState(false);
   // Opens on the corridor's current day and time block: "what to expect if a breakdown is reported now".
   const [slot, setSlot] = useState<Slot>(() => {
     const n = manilaNow();
@@ -174,8 +169,12 @@ export default function BreakdownResponseModel() {
   const champion = data.championModel ?? meta?.champion ?? null;
   const holdoutFraction = (meta as { holdout_fraction?: unknown } | null)?.holdout_fraction;
   const holdoutShare = typeof holdoutFraction === "number" ? `${Math.round(holdoutFraction * 100)}%` : null;
+  const selEarly = meta?.selection;
+  const baselineMae = selEarly?.best_baseline ? meta?.baselines?.[selEarly.best_baseline]?.mae_minutes ?? null : null;
   const championMetrics =
-    champion === "XGBoost"
+    selEarly?.champion_is_baseline
+      ? { mae: baselineMae, n: meta?.xgboost?.n ?? meta?.cox_ph?.n ?? null, scoreLabel: "R²", scoreValue: null as string | null }
+      : champion === "XGBoost"
       ? {
           mae: meta?.xgboost?.mae_minutes ?? null,
           n: meta?.xgboost?.n ?? null,
@@ -206,6 +205,7 @@ export default function BreakdownResponseModel() {
     "Predicted response time of a dispatched unit (AAP, Patrol Vehicle, RAMFA, and others), from dispatch to arrival at the scene, by cause or by service, from what is known before dispatch, scored against the measured times on the most recent held-out dispatches. " +
     "A trained model (Cox PH or XGBoost) is used only if its error on those dispatches is lower than the best simple median lookup's; if both qualify and the better one's lead is within chance, the simpler one is used." +
     ruleOutcome +
+    " Built from breakdown_data's per-dispatch records; responses over 24 h are treated as data-entry noise and excluded, as in the Descriptive tab's figures." +
     " The descriptive counterpart to this card (Descriptive tab) shows the same two groupings from measured history alone, with no model behind it.";
 
   // A group the model left without a prediction in this slot (EMS has one such dispatch) has no bar to draw.
@@ -218,22 +218,29 @@ export default function BreakdownResponseModel() {
   const slotDay = shown.dow === "any" ? "any day" : `${DAY_NAMES[shown.dow]}s`;
   const slotTime = shown.block === "any" ? "any time" : blockLabel(shown.block);
   const slotPhrase = shown.dow === "any" && shown.block === "any" ? "any day and time" : `${slotDay}, ${slotTime}`;
-  const now = manilaNow();
-  const isNow = slot.dow === now.dow && slot.block === now.block;
-  const shownIsNow = shown.dow === now.dow && shown.block === now.block;
   const lead = rows.find((r) => r.group === (view === "service" ? "AAP" : rows[0]?.group)) ?? rows[0] ?? null;
 
+  // The axis ends on the next round 10 minutes past the longest bar, so the bars use the width (reference layout).
+  const maxPred = Math.max(0, ...displayRows.map((r) => r.predictedMedianMin ?? 0));
   const chartOption: EChartsOption = {
-    // No legend: a legend is for telling series apart, and a single-series
-    // bar chart has nothing to tell apart (same reasoning
-    // PredictiveCorridorChart's own shadeFor doc comment gives for dropping
-    // its legend).
-    grid: { left: 130, right: 92, top: 8, bottom: 32 },
-    xAxis: { type: "value", name: "expected median response (min)", nameLocation: "middle", nameGap: 26, nameTextStyle: { color: T.chartText, fontSize: 12 }, splitNumber: 3, axisLabel: { color: T.chartText, fontSize: 12, formatter: (v: number) => `${v} min` }, splitLine: { lineStyle: { color: T.chartSplit } } },
-    yAxis: { type: "category", data: displayRows.map((r) => r.group), axisLabel: { color: T.chartText, fontSize: 12 }, axisTick: { show: false } },
+    // No legend: a single-series bar chart has nothing to tell apart.
+    grid: { left: 120, right: 130, top: 6, bottom: 44 },
+    xAxis: {
+      type: "value", name: "Expected median response (min)", nameLocation: "middle", nameGap: 30,
+      nameTextStyle: { color: T.chartText, fontSize: 12 },
+      min: 0, max: Math.max(10, Math.ceil(maxPred / 10) * 10), interval: 10,
+      axisLabel: { color: T.chartText, fontSize: 12, formatter: (v: number) => `${v} min` },
+      splitLine: { lineStyle: { color: T.chartSplit } },
+    },
+    yAxis: {
+      type: "category", data: displayRows.map((r) => r.group),
+      axisLabel: { color: T.textPrimary, fontSize: 13 }, axisTick: { show: false },
+      axisLine: { lineStyle: { color: T.chartAxis } },
+    },
     tooltip: {
       trigger: "axis",
-      axisPointer: { type: "shadow" },
+      // No grey band behind the hovered row (19 Nov 2026): it was cropped at the plot's edges.
+      axisPointer: { type: "none" },
       backgroundColor: T.tooltipBg,
       borderColor: T.border,
       textStyle: { color: T.tooltipText },
@@ -242,8 +249,8 @@ export default function BreakdownResponseModel() {
         if (items.length === 0) return "";
         const r = displayRows[items[0].dataIndex];
         // The measured median of the same dispatches rides along, so the expectation can be checked.
-        return `<b>${r.group}</b> · ${slotPhrase}<br/>Expected median: <b>${r.predictedMedianMin ?? "—"} min</b><br/>` +
-          `<span style="color:var(--text-muted)">Measured on the same ${r.n.toLocaleString("en-US")} held-out dispatches: ${r.actualMedianMin ?? "—"} min</span>`;
+        return `<b>${r.group}</b> · ${slotPhrase}<br/>Expected median: <b>${r.predictedMedianMin == null ? "—" : fmtNum(r.predictedMedianMin, 1)} min</b><br/>` +
+          `<span style="color:var(--text-muted)">Measured on the same ${r.n.toLocaleString("en-US")} held-out dispatches: ${r.actualMedianMin == null ? "—" : fmtNum(r.actualMedianMin, 1)} min</span>`;
       },
     },
     series: [
@@ -251,41 +258,47 @@ export default function BreakdownResponseModel() {
         name: "Predicted",
         type: "bar",
         data: displayRows.map((r) => r.predictedMedianMin),
-        barMaxWidth: 16,
-        itemStyle: { color: predictedColor, borderRadius: [0, 4, 4, 0] },
+        barMaxWidth: 24,
+        itemStyle: { color: predictedColor, borderRadius: [0, 6, 6, 0] },
+        emphasis: { focus: "self" },
+        blur: { itemStyle: { opacity: 0.45 } },
         label: {
-          show: true, position: "right", color: T.textPrimary, fontSize: 12, fontWeight: 600,
+          show: true, position: "right", distance: 8,
           // A small group says how small: a median over a handful of dispatches is not a firm expectation.
           formatter: (p: unknown) => {
             const { value, dataIndex } = p as { value: number | null; dataIndex: number };
             const r = displayRows[dataIndex];
-            return `${value ?? "—"} min${r && r.n < 20 ? ` · ${r.n} disp.` : ""}`;
+            return `{v|${value == null ? "—" : fmtNum(value, 1)} min}${r && r.n < 20 ? `{n|(${r.n} disp.)}` : ""}`;
+          },
+          rich: {
+            v: { color: T.textPrimary, fontSize: 13, fontWeight: 700 },
+            n: { color: T.textMuted, fontSize: 12, padding: [0, 0, 0, 6] },
           },
         },
       },
     ],
   };
 
+  const groupNoun = view === "cause" ? "causes" : "services";
+  /* What the expectation is for: the model's predictions for held-out dispatches reported on that weekday and in that
+     time block. It is not a forecast for any calendar date, today's included, so the "next: <date>, now" example and
+     the Now button were taken out (20 Nov 2026, user: "why does it have a now option"); the held-out dispatches end
+     on the date below. The card still opens on the current weekday and block (Manila) as a starting choice. */
+  const slotSentence =
+    `What the model expects for a breakdown reported on ${slotPhrase}, any week (not a forecast for particular dates)` +
+    `: the median of its predictions for the ${(data.slot?.n ?? data.holdoutWindow?.n ?? 0).toLocaleString("en-US")} held-out dispatches reported then` +
+    (data.holdoutWindow ? ` in ${fmtDateRange(data.holdoutWindow.from, data.holdoutWindow.to)}` : "") +
+    (holdoutShare ? ` (the latest ${holdoutShare}, never trained on).` : " (never trained on).");
+
   return (
-    <article className="chart-card wide nct-card">
-      {/* Card, title, stats and control row in the Traffic tab's style (16 Oct 2026). */}
+    <article className="chart-card wide nct-card brk-card" style={{ ["--brk-predicted" as string]: predictedColor }}>
       <div className="nct-card-head-split">
+        {/* Title and its ⓘ only, as on Traffic (20 Nov 2026, user); what the expectation is read from moved in. */}
         <div className="nct-head-text">
           <h3 className="nct-title">
             Expected Breakdown Response Time
-            <InfoTooltip text={modelRuleText} />
+            <InfoTooltip text={`${slotSentence} ${modelRuleText}`} />
           </h3>
-          {/* What the expectation is for (17 Oct 2026, testers IN-12; day and time since 19 Oct): the day and
-              time chosen below, read off the model's predictions for held-out dispatches reported then. It is
-              not a fresh forecast for one calendar date, so the next such date is offered as an example only. */}
-          <p className="nct-sub">
-            What the model expects if a breakdown is reported on <b>{slotPhrase}</b>
-            {shown.dow !== "any" && <> (next: <b>{nextDateFor(shown.dow)}{shown.block !== "any" ? `, ${blockLabel(shown.block)}` : ""}</b>{shownIsNow ? ", now" : ""})</>}.
-            {" "}The median of its predictions for the{" "}
-            <b>{(data.slot?.n ?? data.holdoutWindow?.n ?? 0).toLocaleString("en-US")}</b> held-out dispatches reported then
-            {data.holdoutWindow ? <> in <b>{fmtDateRange(data.holdoutWindow.from, data.holdoutWindow.to)}</b></> : null}
-            {holdoutShare ? ` (the latest ${holdoutShare}, never trained on)` : " (never trained on)"}.
-          </p>
         </div>
         {champion && (
           <span
@@ -297,97 +310,101 @@ export default function BreakdownResponseModel() {
         )}
       </div>
 
-      {/* The answer first: how far off the model is on dispatches it never saw. */}
-      <div className="nct-stats nct-stats-auto">
-        <div className="nct-stat">
-          <span className="nct-stat-value">{championMetrics.mae != null ? `${fmtNum(championMetrics.mae, 1)} min` : "—"}</span>
-          <span className="nct-stat-label">Held-out MAE</span>
+      {/* How far off the model is on dispatches it never saw, and when it was trained. */}
+      <div className="brk-stats">
+        <div className="brk-stat">
+          <span className="brk-stat-icon" aria-hidden="true"><Clock size={22} strokeWidth={2} /></span>
+          <span>
+            <b>{championMetrics.mae != null ? `${fmtNum(championMetrics.mae, 1)} min` : "—"}</b>
+            <small>Held-out MAE</small>
+          </span>
         </div>
-        <div className="nct-stat">
-          <span className="nct-stat-value">{championMetrics.scoreValue ?? "—"}</span>
-          <span className="nct-stat-label">{championMetrics.scoreLabel}</span>
+        <div className="brk-stat">
+          <span className="brk-stat-icon" aria-hidden="true"><Layers size={22} strokeWidth={2} /></span>
+          <span>
+            <b>{championMetrics.scoreValue ?? "—"}</b>
+            <small>{championMetrics.scoreLabel}</small>
+          </span>
         </div>
-        <div className="nct-stat">
-          <span className="nct-stat-value">{fmtTrainedAt(data.trainedAt)}</span>
-          <span className="nct-stat-label">Trained</span>
+        <div className="brk-stat">
+          <span className="brk-stat-icon" aria-hidden="true"><CalendarDays size={22} strokeWidth={2} /></span>
+          <span>
+            <b>{fmtTrainedAt(data.trainedAt)}</b>
+            <small>Trained</small>
+          </span>
         </div>
-      </div>
-
-      {/* Day and time: what the expectation below is for. */}
-      <div className="inc-controls" role="group" aria-label="Day and time the expectation is for" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px" }}>
-        <span className="nct-stat-label">Day</span>
-        <CustomSelect
-          value={String(slot.dow)}
-          onChange={(v) => setSlot((s) => ({ ...s, dow: v === "any" ? "any" : Number(v) }))}
-          options={[{ label: "Any day", value: "any" }, ...DAY_ORDER.map((d) => ({ label: DAY_NAMES[d], value: String(d) }))]}
-        />
-        <span className="nct-stat-label">Time</span>
-        <CustomSelect
-          value={String(slot.block)}
-          onChange={(v) => setSlot((s) => ({ ...s, block: v === "any" ? "any" : Number(v) }))}
-          options={[{ label: "Any time", value: "any" }, ...Array.from({ length: 8 }, (_, b) => ({ label: blockLabel(b), value: String(b) }))]}
-        />
-        <button type="button" className={`nct-pill-btn${isNow ? " is-on" : ""}`} aria-pressed={isNow} onClick={() => setSlot({ dow: now.dow, block: now.block })}>
-          Now
-        </button>
-        {loading && <span className="inc-status-line" role="status">Updating…</span>}
-        {error && data && <span className="inc-status-line is-warn" role="alert">Couldn&apos;t load this day and time ({error}); showing the last answer.</span>}
       </div>
 
       {lead?.predictedMedianMin != null && (
-        <p className="inc-answer">
-          <span className="inc-answer-value">{lead.predictedMedianMin} min</span>
-          <span className="inc-answer-label">
-            expected {view === "service" ? <>for <b>{lead.group}</b> to respond</> : <>response to a breakdown of cause <b>{lead.group}</b></>} on {slotPhrase}
-            {lead.actualMedianMin != null && <> · measured {lead.actualMedianMin} min on the same dispatches</>}
+        <p className="brk-answer">
+          <span className="brk-answer-icon" aria-hidden="true"><Car size={24} strokeWidth={2} /></span>
+          <span className="brk-answer-value">{fmtNum(lead.predictedMedianMin, 1)} min</span>
+          <span className="brk-answer-text">
+            Expected {view === "service" ? <>for <b>{lead.group}</b> to respond</> : <>response to a breakdown of cause <b>{lead.group}</b></>} on {slotPhrase}
+            {lead.actualMedianMin != null && <>, measured {fmtNum(lead.actualMedianMin, 1)} min on the same dispatches</>}.
           </span>
         </p>
       )}
 
-      <div aria-busy={loading} className="inc-busy-body">
-        <div className="nct-subhead-row" style={{ marginBottom: 8 }}>
-          <h4 className="nct-subhead">Expected Median Response · {slotPhrase}</h4>
-          <div className="nct-pills" role="group" aria-label="Group by">
-            {(["cause", "service"] as const).map((v) => (
-              <button key={v} type="button" onClick={() => setView(v)} aria-pressed={view === v} className={`nct-pill-btn${view === v ? " is-on" : ""}`}>
-                {v === "cause" ? "By Cause" : "By Service"}
-              </button>
-            ))}
+      <div aria-busy={loading} className="inc-busy-body brk-body">
+        <div className="brk-section-head">
+          <h4 className="nct-subhead">
+            Expected Median Response <span className="brk-dot" aria-hidden="true">•</span> {slotPhrase}
+          </h4>
+          {/* Day and time the expectation is for, then the grouping. */}
+          <div className="brk-tools" role="group" aria-label="Day, time and grouping">
+            <CustomSelect
+              prefix="Day"
+              value={String(slot.dow)}
+              onChange={(v) => setSlot((s) => ({ ...s, dow: v === "any" ? "any" : Number(v) }))}
+              options={[{ label: "Any day", value: "any" }, ...DAY_ORDER.map((d) => ({ label: DAY_NAMES[d], value: String(d) }))]}
+            />
+            <CustomSelect
+              prefix="Time"
+              value={String(slot.block)}
+              onChange={(v) => setSlot((s) => ({ ...s, block: v === "any" ? "any" : Number(v) }))}
+              options={[{ label: "Any time", value: "any" }, ...Array.from({ length: 8 }, (_, b) => ({ label: blockLabel(b), value: String(b) }))]}
+            />
+            <div className="nct-pills" role="group" aria-label="Group by">
+              {(["cause", "service"] as const).map((v) => (
+                <button key={v} type="button" onClick={() => setView(v)} aria-pressed={view === v} className={`nct-pill-btn${view === v ? " is-on" : ""}`}>
+                  {v === "cause" ? "By Cause" : "By Service"}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
+        {loading && <p className="inc-status-line" role="status">Updating…</p>}
+        {error && data && <p className="inc-status-line is-warn" role="alert">Couldn&apos;t load this day and time ({error}); showing the last answer.</p>}
         {rows.length === 0 ? (
           <p className="nct-foot">{data.slot ? <>No {view === "cause" ? "cause" : "service"} group has a held-out dispatch with a prediction on {slotPhrase}. Try Any time or Any day.</> : <>No {view === "cause" ? "cause" : "service"} groups met the training script&apos;s evidence cutoff.</>}</p>
         ) : (
           <>
-            <DashboardChart option={chartOption} height={Math.max(180, displayRows.length * 34 + 20)} />
-            <p className="nct-foot" style={{ marginTop: 6 }}>
-              Top {rows.length} {view === "cause" ? "causes" : "services"} by held-out evidence.
+            <DashboardChart option={chartOption} height={Math.max(200, displayRows.length * 40 + 56)} />
+            <p className="brk-note">
+              <Info size={16} strokeWidth={2} aria-hidden="true" />
+              Top {rows.length} {groupNoun} by held-out evidence.
             </p>
-            <details className="nc-details">
-              <summary>How this is measured</summary>
-              <p style={{ margin: 0 }}>
-                Built from breakdown_data&apos;s per-dispatch records; responses over 24h are treated as data-entry noise and excluded,
-                same as the Descriptive tab&apos;s own figures.
-              </p>
-            </details>
           </>
         )}
       </div>
 
-      {/* Tied to the active view (By Cause / By Service), the same way
-          IncidentSeverityModels' own ClearanceNarrative regenerates per
-          toggled dimension -- switching tabs is a real change of subject,
-          not a cosmetic one, so the narrative should follow it rather than
-          describing whichever view happened to be open when it was first
-          generated. Its own endpoint (not ranking-narrative): that one's
-          prompt frames every row as a corridor LOCATION, which a breakdown
-          cause or service is not. */}
+      {rows.length > 0 && !reportOpen && (
+        <div className="brk-foot">
+          <GenerateReportButton onClick={() => setReportOpen(true)} />
+        </div>
+      )}
+
+      {/* Tied to the active view (By Cause / By Service): switching is a change of subject, so the narrative
+          follows it. Its own endpoint (not ranking-narrative), whose prompt frames rows as corridor locations. */}
       {rows.length > 0 && (
         <NarrativePanel
+          open={reportOpen}
+          onOpenChange={setReportOpen}
           metrics={rows.map((r) => ({ model: r.group }))}
           endpoint="/api/ai-insight/breakdown-response-narrative"
           subjectKey={JSON.stringify(["breakdown-response", view, shown, champion, rows.map((r) => [r.group, r.predictedMedianMin, r.n])])}
-          contextLine={`Expected median response time on ${slotPhrase} across ${rows.length} ${view === "cause" ? "causes" : "services"}${champion ? ` · ${champion}` : ""}.`}
+          contextLine={`Expected median response time on ${slotPhrase} across ${rows.length} ${groupNoun}${champion ? ` · ${champion}` : ""}.`}
           buildBody={() => ({
             dimension: view,
             championModel: champion,

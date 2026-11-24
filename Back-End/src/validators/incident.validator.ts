@@ -107,6 +107,10 @@ const IncidentModelMetricSchema = z.object({
   WMAPE: z.number().nullable(),
   MASE: z.number().nullable(),
   R2: z.number().nullable(),
+  // Secondary measures on the same scored days, as on the Traffic table (20 Nov 2026).
+  MAPE: z.number().nullable().optional(),
+  sMAPE: z.number().nullable().optional(),
+  RMSSE: z.number().nullable().optional(),
   Adjusted_R2: z.number().nullable(),
   Train_R2: z.number().nullable(),
   Gap: z.number().nullable(),

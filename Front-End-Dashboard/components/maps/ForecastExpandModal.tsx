@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronRight, RefreshCw, X } from "lucide-react";
+import Link from "next/link";
+import { ArrowUpRight, ChevronRight, LineChart, RefreshCw, X } from "lucide-react";
 import TrafficMapPanel from "./TrafficMapPanel";
 import MapLegend from "./MapLegend";
 import ForecastHorizonPicker, { clockFor, dayTimeFor, hoursFromNow, type HorizonRangeKey } from "./ForecastHorizonPicker";
@@ -140,6 +141,15 @@ export default function ForecastExpandModal({
               maxHorizon={maxHorizon}
               compact
             />
+            {/* Shortcut to the same forecast as a chart (16 Nov 2026, user request): Traffic > Predictive, the
+                Predictive Congestion State Map. The Traffic page reads ?tab= and the #id and scrolls to the card. */}
+            <Link
+              href="/dashboard/traffic?tab=predictive#congestion-state-map"
+              className="wz-btn fc-jump"
+              title="Open the Predictive Congestion State Map (Traffic › Predictive)"
+            >
+              <LineChart size={14} aria-hidden="true" /> Congestion chart <ArrowUpRight size={14} aria-hidden="true" />
+            </Link>
             <button type="button" className="wz-btn wz-close" onClick={onClose} aria-label="Close">
               <X size={16} />
             </button>

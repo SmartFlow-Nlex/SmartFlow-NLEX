@@ -6,7 +6,7 @@ import StateNote from "../stage/StateNote";
 import { Empty, ForecastAge, SourceBadge } from "./prescriptiveShell";
 import { fetchJsonWithRetry } from "./prescriptiveTraffic.shared";
 import { Term } from "./emissionsTerms";
-import { Clock, Flag, MapPin } from "lucide-react";
+import { CalendarRange, ChevronRight, Clock, Flag, History, MapPin, PieChart, Receipt, Timer, Truck } from "lucide-react";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -328,103 +328,122 @@ export default function PrescriptiveEmissionsPanel({
     const longHit = /^(\d+)% of this saving comes from ([\d,]+) incident/.exec(s.focus ?? "");
     return (
       <section className="chart-card nc-em-span nc-em-hero nc-em-rx-busy" aria-label="Recommendation" {...busy}>
-        <div className="nc-em-acard-top">
-          <span className="nc-em-action-tag">Recommendation · {shownRange}</span>
-          <SourceBadge kind="history" detail="A look back over the Range's incidents, bounded by blockage times comparable ones achieved" />
-          {s.projection && <SourceBadge kind="forecast" detail="Carried over the incident forecast's validated days" />}
-          {updatingBadge}
-          <InfoTooltip text={`${s.lever}. ${s.floorNote ?? ""}`} />
-        </div>
-        <h3 className="nc-em-hero-title">{ACTION_HEAD[s.key] ?? s.label}</h3>
-
-        <div className="nc-em-hero-nums" role="group" aria-label="CO₂ avoided">
-          <div className="nc-em-hero-num is-lead">
-            <span className="nc-em-hero-num-label">Looking back</span>
-            <b>{fmtT(s.reductionTonnes)} <small>tonnes <Term t="CO₂" /></small></b>
-            <span>
-              avoided {period}
-              {s.range && <>, likely {fmtT(s.range.lowTonnes)}–{fmtT(s.range.highTonnes)}</>}
+        {/* Laid out like the Incident prescriptive cards (21 Nov 2026): the action as a banner, its three numbers as
+            an icon strip, then where, when and what to start with as panels. Every figure is the service's own. */}
+        <div className="px-hero em-rx-hero">
+          <div className="px-hero-head">
+            <span className="px-icon is-warm" aria-hidden="true"><Timer size={22} strokeWidth={2} /></span>
+            <div className="em-rx-hero-text">
+              <small>Recommendation · {shownRange}</small>
+              <h4>{ACTION_HEAD[s.key] ?? s.label}</h4>
+            </div>
+            <span className="em-rx-badges">
+              <SourceBadge kind="history" detail="A look back over the Range's incidents, bounded by blockage times comparable ones achieved" />
+              {s.projection && <SourceBadge kind="forecast" detail="Carried over the incident forecast's validated days" />}
+              {updatingBadge}
+              <InfoTooltip text={`${s.lever}. ${s.floorNote ?? ""}`} />
             </span>
           </div>
-          <div className="nc-em-hero-num">
-            <span className="nc-em-hero-num-label">Ahead</span>
-            {s.projection ? (
-              <>
-                <b>~{fmtT(s.projection.tonnes)} <small>tonnes</small></b>
-                {/* The days counted, not first to last (17 Nov 2026: "25 May – 22 Aug" read as 90 days while the 74
-                    the forecast's accuracy study passes were counted, leaving out 8–23 Jun). */}
-                <span title={s.projection.basis}>
-                  {(s.projection.spans?.length ? s.projection.spans : [{ from: s.projection.from, to: s.projection.to }])
-                    .map((p) => dayRange(p.from, p.to))
-                    .join(" and ")}{" "}
-                  ({s.projection.days} days) · {s.projection.forecastIncidents.toLocaleString()} incidents forecast
-                  {gapsOf(s.projection.spans ?? []).length > 0 && (
-                    <> · {gapsOf(s.projection.spans ?? []).join(", ")} left out (the incident forecast fails its accuracy test there)</>
-                  )}
-                </span>
-              </>
-            ) : (
-              <>
-                <b className="is-none">—</b>
-                <span>{s.projectionNote ?? "No forward figure"}</span>
-              </>
-            )}
+        </div>
+
+        <div className="px-sum em-rx-sum" role="group" aria-label="CO₂ avoided">
+          <div className="px-sum-item">
+            <span className="px-icon" aria-hidden="true"><History size={20} strokeWidth={2} /></span>
+            <span>
+              <small>Looking back</small>
+              <b>{fmtT(s.reductionTonnes)} t <Term t="CO₂" /></b>
+              <em>avoided {period}{s.range && <>, likely {fmtT(s.range.lowTonnes)}–{fmtT(s.range.highTonnes)}</>}</em>
+            </span>
           </div>
-          <div className="nc-em-hero-num">
-            <span className="nc-em-hero-num-label">Share of corridor CO₂</span>
-            <b>{s.reductionPct.toFixed(2)}<small>%</small></b>
-            <span>of {fmtT(data.basis.actualCo2Tonnes)} tonnes emitted</span>
+          <div className="px-sum-item">
+            <span className="px-icon" aria-hidden="true"><CalendarRange size={20} strokeWidth={2} /></span>
+            <span>
+              <small>Ahead</small>
+              {s.projection ? (
+                <>
+                  <b>~{fmtT(s.projection.tonnes)} t</b>
+                  {/* The days counted, not first to last (17 Nov 2026); the spans and the left-out stretch are in the hover. */}
+                  <em
+                    title={`${(s.projection.spans?.length ? s.projection.spans : [{ from: s.projection.from, to: s.projection.to }])
+                      .map((x) => dayRange(x.from, x.to))
+                      .join(" and ")}${gapsOf(s.projection.spans ?? []).length > 0 ? ` · ${gapsOf(s.projection.spans ?? []).join(", ")} left out (the incident forecast fails its accuracy test there)` : ""}. ${s.projection.basis ?? ""}`}
+                  >
+                    over {s.projection.days} forecast days · {s.projection.forecastIncidents.toLocaleString()} incidents
+                  </em>
+                </>
+              ) : (
+                <>
+                  <b className="is-none">—</b>
+                  <em>{s.projectionNote ?? "No forward figure"}</em>
+                </>
+              )}
+            </span>
+          </div>
+          <div className="px-sum-item">
+            <span className="px-icon" aria-hidden="true"><PieChart size={20} strokeWidth={2} /></span>
+            <span>
+              <small>Share of corridor CO₂</small>
+              <b>{s.reductionPct.toFixed(2)}%</b>
+              <em>of {fmtT(data.basis.actualCo2Tonnes)} t emitted</em>
+            </span>
           </div>
         </div>
 
-        <div className="nc-em-hero-grid">
+        <div className="em-rx-grid">
           {places.length > 0 && (
-            <div className="nc-em-hero-block">
-              <span className="nc-em-hero-label"><MapPin size={14} strokeWidth={2} aria-hidden="true" /> Where</span>
-              <ul className="nc-em-rcard-exits nc-em-hero-places">
+            <section className="px-panel">
+              <div className="px-panel-head">
+                <span className="px-chip" aria-hidden="true"><MapPin size={17} strokeWidth={2.2} /></span>
+                <h4>Where</h4>
+                <span className="px-legend">share of the saving</span>
+              </div>
+              <ul className="em-rx-bars">
                 {places.map((p) => (
                   <li key={p.full} title={p.full}>
                     <span>{p.name}</span>
                     {p.pct != null && (
                       <>
-                        <span className="nc-em-rcard-bar" aria-hidden="true">
-                          <i style={{ width: `${Math.max(3, Math.min(100, p.pct))}%` }} />
-                        </span>
+                        <span className="px-cov-bar" aria-hidden="true"><i style={{ width: `${Math.max(3, Math.min(100, p.pct))}%` }} /></span>
                         <b>{p.pct}%</b>
                       </>
                     )}
                   </li>
                 ))}
               </ul>
-              <span className="nc-em-hero-foot">Share of the saving</span>
-            </div>
+            </section>
           )}
           {windows.length > 0 && (
-            <div className="nc-em-hero-block">
-              <span className="nc-em-hero-label"><Clock size={14} strokeWidth={2} aria-hidden="true" /> When</span>
-              <ul className="nc-em-hero-hours">
+            <section className="px-panel">
+              <div className="px-panel-head">
+                <span className="px-chip" aria-hidden="true"><Clock size={17} strokeWidth={2.2} /></span>
+                <h4>When</h4>
+              </div>
+              <ul className="em-rx-hours">
                 {windows.map((h) => <li key={h}>{h}</li>)}
               </ul>
-              {whenShare && <span className="nc-em-hero-foot">These hours hold {whenShare.replace(/ of the saving$/, "")} of the saving</span>}
-            </div>
+              {whenShare && <p className="px-note">These hours hold {whenShare.replace(/ of the saving$/, "")} of the saving.</p>}
+            </section>
           )}
           {s.focus && (
-            <div className="nc-em-hero-block">
-              <span className="nc-em-hero-label"><Flag size={14} strokeWidth={2} aria-hidden="true" /> Start with</span>
+            <section className="px-panel">
+              <div className="px-panel-head">
+                <span className="px-chip" aria-hidden="true"><Flag size={17} strokeWidth={2.2} /></span>
+                <h4>Start with</h4>
+              </div>
               {longHit ? (
-                <p className="nc-em-hero-start">
-                  <b>{longHit[2]}</b> blockages of an hour or more hold <b>{longHit[1]}%</b> of the saving
+                <p className="em-rx-start">
+                  <b>{longHit[2]}</b> blockages of an hour or more hold <b>{longHit[1]}%</b> of the saving.
                 </p>
               ) : (
-                <p className="nc-em-hero-start">{s.focus}</p>
+                <p className="em-rx-start">{s.focus}</p>
               )}
-            </div>
+            </section>
           )}
         </div>
         {/* The basis, folded under the action it supports (2 Nov 2026, user: "are these recommendations?"; they
             were their own card, which read as a finding on a tab meant for actions only). */}
-        <details className="nc-details nc-em-hero-how">
-          <summary>How it is measured</summary>
+        <details className="px-details">
+          <summary><ChevronRight size={15} strokeWidth={2.4} aria-hidden="true" />How it is measured</summary>
           <dl className="nc-em-rows nc-em-basis-rows">
             <div>
               <dt>Emitted</dt>
@@ -500,12 +519,16 @@ export default function PrescriptiveEmissionsPanel({
             {(() => {
               const h = data.classKm?.find((c) => c.cls === 3);
               const car = data.classKm?.find((c) => c.cls === 1);
-              if (!h || !car) return null;
+              // With an advisory card on screen the comparison sits inside it (21 Nov 2026); only on its own otherwise.
+              if (!h || !car || w?.action) return null;
               return (
-                <details className="nc-details nc-em-span nc-em-recs-why">
+                <details className="px-details nc-em-span em-rx-why">
                   <summary>
-                    <b>Why Class 3:</b> large trucks drive {h.vkmSharePct.toFixed(1)}% of the distance but emit{" "}
-                    {h.co2SharePct.toFixed(1)}% of the <Term t="CO₂" />, {(h.gPerKm / car.gPerKm).toFixed(1)}× a car per km
+                    <ChevronRight size={15} strokeWidth={2.4} aria-hidden="true" />
+                    <span>
+                      <b>Why Class 3?</b> Large trucks drive {h.vkmSharePct.toFixed(1)}% of the distance but emit{" "}
+                      {h.co2SharePct.toFixed(1)}% of the <Term t="CO₂" /> ({(h.gPerKm / car.gPerKm).toFixed(1)}× a car per km).
+                    </span>
                   </summary>
                   <div className="nc-em-table-wrap">
                     <table className="nc-em-table">
@@ -542,9 +565,11 @@ export default function PrescriptiveEmissionsPanel({
               </article>
             )}
             {w?.action && (
-              <article className="chart-card nc-em-rcard">
-                <div className="nc-em-acard-top">
-                  <span className="nc-em-action-tag">Class 3 window advisory</span>
+              <article className="chart-card nc-em-rcard em-rx-card">
+                <div className="px-panel-head">
+                  <span className="px-chip" aria-hidden="true"><Truck size={17} strokeWidth={2.2} /></span>
+                  <h4>Class 3 window advisory</h4>
+                  <span className="em-rx-badges">
                   <SourceBadge
                     kind={fromForecast ? "forecast" : "history"}
                     detail={
@@ -557,20 +582,58 @@ export default function PrescriptiveEmissionsPanel({
                   />
                   {stamp && <ForecastAge at={stamp.at} stale={stamp.stale} />}
                   <InfoTooltip text={`${w.basis ?? ""} Effect measured on the diagram's KPI, Class 3's share of vehicle-km in the window; what the advisory would change on the road cannot be measured with this data. ${w.capacityNote} No CO2 change is claimed, and truck restrictions are not in our data.`} />
+                  </span>
                 </div>
-                <h3 className="nc-em-rcard-title" title={w.action}>Advise Class 3 to avoid {w.peakHours}</h3>
+                <h3 className="em-rx-card-title" title={w.action}>Advise Class 3 to avoid {w.peakHours}</h3>
+                <div className="em-rx-facts">
+                  <div>
+                    <small>Class 3 share of the window</small>
+                    <b>{w.peakClass3SharePct.toFixed(1)}% → 0%</b>
+                    {w.allDayClass3SharePct != null && <em>{w.allDayClass3SharePct.toFixed(1)}% all day</em>}
+                  </div>
+                  <div title={w.capacityNote}>
+                    <small>Move to</small>
+                    <b>{w.receivingHours}</b>
+                    {!w.fitsOffPeak && <em>not all of it fits</em>}
+                  </div>
+                </div>
+                {/* Why Class 3, inside the card it explains (21 Nov 2026; it was its own all-caps row above). */}
+                {(() => {
+                  const h3 = data.classKm?.find((c) => c.cls === 3);
+                  const car = data.classKm?.find((c) => c.cls === 1);
+                  if (!h3 || !car || !data.classKm) return null;
+                  return (
+                    <div className="em-rx-why-in">
+                      <p>
+                        <b>Why Class 3?</b> Large trucks drive {h3.vkmSharePct.toFixed(1)}% of the distance but emit{" "}
+                        {h3.co2SharePct.toFixed(1)}% of the <Term t="CO₂" />, {(h3.gPerKm / car.gPerKm).toFixed(1)}× a car per km.
+                      </p>
+                      <div className="px-table-wrap">
+                        <table className="px-table">
+                          <thead>
+                            <tr>
+                              <th>Class</th>
+                              <th style={{ textAlign: "right" }}>g CO₂ per km</th>
+                              <th style={{ textAlign: "right" }}>Share of distance</th>
+                              <th style={{ textAlign: "right" }}>Share of CO₂</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {data.classKm.map((c) => (
+                              <tr key={c.cls} className={c.cls === 3 ? "is-first" : undefined}>
+                                <td className="px-name">{c.label}</td>
+                                <td className="px-tab" style={{ textAlign: "right" }}>{c.gPerKm.toFixed(1)}</td>
+                                <td className="px-tab" style={{ textAlign: "right" }}>{c.vkmSharePct.toFixed(1)}%</td>
+                                <td className="px-tab px-strong" style={{ textAlign: "right" }}>{c.co2SharePct.toFixed(1)}%</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
                 <dl className="nc-em-rows">
-                  <div>
-                    <dt>Effect</dt>
-                    <dd>
-                      Class 3 share of the window <b>{w.peakClass3SharePct.toFixed(1)}% → 0%</b>
-                      {w.allDayClass3SharePct != null && <> ({w.allDayClass3SharePct.toFixed(1)}% all day)</>}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Move to</dt>
-                    <dd title={w.capacityNote}>{w.receivingHours}{w.fitsOffPeak ? "" : " (not all of it fits)"}</dd>
-                  </div>
                   {/* Worded by the service for the window's time of day (17 Nov 2026: a midnight window said
                       "check daytime truck restrictions"). */}
                   {w.check && (
@@ -589,42 +652,50 @@ export default function PrescriptiveEmissionsPanel({
               </article>
             )}
             {tl?.action && (
-              <article className="chart-card nc-em-rcard">
-                <div className="nc-em-acard-top">
-                  <span className="nc-em-action-tag">Tolling recommendation</span>
+              <article className="chart-card nc-em-rcard em-rx-card">
+                <div className="px-panel-head">
+                  <span className="px-chip" aria-hidden="true"><Receipt size={17} strokeWidth={2.2} /></span>
+                  <h4>Tolling recommendation</h4>
+                  <span className="em-rx-badges">
                   <SourceBadge
                     kind={fromForecast ? "forecast" : "history"}
                     detail={fromForecast ? "Uses the Class 3 window, which comes from the congestion forecast" : "Uses the Range's busiest hours"}
                   />
                   {stamp && <ForecastAge at={stamp.at} stale={stamp.stale} />}
                   <InfoTooltip text={tl.note} />
+                  </span>
                 </div>
-                <h3 className="nc-em-rcard-title" title={tl.action}>Charge any Class 3 surcharge at these {tl.exits.length} exits, {tl.hours}</h3>
-                <dl className="nc-em-rows">
-                  <div>
-                    <dt>Where</dt>
-                    <dd>
-                      <ul className="nc-em-rcard-exits">
-                        {tl.exits.map((e) => (
-                          <li key={e.name}>
-                            <span>{e.name}</span>
-                            <span className="nc-em-rcard-bar" aria-hidden="true">
-                              <i style={{ width: `${Math.max(3, Math.min(100, e.sharePct))}%` }} />
+                <h3 className="em-rx-card-title" title={tl.action}>Charge any Class 3 surcharge at these {tl.exits.length} exits, {tl.hours}</h3>
+                <div className="px-table-wrap">
+                  <table className="px-table">
+                    <thead>
+                      <tr>
+                        <th className="is-num">#</th>
+                        <th>Exit</th>
+                        <th>Share of Class 3 CO₂ in the window</th>
+                        <th style={{ textAlign: "right" }}>Tonnes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tl.exits.map((e, i) => (
+                        <tr key={e.name}>
+                          <td className="is-num"><span className={`px-order${i === 0 ? " is-top" : ""}`}>{i + 1}</span></td>
+                          <td className="px-name">{e.name}</td>
+                          <td>
+                            <span className="px-cov">
+                              <span className="px-cov-bar" aria-hidden="true"><i style={{ width: `${Math.max(3, Math.min(100, e.sharePct))}%` }} /></span>
+                              <b>{e.sharePct.toFixed(1)}%</b>
                             </span>
-                            <b>{e.sharePct.toFixed(1)}%</b>
-                            <span className="is-muted">{fmtT(e.class3Tonnes)} tonnes</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Effect</dt>
-                    <dd title={`${fmtT(tl.atStakeTonnes)} tonnes of Class 3 CO2 in the window over the Range, at all exits`}>
-                      Together <b>{(tl.coveredPct ?? 0).toFixed(0)}%</b> of Class 3&apos;s CO₂ in those hours
-                    </dd>
-                  </div>
-                </dl>
+                          </td>
+                          <td className="px-tab" style={{ textAlign: "right" }}>{fmtT(e.class3Tonnes)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="px-note" title={`${fmtT(tl.atStakeTonnes)} tonnes of Class 3 CO2 in the window over the Range, at all exits`}>
+                  Together these exits carry <b>{(tl.coveredPct ?? 0).toFixed(0)}%</b> of Class 3&apos;s CO₂ in those hours.
+                </p>
               </article>
             )}
           </section>

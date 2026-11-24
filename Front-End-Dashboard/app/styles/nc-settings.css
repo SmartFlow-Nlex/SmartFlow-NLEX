@@ -106,3 +106,6 @@
 }
 .st-cooldown b { font-size: 15px; font-weight: 600; color: var(--text-primary); }
 .st-cooldown span { font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
+
+/* Two independent stacks (21 Nov 2026), so a tall card never leaves a gap beside a short one. */
+.st-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }

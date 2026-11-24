@@ -52,7 +52,7 @@ type ModelMeta = {
 // call failed. "—" makes a missing fetch visibly missing instead of confidently wrong.
 const MODELS: ModelMeta[] = [
   { key: "LSTM", label: "LSTM", note: "Loading…", accepted: false, color: "#2a78d6", rmse: "—", mae: "—", wmape: "—", r2: "—" },
-  { key: "Prophet", label: "Prophet + holidays", note: "Loading…", accepted: false, color: "#c2185b", rmse: "—", mae: "—", wmape: "—", r2: "—" },
+  { key: "Prophet", label: "Prophet", note: "Loading…", accepted: false, color: "#c2185b", rmse: "—", mae: "—", wmape: "—", r2: "—" },
   { key: "HoltWinters", label: "Holt-Winters", note: "Loading…", accepted: false, color: "#0b8db0", rmse: "—", mae: "—", wmape: "—", r2: "—" },
   { key: "SARIMAX", label: "SARIMAX", note: "Loading…", accepted: false, color: "#7a5fe0", rmse: "—", mae: "—", wmape: "—", r2: "—" },
   { key: "HoltsLinear", label: "Holts Linear", note: "Loading…", accepted: false, color: "#e87ba4", rmse: "—", mae: "—", wmape: "—", r2: "—" },
@@ -290,10 +290,10 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const P = useTrafficPalette();
   const modelColor = (k: string) => (T.isDark ? MODEL_DARK : MODEL_LIGHT)[k] ?? "#2a78d6";
   const ZONE = zoneTints(T.isDark);
-  const CHART_H = 450; // the chart's own height, unchanged
 
   const [pastDays, setPastDays] = useState<number>(ALL_PAST);
-  const [futureDays, setFutureDays] = useState<number>(14);
+  // Opens on one month ahead (20 Nov 2026, user request): two weeks left the Future band too thin to read.
+  const [futureDays, setFutureDays] = useState<number>(28);
 
   // Drill-down: which day is expanded to its 24-hour breakdown
   const [drillDate, setDrillDate] = useState<string | null>(null);
@@ -719,8 +719,10 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
 
   const weeklyPeriods: { weekNum: number; start: string; end: string }[] = [];
   let weekNum = 1;
-  for (let i = 0; i < dates.length; i += 7) {
-    const endIdx = Math.min(i + 6, dates.length - 1);
+  // In Weekly view each point already is a week (20 Nov 2026): stepping 7 points put W2 on the eighth week.
+  const weekStep = granularity === "Weekly" ? 1 : 7;
+  for (let i = 0; i < dates.length; i += weekStep) {
+    const endIdx = Math.min(i + weekStep - 1, dates.length - 1);
     if (dates[i] && dates[endIdx]) {
       weeklyPeriods.push({ weekNum, start: dates[i], end: dates[endIdx] });
       weekNum++;
@@ -969,7 +971,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
     },
     graphic: isAggregated
       ? [{
-          type: "text", right: 18, top: 8, silent: true,
+          type: "text", left: 62, top: 6, silent: true, // left, clear of the Future label (20 Nov 2026)
           style: {
             text: `every point = ${meanLabel}`,
             fontSize: 11, fontWeight: 600, fill: T.textMuted,
@@ -1519,12 +1521,6 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
     : "Measured only for the champion, in a separate test that forecast up to 90 days ahead.";
   const primaryMeta = metricsMeta[primary];
   const futureAvailable = chartData.dates.length - chartData.futureStart;
-  /* Which test each Validation Evidence number is from (17 Nov 2026). With Weather on, a weather model's scores are
-     its weather version's, fed the usual weather for each date; the forecast drawn ahead is its weather-free version
-     whenever the two agree there, so the card names that version's score too. */
-  const TWIN_OF: Partial<Record<ModelType, string>> = { Prophet: "Prophet_nw", SARIMAX: "SARIMAX_nw", LSTM: "LSTM_nw" };
-  const twinRow = TWIN_OF[primary] ? rawMetrics.find((m) => m.model_name === TWIN_OF[primary]) : undefined;
-  const aheadIsWeatherFree = showWeather && twinRow?.wmape != null && sameAhead(primary);
 
   /* The model trust strip, read off the same payload as the table it opens:
      which model the API names champion, the window it was scored on, its
@@ -1534,8 +1530,6 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   const champKey = apiChampion ? BY_DB_KEY[apiChampion.toLowerCase().replace(/[^a-z]/g, "")] ?? null : null;
   const champLabel = champKey ? metricsMeta[champKey].label : apiChampion;
   const scoredDays = chartData.futureStart - chartData.holdoutStart;
-  const testFrom = chartData.isoDates[chartData.holdoutStart] ?? null;
-  const testTo = chartData.isoDates[chartData.futureStart - 1] ?? null;
   const maseNum = primaryMeta.mase && primaryMeta.mase !== "—" ? parseFloat(primaryMeta.mase) : null;
 
   /* Layout, top to bottom: the title -> the answer (the next N days) -> the
@@ -1626,8 +1620,10 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
           </div>
 
           {/* The evidence: history solid, forecast dashed, rainfall in its own band beneath. */}
-          <div style={{ height: `${CHART_H}px`, width: "100%", cursor: isAggregated ? "default" : "pointer" }}>
-            <DashboardChart option={dailyOption} height={CHART_H} onEvents={{ click: onChartClick as (p: never) => void }} />
+          {/* Fills the height the summary column gives the card, CHART_H at least (20 Nov 2026): at a fixed height the
+              graph column ended short of the summary and left a blank band under the key. */}
+          <div className="fc2-chart" style={{ cursor: isAggregated ? "default" : "pointer" }}>
+            <DashboardChart option={dailyOption} height="100%" onEvents={{ click: onChartClick as (p: never) => void }} />
           </div>
 
           <div className="fc2-foot">
@@ -1657,7 +1653,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
           </div>
           {futAvg != null && (
             <div className="fc2-answer">
-              <span className="fc2-answer-label">Forecast daily average · next {Math.min(futureDays, futureAvailable)} days</span>
+              <span className="fc2-answer-label">Forecast daily average · {Math.min(futureDays, futureAvailable)}-day window</span>
               <span className="fc2-answer-value">{fmtVeh(futAvg)}</span>
               <span className="fc2-answer-unit">vehicles/day{futPeak && <> · peak {isAggregated ? bucketNoun : "day"} {dates[futPeak.idx]}</>}</span>
             </div>
@@ -1685,16 +1681,6 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               <div><dt>Scored days</dt><dd>{scoredDays.toLocaleString()}</dd></div>
               {champLabel && <div><dt>Champion</dt><dd>{champLabel}</dd></div>}
             </dl>
-            {testFrom && testTo && (
-              <p className="fc2-period">
-                Period: {fmtDay(testFrom)} – {fmtDay(testTo)}, each day forecast 1 to {VALIDATED_HORIZON} days ahead.
-              </p>
-            )}
-            {aheadIsWeatherFree && twinRow?.wmape != null && (
-              <p className="fc2-period">
-                These scores are the weather version&apos;s, given the usual weather for each date. The forecast ahead is the version without weather, which scored {twinRow.wmape.toFixed(2)}% on the same days.
-              </p>
-            )}
             <button type="button" className="fc2-ev-btn" onClick={() => setEvidenceOpen(true)}>View validation details</button>
           </div>
 
@@ -1760,7 +1746,7 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
               <div className="nct-ev-section">
                 <div className="nct-ev-section-head">
                   <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.2} />} tint="var(--page-accent)" title={`48-hour model: chosen on ${valYear}${testYear ? `, tested on ${testYear}` : ""}`}>
-                    <InfoTooltip text={`The table is the validation year, ${valSpan}: every model forecast each hour of it, fitted only on earlier days, and the model in use was chosen on these scores. ${testSpan ? `It was then tested once on ${testSpan}, fitted only on days before it; that test played no part in any choice (the line under the table). ` : ""}${bt.servedDataTo ? `The forecast in use is the same model refitted on all data to ${fmtDay(bt.servedDataTo)}. ` : ""}Scored per plaza, direction and vehicle class, hour by hour; the best in each column is bold. Show secondary metrics adds the corridor total, hours ahead, holidays and heavy rain.`} />
+                    <InfoTooltip text={`The table is the validation year, ${valSpan}: every model forecast each hour of it, fitted only on earlier days, and the model in use was chosen on these scores. ${testSpan ? `It was then tested once on ${testSpan}, fitted only on days before it; that test played no part in any choice${bt.seriesWape != null ? `, and ${served?.label ?? next48!.run.modelLabel} missed by ${bt.seriesWape.toFixed(2)}% per plaza-hour there` : ""}. ` : ""}${bt.servedDataTo ? `The forecast in use is the same model refitted on all data to ${fmtDay(bt.servedDataTo)}. ` : ""}Scored per plaza, direction and vehicle class, hour by hour; the best in each column is bold. Show secondary metrics adds the corridor total, hours ahead, holidays and heavy rain.`} />
                   </EvidenceHeading>
                   <button type="button" className="nct-link-btn" onClick={() => setShowAll48(!showAll48)}>
                     {showAll48 ? "Hide secondary metrics" : "Show secondary metrics"}
@@ -1790,16 +1776,6 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
                     </tbody>
                   </table>
                 </div>
-                {testSpan && bt.seriesWape != null && (
-                  <p className="nct-dim" style={{ margin: "6px 0 0" }}>
-                    Untouched test, {testSpan}: {served?.label ?? next48!.run.modelLabel} missed by {bt.seriesWape.toFixed(2)}% per plaza-hour
-                    {served?.wape != null ? ` (${served.wape.toFixed(2)}% in the table above)` : ""}.
-                    {bt.testScore != null && ` Averaged over hours 1-6, 7-24 and 25-48 ahead: ${bt.testScore.toFixed(2)}%`}
-                    {bt.testScore != null && bt.currentTestScore != null && bt.naiveTestScore != null
-                      && `, against ${bt.currentTestScore.toFixed(2)}% for the daily total spread over a typical day and ${bt.naiveTestScore.toFixed(2)}% for repeating the same hour last week`}
-                    {bt.testScore != null && "."}
-                  </p>
-                )}
               </div>
             );
           })()}

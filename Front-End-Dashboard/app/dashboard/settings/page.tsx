@@ -215,136 +215,133 @@ export default function SettingsPage() {
 
   return (
     <section className="ds-content st-page">
-      <PageHeader icon={SettingsIcon} title="Settings" subtitle="Your account, your security, and this device" />
+      <PageHeader icon={SettingsIcon} title="Settings" subtitle="Your account, security and this device" />
 
       <div className="st-grid">
-        <Section icon={User} title="Profile" hint="How you appear in the dashboard and the audit log.">
-          <form className="st-form" onSubmit={saveName}>
-            <label className="st-field">
-              <span className="st-label">Display name</span>
-              <input className="ms-input" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} placeholder="Your name" autoComplete="name" />
-            </label>
-            <div className="st-readonly">
-              <div><span className="st-label">Email</span><b>{user?.email ?? "—"}</b></div>
-              <div><span className="st-label">Role</span><b>{ROLE_NAME[String(user?.user_metadata?.role)] ?? "—"}</b></div>
-            </div>
-            <p className="st-note">Your email is how you sign in, and roles are set by an administrator.</p>
-            <div className="st-actions">
-              <button type="submit" className="btn-primary" disabled={!nameChanged || savingName}>{savingName ? "Saving…" : "Save name"}</button>
-            </div>
-          </form>
-        </Section>
-
-        <Section icon={Clock} title="Sign out after inactivity" hint="For your security, the dashboard signs you out when nobody has used it for a while.">
-          <div className="st-choices" role="radiogroup" aria-label="Minutes without activity before signing out">
-            {IDLE_CHOICES.map((m) => (
-              <button
-                key={m}
-                type="button"
-                role="radio"
-                aria-checked={idle === m}
-                className={`st-choice${idle === m ? " is-on" : ""}`}
-                disabled={savingIdle != null}
-                onClick={() => void saveIdle(m)}
-              >
-                <b>{m}</b> min{m === 15 ? <span className="st-default">default</span> : null}
-              </button>
-            ))}
-          </div>
-          <p className="st-note">
-            You get a minute&rsquo;s warning first. Activity in any open dashboard tab counts. This setting follows your
-            account to every device.
-          </p>
-        </Section>
-
-        <Section icon={KeyRound} title="Password" hint={`At least 8 characters. After a change, the next one is possible ${PASSWORD_COOLDOWN_DAYS} days later.`}>
-          {cooldownUntil ? (
-            <div className="st-cooldown" role="status">
-              <b>You can change your password again on {fmtDay(cooldownUntil)}.</b>
-              <span>
-                It was last changed on {lastChanged ? fmtDay(new Date(lastChanged)) : "a recent date"}. For your security, a password can be changed
-                once every {PASSWORD_COOLDOWN_DAYS} days, by reset too. If you forget it before then, contact your administrator.
-              </span>
-            </div>
-          ) : (
-          <form className="st-form" onSubmit={savePassword} noValidate>
-            <label className="st-field">
-              <span className="st-label">New password</span>
-              <input className="ms-input" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="At least 8 characters" />
-            </label>
-            <label className="st-field">
-              <span className="st-label">Confirm new password</span>
-              <input className="ms-input" type="password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="Type it again" />
-            </label>
-            {needsCode && (
+        <div className="st-col">
+          <Section icon={User} title="Profile" hint="How you appear in the dashboard and audit log.">
+            <form className="st-form" onSubmit={saveName}>
               <label className="st-field">
-                <span className="st-label">Authenticator code</span>
-                <input className="ms-input st-code" inputMode="numeric" autoComplete="one-time-code" value={pwCode} onChange={(e) => setPwCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6-digit code" />
-                <span className="st-note">You signed in on a remembered device, so confirm it&rsquo;s you before changing the password.</span>
+                <span className="st-label">Display name</span>
+                <input className="ms-input" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} placeholder="Your name" autoComplete="name" />
               </label>
-            )}
-            {pwError && <p className="st-error" role="alert">{pwError}</p>}
-            <div className="st-actions">
-              <button type="submit" className="btn-primary" disabled={savingPw || !pw || !pw2}>{savingPw ? "Saving…" : "Change password"}</button>
-            </div>
-          </form>
-          )}
-        </Section>
+              <div className="st-readonly">
+                <div><span className="st-label">Email</span><b>{user?.email ?? "—"}</b></div>
+                <div><span className="st-label">Role</span><b>{ROLE_NAME[String(user?.user_metadata?.role)] ?? "—"}</b></div>
+              </div>
+              <p className="st-note">Email and role are set by an administrator.</p>
+              <div className="st-actions">
+                <button type="submit" className="btn-primary" disabled={!nameChanged || savingName}>{savingName ? "Saving…" : "Save name"}</button>
+              </div>
+            </form>
+          </Section>
 
-        <Section icon={MonitorSmartphone} title="This device" hint="What this browser remembers about you. Forgetting it here does not affect your other devices.">
-          <div className="st-rows">
-            <div className="st-row">
-              <ShieldCheck size={18} aria-hidden="true" className={trust ? "st-ok" : "st-muted"} />
-              <div className="st-row-text">
-                <b>{trust ? "Remembered for sign-in" : "Not remembered"}</b>
+          <Section icon={KeyRound} title="Password" hint={`At least 8 characters. Can be changed once every ${PASSWORD_COOLDOWN_DAYS} days.`}>
+            {cooldownUntil ? (
+              <div className="st-cooldown" role="status">
+                <b>You can change your password again on {fmtDay(cooldownUntil)}.</b>
                 <span>
-                  {trust
-                    ? `Signing in here skips the authenticator code until ${fmtDate(trust.expiresAt)}. Your password is still needed.`
-                    : "Tick “Remember this device for 7 days” at the code step to skip the code here for a week."}
+                  It was last changed on {lastChanged ? fmtDay(new Date(lastChanged)) : "a recent date"}. For your security, a password can be changed
+                  once every {PASSWORD_COOLDOWN_DAYS} days, by reset too. If you forget it before then, contact your administrator.
                 </span>
               </div>
-              {trust && <button type="button" className="btn-muted" onClick={forgetThisDevice}>Forget this device</button>}
-            </div>
-            <div className="st-row">
-              <User size={18} aria-hidden="true" className={savedEmail ? "st-ok" : "st-muted"} />
-              <div className="st-row-text">
-                <b>{savedEmail ? "Email remembered" : "Email not remembered"}</b>
-                <span>{savedEmail ? `${savedEmail} is filled in on the sign-in page.` : "Tick “Remember me” when signing in to have your email filled in."}</span>
-              </div>
-              {savedEmail && <button type="button" className="btn-muted" onClick={forgetEmail}>Forget email</button>}
-            </div>
-          </div>
-        </Section>
-
-        <Section icon={LogOut} title="Sign out of all devices" hint="Ends your session on every browser and phone, including this one.">
-          <p className="st-note">
-            Use this if you signed in on a shared or lost device. Each device will need your password again, and every
-            remembered device will ask for the authenticator code again.
-          </p>
-          <div className="st-actions">
-            {confirmEverywhere ? (
-              <>
-                <button type="button" className="btn-muted" onClick={() => setConfirmEverywhere(false)} disabled={leaving}>Cancel</button>
-                <button type="button" className="btn-danger" onClick={() => void signOutEverywhere()} disabled={leaving}>{leaving ? "Signing out…" : "Yes, sign out everywhere"}</button>
-              </>
             ) : (
-              <button type="button" className="btn-muted" onClick={() => setConfirmEverywhere(true)}>Sign out of all devices</button>
+            <form className="st-form" onSubmit={savePassword} noValidate>
+              <label className="st-field">
+                <span className="st-label">New password</span>
+                <input className="ms-input" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="At least 8 characters" />
+              </label>
+              <label className="st-field">
+                <span className="st-label">Confirm new password</span>
+                <input className="ms-input" type="password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="Type it again" />
+              </label>
+              {needsCode && (
+                <label className="st-field">
+                  <span className="st-label">Authenticator code</span>
+                  <input className="ms-input st-code" inputMode="numeric" autoComplete="one-time-code" value={pwCode} onChange={(e) => setPwCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6-digit code" />
+                  <span className="st-note">You signed in on a remembered device, so confirm it&rsquo;s you before changing the password.</span>
+                </label>
+              )}
+              {pwError && <p className="st-error" role="alert">{pwError}</p>}
+              <div className="st-actions">
+                <button type="submit" className="btn-primary" disabled={savingPw || !pw || !pw2}>{savingPw ? "Saving…" : "Change password"}</button>
+              </div>
+            </form>
             )}
-          </div>
-        </Section>
+          </Section>
 
-        <Section icon={Palette} title="Appearance" hint="The same switches as the top bar, kept on this device.">
-          <div className="st-rows">
-            <div className="st-row">
-              <div className="st-row-text"><b>Theme</b><span>Light, dark, or follow your system.</span></div>
-              <ThemeToggle />
+          <Section icon={LogOut} title="Sign out of all devices" hint="Ends every session, including this one.">
+            <p className="st-note">For a shared or lost device. Every device will need your password and code again.</p>
+            <div className="st-actions">
+              {confirmEverywhere ? (
+                <>
+                  <button type="button" className="btn-muted" onClick={() => setConfirmEverywhere(false)} disabled={leaving}>Cancel</button>
+                  <button type="button" className="btn-danger" onClick={() => void signOutEverywhere()} disabled={leaving}>{leaving ? "Signing out…" : "Yes, sign out everywhere"}</button>
+                </>
+              ) : (
+                <button type="button" className="btn-muted" onClick={() => setConfirmEverywhere(true)}>Sign out of all devices</button>
+              )}
             </div>
-            <div className="st-row">
-              <div className="st-row-text"><b>Visual effects</b><span>The moving scenery and animations. Turn off for a calmer screen.</span></div>
-              <EffectsToggle />
+          </Section>
+        </div>
+        <div className="st-col">
+          <Section icon={Clock} title="Sign out after inactivity" hint="Signs you out after a stretch with no activity.">
+            <div className="st-choices" role="radiogroup" aria-label="Minutes without activity before signing out">
+              {IDLE_CHOICES.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={idle === m}
+                  className={`st-choice${idle === m ? " is-on" : ""}`}
+                  disabled={savingIdle != null}
+                  onClick={() => void saveIdle(m)}
+                >
+                  <b>{m}</b> min{m === 15 ? <span className="st-default">default</span> : null}
+                </button>
+              ))}
             </div>
-          </div>
-        </Section>
+            <p className="st-note">A one-minute warning comes first. Applies on all your devices.</p>
+          </Section>
+
+          <Section icon={MonitorSmartphone} title="This device" hint="What this browser remembers. Other devices are not affected.">
+            <div className="st-rows">
+              <div className="st-row">
+                <ShieldCheck size={18} aria-hidden="true" className={trust ? "st-ok" : "st-muted"} />
+                <div className="st-row-text">
+                  <b>{trust ? "Remembered for sign-in" : "Not remembered"}</b>
+                  <span>
+                    {trust
+                      ? `Signing in here skips the authenticator code until ${fmtDate(trust.expiresAt)}. Your password is still needed.`
+                      : "Tick “Remember this device” at the code step to skip it for 7 days."}
+                  </span>
+                </div>
+                {trust && <button type="button" className="btn-muted" onClick={forgetThisDevice}>Forget this device</button>}
+              </div>
+              <div className="st-row">
+                <User size={18} aria-hidden="true" className={savedEmail ? "st-ok" : "st-muted"} />
+                <div className="st-row-text">
+                  <b>{savedEmail ? "Email remembered" : "Email not remembered"}</b>
+                  <span>{savedEmail ? `${savedEmail} is pre-filled at sign-in.` : "Tick “Remember me” at sign-in to pre-fill it."}</span>
+                </div>
+                {savedEmail && <button type="button" className="btn-muted" onClick={forgetEmail}>Forget email</button>}
+              </div>
+            </div>
+          </Section>
+
+          <Section icon={Palette} title="Appearance" hint="Saved on this device.">
+            <div className="st-rows">
+              <div className="st-row">
+                <div className="st-row-text"><b>Theme</b><span>Light, dark or system.</span></div>
+                <ThemeToggle />
+              </div>
+              <div className="st-row">
+                <div className="st-row-text"><b>Visual effects</b><span>Moving scenery and animations.</span></div>
+                <EffectsToggle />
+              </div>
+            </div>
+          </Section>
+        </div>
       </div>
     </section>
   );

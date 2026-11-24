@@ -9,12 +9,12 @@ import InfoTooltip from "./InfoTooltip";
 import StateNote from "../stage/StateNote";
 import { withAlpha } from "../../lib/chart-kit";
 import { aggregateSeries } from "./aggregateSeries";
-import IncidentNarrative, { MetricHint, metricHintFor, modelHintFor } from "./IncidentNarrative";
+import IncidentNarrative, { metricHintFor, modelHintFor } from "./IncidentNarrative";
 import EvidenceModal from "./EvidenceModal";
 import { GenerateReportButton } from "./NarrativePanel";
-import { ShieldCheck, Siren } from "lucide-react";
+import { BarChart3, CloudRain, ShieldCheck, Siren } from "lucide-react";
+import { EvidenceHeading } from "./WeatherEvidencePanel";
 import {
-  ACTUAL_COLOR,
   META,
   MODELS,
   RAIN_COLOR,
@@ -49,6 +49,9 @@ type Props = {
   // weatherApplicable, so the page can disable the Weather chips when the
   // current Range has nothing for them to filter.
   onWeatherApplicableChange?: (applicable: boolean) => void;
+  /** When given, the card shows its own Range control (19 Nov 2026, as Traffic's Volume Forecast): it is the only
+   *  chart on the Predictive tab the Range affects, so the page drops its filter bar there. */
+  onMonthsChange?: (m: "3" | "12" | "all") => void;
 };
 
 const zoneLabel = (text: string, show: boolean, color: string) => ({
@@ -96,6 +99,7 @@ export default function PredictiveIncidentChart({
   weather,
   onDataBoundsChange,
   onWeatherApplicableChange,
+  onMonthsChange,
 }: Props = {}) {
   const [data, setData] = useState<PredictiveData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -107,7 +111,8 @@ export default function PredictiveIncidentChart({
   // did before this control existed. Kept as null rather than seeded to a
   // preset so a Range change never silently hides forecast days the previous
   // selection happened to be narrower than.
-  const [futureDays, setFutureDays] = useState<number | null>(null);
+  // Opens on one month ahead, as Traffic's does (20 Nov 2026, user request); null would be the whole stored horizon.
+  const [futureDays, setFutureDays] = useState<number | null>(28);
   // Exposure overlay, off by default: the chart's subject is the incident
   // forecast, and a second axis should be something the reader opts into rather
   // than something they have to clear away before they can read the lines.
@@ -124,7 +129,9 @@ export default function PredictiveIncidentChart({
   // this chart's drill-down already opens the hourly breakdown from any Daily
   // point, so an Hourly granularity would offer nothing an Hourly button on
   // the traffic chart's own (decorative, always-disabled) control does either.
-  const [granularity, setGranularity] = useState<"Daily" | "Weekly" | "Monthly">("Daily");
+  // Weekly by default (19 Nov 2026, user request, as Traffic's Volume Forecast): a daily count swings too much to
+  // read the trend from, and Daily is one click away.
+  const [granularity, setGranularity] = useState<"Daily" | "Weekly" | "Monthly">("Weekly");
   // Accident/breakdown split view. Only offered when the dedicated accident
   // forecast exists (data.accidentSplit); off by default so the chart opens on
   // the same total-count view it always has.
@@ -134,6 +141,20 @@ export default function PredictiveIncidentChart({
   // button), the same way the Traffic Volume Forecast card does.
   const [reportOpen, setReportOpen] = useState(false);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
+  // The evidence table's secondary columns (Train R², Gap), behind a toggle as on Traffic's.
+  const [showAllMetrics, setShowAllMetrics] = useState(false);
+  // The chart fills the height the summary column gives the card, 450 px at least, as on Traffic (20 Nov 2026). The
+  // split view lays its two panels out in pixels, so it reads the measured height.
+  const [frameH, setFrameH] = useState(560);
+  const frameObserver = useRef<ResizeObserver | null>(null);
+  const frameRef = useCallback((el: HTMLDivElement | null) => {
+    frameObserver.current?.disconnect();
+    frameObserver.current = null;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => setFrameH(Math.max(300, Math.round(entry.contentRect.height))));
+    ro.observe(el);
+    frameObserver.current = ro;
+  }, []);
 
   /* ECharts resolves no CSS, so every colour inside `option` below has to be a
      real string. The surrounding DOM uses var() directly. Both come from the
@@ -250,7 +271,7 @@ export default function PredictiveIncidentChart({
   // narrower window's shorter horizon and slice past the end of the array.
   const effectiveFutureDays = Math.min(futureDays ?? futureAvailable, futureAvailable);
   const daily = fullDaily.slice(0, fullFutureStart + effectiveFutureDays);
-  const dates = daily.map((d) => fmtDate(d.date));
+  const dates = daily.map((d) => fmtDateFull(d.date));
 
   // Drill-down: any point on any series maps back to its day by dataIndex, since
   // every series here is plotted against the same effective (possibly
@@ -308,7 +329,9 @@ export default function PredictiveIncidentChart({
     });
   const futureDayCount = fullDaily.length - fullFutureStart;
   const futureWeatherDays = fullDaily.filter((d) => d.predictionType === "future" && d.modelsNoWeather && readsWeather(d)).length;
-  const rainShown = (d: (typeof daily)[number]) => (readsWeather(d) ? d.rainfallMm : null);
+  // Recorded rain on every day, the Future band included, as Traffic's Volume Forecast draws it (19 Nov 2026, user
+  // request): it is context, what fell. Whether the forecast read any weather is the Weather switch's to say.
+  const rainShown = (d: (typeof daily)[number]) => d.rainfallMm;
   const shown = selected.filter((k) => availableModels.some((m) => m.key === k));
   const activeModels = shown.length > 0 ? shown : availableModels.slice(0, 1).map((m) => m.key);
 
@@ -475,8 +498,18 @@ export default function PredictiveIncidentChart({
     (a, b) => (a === null || zoneFraction[b] > zoneFraction[a] ? b : a),
     null
   );
+  /* A narrow band keeps its label unless a neighbouring band is narrow too (20 Nov 2026, user report). Two weekly
+     points of Future beside a wide Present lost "Future" to the width rule, though nothing was near it to collide
+     with; Traffic labels every band. Labels sit centred on their band, so only two narrow neighbours can collide. */
+  const ZONE_NEIGHBOURS: Record<keyof typeof zoneFraction, (keyof typeof zoneFraction)[]> = {
+    Past: ["Present"],
+    Present: ["Past", "Future"],
+    Future: ["Present"],
+  };
   const showZoneLabel = (zone: keyof typeof zoneFraction) =>
-    zoneFraction[zone] >= MIN_ZONE_LABEL_FRACTION || zone === widestZone;
+    zoneFraction[zone] >= MIN_ZONE_LABEL_FRACTION ||
+    zone === widestZone ||
+    ZONE_NEIGHBOURS[zone].every((n) => !shownZones.includes(n) || zoneFraction[n] >= MIN_ZONE_LABEL_FRACTION);
 
   // Built as an explicitly-typed tuple array (rather than conditional array
   // literals inline in `option`) because TS infers markArea.data as pairs of
@@ -521,7 +554,7 @@ export default function PredictiveIncidentChart({
     markLineData.push({
       xAxis: effFutureStart,
       lineStyle: { type: "solid", color: T.textPrimary, width: 1, opacity: 0.85 },
-      label: { show: true, position: "end", formatter: "FORECAST", color: T.textPrimary, fontSize: 11, fontWeight: 600 },
+      label: { show: false },
     });
 
   // Period dividers (W1/W3/… or M1/M3/…) at Weekly/Monthly granularity --
@@ -532,7 +565,7 @@ export default function PredictiveIncidentChart({
   // date-label string, consistent with how this file's own zone dividers
   // above already address positions by index, not by label text.
   const weeklyPeriods: { weekNum: number; startIdx: number }[] = [];
-  for (let i = 0, weekNum = 1; i < effDates.length; i += 7, weekNum++) {
+  for (let i = 0, weekNum = 1; i < effDates.length; i += granularity === "Weekly" ? 1 : 7, weekNum++) {
     weeklyPeriods.push({ weekNum, startIdx: i });
   }
   const monthlyPeriods: { monthNum: number; startIdx: number }[] = [];
@@ -578,26 +611,28 @@ export default function PredictiveIncidentChart({
   })();
   markLineData.push(...periodDividers);
 
-  /* Rainfall shaded by intensity. PAGASA's classes are HOURLY rates (light up to 2.5 mm/h, moderate 2.5-7.5, heavy
-     over 7.5), the same ones the sandbox uses, so they are applied to each bar's wettest hour. They were applied to
-     daily totals before, which called a day of steady drizzle "heavy" (fix list A8, 2 Nov 2026). The bar's height is
-     still the day's (or period's) total. */
+  /* Rainfall shaded by intensity, on the same scale and colours as Traffic's Volume Forecast (19 Nov 2026, user
+     request): the day's rainfall in four bands, Light under 7.5 mm, Moderate 7.5-15, Heavy 15-30, Intense 30 and
+     over; in Weekly and Monthly the bar takes its wettest day's band. It was shaded by the wettest HOUR on PAGASA's
+     hourly classes (fix list A8), which left nearly every bar the same light blue and did not match Traffic. The
+     bar's height is unchanged: the day's (or period's average daily) rainfall. */
   const RAIN_BANDS = [
-    { max: 2.5, label: "Light", color: "rgba(56, 189, 248, 0.45)" },
-    { max: 7.5, label: "Moderate", color: "rgba(14, 165, 233, 0.65)" },
-    { max: Infinity, label: "Heavy", color: "rgba(30, 64, 175, 0.9)" },
+    { max: 7.5, label: "Light", color: "rgba(56, 189, 248, 0.45)" },
+    { max: 15, label: "Moderate", color: "rgba(14, 165, 233, 0.65)" },
+    { max: 30, label: "Heavy", color: "rgba(2, 132, 199, 0.8)" },
+    { max: Infinity, label: "Intense", color: "rgba(30, 64, 175, 0.9)" },
   ];
-  const rainBand = (mmPerHour: number) => RAIN_BANDS.find((b) => mmPerHour <= b.max) ?? RAIN_BANDS[RAIN_BANDS.length - 1];
-  // Each bar's wettest hour: the day's own, or the wettest across the days of a week or month.
-  const peakByDate = new Map(daily.map((d) => [d.date, d.rainfallPeakHourMm ?? null]));
+  const rainBand = (mm: number) => RAIN_BANDS.find((b) => mm < b.max) ?? RAIN_BANDS[RAIN_BANDS.length - 1];
+  // Each bar's wettest day: the day itself, or the wettest of the days in a week or month (only days whose rain is drawn).
+  const dayRainByDate = new Map(daily.map((d) => [d.date, rainShown(d)]));
   const effPeak: (number | null)[] = effIso.map((start, i) => {
-    if (!isAggregated) return peakByDate.get(start) ?? null;
+    if (!isAggregated) return dayRainByDate.get(start) ?? null;
     const next = effIso[i + 1];
     let peak: number | null = null;
     for (const d of daily) {
       if (d.date < start || (next != null && d.date >= next)) continue;
-      const p = d.rainfallPeakHourMm;
-      if (p != null && (peak == null || p > peak)) peak = p;
+      const mm = rainShown(d);
+      if (mm != null && (peak == null || mm > peak)) peak = mm;
     }
     return peak;
   });
@@ -671,6 +706,8 @@ export default function PredictiveIncidentChart({
   // bar as a solid one. The path's own bounding box is scaled to itemWidth x itemHeight
   // (28 x 3), so these stay thin lines rather than blocks.
   const SOLID_SWATCH = "path://M0,0h28v3h-28z";
+  // Traffic's actual-line ink (19 Nov 2026): blue read as part of the sky-blue rain bars.
+  const actualInk = T.isDark ? "#e8eefb" : "#0a1630";
   const VOLUME_FORECAST_NAME = "Volume forecast (model input)";
   const DASHED_SWATCH = "path://M0,0h8v3h-8zM10,0h8v3h-8zM20,0h8v3h-8z";
   const legendData: (string | { name: string; icon: string })[] = [
@@ -681,10 +718,10 @@ export default function PredictiveIncidentChart({
         ]
       : [
           { name: "Actual Count", icon: SOLID_SWATCH },
-          ...activeModels.map((k) => ({ name: `${META[k].label} Prediction`, icon: DASHED_SWATCH })),
+          ...activeModels.map((k) => ({ name: `${META[k].label} Prediction`, icon: SOLID_SWATCH })),
         ]),
     // The bar/overlay entries keep a block-like icon (a 3px line would vanish).
-    ...(showWeather ? [{ name: "Rainfall", icon: "roundRect" }] : []),
+    ...(showWeather ? [{ name: "Rainfall (mm)", icon: "roundRect" }] : []),
     ...(showVolume ? [{ name: "Vehicle Volume", icon: SOLID_SWATCH }] : []),
     ...(showVolume && hasVolumeForecast ? [{ name: VOLUME_FORECAST_NAME, icon: DASHED_SWATCH }] : []),
   ];
@@ -700,8 +737,13 @@ export default function PredictiveIncidentChart({
       if (p.value == null) return;
       if (p.seriesName === VOLUME_FORECAST_NAME && hasRecordedVolume) return;
       const val =
-        p.seriesName === "Rainfall"
-          ? `${fmtNum(Number(p.value), 1)} mm recorded`
+        p.seriesName === "Rainfall (mm)"
+          ? (() => {
+              const pk = effPeak[(p as { dataIndex?: number }).dataIndex ?? -1];
+              return isAggregated && pk != null
+                ? `${fmtNum(Number(p.value), 1)} mm/day mean, wettest day ${fmtNum(pk, 1)} mm · ${rainBand(pk).label}`
+                : `${fmtNum(Number(p.value), 1)} mm recorded · ${rainBand(Number(p.value)).label}`;
+            })()
           : p.seriesName === "Vehicle Volume" || p.seriesName === VOLUME_FORECAST_NAME
             ? `${fmtInt(Number(p.value))} vehicles`
             : fmtInt(Number(p.value));
@@ -719,7 +761,7 @@ export default function PredictiveIncidentChart({
   // comment on splitOption's yAxis below for why they're treated
   // differently rather than both simply following showWeather/showVolume).
   const rainfallSeries = (xAxisIndex: number, yAxisIndex: number) => ({
-    name: "Rainfall",
+    name: "Rainfall (mm)",
     type: "bar" as const,
     xAxisIndex,
     yAxisIndex,
@@ -802,7 +844,7 @@ export default function PredictiveIncidentChart({
   // Total view's single chart (own axis, same plot area) rather than getting
   // a separate panel of their own, so the split view reads as the Total
   // view's look applied twice.
-  const SPLIT_CHART_HEIGHT = 450;
+  const SPLIT_CHART_HEIGHT = frameH;
   const SPLIT_TOP = 30;
   const SPLIT_BOTTOM = 96;
   const SPLIT_GAP = 34;
@@ -859,7 +901,9 @@ export default function PredictiveIncidentChart({
       {
         gridIndex: 0,
         type: "value",
-        min: 0,
+        // Fitted to each panel's own data, as the single view is (20 Nov 2026, user: Breakdowns sat pressed to the top).
+        // Breakdowns run about 80 to 130 a day, so a zero-based axis left its line in the top third.
+        scale: true,
         splitNumber: 3,
         axisLabel: { color: T.chartText },
         splitLine: { lineStyle: { color: T.chartSplit } },
@@ -867,7 +911,7 @@ export default function PredictiveIncidentChart({
       {
         gridIndex: 1,
         type: "value",
-        min: 0,
+        scale: true,
         splitNumber: 3,
         axisLabel: { color: T.chartText },
         splitLine: { lineStyle: { color: T.chartSplit } },
@@ -886,6 +930,7 @@ export default function PredictiveIncidentChart({
         nameLocation: "middle",
         nameGap: 34,
         min: 0,
+        max: (value: { max: number }) => Math.ceil(value.max * 4) || 10, // rain stays a strip at the bottom, as in the single view
         position: "right",
         show: showWeather,
         axisLabel: { color: RAIN_COLOR },
@@ -898,6 +943,7 @@ export default function PredictiveIncidentChart({
         nameLocation: "middle",
         nameGap: 34,
         min: 0,
+        max: (value: { max: number }) => Math.ceil(value.max * 4) || 10, // rain stays a strip at the bottom, as in the single view
         position: "right",
         show: showWeather,
         axisLabel: { color: RAIN_COLOR },
@@ -953,6 +999,13 @@ export default function PredictiveIncidentChart({
       textStyle: { color: T.tooltipText },
       formatter: tooltipFormatter,
     },
+    // Names the statistic in Weekly and Monthly, as Traffic's Volume Forecast does (19 Nov 2026).
+    graphic: isAggregated
+      ? [{
+          type: "text", left: 62, top: 6, silent: true,
+          style: { text: `every point = ${granularity === "Weekly" ? "7-day" : "monthly"} mean`, fontSize: 11, fontWeight: 600, fill: T.textMuted },
+        }]
+      : [],
     legend: {
       data: legendData,
       bottom: 0,
@@ -967,26 +1020,33 @@ export default function PredictiveIncidentChart({
       // Labels are click targets too — a wider hit area than the line symbols
       // (matches PredictiveVolumeChart's xAxis).
       triggerEvent: true,
-      axisLabel: { color: T.chartText },
+      // The year on a second line ("May 27" over "2024"), as on Traffic's chart, so the labels stay short.
+      axisLabel: { color: T.chartText, lineHeight: 15, formatter: (v: string) => v.replace(", ", "\n") },
       axisLine: { lineStyle: { color: T.chartAxis } },
     },
     yAxis: [
       {
         type: "value",
-        name: "Incident Count",
+        name: isAggregated ? "Avg daily incidents" : "Incident Count",
         nameLocation: "middle",
         nameGap: 40,
-        min: 0,
+        // Fitted to the data, as Traffic's Volume Forecast is (19 Nov 2026, user: the line sat high over an empty
+        // band). Counts here run about 90 to 150 a day, so a zero-based axis spent two thirds of the plot on nothing.
+        // The axis labels still give the real values.
+        scale: true,
         nameTextStyle: { color: T.chartText },
         axisLabel: { color: T.chartText },
         splitLine: { lineStyle: { color: T.chartSplit } },
       },
       {
         type: "value",
-        name: "Rainfall (mm)",
+        name: isAggregated ? "Avg daily rainfall, mm" : "Rainfall (mm)",
         nameLocation: "middle",
         nameGap: 40,
         min: 0,
+        // Headroom of 4x the wettest bar, as on Traffic's Volume Forecast (19 Nov 2026): the rain stays a strip in
+        // the bottom quarter instead of running up through the incident line. Only the headroom changed.
+        max: (value: { max: number }) => Math.ceil(value.max * 4) || 10,
         position: "right",
         show: showWeather,
         axisLabel: { color: RAIN_COLOR },
@@ -1038,8 +1098,8 @@ export default function PredictiveIncidentChart({
         // Never bridged: a day with no log is a gap, not a straight line.
         connectNulls: false,
         z: 3,
-        lineStyle: { width: 2, color: ACTUAL_COLOR },
-        itemStyle: { color: ACTUAL_COLOR },
+        lineStyle: { width: 2, color: actualInk },
+        itemStyle: { color: actualInk },
         emphasis: { scale: 2.2 },
         // The bands ride on the ground-truth series so they stay anchored
         // regardless of which models are toggled on. Each band is included
@@ -1065,9 +1125,9 @@ export default function PredictiveIncidentChart({
         connectNulls: false,
         symbol: "circle" as const,
         symbolSize: 5,
-        // Model output is dashed (chart kit), recorded actuals solid, so a
-        // prediction can never pass for history.
-        lineStyle: { width: 2, color: META[key].color, type: "dashed" as const },
+        // Solid, as on Traffic's Volume Forecast (19 Nov 2026): the colour and the legend tell it from the ink
+        // actual line, and the Present and Future bands say which days are forecast.
+        lineStyle: { width: 2, color: META[key].color },
         itemStyle: { color: META[key].color },
         emphasis: { scale: 2.2 },
       })),
@@ -1134,23 +1194,47 @@ export default function PredictiveIncidentChart({
     (champScore != null ? `: ${champScore.toFixed(2)} incidents a day for this model` : "") +
     "), among models that beat the best simple baseline. This table scores days 1–14 only, so another model can show a lower error here. Not affected by the Range or Weather shown.";
 
+  /* Validation evidence in Traffic's layout (20 Nov 2026, user request): a section card with an icon heading, the
+     headline measures first (WMAPE, MASE, MAE, RMSE, R²) and the train/validation pair behind "Show secondary
+     metrics". The figures are unchanged; only the order and the dress follow Traffic's table. */
+  // Train R² and Gap come from the training run, which has not recorded them for these models; the columns show only
+  // when a run does, rather than as a column of dashes.
+  const hasTrainR2 = shownMetrics.some((m) => m.Train_R2 != null || m.Gap != null);
+  const scoredHorizon = data.horizonAccuracy.find((b) => b.hLo === 1)?.hHi ?? null;
+  const lastRecorded = [...daily].reverse().find((d) => d.actual != null)?.date ?? null;
+  const bestBaseline = /Baseline:\s*([^,(]+?)\s*(?:,|\(|MAE)/i.exec(data.horizonAccuracy[0]?.note ?? "")?.[1] ?? null;
+  const maseTitle =
+    "Error relative to repeating last week on the same days; below 1 beats that forecast. " +
+    `A model is chosen only if it beats the best simple baseline${bestBaseline ? ` (the ${bestBaseline} in this run)` : ""}.`;
   const metricsTable = (
-    <div className="inc-panel">
-      <div className="inc-panel-head">
-        <h4 className="inc-panel-title">Real-World ML Validation Metrics</h4>
+    <div className="nct-ev-section">
+      <div className="nct-ev-section-head">
+        <EvidenceHeading icon={<BarChart3 size={14} strokeWidth={2.2} />} tint="var(--page-accent)" title="Held-out accuracy">
+          <InfoTooltip text={`${scoringCaption}: real daily incident counts the models never trained on${scoredHorizon ? `, each forecast 1 to ${scoredHorizon} days ahead` : ""}. WMAPE is the headline error; MASE below 1 means the model beats repeating last week. Show secondary metrics adds MAPE, sMAPE and RMSSE${hasTrainR2 ? ", and the train/validation pair, which shows whether a model memorised its training days" : ""}.`} />
+        </EvidenceHeading>
+        <button type="button" className="nct-link-btn" onClick={() => setShowAllMetrics(!showAllMetrics)}>
+          {showAllMetrics ? "Hide secondary metrics" : "Show secondary metrics"}
+        </button>
       </div>
-      <div className="inc-table-wrap">
-        <table className="inc-table" style={{ minWidth: "760px" }}>
+      <div className="nct-table-wrap">
+        <table className="nct-table" style={{ minWidth: showAllMetrics ? 820 : 0 }}>
           <thead>
             <tr>
-              <th>Model</th>
-              <th><MetricHint hint={metricHintFor("RMSE")}>RMSE</MetricHint></th>
-              <th><MetricHint hint={metricHintFor("MAE")}>MAE</MetricHint></th>
-              <th><MetricHint hint={metricHintFor("WMAPE")}>WMAPE</MetricHint></th>
-              <th><MetricHint hint={metricHintFor("MASE")}>MASE</MetricHint></th>
-              <th><MetricHint hint={metricHintFor("R² Score")}>R² Score</MetricHint></th>
-              <th><MetricHint hint={metricHintFor("Train R²")}>Train R²</MetricHint></th>
-              <th><MetricHint hint={metricHintFor("Gap")}>Gap</MetricHint></th>
+              <th className="nct-sticky">Model</th>
+              <th className="num" title={metricHintFor("WMAPE")}>WMAPE</th>
+              <th className="num" title={maseTitle}>MASE</th>
+              <th className="num" title={metricHintFor("MAE")}>MAE (inc/day)</th>
+              <th className="num" title={metricHintFor("RMSE")}>RMSE (inc/day)</th>
+              <th className="num" title={metricHintFor("R² Score")}>R²</th>
+              {showAllMetrics && (
+                <>
+                  <th className="num" title="Average percentage miss, over days with at least one incident">MAPE</th>
+                  <th className="num" title="Symmetric percentage miss: the miss over the average of the actual and the forecast">sMAPE</th>
+                  <th className="num" title="Like MASE with large misses weighted more: error relative to repeating last week, on the same days">RMSSE</th>
+                  {hasTrainR2 && <th className="num" title={metricHintFor("Train R²")}>Train R²</th>}
+                  {hasTrainR2 && <th className="num" title={metricHintFor("Gap")}>Gap</th>}
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -1159,40 +1243,34 @@ export default function PredictiveIncidentChart({
               const color = meta?.color ?? "var(--text-muted)";
               return (
                 <tr key={m.model}>
-                  <td>
-                    <span className="inc-model-cell">
-                      <span className="inc-dot" style={{ background: color }} />
-                      <MetricHint hint={modelHintFor(m.model as ModelKey)}>{meta?.label ?? m.model}</MetricHint>
-                      {m.isChampion && (
-                        <span className="inc-tag" title={championTitle}>
-                          Champion
-                        </span>
-                      )}
+                  <td className="nct-sticky">
+                    <span className="nct-model-cell">
+                      <span className="nct-swatch" style={{ background: color }} />
+                      <b title={modelHintFor(m.model as ModelKey) || undefined}>{meta?.label ?? m.model}</b>
+                      {m.isChampion && <span className="nct-ok" title={championTitle}>Champion</span>}
                       {m.source === "holdout" && (
-                        <span
-                          className="inc-tag is-muted"
-                          title="No scored days in the current Range/Weather selection — showing the pipeline's full-holdout numbers instead"
-                        >
-                          (full holdout)
+                        <span className="nct-dim" title="No scored days in the current Range/Weather selection, so these are the pipeline's full-holdout numbers">
+                          full holdout
                         </span>
                       )}
                     </span>
                   </td>
-                  <td>{fmtNum(m.RMSE)}</td>
-                  <td>{fmtNum(m.MAE)}</td>
-                  <td>{m.WMAPE == null ? "—" : `${m.WMAPE.toFixed(2)}%`}</td>
-                  <td>{fmtNum(m.MASE)}</td>
-                  <td
-                    style={{ fontWeight: 600, color }}
-                    // The scored-day count used to sit in its own column and
-                    // explain a blank R² on sight. With that column gone the
-                    // explanation moves here, so "—" still says why.
-                    title={m.R2 == null && m.n < 30 ? `R² is hidden below 30 scored days (${m.n} here)` : undefined}
-                  >
-                    {fmtNum(m.R2, 4)}
-                  </td>
-                  <td>{fmtNum(m.Train_R2, 4)}</td>
-                  <td>{fmtNum(m.Gap, 4)}</td>
+                  <td className="num strong">{m.WMAPE == null ? "—" : `${m.WMAPE.toFixed(2)}%`}</td>
+                  <td className={`num strong ${m.MASE != null && isFinite(m.MASE) ? (m.MASE < 1 ? "nct-ok" : "nct-bad") : ""}`}>{fmtNum(m.MASE)}</td>
+                  <td className="num">{fmtNum(m.MAE)}</td>
+                  <td className="num">{fmtNum(m.RMSE)}</td>
+                  <td className="num" title={m.R2 == null && m.n < 30 ? `R² is hidden below 30 scored days (${m.n} here)` : undefined}>{fmtNum(m.R2, 4)}</td>
+                  {showAllMetrics && (
+                    <>
+                      <td className="num dim">{m.MAPE == null ? "—" : `${m.MAPE.toFixed(2)}%`}</td>
+                      <td className="num dim">{m.sMAPE == null ? "—" : `${m.sMAPE.toFixed(2)}%`}</td>
+                      <td className="num dim">{m.RMSSE == null ? "—" : m.RMSSE.toFixed(4)}</td>
+                      {hasTrainR2 && <td className="num dim">{fmtNum(m.Train_R2, 4)}</td>}
+                      {/* Coloured as on Traffic: a wide positive gap means the model fits its training days far
+                          better than unseen ones. 0.15 is a reading aid, not a pass/fail the pipeline enforces. */}
+                      {hasTrainR2 && <td className={`num ${m.Gap != null && isFinite(m.Gap) ? (m.Gap > 0.15 ? "strong nct-bad" : "strong nct-ok") : "dim"}`}>{fmtNum(m.Gap, 4)}</td>}
+                    </>
+                  )}
                 </tr>
               );
             })}
@@ -1212,27 +1290,26 @@ export default function PredictiveIncidentChart({
       const wetBy = new Map(ws.wet.models.map((m) => [m.model, m]));
       const rows = ws.dry.models.filter((m) => activeModels.includes(m.model as ModelKey));
       return (
-        <div className="inc-panel">
-          <div className="inc-panel-head">
-            <h4 className="inc-panel-title">
-              Dry vs wet days
-              <InfoTooltip text="Each model's error on the same held-out window, split into dry days and wet days (expressway-average rainfall above 0.3 mm). MAE is the average miss in incidents per day; lower is better. Change is how much bigger (or smaller) the miss gets on wet days." />
-            </h4>
-            <span className="inc-panel-caption">
+        <div className="nct-ev-section">
+          <div className="nct-ev-section-head">
+            <EvidenceHeading icon={<CloudRain size={14} strokeWidth={2.2} />} tint="var(--page-accent)" title="Dry vs wet days">
+              <InfoTooltip text="Each model's error on the same held-out window, split into dry days and wet days (a wet day averages over 0.3 mm of rain an hour along the expressway, about 7 mm over the day). MAE is the average miss in incidents per day; lower is better. Change is how much bigger (or smaller) the miss gets on wet days." />
+            </EvidenceHeading>
+            <span className="nct-dim">
               {ws.dry.days} dry · {ws.wet.days} wet of {modelInfo.scoredDays ?? "—"} holdout days
             </span>
           </div>
           {ws.dry.days === 0 || ws.wet.days === 0 ? (
-            <p className="inc-caption">No {ws.wet.days === 0 ? "wet" : "dry"} days in the scored window, so there is nothing to compare.</p>
+            <p className="nct-dim">No {ws.wet.days === 0 ? "wet" : "dry"} days in the scored window, so there is nothing to compare.</p>
           ) : (
-            <div className="inc-table-wrap">
-              <table className="inc-table" style={{ minWidth: "420px" }}>
+            <div className="nct-table-wrap">
+              <table className="nct-table">
                 <thead>
                   <tr>
-                    <th>Model</th>
-                    <th>MAE, dry</th>
-                    <th>MAE, wet</th>
-                    <th>Change on wet days</th>
+                    <th className="nct-sticky">Model</th>
+                    <th className="num">MAE, dry (inc/day)</th>
+                    <th className="num">MAE, wet (inc/day)</th>
+                    <th className="num">Change on wet days</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1243,20 +1320,16 @@ export default function PredictiveIncidentChart({
                     const change = wet && m.MAE > 0 ? ((wet.MAE - m.MAE) / m.MAE) * 100 : null;
                     return (
                       <tr key={m.model}>
-                        <td>
-                          <span className="inc-model-cell">
-                            <span className="inc-dot" style={{ background: color }} />
-                            {meta?.label ?? m.model}
-                            {m.isChampion && (
-                              <span className="inc-tag" title={championTitle}>
-                                Champion
-                              </span>
-                            )}
+                        <td className="nct-sticky">
+                          <span className="nct-model-cell">
+                            <span className="nct-swatch" style={{ background: color }} />
+                            <b>{meta?.label ?? m.model}</b>
+                            {m.isChampion && <span className="nct-ok" title={championTitle}>Champion</span>}
                           </span>
                         </td>
-                        <td>{fmtNum(m.MAE)}</td>
-                        <td>{wet ? fmtNum(wet.MAE) : "—"}</td>
-                        <td style={{ fontWeight: 600, color: change == null ? undefined : change > 0 ? "var(--color-danger)" : "var(--color-success)" }}>
+                        <td className="num">{fmtNum(m.MAE)}</td>
+                        <td className="num">{wet ? fmtNum(wet.MAE) : "—"}</td>
+                        <td className={`num strong ${change == null ? "" : change > 0 ? "nct-bad" : "nct-ok"}`}>
                           {change == null ? "—" : `${change > 0 ? "+" : ""}${change.toFixed(1)}%`}
                         </td>
                       </tr>
@@ -1280,7 +1353,13 @@ export default function PredictiveIncidentChart({
   const champLabel = champKey ? (META[champKey]?.label ?? champKey) : null;
   const champMase = champ?.MASE != null && isFinite(champ.MASE) ? champ.MASE : null;
   const futureFirst = futureAvailable > 0 ? fullDaily[fullFutureStart]?.date ?? null : null;
-  const splitChampLabel = split?.championModel ? (META[split.championModel as ModelKey]?.label ?? split.championModel) : null;
+  const splitChampLabel = (() => {
+    const raw = split?.championModel;
+    if (!raw) return null;
+    const [key, ...rest] = raw.split(" (");
+    const base = META[key.trim() as ModelKey]?.label ?? key.replace(/_/g, " ");
+    return rest.length ? `${base} (${rest.join(" (")}` : base;
+  })();
   /* The accident model against its best simple baseline, from its own training run (17 Nov 2026). It was a fixed
      sentence from the 21 Sep run ("not clearly better than the historical average"), still shown after the 15 Nov
      run found the opposite. */
@@ -1329,7 +1408,7 @@ export default function PredictiveIncidentChart({
           <header className="fc2-head">
             <h3 className="nct-title">
               Incident Walk-Forward Forecast
-              <InfoTooltip text="Daily incident forecast, scored against real held-out data. Past = training history, Present = the model's held-out accuracy check (never trained on), Future = the published forecast for days that haven't happened yet. Click any point to view that day's hourly breakdown." />
+              <InfoTooltip text={`Daily incident forecast, scored against real held-out data. Past = training history, Present = the model's held-out accuracy check (never trained on), Future = the published forecast for the days after the last recorded one${lastRecorded ? ` (${fmtDateFull(lastRecorded)})` : ""}. Click any point to view that day's hourly breakdown.`} />
             </h3>
           </header>
 
@@ -1347,35 +1426,35 @@ export default function PredictiveIncidentChart({
               ) : (
                 modelToolbar
               )}
-              {data.accidentSplit && (
-                <>
-                  {fc2Sep}
-                  <div className="fc-group">
-                    <span className="fc-label">Show</span>
-                    <div
-                      className="inc-seg"
-                      role="group"
-                      aria-label="Forecast view"
-                      title="Total: the blended forecast with every candidate model. Split: a dedicated accident forecast, with breakdowns derived as blended total minus accidents."
-                    >
-                      {([false, true] as const).map((on) => (
-                        <button key={String(on)} onClick={() => setSplitView(on)} aria-pressed={splitView === on} className={splitView === on ? "is-on" : ""}>
-                          {on ? "Accident / Breakdown" : "Total"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              )}
             </div>
             <div className="fc2-row">
+              {onMonthsChange && (
+                <>
+                  <div className="fc-group">
+                    <span className="fc-label">Range</span>
+                    <span className="inc-seg" role="group" aria-label="Range">
+                      {([["3", "3 mo"], ["12", "12 mo"], ["all", "All"]] as const).map(([m, label]) => (
+                        <button key={m} onClick={() => onMonthsChange(m)} aria-pressed={months === m}
+                          title="How much history the chart shows before the validation period"
+                          className={months === m ? "is-on" : ""}>
+                          {label}
+                        </button>
+                      ))}
+                    </span>
+                  </div>
+                  {fc2Sep}
+                </>
+              )}
               <div className="fc-group">
                 <span className="fc-label">View</span>
                 <span className="inc-seg">
                   {(["Daily", "Weekly", "Monthly"] as const).map((g) => (
                     <button
                       key={g}
-                      onClick={() => setGranularity(g)}
+                      onClick={() => {
+                        setGranularity(g);
+                        if (g === "Monthly" && effectiveFutureDays < 28 && futureAvailable >= 28) setFutureDays(28);
+                      }}
                       aria-pressed={granularity === g}
                       className={granularity === g ? "is-on" : ""}
                       title={
@@ -1396,10 +1475,11 @@ export default function PredictiveIncidentChart({
                 <>
                   {fc2Sep}
                   <div className="fc-group">
-                    <span className="fc-label">Ahead</span>
+                    <span className="fc-label">Horizon</span>
                     <span className="inc-seg">
                       {FUTURE_PRESETS.map((item) => {
-                        const unavailable = item.d > futureAvailable;
+                        const tooShort = granularity === "Monthly" && item.d < 28;
+                        const unavailable = item.d > futureAvailable || tooShort;
                         const active = effectiveFutureDays === item.d;
                         return (
                           <button
@@ -1409,7 +1489,9 @@ export default function PredictiveIncidentChart({
                             aria-pressed={active}
                             className={active ? "is-on" : ""}
                             title={
-                              unavailable
+                              tooShort
+                                ? "Monthly view needs at least one month ahead"
+                                : unavailable
                                 ? `The forecast only runs ${futureAvailable} day${futureAvailable === 1 ? "" : "s"} ahead — retrain the incident pipeline with a longer horizon to use this`
                                 : `Show ${item.d} days of forecast`
                             }
@@ -1422,19 +1504,42 @@ export default function PredictiveIncidentChart({
                   </div>
                 </>
               )}
-              {fc2Sep}
+            </div>
+            {/* Three rows (19 Nov 2026): the models; what to show over which window (Range, View, Ahead); and the
+                series switches. Seven model chips leave no room for Range beside them, as Traffic's five do. */}
+            <div className="fc2-row">
+              {data.accidentSplit && (
+                <>
+                  <div className="fc-group">
+                    <span className="fc-label">Show</span>
+                    <div
+                      className="inc-seg"
+                      role="group"
+                      aria-label="Forecast view"
+                      title="Total: the blended forecast with every candidate model. Split: a dedicated accident forecast, with breakdowns derived as blended total minus accidents."
+                    >
+                      {([false, true] as const).map((on) => (
+                        <button key={String(on)} onClick={() => setSplitView(on)} aria-pressed={splitView === on} className={splitView === on ? "is-on" : ""}>
+                          {on ? "Accident / Breakdown" : "Total"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {fc2Sep}
+                </>
+              )}
               {/* Exposure overlay. Switches the forecast itself when the pipeline stored a
                   volume-free twin, not merely the overlay. */}
               <label
                 className="fc2-switch"
                 title={
-                  hasVolumeFreeTwin
+                  hasVolumeFreeTwin && !splitOn
                     ? showVolume
                       ? "Volume ON: forecasts fitted WITH traffic volume, overlay shown. Click to switch to the volume-free models."
                       : "Volume OFF: forecasts fitted WITHOUT traffic volume. Click to use the volume-aware models and show the overlay."
                     : showVolume
-                      ? "Hide the volume overlay (this training run stored no volume-free models, so the forecast lines do not change)"
-                      : "Show the volume overlay (this training run stored no volume-free models, so the forecast lines do not change)"
+                      ? `Hide the volume overlay (${splitOn ? "in this view the lines are the accident model's, which does not change with Volume" : "this training run stored no volume-free models, so the forecast lines do not change"})`
+                      : `Show the volume overlay (${splitOn ? "in this view the lines are the accident model's, which does not change with Volume" : "this training run stored no volume-free models, so the forecast lines do not change"})`
                 }
               >
                 <span className="fc-label">Volume</span>
@@ -1452,19 +1557,19 @@ export default function PredictiveIncidentChart({
               <label
                 className="fc2-switch"
                 title={
-                  hasWeatherFreeTwin
+                  hasWeatherFreeTwin && !splitOn
                     ? showWeather
                       ? `Weather ON: forecasts fitted WITH rainfall, with recorded rain shown, for the Past and Present. ${
                           futureDayCount === 0
                             ? ""
                             : futureWeatherDays === 0
-                              ? "The Future band uses no weather in this run: no real weather forecast reached its days, so every future day is forecast by the weather-free model and no rain is drawn there. "
-                              : `${futureWeatherDays} of the ${futureDayCount} future days had a real weather forecast and show rain; the rest are forecast without weather and show none. `
+                              ? "The Future band uses no weather in this run: no real weather forecast reached its days, so every future day is forecast by the weather-free model; the rain drawn there is what was recorded, for context. "
+                              : `${futureWeatherDays} of the ${futureDayCount} future days had a real weather forecast; the rest are forecast without weather. The rain drawn there is what was recorded, for context. `
                         }No forecast is fed guessed rain. Click to switch to the weather-free models.`
                       : "Weather OFF: forecasts fitted WITHOUT rainfall. Click to use the weather-aware models and show the overlay."
                     : showWeather
-                      ? "Hide the rainfall overlay (this training run stored no weather-free models, so the forecast lines do not change)"
-                      : "Show the rainfall overlay (this training run stored no weather-free models, so the forecast lines do not change)"
+                      ? `Hide the rainfall overlay (${splitOn ? "in this view the lines are the accident model's, which does not change with Weather" : "this training run stored no weather-free models, so the forecast lines do not change"})`
+                      : `Show the rainfall overlay (${splitOn ? "in this view the lines are the accident model's, which does not change with Weather" : "this training run stored no weather-free models, so the forecast lines do not change"})`
                 }
               >
                 <span className="fc-label">Weather</span>
@@ -1474,8 +1579,8 @@ export default function PredictiveIncidentChart({
             </div>
           </div>
 
-          <div className="inc-chart-frame" style={{ height: "450px" }}>
-            <DashboardChart option={option} height={450} onEvents={{ click: onChartClick as (p: never) => void }} />
+          <div ref={frameRef} className="inc-chart-frame fc2-chart">
+            <DashboardChart option={option} height="100%" onEvents={{ click: onChartClick as (p: never) => void }} />
           </div>
 
           <div className="fc2-foot">
@@ -1484,15 +1589,13 @@ export default function PredictiveIncidentChart({
             {/* Without this key the rainfall bars are anonymous blue blocks. */}
             {showWeather && (
               <span className="fc2-rain-key">
-                <span className="fc2-rain-title" title="Colour = the wettest hour (PAGASA classes) · taller bar = more rain that day">Rainfall</span>
+                <span className="fc2-rain-title" title={isAggregated ? `Bar height is the ${granularity === "Weekly" ? "week" : "month"}'s mean rainfall; bar colour is its wettest single day.` : "Taller bar = wetter day."}>Rainfall</span>
                 {RAIN_BANDS.map((b, i) => (
                   <span key={b.label} className="fc2-rain-item">
                     <i style={{ background: b.color }} aria-hidden="true" />
                     {b.label}{" "}
                     <span className="nct-key-dim">
-                      {i === 0 ? `≤ ${b.max} mm/h`
-                        : b.max === Infinity ? `> ${RAIN_BANDS[i - 1].max} mm/h`
-                        : `${RAIN_BANDS[i - 1].max}–${b.max} mm/h`}
+                      {i === 0 ? `< ${b.max} mm` : b.max === Infinity ? `≥ ${RAIN_BANDS[i - 1].max} mm` : `${RAIN_BANDS[i - 1].max}–${b.max} mm`}
                     </span>
                   </span>
                 ))}
@@ -1509,7 +1612,7 @@ export default function PredictiveIncidentChart({
           </div>
           {futAvg != null && futureFirst && futShownLast && (
             <div className="fc2-answer">
-              <span className="fc2-answer-label">Forecast daily average · next {effectiveFutureDays} days</span>
+              <span className="fc2-answer-label">Forecast daily average · {effectiveFutureDays}-day window</span>
               <span className="fc2-answer-value">{fmtInt(Math.round(futAvg))}</span>
               <span className="fc2-answer-unit">
                 incidents/day · {fmtDateFull(futureFirst)} – {fmtDateFull(futShownLast)}
@@ -1519,7 +1622,10 @@ export default function PredictiveIncidentChart({
           )}
           <div className="fc2-pair">
             <div title={futureHorizonBucket?.note ?? undefined}>
-              <span className="fc2-k">{effectiveFutureDays}-day typical error</span>
+              <span className="fc2-k">
+                {futureHorizonBucket ? `Error, days ${futureHorizonBucket.hLo}–${futureHorizonBucket.hHi} ahead` : "Typical error"}
+                {futureHorizonBucket?.model && <> · {META[futureHorizonBucket.model as ModelKey]?.label ?? futureHorizonBucket.model}</>}
+              </span>
               <span className="fc2-v">
                 {futureHorizonBucket?.wmape != null ? `${futureHorizonBucket.wmape.toFixed(0)}%` : "n/a"}
               </span>
@@ -1540,14 +1646,16 @@ export default function PredictiveIncidentChart({
             </div>
           </div>
           {futureHorizonBucket && !futureHorizonBucket.usable && (
-            <p className="fc2-note-warn">This horizon is beyond what this champion clears.</p>
+            <p className="fc2-note-warn">
+              Days {futureHorizonBucket.hLo}–{futureHorizonBucket.hHi} ahead: no better than the {bestBaseline ?? "best simple baseline"} in the rolling test.
+            </p>
           )}
 
           {splitOn && split && (
             <div className="fc2-evidence">
               <dl>
                 {typeof split.metrics?.MAE === "number" && (
-                  <div><dt>Accident MAE</dt><dd>{fmtNum(split.metrics.MAE as number)} /day</dd></div>
+                  <div title={accidentVerdict ?? undefined}><dt>Accident MAE</dt><dd>{fmtNum(split.metrics.MAE as number)} /day</dd></div>
                 )}
                 {typeof split.metrics?.R2 === "number" && (
                   <div><dt>Accident R²</dt><dd>{fmtNum(split.metrics.R2 as number, 3)}</dd></div>
@@ -1555,10 +1663,6 @@ export default function PredictiveIncidentChart({
                 <div><dt>Accident model trained</dt><dd>{fmtTrainedAt(split.trainedAt)}</dd></div>
                 <div><dt>Breakdowns</dt><dd>blended − accidents</dd></div>
               </dl>
-              <p className="fc2-period">
-                {accidentVerdict && <>{accidentVerdict} </>}
-                Validation evidence below is for the blended forecast.
-              </p>
             </div>
           )}
 
@@ -1585,19 +1689,19 @@ export default function PredictiveIncidentChart({
               <div><dt>Scored days</dt><dd>{fmtInt(scoredDayCount)}</dd></div>
               {champLabel && <div title={championTitle}><dt>Champion</dt><dd>{champLabel}</dd></div>}
             </dl>
-            <p className="fc2-period" title={scoringCaption}>
-              {data.scoringWindow
-                ? <>Period: {fmtDateFull(data.scoringWindow.start)} – {fmtDateFull(data.scoringWindow.end)}</>
-                : <>Full holdout · trained {fmtTrainedAt(modelInfo.trainedAt)}</>}
-            </p>
             <button type="button" className="fc2-ev-btn" onClick={() => setEvidenceOpen(true)}>View validation details</button>
           </div>
         </aside>
       </div>
 
       {/* The full evidence (metrics table, dry vs wet) opens from the summary's button. */}
-      <EvidenceModal subtitle={scoringCaption} hideTrigger open={evidenceOpen} onOpenChange={setEvidenceOpen}>
-        <div className="inc-ev-body">
+      <EvidenceModal
+        subtitle="Daily incident forecast: every model's scores on days it never saw."
+        hideTrigger
+        open={evidenceOpen}
+        onOpenChange={setEvidenceOpen}
+      >
+        <div className="nct-evidence">
           {metricsTable}
           {weatherPanel}
         </div>
@@ -1612,7 +1716,7 @@ export default function PredictiveIncidentChart({
           metrics={shownMetrics}
           scoringCaption={scoringCaption}
           weather={weather ?? "all"}
-          horizonDays={modelInfo.forecastHorizon}
+          horizonDays={scoredHorizon ?? modelInfo.forecastHorizon}
           compact
           open={reportOpen}
           onOpenChange={setReportOpen}

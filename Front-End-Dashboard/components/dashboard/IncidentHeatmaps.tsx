@@ -37,8 +37,9 @@ const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1
  *  --inc-heat-lo / --inc-heat-hi in app/styles/nc-incident.css. */
 export function incidentHeatRamp(isDark: boolean): string[] {
   return isDark
-    ? ["#241d4f", "#30276a", "#43358f", "#5a46b5", "#7a66db", "#a596f3", "#d0c6ff"]
-    : ["#e6e1f9", "#cfc6f4", "#b0a2ec", "#8f7ce2", "#7055d3", "#573bb8", "#45299e"];
+    // Orange, the tab's own colour (19 Nov 2026; it was violet).
+    ? ["#2b1d16", "#4a2a17", "#6e3a17", "#9b5019", "#c96d24", "#eb9a5c", "#ffd2a8"]
+    : ["#fdf0e4", "#f9d6b4", "#f3b27c", "#e88b45", "#cf6a1c", "#a9500f", "#7c3807"];
 }
 
 /** The gradient legend: Traffic's interactive key (hover reads out the value and

@@ -1,9 +1,10 @@
 "use client";
 
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Brain, CalendarClock, CheckCircle2, Database, ScanSearch, UploadCloud } from "lucide-react";
+import { Brain, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Database, FileSpreadsheet, ScanSearch, UploadCloud } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
 import StateNote from "../../../components/stage/StateNote";
+import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import { apiFetch, BACKEND } from "../../../lib/api";
 
 
@@ -449,6 +450,41 @@ function rowPreview(row: Record<string, unknown>): string {
     .join(" · ");
 }
 
+/** Rows per page in the two tables (21 Nov 2026: "maximum of 5, then next"). */
+const PAGE_ROWS = 5;
+
+/** "6–10 of 31", Prev / page numbers / Next. Renders nothing when everything fits on one page. */
+function Pager({ page, total, onPage, label }: { page: number; total: number; onPage: (p: number) => void; label: string }) {
+  const pages = Math.ceil(total / PAGE_ROWS);
+  if (pages <= 1) return null;
+  const from = page * PAGE_ROWS + 1;
+  const to = Math.min(total, from + PAGE_ROWS - 1);
+  // At most 5 numbered buttons, centred on the current page.
+  const start = Math.max(0, Math.min(page - 2, pages - 5));
+  const nums = Array.from({ length: Math.min(5, pages) }, (_, i) => start + i);
+  return (
+    <nav className="dm-pager" aria-label={`${label} pages`}>
+      <span className="dm-pager-count">{from}–{to} of {total}</span>
+      <div className="dm-pager-btns">
+        <button type="button" onClick={() => onPage(page - 1)} disabled={page === 0} aria-label="Previous page">
+          <ChevronLeft size={16} aria-hidden="true" /> Prev
+        </button>
+        {nums.map((i) => (
+          <button key={i} type="button" className={i === page ? "is-on" : undefined} aria-current={i === page ? "page" : undefined} onClick={() => onPage(i)}>
+            {i + 1}
+          </button>
+        ))}
+        <button type="button" onClick={() => onPage(page + 1)} disabled={page >= pages - 1} aria-label="Next page">
+          Next <ChevronRight size={16} aria-hidden="true" />
+        </button>
+      </div>
+    </nav>
+  );
+}
+
+/** The retraining detail, without the backend's long stock phrase for an untouched group. */
+const groupReason = (r: string) => (/^no new data since it was last trained$/i.test(r.trim()) ? "No new data since the last training" : r);
+
 export default function DataManagementPage() {
   const [fileName, setFileName] = useState("");
   const [loading, setLoading] = useState<Mode | null>(null);
@@ -466,6 +502,8 @@ export default function DataManagementPage() {
   const [formats, setFormats] = useState<{ recordEnd: string; formats: UploadFormat[] } | null>(null);
   const [history, setHistory] = useState<UploadRecord[] | null>(null);
   const [retraining, setRetraining] = useState<Retraining | null>(null);
+  const [uploadsPage, setUploadsPage] = useState(0);
+  const [groupsPage, setGroupsPage] = useState(0);
   // A request that failed must not look like an empty answer: "No uploads recorded yet" or an endless "Loading…"
   // when the backend is simply not running reads as if the data were gone.
   const [backendDown, setBackendDown] = useState(false);
@@ -479,7 +517,7 @@ export default function DataManagementPage() {
   }, []);
 
   const loadHistory = useCallback(() => {
-    getData<UploadRecord[]>("/api/upload/history?limit=12")
+    getData<UploadRecord[]>("/api/upload/history?limit=50")
       .then((d) => { setHistory(d); setHistoryError(""); })
       .catch(failed(setHistoryError));
   }, [failed]);
@@ -672,7 +710,7 @@ export default function DataManagementPage() {
       <PageHeader
         icon={Brain}
         title="Data Management"
-        subtitle="Upload datasets — the ETL pipeline classifies, validates, and loads them into the AWS database"
+        subtitle="Upload datasets into the AWS database"
         actions={backendDown ? <span className="pill red">Backend offline</span> : <span className="pill blue">ETL Pipeline Ready</span>}
       />
 
@@ -694,10 +732,7 @@ export default function DataManagementPage() {
             target's only picture said "I do not know what this is". */}
         <div className="upload-icon"><UploadCloud size={30} strokeWidth={2} aria-hidden="true" /></div>
         <h2>Upload Batch Dataset</h2>
-        <p>
-          Choose a CSV, JSON or Excel file. The pipeline recognises its layout, validates every row, and loads it where the dashboards read it.
-          Check a file first to see exactly what a load would do.
-        </p>
+        <p>CSV, JSON or Excel. Check a file first to preview what a load would do.</p>
         {/* The view's one white pill. The input is visually hidden rather than display:none, so Tab reaches it
             and Space/Enter open the picker; the label shows its focus ring. Click-to-pick only: there is no drop handling. */}
         <label className="nc-pill dm-pick" style={{ cursor: loading ? "wait" : "pointer", opacity: loading ? 0.7 : 1 }}>
@@ -713,7 +748,7 @@ export default function DataManagementPage() {
         <small>{fileName || "No file selected yet"}</small>
         {loading && (
           <small className="dm-progress">
-            {loading === "check" ? "Checking" : "Loading"} {fileName}: {elapsed} s. A year of hourly toll data takes one to two minutes.
+            {loading === "check" ? "Checking" : "Loading"} {fileName}: {elapsed} s (a year of hourly toll data takes 1–2 min)
           </small>
         )}
       </article>
@@ -829,22 +864,22 @@ export default function DataManagementPage() {
           <li>
             <span className="ds-step-icon"><ScanSearch size={18} aria-hidden="true" /></span>
             <b>Classify</b>
-            <span>The file is matched against the layouts below by its columns. An unrecognised file is rejected here rather than half-loaded.</span>
+            <span>Matched to a known layout by its columns. Unknown files are rejected.</span>
           </li>
           <li>
             <span className="ds-step-icon"><CheckCircle2 size={18} aria-hidden="true" /></span>
             <b>Validate</b>
-            <span>Each quality gate runs in turn: rows off the corridor, unreadable, or after the record&apos;s end are set aside with the reason.</span>
+            <span>Unreadable, off-corridor or too-new rows are set aside, with the reason.</span>
           </li>
           <li>
             <span className="ds-step-icon"><Database size={18} aria-hidden="true" /></span>
             <b>Load &amp; publish</b>
-            <span>Rows are written, then published to the tables the dashboards read, in one transaction. Rows already loaded are skipped.</span>
+            <span>Written and published in one transaction. Rows already loaded are skipped.</span>
           </li>
           <li>
             <span className="ds-step-icon"><CalendarClock size={18} aria-hidden="true" /></span>
             <b>Retrain weekly</b>
-            <span>Loading does not retrain the models. Once a week (scheduled for Sunday 10:00 PM) one batch retrains and re-tests the models whose data changed, and keeps the new ones only if they pass.</span>
+            <span>Sundays 10:00 PM: models whose data changed are retrained, and kept only if they pass.</span>
           </li>
         </ol>
       )}
@@ -1002,8 +1037,7 @@ export default function DataManagementPage() {
           <summary style={{ cursor: "pointer" }}>
             What can I upload?{" "}
             <span className="muted">
-              — {formats.formats.filter((f) => f.accepted).length} layouts; rows dated after {day(formats.recordEnd)} (the record&apos;s end) are set
-              aside, except air-quality readings
+              {formats.formats.filter((f) => f.accepted).length} layouts · rows after {day(formats.recordEnd)} are set aside, except air quality
             </span>
           </summary>
           <div className="dm-format-groups">
@@ -1029,7 +1063,10 @@ export default function DataManagementPage() {
       )}
 
       <div className="table-card" style={{ marginTop: 16 }}>
-        <h3 style={{ padding: '16px 20px', margin: 0, borderBottom: '1px solid var(--border-default)' }}>Recent uploads</h3>
+        <header className="dm-card-head">
+          <h3>Recent uploads</h3>
+          {history && history.length > 0 && <span className="dm-next">{history.length} {history.length === 1 ? "upload" : "uploads"}</span>}
+        </header>
         {undoNote && (
           <p className={undoNote.ok ? "ok" : "bad"} style={{ padding: "10px 20px 0", margin: 0 }}>{undoNote.text}</p>
         )}
@@ -1037,30 +1074,35 @@ export default function DataManagementPage() {
           <table>
             <thead>
               <tr>
-                <th>#</th>
                 <th>FILE</th>
-                <th>LAYOUT</th>
                 <th>STATUS</th>
                 <th style={{ textAlign: "right" }}>ROWS WRITTEN</th>
-                <th>WHEN</th>
+                <th>UPLOADED</th>
                 <th aria-label="Undo" />
               </tr>
             </thead>
             <tbody>
               {history === null ? (
                 backendDown || historyError ? (
-                  <tr><td colSpan={7} className="dm-state-cell"><StateNote kind="error" size={44}>{notLoaded(`Not loaded: ${historyError}`)}</StateNote></td></tr>
+                  <tr><td colSpan={5} className="dm-state-cell"><StateNote kind="error" size={44}>{notLoaded(`Not loaded: ${historyError}`)}</StateNote></td></tr>
                 ) : (
-                  <tr><td colSpan={7} className="muted">Loading…</td></tr>
+                  <tr><td colSpan={5} className="muted">Loading…</td></tr>
                 )
               ) : history.length === 0 ? (
-                <tr><td colSpan={7} className="dm-state-cell"><StateNote kind="nodata" size={44}>No uploads recorded yet. Checks are not recorded: they change nothing.</StateNote></td></tr>
+                <tr><td colSpan={5} className="dm-state-cell"><StateNote kind="nodata" size={44}>No uploads yet. (Checks change nothing, so they are not listed.)</StateNote></td></tr>
               ) : (
-                history.map((u) => (
-                  <tr key={u.id}>
-                    <td className="muted">{u.id}</td>
-                    <td style={{ wordBreak: "break-all" }}>{u.filename}</td>
-                    <td>{formats?.formats.find((f) => f.type === u.dataset_type)?.label ?? u.dataset_type ?? "—"}</td>
+                history.slice(uploadsPage * PAGE_ROWS, uploadsPage * PAGE_ROWS + PAGE_ROWS).map((u) => (
+                  <tr key={u.id} className={u.status === "undone" ? "dm-row-quiet" : undefined}>
+                    <td>
+                      {/* File, with its layout and upload number under it (was three columns). */}
+                      <div className="dm-file">
+                        <span className="dm-file-icon" aria-hidden="true"><FileSpreadsheet size={17} /></span>
+                        <span>
+                          <b>{u.filename}</b>
+                          <small>#{u.id} · {formats?.formats.find((f) => f.type === u.dataset_type)?.label ?? u.dataset_type ?? "—"}</small>
+                        </span>
+                      </div>
+                    </td>
                     <td><span className={`pill ${u.status === "processed" ? "green" : u.status === "failed" ? "red" : "amber"}`}>{u.status}</span></td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{n(u.processed_records)}</td>
                     <td className="muted" style={{ whiteSpace: "nowrap" }}>{when(u.uploaded_at)}</td>
@@ -1084,17 +1126,17 @@ export default function DataManagementPage() {
             </tbody>
           </table>
         </div>
+        {history && history.length > 0 && <Pager page={Math.min(uploadsPage, Math.ceil(history.length / PAGE_ROWS) - 1)} total={history.length} onPage={setUploadsPage} label="Recent uploads" />}
       </div>
 
       <div className="table-card" style={{ marginTop: 16 }}>
-        <h3 style={{ padding: '16px 20px', margin: 0, borderBottom: '1px solid var(--border-default)' }}>Weekly model retraining</h3>
-        <p className="muted" style={{ padding: "12px 20px 0", margin: 0 }}>
-          Uploads do not retrain the models. Once a week one batch retrains and re-tests each model group whose data changed
-          since it was last trained. New models go live only if they pass the tests; otherwise last week&apos;s stay. The batch is
-          scheduled for Sunday 10:00 PM (Manila time); it runs on GitHub, which may start it a few hours later, and in parts,
-          shown here together as one batch.
-          {nextRetrain && <> Next batch scheduled for <b>{nextRetrain}</b>.</>}
-        </p>
+        <header className="dm-card-head">
+          <h3>
+            Weekly model retraining
+            <InfoTooltip text="Uploads do not retrain the models. Once a week one batch retrains and re-tests each model group whose data changed since it was last trained; new models go live only if they pass, otherwise last week's stay. Scheduled for Sunday 10:00 PM Manila time; it runs on GitHub, which may start it a few hours later and in parts, shown here together as one batch." />
+          </h3>
+          {nextRetrain && <span className="dm-next">Next batch <b>{nextRetrain}</b></span>}
+        </header>
         {retraining === null ? (
           backendDown || retrainingError ? (
             <div className="dm-state-block"><StateNote kind="error" size={44}>{notLoaded(`Not loaded: ${retrainingError}`)}</StateNote></div>
@@ -1105,12 +1147,14 @@ export default function DataManagementPage() {
           <div className="dm-state-block"><StateNote kind="nodata" size={44}>No batch has run yet.</StateNote></div>
         ) : (
           <>
-            <p style={{ padding: "8px 20px 0", margin: 0 }}>
-              Last batch {runLabel(lastRetrain)}
-              {lastRetrain.parts && lastRetrain.parts.length > 1 && <> ({lastRetrain.parts.length} parts)</>} · {when(lastRetrain.started_at)}
-              {lastRetrain.finished_at && <> to {clock(lastRetrain.finished_at)}</>} · {lastRetrain.trigger}{" "}
+            <p className="dm-last-batch">
               <span className={`pill ${retrainPill(lastRetrain.status)}`}>{lastRetrain.status}</span>
-              {lastRetrain.summary && <span className="muted"> · {lastRetrain.summary}</span>}
+              <span>
+                Last batch {runLabel(lastRetrain)} · {when(lastRetrain.started_at)}
+                {lastRetrain.finished_at && <>–{clock(lastRetrain.finished_at)}</>}
+                {lastRetrain.parts && lastRetrain.parts.length > 1 && <> · {lastRetrain.parts.length} parts</>} · {lastRetrain.trigger}
+              </span>
+              {lastRetrain.summary && <span className="muted">{lastRetrain.summary}</span>}
             </p>
             <div className="table-scroll">
               <table>
@@ -1122,7 +1166,11 @@ export default function DataManagementPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {lastRetrain.groups.map((latest) => {
+                  {[...lastRetrain.groups]
+                    // What changed first: a retrained, failed or kept-previous group before the unchanged ones.
+                    .sort((x, y) => Number(x.status === "unchanged" || x.status === "not selected") - Number(y.status === "unchanged" || y.status === "not selected"))
+                    .slice(groupsPage * PAGE_ROWS, groupsPage * PAGE_ROWS + PAGE_ROWS)
+                    .map((latest) => {
                     /* A group the last batch did not run shows its latest real result from an earlier batch, named,
                        rather than "not selected" (17 Nov 2026 audit). */
                     const earlier =
@@ -1134,12 +1182,12 @@ export default function DataManagementPage() {
                         : undefined;
                     const g = earlier?.g ?? latest;
                     return (
-                      <tr key={latest.key}>
+                      <tr key={latest.key} className={g.status === "unchanged" ? "dm-row-quiet" : undefined}>
                         <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>{g.title}</td>
                         <td><span className={`pill ${retrainPill(g.status)}`}>{g.status}</span></td>
                         <td style={{ whiteSpace: "normal", minWidth: 320 }}>
-                          {earlier && <div className="muted">Not run in the last batch. Latest result, from batch {runLabel(earlier.run)} ({when(earlier.run.started_at)}):</div>}
-                          {g.reason}
+                          {earlier && <div className="muted">Not in the last batch; from {runLabel(earlier.run)} ({when(earlier.run.started_at)}):</div>}
+                          {groupReason(g.reason)}
                           {(g.comparisons ?? []).map((c) => <div key={c} className="muted">{c}</div>)}
                           {g.status !== "unchanged" && (g.changes ?? []).slice(0, 2).map((c) => <div key={c} className="muted">Data: {c}</div>)}
                         </td>
@@ -1149,13 +1197,17 @@ export default function DataManagementPage() {
                 </tbody>
               </table>
             </div>
+            <Pager page={Math.min(groupsPage, Math.ceil(lastRetrain.groups.length / PAGE_ROWS) - 1)} total={lastRetrain.groups.length} onPage={setGroupsPage} label="Model groups" />
             {retraining.runs.length > 1 && (
-              <p className="muted" style={{ padding: "8px 20px 16px", margin: 0 }}>
-                Earlier:{" "}
-                {retraining.runs.slice(1).map((r, i) => (
-                  <span key={r.id}>{i > 0 && " · "}{runLabel(r)} {when(r.started_at)} — {r.status}</span>
+              <div className="dm-earlier">
+                <span className="muted">Earlier</span>
+                {retraining.runs.slice(1).map((r) => (
+                  <span key={r.id} className="dm-earlier-run" title={`${runLabel(r)} · ${when(r.started_at)}`}>
+                    <i className={`dm-dot ${retrainPill(r.status)}`} aria-hidden="true" />
+                    {runLabel(r)} · {when(r.started_at)} · {r.status}
+                  </span>
                 ))}
-              </p>
+              </div>
             )}
           </>
         )}

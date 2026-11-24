@@ -22,6 +22,16 @@ const STATUS_LIGHT = { clear: "#12804a", slow: "#946500", congested: "#c8322a" }
    roadbed) and is still the same blue-grey, well clear of the green / yellow / red ramp. --signal-none in
    globals.css and components/dashboard/trafficPalette.ts use the same value; change all three together. */
 const NO_DATA_DARK = "#6b778c";
+
+/* The Map tab's daylight look (16 Nov 2026, user reference): a pastel basemap, a navy-edged road and brighter lane
+   colours, the way a navigation app draws them. The deep light-theme set above was chosen to hold 3:1 on a white
+   card; on the road it sits inside a navy edge, which carries the contrast, so the lanes can be the bright greens,
+   ambers and reds of the reference. The Map tab's legends, strip and status dots read these same values (its
+   stylesheet sets --signal-* to them inside .lm-page), so the tab stays one set of colours. The Overview's road map
+   keeps the classic set (look "classic"). */
+/* Slow is a clean amber-yellow (17 Nov 2026, user: "I don't like the shade of the yellow"): #f0a30a read as orange on
+   the road and the chips fell back to the deep #946500 token, a muddy brown. */
+const STATUS_LIGHT_VIVID = { clear: "#1fae52", slow: "#f5b400", congested: "#e5383b" } as const;
 const NO_DATA_LIGHT = "#7d8799";
 
 /**
@@ -40,21 +50,24 @@ export const DARK_BASEMAP = "https://basemaps.cartocdn.com/gl/dark-matter-gl-sty
  * and the corridor colours were picked against a light background they no
  * longer sat on. Both now follow the app's theme.
  */
-export function mapPalette(isDark: boolean) {
-  const status = isDark ? STATUS_DARK : STATUS_LIGHT;
+export function mapPalette(isDark: boolean, look: "map-tab" | "classic" = "map-tab") {
+  const tab = look === "map-tab";
+  const status = isDark ? STATUS_DARK : tab ? STATUS_LIGHT_VIVID : STATUS_LIGHT;
   return {
+    look,
     style: isDark ? DARK_BASEMAP : "mapbox://styles/mapbox/light-v11",
     /* A wash over the base map. Every road in Central Luzon is drawn at much
        the same weight, so dimming all of it is what actually makes NLEX the
        subject — far more than thickening the corridor could. In dark it is the
        stage colour, so the basemap sinks into the same night as the shell. */
-    scrim: isDark ? "#03060d" : "#f2f0ea",
-    scrimOpacity: isDark ? 0.42 : 0.64,
+    /* The Map tab recolours the basemap itself (lib/map-basemap.ts), so it needs only a breath of wash. */
+    scrim: isDark ? "#03060d" : tab ? "#ffffff" : "#f2f0ea",
+    scrimOpacity: isDark ? (tab ? 0.16 : 0.42) : tab ? 0.18 : 0.64,
     /* The lit ribbon: a soft expressway-blue glow under the corridor, in both
        themes (luminous on the night ground, a blue wash on the paper one). Kept
        low so it frames the state colours rather than competing with them. */
-    halo: isDark ? "#6f8cff" : "#3660ff",
-    haloOpacity: isDark ? 0.13 : 0.1,
+    halo: isDark ? "#6f8cff" : tab ? "#1e2b63" : "#3660ff",
+    haloOpacity: isDark ? (tab ? 0.08 : 0.13) : tab ? 0 : 0.1,
     /* A second, wider and fainter glow under the halo: the light the ribbon
        throws on the ground around it. */
     glow: isDark ? "#3660ff" : "#5c7aff",
@@ -64,9 +77,11 @@ export function mapPalette(isDark: boolean) {
        the corridor reads as a divided expressway rather than two thin lines.
        Asphalt a step above the stage in dark; white with grey edges in light,
        the way a printed road map draws a motorway. */
-    roadbed: isDark ? "#182031" : "#ffffff",
-    roadEdge: isDark ? "#46536e" : "#aab3c3",
-    median: isDark ? "#c9d0dc" : "#9aa3b4",
+    /* Map tab: a slate edge round a white bed in light, a deep blue edge in dark (16 Nov 2026 second pass: the
+       navy and periwinkle edges of the first pass outlined the road like a cartoon). */
+    roadbed: isDark ? (tab ? "#101a33" : "#182031") : "#ffffff",
+    roadEdge: isDark ? (tab ? "#2c3d6b" : "#46536e") : tab ? "#8a9abb" : "#aab3c3",
+    median: isDark ? "#c9d0dc" : tab ? "#c4cce0" : "#9aa3b4",
     medianOpacity: isDark ? 0.4 : 0.8,
     /* A stretch the feed said nothing about. Distinct from every congestion
        colour on purpose: "not reported" is not a traffic condition. */

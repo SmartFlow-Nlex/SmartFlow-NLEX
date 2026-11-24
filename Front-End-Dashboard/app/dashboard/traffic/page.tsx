@@ -189,6 +189,46 @@ export default function TrafficPage() {
   const BELOW = chartTheme.isDark ? RAMP[0] : PAIR_B;
   const [activeTab, setActiveTab] = useState<"Descriptive" | "Predictive" | "Prescriptive">("Descriptive");
 
+  /* Deep links (16 Nov 2026): ?tab=predictive opens that subtab, and a #id scrolls to that card once it is
+     on the page. Used by the Map tab's expanded forecast ("Congestion chart"). Read from window rather than
+     useSearchParams, which would need a Suspense boundary around the whole page. */
+  const [jumpTo, setJumpTo] = useState<string | null>(null);
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get("tab")?.toLowerCase();
+    const pick = tab === "predictive" ? "Predictive" : tab === "prescriptive" ? "Prescriptive" : tab === "descriptive" ? "Descriptive" : null;
+    if (pick) setActiveTab(pick);
+    if (window.location.hash.length > 1) setJumpTo(decodeURIComponent(window.location.hash.slice(1)));
+  }, []);
+  useEffect(() => {
+    if (!jumpTo) return;
+    let tries = 0;
+    let userMoved = false;
+    const stop = () => { userMoved = true; };
+    window.addEventListener("wheel", stop, { passive: true });
+    window.addEventListener("touchstart", stop, { passive: true });
+    window.addEventListener("keydown", stop);
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const go = () => document.getElementById(jumpTo)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const poll = setInterval(() => {
+      if (document.getElementById(jumpTo)) {
+        clearInterval(poll);
+        go();
+        // The cards above it load their data after it appears and grow, pushing it down: follow it, twice,
+        // unless the reader has started scrolling on their own.
+        for (const ms of [900, 2000]) timers.push(setTimeout(() => { if (!userMoved) go(); }, ms));
+      } else if (++tries > 40) {
+        clearInterval(poll);
+      }
+    }, 120);
+    return () => {
+      clearInterval(poll);
+      timers.forEach(clearTimeout);
+      window.removeEventListener("wheel", stop);
+      window.removeEventListener("touchstart", stop);
+      window.removeEventListener("keydown", stop);
+    };
+  }, [jumpTo]);
+
   // Global filters (Row A)
   const [rangeMode, setRangeMode] = useState<RangeMode>("12");
   const [customFrom, setCustomFrom] = useState("");
@@ -471,7 +511,7 @@ export default function TrafficPage() {
         // The same layout as the event chart's hover: the name in bold, then plain lines with the figures in bold.
         tooltip: {
           trigger: "axis",
-          axisPointer: { type: "shadow" },
+          axisPointer: { type: "none" },
           formatter: (p) => {
             const i = (Array.isArray(p) ? p[0] : p as { dataIndex: number }).dataIndex;
             const r = display[i];
@@ -502,6 +542,9 @@ export default function TrafficPage() {
               },
             })),
             barWidth: 14,
+            // Hover: this bar stays, the others fade (it replaced a cropped grey band, 19 Nov 2026).
+            emphasis: { focus: "self" },
+            blur: { itemStyle: { opacity: 0.4 } },
             showBackground: true,
             backgroundStyle: { color: chartTheme.isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(16, 33, 63, 0.05)", borderRadius: 6 },
             label: {
@@ -686,7 +729,7 @@ export default function TrafficPage() {
           },
         },
         tooltip: {
-          axisPointer: { type: "shadow" },
+          axisPointer: { type: "none" },
           formatter: (p) => {
             const i = (p as { dataIndex: number }).dataIndex;
             const r = display[i];
@@ -721,6 +764,9 @@ export default function TrafficPage() {
               label: { position: r.pct >= 0 ? "right" : "left" },
             })),
             barWidth: 14,
+            // Hover: this bar stays, the others fade (it replaced a cropped grey band, 19 Nov 2026).
+            emphasis: { focus: "self" },
+            blur: { itemStyle: { opacity: 0.4 } },
             showBackground: true,
             backgroundStyle: { color: chartTheme.isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(16, 33, 63, 0.05)", borderRadius: 6 },
             label: { show: true, distance: 8, fontSize: 12.5, fontWeight: 700, color: labelInk, formatter: (p) => fmtPct(Number(p.value)) },
@@ -1190,7 +1236,7 @@ export default function TrafficPage() {
               </article>
               <article className={styles.kpiTile}>
                 <span className={styles.kpiIcon} aria-hidden="true"><Gauge size={15} /></span>
-                <h3>Congestion Index<InfoTooltip text="How bad the jams were: the average Waze level of the jams reported on the corridor over the Range, from 1 (light) to 5 (blocked road). Waze reports only jams, never free flow, so this measures how severe congestion is when it happens, not how often it happens; it stays near the middle and moves little with weather." /></h3>
+                <h3>Congestion Index<InfoTooltip text={`How bad the jams were: the average Waze level of the jams reported on the corridor over the Range, from 1 (light) to 5 (blocked road). Waze reports only jams, never free flow, so this measures how severe congestion is when it happens, not how often it happens; it stays near the middle and moves little with weather.${data?.meta.jamTo ? ` Waze jam data runs to ${data.meta.jamTo}; later days are not in this figure.` : ""}`} /></h3>
                 <div className={styles.kpiValue}>{kpiValue(data?.kpis.congestionIndex != null ? `${data.kpis.congestionIndex.toFixed(2)} / 5` : null)}</div>
                 <p className={styles.kpiHint}>
                   {derived?.congestionDelta != null ? (
@@ -1202,10 +1248,7 @@ export default function TrafficPage() {
                     </>
                   ) : data ? "no prior data" : "—"}
                 </p>
-                {/* Jam reports stop before the toll record does: say so when the Range runs past them. */}
-                {data?.meta.jamTo && data.range.to > data.meta.jamTo && (
-                  <p className={styles.kpiHint}>Waze jam data runs to {data.meta.jamTo}; later days are not in this figure.</p>
-                )}
+                {/* The jam data's cut-off is in the (i) above (19 Nov 2026, user request: no line under the number). */}
               </article>
             </div>
 
@@ -1330,10 +1373,8 @@ export default function TrafficPage() {
                 <CardIcon icon={CalendarDays} />
                 <div className={styles.headText}>
                   <h3>{impactMode === "Events" ? "Arena Event Impact" : "Holiday vs Normal Days"}<InfoTooltip text="How volume on arena event days or public holidays compares with the normal days around them (±45-day local baseline). Toggle Events / Holidays above. This card covers every year of the record, whatever the Range: each holiday falls once a year and events are few, so a short range would leave one or two days to compare." /></h3>
-                  {/* Deliberately not filtered by Range (17 Nov 2026): under the default 12 months each holiday is a single
-                      day, and a ±45-day baseline would be cut off at the range's edges. Said here, so the 2022-2026
-                      list under a 12-month Range is not read as a filter fault. */}
-                  {data && <p className={styles.subtitle}>All years of the record ({data.meta.minDate.slice(0, 4)} to {data.meta.maxDate}); the Range filter does not apply.</p>}
+                  {/* Deliberately not filtered by Range (17 Nov 2026); its (i) says so. The subtitle saying it again was
+                      removed at the user's request (19 Nov 2026). */}
                 </div>
                 </div>
                 <div className="nct-head-tools">
@@ -1423,10 +1464,7 @@ export default function TrafficPage() {
                 <CardIcon icon={Gauge} />
                 <div className={styles.headText}>
                   <h3>Average Speed in Jams by Hour<InfoTooltip text={`Mean speed reported inside Waze jams for each hour of the day — lower means slower-moving jams at that hour.${data?.meta.jamTo ? ` Waze jam data runs to ${data.meta.jamTo}.` : ""}`} /></h3>
-                  {/* Jam reports stop before the toll record does; said here as on the Congestion Index tile. */}
-                  {data?.meta.jamTo && data.range.to > data.meta.jamTo && (
-                    <p className={styles.subtitle}>Waze jam data runs to {data.meta.jamTo}; later days are not in this chart.</p>
-                  )}
+                  {/* The jam data's cut-off is in the (i) (19 Nov 2026, user request: no subtitle line). */}
                 </div>
                 </div>
               </div>
@@ -1490,7 +1528,14 @@ export default function TrafficPage() {
             {/* Each on its own full row (8 Oct 2026, user request): side by side, the congestion card was
                 twice the height of the event card and one of them always ended in blank space. Each card
                 splits itself into two columns inside instead (.nct-split). */}
-            <div className={styles.spanFull}><PredictiveCongestionChart /></div>
+            {/* id: the Map tab's expanded forecast links here (?tab=predictive#congestion-state-map). */}
+            <div
+              id="congestion-state-map"
+              className={styles.spanFull}
+              style={{ scrollMarginTop: "calc(var(--ds-topbar-h, 64px) + 16px)" }}
+            >
+              <PredictiveCongestionChart />
+            </div>
             <div className={styles.spanFull}><PredictiveEventChart /></div>
           </>
         )}

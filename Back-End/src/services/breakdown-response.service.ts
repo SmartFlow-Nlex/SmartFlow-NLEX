@@ -124,11 +124,14 @@ export async function getBreakdownResponseFromDb(slot: BreakdownResponseSlot = {
       return null;
     }
 
+    // One decimal, as the slot query rounds in SQL (20 Nov 2026): the trainer's stored whole-holdout medians are raw
+    // floats ("21.47635555267334"), which the card printed as they came on Any day / Any time.
+    const min1 = (v: number | null) => (v == null || !Number.isFinite(Number(v)) ? null : Math.round(Number(v) * 10) / 10);
     const toStat = (r: { group_label: string; n: number; actual_median_min: number | null; predicted_median_min: number | null }): BreakdownResponseGroupStat => ({
       group: r.group_label,
       n: r.n,
-      actualMedianMin: r.actual_median_min == null ? null : Number(r.actual_median_min),
-      predictedMedianMin: r.predicted_median_min == null ? null : Number(r.predicted_median_min),
+      actualMedianMin: min1(r.actual_median_min),
+      predictedMedianMin: min1(r.predicted_median_min),
     });
 
     // The trainer's whole-holdout group stats, unless a slot was asked for. The trainer keeps only groups

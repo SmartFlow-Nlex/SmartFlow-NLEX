@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import type { EChartsOption } from "echarts";
-import { Siren } from "lucide-react";
+import { ChevronRight, Siren } from "lucide-react";
 import DashboardChart from "./DashboardChart";
-import { Shell, Empty, ActionCard, Foot, SourceBadge } from "./prescriptiveShell";
+import { Shell, Empty, SourceBadge } from "./prescriptiveShell";
 import { useThemeTokens } from "./useThemeTokens";
+import { incidentHeatRamp } from "./IncidentHeatmaps";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -89,14 +90,6 @@ type Props = {
   from?: string;
   to?: string;
 };
-
-/** #rrggbb -> "r, g, b", for an rgba() string -- canvas-rendered ECharts shapes (markLine/markArea/series) can't
- *  resolve CSS var() or color-mix(), so a token read as a real hex via useThemeTokens is converted by hand. */
-function hexToRgbTriplet(hex: string): string {
-  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
-  if (!m) return "0, 0, 0";
-  return [m[1], m[2], m[3]].map((h) => parseInt(h, 16)).join(", ");
-}
 
 export default function ClearanceResponsePanel({ months = "12", from, to }: Props) {
   const T = useThemeTokens();
@@ -228,57 +221,92 @@ export default function ClearanceResponsePanel({ months = "12", from, to }: Prop
   const rule = data.rule;
   const q = data.quantiles;
 
+  /* Time bands (20 Nov 2026, replacing the survival curve, whose flat day-long tail took most of its width): the share
+     of these incidents cleared within each band of minutes. Each share is S(start) - S(end) read off the same
+     Kaplan-Meier curve (the backend's survivalAt), so day-long ones kept as still open land in the last band rather
+     than being dropped. The band edges are fixed reading points plus the card's own green/amber targets, and 5 min
+     when half clear inside the first band. */
   const curve = data.survivalCurve;
-  const longest = curve.length > 0 ? curve[curve.length - 1].minute : 60;
-  /* Axis capped near P99 (2 Nov 2026): a handful of day-long clearances stretched it to ~1,400 min and squeezed the
-     0-300 min where nearly every incident ends into a sliver. Where the curve never drops to 1% (censoring), the
-     cap falls back to 1.5x P95. */
-  const p99 = curve.find((pt) => pt.survival <= 0.01)?.minute ?? q.p95 * 1.5;
-  const maxMinute = Math.min(longest, Math.max(p99, q.p95 * 1.15, rule.checkAtMinute * 1.2, 60));
-  const capped = maxMinute < longest;
-
-  // ECharts draws on canvas, which can't resolve a CSS var() or color-mix(); useThemeTokens reads the real values.
-  type MLPoint = { xAxis: number; lineStyle?: { type?: "dashed" | "solid"; color?: string; width?: number }; label?: { show: boolean; formatter?: string; color?: string; fontSize?: number; position?: "insideEndTop" | "insideStartTop" | "insideMiddleTop" } };
-  const markLineData: MLPoint[] = [
-    // Short labels, staggered down the line, so close quantiles do not collide; the minutes are in the key above.
-    { xAxis: q.p80, lineStyle: { type: "dashed", color: T.textMuted, width: 1.5 }, label: { show: true, formatter: "P80", color: T.textMuted, fontSize: 11, position: "insideMiddleTop" } },
-    { xAxis: q.p95, lineStyle: { type: "dashed", color: T.textMuted, width: 1.5 }, label: { show: true, formatter: "P95", color: T.textMuted, fontSize: 11, position: "insideStartTop" } },
-    { xAxis: rule.checkAtMinute, lineStyle: { type: "solid", color: T.accent, width: 2 }, label: { show: true, formatter: "P50 · check", color: T.accent, fontSize: 11, position: "insideEndTop" } },
-  ];
-  type MAPoint = { xAxis: number; itemStyle?: { color: string } };
-  const markAreaData: [MAPoint, MAPoint][] = [
-    [{ xAxis: 0, itemStyle: { color: `rgba(${hexToRgbTriplet(T.success)}, 0.1)` } }, { xAxis: data.kpi.targets.greenMax }],
-  ];
+  const longest = curve.length > 0 ? curve[curve.length - 1].minute : 0;
+  const S = (t: number) => {
+    let s = 1;
+    for (const p of curve) {
+      if (p.minute > t) break;
+      s = p.survival;
+    }
+    return s;
+  };
+  const { greenMax, amberMax } = data.kpi.targets;
+  const edges = Array.from(new Set([...(q.p50 < 15 ? [5] : []), 15, 30, 45, 60, 90, 120, 180, greenMax, amberMax]))
+    .filter((e) => e > 0)
+    .sort((x, y) => x - y);
+  // No empty bands past the longest clearance: the last band is "over" the last edge below it.
+  const usable = edges.filter((e, i) => i === 0 || edges[i - 1] < longest);
+  type Band = { label: string; from: number; to: number | null; share: number; cum: number };
+  const bands: Band[] = [];
+  let prev = 0;
+  for (const e of usable) {
+    bands.push({ label: `${prev}–${e} min`, from: prev, to: e, share: S(prev) - S(e), cum: 1 - S(e) });
+    prev = e;
+  }
+  bands.push({ label: `Over ${prev} min`, from: prev, to: null, share: S(prev), cum: 1 });
+  // Incident orange, not green/amber/red (20 Nov 2026, "match the colors"): three shades of the tab's heatmap ramp,
+  // light within the target, deeper past it. Light ramp runs pale to deep, dark runs dim to bright, hence the indices.
+  const heat = incidentHeatRamp(T.isDark);
+  const zone = T.isDark ? { g: heat[3], a: heat[4], r: heat[5] } : { g: heat[2], a: heat[4], r: heat[5] };
+  const zoneColor = (b: Band) => (b.to != null && b.to <= greenMax ? zone.g : b.to != null && b.to <= amberMax ? zone.a : zone.r);
+  const checkBand = bands.findIndex((b) => rule.checkAtMinute >= b.from && (b.to == null || rule.checkAtMinute < b.to));
+  const pctTxt = (v: number) => `${Math.round(v * 100)}%`;
+  const approx = (v: number) => Math.round(v * data.sampleSize);
 
   const option: EChartsOption = {
-    grid: { left: 56, right: 24, top: 24, bottom: 48 },
+    grid: { left: 8, right: 24, top: 8, bottom: 28, containLabel: true },
     tooltip: {
-      trigger: "axis",
+      trigger: "item",
       // Rendered into the tooltip's own DOM node (not canvas), so var() here resolves.
       formatter: (params: unknown) => {
-        const items = params as { dataIndex: number; value: [number, number] }[];
-        if (items.length === 0) return "";
-        const point = curve[items[0].dataIndex];
-        if (!point) return "";
-        return `<b>${point.minute.toFixed(0)} min since report</b><br/>${(point.survival * 100).toFixed(1)}% still uncleared<br/><span style="color:var(--text-muted)">${point.atRisk} at risk</span>`;
+        const b = bands[(params as { dataIndex: number }).dataIndex];
+        if (!b) return "";
+        const head = `<b>${b.to == null ? `Took over ${fmtMin(b.from)}` : `Cleared in ${b.from}–${b.to} min`}</b>`;
+        const body = `${pctTxt(b.share)} of these ${typeLabel} (about ${approx(b.share)} of ${data.sampleSize})`;
+        const tail =
+          b.to == null
+            ? `<br/><span style="color:var(--text-muted)">Includes ${data.censoredCount} still open at 24 h; the longest took ${fmtMin(longest)}.</span>`
+            : `<br/><span style="color:var(--text-muted)">${pctTxt(b.cum)} cleared within ${fmtMin(b.to)}</span>`;
+        return `${head}<br/>${body}${tail}`;
       },
     },
-    xAxis: { type: "value", name: "Minutes since report", nameLocation: "middle", nameGap: 28, min: 0, max: maxMinute, axisLabel: { color: T.chartText }, splitLine: { show: false } },
-    yAxis: {
-      type: "value", name: "Still uncleared", nameLocation: "middle", nameGap: 44, min: 0, max: 1,
+    xAxis: {
+      type: "value", min: 0, max: (v: { max: number }) => Math.min(1, Math.ceil((v.max + 0.06) * 10) / 10),
       axisLabel: { color: T.chartText, formatter: (v: number) => `${Math.round(v * 100)}%` },
       splitLine: { lineStyle: { color: T.chartSplit } },
     },
+    yAxis: {
+      type: "category", inverse: true, data: bands.map((b) => b.label),
+      axisTick: { show: false }, axisLine: { show: false },
+      axisLabel: { color: T.textSecondary, fontSize: 12 },
+    },
     series: [
       {
-        type: "line",
-        step: "end",
-        showSymbol: false,
-        data: curve.filter((p) => p.minute <= maxMinute).map((p) => [p.minute, p.survival]),
-        lineStyle: { width: 2.5, color: T.accent },
-        itemStyle: { color: T.accent },
-        markLine: { silent: true, symbol: "none", label: { show: false }, data: markLineData },
-        markArea: { silent: true, data: markAreaData },
+        type: "bar",
+        barWidth: "62%",
+        data: bands.map((b) => ({ value: b.share, itemStyle: { color: zoneColor(b), borderRadius: [0, 5, 5, 0] } })),
+        label: {
+          show: true,
+          position: "right",
+          formatter: (p: unknown) => {
+            const i = (p as { dataIndex: number }).dataIndex;
+            const b = bands[i];
+            const cum = b.to == null ? "" : `  {c|${pctTxt(b.cum)} by ${b.to} min}`;
+            const chk = i === checkBand ? `  {k|◂ check at ${fmtMin(rule.checkAtMinute)}}` : "";
+            return `{v|${pctTxt(b.share)}}${cum}${chk}`;
+          },
+          rich: {
+            v: { color: T.textPrimary, fontWeight: 700, fontSize: 12 },
+            c: { color: T.textMuted, fontSize: 11 },
+            k: { color: T.textPrimary, fontWeight: 700, fontSize: 11 },
+          },
+        },
       },
     ],
   };
@@ -287,40 +315,40 @@ export default function ClearanceResponsePanel({ months = "12", from, to }: Prop
     <Shell title="Clearance Response Protocol" hint={hint} updating={updating} right={controls}>
       {statusLine}
       <div className="inc-busy-body" aria-busy={updating}>
-        <ActionCard
-          lead
-          icon={Siren}
-          tag={<SourceBadge kind="history" detail={`${data.sampleSize} measured clearance times of ${typeLabel}, ${WEATHER_LABEL[at.weather]}, Kaplan-Meier`} />}
-          title={rule.text}
-          facts={[
-            {
-              label: "How sure",
-              value: (
-                <>
-                  95% range <b>{pct(rule.chance.lo)}–{pct(rule.chance.hi)}</b>, from the {rule.openAtCheck} of {data.sampleSize} still open at {fmtMin(rule.checkAtMinute)}
-                </>
-              ),
-            },
-            { label: "Measured", value: <>P50 <b>{fmtMin(q.p50)}</b> · P80 <b>{fmtMin(q.p80)}</b> · P95 <b>{fmtMin(q.p95)}</b> · n = {data.sampleSize}</> },
-            {
-              label: "Vs target",
-              value: (
-                <>
-                  Mean {fmtMin(data.kpi.baselineMttr)},{" "}
-                  <span style={{ color: RAG_COLOR[data.kpi.rag], fontWeight: 700, textTransform: "uppercase" }}>{data.kpi.rag}</span> against{" "}
-                  {data.kpi.targets.greenMax} / {data.kpi.targets.amberMax} min{data.kpi.indicative ? " (indicative: not lane clearance)" : ""}
-                </>
-              ),
-            },
-          ]}
-          details={
-            <ul style={{ margin: 0, paddingLeft: 18 }}>
+        {/* The rule first, as a banner, with its three supporting facts (reference layout, 20 Nov 2026). */}
+        <section className="px-hero">
+          <div className="px-hero-head">
+            <span className="px-icon is-warm" aria-hidden="true"><Siren size={22} strokeWidth={2} /></span>
+            <h4>{rule.text}</h4>
+            <SourceBadge kind="history" detail={`${data.sampleSize} measured clearance times of ${typeLabel}, ${WEATHER_LABEL[at.weather]}, Kaplan-Meier`} />
+          </div>
+          <dl className="px-hero-facts">
+            <div>
+              <dt>How sure</dt>
+              <dd>95% range <b>{pct(rule.chance.lo)}–{pct(rule.chance.hi)}</b>, from the {rule.openAtCheck} of {data.sampleSize} still open at {fmtMin(rule.checkAtMinute)}</dd>
+            </div>
+            <div>
+              <dt>Measured</dt>
+              <dd>P50 <b>{fmtMin(q.p50)}</b> · P80 <b>{fmtMin(q.p80)}</b> · P95 <b>{fmtMin(q.p95)}</b> · n = {data.sampleSize}</dd>
+            </div>
+            <div>
+              <dt>Vs target</dt>
+              <dd>
+                Mean {fmtMin(data.kpi.baselineMttr)},{" "}
+                <span style={{ color: RAG_COLOR[data.kpi.rag], fontWeight: 700, textTransform: "uppercase" }}>{data.kpi.rag}</span> against{" "}
+                {data.kpi.targets.greenMax} / {data.kpi.targets.amberMax} min{data.kpi.indicative ? " (indicative: not lane clearance)" : ""}
+              </dd>
+            </div>
+          </dl>
+          <details className="px-details">
+            <summary><ChevronRight size={15} strokeWidth={2.4} aria-hidden="true" />Details</summary>
+            <ul>
               {data.method.map((m) => (
-                <li key={m} style={{ marginBottom: 4 }}>{m}</li>
+                <li key={m}>{m}</li>
               ))}
             </ul>
-          }
-        />
+          </details>
+        </section>
 
         {/* All and property-damage-only crashes (17 Nov 2026). With the 0-minute recording defaults left out, half
             of them are still logged as cleared within about 5 minutes, so the rule checks at minute 5. Those short
@@ -334,47 +362,52 @@ export default function ClearanceResponsePanel({ months = "12", from, to }: Prop
           </p>
         )}
 
-        <p className="inc-curve-key" aria-hidden="true">
-          <span><i className="is-esc" />Check at P50, {fmtMin(q.p50)}</span>
-          <span><i className="is-q" />P80 {fmtMin(q.p80)}</span>
-          <span><i className="is-q" />P95 {fmtMin(q.p95)}</span>
-        </p>
-        <DashboardChart option={option} height={300} />
-        {capped && (
-          <p className="inc-caption inc-axis-note">
-            Axis capped near P99 ({fmtMin(maxMinute)}); the longest clearance in this set took {fmtMin(longest)}.
+        <section className="px-panel">
+          <div className="px-panel-head">
+            <h4>Share cleared in each time band</h4>
+            <p className="px-curve-key" aria-hidden="true">
+              <span><i className="is-g" style={{ background: zone.g }} />Within the {greenMax}-min target</span>
+              <span><i className="is-a" style={{ background: zone.a }} />{greenMax}–{amberMax} min</span>
+              <span><i className="is-r" style={{ background: zone.r }} />Over {amberMax} min</span>
+            </p>
+          </div>
+          <DashboardChart option={option} height={bands.length * 34 + 40} />
+          <p className="px-note">
+            Grey figures are the running total. The last band includes the {data.censoredCount} still open at 24 h; the longest took {fmtMin(longest)}.
           </p>
-        )}
+        </section>
 
-        <div className="inc-table-wrap">
-          <table className="inc-table">
-            <thead>
-              <tr>
-                <th>Still open at</th>
-                <th>Share of all</th>
-                <th>Median time left</th>
-                <th>Runs past P95 ({fmtMin(q.p95)})</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.checkpoints.map((c) => (
-                <tr key={c.label} className={c.label === "P50" ? "is-staffed" : undefined}>
-                  <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{fmtMin(c.minute)} <span className="is-muted">({c.label})</span></td>
-                  <td className="is-muted">{pct(c.stillOpen)} · {c.openCount} events</td>
-                  <td>{c.medianRemainingMin == null ? "—" : `${fmtMin(c.medianRemainingMin)} more`}</td>
-                  <td style={{ fontWeight: 600 }}>
-                    {pct(c.pastP95.p)} <span className="is-muted" style={{ fontWeight: 400 }}>({pct(c.pastP95.lo)}–{pct(c.pastP95.hi)})</span>
-                  </td>
+        <section className="px-panel px-panel-flush">
+          <div className="px-table-wrap">
+            <table className="px-table">
+              <thead>
+                <tr>
+                  <th>Still open at</th>
+                  <th>Share of all</th>
+                  <th>Median time left</th>
+                  <th>Runs past P95 ({fmtMin(q.p95)})</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {data.checkpoints.map((c) => (
+                  <tr key={c.label} className={c.label === "P50" ? "is-first" : undefined}>
+                    <td className="px-name">{fmtMin(c.minute)} <span className="is-muted">({c.label})</span></td>
+                    <td>{pct(c.stillOpen)} <span className="is-muted">· {c.openCount} events</span></td>
+                    <td>{c.medianRemainingMin == null ? "—" : `${fmtMin(c.medianRemainingMin)} more`}</td>
+                    <td className="px-strong">
+                      {pct(c.pastP95.p)} <span className="is-muted" style={{ fontWeight: 400 }}>({pct(c.pastP95.lo)}–{pct(c.pastP95.hi)})</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
         {/* Which filters these numbers answer, so a result still on screen from before a change is never mistaken for the new one. */}
-        <Foot>
+        <p className="px-note">
           {at.type === "breakdown" ? "Breakdowns" : `${SEVERITY_LABEL[at.severity][0].toUpperCase()}${SEVERITY_LABEL[at.severity].slice(1)} accidents`},{" "}
           {WEATHER_LABEL[at.weather]} · n = {data.sampleSize} ({data.censoredCount} still open at 24 h) · {data.scoringWindow.from} to {data.scoringWindow.to} · {data.kpi.metricLabel}
-        </Foot>
+        </p>
       </div>
     </Shell>
   );

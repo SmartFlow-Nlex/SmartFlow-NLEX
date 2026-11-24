@@ -1,22 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Clock } from "lucide-react";
-import { Shell, Empty, ActionCard, SourceBadge } from "./prescriptiveShell";
+import { useEffect, useRef, useState } from "react";
+import { BarChart3, CalendarDays, CalendarRange, Clock, ListOrdered, ShieldCheck } from "lucide-react";
+import { Shell, Empty, SourceBadge } from "./prescriptiveShell";
+import { incidentHeatRamp } from "./IncidentHeatmaps";
+import { useThemeTokens } from "./useThemeTokens";
+import RampKey from "./RampKey";
+import { heatValue } from "../../lib/heat-tooltip";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
 const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`);
 
-// Single-hue sequential ramp for the heat strip: the incident magnitude ramp
-// (--inc-heat-lo -> --inc-heat-hi, app/styles/nc-incident.css), which follows the theme.
-function heatShade(t: number): string {
-  const clamped = Math.max(0, Math.min(1, t));
-  return `color-mix(in oklab, var(--inc-heat-hi) ${(clamped * 100).toFixed(1)}%, var(--inc-heat-lo))`;
+// The Descriptive tab's incident ramp (incidentHeatRamp in IncidentHeatmaps.tsx), so the week grid reads the same as
+// "Incidents by Hour and Day" (20 Nov 2026: the paler accent-only ramp looked washed out beside it). t in 0..1 is
+// placed along the 7 stops and mixed between the two either side, as ECharts' continuous visualMap does.
+function heatShade(t: number, ramp: string[]): string {
+  const x = Math.max(0, Math.min(1, t)) * (ramp.length - 1);
+  const i = Math.min(ramp.length - 2, Math.floor(x));
+  return `color-mix(in srgb, ${ramp[i + 1]} ${((x - i) * 100).toFixed(1)}%, ${ramp[i]})`;
 }
 
-// Shade by RANK among the week's 168 hours, not by linear position between min and max: the hourly counts bunch
-// near the top of their range, so linear scaling would spend the ramp on a few quiet overnight hours.
+// An hour's rank among the week's 168 hours, for the tooltip's "Top n%". (The grid itself is shaded like the
+// Descriptive heatmap: linearly from 0 to the busiest hour.)
 function percentileOf(v: number, all: number[]): number {
   let lower = 0;
   let equal = 0;
@@ -122,10 +128,18 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
   const [data, setData] = useState<AnalyticsSlice | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The week grid's hovered hour (with where to draw its tooltip, relative to the panel) and the hour clicked to pin.
+  const [hover, setHover] = useState<{ dow: number; h: number; x: number; y: number; below: boolean } | null>(null);
+  const [pick, setPick] = useState<{ dow: number; h: number } | null>(null);
+  const heatRef = useRef<HTMLElement | null>(null);
+  const ramp = incidentHeatRamp(useThemeTokens().isDark);
+  // Where the cursor is along the colour key (0..1), so the grid can light the hours of that shade, as on Descriptive.
+  const [scrub, setScrub] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setPick(null);
     // Cleared here, not just on success, so a retry after a Range change shows "Updating…", not the last error.
     setError(null);
     const qs = new URLSearchParams();
@@ -210,121 +224,242 @@ export default function PatrolAlertWindowPanel({ months = "12", from, to }: Prop
     }
   }
   const allHours = rows.flatMap((r) => r.profile.hours);
+  const maxHour = Math.max(...allHours);
   const minDays = Math.min(...observed.map((r) => r.days));
   const maxDays = Math.max(...observed.map((r) => r.days));
   const rate = (v: number) => v.toFixed(v < 10 ? 2 : 1);
 
+  /* The hours that are alert hours on most weekdays (reference layout's "focus" takeaway, 20 Nov 2026): for each
+     hour, the weekdays on which it is an alert hour; the longest run of hours alert on at least `need` of the observed
+     weekdays. Computed from the same test as the table; nothing is set by hand except "most" = more than half. */
+  const need = Math.floor(observed.length / 2) + 1;
+  const alertDays = Array.from({ length: 24 }, (_, h) => rows.filter((r) => r.days > 0 && r.profile.alert[h]).length);
+  let common: [number, number] | null = null;
+  for (let h = 0, start = -1; h <= 24; h++) {
+    const on = h < 24 && alertDays[h] >= need;
+    if (on && start < 0) start = h;
+    if (!on && start >= 0) {
+      if (!common || h - start > common[1] - common[0]) common = [start, h];
+      start = -1;
+    }
+  }
+  const commonMin = common ? Math.min(...alertDays.slice(common[0], common[1])) : 0;
+  const daysSpan = minDays === maxDays ? `${minDays}` : `${minDays}–${maxDays}`;
+  const pickRow = pick ? rows.find((r) => r.dow === pick.dow) ?? null : null;
+  // The hour whose day and hour labels light up: the hovered one, else the pinned one.
+  const focus = hover ?? pick;
+
   return (
-    <Shell title="Patrol Alert Schedule" hint={hint} updating={loading && !error}>
+    <Shell
+      title="Patrol Alert Schedule"
+      hint={hint}
+      updating={loading && !error}
+      right={<SourceBadge kind="history" detail="Past incidents by hour and weekday in the Range; the incident model forecasts daily totals, not hours" />}
+    >
       {error && (
         <div role="alert" style={{ fontSize: "0.78rem", color: "var(--color-warning)" }}>
-          Couldn&apos;t refresh with the current Range ({error}) — showing the last loaded result.
+          Couldn&apos;t refresh ({error}) — showing the last loaded result.
         </div>
       )}
-      <ActionCard
-        lead
-        icon={Clock}
-        tag={<SourceBadge kind="history" detail="Past incidents by hour and weekday in the Range; the incident model forecasts daily totals, not hours" />}
-        title={alertCount > 0 ? `Put patrol on alert in ${alertCount} hours a week` : "No hour is clearly above normal"}
-        facts={[
-          {
-            label: "Longest",
-            value: widest
-              ? <><b>{widest.label} {windowLabel(widest.primary)}</b> ({windowSpanHours(widest.primary)} h)</>
-              : "None in this Range",
-          },
-          {
-            label: "Surest",
-            value: surest
-              ? (
-                <>
-                  <b>{surest.r.label} {fmtHour(surest.h)}</b>: {rate(surest.r.profile.lo[surest.h])}–{rate(surest.r.profile.hi[surest.h])} incidents/day
-                  vs a {rate(surest.r.profile.mean)} {surest.r.label} hour
-                </>
-              )
-              : "—",
-          },
-          {
-            label: "How sure",
-            value: <>95%: each alert hour&apos;s low end is above its weekday&apos;s average ({minDays === maxDays ? minDays : `${minDays}–${maxDays}`} of each weekday)</>,
-          },
-        ]}
-        details={
-          <p style={{ margin: 0 }}>
-            For each weekday and hour, the incidents in the Range are a count over that many of the weekday. Its 95% range is the
-            exact Poisson interval of that count, divided by the days. An alert hour is one whose range sits wholly above the
-            weekday&apos;s average hour, so a busy-looking hour resting on few incidents does not qualify. No threshold or rush
-            hour is set by hand.
-          </p>
-        }
-      />
 
-      {/* The week at a glance: one row per weekday, one cell per hour, shaded by rank among all 168 hours; alert hours
-          outlined. The table below has the numbers. */}
-      <div className="inc-week" role="img" aria-label={`Incidents by hour and weekday; alert hours outlined. ${withWindow.map((r) => `${DOW_FULL[r.label]} ${r.profile.windows.map(windowLabel).join(", ")}`).join("; ")}`}>
-        <span />
-        {Array.from({ length: 24 }, (_, h) => (
-          <span key={`h${h}`} className="inc-week-hour">{h % 3 === 0 ? fmtHour(h).replace(" ", "") : ""}</span>
-        ))}
-        {rows.map((r) => (
-          <div key={`w${r.dow}`} className="inc-week-row">
-            <span className={`inc-week-day${widest && r.dow === widest.dow ? " is-widest" : ""}`}>{r.label}</span>
-            {r.profile.hours.map((v, h) => {
-              const a = r.profile.alert;
-              return (
-                <i
-                  key={h}
-                  className={`inc-week-cell${a[h] ? " is-window" : ""}${a[h] && !a[h - 1] ? " is-start" : ""}${a[h] && !a[h + 1] ? " is-end" : ""}`}
-                  style={{ background: r.days > 0 ? heatShade(percentileOf(v, allHours)) : undefined }}
-                  title={`${r.label} ${fmtHour(h)}: ${rate(v)} incidents/day (95%: ${rate(r.profile.lo[h])}–${rate(r.profile.hi[h])}) vs ${rate(r.profile.mean)} average${a[h] ? " · alert hour" : ""}`}
-                />
-              );
-            })}
+      {/* The answer and its three supporting figures (reference layout, 20 Nov 2026). */}
+      <div className="px-sum px-sum-rec">
+        <div className="px-rec">
+          <small>Recommendation</small>
+          <b>{alertCount > 0 ? `Put patrol on alert in ${alertCount} hours a week` : "No hour is clearly above normal"}</b>
+        </div>
+        <div className="px-sum-item">
+          <span className="px-icon" aria-hidden="true"><CalendarDays size={20} strokeWidth={2} /></span>
+          <span>
+            <small>Longest alert period</small>
+            <b>{widest ? `${widest.label}, ${windowLabel(widest.primary)}` : "None in this Range"}</b>
+            {widest && <em>{windowSpanHours(widest.primary)} hours in a row</em>}
+          </span>
+        </div>
+        <div className="px-sum-item">
+          <span className="px-icon" aria-hidden="true"><BarChart3 size={20} strokeWidth={2} /></span>
+          <span>
+            <small>Surest alert hour (95%)</small>
+            <b>{surest ? `${surest.r.label}, ${fmtHour(surest.h)}` : "—"}</b>
+            {surest && <em>{rate(surest.r.profile.lo[surest.h])}–{rate(surest.r.profile.hi[surest.h])} incidents/day vs a {rate(surest.r.profile.mean)} {surest.r.label} hour</em>}
+          </span>
+        </div>
+        <div className="px-sum-item">
+          <span className="px-icon" aria-hidden="true"><ShieldCheck size={20} strokeWidth={2} /></span>
+          <span>
+            <small>Confidence</small>
+            <b>95%</b>
+            <em>Each alert hour&apos;s low end is above its weekday&apos;s average, over {daysSpan} of each weekday</em>
+          </span>
+        </div>
+      </div>
+
+      {/* The week at a glance: one row per weekday, one cell per hour, shaded by rank among all 168 hours; a dot marks
+          an alert hour. Hover an hour for its figures; click to pin it (its day is then highlighted in the table). */}
+      <section className="px-panel px-heat" ref={heatRef}>
+        <div className="px-panel-head">
+          <span className="px-chip" aria-hidden="true"><CalendarRange size={17} strokeWidth={2.2} /></span>
+          <h4>Weekly Incident Intensity by Hour</h4>
+          <div className="px-legend">
+            <RampKey colors={ramp} min={0} max={maxHour} format={(v) => heatValue(v, "incidents / day", 2)} lowLabel="Quieter" highLabel="Busier" onScrub={setScrub} />
+            <span><i className="is-dot" />Alert hour</span>
           </div>
-        ))}
-      </div>
+        </div>
+        <div className="px-week-wrap">
+          <div className="px-week" onMouseLeave={() => setHover(null)} role="img" aria-label={`Incidents by hour and weekday; alert hours marked. ${withWindow.map((r) => `${DOW_FULL[r.label]} ${r.profile.windows.map(windowLabel).join(", ")}`).join("; ")}`}>
+            <span />
+            {Array.from({ length: 24 }, (_, h) => (
+              <span key={`h${h}`} className={`px-week-hour${focus && focus.h === h ? " is-on" : ""}`}>{fmtHour(h)}</span>
+            ))}
+            {rows.map((r) => (
+              <div key={`w${r.dow}`} className="px-week-row">
+                <span className={`px-week-day${widest && r.dow === widest.dow ? " is-widest" : ""}${focus && focus.dow === r.dow ? " is-on" : ""}`}>{r.label}</span>
+                {r.profile.hours.map((v, h) => {
+                  const on = r.days > 0;
+                  const isPick = pick != null && pick.dow === r.dow && pick.h === h;
+                  // Scrubbing the key: hours within 8% of the scale of the pointed-at value stay lit (Descriptive's band).
+                  const dim = scrub != null && on && Math.abs((maxHour > 0 ? v / maxHour : 0) - scrub) > 0.08;
+                  return (
+                    <i
+                      key={h}
+                      className={`px-week-cell${on && r.profile.alert[h] ? " is-alert" : ""}${on ? " is-live" : ""}${isPick ? " is-pick" : ""}${dim ? " is-dim" : ""}`}
+                      style={{ background: on ? heatShade(maxHour > 0 ? v / maxHour : 0, ramp) : undefined }}
+                      onMouseEnter={on ? (e) => {
+                        const box = heatRef.current?.getBoundingClientRect();
+                        const c = e.currentTarget.getBoundingClientRect();
+                        if (!box) return;
+                        // Above the cell unless that would leave the panel's top; centred, kept inside the panel.
+                        const below = c.top - box.top < 150;
+                        setHover({ dow: r.dow, h, x: Math.max(130, Math.min(box.width - 130, c.left - box.left + c.width / 2)), y: below ? c.bottom - box.top + 8 : c.top - box.top - 8, below });
+                      } : undefined}
+                      onClick={on ? () => setPick(isPick ? null : { dow: r.dow, h }) : undefined}
+                    />
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+        {hover && (() => {
+          const r = rows.find((x) => x.dow === hover.dow);
+          if (!r) return null;
+          return (
+            <div className={`px-heat-tip${hover.below ? " is-below" : ""}`} style={{ left: hover.x, top: hover.y }} role="tooltip">
+              <HourFigures r={r} h={hover.h} rank={percentileOf(r.profile.hours[hover.h], allHours)} rate={rate} />
+            </div>
+          );
+        })()}
+        <div className="px-heat-pick" aria-live="polite">
+          {pickRow && pick ? (
+            <>
+              <HourFigures r={pickRow} h={pick.h} rank={percentileOf(pickRow.profile.hours[pick.h], allHours)} rate={rate} inline />
+              <button type="button" className="px-heat-clear" onClick={() => setPick(null)}>Clear</button>
+            </>
+          ) : (
+            <span className="is-muted">Hover an hour for its figures; click one to pin it.</span>
+          )}
+        </div>
+      </section>
 
-      <div className="inc-table-wrap">
-        <table className="inc-table inc-sched">
-          <thead>
-            <tr>
-              <th>Day</th>
-              <th style={{ textAlign: "left" }}>Alert hours</th>
-              <th style={{ textAlign: "left" }}>Busiest hour, per day (95%)</th>
-              <th style={{ textAlign: "left" }}>Average hour</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const p = r.profile;
-              return (
-                <tr key={r.dow}>
-                  <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.label}</td>
-                  {r.days === 0 ? (
-                    <td colSpan={3} className="is-none">No {r.label} in this Range</td>
-                  ) : (
-                    <>
-                      <td className={widest && r.dow === widest.dow ? "is-widest" : r.primary ? undefined : "is-none"} style={{ textAlign: "left" }}>
-                        {p.windows.length > 0 ? p.windows.map(windowLabel).join(", ") : "None clearly above normal"}
-                      </td>
-                      <td className="is-muted" style={{ textAlign: "left", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-                        {fmtHour(p.peakHour)}: {rate(p.hours[p.peakHour])} ({rate(p.lo[p.peakHour])}–{rate(p.hi[p.peakHour])})
-                      </td>
-                      <td className="is-muted" style={{ textAlign: "left", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-                        {rate(p.mean)} · {r.days} days
-                      </td>
-                    </>
-                  )}
+      <div className="px-split">
+        <section className="px-panel">
+          <div className="px-panel-head">
+            <span className="px-chip" aria-hidden="true"><ListOrdered size={17} strokeWidth={2.2} /></span>
+            <h4>Alert Schedule by Day</h4>
+          </div>
+          <div className="px-table-wrap">
+            <table className="px-table">
+              <thead>
+                <tr>
+                  <th>Day</th>
+                  <th>Alert hours</th>
+                  <th>Busiest hour, per day (95%)</th>
+                  <th>Average hour</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const p = r.profile;
+                  const isWidest = widest != null && r.dow === widest.dow;
+                  return (
+                    <tr key={r.dow} className={[isWidest ? "is-first" : "", pick && pick.dow === r.dow ? "is-pick" : ""].join(" ").trim() || undefined}>
+                      <td className="px-name">{r.label}</td>
+                      {r.days === 0 ? (
+                        <td colSpan={3} className="is-muted">No {r.label} in this Range</td>
+                      ) : (
+                        <>
+                          <td className={isWidest ? "px-accent" : p.windows.length ? undefined : "is-muted"}>
+                            {p.windows.length > 0 ? p.windows.map(windowLabel).join(", ") : "None clearly above normal"}
+                          </td>
+                          <td className="px-tab">
+                            {fmtHour(p.peakHour)}: {rate(p.hours[p.peakHour])} <span className="is-muted">({rate(p.lo[p.peakHour])}–{rate(p.hi[p.peakHour])})</span>
+                          </td>
+                          <td className="px-tab">
+                            {rate(p.mean)} <span className="is-muted">({r.days} days)</span>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="px-panel">
+          <div className="px-panel-head">
+            <span className="px-chip" aria-hidden="true"><ShieldCheck size={17} strokeWidth={2.2} /></span>
+            <h4>Key Takeaways</h4>
+          </div>
+          <ul className="px-takeaways">
+            <li>
+              <span className="px-icon" aria-hidden="true"><Clock size={20} strokeWidth={2} /></span>
+              <span><b>{alertCount} hours / week</b><em>Total recommended patrol alert time.</em></span>
+            </li>
+            <li>
+              <span className="px-icon" aria-hidden="true"><BarChart3 size={20} strokeWidth={2} /></span>
+              <span>
+                <b>{common ? `${fmtHour(common[0])} – ${fmtHour(common[1] % 24)}` : "No shared window"}</b>
+                <em>{common ? `Alert hours on at least ${commonMin} of ${observed.length} weekdays: the week's most consistent stretch.` : `No hour is an alert hour on more than half the weekdays.`}</em>
+              </span>
+            </li>
+            <li>
+              <span className="px-icon" aria-hidden="true"><ShieldCheck size={20} strokeWidth={2} /></span>
+              <span><b>95% confidence</b><em>An alert hour&apos;s whole 95% range sits above its weekday&apos;s average hour, so a busy-looking hour resting on few incidents does not count.</em></span>
+            </li>
+          </ul>
+        </section>
       </div>
-      <p className="inc-caption inc-sched-key">
-        <span className="inc-sched-key-ramp" aria-hidden="true" />
-        Shade: incidents per day at that hour, ranked quietest to busiest across the week. <b>Outlined</b>: alert hours. Hover a cell for its numbers.
-      </p>
     </Shell>
+  );
+}
+
+/** One weekday-hour's figures, for the week grid's tooltip and its pinned line. All from the same Poisson test as the table. */
+function HourFigures({ r, h, rank, rate, inline = false }: { r: DayRow; h: number; rank: number; rate: (v: number) => string; inline?: boolean }) {
+  const p = r.profile;
+  const v = p.hours[h];
+  const vs = p.mean > 0 ? v / p.mean : 0;
+  const top = Math.max(1, Math.round((1 - rank) * 100));
+  return (
+    <div className={`px-hf${inline ? " is-inline" : ""}`}>
+      <div className="px-hf-head">
+        <b>{DOW_FULL[r.label]}, {fmtHour(h)} – {fmtHour((h + 1) % 24)}</b>
+        <span className={`px-hf-tag${p.alert[h] ? " is-alert" : ""}`}>{p.alert[h] ? "Alert hour" : "Not an alert hour"}</span>
+      </div>
+      <dl>
+        <div><dt>Incidents per {r.label}</dt><dd>{rate(v)}</dd></div>
+        <div><dt>95% range</dt><dd>{rate(p.lo[h])}–{rate(p.hi[h])}</dd></div>
+        <div><dt>{r.label} average hour</dt><dd>{rate(p.mean)} <span className="is-muted">({vs.toFixed(1)}×)</span></dd></div>
+        <div><dt>Of all 168 hours</dt><dd>{rank >= 0.5 ? `Top ${top}%` : `Bottom ${Math.max(1, Math.round(rank * 100))}%`}</dd></div>
+      </dl>
+      <p className="px-hf-note">
+        {p.alert[h]
+          ? `Even the low end of its range is above the ${r.label} average, over ${r.days} ${r.label}s.`
+          : p.hi[h] < p.mean
+            ? `Its whole range is below the ${r.label} average, over ${r.days} ${r.label}s.`
+            : `Its range reaches down to the ${r.label} average, so it is not clearly above it (${r.days} ${r.label}s).`}
+      </p>
+    </div>
   );
 }

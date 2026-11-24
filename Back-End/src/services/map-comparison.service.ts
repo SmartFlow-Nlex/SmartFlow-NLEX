@@ -151,6 +151,9 @@ export async function getForecastModelInfo(): Promise<{
   accuracy: number | null;
   trainedAt: string | null;
   rejectedCount: number;
+  /** False when nothing passed the test and the served row is the fallback baseline (rank 0): the card must not
+   *  say it "beat" the rejected candidates (19 Nov 2026). */
+  accepted: boolean;
   horizonVaries: boolean;
   horizons: number;
   minHorizon: number | null;
@@ -164,7 +167,7 @@ export async function getForecastModelInfo(): Promise<{
     const src = await forecastTable(db);
     const [{ rows: model }, { rows: variance }, { rows: base }] = await Promise.all([
       db.query(
-        `SELECT model_name, r2, updated_at,
+        `SELECT model_name, r2, updated_at, accepted,
                 -- rank 0 is the served baseline itself, never "accepted": don't count it among the ones it beat
                 (SELECT COUNT(*) FROM gold.ml_model_metrics
                   WHERE target = 'Congestion' AND NOT accepted AND rank IS DISTINCT FROM 0)::int AS rejected
@@ -200,6 +203,7 @@ export async function getForecastModelInfo(): Promise<{
       accuracy: m?.r2 === null || m?.r2 === undefined ? null : Number(m.r2),
       trainedAt: m?.updated_at ? new Date(m.updated_at).toISOString() : null,
       rejectedCount: Number(m?.rejected ?? 0),
+      accepted: m?.accepted === true,
       horizonVaries: Number(v?.varying ?? 0) > 0,
       horizons: Number(v?.horizons ?? 0),
       minHorizon: v?.min_h == null ? null : Number(v.min_h),

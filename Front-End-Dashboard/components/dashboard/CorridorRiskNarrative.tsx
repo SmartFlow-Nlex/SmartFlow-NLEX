@@ -91,7 +91,7 @@ export default function CorridorRiskNarrative({
 
   const names = [
     ...(gwr ? [{ model: "Local risk map (GWR)" }] : []),
-    ...(spatialLstm ? [{ model: "Per-exit 24h forecast (Spatial LSTM)" }] : []),
+    ...(spatialLstm ? [{ model: `Per-exit daily forecast (${spatialLstm.servedModel ?? "Spatial LSTM"})` }] : []),
   ];
 
   const worstExit = topExits[0];
@@ -117,7 +117,7 @@ export default function CorridorRiskNarrative({
             <NarrativeChip tone="neutral">
               <b style={{ color: "var(--text-primary)" }}>{worstExit.exitName}</b>
               <span style={{ color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
-                highest forecast risk, next 24h
+                highest forecast, day 1{spatialLstm?.forecastDate ? ` (${spatialLstm.forecastDate})` : ""}
               </span>
             </NarrativeChip>
           )}

@@ -2025,3 +2025,12 @@ section.nc-ops-maint { gap: 12px; padding-top: 16px; padding-bottom: 36px; }
   text-shadow: none;
 }
 .nc-ops-maint .nc-ops-status-filter button.active .nc-ops-tab-n { opacity: 1; }
+
+/* Alert banner tags (21 Nov 2026): a short pill per row instead of the full status sentence. */
+.nc-ops-maint .nc-ops-alerts-why { font-weight: 400; color: var(--text-secondary); }
+.nc-ops-maint .nc-ops-alerts-tag {
+  display: inline-flex; align-items: center; padding: 1px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.02em;
+  color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+.nc-ops-maint .nc-ops-alerts-tag.is-conflict { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 12%, transparent); }

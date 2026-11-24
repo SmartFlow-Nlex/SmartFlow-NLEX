@@ -583,7 +583,7 @@ export default function SustainabilityPage() {
             silent: true,
             symbol: "none",
             lineStyle: { color: chartTheme.text, type: "dashed", width: 1, opacity: 0.7 },
-            label: { fontSize: 12, color: chartTheme.text, fontFamily: chartTheme.fontFamily, formatter: `whole Range ${rangeShare}%`, position: "insideEndTop" },
+            label: { fontSize: 12, color: chartTheme.text, fontFamily: chartTheme.fontFamily, formatter: `Range avg ${rangeShare}%`, position: "insideStartTop", backgroundColor: chartTheme.tooltipBg, padding: [2, 6], borderRadius: 4 },
             data: [{ yAxis: rangeShare }],
           },
         },

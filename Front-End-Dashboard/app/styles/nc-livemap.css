@@ -1226,6 +1226,18 @@
 }
 .lm-page .wz-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--text-primary) 6%, transparent); border-color: var(--hairline-hover); }
 .lm-page .wz-close { width: 34px; padding: 0; justify-content: center; }
+/* The expanded forecast's shortcut to Traffic > Predictive's congestion chart (16 Nov 2026): a link styled as
+   the header's pill buttons, in the forecast purple so it reads as part of the predicted view. */
+.lm-page .wz-btn.fc-jump {
+  padding: 0 14px;
+  white-space: nowrap;
+  text-decoration: none;
+  color: var(--color-purple);
+  border-color: color-mix(in srgb, var(--color-purple) 45%, transparent);
+}
+.lm-page .wz-btn.fc-jump:hover { background: color-mix(in srgb, var(--color-purple) 9%, transparent); border-color: var(--color-purple); }
+.lm-page .wz-btn.fc-jump:focus-visible { outline: 2px solid var(--color-purple); outline-offset: 2px; }
+@media (max-width: 1100px) { .lm-page .wz-btn.fc-jump { font-size: 0; gap: 2px; padding: 0 10px; } }
 .lm-page .wz-side { background: transparent; border-left-color: var(--border-default); padding: 18px 20px 20px; }
 .lm-page .wz-side-title { font-size: var(--fs-title); font-weight: 600; color: var(--text-primary); }
 .lm-page .wz-kpis { gap: 8px; }
@@ -2421,3 +2433,438 @@
    no longer paint through the chip (13 Nov 2026). */
 .lm-page .lm-strip-field { z-index: 3; }
 .lm-page .lm-strip-chip { z-index: 10; }
+
+/* ===========================================================================
+   MAP CARDS (16 Nov 2026). First pass followed the user's reference image; the second pass, the same day ("don't make
+   it look like an AI did it ... match the theme"), puts the cards back on the system's own parts after two design
+   reviews:
+     - the card is the app's card (--bg-surface, --border-default, --radius-lg, --shadow-card), not a glass panel;
+     - the header is a title, the Overview's freshness line and Expand -- the Live tag, the "Live · updated" chip,
+       the spaced subtitle and the model chip said the same things twice or three times;
+     - one accent per card (NLEX blue live, the model violet forecast), the Overview tile's anatomy in the band, and
+       no gradient pills: in this system gradients belong to primary buttons;
+     - the numbers are the KPI cards' label-over-value, without icon tiles.
+   The basemap and road colours are in lib/map-basemap.ts and lib/map-palette.ts (look "map-tab").
+   =========================================================================== */
+.lm-page {
+  --lm-slow-dot: #f5b400;
+  --lm-congested-dot: #e5383b;
+  --lm-plate-border: rgba(30, 43, 99, 0.14);
+  --lm-lead: #8a9bbd;
+}
+:root[data-theme="dark"] .lm-page {
+  --lm-slow-dot: #f6c544;
+  --lm-congested-dot: #ff5a4a;
+  --lm-plate-border: rgba(140, 170, 255, 0.2);
+  --lm-lead: #5d6f99;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lm-page {
+    --lm-slow-dot: #f6c544;
+    --lm-congested-dot: #ff5a4a;
+    --lm-plate-border: rgba(140, 170, 255, 0.2);
+    --lm-lead: #5d6f99;
+  }
+}
+
+/* --- The card ---------------------------------------------------------------- */
+.lm-page .lm-maps .mc-panel-wrapper.lm-panel {
+  --card-accent: var(--nlex-blue, var(--action));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-card);
+}
+.lm-page .lm-maps .mc-panel-wrapper.lm-panel.lm-panel-forecast { --card-accent: var(--color-purple); }
+/* The inner card is the size container: on the outer one, containment would switch off the subgrid that keeps
+   the two maps the same height. */
+.lm-page .lm-maps .lm-panel .map-card { container-type: inline-size; }
+
+/* --- Header: title, one freshness line, Expand --------------------------------- */
+.lm-page .lm-maps .lm-panel .map-head,
+.lm-page .lm-maps .lm-panel .map-head.blue,
+.lm-page .lm-maps .lm-panel .map-head.purple {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px 12px 20px;
+  border-bottom: 0;
+  background: transparent;
+}
+.lm-page .lm-maps .lm-panel .map-head > div { min-width: 0; }
+.lm-page .lm-maps .lm-panel .map-head h3 {
+  overflow: hidden;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.lm-page .lm-maps .lm-panel .map-head p {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-secondary);
+}
+.lm-page .lm-fresh { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+/* globals.css boxes every span in .map-head as a pill (the old badge); the freshness line is plain text. */
+.lm-page .map-head .lm-fresh,
+.lm-page .map-head .lm-fresh > span,
+.lm-page .map-head .mc-maximise-text {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: 0;
+  text-transform: none;
+  color: inherit;
+}
+.lm-page .map-head .lm-fresh > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.lm-page .lm-fresh b { font-weight: 700; color: var(--signal-clear); }
+.lm-page .lm-fresh-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--signal-clear);
+  animation: ov-live 2.4s ease-out infinite; /* the Overview's live pulse (nlex-daylight.css) */
+}
+.lm-page .lm-fresh.is-stale b { color: var(--text-muted); }
+.lm-page .lm-fresh.is-stale .lm-fresh-dot { background: var(--signal-none); animation: none; }
+.lm-page .lm-fresh.is-forecast b { color: var(--color-purple); }
+.lm-page .lm-fresh.is-forecast .lm-fresh-dot { background: var(--color-purple); animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .lm-page .lm-fresh-dot { animation: none; }
+}
+.lm-page .lm-maps .lm-panel .map-head > span { gap: 8px; }
+/* Expand: the Traffic tab's pill button. */
+.lm-page .lm-maps .lm-panel .mc-maximise {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: auto;
+  min-height: 30px;
+  margin: 0 !important;
+  padding: 0 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.lm-page .lm-maps .lm-panel .mc-maximise:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 5%, transparent); transform: none; }
+@container (max-width: 600px) {
+  .lm-page .lm-maps .lm-panel .mc-maximise { width: 32px; min-height: 32px; padding: 0; }
+  .lm-page .lm-maps .lm-panel .mc-maximise-text { display: none; }
+}
+
+/* --- The map window -------------------------------------------------------------- */
+/* Taller cards (17 Nov 2026, user request: hover cards did not fit; "don't enlarge it exaggeratedly"). The old floor of
+   560 px left each map about 340 px tall on a laptop once the header, band and numbers took their share; 680 px gives
+   it about 120 px more, and the cap stays near a full screen on tall displays. Below 1101 px the cards stack and size
+   to their content as before. */
+@media (min-width: 1101px) {
+  .lm-page .map-grid.mc-map-grid.lm-maps { height: clamp(680px, calc(100dvh - 170px), 880px); }
+}
+
+.lm-page .lm-maps .lm-panel .map-canvas-container {
+  margin: 0 12px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  isolation: isolate;
+}
+.lm-page .lm-maps .lm-panel .map-canvas-container::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--border-default);
+}
+.lm-page .lm-maps .lm-panel .mapboxgl-canvas-container::after { display: none; }
+
+/* Mapbox's controls: a small compass, then + and − as one capsule. */
+.lm-page .lm-panel .mapboxgl-ctrl-top-right .mapboxgl-ctrl-group,
+.lm-page .wz-map .mapboxgl-ctrl-top-right .mapboxgl-ctrl-group {
+  display: flex;
+  flex-direction: column;
+  margin: 10px 10px 0 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+.lm-page .lm-panel .mapboxgl-ctrl-top-right .mapboxgl-ctrl-group button,
+.lm-page .wz-map .mapboxgl-ctrl-top-right .mapboxgl-ctrl-group button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-strong);
+  background-color: var(--bg-raised);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14);
+}
+.lm-page .lm-panel .mapboxgl-ctrl-group .mapboxgl-ctrl-zoom-in,
+.lm-page .wz-map .mapboxgl-ctrl-group .mapboxgl-ctrl-zoom-in { border-radius: 10px 10px 0 0; }
+.lm-page .lm-panel .mapboxgl-ctrl-group .mapboxgl-ctrl-zoom-out,
+.lm-page .wz-map .mapboxgl-ctrl-group .mapboxgl-ctrl-zoom-out { border-radius: 0 0 10px 10px; border-top: 0; }
+.lm-page .lm-panel .mapboxgl-ctrl-group .mapboxgl-ctrl-compass,
+.lm-page .wz-map .mapboxgl-ctrl-group .mapboxgl-ctrl-compass { order: -1; margin-bottom: 8px; border-radius: 10px; }
+.lm-page .lm-panel .mapboxgl-ctrl-compass .mapboxgl-ctrl-icon,
+.lm-page .wz-map .mapboxgl-ctrl-compass .mapboxgl-ctrl-icon {
+  filter: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 29 29'%3E%3Cpath d='M14.5 6 18 14.5h-7z' fill='%231f5fe0'/%3E%3Cpath d='M14.5 23 11 14.5h7z' fill='%23b7c2d6'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] .lm-page .lm-panel .mapboxgl-ctrl-compass .mapboxgl-ctrl-icon,
+:root[data-theme="dark"] .lm-page .wz-map .mapboxgl-ctrl-compass .mapboxgl-ctrl-icon {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 29 29'%3E%3Cpath d='M14.5 6 18 14.5h-7z' fill='%238fb0ff'/%3E%3Cpath d='M14.5 23 11 14.5h7z' fill='%233a4d7d'/%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lm-page .lm-panel .mapboxgl-ctrl-compass .mapboxgl-ctrl-icon,
+  :root:not([data-theme="light"]) .lm-page .wz-map .mapboxgl-ctrl-compass .mapboxgl-ctrl-icon {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 29 29'%3E%3Cpath d='M14.5 6 18 14.5h-7z' fill='%238fb0ff'/%3E%3Cpath d='M14.5 23 11 14.5h7z' fill='%233a4d7d'/%3E%3C/svg%3E");
+  }
+}
+/* The card maps' compact credit button, faded until it is wanted (17 Nov 2026, user request). */
+.lm-page .lm-panel .mapboxgl-ctrl-attrib.mapboxgl-compact:not(.mapboxgl-compact-show) {
+  opacity: 0.4;
+  transition: opacity 0.15s ease;
+  /* Just the circled "i": no white backing behind it (17 Nov 2026, user request). */
+  background: transparent !important;
+  box-shadow: none;
+}
+.lm-page .lm-panel .mapboxgl-ctrl-attrib.mapboxgl-compact:not(.mapboxgl-compact-show) .mapboxgl-ctrl-attrib-button {
+  background-color: transparent;
+}
+/* Mapbox draws the "i" dark; with no backing it needs to be light on the night map. */
+:root[data-theme="dark"] .lm-page .lm-panel .mapboxgl-ctrl-attrib.mapboxgl-compact:not(.mapboxgl-compact-show) .mapboxgl-ctrl-attrib-button { filter: invert(1); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lm-page .lm-panel .mapboxgl-ctrl-attrib.mapboxgl-compact:not(.mapboxgl-compact-show) .mapboxgl-ctrl-attrib-button { filter: invert(1); }
+}
+.lm-page .lm-panel .mapboxgl-ctrl-attrib.mapboxgl-compact:hover,
+.lm-page .lm-panel .mapboxgl-ctrl-attrib.mapboxgl-compact:focus-within { opacity: 1; }
+/* Attribution: still visible (CARTO's terms ask for it), but small and on a quiet backing. */
+.lm-page .lm-panel .mapboxgl-ctrl-attrib.mapboxgl-compact,
+.lm-page .lm-panel .mapboxgl-ctrl.mapboxgl-ctrl-attrib { font-size: 10px; background: color-mix(in srgb, var(--bg-raised) 72%, transparent); }
+
+/* --- On the map: plates, leaders and queue chips --------------------------------- */
+.lm-page .custom-toll-marker .toll-pin-name {
+  --callout-line: var(--lm-lead);
+  padding: 2px 8px 3px;
+  border: 1px solid var(--lm-plate-border);
+  border-radius: 6px;
+  background-color: var(--bg-raised);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.1);
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+/* Leaders stay neutral; the status dot carries the queue's colour. No end tick. */
+:root .lm-page .custom-toll-marker[data-queue] .toll-pin-name { --callout-line: var(--lm-lead); padding-left: 18px; border-color: var(--lm-plate-border); }
+:root .lm-page .custom-toll-marker[data-queue="slow"] .toll-pin-name { --queue-c: var(--lm-slow-dot); }
+:root .lm-page .custom-toll-marker[data-queue="congested"] .toll-pin-name { --queue-c: var(--lm-congested-dot); }
+.lm-page .custom-toll-marker .toll-pin-name::before { height: 1px; }
+.lm-page .custom-toll-marker .toll-pin-name::after { display: none; }
+.lm-page .toll-pin-km { font-size: 10.5px; font-weight: 500; color: var(--text-muted); }
+
+.lm-page .lm-callout-plate {
+  height: 22px;
+  gap: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.22);
+}
+.lm-page .lm-callout[data-level="slow"] .lm-callout-plate { color: #3a2800; }
+/* The chips take the road's colours (the --signal tokens' deep amber read as brown on a chip). */
+.lm-page .lm-callout[data-level="slow"] { --lm-c: var(--lm-slow-dot); }
+.lm-page .lm-callout[data-level="congested"] { --lm-c: var(--lm-congested-dot); }
+/* A forecast queue is hollow: outlined in its colour on the plate surface, the usual way to draw "projected". */
+.lm-page .lm-callout[data-predicted] .lm-callout-plate {
+  border: 1.5px solid var(--lm-c);
+  border-style: solid;
+  background: var(--bg-raised);
+  color: var(--lm-c);
+}
+:root:not([data-theme="dark"]) .lm-page .lm-callout[data-predicted][data-level="congested"] .lm-callout-plate { color: #b42a2d; }
+:root:not([data-theme="dark"]) .lm-page .lm-callout[data-predicted][data-level="slow"] .lm-callout-plate { color: #7a5600; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lm-page .lm-callout[data-predicted][data-level] .lm-callout-plate { color: var(--lm-c); }
+}
+
+/* --- Legend (17 Nov 2026, user request): a plain "Legend" button until opened, then a small card ------ */
+.lm-page .lm-maps .lm-panel .mc-legend-card {
+  left: 12px;
+  bottom: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-md);
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+}
+.lm-page .lm-maps .lm-panel .mc-legend-card[open] { width: 248px; border-radius: var(--radius-md); }
+.lm-page .lm-maps .lm-panel .mc-legend-card > summary {
+  min-height: 32px;
+  gap: 6px;
+  padding: 0 10px 0 11px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-primary);
+}
+.lm-page .lm-maps .lm-panel .mc-legend-card > summary::before { display: none; }
+.lm-page .lm-maps .lm-panel .mc-legend-card > summary > svg:first-child { color: var(--text-secondary); }
+.lm-page .lm-maps .lm-panel .mc-legend-card[open] > summary {
+  min-height: 38px;
+  padding: 0 12px 0 14px;
+  border-bottom: 1px solid var(--border-default);
+}
+.lm-page .lm-legend-chev { margin-left: auto; color: var(--text-muted); transition: transform 0.15s ease; }
+.lm-page .mc-legend-card[open] .lm-legend-chev { transform: rotate(180deg); }
+.lm-page .lm-maps .lm-panel .mc-legend-card > .map-legend { padding: 10px 14px 12px; }
+
+/* The key itself (the panel's and the expanded view's: MapLegend). */
+.lm-page .map-legend h4,
+.lm-page .map-legend h4.wz-legend-gap {
+  margin: 0 0 6px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+}
+.lm-page .map-legend h4.wz-legend-gap { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-default); }
+.lm-page .map-legend .wz-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--text-primary);
+}
+.lm-page .map-legend .wz-line { width: 20px; height: 5px; border-radius: 3px; flex: none; }
+.lm-page .wz-legend-text { display: grid; }
+.lm-page .map-legend .wz-line.wz-line-hatch {
+  width: 22px;
+  height: 8px;
+  background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.7) 0 1.5px, transparent 1.5px 4px);
+}
+.lm-page .map-legend .wz-line.wz-line-dash {
+  background: repeating-linear-gradient(90deg, currentColor 0 5px, transparent 5px 9px) !important;
+}
+.lm-page .wz-legend-text small { font-size: 11.5px; color: var(--text-muted); }
+/* Hans's note under the forecast key (17 Nov 2026 audit), in the key's own small type (merged 19 Nov 2026). */
+.lm-page .map-legend p.wz-legend-sub { font-size: 11.5px; line-height: 1.35; white-space: normal; opacity: 1; color: var(--text-muted); }
+
+/* --- The band: the Overview tile's anatomy on a tint of the card's accent ---------- */
+.lm-page .lm-maps .lm-panel .lm-band.lm-band3 {
+  container-type: inline-size;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0;
+  min-height: 0;
+  margin: 12px 12px 0;
+  padding: 12px 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--card-accent) 6%, transparent);
+}
+.lm-page .lm-band3 > .lm-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 2px 16px;
+}
+.lm-page .lm-band3 > .lm-cell:first-child { flex: 1.25 1 0; }
+.lm-page .lm-band3 > .lm-cell.lm-cell-model { flex: 1.6 1 0; }
+.lm-page .lm-band3 > .lm-cell + .lm-cell { border-left: 1px solid var(--border-default); }
+.lm-page .lm-cell-ico {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  color: var(--card-accent);
+  background: color-mix(in srgb, var(--card-accent) 12%, transparent);
+}
+.lm-page .lm-cell-text { display: grid; gap: 1px; min-width: 0; }
+.lm-page .lm-cell-label { font-size: var(--fs-label); font-weight: 650; letter-spacing: 0.2px; color: var(--text-secondary); white-space: nowrap; }
+.lm-page .lm-cell-value {
+  overflow: hidden;
+  font-size: 20px;
+  font-weight: 750;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.lm-page .lm-cell-note { overflow: hidden; font-size: 12.5px; line-height: 1.35; white-space: nowrap; text-overflow: ellipsis; color: var(--text-secondary); }
+@container (max-width: 640px) {
+  .lm-page .lm-cell-ico { display: none; }
+  .lm-page .lm-band3 > .lm-cell { padding: 2px 12px; }
+  .lm-page .lm-cell-value { font-size: 18px; }
+}
+
+/* --- The numbers: the KPI cards' label and value, hairlines between --------------- */
+.lm-page .lm-maps .lm-panel .mc-footer-stats.lm-stats { padding: 12px 12px 14px; border-top: 0; background: transparent; }
+.lm-page .lm-maps .lm-panel .lm-stats .mc-stat-item {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 14px;
+}
+.lm-page .lm-maps .lm-panel .lm-stats .mc-stat-item + .mc-stat-item { border-left: 1px solid var(--border-default); }
+.lm-page .lm-maps .lm-panel .lm-stats .mc-stat-label {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+}
+.lm-page .lm-maps .lm-panel .lm-stats .mc-stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.lm-page .lm-maps .lm-panel .lm-stats .mc-stat-value.is-alert { color: var(--signal-congested); }
+@container (min-width: 700px) {
+  .lm-page .lm-maps .lm-panel .lm-stats .mc-stat-item { flex-direction: row; align-items: baseline; gap: 8px; }
+}
+
+@media (max-width: 640px) {
+  .lm-page .lm-maps .lm-panel .map-canvas-container { margin: 0 8px; }
+  .lm-page .lm-maps .lm-panel .lm-band.lm-band3 { margin: 10px 8px 0; }
+}

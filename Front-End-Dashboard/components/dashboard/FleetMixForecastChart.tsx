@@ -27,7 +27,7 @@
 import type { EChartsOption } from "echarts";
 import { useEffect, useMemo, useState } from "react";
 import FleetMixNarrative from "./FleetMixNarrative";
-import { TriangleAlert } from "lucide-react";
+import { BrainCircuit, CalendarDays, TrendingUp, TriangleAlert, Truck } from "lucide-react";
 import DashboardChart from "./DashboardChart";
 import InfoTooltip from "./InfoTooltip";
 import EvidenceModal from "./EvidenceModal";
@@ -308,6 +308,8 @@ export default function FleetMixForecastChart() {
   const axisMax = zoom ? zoomMax : 100;
   const shortDay = (iso: string) =>
     new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const spansYears = dates.length > 0 && dates[0].slice(0, 4) !== dates[dates.length - 1].slice(0, 4);
+  const axisDay = (iso: string) => (spansYears ? `${shortDay(iso)} ’${iso.slice(2, 4)}` : shortDay(iso));
   const extremeMarks = (x: typeof obsX, prefix: string, side?: "left") =>
     x
       ? {
@@ -371,8 +373,8 @@ export default function FleetMixForecastChart() {
                Not labelled NOW: the data ends well before today (the
                staleness line above says by how much). */
             label: {
-              formatter: "forecast →", fontSize: 12, fontWeight: 600, color: T.ink, fontFamily: T.fontFamily,
-              position: "insideEndTop" as const, backgroundColor: T.tooltipBg, padding: [3, 6], borderRadius: 4,
+              formatter: "Forecast →", fontSize: 12, fontWeight: 600, color: T.ink, fontFamily: T.fontFamily,
+              position: "end" as const, distance: 4, backgroundColor: T.tooltipBg, padding: [3, 6], borderRadius: 4,
             },
             lineStyle: { color: heavyView ? T.text : T.tooltipBg, type: "dashed" as const, width: heavyView ? 1 : 2, opacity: 1 },
             data: [
@@ -507,7 +509,7 @@ export default function FleetMixForecastChart() {
       type: "category",
       data: dates,
       boundaryGap: false,
-      axisLabel: { fontSize: 12, color: T.text, hideOverlap: true },
+      axisLabel: { fontSize: 12, color: T.text, hideOverlap: true, formatter: (v: string) => axisDay(v) },
       axisTick: { show: false },
     },
     yAxis: heavyView
@@ -611,38 +613,64 @@ export default function FleetMixForecastChart() {
           strip that opens the leaderboard, then the narrative. */}
       <header className="nct-card-head">{head}</header>
       {heavyNowMean != null && heavyEndMean != null && (
-        <div className="fc-answer">
-          <span className="fc-answer-label">Heavy share (C2+C3) · {HEAVY_WINDOW_DAYS}-day means</span>
-          <span className="fc-answer-value">
-            {pct(heavyNowMean)} → {pct(heavyEndMean)}
-            {heavyDeltaPp != null && (
-              <span className="fc-answer-unit">
-                {Math.abs(heavyDeltaPp) < 1 ? "no material change" : `${heavyDeltaPp > 0 ? "+" : ""}${heavyDeltaPp.toFixed(1)} pp`}
+        /* The answer as a strip of four facts (21 Nov 2026, as the hotspot and prescriptive cards). */
+        <div className="px-sum fm-sum">
+          <div className="px-sum-item">
+            <span className="px-icon" aria-hidden="true"><Truck size={20} strokeWidth={2} /></span>
+            <span>
+              <small>Heavy share now</small>
+              <b>{pct(heavyNowMean)}</b>
+              <em>Class 2 + 3, last {HEAVY_WINDOW_DAYS} days observed</em>
+            </span>
+          </div>
+          <div className="px-sum-item">
+            <span className="px-icon" aria-hidden="true"><TrendingUp size={20} strokeWidth={2} /></span>
+            <span>
+              <small>Forecast</small>
+              <b>{pct(heavyEndMean)}</b>
+              <em>
+                {heavyDeltaPp == null ? "next days" : Math.abs(heavyDeltaPp) < 1 ? "no material change" : `${heavyDeltaPp > 0 ? "+" : ""}${heavyDeltaPp.toFixed(1)} pp`}
+                {data.split?.future_days ? ` · next ${data.split.future_days} days` : ""}
+              </em>
+            </span>
+          </div>
+          <div className="px-sum-item">
+            <span className="px-icon" aria-hidden="true"><BrainCircuit size={20} strokeWidth={2} /></span>
+            <span>
+              <small>Model</small>
+              <b>{champ ? champ.model_name : "None accepted"}</b>
+              {data.split?.future_days ? (
+                <em>
+                  {testedDays == null
+                    ? `${data.split.future_days} days ahead`
+                    : data.split.future_days > testedDays
+                      ? `${testedDays} days tested, ${data.split.future_days - testedDays} as outlook`
+                      : `all ${data.split.future_days} days ahead tested`}
+                </em>
+              ) : null}
+            </span>
+          </div>
+          {lastObservedDate && (
+            <div className="px-sum-item">
+              <span className="px-icon" aria-hidden="true"><CalendarDays size={20} strokeWidth={2} /></span>
+              <span>
+                <small>Data to</small>
+                <b>{new Date(`${lastObservedDate}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</b>
+                <em>last observed day</em>
               </span>
-            )}
-          </span>
-          <span className="fc-answer-context">
-            {champ ? <>model <b>{champ.model_name}</b></> : "no model accepted"}
-            {data.split?.future_days ? (
-              <>
-                {" · "}
-                {testedDays == null ? (
-                  <b>{data.split.future_days} days ahead</b>
-                ) : data.split.future_days > testedDays ? (
-                  <><b>{testedDays} days tested</b>, {data.split.future_days - testedDays} more as outlook</>
-                ) : (
-                  <b>all {data.split.future_days} days ahead tested</b>
-                )}
-              </>
-            ) : null}
-            {lastObservedDate ? <> · data to <b>{lastObservedDate}</b></> : null}
-          </span>
+            </div>
+          )}
         </div>
       )}
 
       <div className="fc-row fc-controls" role="group" aria-label="Fleet composition scale">
         <div className="fc-group">
           <span className="fc-label">Scale</span>
+          <InfoTooltip text={heavyView
+            ? "Heavy share starts the axis above 0% to show small changes: read the line's movement, not its height. Drag the slider under the chart to zoom into dates."
+            : zoom
+              ? `Zoomed stops the axis at ${zoomMax}%, just above the highest heavy-vehicle share; Class 1 (light) fills the rest of the 100% above it, so its band is cut short.`
+              : "Full shows the whole mix, stacked to 100%."} />
           <div className="nc-em-seg">
             <button
               type="button"
@@ -673,17 +701,6 @@ export default function FleetMixForecastChart() {
             </button>
           </div>
         </div>
-        {zoom && (
-          <span className="fc-note nc-em-hz-note">
-            Class 1 (light) fills the rest of the 100% above the top of this view, so its faint band is cut short.
-          </span>
-        )}
-        {heavyView && (
-          <span className="fc-note nc-em-hz-note">
-            The axis starts above 0% to show small changes: read the line&apos;s movement, not its height. Drag the slider
-            under the chart to zoom into dates.
-          </span>
-        )}
       </div>
 
       <DashboardChart option={option} height={344} onEvents={{ datazoom: onZoom as (p: never) => void }} />
@@ -693,7 +710,7 @@ export default function FleetMixForecastChart() {
           <TriangleAlert size={15} strokeWidth={2} aria-hidden="true" />
           <span>
             <b>Heavy-vehicle surge predicted</b> on {surges.length} day{surges.length === 1 ? "" : "s"} —{" "}
-            {surges.slice(0, 4).map((s) => s.d).join(", ")}{surges.length > 4 ? ` and ${surges.length - 4} more` : ""}.
+            {surges.slice(0, 4).map((x) => shortDay(x.d)).join(", ")}{surges.length > 4 ? ` and ${surges.length - 4} more` : ""}.
             <details className="nc-details">
               <summary>How a surge is flagged</summary>
               <p>A day is flagged when the projected Class 2+3 share runs more than 1.5 standard deviations above its training mean.</p>
@@ -719,8 +736,12 @@ export default function FleetMixForecastChart() {
                 {test?.origins != null ? `${test.origins} origins × ${testedDays} days` : `${testedDays} days ahead`}
               </span>
             )}
-            {champ?.split_label ? <span className="nct-trust-pill"><span className="nct-trust-k">Protocol</span>{champ.split_label}</span> : null}
-            {data.split?.updated_at ? <span className="nct-trust-pill"><span className="nct-trust-k">Trained</span>{data.split.updated_at.slice(0, 10)}</span> : null}
+            {data.split?.updated_at ? (
+              <span className="nct-trust-pill">
+                <span className="nct-trust-k">Trained</span>
+                {new Date(`${data.split.updated_at.slice(0, 10)}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              </span>
+            ) : null}
           </>}
         >
           <div className="nc-em-table-wrap">

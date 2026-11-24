@@ -92,6 +92,10 @@ export type ModelMetric = {
   WMAPE: number | null;
   MASE: number | null;
   R2: number | null;
+  /** Secondary measures, scored on the same days (absent from an older backend). */
+  MAPE?: number | null;
+  sMAPE?: number | null;
+  RMSSE?: number | null;
   Adjusted_R2: number | null;
   Train_R2: number | null;
   Gap: number | null;

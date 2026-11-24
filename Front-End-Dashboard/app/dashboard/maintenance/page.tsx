@@ -1540,10 +1540,12 @@ export default function MaintenancePage() {
           <div className="nc-ops-alerts" role="status">
             <AlertTriangle size={18} aria-hidden="true" className="nc-ops-alerts-icon" />
             <div className="nc-ops-alerts-body">
+              {/* One summary line, then short tags per row (21 Nov 2026: "Overdue — needs an update" repeated on every row). */}
               <p className="nc-ops-alerts-title">
-                {ops.alerts.length === 1
-                  ? "Maintenance window requires attention"
-                  : `${ops.alerts.length} maintenance windows require attention`}
+                {ops.alerts.length === 1 ? "1 window needs attention" : `${ops.alerts.length} windows need attention`}
+                {ops.alerts.every((a) => a.reason === OVERDUE_META.label) && (
+                  <span className="nc-ops-alerts-why"> · all overdue: mark completed, cancel, or move the dates</span>
+                )}
               </p>
               <ul className="nc-ops-alerts-list">
                 {ops.alerts.slice(0, MAX_ALERTS).map((a, i) => (
@@ -1551,7 +1553,9 @@ export default function MaintenancePage() {
                     <button type="button" className="nc-ops-alerts-row" onClick={() => { setActionError(null); setDetail(a.schedule); }}>
                       <span className="nc-ops-alerts-n">{i + 1}</span>
                       <strong>{a.schedule.title}</strong>
-                      <span className="nc-ops-alerts-reason">{a.reason}</span>
+                      <span className={`nc-ops-alerts-tag${a.key.startsWith("x-") ? " is-conflict" : ""}`} title={a.text}>
+                        {a.reason === OVERDUE_META.label ? "Overdue" : a.reason === "Start overdue" ? "Late start" : a.reason}
+                      </span>
                       <span className="nc-ops-sub">{a.schedule.direction} {kmRange(a.schedule)} · {nearOf(a.schedule)}</span>
                     </button>
                   </li>
