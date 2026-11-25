@@ -1388,7 +1388,6 @@ export default function MaintenancePage() {
           <div className={`${styles.segmented} nc-ops-status-filter`}>
             {(["all", "scheduled", "in_progress", "completed", "cancelled"] as const).map((s) => (
               <button key={s} className={statusFilter === s ? "active" : ""} onClick={() => pickStatus(s)} aria-pressed={statusFilter === s}>
-                {statusFilter === s && check}
                 {s === "all" ? "All" : STATUS_META[s].label}
                 {!loading && <span className="nc-ops-tab-n">{statusCounts[s]}</span>}
               </button>

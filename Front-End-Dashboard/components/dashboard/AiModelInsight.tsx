@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
-import { Sparkles } from "lucide-react";
+import { Calculator, Sparkles } from "lucide-react";
+import { narrativeMethod } from "./narrativeMethod";
 
 /**
  * The Narrative Explanation panel's body: a language model's read of the
@@ -78,6 +79,51 @@ type Props = {
   hideDetails?: boolean;
 };
 
+/** The request body: the card's own, or the forecast table's default. Also what the method notes are filled from. */
+function bodyOf(p: Props): unknown {
+  return p.buildBody
+    ? p.buildBody()
+    : {
+        quantity: p.quantity,
+        metrics: p.metrics,
+        horizonDays: p.horizonDays,
+        scoredDays: p.scoredDays ?? null,
+        windowStart: p.windowStart ?? null,
+        windowEnd: p.windowEnd ?? null,
+        weatherMode: p.weatherMode ?? null,
+        naiveMase: p.naiveMase ?? null,
+      };
+}
+
+/** "How it is computed": fixed method notes for this card, with its live figures (narrativeMethod.ts). Shown with
+ *  every report, and even when the AI service fails, since it does not depend on it. */
+function MethodNotes({ props }: { props: Props }) {
+  const { method, reading, choice } = narrativeMethod(props.endpoint, bodyOf(props), props.labelFor);
+  if (method.length + reading.length + choice.length === 0) return null;
+  const list = (title: string, items: string[]) =>
+    items.length > 0 && (
+      <div className="nc-method-part">
+        <span className="nc-method-sub">{title}</span>
+        <ul>
+          {items.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  return (
+    <div className="nc-method">
+      <div className="nc-method-head">
+        <Calculator size={13} strokeWidth={2.2} aria-hidden="true" />
+        <span>How it is computed</span>
+      </div>
+      {list("Method", method)}
+      {list("This card's figures", reading)}
+      {list("Why this model", choice)}
+    </div>
+  );
+}
+
 export default function AiModelInsight(props: Props) {
   const { quantity, metrics, weatherMode, labelFor } = props;
   const [insight, setInsight] = useState<Insight | null>(null);
@@ -109,20 +155,7 @@ export default function AiModelInsight(props: Props) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: ctrl.signal,
-      body: JSON.stringify(
-        p.buildBody
-          ? p.buildBody()
-          : {
-              quantity: p.quantity,
-              metrics: p.metrics,
-              horizonDays: p.horizonDays,
-              scoredDays: p.scoredDays ?? null,
-              windowStart: p.windowStart ?? null,
-              windowEnd: p.windowEnd ?? null,
-              weatherMode: p.weatherMode ?? null,
-              naiveMase: p.naiveMase ?? null,
-            },
-      ),
+      body: JSON.stringify(bodyOf(p)),
     })
       .then(async (r) => {
         const j = await r.json().catch(() => null);
@@ -198,6 +231,7 @@ export default function AiModelInsight(props: Props) {
       // A div, not a p: this is a row with a control in it, and a paragraph
       // that lays its own children out in a flex row is a paragraph in name
       // only.
+      <>
       <div className="ds-narrative-error" role="alert" title={error}>
         <span>{text}</span>
         {retryable && (
@@ -206,6 +240,8 @@ export default function AiModelInsight(props: Props) {
           </button>
         )}
       </div>
+      <MethodNotes props={props} />
+      </>
     );
   }
 
@@ -279,6 +315,7 @@ export default function AiModelInsight(props: Props) {
       </div>
 
       <p className="nc-insight-note">Check any figure against the measured numbers before acting on it.</p>
+      <MethodNotes props={props} />
     </div>
   );
 }

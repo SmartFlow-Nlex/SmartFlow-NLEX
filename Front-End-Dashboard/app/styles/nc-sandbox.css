@@ -802,3 +802,623 @@
   .sandbox-steps li .n, .sandbox-trend .trend-tick, .sandbox-trend-tip .tip-time
 ) { font-size: 11px; }
 .ds-main .sandbox-page .sb-place-name { font-size: 13px; }
+
+/* ===========================================================================
+   Simulation tab redesign (24 Nov 2026, reference layout): a tabbed KPI deck (Forecast | Live simulation) with
+   icon cards, the canvas card with Recommendations and Trends side by side under the road, and the control rail
+   as card-style accordion sections with a summary on each folded one. Presentation only.
+   =========================================================================== */
+
+/* --- KPI deck ------------------------------------------------------------- */
+.ds-main .sandbox-page .sandbox-forecast { padding: 14px 16px 16px; }
+.ds-main .sandbox-page .sandbox-forecast-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-bottom: 12px; }
+.ds-main .sandbox-page .sandbox-forecast-apply { margin-left: auto; }
+.sandbox-deck-tabs {
+  display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+.sandbox-deck-tabs button {
+  border: 0; background: none; padding: 7px 16px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 0.86rem; font-weight: 600; color: var(--text-secondary);
+}
+.sandbox-deck-tabs button.active { background: var(--action); color: #fff; box-shadow: 0 2px 8px color-mix(in srgb, var(--action) 35%, transparent); }
+.sandbox-deck-tabs button:not(.active):hover { color: var(--text-primary); }
+.sandbox-deck-note { display: inline-flex; align-items: center; gap: 6px; font-size: 0.84rem; color: var(--text-muted); }
+
+.ds-main .sandbox-page .sandbox-forecast-tile {
+  display: flex; flex-direction: row; align-items: center; gap: 14px; padding: 14px 16px;
+  border-radius: 14px; background: color-mix(in srgb, var(--bg-raised, #fff) 60%, transparent);
+}
+.sandbox-forecast-icon {
+  flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px;
+  color: var(--sfi, var(--action)); background: color-mix(in srgb, var(--sfi, var(--action)) 12%, transparent);
+}
+.sandbox-forecast-tile:nth-child(3) { --sfi: var(--color-purple, #7c3aed); }
+.sandbox-forecast-tile:nth-child(4) { --sfi: var(--color-success); }
+.sandbox-forecast-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ds-main .sandbox-page .sandbox-forecast-tile .k { letter-spacing: 0.04em; text-transform: none; font-size: 0.82rem; }
+.ds-main .sandbox-page .sandbox-forecast-tile .v { font-size: 1.6rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-main .sandbox-page .sandbox-forecast-foot { margin-top: 12px; padding-top: 10px; }
+
+/* The live readings inside the deck: the tab already says "Live simulation", so the Simulation pill is dropped. */
+.ds-main .sandbox-page .sandbox-forecast .sandbox-metric-flag { margin: 0 0 8px; }
+.ds-main .sandbox-page .sandbox-forecast .sandbox-metric-flag .nc-tag-illustrative { display: none; }
+.ds-main .sandbox-page .sandbox-forecast .sandbox-metric-row { margin-top: 0; }
+
+/* --- Event note: one line, the rest folded -------------------------------- */
+.sandbox-event-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.sandbox-event-main { min-width: 0; }
+.sandbox-event-more { flex-basis: 100%; }
+.sandbox-event-more summary { cursor: pointer; font-size: 0.8rem; font-weight: 600; color: var(--page-accent); width: max-content; }
+.sandbox-event-more p { margin: 6px 0 0; line-height: 1.5; }
+
+/* --- Under the road: legend first, then Recommendations | Trends ---------- */
+@media (min-width: 981px) {
+  .ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-footbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+    gap: 14px;
+    align-items: start;
+    margin-top: 12px;
+  }
+  .ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-footbar > .sandbox-legend {
+    order: -1; grid-column: 1 / -1; margin: 0; padding: 0 0 2px; border-top: 0;
+  }
+  .ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-footbar > .sandbox-recos { grid-column: 1; }
+  .ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-footbar > .sandbox-trends { grid-column: 2; margin-top: 0; }
+}
+.sandbox-recos {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; min-width: 0;
+  border: 1px solid var(--border-default); border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-raised, #fff) 60%, transparent);
+}
+.sandbox-main.is-expanded .sandbox-recos { border: 0; padding: 0; background: none; }
+.sandbox-recos-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
+.sandbox-recos-head h3 { margin: 0; font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+.sandbox-recos-tabs {
+  margin-left: auto; display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+.sandbox-recos-tabs button {
+  display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; cursor: pointer;
+  padding: 5px 12px; border-radius: 999px; font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);
+}
+.sandbox-recos-tabs button.active { background: var(--bg-raised, #fff); color: var(--text-primary); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12); }
+.sandbox-recos-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-success); }
+.sandbox-recos-dot.warn { background: var(--color-warning); }
+.sandbox-recos-dot.bad { background: var(--color-danger); }
+.sandbox-recos .sandbox-dir-card { display: flex; flex-direction: column; gap: 8px; padding: 0; border: 0; background: none; }
+.sandbox-recos .sandbox-reco { margin: 0; border-radius: 12px; }
+.sandbox-recos .sandbox-reco p { margin: 0; }
+.sandbox-recos .sandbox-live-note { margin: 0; }
+.sandbox-compare-none { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+
+/* --- Control rail: card sections ------------------------------------------- */
+.sandbox-rail-sec {
+  margin-top: 8px; padding: 2px 8px; border-radius: 12px;
+  border: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--bg-raised, #fff) 55%, transparent);
+}
+.sandbox-rail-head {
+  width: 100%; display: flex; align-items: center; gap: 8px; min-height: 40px;
+  background: none; border: 0; padding: 6px 0; cursor: pointer; text-align: left; color: var(--text-muted);
+}
+.sandbox-rail-head:hover { color: var(--text-primary); }
+.sandbox-rail-chev { flex: none; transition: transform 140ms ease; }
+.sandbox-rail-sec.is-open .sandbox-rail-chev { transform: rotate(90deg); }
+.ds-main .sandbox-page .sandbox-rail-head .sandbox-section-title {
+  flex: none; margin: 0; font-size: 0.95rem; font-weight: 700; letter-spacing: 0; text-transform: none; color: var(--text-primary);
+}
+.sandbox-rail-sum {
+  margin-left: auto; min-width: 0; font-size: 0.76rem; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sandbox-rail-body { padding-bottom: 10px; }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-footbar > .sandbox-trends {
+  padding: 14px 16px; border: 1px solid var(--border-default); border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-raised, #fff) 60%, transparent);
+}
+.sandbox-recos-head { flex-wrap: nowrap; }
+.sandbox-recos-head .nc-tag-illustrative { flex: none; }
+/* Full screen in the light theme: the notes panel is light there, so its warm-up note and trends take dark ink
+   (they kept the dark-glass light ink and were near invisible). */
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-live-note:not(.warn) { color: #3d4a63; }
+:root[data-theme="light"] .sandbox-main.is-expanded .sandbox-trends {
+  --trend-ink: #1b2a44;
+  --trend-ink-2: #3d4a63;
+  --trend-muted: #5a6478;
+}
+
+/* Live tab: the caption row is folded into the tab's "i"; NB / SB rows hidden until asked for (24 Nov 2026). */
+.ds-main .sandbox-page .sandbox-forecast .sandbox-metric-flag { display: none; }
+.sandbox-metric-flag.dirs-hidden + .sandbox-metric-row .sandbox-metric-dirs { display: none; }
+.sandbox-metric-flag.dirs-hidden + .sandbox-metric-row .sandbox-metric { padding-bottom: 14px; }
+.sandbox-deck-action { margin-left: auto; }
+.sandbox-dirs-toggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-secondary);
+  font: inherit; font-size: 0.82rem; font-weight: 600;
+}
+.sandbox-dirs-toggle:hover { color: var(--text-primary); border-color: color-mix(in srgb, var(--action) 40%, var(--border-default)); }
+.sandbox-dirs-toggle svg { transition: transform 140ms ease; }
+.sandbox-dirs-toggle.is-open svg { transform: rotate(180deg); }
+.sandbox-metric-split { font-size: 0.62em; white-space: nowrap; }
+.ds-main .sandbox-page .sandbox-forecast-help { display: inline-flex; align-items: center; gap: 6px; cursor: default; }
+/* Live tiles with an icon at the left, like the Forecast cards. */
+.ds-main .sandbox-page .sandbox-metric.has-icon { position: relative; padding-left: 74px; }
+.sandbox-metric-icon {
+  position: absolute; left: 16px; top: 16px; display: grid; place-items: center; width: 44px; height: 44px;
+  border-radius: 12px; color: var(--smi, var(--action)); background: color-mix(in srgb, var(--smi, var(--action)) 12%, transparent);
+}
+.sandbox-metric[data-metric="Longest queue"] .sandbox-metric-icon { --smi: var(--color-warning); }
+.sandbox-metric[data-metric="CO₂ rate"] .sandbox-metric-icon { --smi: var(--color-success); }
+.sandbox-metric-row:has(.sandbox-metric:nth-child(5):last-child) { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.ds-main .sandbox-page .sandbox-legend { flex-wrap: nowrap; gap: 18px; overflow-x: auto; white-space: nowrap; }
+.sandbox-legend-veh { display: inline-block; vertical-align: middle; border-radius: 4px; background: #8d939d; }
+.sandbox-legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* --- Controls rail as settings rows (24 Nov 2026) --------------------------------------------------------
+   Three groups (Road configuration, Traffic demand, Scenario management); each row opens its page in place of
+   the list. Sentence case, no tracked capitals, a mostly opaque surface. */
+.ds-main .sandbox-page .sandbox-side { background: color-mix(in srgb, var(--bg-raised, #fff) 94%, transparent); }
+.sandbox-rail-group {
+  margin: 16px 2px 6px; font-size: 0.74rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.sandbox-side-scroll > .sandbox-rail-group:first-child { margin-top: 4px; }
+.sandbox-rail-row {
+  width: 100%; display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 10px;
+  margin-top: 6px; border: 1px solid var(--border-default); border-radius: 12px;
+  background: var(--bg-surface, #fff); color: var(--text-primary); font: inherit; text-align: left; cursor: pointer;
+}
+.sandbox-rail-row:hover { border-color: color-mix(in srgb, var(--action) 40%, var(--border-default)); }
+.sandbox-rail-row:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
+.sandbox-rail-row.is-static { cursor: default; }
+.sandbox-rail-row.is-static:hover { border-color: var(--border-default); }
+.sandbox-rail-icon {
+  flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px;
+  color: var(--action); background: color-mix(in srgb, var(--action) 10%, transparent);
+}
+.sandbox-rail-title { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 0.92rem; font-weight: 600; }
+.sandbox-rail-row .sandbox-rail-sum {
+  margin-left: auto; min-width: 0; font-size: 0.8rem; color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sandbox-rail-row .sandbox-rail-chev { flex: none; color: var(--text-muted); transform: none; }
+
+.sandbox-rail-page[hidden] { display: none; }
+.sandbox-rail-page-head {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
+  padding: 4px 0 10px; margin-bottom: 6px; border-bottom: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--bg-raised, #fff) 96%, transparent);
+}
+.sandbox-rail-page-head h3 { margin: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+.sandbox-rail-back {
+  display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border-default); background: var(--bg-surface, #fff); color: var(--text-secondary);
+  font: inherit; font-size: 0.8rem; font-weight: 600;
+}
+.sandbox-rail-back:hover { color: var(--text-primary); }
+.sandbox-rail-demand { padding: 2px 2px 0; }
+.sandbox-rail-demand[hidden] { display: none; }
+
+/* Labels inside the rail: sentence case, no tracked capitals. */
+.ds-main .sandbox-page .sandbox-side .sandbox-mini-label,
+.ds-main .sandbox-page .sandbox-side label,
+.ds-main .sandbox-page .sandbox-side .sandbox-dir-pick .k {
+  text-transform: none; letter-spacing: 0;
+}
+.ds-main .sandbox-page .sandbox-side .sandbox-mini-label { font-size: 0.84rem; font-weight: 600; color: var(--text-primary); }
+
+/* --- Canvas toolbar (24 Nov 2026 reference): related controls grouped, groups spaced apart, icon + label in
+   sentence case, the actions as quiet text buttons split by hairlines. Docked view only. */
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-toolbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%;
+}
+.sandbox-tb-gap { flex: 0 0 10px; }
+.sandbox-tb-sep { width: 1px; height: 18px; background: var(--border-default); margin: 0 2px; align-self: center; }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-toolbar :is(button, .sandbox-speed-seg button) {
+  text-transform: none; letter-spacing: 0; font-size: 0.88rem; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-toolbar .sandbox-play {
+  min-width: 112px; justify-content: center; padding: 0 20px;
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-toolbar .sandbox-play::after { content: none; }
+.sandbox-tb-actions { display: inline-flex; align-items: center; margin-left: auto; }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-tb-actions > button {
+  border: 0; background: none; box-shadow: none; min-height: 36px; padding: 0 12px; color: var(--text-primary);
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-tb-actions > button:hover { color: var(--action); }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-tb-actions > button + button { border-left: 1px solid var(--border-default); border-radius: 0; }
+
+/* The clock: calendar, date | time, as one pill. */
+.sandbox-live-clock-icon { color: var(--text-secondary); flex: none; }
+.sandbox-live-clock-sep { width: 1px; height: 18px; background: var(--border-default); margin: 0 4px; }
+.ds-main .sandbox-page .sandbox-live-clock-date { font-size: 0.9rem; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--text-primary); }
+
+/* Scenario events: step bar and nav. */
+.sandbox-scn-steps { list-style: none; margin: 0 0 10px; padding: 0; display: flex; gap: 6px; }
+.sandbox-scn-steps li { flex: 1; }
+.sandbox-scn-steps button { width: 100%; display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--border-default); background: var(--bg-surface, #fff); color: var(--text-secondary); font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+.sandbox-scn-steps .n { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: 0.72rem; background: color-mix(in srgb, var(--text-muted) 18%, transparent); }
+.sandbox-scn-steps button.is-on { border-color: var(--action); color: var(--text-primary); }
+.sandbox-scn-steps button.is-on .n { background: var(--action); color: #fff; }
+.sandbox-scn-steps button.is-done .n { background: color-mix(in srgb, var(--color-success) 22%, transparent); color: var(--color-success); }
+.sandbox-scn-nav { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.sandbox-scn-cap { display: inline-flex; align-items: center; gap: 6px; }
+
+/* --- Docked size (24 Nov 2026): a compact road, and the controls exactly as tall as the simulation card ------
+   The canvas takes its inline min-height (lanes x DOCKED_LANE_PX + gutters) as its height; the old CSS height of
+   lanes x 88px made the docked road twice the size. The rail takes no height of its own (height: 0) and fills the
+   card's row (min-height: 100%), scrolling inside, so the two cards end on the same line. */
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-canvas { height: 0; max-height: none; }
+@media (min-width: 981px) {
+  .ds-main .sandbox-page .sandbox-grid > .sandbox-side:not(.is-expanded) {
+    align-self: stretch; height: 0; min-height: 100%;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .ds-main .sandbox-page .sandbox-grid > .sandbox-side:not(.is-expanded) .sandbox-side-scroll {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px;
+  }
+}
+/* Toolbar on one line at desktop widths: tighter groups, actions as compact text buttons. */
+@media (min-width: 1200px) {
+  .ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-toolbar { flex-wrap: nowrap; gap: 6px; }
+}
+.sandbox-tb-gap { flex: 0 0 6px; }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-tb-actions > button { padding: 0 9px; white-space: nowrap; }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-toolbar .sandbox-play { min-width: 100px; padding: 0 16px; }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-toolbar .sandbox-speed-seg button { padding-left: 10px; padding-right: 10px; }
+/* Event form: sentence case throughout. */
+.ds-main .sandbox-page .sandbox-side .sandbox-scn label,
+.ds-main .sandbox-page .sandbox-side .sandbox-scn-nav button,
+.ds-main .sandbox-page .sandbox-side .sandbox-scn .sandbox-speed-seg button { text-transform: none; letter-spacing: 0; }
+/* Breathing room under the two cards at the foot of the page (24 Nov 2026). */
+/* The page box has a fixed height and the grid overflows it, so a margin fell outside the scroll area: a real
+   box after the grid gives the space instead. */
+.ds-main .sandbox-page::after { content: ""; display: block; flex: none; height: 32px; }
+/* The inflow sliders in a card like the rows around them. */
+.sandbox-rail-card {
+  padding: 4px 12px 10px; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface, #fff);
+}
+.sandbox-rail-card > .sandbox-slider-group:first-child { margin-top: 6px; }
+/* Traffic demand as a card like the rows: icon + title, then the sliders, same edges and padding. */
+.sandbox-rail-demand { padding: 0; }
+.sandbox-rail-card { margin-top: 6px; padding: 8px 10px 12px; }
+.sandbox-rail-card-head { display: flex; align-items: center; gap: 10px; min-height: 32px; margin-bottom: 4px; }
+.sandbox-rail-card-head .sandbox-rail-sum { margin-left: auto; font-size: 0.78rem; color: var(--text-muted); }
+.sandbox-rail-card > .sandbox-slider-group { padding-left: 40px; }
+
+/* --- Full screen, same toolbar as the docked view (25 Nov 2026 reference) -----------------------------------
+   Row 1: the clock, then the view group (zoom, speed), run group (play, replay) and the quiet actions.
+   Row 2: Carriageway and Forecast day. No title, no key hints, no notes toggle. */
+.sandbox-main.is-expanded .sandbox-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.sandbox-main.is-expanded .sandbox-head > h2 { display: none; }
+.sandbox-main.is-expanded .sandbox-live-clock { order: -1; margin: 0; }
+.sandbox-main.is-expanded .sandbox-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex: 1 1 auto; min-width: 0; }
+.sandbox-main.is-expanded .sandbox-toolbar :is(button, .sandbox-speed-seg button) {
+  text-transform: none; letter-spacing: 0; font-size: 0.86rem; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.sandbox-main.is-expanded .sandbox-toolbar .sandbox-play { min-width: 100px; justify-content: center; padding: 0 16px; }
+.sandbox-main.is-expanded .sandbox-toolbar .sandbox-play::after { content: none; }
+.sandbox-main.is-expanded .sandbox-tb-actions { display: inline-flex; align-items: center; margin-left: auto; }
+.sandbox-main.is-expanded .sandbox-tb-actions > button {
+  border: 0; background: none; box-shadow: none; min-height: 34px; padding: 0 10px; white-space: nowrap; color: var(--text-primary);
+}
+.sandbox-main.is-expanded .sandbox-tb-actions > button:hover { color: var(--action); }
+.sandbox-main.is-expanded .sandbox-tb-actions > button + button { border-left: 1px solid var(--border-default); border-radius: 0; }
+.sandbox-main.is-expanded .sandbox-hud-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; }
+.sandbox-main.is-expanded .sandbox-view-seg .k { text-transform: none; letter-spacing: 0; font-size: 0.86rem; font-weight: 600; color: var(--text-secondary); }
+.sandbox-main.is-expanded .sandbox-view-buttons button { text-transform: none; letter-spacing: 0; }
+/* Two rows: the toolbar across the top, then the clock with Carriageway and Forecast day. The head and the HUD row
+   dissolve (display: contents) so their pieces share one wrapping row. */
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-hud-top {
+  display: flex !important; flex-direction: row !important; flex-wrap: wrap; align-items: center !important;
+  justify-content: flex-start !important; gap: 10px 14px; padding: 10px 14px; border-radius: 16px;
+  background: var(--bg-raised, #fff); border: 1px solid var(--border-default); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-hud-top > *,
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-hud-row > * {
+  margin: 0; background: none; border: 0; box-shadow: none; padding: 0;
+}
+.sandbox-main.is-expanded .sandbox-head,
+.sandbox-main.is-expanded .sandbox-hud-row { display: contents; }
+.sandbox-main.is-expanded .sandbox-toolbar { order: 1; flex: 1 1 100%; }
+.sandbox-main.is-expanded .sandbox-live-clock { order: 2; }
+.sandbox-main.is-expanded .sandbox-hud-row > * { order: 3; }
+
+/* --- Command (Copilot) mode, 25 Nov 2026 ------------------------------------------------------------------ */
+.ds-main .sandbox-page .ai-command { display: flex; flex-direction: column; gap: 10px; }
+.ds-main .sandbox-page .ai-command-sub { display: flex; align-items: center; gap: 6px; margin: 2px 0 0; font-size: 0.9rem; color: var(--text-secondary); }
+.ds-main .sandbox-page .ai-command .sandbox-dir-pick { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ds-main .sandbox-page .ai-command .sandbox-dir-pick .k { font-size: 0.84rem; font-weight: 600; color: var(--text-secondary); }
+.ds-main .sandbox-page .ai-command .sandbox-dir-seg { margin-left: auto; }
+.ds-main .sandbox-page .ai-command-input {
+  min-height: 96px; border-radius: 12px; background: var(--bg-surface, #fff); font-size: 0.92rem; line-height: 1.5;
+}
+.ai-command-examples { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ai-command-examples > span { font-size: 0.78rem; font-weight: 700; color: var(--text-muted); }
+.ai-command-examples button {
+  max-width: 100%; padding: 5px 10px; border-radius: 999px; cursor: pointer; text-align: left;
+  border: 1px solid var(--border-default); background: var(--bg-surface, #fff); color: var(--text-secondary);
+  font: inherit; font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ai-command-examples button:hover { color: var(--text-primary); border-color: color-mix(in srgb, var(--action) 40%, var(--border-default)); }
+.ds-main .sandbox-page .ai-command-btn {
+  min-height: 42px; border-radius: 12px; text-transform: none; letter-spacing: 0; font-size: 0.92rem; font-weight: 700;
+  background: var(--action); color: #fff; border: 0;
+}
+.ds-main .sandbox-page .ai-command-btn:disabled { background: color-mix(in srgb, var(--action) 14%, transparent); color: var(--text-muted); }
+
+.ds-main .sandbox-page .ai-plan {
+  display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--action) 30%, var(--border-default)); background: var(--bg-surface, #fff);
+}
+.ai-plan-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-plan-head b { font-size: 0.95rem; color: var(--text-primary); }
+.ai-plan-head > span:not(.ai-plan-target) {
+  padding: 1px 8px; border-radius: 999px; font-size: 0.74rem; font-weight: 700;
+  color: var(--action); background: color-mix(in srgb, var(--action) 10%, transparent);
+}
+.ds-main .sandbox-page .ai-plan-target { margin: 0 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font-size: 0.76rem; color: var(--text-muted); }
+.ds-main .sandbox-page .ai-plan-reply { margin: 0; font-size: 0.86rem; line-height: 1.5; color: var(--text-secondary); }
+.ds-main .sandbox-page .ai-plan-actions { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.ds-main .sandbox-page .ai-plan-actions li {
+  display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 10px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent); font-size: 0.86rem; line-height: 1.45; color: var(--text-primary);
+}
+.ai-plan-actions .n {
+  flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  font-size: 0.72rem; font-weight: 700; color: #fff; background: var(--action);
+}
+.ds-main .sandbox-page .ai-plan-warn {
+  margin: 0; padding: 7px 10px; border-radius: 10px; font-size: 0.82rem; line-height: 1.45;
+  color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+}
+.ds-main .sandbox-page .ai-plan-buttons { display: flex; gap: 8px; margin-top: 2px; }
+.ds-main .sandbox-page .ai-plan-apply,
+.ds-main .sandbox-page .ai-plan-discard { flex: 1; min-height: 38px; border-radius: 10px; text-transform: none; letter-spacing: 0; font-weight: 700; }
+.ds-main .sandbox-page .ai-plan-apply { background: var(--action); color: #fff; border: 0; }
+.ds-main .sandbox-page .ai-plan-apply:disabled { opacity: 0.5; }
+.ds-main .sandbox-page .ai-command-error,
+.ds-main .sandbox-page .ai-command-note { margin: 0; font-size: 0.84rem; line-height: 1.45; }
+
+/* --- Recommendations and Trends, 25 Nov 2026 reference ------------------------------------------------------ */
+.ds-main .sandbox-page .sandbox-recos .sandbox-reco,
+.ds-main .sandbox-page .sandbox-recos .sandbox-note-card {
+  display: flex; align-items: flex-start; gap: 12px; padding: 14px; border-radius: 14px; border-width: 1px; border-style: solid;
+}
+.sandbox-note-icon {
+  flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.ds-main .sandbox-page .sandbox-recos .sandbox-reco b,
+.ds-main .sandbox-page .sandbox-recos .sandbox-note-card b { display: block; margin-bottom: 3px; font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+.ds-main .sandbox-page .sandbox-recos .sandbox-reco p { margin: 0; font-size: 0.88rem; line-height: 1.5; color: var(--text-secondary); }
+.ds-main .sandbox-page .sandbox-recos .sandbox-note-card > span:last-child { font-size: 0.86rem; line-height: 1.5; color: var(--text-secondary); }
+.ds-main .sandbox-page .sandbox-recos .sandbox-reco.good { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 7%, var(--bg-surface, #fff)); border-color: color-mix(in srgb, var(--color-success) 30%, transparent); }
+.ds-main .sandbox-page .sandbox-recos .sandbox-reco.warn,
+.ds-main .sandbox-page .sandbox-recos .sandbox-note-card.warn { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 8%, var(--bg-surface, #fff)); border-color: color-mix(in srgb, var(--color-warning) 32%, transparent); }
+.ds-main .sandbox-page .sandbox-recos .sandbox-reco.bad { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 7%, var(--bg-surface, #fff)); border-color: color-mix(in srgb, var(--color-danger) 30%, transparent); }
+.ds-main .sandbox-page .sandbox-recos .sandbox-reco.is-waiting { color: var(--action); background: color-mix(in srgb, var(--action) 5%, var(--bg-surface, #fff)); border-color: var(--border-default); }
+.ds-main .sandbox-page .sandbox-recos .sandbox-live-note:not(.warn) {
+  margin: 0; padding: 10px 14px; border-radius: 12px; font-size: 0.86rem; color: var(--text-secondary);
+  background: color-mix(in srgb, var(--action) 5%, transparent); border: 1px solid var(--border-default);
+}
+.ds-main .sandbox-page .sandbox-recos .sandbox-compare-none {
+  display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; font-size: 0.88rem;
+  color: var(--text-secondary); background: color-mix(in srgb, var(--action) 5%, transparent); border: 1px solid var(--border-default);
+}
+.ds-main .sandbox-page .sandbox-recos .sandbox-compare-none svg { color: var(--action); flex: none; }
+
+.sandbox-trends-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.ds-main .sandbox-page .sandbox-trends-title strong { font-size: 1.05rem; }
+.ds-main .sandbox-page .sandbox-trends-sub { padding-left: 12px; border-left: 1px solid var(--border-default); font-size: 0.84rem; }
+.ds-main .sandbox-page .sandbox-trends-head { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+.ds-main .sandbox-page .sandbox-trends-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.sandbox-trends-view { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.sandbox-trends-view button {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 999px; border: 0; background: none;
+  cursor: pointer; font: inherit; font-size: 0.84rem; font-weight: 600; color: var(--text-secondary);
+}
+.sandbox-trends-view button.active { background: var(--bg-surface, #fff); color: var(--action); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12); }
+.sandbox-trends-metrics { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
+.sandbox-trends-metrics button {
+  padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border-default); background: var(--bg-surface, #fff);
+  cursor: pointer; font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);
+}
+.sandbox-trends-metrics button.active { color: var(--action); border-color: color-mix(in srgb, var(--action) 45%, var(--border-default)); background: color-mix(in srgb, var(--action) 8%, var(--bg-surface, #fff)); }
+.ds-main .sandbox-page .sandbox-trends-grid.is-single { display: block; }
+.sandbox-trends-latest {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 0; margin-top: 10px; padding: 10px 12px;
+  border: 1px solid var(--border-default); border-radius: 14px; background: var(--bg-surface, #fff);
+}
+.sandbox-trends-latest-time {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 10px; margin-right: 6px;
+  font-size: 1.05rem; font-weight: 700; color: var(--text-primary); background: color-mix(in srgb, var(--action) 8%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.sandbox-trends-latest-time svg { color: var(--action); }
+.sandbox-trends-latest-time small { font-size: 0.7rem; font-weight: 600; color: var(--text-muted); }
+.sandbox-trends-latest-v { display: flex; flex-direction: column; gap: 2px; padding: 0 16px; border-left: 1px solid var(--border-default); }
+.sandbox-trends-latest-v small { font-size: 0.78rem; color: var(--text-muted); }
+.sandbox-trends-latest-v b { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+
+/* Table: grouped headers, zebra rows, sticky head, numbers right-aligned. */
+.ds-main .sandbox-page .sandbox-trends-tablewrap { max-height: 300px; overflow: auto; border: 1px solid var(--border-default); border-radius: 12px; }
+.ds-main .sandbox-page .sandbox-trends-table { font-size: 0.82rem; }
+.ds-main .sandbox-page .sandbox-trends-table thead th { position: sticky; top: 0; z-index: 1; background: var(--bg-surface, #fff); text-transform: none; letter-spacing: 0; }
+.ds-main .sandbox-page .sandbox-trends-table thead tr:nth-child(2) th { top: 28px; }
+.ds-main .sandbox-page .sandbox-trends-table th.grp { text-align: center; border-bottom: 1px solid var(--border-default); }
+.ds-main .sandbox-page .sandbox-trends-table th.grp span { font-weight: 400; color: var(--text-muted); }
+.ds-main .sandbox-page .sandbox-trends-table th.dir { font-size: 0.74rem; }
+.ds-main .sandbox-page .sandbox-trends-table th.dir-NB { color: var(--trend-NB); }
+.ds-main .sandbox-page .sandbox-trends-table th.dir-SB { color: var(--trend-SB); }
+.ds-main .sandbox-page .sandbox-trends-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+.ds-main .sandbox-page .sandbox-trends-table tbody th { text-align: left; font-weight: 600; }
+.ds-main .sandbox-page .sandbox-recos .sandbox-note-card.warn .sandbox-note-icon { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 16%, transparent); }
+
+/* --- Full screen header, second pass (25 Nov 2026) -------------------------------------------------------
+   Row 1: one date-and-time pill (the forecast day picker + the simulation time; the clock's own date is dropped),
+          Carriageway, and the actions as plain text on the right.
+   Row 2: zoom, speed, Play/Pause, Replay. */
+.sandbox-tb-break { display: none; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-toolbar { display: contents !important; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-forecast-seg { order: 1; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock { order: 2; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-view-seg:not(.sandbox-forecast-seg) { order: 3; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-tb-actions { order: 4; margin-left: auto; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-tb-break { display: block; order: 5; flex: 0 0 100%; height: 0; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-zoom-seg { order: 6; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-speed-seg:not(.sandbox-zoom-seg) { order: 7; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-play { order: 8; margin-left: 10px; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-tb-replay { order: 9; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-tb-gap { display: none; }
+
+/* One pill: the picker's own label and the clock's date and icon go; the two halves sit flush. */
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-forecast-seg > .k { display: none; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock :is(.sandbox-live-clock-icon, .sandbox-live-clock-date) { display: none; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-forecast-seg [class*="trigger"] {
+  border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: 0; min-height: 38px;
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock {
+  margin-left: -14px !important; min-height: 38px; padding: 0 12px 0 4px !important;
+  border: 1px solid var(--border-default) !important; border-left: 0 !important;
+  border-radius: 0 999px 999px 0 !important; background: var(--bg-surface, #fff) !important;
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock-sep { display: block; }
+
+/* Actions: text only, no button chrome, split by hairlines. */
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-tb-actions > button,
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-tb-actions > button:hover {
+  background: none !important; border: 0 !important; box-shadow: none !important; border-radius: 0 !important;
+  min-height: 30px; padding: 0 12px !important;
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-tb-actions > button + button { border-left: 1px solid var(--border-default) !important; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-tb-actions > button:hover { color: var(--action); }
+
+/* The forecast-day calendar opens over the controls rail, not under it. */
+@media (min-width: 901px) {
+  .sandbox-page .sandbox-main.is-expanded { z-index: 57; }
+}
+
+/* --- Full screen controls, one look (25 Nov 2026) ----------------------------------------------------------
+   Every segmented control (Carriageway, zoom, speed) is the same light track with the chosen option as a white
+   chip in the accent colour; no grey glow, no inset highlight. The time is plain digits with small arrows. */
+.ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-view-buttons, .sandbox-speed-seg) {
+  display: inline-flex !important; align-items: center; gap: 2px; padding: 3px !important; height: 38px;
+  border: 0 !important; border-radius: 999px !important; box-shadow: none !important;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent) !important;
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-view-buttons, .sandbox-speed-seg) > :is(button, span) {
+  min-height: 32px; padding: 0 12px !important; border: 0 !important; border-radius: 999px !important;
+  background: none !important; box-shadow: none !important; filter: none !important;
+  font-size: 0.84rem !important; font-weight: 600 !important; letter-spacing: 0 !important; text-transform: none !important;
+  color: var(--text-secondary) !important; display: inline-flex; align-items: center; gap: 5px;
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-view-buttons, .sandbox-speed-seg) > button:hover:not(:disabled) { color: var(--text-primary) !important; }
+.ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-view-buttons, .sandbox-speed-seg) > button:is(.active, [aria-selected="true"]) {
+  background: var(--bg-surface, #fff) !important; color: var(--action) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14) !important;
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-view-buttons, .sandbox-speed-seg) > button:disabled { opacity: 0.4; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-zoom-seg > span { color: var(--text-primary) !important; padding: 0 6px !important; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-view-seg { display: inline-flex; align-items: center; gap: 8px; }
+
+/* Play and Replay: same height as the tracks. */
+.ds-main .sandbox-page .sandbox-main.is-expanded :is(.sandbox-play, .sandbox-tb-replay) { min-height: 38px !important; height: 38px; border-radius: 999px !important; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-tb-replay {
+  background: var(--bg-surface, #fff) !important; border: 1px solid var(--border-default) !important; box-shadow: none !important;
+  text-transform: none !important; letter-spacing: 0 !important;
+}
+
+/* Time: plain digits, arrows only on hover. */
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock .sandbox-time-seg-input {
+  background: none !important; border: 0 !important; box-shadow: none !important; padding: 0 1px !important;
+  width: 2.1ch; text-align: center; font-size: 0.95rem; font-weight: 700; color: var(--text-primary);
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock .sandbox-time-seg-arrows {
+  opacity: 0; transition: opacity 120ms ease; background: none !important; border: 0 !important;
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock .sandbox-time-seg:is(:hover, :focus-within) .sandbox-time-seg-arrows { opacity: 1; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock .sandbox-time-sep { color: var(--text-muted); }
+
+/* Room between a tile's label, its i and its tag (total, max, flow-weighted). */
+.ds-main .sandbox-page .sandbox-metric h3 .info-tip { margin: 0 10px 0 2px; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric-tag { padding-left: 10px; margin-left: 0; border-left: 1px solid var(--border-default); }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock .sandbox-time-seg { position: relative; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock .sandbox-time-seg-arrows { position: absolute; left: 100%; top: 50%; transform: translateY(-50%); z-index: 2; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock .sandbox-time-sep { margin: 0 2px; }
+.ds-main .sandbox-page .sandbox-metric-tag { white-space: nowrap; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric h3 .info-tip { margin-right: 8px; }
+/* Full screen: the tag on its own line under the label, as in the docked tiles, so nothing wraps mid-label. */
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric h3 { white-space: nowrap; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-metric-tag { display: block; padding-left: 0; border-left: 0; margin-top: 2px; }
+
+/* Date | time as one even pill (25 Nov 2026): same surface, border, height and type on both halves, one hairline
+   between them. */
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-forecast-seg [class*="trigger"] {
+  height: 38px !important; min-height: 38px; padding: 0 12px 0 14px !important;
+  background: var(--bg-surface, #fff) !important; box-shadow: none !important; outline: 0;
+  border: 1px solid var(--border-default) !important; border-right: 0 !important;
+  border-radius: 999px 0 0 999px !important;
+  font-size: 0.9rem !important; font-weight: 600 !important; color: var(--text-primary) !important;
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock {
+  height: 38px; min-height: 38px !important; padding: 0 16px 0 14px !important;
+  border: 1px solid var(--border-default) !important; border-radius: 0 999px 999px 0 !important;
+  background: var(--bg-surface, #fff) !important; box-shadow: none !important;
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock-sep { display: none !important; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock .sandbox-time-seg-input {
+  font-size: 0.9rem !important; font-weight: 600 !important; font-variant-numeric: tabular-nums; width: 2ch;
+}
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock .sandbox-time-sep { margin: 0 1px; color: var(--text-secondary); font-weight: 600; }
+.ds-main .sandbox-page .sandbox-main.is-expanded .sandbox-live-clock .sandbox-time-seg-input { width: 2.6ch !important; min-width: 2.6ch; padding: 0 !important; overflow: visible; }
+
+/* Docked clock in the same style as full screen's date | time pill (25 Nov 2026): plain date text, not a picker. */
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock {
+  display: inline-flex; align-items: center; gap: 8px; height: 38px; min-height: 38px; padding: 0 16px 0 14px !important;
+  border: 1px solid var(--border-default) !important; border-radius: 999px !important;
+  background: var(--bg-surface, #fff) !important; box-shadow: none !important;
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock-icon { color: var(--text-secondary); }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock-date { font-size: 0.9rem !important; font-weight: 600 !important; color: var(--text-primary); }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock-sep { display: block; width: 1px; height: 38px; margin: 0 6px 0 4px; background: var(--border-default); }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock .sandbox-time-seg { position: relative; }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock .sandbox-time-seg-input {
+  background: none !important; border: 0 !important; box-shadow: none !important; padding: 0 !important;
+  width: 2.6ch !important; min-width: 2.6ch; text-align: center;
+  font-size: 0.9rem !important; font-weight: 600 !important; font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock .sandbox-time-seg-arrows {
+  position: absolute; left: 100%; top: 50%; transform: translateY(-50%); z-index: 2;
+  opacity: 0; transition: opacity 120ms ease; background: none !important; border: 0 !important;
+}
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock .sandbox-time-seg:is(:hover, :focus-within) .sandbox-time-seg-arrows { opacity: 1; }
+.ds-main .sandbox-page .sandbox-main:not(.is-expanded) .sandbox-live-clock .sandbox-time-sep { margin: 0 1px; color: var(--text-secondary); font-weight: 600; }
+/* The hover arrows sit just right of each number: room for them inside the pill (after the seconds) and in the
+   gaps between the numbers, so they never spill outside the container. */
+/* Tight numbers again; only the last arrow needs room, so the pill keeps a little space after the seconds. */
+.ds-main .sandbox-page .sandbox-main.sandbox-main .sandbox-live-clock { padding-right: 24px !important; }
+.ds-main .sandbox-page .sandbox-main.sandbox-main .sandbox-live-clock .sandbox-time-sep { margin: 0 2px !important; }
+.ds-main .sandbox-page .sandbox-main .sandbox-live-clock .sandbox-time-seg-arrows { left: calc(100% + 1px); }
+/* Trends, compact: legend and metric tabs share a line, a slimmer readings strip. */
+.ds-main .sandbox-page .sandbox-trends { display: flex; flex-direction: column; gap: 6px; }
+.ds-main .sandbox-page .sandbox-trends-legend { margin: 0; }
+.sandbox-trends-metrics { margin: 0; }
+.ds-main .sandbox-page .sandbox-trend figcaption { display: none; }
+.sandbox-trends-latest { margin-top: 4px; padding: 6px 10px; }
+.sandbox-trends-latest-time { padding: 5px 10px; font-size: 0.95rem; }
+.sandbox-trends-latest-v b { font-size: 1rem; }
+.ds-main .sandbox-page .sandbox-trends-tablewrap { max-height: 248px; }
+/* Rail rows, two lines: name, then the current setting. */
+.sandbox-rail-row { min-height: 56px; align-items: center; }
+.sandbox-rail-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sandbox-rail-row .sandbox-rail-text .sandbox-rail-sum {
+  margin: 0; font-size: 0.8rem; font-weight: 600; color: var(--action);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ds-main .sandbox-page .sandbox-rail-row .sandbox-rail-text .sandbox-rail-sum.is-idle { font-weight: 500 !important; color: var(--text-muted) !important; }

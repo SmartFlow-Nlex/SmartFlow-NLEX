@@ -2318,10 +2318,11 @@ check(
   const tileTags = [...pageSource.matchAll(/<MetricTileBoth\s+label="([^"]+)"\s+tag="([^"]+)"/g)].map((x) => `${x[1]}=${x[2]}`).join(", ");
   check(
     "page: Both-mode tiles label what kind of headline each is (avg speed flow-weighted, queue max, density per direction) — the tag is in the tile, not only in a tooltip",
-    tileTags === "Active agents=total, Avg speed=flow-weighted, Throughput=total, Longest queue=max, CO₂ rate=total, Density=per direction",
+    // Density left the strip on 24 Nov 2026 (user request); it is still measured and exported.
+    tileTags === "Active agents=total, Avg speed=flow-weighted, Throughput=total, Longest queue=max, CO₂ rate=total",
     tileTags,
   );
-  check("page: the density tile has NO corridor total (total={null})", /label="Density"\s+tag="per direction"[\s\S]{0,260}total=\{null\}/.test(pageSource));
+  check("page: density is not drawn as a tile (it has no corridor total; removed from the strip 24 Nov 2026)", !/label="Density"/.test(pageSource));
   check(
     "page: the corridor totals come from combineMetrics/combineBaselines (one rule set), never re-derived inline",
     /combineMetrics\(nb\.metrics, sb\.metrics\)/.test(pageSource) && /combineBaselines\(nb\.baseline, sb\.baseline\)/.test(pageSource) && !/nb\.metrics\.avgSpeedKmh \+ sb\.metrics\.avgSpeedKmh/.test(pageSource),
@@ -2802,10 +2803,10 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
     /\{\(\["Both", "NB", "SB"\] as const\)\.map\(\(v\) => \(/.test(pageSource) && !/\{\(\["NB", "SB", "Both"\] as const\)\.map\(\(v\) => \(/.test(pageSource) && /const MIN_LEN_PX = 15;/.test(pageSource),
   );
   check(
-    "traffic sprites: vehicles are painted from vehiclePaint.ts by the vehicle's id (trailer painted separately), classes are told apart by shape, and the legend shows the shapes rather than class colours",
+    "traffic sprites: vehicles are painted from vehiclePaint.ts by the vehicle's id (trailer painted separately), classes are told apart by shape, and no colour-coded class legend is drawn (the legend was removed 24 Nov 2026)",
     /import \{ PAINT_WHITE, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint \} from "\.\/vehiclePaint";/.test(pageSource) &&
       /const paint = moto \? motorcyclePaintFor\(v\.id\) : paintFor\(v\.id, v\.vClass\);/.test(pageSource) && /v\.vClass, paint, braking, sb, trailerPaintFor\(v\.id\), moto\);/.test(pageSource) && !/v\.color/.test(pageSource) &&
-      /<i className="veh veh-1" \/>/.test(pageSource) && /<i className="veh veh-3" \/>/.test(pageSource) && !/CLASS_META\[[123]\]\.color/.test(pageSource),
+      !/className="sandbox-legend"/.test(pageSource) && !/CLASS_META\[[123]\]\.color/.test(pageSource),
   );
   // ── the colours themselves: a realistic spread, stable per vehicle ─────────
   {
@@ -2885,10 +2886,10 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
     const moto = readFileSync(new URL("./tools/motorcycle_share.py", import.meta.url), "utf8");
     check("motorcycle tool: no built-in data path, requires --csv-dir (or NLEX_CSV_DIR), reads only the vehicle type and class columns (never a plate or a driver)", !/onedrive/i.test(moto) && !/[A-Za-z]:\\/.test(moto) && /NLEX_CSV_DIR/.test(moto) && /"--csv-dir"/.test(moto) && /TypeOfVehicle/.test(moto) && /VehicleClass/.test(moto) && !/row\.get\("(PlateNumber|Driver)"\)/.test(moto));
     check(
-      "motorcycles: the road draws a vehicle as a motorcycle only through isMotorcycle at the recorded share (Class 1 only), the legend says where the figure comes from, and the counts are published for the browser checks",
+      "motorcycles: the road draws a vehicle as a motorcycle only through isMotorcycle at the recorded share (Class 1 only), and the counts are published for the browser checks",
       /const motoShare = ASSUMPTIONS\.MOTORCYCLE_SHARE_OF_CLASS_1\.value;/.test(pageSource) && /const moto = isMotorcycle\(v\.id, v\.vClass, motoShare\);/.test(pageSource) &&
         /const paint = moto \? motorcyclePaintFor\(v\.id\) : paintFor\(v\.id, v\.vClass\);/.test(pageSource) && /drawVehicle\(ctx, xNose, y, len, wid, v\.vClass, paint, braking, sb, trailerPaintFor\(v\.id\), moto\);/.test(pageSource) &&
-        /data-legend="motorcycle"/.test(pageSource) && /from NLEX&apos;s records/.test(pageSource) && /ctx\.canvas\.dataset\[sb \? "motoSb" : "motoNb"\]/.test(pageSource) && /if \(motorcycle\) \{/.test(pageSource),
+        /ctx\.canvas\.dataset\[sb \? "motoSb" : "motoNb"\]/.test(pageSource) && /if \(motorcycle\) \{/.test(pageSource),
     );
   }
   // ── which stretch the reallocation covers: asked for, checked, and it becomes the simulated road ──────

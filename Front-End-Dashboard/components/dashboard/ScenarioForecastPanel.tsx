@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import InfoTooltip from "./InfoTooltip";
+import { Car, Gauge, Leaf, TriangleAlert, type LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 /**
  * The seam between the three predictive modules and the sandbox.
@@ -207,6 +210,11 @@ export default function ScenarioForecastPanel({
   following = false,
   inflowHere = null,
   onApplyInflow,
+  tab = "forecast",
+  onTab,
+  live = null,
+  liveNote,
+  liveAction = null,
 }: {
   forecast: ScenarioForecast;
   /** The hour of day the forecast is read at (the page's shared hour); null until it has one. */
@@ -218,9 +226,15 @@ export default function ScenarioForecastPanel({
   inflowHere?: { readonly vehPerHour: number; readonly where: string } | null;
   /** Tells the page to load the chosen day; the inflow itself is worked out per carriageway from the scale. */
   onApplyInflow: (forecastDate: string) => void;
+  /** The deck's tab (24 Nov 2026 redesign): the model forecast, or the simulation's live readings passed in `live`. */
+  tab?: "forecast" | "live";
+  onTab?: (t: "forecast" | "live") => void;
+  live?: ReactNode;
+  /** The Live tab's "i" text, and its control on the right (the NB / SB toggle). */
+  liveNote?: string;
+  liveAction?: ReactNode;
 }) {
   const { data, busy, failed, applied, setApplied } = forecast;
-  const [showHelp, setShowHelp] = useState(false);
 
   if (failed && !data) return null;
 
@@ -247,15 +261,30 @@ export default function ScenarioForecastPanel({
   return (
     <article className="sandbox-forecast">
       <div className="sandbox-forecast-head">
-        <div className="sandbox-forecast-title">
-          <div className="sandbox-forecast-titlerow">
-            <h3>Simulate a Forecast Day</h3>
-            {/* What these tiles are: model output, not the simulation's own readings. */}
-            <span className="pill purple">Model forecast</span>
-          </div>
-          <p>Starts the scenario from what the traffic, incident and emission models predict</p>
+        {/* Forecast = model output for the day; Live simulation = the engine's own readings. Kept apart so a forecast
+            figure is never read as a simulated one. */}
+        <div className="sandbox-deck-tabs" role="tablist" aria-label="Figures shown">
+          <button type="button" role="tab" aria-selected={tab === "live"} className={tab === "live" ? "active" : ""} onClick={() => onTab?.("live")}>
+            Live simulation
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "forecast"} className={tab === "forecast" ? "active" : ""} onClick={() => onTab?.("forecast")}>
+            Forecast
+          </button>
         </div>
+        <span className="sandbox-deck-note">
+          {tab === "forecast" ? "Model forecast for the day" : "Simulation readings"}
+          <InfoTooltip
+            text={
+              tab === "forecast"
+                ? "What the traffic, incident and emission models predict for the day and hour chosen above. Load it to start the scenario from it. Hover a card for its model and test score."
+                : liveNote ?? "Read live from the agent-based simulation of the stretch on screen, not from the models."
+            }
+          />
+        </span>
 
+        {tab === "live" && liveAction && <span className="sandbox-deck-action">{liveAction}</span>}
+        {/* Loading the forecast belongs to the Forecast tab only. */}
+        {tab === "forecast" && (
         <button
           className={`sandbox-forecast-apply${isApplied ? " is-applied" : ""}`}
           onClick={() => {
@@ -268,17 +297,25 @@ export default function ScenarioForecastPanel({
         >
           {busy ? "Loading…" : isApplied ? (following ? "✓ Following forecast" : "✓ Applied") : "Load into simulation"}
         </button>
+        )}
       </div>
 
-      {data && inc && (
+      {tab === "live" && live}
+
+      {tab === "forecast" && data && inc && (
         <>
           <div className="sandbox-forecast-tiles">
             <Tile
+              icon={Car}
+              info="Vehicles forecast to use the whole corridor in this hour; the line below is the day's total."
               k={hourLabel ? `Corridor volume · ${hourLabel}` : "Corridor volume"}
               v={`${fmt(hourLabel && hr != null ? v?.hourly?.[hr] : v?.dailyVehicles)} veh`}
-              s={`${hourLabel ? `day ${fmt(v?.dailyVehicles)} veh · ` : ""}${v?.model ?? "—"}${v?.wmape != null ? ` · ${v.wmape.toFixed(1)}% WMAPE` : ""}`}
+              s={hourLabel ? `day ${fmt(v?.dailyVehicles)} veh` : undefined}
+              hint={`${v?.model ?? "—"}${v?.wmape != null ? ` · ${v.wmape.toFixed(1)}% WMAPE` : ""}`}
             />
             <Tile
+              icon={Gauge}
+              info="Vehicles per hour the forecast puts on this stretch and carriageway: its own recorded flow for this hour times the forecast's factor."
               k={hourLabel ? `Inflow here · ${hourLabel}` : "Inflow here"}
               v={inflowHere ? `${fmt(inflowHere.vehPerHour)} veh/h` : scaleNow ? `${scaleNow.factor.toFixed(2)} times usual` : "—"}
               s={
@@ -288,25 +325,28 @@ export default function ScenarioForecastPanel({
                     ? `${scaleText}; this stretch has no recorded flow to scale`
                     : "no forecast for this hour"
               }
-              accent
             />
             <Tile
+              icon={TriangleAlert}
+              info="Incidents forecast on the whole corridor for this hour; the line below is the day's total."
               k={inc.covered && incidentsNow != null && hr != null ? `Predicted incidents · ${hhmm(hr)}` : "Predicted incidents"}
               v={inc.covered ? (incidentsNow != null ? fmt(incidentsNow) : fmt(inc.predictedForDate, 1)) : "No forecast"}
               s={
                 inc.covered
-                  ? `${incidentsNow != null ? `day ${fmt(inc.predictedForDate, 1)} · ` : ""}corridor-wide · ${inc.model ?? "—"}`
+                  ? `${incidentsNow != null ? `day ${fmt(inc.predictedForDate, 1)} · ` : ""}corridor-wide`
                   : coverageEnd
                     ? `incident forecast runs to ${shortDay(coverageEnd)}`
                     : "incident forecast unavailable"
               }
+              hint={inc.covered ? inc.model ?? undefined : undefined}
             />
             <Tile
+              icon={Leaf}
+              info="CO₂ forecast for the whole corridor over the day, from forecast traffic and emission factors."
               k="Predicted CO₂"
               v={`${fmt(data.emissions.predictedTonnes, 1)} t`}
-              s={`${data.emissions.model ?? "—"}${
-                data.emissions.wmape != null ? ` · ${data.emissions.wmape.toFixed(1)}% WMAPE` : ""
-              }`}
+              s="for the day, corridor-wide"
+              hint={`${data.emissions.model ?? "—"}${data.emissions.wmape != null ? ` · ${data.emissions.wmape.toFixed(1)}% WMAPE` : ""}`}
             />
           </div>
 
@@ -315,7 +355,6 @@ export default function ScenarioForecastPanel({
               <span>
                 <b>Fleet mix:</b> Class 1 {(data.fleet.c1 * 100).toFixed(1)}% · Class 2 {(data.fleet.c2 * 100).toFixed(1)}% · Class 3{" "}
                 {(data.fleet.c3 * 100).toFixed(1)}%{data.fleet.heavySurge ? " · heavy-vehicle surge day" : ""}
-                {data.fleet.model ? ` · ${data.fleet.model}` : ""}
               </span>
             )}
             {inc.byExit.length > 0 && (
@@ -327,42 +366,14 @@ export default function ScenarioForecastPanel({
                   .join(", ")}
               </span>
             )}
-            <button className="sandbox-forecast-help" onClick={() => setShowHelp((x) => !x)}>
-              {showHelp ? "Hide detail" : "What gets loaded?"}
-            </button>
+            {/* The how-it-loads explanation, cut to its points and kept behind the "i" (24 Nov 2026: a paragraph nobody read). */}
+            <span className="sandbox-forecast-help">
+              What gets loaded
+              <InfoTooltip
+                text={`Inflow: each stretch's recorded flow for this hour and direction × the forecast's "times a usual" factor. Incidents: the corridor forecast for the hour, shared out to this stretch and added as scenario events. Fleet mix: the forecast's daily shares, within a week of the last observation. CO₂: the day's corridor forecast; the simulation's own CO₂ rate covers one short stretch, so the two do not compare.${lastDay ? ` Forecasts run to ${dayLabel(lastDay)}.` : ""}${coverageEnd && hasPartial ? ` Incidents only to ${dayLabel(coverageEnd)}.` : ""}`}
+              />
+            </span>
           </div>
-
-          {showHelp && (
-            <div className="sandbox-forecast-foot" style={{ display: "block" }}>
-              The forecast for the chosen hour is loaded into the simulation on each carriageway the
-              Carriageway control at the top shows. The forecast is a corridor total with no direction, so it
-              is not loaded as it is: each stretch keeps its own recorded flow for that hour and direction, and
-              that flow is multiplied by the forecast corridor total for the hour over the corridor&apos;s
-              average for the same hour in the record (the &quot;times a usual&quot; figure above). The incidents forecast for that hour are
-              for the whole corridor, so the sandbox shares them out to the stretch on screen and to each
-              carriageway, and adds what that comes to as scenario events: on a short stretch usually none
-              or one, at a place, lane and time drawn from NLEX&apos;s records for that day. Both are the same
-              hourly figures the Traffic and Incident tabs show; change the day or the time and the road follows.
-              Within a week of the last observation the fleet-mix forecast sets how many cars, buses
-              and trucks arrive — its daily shares, shaped by the observed hour-to-hour pattern.
-              The CO₂ figure is the condition forecast for the day. The simulation&apos;s own CO₂
-              rate covers one short stretch and is not comparable to the corridor-wide tonnage.
-              {lastDay && (
-                <>
-                  {" "}
-                  Forecasts run from the end of observed data, which is why the horizon ends{" "}
-                  {dayLabel(lastDay)}.
-                </>
-              )}
-              {coverageEnd && hasPartial && (
-                <>
-                  {" "}
-                  The incident model currently forecasts through {dayLabel(coverageEnd)}; later days
-                  carry traffic and CO₂ forecasts only.
-                </>
-              )}
-            </div>
-          )}
 
           {data.notes.map((n, i) => (
             <p className="sandbox-forecast-note" key={i}>
@@ -375,14 +386,18 @@ export default function ScenarioForecastPanel({
   );
 }
 
-function Tile({ k, v, s, accent }: { k: string; v: string; s?: string; accent?: boolean }) {
+/** `hint`: the model and its test score, on hover rather than printed on the tile (24 Nov 2026, "not that overwhelming"). */
+function Tile({ k, v, s, accent, hint, icon: Icon, info }: { k: string; v: string; s?: string; accent?: boolean; hint?: string; icon?: LucideIcon; info?: string }) {
   return (
-    <div className={`sandbox-forecast-tile${accent ? " accent" : ""}`}>
-      <div className="k">{k}</div>
-      <div className="v" title={v}>
-        {v}
+    <div className={`sandbox-forecast-tile${accent ? " accent" : ""}`} title={hint ? `Model: ${hint}` : undefined}>
+      {Icon && <span className="sandbox-forecast-icon" aria-hidden="true"><Icon size={20} strokeWidth={2} /></span>}
+      <div className="sandbox-forecast-text">
+        <div className="k">{k}{info && <InfoTooltip text={info} />}</div>
+        <div className="v" title={v}>
+          {v}
+        </div>
+        {s && <div className="s">{s}</div>}
       </div>
-      {s && <div className="s">{s}</div>}
     </div>
   );
 }

@@ -638,6 +638,9 @@ export default function ScenarioPanel(props: Props) {
   const [wantBoth, setWantBoth] = useState(false);
   // The scenario's description lives behind the "i" on its picture rather than taking up the panel.
   const [infoOpen, setInfoOpen] = useState(false);
+  /* The add-event form as three steps (24 Nov 2026): 1 the event and its carriageway, 2 its details and timing,
+     3 where. Every answer is kept in this component's state, so moving between steps loses nothing. */
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   /* Where: from the incident log, a click on the road, a plaza or service
      area, or a typed km — see placement.ts. The log is the default for
      anything it records: "where it usually happens" is the first question
@@ -834,13 +837,25 @@ export default function ScenarioPanel(props: Props) {
     }
     if (failure === null) clearAnswers(family);
     else setRefusal(failure);
+    if (failure === null) setStep(1);
   };
 
   return (
     <div className="sandbox-scn" data-scn="panel">
-      <span className="sandbox-mini-label">Add a real-incident scenario</span>
+      <ol className="sandbox-scn-steps" aria-label="Add an event">
+        {(["Event type", "Details", "Location"] as const).map((t, i) => (
+          <li key={t}>
+            <button type="button" className={step === i + 1 ? "is-on" : step > i + 1 ? "is-done" : ""} aria-current={step === i + 1 ? "step" : undefined} onClick={() => setStep((i + 1) as 1 | 2 | 3)}>
+              <span className="n">{i + 1}</span>
+              {t}
+            </button>
+          </li>
+        ))}
+      </ol>
+      {step === 1 && (
+      <>
       <span className="sandbox-slider-hint" data-scn="drag-hint">
-        Drag one onto the road to put it there, or choose it and set where below.
+        Pick one, or drag it onto the road to place it there.
       </span>
       <div className="sandbox-scn-families">
         {SCENARIO_TEMPLATES.map((t) => (
@@ -910,6 +925,10 @@ export default function ScenarioPanel(props: Props) {
           </span>
         </div>
       )}
+      </>
+      )}
+      {step === 2 && (
+      <>
       <div
         className="sandbox-scn-scene"
         onKeyDown={(e) => {
@@ -954,7 +973,8 @@ export default function ScenarioPanel(props: Props) {
             ))}
           </div>
           <span className="sandbox-scn-cap" data-scn="rain-cap">
-            Caps traffic at {ASSUMPTIONS.RAIN_SPEED_KMH.value[intensity]} km/h — scaled from free-flow speeds measured on the NLEx in rain (Mejia &amp; Sigua 2018). A cap does not lengthen following headways, so capacity loss is understated.
+            Caps traffic at {ASSUMPTIONS.RAIN_SPEED_KMH.value[intensity]} km/h
+            <InfoTooltip text="Scaled from free-flow speeds measured on the NLEx in rain (Mejia & Sigua 2018). A cap does not lengthen following headways, so capacity loss is understated." />
           </span>
         </div>
       )}
@@ -990,6 +1010,62 @@ export default function ScenarioPanel(props: Props) {
         </label>
       )}
 
+      <div className="sandbox-scn-row">
+        <label title={`The road is simulated at the flow of the hour chosen in Hour of day, so the clock starts at ${clockLabel(clockStartMin)}: an event can start then or later that day.`}>
+          Start (time of day)
+          <TimeField
+            valueS={(clockStartMin + startMin) * 60}
+            minS={clockStartMin * 60}
+            maxS={1439 * 60}
+            scn="start"
+            onCommit={(t) => setStartMin(t / 60 - clockStartMin)}
+          />
+        </label>
+      </div>
+      <span className="sandbox-mini-label">Duration</span>
+      {template.durationSource === "manual_only" ? (
+        <p className="sandbox-scn-desc" data-scn="manual-only-note">
+          No NLEX record of this family exists, so there is nothing to sample from — enter the duration yourself.
+        </p>
+      ) : (
+        <div className="sandbox-speed-seg sandbox-scn-duration-seg" role="radiogroup" aria-label="How long the event lasts">
+          {DURATION_CHOICES.map((c) => (
+            <button key={c.id} role="radio" aria-checked={choice === c.id} className={choice === c.id ? "active" : ""} data-scn-duration={c.id} onClick={() => setChoice(c.id)}>
+              {c.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {choice === "manual" && (
+        <label className="sandbox-scn-manual">
+          Minutes
+          <NumberField value={manualMin} min={0.1} max={1440} step={1} decimals={1} scn="manual-min" onCommit={setManualMin} />
+        </label>
+      )}
+      {(preview !== null || previewPhases.length > 0) && (
+        <div className="sandbox-scn-duration-out">
+          <div className="sandbox-scn-duration-head">
+            {preview !== null && <ResolutionBlock resolved={preview} />}
+            {choice === "sampled" && (
+              <button className="sandbox-scn-redraw" data-scn="redraw" onClick={() => setSeed(1 + Math.floor(Math.random() * 2147483000))} title="Draw again from the same calibrated distribution">
+                ↻ Redraw
+              </button>
+            )}
+          </div>
+          {previewPhases.length > 0 && (
+            <ul className="sandbox-scn-phases" data-scn="preview-phases">
+              {previewPhases.map((ph) => (
+                <li key={ph.id} className={ph.skipped ? "is-skipped" : ""}>{ph.text}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      </>
+      )}
+      {step === 3 && (
+      <>
       <div className="sandbox-scn-place" data-scn="place">
         <span className="sandbox-mini-label">Where</span>
         <div className="sandbox-speed-seg" role="radiogroup" aria-label="Where the event happens">
@@ -1163,68 +1239,32 @@ export default function ScenarioPanel(props: Props) {
           </label>
         </div>
       )}
-      <div className="sandbox-scn-row">
-        <label title={`The road is simulated at the flow of the hour chosen in Hour of day, so the clock starts at ${clockLabel(clockStartMin)}: an event can start then or later that day.`}>
-          Start (time of day)
-          <TimeField
-            valueS={(clockStartMin + startMin) * 60}
-            minS={clockStartMin * 60}
-            maxS={1439 * 60}
-            scn="start"
-            onCommit={(t) => setStartMin(t / 60 - clockStartMin)}
-          />
-        </label>
-      </div>
-      <span className="sandbox-mini-label">Duration</span>
-      {template.durationSource === "manual_only" ? (
-        <p className="sandbox-scn-desc" data-scn="manual-only-note">
-          No NLEX record of this family exists, so there is nothing to sample from — enter the duration yourself.
-        </p>
-      ) : (
-        <div className="sandbox-speed-seg sandbox-scn-duration-seg" role="radiogroup" aria-label="How long the event lasts">
-          {DURATION_CHOICES.map((c) => (
-            <button key={c.id} role="radio" aria-checked={choice === c.id} className={choice === c.id ? "active" : ""} data-scn-duration={c.id} onClick={() => setChoice(c.id)}>
-              {c.label}
-            </button>
-          ))}
-        </div>
-      )}
-      {choice === "manual" && (
-        <label className="sandbox-scn-manual">
-          Minutes
-          <NumberField value={manualMin} min={0.1} max={1440} step={1} decimals={1} scn="manual-min" onCommit={setManualMin} />
-        </label>
-      )}
-      {(preview !== null || previewPhases.length > 0) && (
-        <div className="sandbox-scn-duration-out">
-          <div className="sandbox-scn-duration-head">
-            {preview !== null && <ResolutionBlock resolved={preview} />}
-            {choice === "sampled" && (
-              <button className="sandbox-scn-redraw" data-scn="redraw" onClick={() => setSeed(1 + Math.floor(Math.random() * 2147483000))} title="Draw again from the same calibrated distribution">
-                ↻ Redraw
-              </button>
-            )}
-          </div>
-          {previewPhases.length > 0 && (
-            <ul className="sandbox-scn-phases" data-scn="preview-phases">
-              {previewPhases.map((ph) => (
-                <li key={ph.id} className={ph.skipped ? "is-skipped" : ""}>{ph.text}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
       {refusalNow !== null && (
         <p className="sandbox-live-note warn" data-scn="refusal">
           {refusalNow}
         </p>
       )}
       {refusal !== null && refusalNow === null && <p className="sandbox-live-note warn">{refusal}</p>}
-      <div className="sandbox-btn-row">
-        <button className="btn-primary" data-scn="add" disabled={refusalNow !== null} onClick={add} style={{ marginLeft: 0 }}>
-          {onBoth ? "Add to both carriageways" : both ? `Add to ${DIRECTION_NAME[direction]}` : "Add event"}
-        </button>
+      </>
+      )}
+      <div className="sandbox-btn-row sandbox-scn-nav">
+        {step > 1 ? (
+          <button type="button" className="btn-muted" onClick={() => setStep((step - 1) as 1 | 2 | 3)}>Back</button>
+        ) : (
+          <span />
+        )}
+        {step > 1 && (
+          <button type="button" className="btn-muted" onClick={() => { clearAnswers(family); setStep(1); }} title="Clear this event's answers and start again">
+            Cancel
+          </button>
+        )}
+        {step < 3 ? (
+          <button type="button" className="btn-primary" onClick={() => setStep((step + 1) as 1 | 2 | 3)} style={{ marginLeft: "auto" }}>Continue</button>
+        ) : (
+          <button className="btn-primary" data-scn="add" disabled={refusalNow !== null} onClick={add} style={{ marginLeft: "auto" }}>
+            {onBoth ? "Add to both carriageways" : both ? `Add to ${DIRECTION_NAME[direction]}` : "Add event"}
+          </button>
+        )}
       </div>
 
       {both

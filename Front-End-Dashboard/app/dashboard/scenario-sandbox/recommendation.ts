@@ -77,7 +77,7 @@ export function getRecommendation(
   const say = (text: string, tone: Recommendation["tone"]): Recommendation => ({ text: text + caveat, tone });
 
   // A road still filling is not the scenario yet (the note above says so), so the advice waits for it.
-  if (!m.warm) return say("Advice follows once the road has filled and the readings describe the scenario.", "good");
+  if (!m.warm) return say("Advice follows once the road has filled.", "good");
 
   const lanes = closedLanes.length;
   const closed = closedLanes.filter(Boolean).length;

@@ -562,3 +562,15 @@
 
 /* A tied champion, as a short note under the model name (21 Nov 2026; the joined names used to wrap the tile). */
 .fc2-tie { display: block; margin-top: 3px; font-size: 0.74rem; color: var(--text-muted); }
+
+/* "How it is computed" under every Narrative Explanation (24 Nov 2026): fixed method notes, set apart from the AI
+   box so they read as the pipeline's own description, not the model's. */
+.nc-method {
+  margin-top: 10px; padding: 10px 14px; border-radius: 12px;
+  border: 1px solid var(--border-default); background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+.nc-method-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 0.8rem; font-weight: 700; color: var(--text-primary); }
+.nc-method ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.nc-method li { font-size: 0.82rem; line-height: 1.5; color: var(--text-secondary); }
+.nc-method-part + .nc-method-part { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border-default); }
+.nc-method-sub { display: block; margin-bottom: 3px; font-size: 0.74rem; font-weight: 700; color: var(--text-muted); }

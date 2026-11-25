@@ -182,8 +182,10 @@ export default function CorridorStrip({
 
   const lane = (dir: Dir) => {
     const segs = shown?.segments.filter((s) => s.dir === dir) ?? [];
-    const jams = shown?.jams.filter((j) => j.dir === dir) ?? [];
-    const tails = shown?.tails.filter((t) => t.dir === dir) ?? [];
+    // A level-0 Waze jam is free-flowing: drawn, it was a second green block on the green road (24 Nov 2026,
+    // "it should not double"). Only slow and congested jams, and their tails, are marked.
+    const jams = shown?.jams.filter((j) => j.dir === dir && levelWord(j.level) !== "clear") ?? [];
+    const tails = shown?.tails.filter((t) => t.dir === dir && levelWord(t.level) !== "clear") ?? [];
     const alerts = shown?.alerts.filter((a) => a.dir === dir || (a.dir == null && dir === "NB")) ?? [];
     const shut = (closures ?? []).filter((c) => c.direction === dir || c.direction === "Both");
     return (

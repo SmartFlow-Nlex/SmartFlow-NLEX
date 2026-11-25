@@ -139,7 +139,7 @@ export function candidatesFrom(hot: Hotspots | null, sites: readonly SiteOption[
     out.push({
       key: `km:${s.fromKm}`,
       label: `${fmtKmRange(s.fromKm, s.toKm, 2)}${s.lane != null ? ` · Lane ${s.lane}` : ""}`,
-      detail: `${s.count.toLocaleString()} recorded${s.lane != null && s.laneShare != null ? `, ${Math.round(s.laneShare * 100)}% of those in a lane were in Lane ${s.lane}` : ""}`,
+      detail: `${s.count.toLocaleString()} records${s.lane != null && s.laneShare != null ? ` · ${Math.round(s.laneShare * 100)}% in Lane ${s.lane}` : ""}`,
       count: s.count,
       place: { positionKm: mid, lane: s.lane, site: null, note: `Busiest 100 m of this stretch for this kind of event in the incident log.`, incomplete: false },
     });

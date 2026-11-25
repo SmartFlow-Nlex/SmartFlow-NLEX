@@ -5,7 +5,7 @@ import { displayExitName, useNlexExits, type NlexExit } from "../../../lib/nlex-
 import { apiFetch } from "../../../lib/api";
 import { lanesForSegment, laneSources } from "../../../lib/nlex-lanes";
 import { fmtKm, fmtKmRange, kmMeasured, kmPost } from "../../../lib/km-post";
-import { Car } from "lucide-react";
+import { ArrowRightLeft, CalendarDays, CircleCheck, Hourglass, OctagonAlert, TriangleAlert, Car, ClipboardCheck, Download, Maximize2, Minimize2, Pause, Play, RefreshCw, RotateCcw, ScanSearch, SlidersHorizontal, FlaskConical, Gauge, Layers, Leaf, MapPin, Route, Siren, TrafficCone, type LucideIcon } from "lucide-react";
 import PageHeader from "../../../components/dashboard/PageHeader";
 import ScenarioForecastPanel, { forecastHour, forecastIncidentsAt, forecastScaleAt, useScenarioForecast } from "../../../components/dashboard/ScenarioForecastPanel";
 import ForecastDayPicker from "../../../components/dashboard/ForecastDayPicker";
@@ -138,13 +138,17 @@ const venueStrip: { px: number; side: "top" | "bottom"; host: VenueKey | null; t
  *  Not unbounded, and well under the 240 used when expanded: at four lanes this
  *  covers a rail about 650px tall, and past that a band is the right answer —
  *  a two-lane road drawn 300px per lane is a diagram of nothing. */
-const DOCKED_LANE_MAX = 160;
+const DOCKED_LANE_MAX = 46;
+/** A lane's height in the docked view (24 Nov 2026, user request): a compact road, so the card and the controls
+ *  beside it line up; full screen keeps LANE_PX and its own ceiling. */
+const DOCKED_LANE_PX = 46;
 
 /** The carriageway choice is drawn twice — in the top filter row, and inside the card in full screen
  *  (which covers that row) — so its wording lives in one place. */
-const viewLabel = (v: "Both" | "NB" | "SB") => (v === "NB" ? "Northbound" : v === "SB" ? "Southbound" : "Both (NB + SB)");
+// Short labels (24 Nov 2026); the full names stay in each button's hover (viewTitle).
+const viewLabel = (v: "Both" | "NB" | "SB") => (v === "NB" ? "NB" : v === "SB" ? "SB" : "Both");
 const viewTitle = (v: "Both" | "NB" | "SB") =>
-  v === "Both" ? "Both carriageways at once, median-separated — the whole road" : v === "NB" ? "Northbound only" : "Southbound only";
+  v === "Both" ? "Both carriageways (NB + SB) at once, median-separated — the whole road" : v === "NB" ? "Northbound only" : "Southbound only";
 
 /**
  * The live sandbox clock: `clockStartMin` (the picked hour and minute) plus the engine's own elapsed
@@ -796,10 +800,17 @@ export default function AiSandboxPage() {
    * different section to spring open in its place, is the rail refusing to get
    * out of the way. Corridor starts open because nothing else means anything
    * until the route is set. */
-  const [openSection, setOpenSection] =
-    useState<"corridor" | "interventions" | "scenarios" | "baseline" | "confidence" | null>("corridor");
-  const toggleSection = (id: "corridor" | "interventions" | "scenarios" | "baseline" | "confidence") =>
-    setOpenSection((cur) => (cur === id ? null : id));
+  type RailId = "corridor" | "inflow" | "lanes" | "interventions" | "scenarios" | "baseline" | "confidence";
+  /* The controls rail as settings rows (24 Nov 2026 redesign): each row opens its page in place of the list, with
+     Back to return. Every page stays mounted while hidden, so values typed into one (a half-filled event) survive
+     going back; opening or closing a page never touches the run. */
+  const [railPage, setRailPage] = useState<RailId | null>(null);
+  // Which carriageway's recommendation the Recommendations card shows in Both mode.
+  const [recoDir, setRecoDir] = useState<Direction>("NB");
+  // The KPI deck: the model forecast for the day, or the simulation's own live readings.
+  const [deckTab, setDeckTab] = useState<"forecast" | "live">("live");
+  // Both mode: each tile's NB / SB rows fold away behind one toggle (24 Nov 2026); full screen always shows them.
+  const [showDirs, setShowDirs] = useState(false);
   /* The chips are a reframing tool, reached for occasionally, but nineteen of
    * them wrap to four rows and were the tallest thing in the corridor section.
    * The count stays visible so nothing is lost by keeping them folded. */
@@ -836,8 +847,7 @@ export default function AiSandboxPage() {
   /* Jump the window to a junction, toll plaza, barrier or service area on the
      chosen route. The list offers only what lies between the origin and the
      destination, so a pick never changes the route: the operator chose that
-     stretch, and the list is for moving around inside it. */
-  const [placesOpen, setPlacesOpen] = useState(false);
+     stretch, and the list is for moving around inside it. (Its own page in the controls rail since 24 Nov 2026.) */
   /** Open window w, kept inside the route. */
   const showWindow = (w: { fromKm: number; toKm: number }) => {
     setSegFromKm(Number(Math.max(routeFromKm, w.fromKm).toFixed(3)));
@@ -1039,7 +1049,6 @@ export default function AiSandboxPage() {
   /* The notes, legend and recommendation are reference material. Docked they
    * sit under the road; full screen they were taking a quarter of the height
    * the road had just been given, so they start folded and open on request. */
-  const [notesOpen, setNotesOpen] = useState(false);
 
   useEffect(() => {
     if (!expanded) return;
@@ -2970,13 +2979,17 @@ export default function AiSandboxPage() {
   const sbEvents = sb.scenarioEvents.length;
   const scenarioSummary = both
     ? nbEvents + sbEvents === 0
-      ? "none"
+      ? "None"
       : `${nbEvents + sbEvents} event${nbEvents + sbEvents === 1 ? "" : "s"} · NB ${nbEvents} · SB ${sbEvents}`
     : focused.scenarioEvents.length === 0
-      ? "none"
+      ? "None"
       : `${focused.scenarioEvents.length} event${focused.scenarioEvents.length === 1 ? "" : "s"} · ${focused.activeScenarioText.length > 0 ? focused.activeScenarioText[0] : "none running"}`;
   const baselineSummaryOf = (d: DirectionApi) => (d.baseline ? `${fmt(d.baseline.avgSpeedKmh)} km/h · ${fmt(d.baseline.throughputPerMin)}/min captured` : "not captured");
-  const baselineSummary = both ? `NB ${nb.baseline ? "captured" : "not captured"} · SB ${sb.baseline ? "captured" : "not captured"}` : baselineSummaryOf(focused);
+  const baselineSummary = both
+    ? !!nb.baseline === !!sb.baseline
+      ? nb.baseline ? "Captured" : "Not captured"
+      : `NB ${nb.baseline ? "captured" : "not captured"} · SB ${sb.baseline ? "captured" : "not captured"}`
+    : capFirst(baselineSummaryOf(focused));
 
   /* The picked hour and minute, in minutes since midnight — the zero point both the live clock below
    * and every scenario event's "starts HH:MM" label (ScenarioPanel) are written against. NB and SB
@@ -3067,7 +3080,7 @@ export default function AiSandboxPage() {
           always visible) — see bothMetrics.ts for which metrics sum, which take the max, which are
           flow-weighted, and which (density) have no total at all. */}
       {/* Every figure in this strip comes from the agent-based engine, not from the road: the pill says so. */}
-      <div className="sandbox-metric-flag">
+      <div className={`sandbox-metric-flag${showDirs || expanded ? "" : " dirs-hidden"}`}>
         <span className="nc-tag-illustrative">Simulation</span>
         {both && (
           <p className="sandbox-metric-caption" data-metric-caption>
@@ -3123,13 +3136,6 @@ export default function AiSandboxPage() {
             totalDelta={corridor && corridorBase ? pctDelta(corridor.co2RatePerMin, corridorBase.co2RatePerMin) : null}
             rows={rowsOf((m) => `${fmt(m.co2RatePerMin, 1)} kg/min`, (m, b) => pctDelta(m.co2RatePerMin, b.co2RatePerMin))}
           />
-          <MetricTileBoth
-            label="Density"
-            tag="per direction"
-            tagTitle="Vehicles per km per lane on two separate carriageways has no meaningful total or mean, so none is shown."
-            total={null}
-            rows={rowsOf((m) => `${fmt(m.densityPerKmLane)}/km/ln`)}
-          />
         </div>
       ) : (
       <div className="sandbox-metric-row">
@@ -3156,7 +3162,6 @@ export default function AiSandboxPage() {
           value={focused.metrics ? `${fmt(focused.metrics.co2RatePerMin, 1)} kg/min` : "…"}
           delta={focused.baseline && focused.metrics ? pctDelta(focused.metrics.co2RatePerMin, focused.baseline.co2RatePerMin) : null}
         />
-        <MetricTile label="Density" value={focused.metrics ? `${fmt(focused.metrics.densityPerKmLane)}/km/ln` : "…"} />
       </div>
       )}
     </>
@@ -3180,7 +3185,6 @@ export default function AiSandboxPage() {
           <div className={filterStyles.segmented} role="tablist" aria-label="Carriageway view">
             {(["Both", "NB", "SB"] as const).map((v) => (
               <button key={v} role="tab" aria-selected={view === v} className={view === v ? "active" : ""} onClick={() => setView(v)} title={viewTitle(v)}>
-                {view === v && <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ marginRight: 4, marginBottom: -1 }}><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
                 {viewLabel(v)}
               </button>
             ))}
@@ -3227,37 +3231,48 @@ export default function AiSandboxPage() {
         const inForecast = (forecast.data?.availableDates ?? []).includes(chosenEvent.date);
         const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
         return (
-          <p className="sandbox-event-note" role="status">
-            <b>{chosenEvent.title.split(" - ")[0]}</b>, {new Date(`${chosenEvent.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
-            {chosenEvent.venue && !/arena/i.test(chosenEvent.venue) ? ` at ${chosenEvent.venue}` : ""}.
-            {eventDayData.venue && (() => {
-              const v = eventDayData.venue;
-              const h = hourOfDay ?? venuePeakHour(eventDayData);
-              const k = v.entries[eventCrowd][h] ?? 1;
-              const extra = Math.round((k - 1) * (v.normalEntries[h] ?? 0));
-              return (
-                <>
-                  {" "}At the venue&apos;s own exit, past concert nights at the Arena and Stadium ({v.nights} nights) put the crowd
-                  leaving for Manila (southbound entries at CDV) at <b>×{k.toFixed(1)}</b> a normal {hh(h)}
-                  {extra > 0 ? <> (about <b>+{extra.toLocaleString()}</b> cars that hour)</> : null}; arrivals barely change.{" "}
-                  <span className="sandbox-event-crowd" role="group" aria-label="Event night size">
-                    {(["typical", "busy"] as const).map((c) => (
-                      <button key={c} type="button" className={eventCrowd === c ? "active" : ""} aria-pressed={eventCrowd === c} onClick={() => setEventCrowd(c)}
-                        title={c === "typical" ? "The median past event night at each hour" : "A night busier than three in four past event nights (75th percentile)"}>
-                        {c === "typical" ? "Typical night" : "Busy night"}
-                      </button>
-                    ))}
-                  </span>
-                </>
-              );
-            })()}
-            {" "}Elsewhere, the Event Prediction adds about <b>+{chosenEvent.extraVehicles.toLocaleString()}</b> vehicles over the day at the {eventDayData.exits.length} exits
-            it finds affected; traffic joining this stretch at {hh(hourOfDay ?? eventDayData.peakHour)}: <b>{lift >= 0 ? "+" : ""}{lift.toFixed(1)}%</b>.
-            {inForecast
-              ? " The forecast for the day is loaded under it."
-              : ` The forecast does not reach ${new Date(`${chosenEvent.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}, so the event runs on the day shown above at this hour.`}
-            {" "}<button type="button" className="sandbox-event-clear" onClick={() => pickEventDay(null)}>Clear</button>
-          </p>
+          <div className="sandbox-event-note" role="status">
+            <span className="sandbox-event-main">
+              <b>{chosenEvent.title.split(" - ")[0]}</b>
+              {" · "}{new Date(`${chosenEvent.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
+              {" · "}traffic joining here at {hh(hourOfDay ?? eventDayData.peakHour)} <b>{lift >= 0 ? "+" : ""}{lift.toFixed(1)}%</b>
+            </span>
+            {eventDayData.venue && (
+              <span className="sandbox-event-crowd" role="group" aria-label="Event night size">
+                {(["typical", "busy"] as const).map((c) => (
+                  <button key={c} type="button" className={eventCrowd === c ? "active" : ""} aria-pressed={eventCrowd === c} onClick={() => setEventCrowd(c)}
+                    title={c === "typical" ? "The median past event night at each hour" : "A night busier than three in four past event nights (75th percentile)"}>
+                    {c === "typical" ? "Typical night" : "Busy night"}
+                  </button>
+                ))}
+              </span>
+            )}
+            <button type="button" className="sandbox-event-clear" onClick={() => pickEventDay(null)}>Clear</button>
+            <details className="sandbox-event-more">
+              <summary>Details</summary>
+              <p>
+                {chosenEvent.venue && !/arena/i.test(chosenEvent.venue) ? `At ${chosenEvent.venue}. ` : ""}
+                {eventDayData.venue && (() => {
+                  const v = eventDayData.venue;
+                  const h = hourOfDay ?? venuePeakHour(eventDayData);
+                  const k = v.entries[eventCrowd][h] ?? 1;
+                  const extra = Math.round((k - 1) * (v.normalEntries[h] ?? 0));
+                  return (
+                    <>
+                      At the venue&apos;s own exit, past concert nights at the Arena and Stadium ({v.nights} nights) put the crowd
+                      leaving for Manila (southbound entries at CDV) at <b>×{k.toFixed(1)}</b> a normal {hh(h)}
+                      {extra > 0 ? <> (about <b>+{extra.toLocaleString()}</b> cars that hour)</> : null}; arrivals barely change.{" "}
+                    </>
+                  );
+                })()}
+                Elsewhere, the Event Prediction adds about <b>+{chosenEvent.extraVehicles.toLocaleString()}</b> vehicles over the day at the {eventDayData.exits.length} exits
+                it finds affected.
+                {inForecast
+                  ? " The forecast for the day is loaded under it."
+                  : ` The forecast does not reach ${new Date(`${chosenEvent.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}, so the event runs on the day shown above at this hour.`}
+              </p>
+            </details>
+          </div>
         );
       })()}
 
@@ -3280,9 +3295,19 @@ export default function AiSandboxPage() {
         // following on; the inflow itself arrives through the hook's dataAnchor, so it tracks the day and hour from
         // here on. Each road's own Inflow slider can still move it afterwards, until the day or hour next changes.
         onApplyInflow={() => setForecastFollowing(true)}
+        tab={deckTab}
+        onTab={setDeckTab}
+        live={expanded ? null : metricTiles}
+        liveNote="Read live from the agent-based simulation of the stretch on screen, not from the models. In Both mode each figure is the corridor total: average speed is flow-weighted (each direction's speed weighted by its throughput), longest queue is the worse of the two, and density has no total."
+        liveAction={
+          both ? (
+            <button type="button" className={`sandbox-dirs-toggle${showDirs ? " is-open" : ""}`} aria-expanded={showDirs} onClick={() => setShowDirs((v) => !v)}>
+              {showDirs ? "Hide NB / SB" : "Show NB / SB"}
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </button>
+          ) : null
+        }
       />
-
-      {!expanded && metricTiles}
 
       <div className="sandbox-grid" style={{ marginTop: 14 }}>
         {/* Simulation canvas + recommendation */}
@@ -3306,14 +3331,21 @@ export default function AiSandboxPage() {
               is still just .sandbox-main's first child. */}
           <div className="sandbox-hud-top" ref={hudTopRef}>
           <div className="sandbox-head">
-            <h2>Traffic Simulation</h2>
+            <h2>
+              Traffic Simulation
+              {view === "Both" && !expanded && (
+                <InfoTooltip text="Both carriageways run together, median-separated, lane 1 against the median on each side. Every control, event and readout belongs to one carriageway and says which. The Command prompt and the Add-event picker carry their own NB / SB choice; with a placing tool armed, clicking a lane on either road changes that road." />
+              )}
+            </h2>
             {live && (
               <div
                 className="sandbox-live-clock"
                 title="The simulated date and time of day. Ticks forward with the simulation (paused when it's paused, faster at higher speeds). Picking a forecast day moves it to that day's busiest forecast hour. Edit it to jump the clock to a different hour, minute or second; the hour reseeds the road's demand for that hour, the minute and second just move the starting point."
               >
-                <span className="sandbox-live-clock-label">Simulation time</span>
+                <span className="sandbox-live-clock-label sr-only">Simulation time</span>
+                <CalendarDays size={16} strokeWidth={2} aria-hidden="true" className="sandbox-live-clock-icon" />
                 {liveDateText && <span className="sandbox-live-clock-date">{liveDateText}</span>}
+                <span className="sandbox-live-clock-sep" aria-hidden="true" />
                 <TimeField
                   valueS={liveMin * 60}
                   // No upper limit: the clock rolls past midnight on its own as the run goes, so a cap at
@@ -3346,7 +3378,9 @@ export default function AiSandboxPage() {
                 />
               </div>
             )}
-            <div>
+            <div className="sandbox-toolbar">
+              {/* Full screen only: ends the first row of the header (date, carriageway, actions); the view and run controls wrap under it. */}
+              <span className="sandbox-tb-break" aria-hidden="true" />
               <div className="sandbox-speed-seg sandbox-zoom-seg" role="group" aria-label="Zoom the road" data-zoom>
                 <button onClick={() => zoomAt(roadView.zoom / 1.6, null)} disabled={zoom <= 1.001} aria-label="Zoom out" title="Zoom out (Ctrl + wheel, or the wheel in full screen)">
                   −
@@ -3358,7 +3392,7 @@ export default function AiSandboxPage() {
                   +
                 </button>
                 <button onClick={() => zoomAt(1, null)} disabled={zoom <= 1.001} title="Show the whole window" data-zoom-fit>
-                  Fit
+                  <ScanSearch size={15} strokeWidth={2} aria-hidden="true" /> Fit
                 </button>
               </div>
               <div className="sandbox-speed-seg">
@@ -3368,6 +3402,7 @@ export default function AiSandboxPage() {
                   </button>
                 ))}
               </div>
+              <span className="sandbox-tb-gap" aria-hidden="true" />
               <button
                 className="nc-pill sandbox-play"
                 onClick={() => {
@@ -3377,6 +3412,7 @@ export default function AiSandboxPage() {
                   setRunning((r) => !r);
                 }}
               >
+                {replayIndex === null && (running ? <Pause size={15} strokeWidth={2.4} aria-hidden="true" /> : <Play size={15} strokeWidth={2.4} aria-hidden="true" />)}
                 {replayIndex !== null ? "Back to live" : running ? "Pause" : "Play"}
               </button>
               {/* Rewind. An incident here is over in seconds, and an operator
@@ -3389,8 +3425,8 @@ export default function AiSandboxPage() {
                   the kind recorded it replays the whole recording; with one, from just before the latest. */}
               {(replayAvailable || replayIndex !== null) && (
                 <button
-                  className="btn-muted"
-                  data-short="⟲ Replay"
+                  className="btn-muted sandbox-tb-replay"
+                  data-short="Replay"
                   title={
                     replayHasEvent
                       ? both ? "Replay the last incident or closure on either carriageway" : "Replay the last incident or closure on this carriageway"
@@ -3424,19 +3460,22 @@ export default function AiSandboxPage() {
                     setReplayPlaying(true);
                   }}
                 >
-                  {replayHasEvent ? "⟲ Replay incident" : "⟲ Replay"}
+                  <RotateCcw size={15} strokeWidth={2.2} aria-hidden="true" />
+                  {replayHasEvent ? "Replay incident" : "Replay"}
                 </button>
               )}
+              <span className="sandbox-tb-gap" aria-hidden="true" />
+              <span className="sandbox-tb-actions">
               <button
                 className="btn-muted"
                 onClick={exportRun}
                 title="Download this run as a CSV: the stretch and demand, each carriageway's readings, the interventions and events in force, and the confidence run if one was done"
                 data-short="CSV"
               >
-                Export
+                <Download size={15} strokeWidth={2.2} aria-hidden="true" /> Export
               </button>
               <button className="btn-muted" onClick={resetEverything} title="Back to a clean start: scenarios, closures, speed limits, incidents, baselines and any lane reallocation are all cleared">
-                Reset
+                <RefreshCw size={15} strokeWidth={2.2} aria-hidden="true" /> Reset
               </button>
               {expanded && (
                 <button
@@ -3446,7 +3485,7 @@ export default function AiSandboxPage() {
                   aria-pressed={railOpen}
                   data-short={railOpen ? "Hide" : "Controls"}
                 >
-                  {railOpen ? "Hide controls" : "Controls"}
+                  <SlidersHorizontal size={15} strokeWidth={2.2} aria-hidden="true" /> {railOpen ? "Hide controls" : "Controls"}
                 </button>
               )}
               <button
@@ -3455,8 +3494,10 @@ export default function AiSandboxPage() {
                 title={expanded ? "Exit full screen (Esc)" : "Expand the road to fill the screen"}
                 data-short={expanded ? "Exit" : undefined}
               >
+                {expanded ? <Minimize2 size={15} strokeWidth={2.2} aria-hidden="true" /> : <Maximize2 size={15} strokeWidth={2.2} aria-hidden="true" />}{" "}
                 {expanded ? "Exit full screen" : "Full screen"}
               </button>
+              </span>
             </div>
           </div>
 
@@ -3572,17 +3613,6 @@ export default function AiSandboxPage() {
                   />
                   {forecast.busy && <span className="k">Loading…</span>}
                 </div>
-                <p className="sandbox-fs-keys" aria-hidden>
-                  <b>Space</b> play/pause · <b>1–4</b> speed · <b>B/N/S</b> carriageway · <b>C</b> controls · <b>Esc</b> exit
-                </p>
-                <button
-                  className="sandbox-fs-notes-toggle"
-                  onClick={() => setNotesOpen((o) => !o)}
-                  aria-expanded={notesOpen}
-                  data-short={notesOpen ? "Hide notes" : "Notes"}
-                >
-                  {notesOpen ? "Hide notes" : "Notes, legend & recommendation"}
-                </button>
               </div>
             </>
           )}
@@ -3591,18 +3621,6 @@ export default function AiSandboxPage() {
             <p className="sandbox-place-hint" data-place-note>
               {placeNote}
             </p>
-          )}
-          {view === "Both" && !expanded && (
-            <details className="nc-details sandbox-both-details">
-              <summary>Details</summary>
-              <p className="sandbox-live-note">
-                Both carriageways run together, median-separated, lane 1 against the median on each
-                side. Every control, event and readout below belongs to one carriageway and says which.
-                The few things that can address only one road at a time — the Command prompt and the
-                Add-event picker — each carry their own NB / SB choice;
-                with a placing tool armed, clicking a lane on either road changes that road.
-              </p>
-            </details>
           )}
 
           {/* A floor, not a fixed height. This was pinned to the lane count so
@@ -3632,12 +3650,12 @@ export default function AiSandboxPage() {
                 : {
                     minHeight:
                       view === "Both"
-                        ? (nb.laneCount + sb.laneCount) * LANE_PX +
+                        ? (nb.laneCount + sb.laneCount) * DOCKED_LANE_PX +
                           MEDIAN_GUTTER_PX +
                           gutterFloorPx(facDepthNB, exitsRef.current.length > 0, facBarrierOf("NB")) +
                           gutterFloorPx(facDepthSB, exitsRef.current.length > 0, facBarrierOf("SB")) +
                           CANVAS_PAD * 2 + venueStrip.px
-                        : focused.laneCount * LANE_PX +
+                        : focused.laneCount * DOCKED_LANE_PX +
                           (facDepthOf(focusDirection) > 0 ? gutterFloorPx(facDepthOf(focusDirection), false, facBarrierOf(focusDirection)) : 0) +
                           CANVAS_PAD * 2 + venueStrip.px,
                   }
@@ -3675,32 +3693,54 @@ export default function AiSandboxPage() {
               in flow with everything else in full screen's top HUD instead
               of floating independently. */}
           <div
-            className={`sandbox-footbar${expanded && !notesOpen ? " is-folded" : ""}`}
+            className={`sandbox-footbar${expanded ? " is-folded" : ""}`}
             data-both={both || undefined}
           >
           {/* Both mode: one card per carriageway — its recommendation first (the prescriptive output), then what
               the panel must never hide (a warm-up reading is the road filling, not the scenario; demand the
               segment cannot take queues upstream where nothing draws it), then its before/after — and the legend
               once, under both. NB-only/SB-only keeps the single column. */}
+          <section className="sandbox-recos" data-both={both || undefined}>
+            <header className="sandbox-recos-head">
+              <h3>Recommendations</h3>
+              <span className="nc-tag-illustrative">Simulation</span>
+              {both && (
+                <div className="sandbox-recos-tabs" role="tablist" aria-label="Carriageway">
+                  {activeDirections.map((dn) => (
+                    <button
+                      key={dn}
+                      type="button"
+                      role="tab"
+                      aria-selected={(activeDirections.includes(recoDir) ? recoDir : activeDirections[0]) === dn}
+                      className={(activeDirections.includes(recoDir) ? recoDir : activeDirections[0]) === dn ? "active" : ""}
+                      onClick={() => setRecoDir(dn)}
+                      title={recommendations[dn].text}
+                    >
+                      {/* The tone dot keeps the other carriageway's warning visible while its card is not shown. */}
+                      <i className={`sandbox-recos-dot ${recommendations[dn].tone}`} aria-hidden="true" />
+                      {dn}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </header>
+          {/* Both mode: one card per carriageway, one shown at a time (24 Nov 2026) — its recommendation first, then
+              what the panel must never hide (a warm-up reading is the road filling, not the scenario; demand the
+              segment cannot take queues upstream where nothing draws it), then its before/after. */}
           {both ? (
-            activeDirections.map((dn) => {
+            activeDirections.filter((dn) => dn === (activeDirections.includes(recoDir) ? recoDir : activeDirections[0])).map((dn) => {
               const d = byDirection[dn];
               return (
                 <section key={dn} className="sandbox-dir-card" data-dir={dn}>
-                  <div className={`sandbox-reco ${recommendations[dn].tone}`} data-reco={dn}>
-                    <strong>
-                      <DirectionPill direction={dn} long /> Prescriptive recommendation
-                      <span className="nc-tag-illustrative">Simulation</span>
-                    </strong>
-                    <p>{recommendations[dn].text}</p>
-                  </div>
+                  <RecoCard rec={recommendations[dn]} dataReco={dn} />
                   <DirectionNotes d={d} direction={dn} />
                   {/* With events the comparison needs no capture: it is the same run without them (eventCompare). */}
                   {d.metrics && (d.eventCompare || (d.baseline && d.anyChange)) ? (
                     <CompareBlock d={d} direction={dn} />
                   ) : (
                     <p className="sandbox-compare-none" data-compare-none={dn}>
-                      No before/after yet: add an event to compare the run with and without it, or capture a baseline and then change something on this carriageway.
+                      No before/after yet.
+                      <InfoTooltip text="Add an event to compare the run with and without it, or capture a baseline and then change something on this carriageway." />
                     </p>
                   )}
                 </section>
@@ -3708,33 +3748,30 @@ export default function AiSandboxPage() {
             })
           ) : (
             <>
-              <div className={`sandbox-reco ${recommendation.tone}`}>
-                <strong>
-                  Prescriptive recommendation
-                  <span className="nc-tag-illustrative">Simulation</span>
-                </strong>
-                <p>{recommendation.text}</p>
-              </div>
+              <RecoCard rec={recommendation} />
               {focused.metrics && !focused.metrics.warm && (
-                <p className="sandbox-live-note">
-                  Warming up &mdash; the road is still filling, so these figures are not yet the
-                  scenario. {Math.max(0, Math.ceil(WARMUP_S - focused.metrics.elapsedS))}s to go.
+                <p className="sandbox-live-note" title="The road is still filling, so these figures are not yet the scenario.">
+                  Warming up · {Math.max(0, Math.ceil(WARMUP_S - focused.metrics.elapsedS))}s remaining
                 </p>
               )}
               {/* Keyed off the peak, not the live reading alone — see the matching
                   comment in DirectionNotes — so a backup that has since cleared
                   still shows that it happened, not just that the road is clear now. */}
               {focused.metrics && focused.metrics.warm && focused.peakUnmetVehPerHour > 1 && (
-                <p className="sandbox-live-note warn">
-                  Peak {Math.round(focused.peakUnmetVehPerHour).toLocaleString()} veh/h of demand couldn&rsquo;t
-                  enter this run (currently {Math.round(focused.metrics.unmetVehPerHour).toLocaleString()} veh/h):
-                  the segment was at capacity and the queue for it forms upstream, outside this model. The speeds
-                  shown describe only the traffic that got on.
-                </p>
+                <div className="sandbox-live-note warn sandbox-note-card">
+                  <span className="sandbox-note-icon" aria-hidden="true"><TriangleAlert size={18} strokeWidth={2.2} /></span>
+                  <span>
+                    <b>Capacity reached</b>
+                    Peak demand of {Math.round(focused.peakUnmetVehPerHour).toLocaleString()} veh/h could not enter (now{" "}
+                    {Math.round(focused.metrics.unmetVehPerHour).toLocaleString()} veh/h). The queue forms upstream, outside the
+                    model; speeds describe only the traffic that got on.
+                  </span>
+                </div>
               )}
               <CompareBlock d={focused} direction={null} />
             </>
           )}
+          </section>
           {/* The readouts over time, per carriageway shown: what the strip above can only show as a moment. */}
           <TrendCharts
             series={activeDirections.map((dn) => {
@@ -3748,16 +3785,7 @@ export default function AiSandboxPage() {
             })}
             clockStartMin={clockStartMin}
           />
-          <div className="sandbox-legend">
-            <span><i className="veh veh-1" /> Class 1 · light (car)</span>
-            <span><i className="veh veh-2" /> Class 2 · medium (bus)</span>
-            <span><i className="veh veh-3" /> Class 3 · heavy (truck)</span>
-            <span data-legend="motorcycle">
-              <i className="veh veh-m" /> Motorcycle · {(ASSUMPTIONS.MOTORCYCLE_SHARE_OF_CLASS_1.value * 100).toFixed(1)}% of Class 1, from NLEX&apos;s records
-            </span>
-            <span><i style={{ background: "#dc2626" }} /> stopped / incident</span>
-            <span><i style={{ background: "#f59e0b" }} /> scenario event</span>
-          </div>
+          {/* The vehicle legend was removed (24 Nov 2026, user request): the vehicles on the road read for themselves. */}
           </div>
         </article>
 
@@ -3787,11 +3815,15 @@ export default function AiSandboxPage() {
 
           {sideMode === "controls" ? (
           <div className="sandbox-side-scroll">
+          <h4 className="sandbox-rail-group" hidden={railPage !== null}>Road configuration</h4>
           <RailSection
             title="Corridor"
-            open={openSection === "corridor"}
-            onToggle={() => toggleSection("corridor")}
-            summary={`${originExit ? displayExitName(originExit.exit_name) : "?"} → ${destExit ? displayExitName(destExit.exit_name) : "?"} · ${view} · ${focused.laneCount} lanes · ${fmt(focused.inflow)} veh/hr`}
+            rowInfo="The stretch of NLEX being simulated: pick an origin and destination exit, or a km range."
+            id="corridor"
+            icon={Route}
+            openId={railPage}
+            onOpen={(x) => setRailPage(x as RailId | null)}
+            summary={`${originExit ? displayExitName(originExit.exit_name) : "?"} → ${destExit ? displayExitName(destExit.exit_name) : "?"} · ${fmtKmRange(fromKm, toKm, 2)}`}
           >
           <div className="sandbox-slider-header" style={{ marginBottom: 6 }}>
             <span className="sandbox-slider-hint">Choose by</span>
@@ -3898,123 +3930,53 @@ export default function AiSandboxPage() {
             )}
           </div>
 
-          <div className="sandbox-slider-group">
-            <div className="sandbox-slider-header">
-              <InfoLabel
-                info={
-                  forecastDay
-                    ? `Loaded from the forecast for ${new Date(`${forecastDay}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.`
-                    : focused.dataAnchor
-                      ? `Observed NLEX peak ≈ ${fmt(focused.dataAnchor)} veh/hr.`
-                      : "Vehicle entry rate."
-                }
-              >
-                {view === "Both" ? `Inflow (${focusDirection})` : "Inflow"}
-              </InfoLabel>
-              <span className="sandbox-slider-value" style={{ color: "var(--page-accent)" }}>{fmt(focused.inflow)} veh/hr</span>
-            </div>
-            {/* Down to the quiet hours the record and the forecast give (100 veh/h) and up to what the lanes are given:
-                at 1,000-8,000 a night or forecast inflow below 1,000 sat the thumb at the end with the wrong value. */}
-            <input
-              type="range"
-              min={inflowSliderRange(focused.laneCount).min}
-              max={inflowSliderRange(focused.laneCount).max}
-              step={100}
-              value={focused.inflow}
-              onChange={(e) => focused.setInflow(Number(e.target.value))}
-              className="sandbox-range inflow"
-              style={{ "--range-pct": `${rangePct(focused.inflow, inflowSliderRange(focused.laneCount))}%` } as React.CSSProperties}
-            />
-          </div>
-          {/* Both mode: the OTHER direction's inflow, right below the focused one's — D2.3's "show
-              both inflow sliders in Both mode". Switching focus (the NB/SB tabs above the canvas)
-              brings that direction's full slider (with its own basis/forecast hint) into the primary
-              slot above; this one stays a compact second control so both are always reachable without
-              a focus switch just to nudge a number. */}
-          {view === "Both" && (
-            <div className="sandbox-slider-group">
-              <div className="sandbox-slider-header">
-                <span className="sandbox-slider-label">Inflow ({focusDirection === "NB" ? "SB" : "NB"})</span>
-                <span className="sandbox-slider-value" style={{ color: "var(--page-accent)" }}>
-                  {fmt(byDirection[focusDirection === "NB" ? "SB" : "NB"].inflow)} veh/hr
-                </span>
-              </div>
-              <input
-                type="range"
-                min={inflowSliderRange(byDirection[focusDirection === "NB" ? "SB" : "NB"].laneCount).min}
-                max={inflowSliderRange(byDirection[focusDirection === "NB" ? "SB" : "NB"].laneCount).max}
-                step={100}
-                value={byDirection[focusDirection === "NB" ? "SB" : "NB"].inflow}
-                onChange={(e) => byDirection[focusDirection === "NB" ? "SB" : "NB"].setInflow(Number(e.target.value))}
-                className="sandbox-range inflow"
-                style={{ "--range-pct": `${rangePct(byDirection[focusDirection === "NB" ? "SB" : "NB"].inflow, inflowSliderRange(byDirection[focusDirection === "NB" ? "SB" : "NB"].laneCount))}%` } as React.CSSProperties}
-              />
-            </div>
-          )}
+          </RailSection>
 
-          {/* The chosen route as one list: each junction from the origin to the
-              destination with its toll plazas on the same row, service areas
-              between them. Click to frame; two junctions span the road between them. */}
+          <RailSection
+            title="Access points"
+            rowInfo="Exits, entries, toll plazas and service areas on the chosen route; click one to jump the road to it."
+            id="places"
+            icon={MapPin}
+            openId={railPage}
+            onOpen={(x) => setRailPage(x as RailId | null)}
+            summary={`${focused.places.length} on this route · ${focusDirection}`}
+            info="Exits, entries, toll plazas and service areas between your origin and destination. Click a row to frame it on the road. Between Balintawak and the Bocaue Barrier you pay on entry, so exits there are free. Plazas: OpenStreetMap (© OpenStreetMap contributors), or estimated from the toll record."
+          >
           <div className="sandbox-slider-group" data-places>
-            <button
-              onClick={() => setPlacesOpen((o) => !o)}
-              aria-expanded={placesOpen}
-              className="sandbox-slider-header"
-              style={{ width: "100%", background: "none", border: 0, padding: 0, cursor: "pointer" }}
-            >
-              <span className="sandbox-slider-label" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                <svg width="9" height="9" viewBox="0 0 16 16" fill="none"
-                     style={{ transform: placesOpen ? "rotate(90deg)" : "none", transition: "transform 140ms ease" }}>
-                  <path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                Exits, entries &amp; gas stations
-              </span>
-              <span className="sandbox-slider-value is-info">{DIRECTION_NAME[focusDirection]}</span>
-            </button>
-            {placesOpen && (
-              <>
-                {/* Its own NB / SB choice, like Add to and Commands apply to: the plazas differ by carriageway. */}
-                {both && <FocusSwitch label="Showing" focus={focusDirection} directions={activeDirections} onFocus={chooseFocus} />}
-                <PlacesList
-                  junctions={EXITS}
-                  places={focused.places}
-                  placesInView={new Set(focused.facilities.map((f) => f.id))}
-                  view={{ fromKm, toKm }}
-                  route={{ fromKm: routeFromKm, toKm: routeToKm }}
-                  direction={focusDirection}
-                  onJunction={(j) => frameJunction(j.km)}
-                  onPlace={(pl) => framePlace(pl, focusDirection)}
-                />
-                <div className="sandbox-btn-row">
-                  <button className="btn-muted" style={{ flex: 1 }} onClick={fitRoute}
-                          title="Widen the drawn window to the whole origin-to-destination route, as far as it can still be drawn legibly.">
-                    Fit whole route
-                  </button>
-                </div>
-                <span className="sandbox-slider-hint">
-                  Click a row to frame it. Only what lies between your origin and destination is listed. Between Balintawak and the Bocaue Barrier you pay on entry, so exits there are free. Plazas: OpenStreetMap (© OpenStreetMap contributors), or estimated from the toll record.
-                </span>
-              </>
-            )}
-          </div>
-
-          {/* Direction used to be DERIVED from origin > destination, with a Swap button to reverse
-              it — removed in Phase D2, not repurposed: origin/destination now define the km window
-              only (routeFromKm/routeToKm already take the min/max regardless of which was picked
-              first), so swapping them changes nothing to swap. Which carriageway(s) run is the NB /
-              SB / Both selector above the road. This block is read-only status, kept here because an
-              operator scanning the Corridor section for "which way" should still find an answer. */}
-          <div className="sandbox-slider-group">
-            <div className="sandbox-slider-header">
-              <InfoLabel info="NLEX runs from Balintawak (Km 12) north to Sta. Ines (Km 87), on the official km posts. Choose the carriageway with the Carriageway control at the top of the page. The km axis is fixed — the Balintawak end, the lower km posts, is always on-screen-left — and it is the TRAFFIC that runs right to left when southbound; each direction's inflow anchors to its own observed volume, independently. Both mode draws the two carriageways stacked with a median between them, Southbound above and Northbound below, sharing this one axis — lane 1 sits against the median on both sides.">
-                Carriageway
-              </InfoLabel>
-              <span className="sandbox-slider-value is-info">
-                {view === "Both" ? "Both" : focusDirection === "NB" ? "Northbound" : "Southbound"}
-              </span>
+            {/* Its own NB / SB choice, like Add to and Commands apply to: the plazas differ by carriageway. */}
+            {both && <FocusSwitch label="Showing" focus={focusDirection} directions={activeDirections} onFocus={chooseFocus} />}
+            <PlacesList
+              junctions={EXITS}
+              places={focused.places}
+              placesInView={new Set(focused.facilities.map((f) => f.id))}
+              view={{ fromKm, toKm }}
+              route={{ fromKm: routeFromKm, toKm: routeToKm }}
+              direction={focusDirection}
+              onJunction={(j) => frameJunction(j.km)}
+              onPlace={(pl) => framePlace(pl, focusDirection)}
+            />
+            <div className="sandbox-btn-row">
+              <button className="btn-muted" style={{ flex: 1 }} onClick={fitRoute}
+                      title="Widen the drawn window to the whole origin-to-destination route, as far as it can still be drawn legibly.">
+                Fit whole route
+              </button>
             </div>
+            <span className="sandbox-slider-hint">
+              Click a row to frame it. Only what lies between your origin and destination is listed. Between Balintawak and the Bocaue Barrier you pay on entry, so exits there are free. Plazas: OpenStreetMap (© OpenStreetMap contributors), or estimated from the toll record.
+            </span>
           </div>
+          </RailSection>
 
+
+          <RailSection
+            title="Lanes"
+            rowInfo="How many lanes each carriageway has here, taken from the road; you can change them for a what-if."
+            id="lanes"
+            icon={Layers}
+            openId={railPage}
+            onOpen={(x) => setRailPage(x as RailId | null)}
+            summary={laneDirs.length > 1 && byDirection[laneDirs[0]].laneCount !== byDirection[laneDirs[1]].laneCount ? laneDirs.map((d) => `${d} ${byDirection[d].laneCount}`).join(" · ") : `${byDirection[laneDirs[0]].laneCount} lanes${laneDirs.length > 1 ? " each" : ""}`}
+          >
           {/* Lanes follow the road: each carriageway's width over the stretch on screen (segmentLanes). Shown as a
               fact, with the sliders folded away behind "Change lanes" as an override. */}
           <div className="sandbox-slider-group" data-lanes={lanesBy}>
@@ -4082,13 +4044,89 @@ export default function AiSandboxPage() {
 
           </RailSection>
 
+          <h4 className="sandbox-rail-group" hidden={railPage !== null}>Traffic demand</h4>
+          <RailSection
+            title="Inflow"
+            rowInfo="How many vehicles enter the stretch per hour, set separately for northbound and southbound."
+            id="inflow"
+            icon={Gauge}
+            openId={railPage}
+            onOpen={(x) => setRailPage(x as RailId | null)}
+            summary={
+              activeDirections.length > 1 && byDirection.NB.inflow !== byDirection.SB.inflow
+                ? `${activeDirections.map((d) => `${d} ${fmt(byDirection[d].inflow)}`).join(" · ")} veh/hr`
+                : `${fmt(byDirection[activeDirections[0]].inflow)} veh/hr${activeDirections.length > 1 ? " each" : ""}`
+            }
+            info="Vehicles entering the stretch per hour, set per carriageway."
+          >
+          <div className="sandbox-slider-group">
+            <div className="sandbox-slider-header">
+              <InfoLabel
+                info={
+                  forecastDay
+                    ? `Loaded from the forecast for ${new Date(`${forecastDay}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.`
+                    : focused.dataAnchor
+                      ? `Observed NLEX peak ≈ ${fmt(focused.dataAnchor)} veh/hr.`
+                      : "Vehicle entry rate."
+                }
+              >
+                {view === "Both" ? `Inflow (${focusDirection})` : "Inflow"}
+              </InfoLabel>
+              <span className="sandbox-slider-value" style={{ color: "var(--page-accent)" }}>{fmt(focused.inflow)} veh/hr</span>
+            </div>
+            {/* Down to the quiet hours the record and the forecast give (100 veh/h) and up to what the lanes are given:
+                at 1,000-8,000 a night or forecast inflow below 1,000 sat the thumb at the end with the wrong value. */}
+            <input
+              type="range"
+              min={inflowSliderRange(focused.laneCount).min}
+              max={inflowSliderRange(focused.laneCount).max}
+              step={100}
+              value={focused.inflow}
+              onChange={(e) => focused.setInflow(Number(e.target.value))}
+              className="sandbox-range inflow"
+              style={{ "--range-pct": `${rangePct(focused.inflow, inflowSliderRange(focused.laneCount))}%` } as React.CSSProperties}
+            />
+          </div>
+          {/* Both mode: the OTHER direction's inflow, right below the focused one's — D2.3's "show
+              both inflow sliders in Both mode". Switching focus (the NB/SB tabs above the canvas)
+              brings that direction's full slider (with its own basis/forecast hint) into the primary
+              slot above; this one stays a compact second control so both are always reachable without
+              a focus switch just to nudge a number. */}
+          {view === "Both" && (
+            <div className="sandbox-slider-group">
+              <div className="sandbox-slider-header">
+                <span className="sandbox-slider-label">Inflow ({focusDirection === "NB" ? "SB" : "NB"})</span>
+                <span className="sandbox-slider-value" style={{ color: "var(--page-accent)" }}>
+                  {fmt(byDirection[focusDirection === "NB" ? "SB" : "NB"].inflow)} veh/hr
+                </span>
+              </div>
+              <input
+                type="range"
+                min={inflowSliderRange(byDirection[focusDirection === "NB" ? "SB" : "NB"].laneCount).min}
+                max={inflowSliderRange(byDirection[focusDirection === "NB" ? "SB" : "NB"].laneCount).max}
+                step={100}
+                value={byDirection[focusDirection === "NB" ? "SB" : "NB"].inflow}
+                onChange={(e) => byDirection[focusDirection === "NB" ? "SB" : "NB"].setInflow(Number(e.target.value))}
+                className="sandbox-range inflow"
+                style={{ "--range-pct": `${rangePct(byDirection[focusDirection === "NB" ? "SB" : "NB"].inflow, inflowSliderRange(byDirection[focusDirection === "NB" ? "SB" : "NB"].laneCount))}%` } as React.CSSProperties}
+              />
+            </div>
+          )}
+
+          </RailSection>
+
+          <h4 className="sandbox-rail-group" hidden={railPage !== null}>Scenario management</h4>
+
           <RailSection
             title="Interventions"
-            open={openSection === "interventions"}
-            onToggle={() => toggleSection("interventions")}
+            rowInfo="Changes you make to the road: close lanes, set a speed limit, add an incident, or shut toll booths."
+            id="interventions"
+            icon={Siren}
+            openId={railPage}
+            onOpen={(x) => setRailPage(x as RailId | null)}
             summary={
               (zipper !== null ? `${REALLOCATION_NAME}: ${zipper.toward} +${zipper.lanes} · ` : "") +
-              (both ? `NB: ${nb.interventionSummary} · SB: ${sb.interventionSummary}` : focused.interventionSummary)
+              (both && nb.interventionSummary !== sb.interventionSummary ? `NB: ${nb.interventionSummary} · SB: ${sb.interventionSummary}` : capFirst(focused.interventionSummary))
             }
           >
 
@@ -4124,8 +4162,11 @@ export default function AiSandboxPage() {
 
           <RailSection
             title="Scenario events"
-            open={openSection === "scenarios"}
-            onToggle={() => toggleSection("scenarios")}
+            rowInfo="Timed real-incident scenarios (breakdowns, collisions, rain, floods) placed on the road from NLEX's records."
+            id="scenarios"
+            icon={TrafficCone}
+            openId={railPage}
+            onOpen={(x) => setRailPage(x as RailId | null)}
             summary={scenarioSummary}
           >
             {/* What the loaded forecast put on this stretch, and why so few: its count is the whole corridor's. */}
@@ -4160,8 +4201,12 @@ export default function AiSandboxPage() {
 
           <RailSection
             title="Baseline comparison"
-            open={openSection === "baseline"}
-            onToggle={() => toggleSection("baseline")}
+            rowInfo="Capture the road as it is, change something, and see the before and after."
+            info="Measures what an intervention costs, by comparing the road before and after it."
+            id="baseline"
+            icon={ClipboardCheck}
+            openId={railPage}
+            onOpen={(x) => setRailPage(x as RailId | null)}
             summary={baselineSummary}
           >
           {/* This was a lone "Capture baseline" button whose only explanation
@@ -4177,9 +4222,6 @@ export default function AiSandboxPage() {
               genuinely be ready before the other), but one button captures both
               at once rather than making the operator click twice for what is, in
               practice, always the same action done on both roads together. */}
-          <p className="sandbox-baseline-lede">
-            Measures what an intervention costs, by comparing the road before and after it.
-          </p>
           {both ? (
             <>
               <div className="sandbox-btn-row">
@@ -4213,27 +4255,25 @@ export default function AiSandboxPage() {
 
           <RailSection
             title="Confidence run"
-            open={openSection === "confidence"}
-            onToggle={() => toggleSection("confidence")}
+            rowInfo="Re-runs the scenario several times to give a 95% range, so a real effect can be told from chance."
+            info="Re-runs the current scenario on independent seeds and reports a 95% confidence interval, so a real effect can be told from noise. One carriageway at a time, without timed events."
+            id="confidence"
+            icon={FlaskConical}
+            openId={railPage}
+            onOpen={(x) => setRailPage(x as RailId | null)}
             summary={
               repProgress != null
-                ? `running ${(repProgress * 100).toFixed(0)}%`
-                : repEvents.length > 0
-                  ? `off · ${repEvents.length} timed event${repEvents.length === 1 ? "" : "s"}`
-                  : both
-                    ? "off · one carriageway at a time"
-                    : repResult
-                      ? `${repResult.runs} runs · ${fmt(repResult.avgSpeedKmh.mean)} ± ${fmt(repResult.avgSpeedKmh.ci95, 1)} km/h`
-                      : "not run"
+                ? `Running ${(repProgress * 100).toFixed(0)}%`
+                : repEvents.length > 0 || both
+                  ? "Off"
+                  : repResult
+                    ? `${repResult.runs} runs · ${fmt(repResult.avgSpeedKmh.mean)} ± ${fmt(repResult.avgSpeedKmh.ci95, 1)} km/h`
+                    : "Not run"
             }
           >
           {/* One animated run is one sample. This re-runs the SAME scenario on
               independent seeds and reports a 95% interval, so a difference can
               be told apart from the luck of the draw. */}
-          <p className="sandbox-baseline-lede">
-            Re-runs the current scenario on independent seeds and reports a 95%
-            confidence interval, so you can tell a real effect from noise.
-          </p>
           <label className="sandbox-reps-label">
             Runs
             <input
@@ -4314,10 +4354,10 @@ export default function AiSandboxPage() {
           ) : (
           <div className="sandbox-side-scroll">
             <div className="ai-command">
+              {/* Command mode, simplified (25 Nov 2026): one line and an "i" instead of the paragraph, examples as chips. */}
               <p className="ai-command-sub">
-                Type a command in English, Filipino or Taglish: close lanes or set a speed limit by km, add a crash,
-                breakdown, rain or road works (on a lane or at a booth or pump), borrow a lane from the other side,
-                go to a place, or change the time or forecast day. You see the actions before anything changes.
+                Describe a change in English, Filipino or Taglish.
+                <InfoTooltip text="Close lanes or set a speed limit by km, add a crash, breakdown, rain or road works (on a lane, or at a booth or pump), borrow a lane from the other side, go to a place, or change the time or forecast day. You see the proposed actions before anything changes." />
               </p>
               {/* Both mode: a command that names a carriageway ("southbound", "pa-Maynila", "both directions")
                   goes there; one that names none goes to the carriageway picked here — a deliberate,
@@ -4326,6 +4366,7 @@ export default function AiSandboxPage() {
               {both && (
                 <div className="sandbox-dir-pick" data-cmd="direction" role="tablist" aria-label="Carriageway a command applies to when it names none" title="Used when the command does not say northbound or southbound">
                   <span className="k">Commands apply to</span>
+                  <InfoTooltip text="Used when the command does not say northbound or southbound." />
                   <div className="sandbox-dir-seg">
                     {activeDirections.map((dn) => (
                       <button
@@ -4335,7 +4376,7 @@ export default function AiSandboxPage() {
                         className={`dir-${dn}${focusDirection === dn ? " active" : ""}`}
                         onClick={() => chooseFocus(dn)}
                       >
-                        {DIRECTION_NAME[dn]}
+                        {dn}
                       </button>
                     ))}
                   </div>
@@ -4346,14 +4387,32 @@ export default function AiSandboxPage() {
                 rows={4}
                 value={command}
                 onChange={(e) => setCommand(e.target.value)}
-                placeholder={'Try: "isara lane 4 southbound mula Km 20.1 hanggang 20.4" or "may banggaan sa Meycauayan toll, booth 2, 30 minutes"'}
+                placeholder="Type a command…"
+                onKeyDown={(e) => {
+                  // Ctrl/Cmd + Enter sends; plain Enter keeps a new line.
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && command.trim() && !commandBusy) runCommand();
+                }}
               />
+              {!plan && !commandBusy && (
+                <div className="ai-command-examples" aria-label="Examples">
+                  <span>Try</span>
+                  {[
+                    "isara lane 4 southbound mula Km 20.1 hanggang 20.4",
+                    "may banggaan sa Meycauayan toll, booth 2, 30 minutes",
+                    "speed limit 60 km/h NB Km 15 to 18",
+                  ].map((ex) => (
+                    <button key={ex} type="button" onClick={() => setCommand(ex)} title="Put this example in the box">
+                      {ex}
+                    </button>
+                  ))}
+                </div>
+              )}
               <button
                 className="ai-command-btn"
                 onClick={runCommand}
                 disabled={!command.trim() || commandBusy}
               >
-                {commandBusy ? `Interpreting… ${commandSince === null ? 0 : Math.floor((Date.now() - commandSince) / 1000)} s` : "Execute Command"}
+                {commandBusy ? `Interpreting… ${commandSince === null ? 0 : Math.floor((Date.now() - commandSince) / 1000)} s` : "Preview actions"}
               </button>
               {commandBusy && (
                 <button className="ai-plan-discard" data-cmd="cancel" onClick={() => commandAbortRef.current?.abort("cancel")}>
@@ -4367,19 +4426,23 @@ export default function AiSandboxPage() {
                   the operator presses Apply. */}
               {plan && (
                 <div className="ai-plan">
-                  {both && planDirection !== null && (
-                    <p className="ai-plan-target" data-plan-direction={planDirection}>
-                      Each line names the carriageway it changes; one the command did not name went to <DirectionPill direction={planDirection} long />
-                    </p>
-                  )}
+                  <div className="ai-plan-head">
+                    <b>Proposed changes</b>
+                    <span>{plan.actions.length} action{plan.actions.length === 1 ? "" : "s"}</span>
+                    {both && planDirection !== null && (
+                      <span className="ai-plan-target" data-plan-direction={planDirection} title="Each line names the carriageway it changes; a line the command did not name goes here">
+                        default <DirectionPill direction={planDirection} />
+                      </span>
+                    )}
+                  </div>
                   <p className="ai-plan-reply">{plan.reply}</p>
 
                   {plan.actions.length > 0 ? (
-                    <ul className="ai-plan-actions">
+                    <ol className="ai-plan-actions">
                       {plan.actions.map((a, i) => (
-                        <li key={i}>{describeAction(a, commandLookup)}</li>
+                        <li key={i}><span className="n">{i + 1}</span><span>{describeAction(a, commandLookup)}</span></li>
                       ))}
-                    </ul>
+                    </ol>
                   ) : (
                     <p className="ai-plan-empty">No actions to apply.</p>
                   )}
@@ -4397,7 +4460,7 @@ export default function AiSandboxPage() {
                       onClick={applyPlan}
                       disabled={plan.actions.length === 0}
                     >
-                      Apply
+                      Apply {plan.actions.length > 0 ? `(${plan.actions.length})` : ""}
                     </button>
                     <button className="ai-plan-discard" onClick={() => setPlan(null)}>
                       Discard
@@ -4575,6 +4638,42 @@ function ZipperControl({
 }
 
 /** One carriageway's line inside a Both-mode tile. */
+/** What each live reading means, behind an "i" on its tile (25 Nov 2026). */
+const METRIC_INFO: Record<string, string> = {
+  "Active agents": "Vehicles on the simulated stretch right now.",
+  "Avg speed": "Average speed of the vehicles on the stretch. In Both mode the corridor figure is weighted by each direction's throughput.",
+  Throughput: "Vehicles per minute leaving the end of the stretch: how much traffic it is getting through.",
+  "Longest queue": "Length of the longest standing queue on the stretch. In Both mode, the worse of the two carriageways.",
+  "CO₂ rate": "Kilograms of CO₂ the vehicles on the stretch emit per minute, from per-class emission factors.",
+};
+
+const capFirst = (t: string) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
+
+/** A recommendation as a card: an icon and a short title for its tone, then the text (25 Nov 2026 reference). */
+function RecoCard({ rec, dataReco }: { rec: { text: string; tone: "good" | "warn" | "bad" }; dataReco?: Direction }) {
+  const waiting = /^(Advice follows|Warming up)/.test(rec.text);
+  const Icon = waiting ? Hourglass : rec.tone === "bad" ? OctagonAlert : rec.tone === "warn" ? TriangleAlert : CircleCheck;
+  const title = waiting ? "Waiting for the road to fill" : rec.tone === "bad" ? "Action needed" : rec.tone === "warn" ? "Watch closely" : "Traffic stable";
+  return (
+    <div className={`sandbox-reco ${rec.tone}${waiting ? " is-waiting" : ""}`} data-reco={dataReco}>
+      <span className="sandbox-note-icon" aria-hidden="true"><Icon size={20} strokeWidth={2.2} /></span>
+      <span>
+        <b>{title}</b>
+        <p>{rec.text}</p>
+      </span>
+    </div>
+  );
+}
+
+/** Each live reading's icon, as on the Forecast cards (24 Nov 2026). */
+const METRIC_ICON: Record<string, LucideIcon> = {
+  "Active agents": Car,
+  "Avg speed": Gauge,
+  Throughput: ArrowRightLeft,
+  "Longest queue": TrafficCone,
+  "CO₂ rate": Leaf,
+};
+
 type TileRow = { readonly direction: Direction; readonly value: string; readonly delta: number | null };
 
 /**
@@ -4607,13 +4706,16 @@ function MetricTileBoth({
     return (goodWhenUp ? delta > 0 : delta < 0) ? "up" : "down";
   };
   const chip = (delta: number | null): string => (delta == null ? "" : Math.abs(delta) < 1 ? "≈" : `${delta > 0 ? "+" : ""}${delta.toFixed(0)}%`);
+  const Icon = METRIC_ICON[label];
   return (
-    <article className="sandbox-metric is-both" data-metric={label}>
+    <article className="sandbox-metric is-both has-icon" data-metric={label}>
+      {Icon && <span className="sandbox-metric-icon" aria-hidden="true"><Icon size={20} strokeWidth={2} /></span>}
       <h3>
         {label}
+        {METRIC_INFO[label] && <InfoTooltip text={METRIC_INFO[label]} />}
         <span className="sandbox-metric-tag" title={tagTitle} data-metric-tag={tag}>{tag}</span>
       </h3>
-      <div className={`sandbox-metric-val${total === null ? " is-none" : ""}`}>{total ?? "no total"}</div>
+      <div className={`sandbox-metric-val${total === null ? " is-none" : ""}`}>{total ?? <span className="sandbox-metric-split" title="Density has no meaningful corridor total, so each carriageway's own is shown">{rows.map((r) => `${r.direction} ${r.value}`).join(" · ")}</span>}</div>
       {totalDelta != null && Math.abs(totalDelta) >= 1 ? (
         <span className={`sandbox-metric-delta ${tone(totalDelta)}`}>
           {totalDelta > 0 ? "+" : ""}
@@ -5115,9 +5217,8 @@ function DirectionNotes({ d, direction }: { d: DirectionApi; direction: Directio
   return (
     <>
       {!m.warm && (
-        <p className="sandbox-live-note" data-note={direction}>
-          Warming up &mdash; the road is still filling, so these figures are not yet the
-          scenario. {Math.max(0, Math.ceil(WARMUP_S - m.elapsedS))}s to go.
+        <p className="sandbox-live-note" data-note={direction} title="The road is still filling, so these figures are not yet the scenario.">
+          Warming up · {Math.max(0, Math.ceil(WARMUP_S - m.elapsedS))}s remaining
         </p>
       )}
       {/* unmetVehPerHour alone is a cumulative average since warm-up: it fades
@@ -5127,12 +5228,15 @@ function DirectionNotes({ d, direction }: { d: DirectionApi; direction: Directio
           in useDirectionSim — keeps the note up (naming both figures) for the
           rest of the run even once the live number drops back near zero. */}
       {m.warm && d.peakUnmetVehPerHour > 1 && (
-        <p className="sandbox-live-note warn" data-note={direction}>
-          Peak {Math.round(d.peakUnmetVehPerHour).toLocaleString()} veh/h of demand couldn&rsquo;t enter this run
-          (currently {Math.round(m.unmetVehPerHour).toLocaleString()} veh/h): the segment was at capacity and
-          the queue for it forms upstream, outside this model. The speeds shown describe only the traffic
-          that got on.
-        </p>
+        <div className="sandbox-live-note warn sandbox-note-card" data-note={direction}>
+          <span className="sandbox-note-icon" aria-hidden="true"><TriangleAlert size={18} strokeWidth={2.2} /></span>
+          <span>
+            <b>Capacity reached</b>
+            Peak demand of {Math.round(d.peakUnmetVehPerHour).toLocaleString()} veh/h could not enter (now{" "}
+            {Math.round(m.unmetVehPerHour).toLocaleString()} veh/h). The queue forms upstream, outside the model; speeds
+            describe only the traffic that got on.
+          </span>
+        </div>
       )}
     </>
   );
@@ -5155,9 +5259,11 @@ function MetricTile({
     const good = goodWhenUp ? positive : !positive;
     cls = good ? "up" : "down";
   }
+  const Icon = METRIC_ICON[label];
   return (
-    <article className="sandbox-metric">
-      <h3>{label}</h3>
+    <article className="sandbox-metric has-icon">
+      {Icon && <span className="sandbox-metric-icon" aria-hidden="true"><Icon size={20} strokeWidth={2} /></span>}
+      <h3>{label}{METRIC_INFO[label] && <InfoTooltip text={METRIC_INFO[label]} />}</h3>
       <div className="sandbox-metric-val">{value}</div>
       {delta != null && Math.abs(delta) >= 1 ? (
         <span className={`sandbox-metric-delta ${cls}`}>
@@ -5192,42 +5298,63 @@ function pctDelta(cur: number, base: number): number | null {
  *  section still reports what it is holding.
  */
 function RailSection({
+  id,
   title,
+  icon: Icon,
   summary,
-  open,
-  onToggle,
+  openId,
+  onOpen,
+  info,
+  rowInfo,
   children,
 }: {
+  /** What the row is for, behind an "i" on the row itself. */
+  rowInfo?: string;
+  id: string;
   title: React.ReactNode;
+  icon: LucideIcon;
   summary: string;
-  open: boolean;
-  onToggle: () => void;
+  openId: string | null;
+  onOpen: (id: string | null) => void;
+  /** A short explanation behind the page header's "i". */
+  info?: string;
   children: React.ReactNode;
 }) {
+  const open = openId === id;
   return (
-    <section style={{ borderTop: "1px solid var(--border-default)", paddingTop: 8, marginTop: 8 }}>
-      <button
-        onClick={onToggle}
-        aria-expanded={open}
-        style={{
-          width: "100%", display: "flex", alignItems: "center", gap: 8,
-          background: "none", border: 0, padding: "2px 0", cursor: "pointer", textAlign: "left",
-        }}
-      >
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="none"
-             style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform 140ms ease", flex: "0 0 auto" }}>
-          <path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        <span className="sandbox-section-title" style={{ margin: 0, flex: "0 0 auto" }}>{title}</span>
-        {!open && (
-          <span title={summary} style={{
-            marginLeft: "auto", fontSize: "0.72rem", color: "var(--text-muted)",
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0,
-          }}>{summary}</span>
-        )}
-      </button>
-      {open && <div style={{ marginTop: 2 }}>{children}</div>}
-    </section>
+    <>
+      {openId === null && (
+        <button type="button" className="sandbox-rail-row" onClick={() => onOpen(id)} data-rail={id}>
+          <span className="sandbox-rail-icon" aria-hidden="true"><Icon size={17} strokeWidth={2} /></span>
+          {/* Two lines (25 Nov 2026): the name, then what is set now at full width instead of a cut-off right column.
+              A setting that is off or empty reads muted; one in force reads in the accent colour. */}
+          <span className="sandbox-rail-text">
+            <span className="sandbox-rail-title">
+              {title}
+              {/* What the row is for; hovering it does not open the row. */}
+              {rowInfo && <span onClick={(e) => e.stopPropagation()}><InfoTooltip text={rowInfo} /></span>}
+            </span>
+            <span className={`sandbox-rail-sum${/^(None|Not captured|Not run|Off)(?![a-z])/.test(summary) ? " is-idle" : ""}`} title={summary}>{summary}</span>
+          </span>
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" className="sandbox-rail-chev" aria-hidden="true">
+            <path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      )}
+      <section className="sandbox-rail-page" hidden={!open} aria-label={typeof title === "string" ? title : undefined}>
+        <header className="sandbox-rail-page-head">
+          <button type="button" className="sandbox-rail-back" onClick={() => onOpen(null)} aria-label="Back to all controls">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 3.5L5.5 8L10 12.5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            Back
+          </button>
+          <h3>
+            {title}
+            {info && <InfoTooltip text={info} />}
+          </h3>
+        </header>
+        <div className="sandbox-rail-body">{children}</div>
+      </section>
+    </>
   );
 }
 

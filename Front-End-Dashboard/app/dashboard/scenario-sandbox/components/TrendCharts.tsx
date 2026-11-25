@@ -5,6 +5,7 @@ import type { Direction } from "../scenarios/adapter";
 import type { Baseline } from "../useDirectionSim";
 import { TREND_STEP_S, type TrendSample } from "../trends";
 import { DIRECTION_NAME } from "./DirectionPill";
+import { Clock3, LineChart, Table2 } from "lucide-react";
 
 /* The readouts over time: four small line charts under the road — speed, throughput, longest queue, CO2 —
  * one line per carriageway, so what a crash costs, and how long the road takes to get over it, can be read
@@ -48,7 +49,8 @@ const RANGES: readonly { readonly label: string; readonly s: number }[] = [
 ];
 
 /** Plot geometry, CSS px. The x-axis band is part of the chart's own height, so the card never scrolls inside. */
-const H = 150;
+/** One chart at a time (25 Nov 2026), kept compact so the Trends card ends level with Recommendations. */
+const H = 160;
 const PAD = { top: 12, right: 52, bottom: 20, left: 38 };
 /** Two samples further apart than this are not joined: the run was rebuilt or skipped past them. */
 const GAP_S = TREND_STEP_S * 3.5;
@@ -127,6 +129,9 @@ export default function TrendCharts({ series, clockStartMin }: { series: readonl
   const [hoverT, setHoverT] = useState<number | null>(null);
   const [active, setActive] = useState<MetricKey | null>(null);
   const [table, setTable] = useState(false);
+  // The metric drawn: one large chart, picked by tab (25 Nov 2026 reference), instead of four small ones.
+  const [metricKey, setMetricKey] = useState<MetricKey>("speedKmh");
+  const metric = METRICS.find((m) => m.key === metricKey) ?? METRICS[0];
 
   const lastT = Math.max(0, ...series.map((s) => (s.samples.length ? s.samples[s.samples.length - 1].t : 0)));
   const firstT = Math.min(...series.map((s) => (s.samples.length ? s.samples[0].t : lastT)));
@@ -158,9 +163,9 @@ export default function TrendCharts({ series, clockStartMin }: { series: readonl
   return (
     <section className="sandbox-trends" data-trends aria-label="Trends: the readouts over time">
       <div className="sandbox-trends-head">
-        <div>
+        <div className="sandbox-trends-title">
           <strong>Trends</strong>
-          <span className="sandbox-trends-sub">every {TREND_STEP_S} s of simulated time since the road filled</span>
+          <span className="sandbox-trends-sub">Updates every {TREND_STEP_S} s of simulated time since the road filled.</span>
         </div>
         <div className="sandbox-trends-controls">
           <div className="sandbox-trends-seg" role="radiogroup" aria-label="Time shown">
@@ -170,9 +175,14 @@ export default function TrendCharts({ series, clockStartMin }: { series: readonl
               </button>
             ))}
           </div>
-          <button className="sandbox-trends-table-toggle" aria-pressed={table} onClick={() => setTable((v) => !v)} data-trend-table-toggle>
-            {table ? "Charts" : "Table"}
-          </button>
+          <div className="sandbox-trends-view" role="radiogroup" aria-label="Show as">
+            <button role="radio" aria-checked={!table} className={!table ? "active" : ""} onClick={() => setTable(false)}>
+              <LineChart size={15} strokeWidth={2.2} aria-hidden="true" /> Charts
+            </button>
+            <button role="radio" aria-checked={table} className={table ? "active" : ""} onClick={() => setTable(true)} data-trend-table-toggle>
+              <Table2 size={15} strokeWidth={2.2} aria-hidden="true" /> Table
+            </button>
+          </div>
         </div>
       </div>
 
@@ -193,43 +203,51 @@ export default function TrendCharts({ series, clockStartMin }: { series: readonl
       ) : table ? (
         <TrendTable series={visible} clockStartMin={clockStartMin} />
       ) : (
-        <div className="sandbox-trends-grid">
-          {METRICS.map((m) => (
-            <TrendChart
-              key={m.key}
-              metric={m}
-              series={visible}
-              t0={t0}
-              t1={t1}
-              clockStartMin={clockStartMin}
-              hoverT={hoverT}
-              showTip={active === m.key}
-              onHover={(t) => {
-                setActive(t === null ? null : m.key);
-                setHoverT(t === null ? null : snap(t));
-              }}
-              onKey={(e) => {
-                const k = e.key;
-                if (k === "ArrowLeft" || k === "ArrowRight" || k === "Home" || k === "End") {
-                  e.preventDefault();
-                  setActive(m.key);
-                  step(k === "ArrowLeft" ? -1 : k === "ArrowRight" ? 1 : k === "Home" ? "home" : "end");
-                } else if (k === "Escape") {
-                  setHoverT(null);
-                  setActive(null);
-                }
-              }}
-              onFocus={() => {
-                setActive(m.key);
-                if (hoverT === null && times.length) setHoverT(times[times.length - 1]);
-              }}
-              onBlur={() => {
-                setActive(null);
-                setHoverT(null);
-              }}
-            />
-          ))}
-        </div>
+        <>
+          <div className="sandbox-trends-metrics" role="tablist" aria-label="Reading shown">
+            {METRICS.map((m) => (
+              <button key={m.key} role="tab" aria-selected={metricKey === m.key} className={metricKey === m.key ? "active" : ""} onClick={() => setMetricKey(m.key)}>
+                {m.title}
+              </button>
+            ))}
+          </div>
+          <div className="sandbox-trends-grid is-single">
+        <TrendChart
+          key={metric.key}
+          metric={metric}
+          series={visible}
+          t0={t0}
+          t1={t1}
+          clockStartMin={clockStartMin}
+          hoverT={hoverT}
+          showTip={active === metric.key}
+          onHover={(t) => {
+            setActive(t === null ? null : metric.key);
+            setHoverT(t === null ? null : snap(t));
+          }}
+          onKey={(e) => {
+            const k = e.key;
+            if (k === "ArrowLeft" || k === "ArrowRight" || k === "Home" || k === "End") {
+              e.preventDefault();
+              setActive(metric.key);
+              step(k === "ArrowLeft" ? -1 : k === "ArrowRight" ? 1 : k === "Home" ? "home" : "end");
+            } else if (k === "Escape") {
+              setHoverT(null);
+              setActive(null);
+            }
+          }}
+          onFocus={() => {
+            setActive(metric.key);
+            if (hoverT === null && times.length) setHoverT(times[times.length - 1]);
+          }}
+          onBlur={() => {
+            setActive(null);
+            setHoverT(null);
+          }}
+        />
+          </div>
+          <LatestStrip series={visible} metric={metric} clockStartMin={clockStartMin} at={hoverT} />
+        </>
       )}
     </section>
   );
@@ -426,6 +444,28 @@ function TrendChart({
 }
 
 /** The same readings as rows, one a minute, newest first: every value reachable without a pointer. */
+/** The readings at the hovered time, or the latest: time, then each carriageway's value of the metric shown. */
+function LatestStrip({ series, metric, clockStartMin, at }: { series: readonly TrendSeries[]; metric: MetricDef; clockStartMin: number; at: number | null }) {
+  const pick = (s: TrendSeries) => (at !== null ? sampleNear(s.samples, at) : s.samples[s.samples.length - 1] ?? null);
+  const shown = series.map((s) => ({ s, p: pick(s) }));
+  const t = at ?? Math.max(...shown.map((x) => x.p?.t ?? 0));
+  return (
+    <div className="sandbox-trends-latest" aria-live="polite">
+      <span className="sandbox-trends-latest-time">
+        <Clock3 size={16} strokeWidth={2.2} aria-hidden="true" />
+        {clockOf(clockStartMin, t)}
+        <small>{at !== null ? "hovered" : "latest"}</small>
+      </span>
+      {shown.map(({ s, p }) => (
+        <span key={s.direction} className="sandbox-trends-latest-v">
+          <small>{metric.title} {s.direction}</small>
+          <b style={{ color: `var(--trend-${s.direction})` }}>{p ? `${fmtNum(p[metric.key], metric.decimals)} ${metric.unit}` : "—"}</b>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function TrendTable({ series, clockStartMin }: { series: readonly TrendSeries[]; clockStartMin: number }) {
   const byMinute = new Map<number, (TrendSample | null)[]>();
   series.forEach((s, i) => {
@@ -442,16 +482,22 @@ function TrendTable({ series, clockStartMin }: { series: readonly TrendSeries[];
       <table className="sandbox-trends-table">
         <thead>
           <tr>
-            <th scope="col">Time</th>
-            {METRICS.flatMap((m) =>
-              series.map((s) => (
-                <th key={`${m.key}-${s.direction}`} scope="col">
-                  {m.title}
-                  {series.length > 1 ? ` ${s.direction}` : ""} <span>{m.unit}</span>
-                </th>
-              )),
-            )}
+            <th scope="col" rowSpan={series.length > 1 ? 2 : 1}>Time</th>
+            {METRICS.map((m) => (
+              <th key={m.key} scope="colgroup" colSpan={series.length} className="grp">
+                {m.title} <span>{m.unit}</span>
+              </th>
+            ))}
           </tr>
+          {series.length > 1 && (
+            <tr>
+              {METRICS.flatMap((m) =>
+                series.map((s) => (
+                  <th key={`${m.key}-${s.direction}`} scope="col" className={`dir dir-${s.direction}`}>{s.direction}</th>
+                )),
+              )}
+            </tr>
+          )}
         </thead>
         <tbody>
           {rows.map(([minute, row]) => (
