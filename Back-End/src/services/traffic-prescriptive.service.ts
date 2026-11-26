@@ -54,6 +54,16 @@ import { getMLPredictiveCongestion } from "./traffic.service.js";
    no higher cut-off in the archive buys a precision worth a second action (it
    tops out near 40% while recall falls below 10%). With too few scored
    forecasts the panel says so and labels nothing.
+
+   The cut-off is a point on ONE model's probability scale, and the archive
+   pools every model ever served (the log has no model column). Each logged run
+   is matched to its hourly job's audit entry (audit_logs model.live_refresh:
+   to_status names the model, details.base_ts the run), and the Act line is used
+   only when every forecast it was fitted on came from the model serving now
+   (gold.ml_congestion_eval). Otherwise the advice is paused and only the chances
+   are shown (system audit 19 Nov 2026, H5: the "Same hour last week" baseline's
+   lowest p_high, 0.14, sat above a 0.13 line fitted on earlier models, so all 20
+   segments read Act by construction). The cut-off itself is not re-tuned here.
 ══════════════════════════════════════════════════════════════════════════════ */
 
 /** How many future days the week-ahead view covers. */
@@ -135,9 +145,10 @@ export type CongestionAdvice = {
   probability: number;
   /** The hour of that highest chance. */
   hoursAhead: number;
-  /** The first hour at or above the calibrated cut-off; null when none is. */
+  /** The first hour at or above the calibrated cut-off; null when none is, or when no cut-off applies. */
   firstAct: number | null;
-  label: "Act" | "Monitor";
+  /** Unrated: no cut-off applies (too few scored forecasts, or one fitted on other models' forecasts). */
+  label: "Act" | "Monitor" | "Unrated";
   action: string;
   /** Of archived forecasts at or above this probability, the share that High followed, and how many there were. */
   hitRate: number | null;
@@ -165,6 +176,13 @@ export type CongestionCalibration = {
   testFrom: string | null;
   testTo: string | null;
   testRows: number;
+  /** The congestion model serving now (gold.ml_congestion_eval); null when it could not be read. */
+  servedModel: string | null;
+  /** Scored forecast-hours the cut-off was fitted on, by the model that made them (null = no run record names one). */
+  fitModels: { model: string | null; rows: number }[];
+  /** True only when every forecast the cut-off was fitted on came from servedModel. When false the advice is
+   *  paused: no segment is labelled Act or Monitor, and no past hit rate is quoted. */
+  calibratedOnServed: boolean;
 };
 
 export type TrafficPrescriptive = {
@@ -249,8 +267,9 @@ function staffingCell(
   };
 }
 
-/** One histogram bin of archived forecasts: p_high in [b/100, (b+1)/100), outcome High or not. */
-type CalBin = { test: boolean; b: number; pos: boolean; n: number };
+/** One histogram bin of archived forecasts: p_high in [b/100, (b+1)/100), outcome High or not, and the model whose
+ *  runs made them (null when no run record names one). */
+type CalBin = { test: boolean; b: number; pos: boolean; n: number; model?: string | null };
 type CurvePoint = { t: number; tp: number; fp: number; fn: number; n: number };
 
 /** Confusion counts at every cut-off 0.01..0.95 for the bins given ("p_high >= t" means bin >= t). */
@@ -282,10 +301,15 @@ const MIN_TEST_HIGH = 30;
 /** A probability's hit rate is quoted only when at least this many archived forecasts reached it. */
 const MIN_HIT_N = 50;
 
-const ACTION: Record<CongestionAdvice["label"], string> = {
+const ACTION: Record<"Act" | "Monitor", string> = {
   // No VMS: the system cannot drive message signs and the manuscript does not propose them (2 Nov 2026).
   Act: "Deploy counter-flow, publish a Mobile App advisory and alert the TCC before the first High hour.",
   Monitor: "No action; re-check next cycle.",
+};
+/** What an unrated segment says instead: no cut-off yet, or one fitted on other models' forecasts. */
+const UNRATED_ACTION = {
+  noLine: "No Act line until enough past forecasts are scored; read the chance directly.",
+  paused: "Advice paused for this forecast model; read the chance of High directly.",
 };
 
 /* ── what the plan is computed from ──────────────────────────────────────── */
@@ -387,26 +411,38 @@ function loadCalibration(): Promise<CalibrationEvidence | null> {
 
 async function readCalibration(): Promise<CalibrationEvidence | null> {
   if (!db) return null;
-  const { rows } = await db.query<{ test: boolean; b: number; pos: boolean; n: number; t_from: string; t_to: string; runs: number }>(
-    `WITH j AS (
-       SELECT LEAST(99, FLOOR(l.p_high * 100))::int AS b, (s.actual_state = 'High') AS pos, s.target_ts, l.base_ts
+  /* `runs` names the model behind each logged run. The log has no model column, but every published run of the
+     hourly job writes an audit entry whose to_status is the model it served and details.base_ts the run's base hour
+     (Manila wall clock, as the log's base_ts). A base hour two publishers wrote under different models is left
+     unnamed, as are runs with no entry (before 24 Oct 2026, or a publisher that writes none). */
+  const { rows } = await db.query<{ test: boolean; b: number; pos: boolean; model: string | null; n: number; t_from: string; t_to: string; runs: number }>(
+    `WITH runs AS (
+       SELECT CASE WHEN details->>'base_ts' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]+)?)?$'
+                   THEN (details->>'base_ts')::timestamp END AS base_ts,
+              CASE WHEN COUNT(DISTINCT to_status) = 1 THEN MIN(to_status) END AS model
+         FROM audit_logs
+        WHERE action = 'model.live_refresh' AND outcome = 'published'
+        GROUP BY 1
+     ), j AS (
+       SELECT LEAST(99, FLOOR(l.p_high * 100))::int AS b, (s.actual_state = 'High') AS pos, s.target_ts, l.base_ts, r.model
          FROM gold.ml_congestion_forecast_log l
          JOIN gold.v_congestion_forecast_score s
            ON s.base_ts = l.base_ts AND s.segment_name = l.segment_name AND s.hours_ahead = l.hours_ahead
+         LEFT JOIN runs r ON r.base_ts = l.base_ts
         WHERE l.hours_ahead BETWEEN 1 AND 12 AND s.actual_state IS NOT NULL AND l.p_high IS NOT NULL
      ), cut AS (SELECT MAX(target_ts) - interval '7 days' AS at FROM j),
      k AS (SELECT j.*, (j.target_ts > cut.at) AS test FROM j, cut)
-     SELECT k.test, k.b, k.pos, COUNT(*)::int AS n,
+     SELECT k.test, k.b, k.pos, k.model, COUNT(*)::int AS n,
             MIN(MIN(k.target_ts)) OVER (PARTITION BY k.test)::text AS t_from,
             MAX(MAX(k.target_ts)) OVER (PARTITION BY k.test)::text AS t_to,
             (SELECT COUNT(DISTINCT base_ts) FROM j)::int AS runs
-       FROM k GROUP BY k.test, k.b, k.pos`,
+       FROM k GROUP BY k.test, k.b, k.pos, k.model`,
   );
   if (rows.length === 0) return { bins: [], fitFrom: null, fitTo: null, testFrom: null, testTo: null, runs: 0 };
   const fit = rows.find((r) => !r.test);
   const test = rows.find((r) => r.test);
   return {
-    bins: rows.map((r) => ({ test: r.test, b: Number(r.b), pos: r.pos, n: Number(r.n) })),
+    bins: rows.map((r) => ({ test: r.test, b: Number(r.b), pos: r.pos, n: Number(r.n), model: r.model ?? null })),
     fitFrom: fit?.t_from ?? null,
     fitTo: fit?.t_to ?? null,
     testFrom: test?.t_from ?? null,
@@ -421,6 +457,8 @@ function calibrate(ev: CalibrationEvidence | null): { cal: CongestionCalibration
   const empty: CongestionCalibration = {
     ok: false, reason: null, threshold: null, precision: null, recall: null, f1: null, baseRate: null, fitF1: null,
     scored: 0, scoredHigh: 0, runs: 0, fitFrom: null, fitTo: null, testFrom: null, testTo: null, testRows: 0,
+    // Filled in by fitProvenance, which needs the served model as well.
+    servedModel: null, fitModels: [], calibratedOnServed: false,
   };
   if (!ev) return { cal: { ...empty, reason: "The forecast archive could not be read." }, all: [] };
   const fitBins = ev.bins.filter((x) => !x.test);
@@ -460,6 +498,43 @@ function calibrate(ev: CalibrationEvidence | null): { cal: CongestionCalibration
       fitF1: r3(f1Of(best)),
     },
     all,
+  };
+}
+
+/* The congestion model serving now. The hourly job writes its name to gold.ml_congestion_eval in the same transaction
+   as the forecast rows, so it names the model behind the forecast the panel reads. Kept for five minutes like the
+   forecast, not six hours like the calibration: the served model has changed between runs (XGBoost and the baseline
+   swapped on 20 Nov 2026). A failed read is not kept, and reads as unknown, which pauses the advice. */
+let servedCache: { at: number; model: string | null } | null = null;
+let servedRead: Promise<string | null> | null = null;
+
+function loadServedModel(): Promise<string | null> {
+  if (servedCache && Date.now() - servedCache.at < CONGESTION_TTL_MS) return Promise.resolve(servedCache.model);
+  servedRead ??= (db
+    ? db.query<{ model: string | null }>(`SELECT payload->>'model' AS model FROM gold.ml_congestion_eval WHERE id = 1`)
+        .then(({ rows }) => {
+          const model = rows[0]?.model ?? null;
+          if (model) servedCache = { at: Date.now(), model };
+          return model;
+        })
+    : Promise.resolve(null))
+    .catch((e) => {
+      console.warn("[traffic-prescriptive] served congestion model unavailable:", e?.message ?? e);
+      return null;
+    })
+    .finally(() => { servedRead = null; });
+  return servedRead;
+}
+
+/** Which models' forecasts the cut-off was fitted on, and whether every one of them is the model serving now. */
+function fitProvenance(ev: CalibrationEvidence | null, servedModel: string | null): Pick<CongestionCalibration, "servedModel" | "fitModels" | "calibratedOnServed"> {
+  const rowsBy = new Map<string | null, number>();
+  for (const x of ev?.bins ?? []) if (!x.test) rowsBy.set(x.model ?? null, (rowsBy.get(x.model ?? null) ?? 0) + x.n);
+  const fitModels = [...rowsBy.entries()].map(([model, rows]) => ({ model, rows })).sort((a, b) => b.rows - a.rows);
+  return {
+    servedModel,
+    fitModels,
+    calibratedOnServed: servedModel != null && fitModels.length > 0 && fitModels.every((m) => m.model === servedModel),
   };
 }
 
@@ -628,7 +703,9 @@ export async function getTrafficPrescriptive(opts: { split?: string }): Promise<
   const split = opts.split ?? "80_20";
 
   // In parallel: the congestion reads are independent of the staffing inputs.
-  const [inputs, congestionRows, evidence] = await Promise.all([loadInputs(split), loadCongestion(), loadCalibration()]);
+  const [inputs, congestionRows, evidence, servedModel] = await Promise.all([
+    loadInputs(split), loadCongestion(), loadCalibration(), loadServedModel(),
+  ]);
   if (!inputs) return null;
   const { champion, future, corridor } = inputs;
 
@@ -677,10 +754,16 @@ export async function getTrafficPrescriptive(opts: { split?: string }): Promise<
   priorities.sort(byCertainty);
 
   /* ── congestion ─────────────────────────────────────────────────────────── */
-  const { cal, all } = calibrate(evidence);
-  const cutoff = cal.ok && cal.threshold != null ? Math.round(cal.threshold * 100) : null;
+  const fitted = calibrate(evidence);
+  const all = fitted.all;
+  const cal: CongestionCalibration = { ...fitted.cal, ...fitProvenance(evidence, servedModel) };
+  /* A cut-off fitted on other models' forecasts says nothing about this model's probability scale, so no segment is
+     labelled and no past hit rate (also other models' forecasts) is quoted; the chances stay. */
+  const rated = cal.ok && cal.calibratedOnServed;
+  const cutoff = rated && cal.threshold != null ? Math.round(cal.threshold * 100) : null;
   /** Of archived forecasts at or above p, the share High followed. */
   const hitAt = (p: number) => {
+    if (!cal.calibratedOnServed) return { hitRate: null, hitN: 0 };
     const c = all[Math.max(0, Math.min(94, Math.floor(p * 100 + 1e-9) - 1))];
     const n = c ? c.tp + c.fp : 0;
     return { hitRate: c && n >= MIN_HIT_N && p >= 0.01 ? r3(c.tp / n) : null, hitN: n };
@@ -714,7 +797,7 @@ export async function getTrafficPrescriptive(opts: { split?: string }): Promise<
   }
   const congestion: CongestionAdvice[] = [...bySeg.values()]
     .map((s) => {
-      const label: CongestionAdvice["label"] = s.firstAct != null ? "Act" : "Monitor";
+      const label: CongestionAdvice["label"] = !rated ? "Unrated" : s.firstAct != null ? "Act" : "Monitor";
       return {
         segment: s.segment,
         km: s.km,
@@ -722,7 +805,7 @@ export async function getTrafficPrescriptive(opts: { split?: string }): Promise<
         hoursAhead: s.peakH,
         firstAct: s.firstAct,
         label,
-        action: cal.ok ? ACTION[label] : "No Act line until enough past forecasts are scored; read the chance directly.",
+        action: label !== "Unrated" ? ACTION[label] : cal.ok ? UNRATED_ACTION.paused : UNRATED_ACTION.noLine,
         ...hitAt(Math.max(0, s.peak)),
       };
     })

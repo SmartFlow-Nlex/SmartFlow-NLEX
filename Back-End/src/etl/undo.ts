@@ -18,6 +18,8 @@
 import type { PoolClient } from "pg";
 import { db } from "../config/db.js";
 import { scriptActor, writeAudit, type Actor } from "../services/audit.js";
+// toll-hourly imports this module too; RECORD_END is only read inside runUndo, after both have loaded.
+import { RECORD_END } from "./toll-hourly.js";
 
 /** How many of the latest loads keep their journal. */
 export const UNDO_KEEP = 10;
@@ -269,8 +271,16 @@ async function runUndo(uploadId: number, dryRun: boolean): Promise<UndoResult> {
         .filter((x) => kept.has(x.column_name) && x.is_generated !== "ALWAYS");
       const list = live.map((x) => q(x.column_name)).join(", ");
       const override = live.some((x) => x.identity_generation === "ALWAYS") ? "OVERRIDING SYSTEM VALUE " : "";
+      /* Never put back rows dated after the record end (21 Nov 2026, audit P3-02). The 15 Nov trim of the record to
+         RECORD_END was a script, not a load, so it left no journal: undoing a load made before it (upload #71, batch
+         57) would otherwise restore the synthetic 25 May - 13 Jun rows the trim removed, and only in some tables. */
+      const beforeEnd = kept.has("date")
+        ? ` AND (date IS NULL OR date <= '${RECORD_END}'::date)`
+        : kept.has("event_start_date")
+          ? ` AND (event_start_date IS NULL OR event_start_date < '${RECORD_END}'::date + 1)`
+          : "";
       const ins = await c.query(
-        `INSERT INTO ${t.table} (${list}) ${override}SELECT ${list} FROM ${j} WHERE undo_batch = $1 AND undo_kind = 'old'`,
+        `INSERT INTO ${t.table} (${list}) ${override}SELECT ${list} FROM ${j} WHERE undo_batch = $1 AND undo_kind = 'old'${beforeEnd}`,
         [b!.id],
       );
       out.tables.push({ table: t.table, removed: del.rowCount ?? 0, restored: ins.rowCount ?? 0 });

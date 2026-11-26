@@ -3,8 +3,9 @@ import { routeCache } from "./middleware/route-cache.js";
 import compression from "compression";
 import express from "express";
 import morgan from "morgan";
-import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
+import { resolveClientIp } from "./middleware/client-ip.js";
+import { limitsBeforeCache, readLimiterAfterCache } from "./middleware/rate-limit.js";
 import apiRoutes from "./routes/index.js";
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
@@ -16,22 +17,9 @@ export const app = express();
 app.disable("x-powered-by");
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 // Real client addresses behind a hosting proxy (see TRUST_PROXY in config/env.ts). Off unless configured.
-if (env.TRUST_PROXY) app.set("trust proxy", env.TRUST_PROXY);
-
-// Rate limiting middleware to throttle request bursts
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  limit: 200, // Limit each IP to 200 requests per 15 minutes
-  standardHeaders: "draft-7", // Standard headers in HTTP
-  legacyHeaders: false, // Disable X-RateLimit-* headers
-  // Local development shares one IP across every dashboard tab, so the per-IP
-  // cap trips on normal use — exempt loopback traffic only (user-approved).
-  skip: (req) => req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1",
-  message: {
-    success: false,
-    message: "Too many requests from this IP, please try again after 15 minutes"
-  }
-});
+// A hop count goes to Express; "cloudflare" is read by resolveClientIp, which puts CF-Connecting-IP on req.ip.
+if (typeof env.TRUST_PROXY === "number") app.set("trust proxy", env.TRUST_PROXY);
+app.use(resolveClientIp);
 
 /**
  * Allow every origin listed in FRONTEND_ORIGIN, plus requests that carry no
@@ -61,11 +49,10 @@ app.use(compression());
 app.use(express.json({ limit: "2mb" }));
 app.use(morgan("dev"));
 
-// Mount API routes with rate limiter
-/* Route-level GET cache for every API response -- see middleware/route-cache.
-   Mounted after the limiter so a cache hit still counts as a request, and
-   before the routes so handlers never see a request the cache can answer. */
-app.use("/api", apiLimiter, routeCache, apiRoutes);
+/* Rate limits around the route-level GET cache (middleware/rate-limit and middleware/route-cache, audit P8-01).
+   The flood ceiling and the write limits run before the cache; the read limit runs after it, so a cache hit is
+   never counted against it. The cache sits before the routes so handlers never see a request it can answer. */
+app.use("/api", ...limitsBeforeCache, routeCache, readLimiterAfterCache, apiRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

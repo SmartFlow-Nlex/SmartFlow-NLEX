@@ -8,7 +8,6 @@ import {
   Bell,
   Bot,
   CalendarClock,
-  CalendarRange,
   ChevronDown,
   EyeOff,
   Filter,
@@ -39,6 +38,9 @@ import {
 import PageHeader from "../../../components/dashboard/PageHeader";
 import { apiFetch } from "../../../lib/api";
 import StateNote from "../../../components/stage/StateNote";
+import { failureText, SERVER_UNREACHABLE } from "../../../lib/server-status";
+import { canWriteOps } from "../../../lib/auth-access";
+import { useServerRole } from "../../../lib/use-server-role";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -82,7 +84,7 @@ const TABS: { key: TabKey; label: string; icon: Icon; blurb: string; sections: S
     sections: [
       { key: "statusSummary", label: "Network status", icon: Activity, blurb: "The live corridor summary at the top of the screen." },
       { key: "segmentForecast", label: "Traffic forecast", icon: Route, blurb: "Pick a route and hour, get a predicted state." },
-      { key: "corridorOutlook", label: "Corridor outlook", icon: CalendarRange, blurb: "The Today / This Week strip." },
+      // "Corridor outlook" left this list on 26 Nov 2026: the app dropped that section on 12 Oct, so the switch did nothing.
       { key: "eventForecasts", label: "Event forecasts", icon: CalendarClock, blurb: "Upcoming events and the surge each is expected to bring." },
       { key: "mlHotspots", label: "ML hotspots", icon: Flame, blurb: "Model-ranked risk locations." },
     ],
@@ -190,6 +192,9 @@ export default function MobileControlPage() {
   const [flash, setFlash] = useState<string | null>(null);
   const [open, setOpen] = useState<TabKey | null>("dashboard");
   const [previewTab, setPreviewTab] = useState<TabKey>("dashboard");
+  /* Saving is for the roles the API allows (lib/auth-access OPS_WRITE_ROLES, 21 Nov 2026); the others see the
+     settings with the switches and advisory editor locked. Until the server has said, the API decides. */
+  const readOnly = !canWriteOps(useServerRole());
 
   /* Which ends of the tab list have content beyond them.
    *
@@ -221,7 +226,7 @@ export default function MobileControlPage() {
       setDraft(body.data as MobileConfig);
       setMeta(body.meta as Meta);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not reach the dashboard API");
+      setError(failureText(e, e instanceof Error ? e.message : SERVER_UNREACHABLE));
     } finally {
       setLoading(false);
     }
@@ -337,12 +342,13 @@ export default function MobileControlPage() {
   // disabled and says why, rather than letting the operator find out from a red
   // banner after pressing Save.
   const blockedReason = useMemo(() => {
+    if (readOnly) return "View only: publishing to the app is for Data Analysts and TCC Operators.";
     if (draft.advisories.some((a) => a.active && a.message.trim().length < MIN_MESSAGE)) {
       return `A published advisory needs at least ${MIN_MESSAGE} characters.`;
     }
     if (!anythingOn) return "Everything is switched off — the app would open to nothing.";
     return null;
-  }, [draft, anythingOn]);
+  }, [draft, anythingOn, readOnly]);
 
   const save = async () => {
     if (blockedReason) return;
@@ -360,10 +366,10 @@ export default function MobileControlPage() {
       setSaved(body.data as MobileConfig);
       setDraft(body.data as MobileConfig);
       setMeta(body.meta as Meta);
-      setFlash("Saved — the app picks this up on its next launch or refresh.");
+      setFlash("Saved — phones running the app show this within about a minute.");
       window.setTimeout(() => setFlash(null), 5000);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Save failed");
+      setError(failureText(e, e instanceof Error ? e.message : "Save failed"));
     } finally {
       setSaving(false);
     }
@@ -394,9 +400,14 @@ export default function MobileControlPage() {
         title="Mobile Control Centre"
         subtitle="What the SmartFlow mobile app shows to travellers"
         actions={
-          <button className="btn-muted" onClick={() => void load()} disabled={loading || saving}>
-            <RotateCcw size={14} aria-hidden="true" /> Reload
-          </button>
+          <>
+            {readOnly && (
+              <span className="pill blue" title="Changing what the app shows is for Data Analysts and TCC Operators.">View only for your role</span>
+            )}
+            <button className="btn-muted" onClick={() => void load()} disabled={loading || saving}>
+              <RotateCcw size={14} aria-hidden="true" /> Reload
+            </button>
+          </>
         }
       />
 
@@ -463,14 +474,16 @@ export default function MobileControlPage() {
               <span>Nothing published. Travellers see only the app&apos;s own notices.</span>
             )}
           </span>
-          <button
-            type="button"
-            className="btn-muted ds-mc-advisory-btn"
-            disabled={loading}
-            onClick={() => setAdvisoryOpen(true)}
-          >
-            Manage
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              className="btn-muted ds-mc-advisory-btn"
+              disabled={loading}
+              onClick={() => setAdvisoryOpen(true)}
+            >
+              Manage
+            </button>
+          )}
         </div>
 
       <div className="ds-mc-grid">
@@ -555,7 +568,7 @@ export default function MobileControlPage() {
                           <button
                             type="button"
                             className="ds-mc-linkbtn"
-                            disabled={loading}
+                            disabled={loading || readOnly}
                             onClick={() => setWholeTab(key, !shown)}
                           >
                             {shown ? "Turn all off" : "Turn all on"}
@@ -577,7 +590,7 @@ export default function MobileControlPage() {
                                   <input
                                     type="checkbox"
                                     checked={Boolean(group[s.key])}
-                                    disabled={loading}
+                                    disabled={loading || readOnly}
                                     onChange={(e) => setSection(key, s.key, e.target.checked)}
                                   />
                                   <span className="ds-switch-track" aria-hidden="true">

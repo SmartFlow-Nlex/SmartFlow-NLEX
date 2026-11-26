@@ -35,6 +35,7 @@ import SectionProgress from "../../components/stage/SectionProgress";
 import Mascot from "../../components/stage/Mascot";
 import LoadingGate from "../../components/dashboard/LoadingGate";
 import IdleGuard from "../../components/dashboard/IdleGuard";
+import ServerWakeNotice from "../../components/dashboard/ServerWakeNotice";
 import { displayNameOf, idleMinutesOf, DEFAULT_IDLE_MINUTES, rememberedEmail } from "../../lib/account-device";
 import NlexEnvironment from "../../components/environment/NlexEnvironment";
 
@@ -412,6 +413,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <>
     {/* Signs out after the account's idle limit, with a minute's warning. */}
     <IdleGuard minutes={idleMinutes} onTimeout={handleIdleTimeout} />
+    {/* "The server may be waking up" while a request to it is slow (lib/server-status.ts). */}
+    <ServerWakeNotice />
     {/* The NLEX environment behind every page, tab and sub-tab. */}
     <NlexEnvironment scene={pathname === "/dashboard" ? "hero" : "page"} />
     <NightCorridorStage variant="dashboard" />

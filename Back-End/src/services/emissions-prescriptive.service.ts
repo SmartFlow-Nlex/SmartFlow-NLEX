@@ -547,7 +547,8 @@ export async function getPrescriptiveStrategies(
       assumptions: [
         "Queueing lasts as long as a lane is blocked (blockage cleared minus the start), not as long as the site takes to clear: an incident that never blocked a lane queues nobody and is not counted.",
         "Idling is the area of the queue triangle, lambda x T^2 / 2: vehicles join while the lane is blocked and drain as it clears. Still quadratic in delay, so the long tail dominates.",
-        "Upper bound: every vehicle arriving during the blockage is treated as stopped until the lane reopens, as if the carriageway were closed. The records do not say how many lanes were blocked, and with one lane blocked some traffic still passes, so the real idling, and the saving, are lower.",
+        // Not an upper bound (system audit 19 Nov 2026, EMI-2): the triangle leaves out queue discharge, which adds to it.
+        "An estimate (full-stop queue), not a bound: every vehicle arriving during the blockage is treated as stopped until the lane reopens, as if the carriageway were closed. The records do not say how many lanes were blocked; with one lane blocked some traffic still passes, which would make the real idling, and the saving, lower, but the time the queue takes to discharge after the lane reopens is left out, which would make them higher.",
         `One incident holds up one carriageway, not the whole corridor: the vehicles queueing are that hour's average flow past a point in one direction (the hour's vehicle-km over the ${CORRIDOR_KM.toFixed(2)} km from Balintawak to Sta. Ines, halved).`,
         floorNote,
         `Idling: ${IDLING_SOURCE} Weighted by each hour's class mix. US figures: none were found for the Philippine fleet.`,

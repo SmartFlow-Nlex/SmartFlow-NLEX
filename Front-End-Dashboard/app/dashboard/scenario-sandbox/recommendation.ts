@@ -32,6 +32,17 @@ export type Supply = {
   anchor: number | null;
 };
 
+/** What is on the stretch in view, so the advice names only levers that exist there (19 Nov 2026 audit S24: "meter the
+ *  on-ramps" was said on stretches with no on-ramp, and "toll/travel lane" whether or not a plaza was in view). */
+export type RoadInView = {
+  /** On-ramps and entry plazas joining inside the window. */
+  onRamps: number;
+  /** Toll plazas and barriers with booths inside the window. */
+  tollPlazas: number;
+  /** veh/h joining from those on-ramps and entry plazas, on top of the mainline inflow. */
+  rampInflowVehPerHour: number;
+};
+
 /* What one open lane carries past a closure, veh/h. MEASURED on this engine at
  * saturating demand, admitted flow after 15 simulated minutes, two seeds each:
  * 1,470 to 1,640 per open lane with 1 or 2 of 2 to 5 lanes closed, against
@@ -59,6 +70,8 @@ export function getRecommendation(
   incidents: number,
   speedLimit: number | null,
   supply: Supply,
+  /** Optional: without it the advice keeps its general wording. */
+  road?: RoadInView,
 ): Recommendation {
   if (!m) return { text: "Warming up the simulation…", tone: "good" };
 
@@ -92,6 +105,15 @@ export function getRecommendation(
     supply.inflowFrom === "operator" && supply.anchor != null
       ? ` at the ${fmt(supply.inflow)} veh/h set here (the data gives ${fmt(supply.anchor)})`
       : "";
+  /* The levers this stretch has. Unknown (no `road`): the general wording. No on-ramp in view: holding traffic back
+     upstream is the lever, not metering. No plaza in view: a travel lane, not a toll lane. */
+  const meter =
+    road && road.onRamps === 0 ? "hold traffic back upstream of the stretch" : "meter the on-ramps";
+  const extraLane =
+    !road ? "an additional toll/travel lane" : road.tollPlazas > 0 ? "an additional toll lane at the plaza" : "an additional travel lane";
+  /* Everything the open lanes must carry: the mainline inflow plus what joins from ramps and plazas in view. The
+     capacity check compared the mainline alone with the open lanes, so a ramp-heavy stretch read as absorbed. */
+  const load = supply.inflow + (road?.rampInflowVehPerHour ?? 0);
 
   if (closed > 0 && open === 0) {
     return say(
@@ -103,7 +125,9 @@ export function getRecommendation(
     return say(
       `An incident is holding back a ${fmt(m.longestQueueM)} m queue and average speed is ${fmt(m.avgSpeedKmh)} km/h` +
         (closed > 0 ? `, with ${closedText} as well` : "") +
-        `. Deploy responders to clear it before the queue spills upstream` +
+        /* Responders are already dispatched to every incident in the simulation, so "deploy responders" told the
+           operator to do what had happened. The lever is how fast the lane is cleared. */
+        `. Clearing the lane sooner is what shortens it: prioritise clearance before the queue spills upstream` +
         (turnedAway ? `; ${fmt(unmet)} veh/h already cannot get on` : "") +
         ".",
       "bad",
@@ -112,8 +136,8 @@ export function getRecommendation(
   if (turnedAway) {
     return say(
       `Demand is beyond what ${open} open ${plural(open, "lane")} can take${asSet}: ${fmt(unmet)} veh/h cannot get on and queue upstream, out of view, so the ${fmt(m.avgSpeedKmh)} km/h shown describes only the traffic that got on. ` +
-        (closed > 0 ? `Reopen the closed ${plural(closed, "lane")} first (${closedText}), then meter` : "Meter") +
-        " the on-ramps and post a diversion advisory upstream.",
+        (closed > 0 ? `Reopen the closed ${plural(closed, "lane")} first (${closedText}), then ${meter}` : `${meter[0].toUpperCase()}${meter.slice(1)}`) +
+        " and post a diversion advisory upstream.",
       "bad",
     );
   }
@@ -127,7 +151,7 @@ export function getRecommendation(
     return say(
       `Congestion is building: ${m.stoppedCount} vehicles stopped, queue ${fmt(m.longestQueueM)} m` +
         (closed > 0 ? `, with ${closedText}. Reopen a lane first, or consider opening` : ". Consider opening") +
-        " an additional toll/travel lane or metering inflow upstream.",
+        ` ${extraLane} or metering inflow upstream.`,
       "warn",
     );
   }
@@ -135,14 +159,14 @@ export function getRecommendation(
     /* The road is absorbing the closure. Said anyway, with what it costs and
        how much room is left, so a quiet road never hides a closed lane. */
     const capacity = open * CLOSURE_LANE_CAPACITY_VEH_H;
-    const use = Math.round((supply.inflow / capacity) * 100);
+    const use = Math.round((load / capacity) * 100);
     const cost = base
       ? speedDrop >= 0.01
         ? `${fmt(m.avgSpeedKmh)} km/h, ${(speedDrop * 100).toFixed(0)}% below the baseline`
         : `${fmt(m.avgSpeedKmh)} km/h, level with the baseline`
       : `${fmt(m.avgSpeedKmh)} km/h`;
     return say(
-      `${closedText[0].toUpperCase()}${closedText.slice(1)}. The ${open} still open carry ${fmt(supply.inflow)} veh/h, about ${use}% of the ~${fmt(capacity)} they can take, at ${cost}. ` +
+      `${closedText[0].toUpperCase()}${closedText.slice(1)}. The ${open} still open carry ${fmt(load)} veh/h${road && road.rampInflowVehPerHour > 0 ? ` (${fmt(road.rampInflowVehPerHour)} of it joining from ramps in view)` : ""}, about ${use}% of the ~${fmt(capacity)} they can take, at ${cost}. ` +
         `The closure is absorbed at this demand; past about ${fmt(capacity)} veh/h it will not be, so keep it out of the peak.`,
       use >= 85 ? "warn" : "good",
     );

@@ -12,6 +12,7 @@
  */
 import { supabase } from "./supabase";
 import { deviceTrustFor } from "./account-device";
+import { isRead, watchSlow, withReadDeadline } from "./server-status";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -50,11 +51,18 @@ export function installBackendAuth(): void {
   const original = window.fetch.bind(window);
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (!token || !url.startsWith(BACKEND)) return original(input, init);
+    if (!url.startsWith(BACKEND)) return original(input, init);
+    /* Every read to the backend gets a deadline and is watched for slowness (21 Nov 2026, audit A9): most pages call
+       fetch or cachedJson directly, so this is the one place all of them pass. Writes and callers with their own
+       signal are left as they were (lib/server-status.ts). */
+    const timed = withReadDeadline(input, init);
+    const read = isRead(input, init);
+    const send = (i?: RequestInit) => (read ? watchSlow(original(input, i)) : original(input, i));
+    if (!token) return send(timed);
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     if (!headers.has("authorization")) headers.set("authorization", `Bearer ${token}`);
     for (const [k, v] of Object.entries(deviceTrustHeader())) if (!headers.has(k)) headers.set(k, v);
-    return original(input, { ...init, headers });
+    return send({ ...timed, headers });
   };
 }
 

@@ -5,27 +5,27 @@
   "description": "SmartFlow NLEX desktop dashboard built with Next.js, TypeScript, and Electron.",
   "main": "electron/main.js",
   "scripts": {
-    "dev": "next dev --turbopack -p 3002",
-    "dev:desktop": "concurrently \"next dev -p 3002\" \"wait-on http://127.0.0.1:3002 && electron .\"",
-    "dev:web": "next dev --turbopack -p 3002",
+    "dev": "next dev --turbopack -H 127.0.0.1 -p 3002",
+    "dev:desktop": "concurrently \"next dev -H 127.0.0.1 -p 3002\" \"wait-on http://127.0.0.1:3002 && electron .\"",
+    "dev:web": "next dev --turbopack -H 127.0.0.1 -p 3002",
     "build": "next build",
-    "dist": "npm run build && electron-builder --win nsis",
-    "start": "npx serve@latest out -l 3002",
-    "start:desktop": "concurrently \"npx serve@latest out -l 3002\" \"wait-on http://127.0.0.1:3002 && electron .\"",
+    "dist": "node scripts/check-desktop-build.cjs env && npm run build && electron-builder --win nsis",
+    "start": "npx serve@14.2.8 out -l tcp://127.0.0.1:3002",
+    "start:desktop": "concurrently \"npx serve@14.2.8 out -l tcp://127.0.0.1:3002\" \"wait-on http://127.0.0.1:3002 && electron .\"",
     "lint": "next lint"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
     "@supabase/supabase-js": "^2.108.2",
     "@tailwindcss/postcss": "^4.2.4",
-    "echarts": "^6.0.0",
+    "echarts": "^6.1.0",
     "echarts-for-react": "^3.0.6",
     "lucide-react": "^1.14.0",
     "mapbox-gl": "^3.23.0",
-    "maplibre-gl": "^5.24.0",
-    "next": "^15.2.4",
+    "maplibre-gl": "^6.19.0",
+    "next": "^15.5.29",
     "pg": "^8.20.0",
-    "postcss": "^8.5.12",
+    "postcss": "^8.5.33",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^3.8.1",
@@ -49,10 +49,15 @@
     "typescript": "^5.8.3",
     "wait-on": "^8.0.3"
   },
+  "overrides": {
+    "next": {
+      "postcss": "^8.5.33"
+    }
+  },
   "build": {
     "appId": "ph.edu.ust.smartflow.nlex",
     "productName": "SmartFlow NLEX",
-    "copyright": "Copyright \u00a9 2026 SmartFlow NLEX",
+    "copyright": "Copyright © 2026 SmartFlow NLEX",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -65,6 +70,7 @@
     "extraMetadata": {
       "main": "electron/main.js"
     },
+    "beforePack": "./scripts/check-desktop-build.cjs",
     "win": {
       "target": [
         {

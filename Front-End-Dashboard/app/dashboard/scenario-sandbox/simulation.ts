@@ -197,10 +197,16 @@ export type Vehicle = {
   shoulderWait?: number;
   /** Until when (sim time) this driver accepts a shortened headway behind a car that just merged in front of it. */
   relaxUntil?: number;
+  /** When a driver merging out of a closing lane last nosed in in front of this one: its turn to go on, see ZIP_TURN_S. */
+  letInAt?: number;
   /* On its way into a scene that has not happened yet (crashAt): which, its place in it (0 stops first; each after it
    * runs into the one ahead, `ahead`), and how it is going. Until the moment it happens it drives as everyone does,
    * which is what lets the event be seen coming. */
   doom?: { readonly scene: CrashScene; readonly order: number; readonly ahead: Vehicle | null; readonly spin: number; brakeFromV?: number; hitAt?: number; stoppedFor: number };
+  /** Where on the stretch this vehicle's trip began, m: 0 for one that came in at the entrance (or was on the road
+   *  when the run began), the ramp's or plaza's merge point for one that joined part-way. Only a trip from 0 to the
+   *  far end is a full crossing of the stretch, and only those make up avgTravelTimeS (audit S12). */
+  tripFrom?: number;
   /** Wrecks, and a vehicle skidding into one: which way the body points now, radians off the lane, easing to restAngle. */
   yaw?: number;
   /** Wrecks: how the canvas draws it. */
@@ -265,7 +271,14 @@ export type Interventions = {
    * empty when absent, so a run with one of each behaves exactly as it always did. */
   closures?: readonly LaneClosure[];
   speedZones?: readonly SpeedZone[];
+  /* Rain over the whole stretch, or null / absent when it is dry. Not a speed limit: a factor on every driver's own
+   * desired speed and one on the time headway every driver keeps, whatever the class (desiredSpeed, headwayOf). The
+   * factors come from RAIN_EFFECT in scenarios/assumptions.ts, for a rain event or a flood's rain. */
+  weather?: Weather | null;
 };
+
+/** What rain does to the drivers: desired speed x v0Factor (< 1), time headway x headwayFactor (> 1). */
+export type Weather = { readonly v0Factor: number; readonly headwayFactor: number };
 
 /** One lane closure: which lanes (engine index), from where to where along the stretch (metres). */
 export type LaneClosure = { readonly lanes: readonly boolean[]; readonly from: number; readonly to: number };
@@ -274,13 +287,31 @@ export type SpeedZone = { readonly from: number; readonly to: number; readonly k
 
 export type Metrics = {
   activeAgents: number;
+  /** Ordinary traffic on the stretch (no wrecks, no responders): the vehicles avgSpeedKmh is the mean over, and the
+   *  weight a corridor speed needs (bothMetrics.ts: traffic-weighted, Σq/Σk). */
+  trafficCount: number;
   avgSpeedKmh: number;
-  throughputPerMin: number; // vehicles completing the segment, extrapolated
+  /** Trips served per minute, rolling 60 s: vehicles leaving at the far end PLUS vehicles leaving at a ramp or plaza.
+   *  That has always been its meaning; the two parts are throughPerMin and exitedPerMin. */
+  throughputPerMin: number;
+  /** Vehicles leaving at the far end of the stretch per minute, rolling 60 s ("through"). */
+  throughPerMin: number;
+  /** Vehicles leaving at a ramp or a plaza per minute, rolling 60 s (a stop at a service area is not a departure). */
+  exitedPerMin: number;
   densityPerKmLane: number;
   stoppedCount: number;
   longestQueueM: number;
-  co2RatePerMin: number; // kg CO2 / minute (current)
-  avgTravelTimeS: number; // of recently completed vehicles
+  /** kg CO2 / minute, now: co2OnRoadPerMin + co2UpstreamPerMin. Until 19 Nov 2026 it was the on-road part alone,
+   *  so a closure that turned traffic away read as a CO2 saving (audit S17). */
+  co2RatePerMin: number;
+  /** kg CO2 / minute emitted on the stretch and in its plazas (last 5 s): distance x class factor + idling x idle rate. */
+  co2OnRoadPerMin: number;
+  /** kg CO2 / minute idled by the demand held upstream (unmet vehicles still waiting x the fleet's idle rate). */
+  co2UpstreamPerMin: number;
+  /** Mean travel time of recent FULL crossings (in at the entrance, out at the far end), last 40. Until 19 Nov 2026 it
+   *  also averaged in trips that joined or left part-way, so a turn share moved it with no change in congestion. */
+  avgTravelTimeS: number;
+  /** Trips served (through + exited) in the rolling window. */
   completed: number;
   elapsedS: number; // simulated seconds since this run began
   /** False until the warm-up has elapsed; statistics before that are not
@@ -294,8 +325,21 @@ export type Metrics = {
    * traffic on it is the traffic that fitted. Measured at 3,000 veh/h/lane of
    * demand the road read 78 km/h while a quarter of the vehicles never got on.
    * Reporting this is the difference between "the road is fine" and "the road
-   * is fine because we left a quarter of the demand at the door". */
+   * is fine because we left a quarter of the demand at the door".
+   *
+   * All of it since 19 Nov 2026: the entrance, the on-ramps and the entry plazas' local roads. It was the entrance
+   * alone, so ramp-heavy stretches read healthier than they were (audit S3). The two parts follow. */
   unmetVehPerHour: number;
+  /** Unmet demand at the entrance of the stretch alone, veh/h (what unmetVehPerHour meant before 19 Nov 2026). */
+  unmetMainlineVehPerHour: number;
+  /** Unmet demand on the on-ramps and the entry plazas' local roads, veh/h: arrivals that could not get on. */
+  unmetFromRampsVehPerHour: number;
+  /** Exits, since the warm-up, over the traffic that reached them on the carriageway: the share their turning
+   *  fractions ask for, and the share that actually left there (0-1; null with no exit or nobody at one yet). */
+  exitShareConfigured: number | null;
+  exitShareDelivered: number | null;
+  /** Of the drivers bound for an exit who got to it, the share who missed it (not in the outer lane in time). */
+  exitMissedShare: number | null;
 };
 
 export type SimConfig = {
@@ -309,8 +353,12 @@ export type SimConfig = {
    *  but they are NOT the corridor's numbers: they have Class 3 at 950 g/km
    *  against the 798 in nlex_emission_factors, and the fleet at 78/16/6
    *  against an observed 78.1/13.5/8.4. Supplying this makes the sandbox agree
-   *  with the Emissions dashboard instead of quietly contradicting it. */
-  classProfile?: Partial<Record<VehicleClass, { co2PerM?: number; share?: number }>>;
+   *  with the Emissions dashboard instead of quietly contradicting it.
+   *
+   *  `idleKgPerMin` is the CO2 one vehicle of the class burns per minute standing with its engine running (kg). The
+   *  defaults in CLASS are the backend's IDLING_KG_PER_MINUTE (Argonne / US EPA, see CO2_MODEL in
+   *  scenarios/assumptions.ts); the page passes the served values through here so the two cannot drift apart. */
+  classProfile?: Partial<Record<VehicleClass, { co2PerM?: number; share?: number; idleKgPerMin?: number }>>;
   /* How long to let the road fill before statistics mean anything.
    *
    * A run starts with an empty carriageway, so for the first minute or so
@@ -332,6 +380,9 @@ export type SimConfig = {
   secondaryIncidents?: boolean;
   /** Override the calibrated hazard. Only for sensitivity work. */
   secondaryPerIncidentMinute?: number;
+  /** The corridor's measured secondary-incident base rate (gold.ml_incident_severity_metadata.base_rate), if the
+   *  caller has the served value; the hazard is derived from it. Defaults to 0.11325 (model of 15 Nov 2026). */
+  secondaryBaseRate?: number;
   /* Toll plazas and service areas with real geometry. Where one is given, its
    * movement is NOT also listed in `ramps`: a facility's diverge is added to
    * the exit list here, and its arrivals come off its own approach road. */
@@ -375,10 +426,16 @@ export type RampSpec = {
 //             so they cluster tighter around their cruising speed than cars do.
 //   keepRight extra pull towards the outer lane, on top of LANE_DISCIPLINE (m/s²): heavy vehicles are expected to
 //             stay out of the overtaking lanes, and do so more than a car that merely prefers to.
+//   idleKgPerMin  CO2 burned standing still with the engine running, kg per vehicle-minute. NOT the engine's own
+//             numbers: the backend's IDLING_KG_PER_MINUTE (Back-End/src/services/emissions-source.ts), copied here so
+//             the sandbox runs standalone — Argonne's idle fuel burn (0.3 gal/h for a car, 0.8 for Class 2, 1 for a
+//             big truck) times US EPA's CO2 per gallon (8,887 g gasoline for Class 1, 10,180 g diesel for 2 and 3).
+//             Until 19 Nov 2026 idling was "six metres a second" of the moving factor, which nobody had measured and
+//             came out 1.6-1.8 times the Emissions module's figure. See CO2_MODEL in scenarios/assumptions.ts.
 const CLASS = {
-  1: { v0: 30, len: 4.6, co2PerM: 0.16, color: "#3e67ef", share: 0.78, lcSec: 1.1, aF: 1.0, tF: 1.0, v0Sd: 0.1, keepRight: 0 }, // light — blue
-  2: { v0: 25, len: 9, co2PerM: 0.55, color: "#1f9d57", share: 0.16, lcSec: 1.9, aF: 0.75, tF: 1.15, v0Sd: 0.08, keepRight: 0.25 }, // medium — green
-  3: { v0: 22, len: 14, co2PerM: 0.95, color: "#9b5de5", share: 0.06, lcSec: 2.7, aF: 0.45, tF: 1.35, v0Sd: 0.06, keepRight: 0.5 }, // heavy — purple
+  1: { v0: 30, len: 4.6, co2PerM: 0.16, color: "#3e67ef", share: 0.78, lcSec: 1.1, aF: 1.0, tF: 1.0, v0Sd: 0.1, keepRight: 0, idleKgPerMin: (0.3 * 8.887) / 60 }, // light — blue
+  2: { v0: 25, len: 9, co2PerM: 0.55, color: "#1f9d57", share: 0.16, lcSec: 1.9, aF: 0.75, tF: 1.15, v0Sd: 0.08, keepRight: 0.25, idleKgPerMin: (0.8 * 10.18) / 60 }, // medium — green
+  3: { v0: 22, len: 14, co2PerM: 0.95, color: "#9b5de5", share: 0.06, lcSec: 2.7, aF: 0.45, tF: 1.35, v0Sd: 0.06, keepRight: 0.5, idleKgPerMin: (1 * 10.18) / 60 }, // heavy — purple
 } as const;
 
 // Driver profile modifiers: time headway T, desired-speed factor, politeness.
@@ -418,6 +475,11 @@ const B_COMF = 2.0; // comfortable decel m/s^2
 const S0 = 2.5; // minimum bumper gap m
 const DELTA = 4;
 const INCIDENT_LENGTH = 5; // a stalled vehicle occupies ~5 m of lane
+/** How far ahead a driver reads a lower speed limit, m, and the braking it takes before they start slowing for it,
+ *  m/s² (zoneBrake). Over 300 m a car at 108 km/h gets down to 40 at 1.3 m/s², well inside B_COMF. Modelling
+ *  choices, not measured figures. */
+const ZONE_LOOK_M = 300;
+const ZONE_BRAKE_START = 0.8;
 
 /* Scenes made of the traffic (crashAt). */
 /** How far upstream the first vehicle of a scene may be picked from, m. */
@@ -460,6 +522,10 @@ const LC_BIAS_ESCAPE = 3.0; // strong pull to leave a lane that's blocked ahead
  * collision.
  */
 const MERGE_ZONE_M = 150; // over what distance the urgency ramps to 1
+/** A driver out of patience this close to the taper of its closing lane is let in (findYields), m. */
+const MERGE_YIELD_AT_M = 12;
+/** After letting a merging driver in, how long a driver goes on before it gives way to the next one, s. */
+const ZIP_TURN_S = 5;
 /* How much a driver eases off approaching a lane drop in a NEIGHBOURING lane.
  *
  * A closure does not only affect the lane that is shut. Drivers in the open
@@ -563,22 +629,39 @@ const FORCE_TTC_SEC = 1.2;
 /* Secondary-incident hazard, per primary incident per minute.
  *
  * NOT invented. gold.ml_incident_severity_metadata holds this corridor's own
- * measured figure: base_rate 0.11511 over n = 4,361 incidents — 11.5% of NLEX
- * incidents are followed by another within 2 km (secondary_km_radius) — and
- * silver.nlex_accident_events_clean gives a 22.8-minute mean clearance. A
- * constant hazard that reproduces 11.5% over a 22.8-minute exposure is
+ * measured figure — base_rate 0.11325 over n = 4,265 incidents, in the model
+ * trained 15 Nov 2026 and copied here 19 Nov 2026 (it was 0.11511 over n = 4,361
+ * before that retrain): 11.3% of NLEX incidents are followed by another within
+ * 2 km (secondary_km_radius). silver.nlex_accident_events_clean gives a
+ * 22.8-minute mean clearance. A constant hazard that reproduces the base rate
+ * over a 22.8-minute exposure is
  *
- *     lambda = -ln(1 - 0.11511) / 22.8 = 0.00536 per minute
+ *     lambda = -ln(1 - 0.11325) / 22.8 = 0.00527 per minute
  *
- * so a scenario of average length generates a secondary 11.5% of the time,
+ * so a scenario of average length generates a secondary 11.3% of the time,
  * which is what the corridor does. Longer incidents generate more, which is
  * also what the corridor does, and is the reason clearance time is worth
- * optimising twice over. */
-const SECONDARY_PER_INCIDENT_MINUTE = 0.00536;
+ * optimising twice over. The rate is hand-copied, so a caller holding the
+ * served metadata passes it as SimConfig.secondaryBaseRate instead. */
+const SECONDARY_BASE_RATE = 0.11325;
+const SECONDARY_MEAN_CLEARANCE_MIN = 22.8;
+/** The constant hazard that gives `baseRate` over the mean clearance. */
+function secondaryHazardPerMinute(baseRate: number): number {
+  return -Math.log(1 - Math.min(0.99, Math.max(0, baseRate))) / SECONDARY_MEAN_CLEARANCE_MIN;
+}
+const SECONDARY_PER_INCIDENT_MINUTE = secondaryHazardPerMinute(SECONDARY_BASE_RATE);
 /** Observed radius the base rate was measured over (secondary_km_radius = 2 km). */
 const SECONDARY_RADIUS_M = 2000;
 
 const MIN_CLEARANCE = 0.5; // m
+
+/** Below this a vehicle is standing, engine running: it burns its class's idle rate (emit). ~2 km/h. */
+const IDLE_SPEED = 0.5; // m/s
+
+/** A vehicle part-way out of a lane keeps this much clear of the tail ahead of it there (m), and brakes for it only
+ *  once that takes more than STRADDLE_BRAKE_FROM (m/s²); see idmAccel. */
+const STRADDLE_CLEAR_M = 1.0;
+const STRADDLE_BRAKE_FROM = 0.3;
 
 /* Base perception-reaction time. The traffic-psychology range for an expected
  * event (the car ahead's brake lights) is roughly 0.6-1.5 s; 0.9 s sits in the
@@ -601,6 +684,16 @@ const RAMP_JOIN_SPEED = 16;
 /** How far ahead of their exit a driver starts working towards the outside
  *  lane. 400 m is about the point the advance sign appears. */
 const EXIT_APPROACH_M = 650;
+/* ...for a driver one lane from the exit lane. Each further lane to cross starts them this much earlier.
+ *
+ * One approach for everyone meant a driver three lanes out had the same 650 m to cross three lanes as one beside the
+ * exit lane had to cross one, and at 1,500 veh/h/lane 39-41% of drivers bound for an exit 1 km in missed it (audit
+ * S2, 19 Nov 2026). Real drivers bound for a junction move across lane by lane from the first advance sign, a
+ * kilometre or two out. A modelling choice, sized so that the probe's miss share falls under a tenth. */
+const EXIT_PER_LANE_M = 400;
+/** An arrival bound for an exit waits up to this long at the entrance for room in a lane that can still reach it,
+ *  before taking whatever lane has room (see the entrance in step()). */
+const EXIT_ENTRY_WAIT_S = 3;
 
 /** Pull towards the exit lane for a vehicle that is leaving soon. Scaled by
  *  how close the exit is, so it grows from a preference into a necessity. */
@@ -648,6 +741,23 @@ const EXIT_CAUTION = 0.7;
  * in it.
  */
 const HEAVY_MIN_LANE = 1;
+
+/* Free-road acceleration: IDM below the desired speed, the improved IDM's branch above it.
+ *
+ * IDM's free term a(1 - (v/v0)^4) is meant for v <= v0. Above it, it grows with the fourth power of the overshoot: a
+ * car at 108 km/h entering a 40 km/h zone was asked for about -73 m/s², clipped to -8, which is an emergency stop at the
+ * sign. Probed (audit S8, 19 Nov 2026): hard braking in the 150 m round a zone's start went from 16 with no zone to
+ * 271 at 60 km/h and 791 at 40. The improved IDM (Treiber & Kesting, Traffic Flow Dynamics, 2013, section 11.3.4)
+ * slows a driver above their desired speed at no more than the comfortable deceleration b:
+ *
+ *     v > v0:  a_free = -b (1 - (v0 / v)^(a delta / b))
+ *
+ * which is continuous with IDM at v = v0, so nothing changes for anyone at or below their desired speed. */
+function freeRoadAccel(aMax: number, v: number, v0: number): number {
+  const vf = Math.max(1, v0);
+  if (v <= vf) return aMax * (1 - Math.pow(v / vf, DELTA));
+  return -B_COMF * (1 - Math.pow(vf / v, (aMax * DELTA) / B_COMF));
+}
 
 /** May this class travel in this lane? */
 function laneAllowsClass(vClass: VehicleClass, lane: number): boolean {
@@ -755,7 +865,7 @@ function varyColor(hex: string, r: number): string {
 }
 
 /** Who is waiting to enter the road: their class, temperament, the traits drawn for them and where they are headed, fixed once. */
-type Arrival = { vClass: VehicleClass; profile: DriverProfile; d: ReturnType<typeof makeDriver>; exitAtX: number | null };
+type Arrival = { vClass: VehicleClass; profile: DriverProfile; d: ReturnType<typeof makeDriver>; exitAtX: number | null; since?: number };
 
 function mulberry32(seed: number) {
   let a = seed >>> 0;
@@ -782,8 +892,9 @@ export class TrafficSim {
   private sceneSeq = 0;
   /** The incidents that are obstacles this step: one whose vehicles are still on their way to it is not there yet. */
   private liveIncidents: Interventions["incidents"] = [];
-  /** Responders waiting to come across into a lane this step: the traffic coming up in it holds back and lets them in. */
-  private yieldTo: { lane: number; x: number; len: number }[] = [];
+  /** Responders waiting to come across into a lane this step: the traffic coming up in it holds back and lets them in.
+   *  `merge`: a driver at a taper out of patience, let in the same way (findYields) but taking turns (ZIP_TURN_S). */
+  private yieldTo: { lane: number; x: number; len: number; merge?: boolean }[] = [];
   interventions: Interventions;
   time = 0;
   private rng: () => number;
@@ -822,6 +933,12 @@ export class TrafficSim {
     this.laneIndex = Array.from({ length: lanes }, () => [] as Vehicle[]);
     for (const v of this.vehicles) {
       if (v.lane >= 0 && v.lane < lanes) this.laneIndex[v.lane].push(v);
+      /* A vehicle part-way across a line is still in the lane it is leaving as well (occupiesLane), and it is listed
+       * in that lane's row too. Listed only under `lane`, it was invisible to everything that reads the index: the
+       * car behind it in the lane it was leaving closed up on a tail it could not see, and a driver deciding to change
+       * INTO that lane measured its room ahead past it. The overlap pass at the end of the step does see straddlers,
+       * and shoved the newcomer back to clear them — up to 22 m in one 0.05 s tick (audit S9, 19 Nov 2026). */
+      if (v.laneShift < 1 && v.laneFrom !== v.lane && Number.isInteger(v.laneFrom) && v.laneFrom >= 0 && v.laneFrom < lanes) this.laneIndex[v.laneFrom].push(v);
     }
     /* A vehicle on a taper is half off the carriageway, but the half that is
      * still on it is in the outer lane, and the car behind has to see it. Putting
@@ -866,9 +983,43 @@ export class TrafficSim {
     for (let i = lo - 1; i >= 0; i--) if (row[i] !== exclude) return row[i];
     return null;
   }
-  private completedTimes: number[] = []; // travel times, rolling
-  private completedInWindow: number[] = []; // completion timestamps, rolling
+
+  /** Last vehicle before x that belongs to `lane` — passing over one only sliding out of it, which the index lists
+   *  there too. For picking who comes next into a scene, which was always chosen from the lane's own traffic. */
+  private settledBefore(lane: number, x: number, exclude?: Vehicle): Vehicle | null {
+    let o = this.lastBefore(lane, x, exclude);
+    while (o && o.lane !== lane) o = this.lastBefore(lane, o.x, o);
+    return o;
+  }
+
+  /* Keep the index true within a step. It is rebuilt once per step, so a vehicle that started across a line, or came
+   * onto the road, earlier in this step was not yet in the lane it is now in: two drivers could pick the same gap in
+   * the same tick, or change into a lane with a car just spawned in it, and the overlap pass then pushed one back. */
+  private indexInsert(lane: number, v: Vehicle) {
+    const row = this.laneIndex[lane];
+    if (!row || row.includes(v)) return;
+    let lo = 0;
+    let hi = row.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (row[mid].x < v.x) lo = mid + 1;
+      else hi = mid;
+    }
+    row.splice(lo, 0, v);
+  }
+
+  /** Start across into `to`: drawn from where it is, in both lanes until the slide ends, and in `to`'s row from now. */
+  private beginLaneChange(v: Vehicle, to: number, cooldown: number) {
+    v.laneFrom = visualLane(v);
+    v.laneShift = 0;
+    v.lane = to;
+    v.laneCooldown = cooldown;
+    this.indexInsert(to, v);
+  }
+  private completedInWindow: number[] = []; // completion timestamps (through and exited), rolling
   private co2Window: { t: number; g: number }[] = [];
+  /** Grams emitted so far this step, by everyone on the stretch and in its plazas; one co2Window entry per step. */
+  private co2Step = 0;
   private readonly warmupS: number;
   /** Ramps, sorted by position so a vehicle's exit can be picked in one pass. */
   private readonly ramps: RampSpec[];
@@ -878,18 +1029,34 @@ export class TrafficSim {
   /** Vehicles asked for, and vehicles actually let on, since the warm-up. */
   private demanded = 0;
   private admitted = 0;
+  /* The same for the on-ramps, and for the entry plazas' local roads (counted by the facility layer, read as the
+   * difference from where it stood when the warm-up ended). Only the entrance was counted, so a ramp that delivered
+   * 38 of 100 vehicles in ten minutes showed no unmet demand at all (audit S3, 19 Nov 2026). */
+  private rampDemanded = 0;
+  private rampAdmitted = 0;
+  private plazaAt0 = { demanded: 0, admitted: 0 };
+  /* Exits: for each ramp, the traffic that reached it on the carriageway, the drivers who left there, and the drivers
+   * bound for it who were not in the outer lane when they got there and so carried on (audit S2). Since the warm-up. */
+  private exitPassed: number[] = [];
+  private exitTaken: number[] = [];
+  private exitMissed: number[] = [];
+  /** Recent full crossings of the stretch: entrance to far end. Their travel times make avgTravelTimeS. */
+  private throughTimes: number[] = [];
+  /** Timestamps of recent completions at the far end, and of recent departures at a ramp or plaza (rolling 60 s). */
+  private throughInWindow: number[] = [];
+  private exitedInWindow: number[] = [];
 
   /** Class kinematics for THIS run: the defaults, with any warehouse values
    *  laid over them. Shares are renormalised so a partial override cannot make
    *  pickClass fall off the end of the distribution. */
-  private readonly cls: Record<VehicleClass, { v0: number; len: number; co2PerM: number; color: string; share: number }>;
+  private readonly cls: Record<VehicleClass, { v0: number; len: number; co2PerM: number; color: string; share: number; idleKgPerMin: number }>;
 
   constructor(cfg: SimConfig, interventions?: Partial<Interventions>) {
     this.cfg = cfg;
     {
       const base = { 1: { ...CLASS[1] }, 2: { ...CLASS[2] }, 3: { ...CLASS[3] } } as Record<
         VehicleClass,
-        { v0: number; len: number; co2PerM: number; color: string; share: number }
+        { v0: number; len: number; co2PerM: number; color: string; share: number; idleKgPerMin: number }
       >;
       const over = cfg.classProfile;
       if (over) {
@@ -898,6 +1065,7 @@ export class TrafficSim {
           if (!o) continue;
           if (typeof o.co2PerM === "number" && o.co2PerM > 0) base[k].co2PerM = o.co2PerM;
           if (typeof o.share === "number" && o.share >= 0) base[k].share = o.share;
+          if (typeof o.idleKgPerMin === "number" && Number.isFinite(o.idleKgPerMin) && o.idleKgPerMin >= 0) base[k].idleKgPerMin = o.idleKgPerMin;
         }
         const sum = base[1].share + base[2].share + base[3].share;
         if (sum > 0) for (const k of [1, 2, 3] as VehicleClass[]) base[k].share /= sum;
@@ -919,6 +1087,9 @@ export class TrafficSim {
     // the vehicle; unsorted, a vehicle could be assigned an exit behind it.
     this.ramps = [...(cfg.ramps ?? []), ...facilityExits].sort((a, b) => a.x - b.x);
     this.rampAccumulator = this.ramps.map(() => 0);
+    this.exitPassed = this.ramps.map(() => 0);
+    this.exitTaken = this.ramps.map(() => 0);
+    this.exitMissed = this.ramps.map(() => 0);
     this.rng = mulberry32(cfg.seed);
     this.interventions = {
       closedLanes: Array(cfg.laneCount).fill(false),
@@ -975,10 +1146,7 @@ export class TrafficSim {
       pastEnd: (v, from) => {
         // Back on the expressway beyond the stretch after a stop for fuel: that
         // trip went through it. An arrival off a local road never drove it.
-        if (from.spec.kind === "service_area" && v.role === "traffic") {
-          this.completedTimes.push(this.time - v.spawnTime);
-          this.completedInWindow.push(this.time);
-        }
+        if (from.spec.kind === "service_area" && v.role === "traffic") this.recordTrip(v, true);
       },
       emit: (v, dist, dt) => this.emit(v, dist, dt),
     };
@@ -1011,7 +1179,7 @@ export class TrafficSim {
     if (behind) {
       const g = x - v.length - behind.x;
       if (g < room) return false;
-      if (this.idmAccelAgainst(behind, x, v.v, v.length, behind.T * RELAX_MIN) < -bSafe) return false;
+      if (this.idmAccelAgainst(behind, x, v.v, v.length, behind.T * this.headwayWeather * RELAX_MIN) < -bSafe) return false;
     }
     return true;
   }
@@ -1067,6 +1235,7 @@ export class TrafficSim {
     v.reactTimer = 0;
     if (from.spec.kind === "entry_ramp") {
       v.spawnTime = this.time;
+      v.tripFrom = x; // joined part-way: not a full crossing of the stretch
       v.exitAtX = this.pickExit(x);
     } else if (from.spec.kind === "service_area") {
       v.spawnTime += inside;
@@ -1368,7 +1537,8 @@ export class TrafficSim {
      * drawn through it. Every residual overlap in the diagnostic was this
      * one case. The gap that matters is bumper to bumper. */
     const gapAhead = lead ? lead.x - lead.length : Infinity;
-    if (gapAhead < S0 + enterV * d.T) return false;
+    // The headway they will keep here: longer in rain, which is most of what rain takes off a lane's capacity.
+    if (gapAhead < S0 + enterV * d.T * this.headwayWeather) return false;
 
     this.vehicles.push({
       id: this.nextId++,
@@ -1398,7 +1568,10 @@ export class TrafficSim {
       laneShift: 1,
       color: varyColor(c.color, this.rng()),
       role: "traffic",
+      tripFrom: 0,
     });
+    // Seen by every decision later in this step (indexInsert): a driver beside the entrance must not change into it.
+    this.indexInsert(lane, this.vehicles[this.vehicles.length - 1]);
     return true;
   }
 
@@ -1437,16 +1610,54 @@ export class TrafficSim {
     return cap;
   }
 
+  /** The weather's factors on desired speed and following headway (1 and 1 when it is dry). */
+  private get v0Weather(): number {
+    const w = this.interventions.weather;
+    return w && w.v0Factor > 0 ? w.v0Factor : 1;
+  }
+  private get headwayWeather(): number {
+    const w = this.interventions.weather;
+    return w && w.headwayFactor > 0 ? w.headwayFactor : 1;
+  }
+
   // Desired speed at a position, honouring every speed-limit zone it is in.
+  /* In rain every driver's own desired speed is scaled by the weather's factor (Interventions.weather), whatever the
+   * class. It used to be a speed limit of 100 or 96 km/h over the whole road, which only reached the Class 1 drivers
+   * who wanted more than that: buses (90) and trucks (79) never noticed the rain at all (audit S7). */
   private desiredSpeed(v: Vehicle): number {
     const cap = this.speedCapAt(v.x);
-    let v0 = v.v0;
+    let v0 = v.v0 * this.v0Weather;
     if (cap != null) {
       v0 = Math.min(v0, cap / 3.6);
     }
     v0 *= this.mergeCaution(v);
     v0 *= this.exitCaution(v);
     return v0;
+  }
+
+  /* Seeing the sign: slowing for a lower limit ahead so as to arrive at it at the limit, not after.
+   *
+   * A desired speed only knows the limit where the driver IS, so a limit took effect at the sign itself, all at once.
+   * A driver who can see it coming starts to slow while there is road to do it gently: once reaching the limit at the
+   * sign takes ZONE_BRAKE_START, they brake at whatever constant rate gets them there, never harder than the
+   * comfortable deceleration B_COMF. Arriving too fast anyway (a zone set right in front of them), the rest is shed
+   * inside it on the improved-IDM branch (freeRoadAccel). Infinity when no lower limit is coming up. */
+  private zoneBrake(v: Vehicle): number {
+    const { speedLimitKmh, speedZone, speedZones } = this.interventions;
+    if (speedLimitKmh == null && (speedZones === undefined || speedZones.length === 0)) return Infinity;
+    let a = Infinity;
+    const want = v.v0 * this.v0Weather;
+    const consider = (from: number, kmh: number) => {
+      const d = from - v.x;
+      if (d <= 0 || d > ZONE_LOOK_M) return;
+      const target = Math.min(kmh / 3.6, want);
+      if (v.v <= target) return;
+      const need = (v.v * v.v - target * target) / (2 * d);
+      if (need >= ZONE_BRAKE_START) a = Math.min(a, -Math.min(B_COMF, need));
+    };
+    if (speedLimitKmh != null) consider(speedZone[0], speedLimitKmh);
+    for (const z of speedZones ?? []) consider(z.from, z.kmh);
+    return a;
   }
 
   /** Speed factor for a driver running out of road before their exit.
@@ -1529,7 +1740,12 @@ export class TrafficSim {
     /* A responder waiting to come across into this lane: the traffic coming up behind the gap holds back for it, as
        drivers do for the lights. Without this an ambulance stood beside a stream of cars that never left it a gap. */
     if (v.role === "traffic" && !v.doom) {
+      const myTurn = v.letInAt !== undefined && this.time - v.letInAt < ZIP_TURN_S;
       for (const y of this.yieldTo) {
+        if (y.merge && myTurn) continue;
+        /* Letting a merging driver in: only a driver who can still stop short of the gap gently holds back. One
+         * moving too fast for that goes on by, and the next driver lets it in, as at a real zipper. */
+        if (y.merge && y.x - y.len - 1.5 - (v.v * v.v) / (2 * B_COMF) <= v.x) continue;
         if (y.lane === lane && y.x - y.len - 1.5 > v.x && y.x < bestX) {
           bestX = y.x;
           leadV = 0;
@@ -1554,10 +1770,13 @@ export class TrafficSim {
   }
 
   /** This driver's time headway now: shortened just after someone merged in front of them, easing back. */
+  /* In rain the gap every driver keeps is longer by the weather's headway factor — rain's main effect on a motorway,
+   * and the one that takes capacity away; see RAIN_EFFECT in scenarios/assumptions.ts. */
   private headwayOf(v: Vehicle): number {
-    if (v.relaxUntil == null || this.time >= v.relaxUntil) return v.T;
+    const T = v.T * this.headwayWeather;
+    if (v.relaxUntil == null || this.time >= v.relaxUntil) return T;
     const done = 1 - (v.relaxUntil - this.time) / RELAX_S;
-    return v.T * (RELAX_MIN + (1 - RELAX_MIN) * Math.max(0, done));
+    return T * (RELAX_MIN + (1 - RELAX_MIN) * Math.max(0, done));
   }
 
   private idmAccel(v: Vehicle, lane: number): number {
@@ -1565,12 +1784,31 @@ export class TrafficSim {
     // collapsed nine hundred drivers into nine behaviours no matter what was
     // stored on the vehicle.
     const v0 = this.desiredSpeed(v);
-    const free = v.aMax * (1 - Math.pow(v.v / Math.max(1, v0), DELTA));
+    const free = Math.min(freeRoadAccel(v.aMax, v.v, v0), this.zoneBrake(v));
     const lead = this.leaderAhead(v, lane);
-    if (!lead) return free;
-    const sStar = S0 + Math.max(0, v.v * this.headwayOf(v) + (v.v * lead.dv) / (2 * Math.sqrt(v.aMax * B_COMF)));
-    const interaction = -v.aMax * Math.pow(sStar / lead.gap, 2);
-    return free + interaction;
+    const T = this.headwayOf(v);
+    let a = lead ? free - v.aMax * Math.pow(this.desiredGap(v, lead.dv, T) / lead.gap, 2) : free;
+    /* Still across the line out of its old lane: the vehicle in front THERE is in its way as well. Following only
+     * the new lane, it drove into the tail of the car ahead in the old one and the overlap pass shoved it back, up
+     * to 22 m in one tick (audit S9). It is not FOLLOWING that car — it is pulling out past it, usually because it was
+     * close behind it — so no headway is kept to it, which would brake every overtake as it began: only the braking
+     * that stops it short of that tail, if it is closing on it. Only real vehicles count in the old lane; its nose is
+     * already over the line, so a taper or a stalled obstacle there is behind the part of it that matters. */
+    if (lane === v.lane && v.laneShift < 1 && v.laneFrom !== v.lane && Number.isInteger(v.laneFrom) && v.laneFrom >= 0 && v.laneFrom < this.cfg.laneCount) {
+      const o = this.firstAfter(v.laneFrom, v.x, v);
+      const closing = o ? v.v - o.v : 0;
+      if (o && closing > 0) {
+        const room = o.x - o.length - v.x - STRADDLE_CLEAR_M;
+        const need = room <= 0.05 ? 8 : (closing * closing) / (2 * room);
+        if (need > STRADDLE_BRAKE_FROM) a = Math.min(a, -need);
+      }
+    }
+    return a;
+  }
+
+  /** IDM's desired bumper gap s* for `v` closing at `dv` with time headway T. */
+  private desiredGap(v: Vehicle, dv: number, T: number): number {
+    return S0 + Math.max(0, v.v * T + (v.v * dv) / (2 * Math.sqrt(v.aMax * B_COMF)));
   }
 
   // Would merging a vehicle of `length` at front-position `x` land it on top of
@@ -1626,6 +1864,29 @@ export class TrafficSim {
       if (v.role !== "responder" || v.departing || v.holdAtX == null || v.parkLane == null || v.parkLane >= this.cfg.laneCount) continue;
       if (v.x >= v.holdAtX - 16) this.yieldTo.push({ lane: outer, x: v.x, len: v.length });
     }
+    /* A driver at the head of a closing lane who has run out of patience (stuckFor > patience) is let in the same way:
+     * the traffic coming up behind it in the lane it is moving to holds back and leaves it the gap, as drivers at a
+     * real zipper do. Without it a long vehicle at the taper could wait for most of a closure: with the middle two of
+     * four lanes shut at 4,000 veh/h one stood 229 s at the taper (audit S1), and once the edge lane of a two-lane
+     * closure could get out at all, its trucks had to cross a second closing lane packed nose to tail and a bus stood
+     * 378 s waiting for the 16 m it needed (lanes 3 and 4 shut at 6,000 veh/h). The car that has just let someone in
+     * takes its turn to go on before it gives way again (ZIP_TURN_S), so the open lane is not starved instead. Toward
+     * the nearest lane open past the closure: through a lane that closes there too, if that is the way out. */
+    if (this.closureList().length === 0) return;
+    for (const v of this.vehicles) {
+      if (v.role !== "traffic" || v.doom || v.laneShift < 1 || v.v >= CREEP_SPEED || v.stuckFor <= v.patience) continue;
+      const c = this.nextClosureIn(v.lane, v.x);
+      if (c === null || c.from - v.x > MERGE_YIELD_AT_M) continue;
+      // The head of its lane's queue only: one at a time is let in, the next when it is at the front.
+      const ahead = this.firstAfter(v.lane, v.x, v);
+      if (ahead !== null && ahead.x - ahead.length < c.from) continue;
+      let open = -1;
+      for (let d = 1; d < this.cfg.laneCount && open < 0; d++) {
+        for (const l of [v.lane - d, v.lane + d]) if (open < 0 && l >= 0 && l < this.cfg.laneCount && !this.laneBlockedFor(l, v.x)) open = l;
+      }
+      if (open < 0) continue;
+      this.yieldTo.push({ lane: v.lane + Math.sign(open - v.lane), x: v.x, len: v.length, merge: true });
+    }
   }
 
   /** Room for `v` in `lane` with its nose at x: nobody in the way, and whoever is behind has room to stop for it. */
@@ -1676,10 +1937,7 @@ export class TrafficSim {
     if (v.lane === target) return;
     const to = v.lane + Math.sign(target - v.lane);
     if (!this.roomFor(v, to, v.x)) return;
-    v.laneFrom = visualLane(v);
-    v.laneShift = 0;
-    v.lane = to;
-    v.laneCooldown = v.lcSec + 0.2;
+    this.beginLaneChange(v, to, v.lcSec + 0.2);
   }
 
   // MOBIL-ish lane change: pick the neighbouring lane that is safe and offers a
@@ -1699,24 +1957,14 @@ export class TrafficSim {
     if (v.role === "responder" && !v.departing && v.facTarget && v.exitAtX != null && v.stillSince == null) {
       if (v.lane !== this.exitLane && v.laneShift >= 1 && v.laneCooldown <= 0) {
         const to = v.lane + Math.sign(this.exitLane - v.lane);
-        if (this.roomFor(v, to, v.x)) {
-          v.laneFrom = visualLane(v);
-          v.laneShift = 0;
-          v.lane = to;
-          v.laneCooldown = v.lcSec + 0.2;
-        }
+        if (this.roomFor(v, to, v.x)) this.beginLaneChange(v, to, v.lcSec + 0.2);
       }
       return;
     }
     if (v.doom) {
       // Brought in from the next lane: it moves across behind the others first.
       const want = v.doom.scene.lane;
-      if (v.lane !== want && v.laneShift >= 1 && v.laneCooldown <= 0 && this.roomFor(v, want, v.x)) {
-        v.laneFrom = visualLane(v);
-        v.laneShift = 0;
-        v.lane = want;
-        v.laneCooldown = v.lcSec + LC_SETTLE_SEC;
-      }
+      if (v.lane !== want && v.laneShift >= 1 && v.laneCooldown <= 0 && this.roomFor(v, want, v.x)) this.beginLaneChange(v, want, v.lcSec + LC_SETTLE_SEC);
       return;
     }
     if (v.role === "responder" && !v.departing && v.parkLane != null) {
@@ -1757,12 +2005,35 @@ export class TrafficSim {
      * shut 300 m on), and without it a car behind the first waited for ever. With a single closure it never
      * applies — every lane one closure shuts, it shuts at the same point — so that behaviour, and the capacity
      * measured on it, are unchanged. Inside a closed stretch a lane is never a way round. */
-    const blockedFor = (lane: number) => {
+    const shut = (lane: number) => {
       if (!this.laneBlockedFor(lane, v.x)) return false;
       if (this.closedHere(lane, v.x) || closing === null) return true;
       const next = this.nextClosureIn(lane, v.x);
       return !(next !== null && next.from > closing.from);
     };
+    /* ...and, while this vehicle must get out, a lane that is shut too but lies on its way to the nearest lane it
+     * may use: two lanes closed at the same point with one of them at the edge of the road ([T,T,F,F], [F,F,T,T]).
+     * The edge lane's only neighbour closes where it does, so it counted as blocked, nothing in the edge lane could
+     * ever leave it, and it stood as a parked column back to the entrance for as long as the closure lasted — the
+     * longest wait probed was 563 s of 600 (audit S1, 19 Nov 2026). The lanes beyond are the way out, as for a
+     * driver at real roadworks: across the closing lane next to you and on into the open one. Only toward the
+     * nearest usable lane (both ways if two are equally near), and for a shut lane ahead of this vehicle only one
+     * that closes where its own does or later, never sooner. */
+    let wayOut: number[] = [];
+    if (mustEscape) {
+      for (let d = 1; d < this.cfg.laneCount && wayOut.length === 0; d++) {
+        wayOut = [v.lane - d, v.lane + d].filter((l) => l >= 0 && l < this.cfg.laneCount && !shut(l));
+      }
+    }
+    const onTheWayOut = (lane: number) => {
+      const dir = Math.sign(lane - v.lane);
+      if (!wayOut.some((w) => Math.sign(w - v.lane) === dir && Math.abs(w - v.lane) > 1)) return false;
+      if (trapped || closing === null) return true;
+      if (this.closedHere(lane, v.x)) return false;
+      const next = this.nextClosureIn(lane, v.x);
+      return next !== null && next.from >= closing.from;
+    };
+    const blockedFor = (lane: number) => shut(lane) && !onTheWayOut(lane);
     let candidates = [v.lane - 1, v.lane + 1].filter(
       (l) => l >= 0 && l < this.cfg.laneCount && !blockedFor(l),
     );
@@ -1819,10 +2090,14 @@ export class TrafficSim {
      * whoever happened to be in the outer lane already, and the weaving that
      * makes interchanges the real bottleneck on this corridor would never
      * appear. */
+    /* Each lane still to cross gets its own EXIT_APPROACH_M, the furthest first: the road this lane change has is
+     * what is left once the later ones have had EXIT_PER_LANE_M each. One lane from the exit lane that is exactly the
+     * old rule. */
     const toExit = v.exitAtX != null ? v.exitAtX - v.x : Infinity;
-    const exiting = toExit <= EXIT_APPROACH_M;
+    const forThisLane = toExit - Math.max(0, this.exitLane - v.lane - 1) * EXIT_PER_LANE_M;
+    const exiting = forThisLane <= EXIT_APPROACH_M;
     const exitUrgency = exiting
-      ? Math.max(0, Math.min(1, 1 - toExit / EXIT_APPROACH_M))
+      ? Math.max(0, Math.min(1, 1 - forThisLane / EXIT_APPROACH_M))
       : 0;
     /* Pressure in the last stretch before a ramp.
      *
@@ -1839,7 +2114,7 @@ export class TrafficSim {
         : 0;
     const bSafeEff = B_SAFE + Math.max(urgency, exitPressure) * (B_SAFE_FORCED - B_SAFE);
     const plazaAhead = this.fac.list.length > 0 ? this.fac.barrierAhead(v.x, PLAZA_LOOK_M) : null;
-    let best: { lane: number; gain: number } | null = null;
+    let best: { lane: number; gain: number; relax: Vehicle | null | undefined; letIn: Vehicle | null } | null = null;
     for (const lane of candidates) {
       // never change lanes onto (or right up against) an accident
       if (this.incidentTooCloseInLane(lane, v.x, v.length)) continue;
@@ -1849,6 +2124,15 @@ export class TrafficSim {
       if (follower?.doom) continue;
       const lead = this.firstAfter(lane, v.x, v);
       const roomAhead = lead ? lead.x - v.x - lead.length : Infinity;
+      /* Working across for an exit, inside this lane's approach, where the move is no longer optional: judged the
+       * way a merge from an acceleration lane is (facilityJoinSafe). The driver
+       * cut in front of accepts a short headway and drops back over RELAX_S, and so does the one cutting in behind its
+       * new leader. Judged at full headway, no gap in a busy outer lane ever passed — the space between two cars at
+       * capacity is one headway, and halving it looked like an emergency stop to both of them — so drivers one lane
+       * out rode beside the exit lane for a kilometre and missed the ramp (audit S2). Both still have to stop within
+       * B_SAFE at the relaxed headway, so this buys a zipper, not a cut-in. */
+      const exitMove = exiting && lane > v.lane;
+      const relaxedT = (who: Vehicle) => who.T * this.headwayWeather * RELAX_MIN;
       /* Gap between this vehicle's rear and the follower's nose.
        *
        * This subtracted the FOLLOWER's length instead of the merging
@@ -1906,6 +2190,10 @@ export class TrafficSim {
        * full 14 m artic inside another vehicle. A gain term is not a substitute
        * for asking whether the car fits. */
       if (roomAhead < (creeping || forcing ? CREEP_GAP : S0)) continue;
+      /* Taking turns at the zipper: the driver who has just let one in goes on before it lets in the next. Without
+       * it the merging lane, which checks for a gap four times as often (SCAN_ALERT_FACTOR), took every gap that
+       * opened in front of the same car, and that car stood at the taper for the length of the closure. */
+      if ((creeping || forcing) && follower && follower.letInAt !== undefined && this.time - follower.letInAt < ZIP_TURN_S) continue;
       /* What the move costs the driver being cut in front of.
        *
        * MOBIL's defining term, and it was missing: `politeness` was defined on
@@ -1919,8 +2207,11 @@ export class TrafficSim {
        * 0.85 they hold station rather than force someone to lift off. */
       let courtesy = 0;
       if (follower) {
-        if (gapBehind < S0) continue;
-        const followerAccel = this.idmAccelAgainst(follower, v.x, v.v, v.length);
+        /* At crawling pace, physical room behind as well as ahead (CREEP_GAP): a driver letting it in has stopped a
+         * car length back, not a full S0. Asking S0 of a queue standing nose to tail left a driver at the taper with
+         * 1.6 m behind it for ever. */
+        if (gapBehind < (creeping ? CREEP_GAP : S0)) continue;
+        const followerAccel = this.idmAccelAgainst(follower, v.x, v.v, v.length, exitMove ? relaxedT(follower) : undefined);
         if (!creeping && !forcing && followerAccel < -bSafeEff) continue;
         /* Politeness applies to a DISCRETIONARY change only.
          *
@@ -1968,7 +2259,7 @@ export class TrafficSim {
        * queues. Each lane feeds only the booths in front of it, and without
        * this the outer lanes — which carry the most traffic — saturated their
        * booths while the inner ones stood idle: twelve booths cleared 3,100
-       * veh/h where the operator's rate says 4,200. Choosing the shortest
+       * veh/h where the assumed booth rate (ASSUMPTIONS.PAY_BOOTH_VEH_PER_HOUR) says 4,200. Choosing the shortest
        * queue on the approach is what drivers at a plaza do. */
       if (plazaAhead && lane !== v.lane) {
         const here = this.fac.laneQueue(plazaAhead, v.lane);
@@ -1994,10 +2285,15 @@ export class TrafficSim {
        *
        * A driver about to miss their exit is not weighing acceleration. They
        * take the gap if it exists, and the cost of arriving in a slower lane
-       * does not enter into it. Physical room is still required. */
+       * does not enter into it. Physical room is still required.
+       *
+       * Not only in the final 125 m and not only into the exit lane itself: inside each lane's approach every move
+       * toward the exit is taken on the gap alone (exitMove, judged at a relaxed headway), the follower's safety limit
+       * still applying (the veto above) and now the mover's own as well. Held to the last stretch, a driver one lane
+       * out found the busy outer lane worse by IDM's reckoning on every glance for most of a kilometre and was still
+       * beside it at the ramp: 21 of 44 such drivers missed it at 1,500 veh/h/lane (audit S2). */
       if (
-        exitPressure > 0.5 &&
-        lane === this.exitLane &&
+        ((exitPressure > 0.5 && lane === this.exitLane) || (exitMove && (!lead || this.idmAccelAgainst(v, lead.x, lead.v, lead.length, relaxedT(v)) >= -B_SAFE))) &&
         roomAhead >= S0 &&
         gapBehind >= S0
       ) {
@@ -2007,40 +2303,49 @@ export class TrafficSim {
        * rule to avoid blocking the road. Charged for it, so that whenever a
        * permitted lane will also have it, the permitted lane wins. */
       if (!laneAllowsClass(v.vClass, lane)) gain -= RESTRICTED_LANE_PENALTY;
-      if (gain > LC_THRESHOLD && (!best || gain > best.gain)) best = { lane, gain };
+      if (gain > LC_THRESHOLD && (!best || gain > best.gain)) best = { lane, gain, relax: exitMove ? follower : undefined, letIn: mustEscape ? follower : null };
     }
     if (best) {
       // Start the slide from wherever the sprite currently is, not from the
       // lane being left. They are the same thing for a settled vehicle, and
       // differ only if a change is somehow accepted mid-manoeuvre — in which
       // case continuing from the drawn position is what avoids a jump.
-      v.laneFrom = visualLane(v);
-      v.laneShift = 0;
-      v.lane = best.lane;
-      v.laneCooldown = v.lcSec + LC_SETTLE_SEC;
+      this.beginLaneChange(v, best.lane, v.lcSec + LC_SETTLE_SEC);
+      // Out of a closing lane in front of someone: it is their turn next (ZIP_TURN_S).
+      if (best.letIn) best.letIn.letInAt = this.time;
+      // Into a short gap for an exit: both ends of it ease back to their own headway rather than braking for it now.
+      if (best.relax !== undefined) {
+        v.relaxUntil = this.time + RELAX_S;
+        if (best.relax) best.relax.relaxUntil = this.time + RELAX_S;
+      }
     }
   }
 
   // IDM accel of `f` if a vehicle were at position `leadX` moving `leadV`.
   private idmAccelAgainst(f: Vehicle, leadX: number, leadV: number, leadLen: number, T = this.headwayOf(f)): number {
     const v0 = this.desiredSpeed(f);
-    const free = f.aMax * (1 - Math.pow(f.v / Math.max(1, v0), DELTA));
+    const free = Math.min(freeRoadAccel(f.aMax, f.v, v0), this.zoneBrake(f));
     const gap = Math.max(0.1, leadX - f.x - leadLen);
-    const dv = f.v - leadV;
-    const sStar = S0 + Math.max(0, f.v * T + (f.v * dv) / (2 * Math.sqrt(f.aMax * B_COMF)));
-    return free - f.aMax * Math.pow(sStar / gap, 2);
+    return free - f.aMax * Math.pow(this.desiredGap(f, f.v - leadV, T) / gap, 2);
   }
 
+  /* CO2: the Emissions module's model, so the two can be compared (CO2_MODEL in scenarios/assumptions.ts).
+   *
+   *   distance driven x the class's factor (g/m, EMEP/EEA through fleet-profile)
+   * + time standing with the engine running x the class's idle rate (kg/min, Argonne / US EPA)
+   *
+   * Until 19 Nov 2026 this also multiplied the per-metre factor by up to 2.2 below 30 km/h, and charged a stopped
+   * vehicle "six metres a second" of its moving factor. Neither had a source; the second made a queue's CO2 1.6-1.8
+   * times what the Emissions dashboard says for the same idling. The factors carry no speed term there, and they carry
+   * none here: congestion costs CO2 only through the time vehicles spend standing in it. */
   private emit(v: Vehicle, dist: number, dt: number) {
-    const base = this.cls[v.vClass].co2PerM;
-    const vKmh = v.v * 3.6;
-    // congestion penalty: crawling burns far more per metre; idling still emits
-    const congestion = 1 + Math.max(0, (30 - vKmh) / 30) * 1.2;
-    const moving = base * dist * congestion;
-    const idle = v.v < 0.5 ? this.cls[v.vClass].co2PerM * 6 * dt : 0; // g while stopped
+    const c = this.cls[v.vClass];
+    const moving = c.co2PerM * dist;
+    const idle = v.v < IDLE_SPEED ? ((c.idleKgPerMin * 1000) / 60) * dt : 0; // g while standing
     const g = moving + idle;
     v.co2 += g;
-    this.co2Window.push({ t: this.time, g });
+    // Summed over the step and kept as one entry: a row per vehicle per tick was 36,000 rows to filter every step.
+    this.co2Step += g;
   }
 
   // Nearest impassable point ahead of `fromX` in a lane: the rear of a stalled
@@ -2092,6 +2397,8 @@ export class TrafficSim {
       const r = this.ramps[i];
       if (r.onVehPerHour <= 0) continue;
       this.rampAccumulator[i] += (r.onVehPerHour / 3600) * dt;
+      // Demand, whether or not it gets on: what the queue on the ramp cannot hold is unmet demand (metrics).
+      this.rampDemanded += (r.onVehPerHour / 3600) * dt;
       while (this.rampAccumulator[i] >= 1) {
         this.rampAccumulator[i] -= 1;
         const lane = this.exitLane;
@@ -2102,11 +2409,12 @@ export class TrafficSim {
 
         /* Scanned live, not through the lane index, for the same reason the
          * mainline spawn is: the index is a step old and several joins can
-         * happen inside one step. */
+         * happen inside one step. By what is physically in the lane
+         * (occupiesLane): a car still sliding out of it is still in the way. */
         let ahead: Vehicle | null = null;
         let behind: Vehicle | null = null;
         for (const other of this.vehicles) {
-          if (other.lane !== lane) continue;
+          if (!occupiesLane(other, lane)) continue;
           if (other.x >= r.x) { if (!ahead || other.x < ahead.x) ahead = other; }
           else if (!behind || other.x > behind.x) behind = other;
         }
@@ -2120,11 +2428,12 @@ export class TrafficSim {
          * waits on the ramp — and its place in the queue is KEPT rather than
          * discarded, which is what was quietly losing 40% of every ramp's
          * configured volume. */
-        const needAhead = c.len + S0 + joinV * d.T;
+        const needAhead = c.len + S0 + joinV * d.T * this.headwayWeather;
         const needBehind = behind ? S0 + behind.v * 0.8 : S0;
         if ((ahead && ahead.x - ahead.length - r.x < needAhead - c.len) ||
             (behind && r.x - c.len - behind.x < needBehind)) {
           this.rampPendingArrival[i] = arrival; // waits on the ramp as who it is
+          // At most MAX_ENTRY_QUEUE wait; the rest never get on, and are in rampDemanded but never in rampAdmitted.
           this.rampAccumulator[i] = Math.min(this.rampAccumulator[i] + 1, MAX_ENTRY_QUEUE);
           break;
         }
@@ -2139,7 +2448,10 @@ export class TrafficSim {
           laneCooldown: 0, laneFrom: lane, laneShift: 1,
           color: varyColor(c.color, this.rng()),
           role: "traffic",
+          tripFrom: r.x,
         });
+        this.rampAdmitted++;
+        this.indexInsert(lane, this.vehicles[this.vehicles.length - 1]);
       }
     }
   }
@@ -2155,7 +2467,9 @@ export class TrafficSim {
     this.vehicles = this.vehicles.filter((v) => {
       if (v.exitAtX == null || v.x < v.exitAtX) return true;
       if (v.lane !== this.exitLane) {
-        // Missed it. Carry on to the next one they can reach, or run through.
+        // Missed it. Carry on to the next one they can reach, or run through. Counted, so a ramp that drains less
+        // than its share says so (exitStats) instead of being quietly made up by a later exit.
+        if (v.role === "traffic") this.countExit(v.exitAtX, "missed");
         v.exitAtX = this.pickExit(v.x);
         return true;
       }
@@ -2175,17 +2489,79 @@ export class TrafficSim {
         v.heldAtGore = false;
         // A trip on the expressway ends here — unless it is a stop for fuel,
         // after which the same trip carries on.
-        if (f.spec.kind !== "service_area" && v.role === "traffic") {
-          this.completedTimes.push(this.time - v.spawnTime);
-          this.completedInWindow.push(this.time);
+        if (v.role === "traffic") {
+          this.countExit(v.exitAtX, "taken");
+          if (f.spec.kind !== "service_area") this.recordTrip(v, false);
         }
         this.fac.take(f, v, f.divergePath, ahead, { w: visualLane(v) - (this.cfg.laneCount - 1), shift: v.laneShift });
         return false;
       }
-      this.completedTimes.push(this.time - v.spawnTime);
-      this.completedInWindow.push(this.time);
+      if (v.role === "traffic") {
+        this.countExit(v.exitAtX, "taken");
+        this.recordTrip(v, false);
+      }
       return false;
     });
+  }
+
+  /* Who has reached each ramp on the carriageway: the denominator of the share it actually drains. Kept as a cursor
+   * per vehicle (the next ramp ahead of it) rather than a crossing test on each move, so a vehicle held back by a
+   * clamp or by the overlap pass is never counted twice, and one that joined at a ramp does not pass its own. */
+  private rampCursor = new WeakMap<Vehicle, number>();
+  private countPassings() {
+    const R = this.ramps;
+    for (const v of this.vehicles) {
+      if (v.role !== "traffic") continue;
+      let i = this.rampCursor.get(v);
+      if (i === undefined) {
+        // First seen (after its first move): the ramps behind it, and the one it came on at, were never its to pass.
+        i = 0;
+        while (i < R.length && R[i].x <= v.x) i++;
+      }
+      while (i < R.length && v.x >= R[i].x) {
+        this.exitPassed[i]++;
+        i++;
+      }
+      this.rampCursor.set(v, i);
+    }
+  }
+
+  /** Per exit: the share of passing traffic configured to leave there, the share that did, and the drivers bound for
+   *  it who missed it (not in the outer lane when they got there). Since the warm-up. */
+  exitStats(): { name: string; x: number; configuredShare: number; deliveredShare: number | null; passed: number; taken: number; missed: number }[] {
+    const out: { name: string; x: number; configuredShare: number; deliveredShare: number | null; passed: number; taken: number; missed: number }[] = [];
+    this.ramps.forEach((r, i) => {
+      if (!(r.offFraction > 0)) return;
+      const passed = this.exitPassed[i];
+      out.push({ name: r.name, x: r.x, configuredShare: r.offFraction, deliveredShare: passed > 0 ? this.exitTaken[i] / passed : null, passed, taken: this.exitTaken[i], missed: this.exitMissed[i] });
+    });
+    return out;
+  }
+
+  /** Which ramp is at x (ramps are listed by position), for the exit tallies. */
+  private rampIndexAt(x: number): number {
+    for (let i = 0; i < this.ramps.length; i++) if (Math.abs(this.ramps[i].x - x) < 1e-6) return i;
+    return -1;
+  }
+  private countExit(x: number, what: "taken" | "missed") {
+    const i = this.rampIndexAt(x);
+    if (i < 0) return;
+    if (what === "taken") this.exitTaken[i]++;
+    else this.exitMissed[i]++;
+  }
+
+  /* A trip served. `through`: off the far end of the stretch; otherwise off at a ramp or a plaza. throughputPerMin
+   * has always counted both (trips served); they are now also counted apart, and only a full crossing — in at the
+   * entrance, out at the far end — goes into the travel time, so a turn share no longer moves "travel time" by
+   * mixing short trips in with long ones (audit S12). */
+  private recordTrip(v: Vehicle, through: boolean) {
+    this.completedInWindow.push(this.time);
+    if (!through) {
+      this.exitedInWindow.push(this.time);
+      return;
+    }
+    this.throughInWindow.push(this.time);
+    if ((v.tripFrom ?? 0) <= 1) this.throughTimes.push(this.time - v.spawnTime);
   }
 
   /* A barrier plaza takes EVERY lane. Whoever reaches its fan-in goes into the
@@ -2224,7 +2600,9 @@ export class TrafficSim {
    * Returns the incidents it created, so the caller can surface them. */
   private maybeSecondary(dt: number): { lane: number; x: number }[] {
     if (!this.cfg.secondaryIncidents) return [];
-    const perMin = this.cfg.secondaryPerIncidentMinute ?? SECONDARY_PER_INCIDENT_MINUTE;
+    const perMin =
+      this.cfg.secondaryPerIncidentMinute ??
+      (typeof this.cfg.secondaryBaseRate === "number" && Number.isFinite(this.cfg.secondaryBaseRate) ? secondaryHazardPerMinute(this.cfg.secondaryBaseRate) : SECONDARY_PER_INCIDENT_MINUTE);
     if (perMin <= 0) return [];
 
     const primaries = this.interventions.incidents.filter((i) => !i.secondary);
@@ -2428,7 +2806,7 @@ export class TrafficSim {
       const last = s.members[s.members.length - 1];
       if (last.onShoulder) break;
       const rear = last.x - last.length;
-      let next = this.lastBefore(s.lane, rear, last);
+      let next = this.settledBefore(s.lane, rear, last);
       if (next && (!this.canJoinScene(next, s.lane) || rear - next.x > SCENE_FOLLOW_M)) next = null;
       /* Nobody coming in its own lane for a few seconds (light traffic, or the lane already emptying ahead of the
          closure): the next one comes from the lane beside it, far enough back to move across first. */
@@ -2436,7 +2814,7 @@ export class TrafficSim {
         let best: Vehicle | null = null;
         for (const l of [s.lane - 1, s.lane + 1]) {
           if (l < 0 || l >= this.cfg.laneCount) continue;
-          const c = this.lastBefore(l, rear - 40);
+          const c = this.settledBefore(l, rear - 40);
           if (c && this.canJoinScene(c, l) && rear - c.x <= SCENE_FOLLOW_M && (!best || c.x > best.x)) best = c;
         }
         next = best;
@@ -2962,10 +3340,18 @@ export class TrafficSim {
      * first warm reading is built only from warm data. */
     if (before < this.warmupS && this.time >= this.warmupS) {
       this.completedInWindow = [];
-      this.completedTimes = [];
+      this.throughInWindow = [];
+      this.exitedInWindow = [];
+      this.throughTimes = [];
       this.co2Window = [];
       this.demanded = 0;
       this.admitted = 0;
+      this.rampDemanded = 0;
+      this.rampAdmitted = 0;
+      this.plazaAt0 = this.fac.localArrivals();
+      this.exitPassed.fill(0);
+      this.exitTaken.fill(0);
+      this.exitMissed.fill(0);
     }
     // Every lookup below reads this; it must reflect the positions the
     // decisions are made against, so it is built before any of them.
@@ -2984,7 +3370,7 @@ export class TrafficSim {
        * surplus is not traffic waiting to enter but demand the segment cannot serve, and is counted as such (it is
        * in `demanded` and never in `admitted`) rather than stored — left uncapped the queue reached 978 vehicles
        * in a 10-minute run, a phantom that nothing rendered and that would have flooded the road when demand eased. */
-      if (this.waiting.length < MAX_ENTRY_QUEUE) this.waiting.push(this.newArrival(0));
+      if (this.waiting.length < MAX_ENTRY_QUEUE) this.waiting.push({ ...this.newArrival(0), since: this.time });
     }
     /* Whoever fits goes in, in order of arrival. One that does not fit does not hold up the rest: they are in
      * different lanes, and a truck waiting for a long gap in one lane says nothing about a car that fits in
@@ -3038,9 +3424,29 @@ export class TrafficSim {
       let placed = false;
       /* Someone leaving soon joins towards the outside; everyone else takes
        * whichever lane the shuffle offers. The shuffle above still applies
-       * within each group, so no single lane is favoured. */
-      if (exitAtX != null && exitAtX < EXIT_APPROACH_M * 1.5) legal.sort((a, b) => b - a);
-      for (const lane of legal) {
+       * within each group, so no single lane is favoured.
+       *
+       * "Soon" is per lane: a lane is in reach if the exit is at least the approach that lane needs away (one
+       * EXIT_APPROACH_M, plus EXIT_PER_LANE_M for each lane further out than the one next to the exit lane). They
+       * join in any lane in reach, in the shuffled order, and only failing all of those in the rest, outermost first.
+       * It used to be all lanes at random unless the exit was within 975 m, so drivers bound for an exit 1 km in
+       * started three lanes away from it as often as next to it (audit S2). A trip has been on the expressway before
+       * the stretch begins, and a driver bound for the next junction has been moving across for it. */
+      let tryLanes = legal;
+      if (exitAtX != null) {
+        const inReach = (l: number) => exitAtX >= EXIT_APPROACH_M + Math.max(0, this.exitLane - l - 1) * EXIT_PER_LANE_M;
+        // Stable sort: lanes in reach keep their shuffled order, ahead of the rest (those outermost first).
+        legal.sort((a, b) => Number(inReach(b)) - Number(inReach(a)) || (inReach(a) ? 0 : b - a));
+        /* And for a few seconds only those: a driver lined up for the junction waits for room in their lane rather
+         * than joining three lanes away from it, which is where the misses came from (most drivers who missed had
+         * been put in an inner lane because the outer ones were full at that instant). Not for long, so a full
+         * outer lane cannot hold up the entrance queue behind it. */
+        // An exit too close for any lane's approach: the two lanes nearest it are the best there is.
+        let reach = legal.filter(inReach);
+        if (reach.length === 0) reach = legal.filter((l) => l >= this.exitLane - 1);
+        if (reach.length > 0 && this.time - (arrival.since ?? this.time) < EXIT_ENTRY_WAIT_S) tryLanes = reach;
+      }
+      for (const lane of tryLanes) {
         if (this.spawn(lane, arrival, exitAtX)) { placed = true; break; }
       }
       if (placed) {
@@ -3062,6 +3468,8 @@ export class TrafficSim {
     // Lane-change decisions (before motion, using current state).
     for (const v of this.vehicles) {
       v.laneCooldown = Math.max(0, v.laneCooldown - dt);
+      // A shortened headway that has eased back in full is over (canJoinScene reads it as "still settling in").
+      if (v.relaxUntil != null && this.time >= v.relaxUntil) v.relaxUntil = undefined;
       // Advance any slide already running before this step can start a new one,
       // so a manoeuvre always gets its full crossing time on screen.
       if (v.laneShift < 1) v.laneShift = Math.min(1, v.laneShift + dt / v.lcSec);
@@ -3287,7 +3695,8 @@ export class TrafficSim {
     // A shunt in the queue behind an existing incident, if one is due.
     this.maybeSecondary(dt);
 
-    // Vehicles peeling off at their interchange.
+    // Vehicles peeling off at their interchange: first who has reached each one, for the share it drains.
+    if (this.ramps.length > 0) this.countPassings();
     this.takeExits();
 
     // Into the booths at a barrier plaza.
@@ -3301,19 +3710,22 @@ export class TrafficSim {
            drives off the end is not a road user the corridor served, and a
            wreck never gets there at all — counting either would inflate
            throughput with vehicles the scenario itself put on the road. */
-        if (v.role === "traffic") {
-          this.completedTimes.push(this.time - v.spawnTime);
-          this.completedInWindow.push(this.time);
-        }
+        if (v.role === "traffic") this.recordTrip(v, true);
       } else remaining.push(v);
     }
     this.vehicles = remaining;
 
+    // This step's CO2, all of it, as one entry (see emit).
+    this.co2Window.push({ t: this.time, g: this.co2Step });
+    this.co2Step = 0;
+
     // Trim rolling windows (keep ~60 s / last 40 completions).
     const cutoff = this.time - 60;
     this.completedInWindow = this.completedInWindow.filter((t) => t >= cutoff);
+    this.throughInWindow = this.throughInWindow.filter((t) => t >= cutoff);
+    this.exitedInWindow = this.exitedInWindow.filter((t) => t >= cutoff);
     this.co2Window = this.co2Window.filter((e) => e.t >= this.time - 5);
-    if (this.completedTimes.length > 40) this.completedTimes = this.completedTimes.slice(-40);
+    if (this.throughTimes.length > 40) this.throughTimes = this.throughTimes.slice(-40);
   }
 
   metrics(): Metrics {
@@ -3362,24 +3774,59 @@ export class TrafficSim {
     const throughput = this.completedInWindow.length / windowSpanMin;
     const co2g = this.co2Window.reduce((s, e) => s + e.g, 0);
     const co2Span = Math.min(5, Math.max(0.5, since));
-    const co2RatePerMin = (co2g / co2Span) * 60 / 1000; // kg/min
-    const avgTT = this.completedTimes.length
-      ? this.completedTimes.reduce((s, t) => s + t, 0) / this.completedTimes.length
+    const co2OnRoad = (co2g / co2Span) * 60 / 1000; // kg/min
+    const avgTT = this.throughTimes.length
+      ? this.throughTimes.reduce((s, t) => s + t, 0) / this.throughTimes.length
       : 0;
+
+    /* Demand that did not get on, at the entrance and at the ramps and entry plazas, since the warm-up. A vehicle
+     * waiting at the entrance or on a ramp is in it until it gets on, and so is one that never will. */
+    const plaza = this.fac.list.length > 0 ? this.fac.localArrivals() : this.plazaAt0;
+    const heldMain = Math.max(0, this.demanded - this.admitted);
+    const heldRamps = Math.max(0, this.rampDemanded - this.rampAdmitted) + Math.max(0, plaza.demanded - this.plazaAt0.demanded - (plaza.admitted - this.plazaAt0.admitted));
+    /* The CO2 of the traffic held upstream (audit S17). It is not on the stretch, so the on-road figure never saw it:
+     * a closure that turned demand away LOWERED the CO2 rate against the baseline, because the vehicles it kept off
+     * the road were idling out of view. Each vehicle still waiting to get on is idling, at the run's fleet mix, which
+     * is the same thing the Emissions module charges an incident queue: vehicle-minutes of delay times the idle rate.
+     * Counted from the warm-up, like unmet demand, so in a run the road can carry it is a handful at the entrance. */
+    const idleMix = ([1, 2, 3] as VehicleClass[]).reduce((s, k) => s + this.cls[k].share * this.cls[k].idleKgPerMin, 0);
+    const co2Upstream = (heldMain + heldRamps) * idleMix;
+
+    let passed = 0;
+    let taken = 0;
+    let missed = 0;
+    let configured = 0;
+    this.ramps.forEach((r, i) => {
+      if (!(r.offFraction > 0)) return;
+      passed += this.exitPassed[i];
+      taken += this.exitTaken[i];
+      missed += this.exitMissed[i];
+      configured += this.exitPassed[i] * r.offFraction;
+    });
 
     return {
       activeAgents: n,
+      trafficCount: nt,
       avgSpeedKmh: avgV * 3.6,
       throughputPerMin: throughput,
+      throughPerMin: this.throughInWindow.length / windowSpanMin,
+      exitedPerMin: this.exitedInWindow.length / windowSpanMin,
       densityPerKmLane: (nt / (this.cfg.length / 1000)) / this.cfg.laneCount,
       stoppedCount: stopped,
       longestQueueM: longestQueue,
-      co2RatePerMin,
+      co2RatePerMin: co2OnRoad + co2Upstream,
+      co2OnRoadPerMin: co2OnRoad,
+      co2UpstreamPerMin: co2Upstream,
       avgTravelTimeS: avgTT,
       completed: this.completedInWindow.length,
       elapsedS: this.time,
       warm,
-      unmetVehPerHour: Math.max(0, (this.demanded - this.admitted) / since) * 3600,
+      unmetVehPerHour: ((heldMain + heldRamps) / since) * 3600,
+      unmetMainlineVehPerHour: (heldMain / since) * 3600,
+      unmetFromRampsVehPerHour: (heldRamps / since) * 3600,
+      exitShareConfigured: passed > 0 ? configured / passed : null,
+      exitShareDelivered: passed > 0 ? taken / passed : null,
+      exitMissedShare: taken + missed > 0 ? missed / (taken + missed) : null,
     };
   }
 }

@@ -10,6 +10,8 @@
 import { planFromModelOutput, promptFor, rangesInWords, type Action, type SandboxContext } from "../src/services/sandbox-command.service.js";
 import { sandboxTestContext } from "./sandbox-command-context.js";
 import { kmPost } from "../src/lib/km-post.js";
+import { SandboxCommandSchema } from "../src/validators/ai-sandbox.validator.js";
+import { maskPersonalDetails } from "../src/lib/pii.js";
 
 let checks = 0;
 const failures: string[] = [];
@@ -343,6 +345,39 @@ const show = (p: { actions: readonly Action[]; warnings: readonly string[] }) =>
   check("all lanes: an exception named is respected (all lanes except lane 1 stays 2, 3, 4)", lanesOf(except) === "NB:2,3,4", lanesOf(except));
   const one = planFromModelOutput({ actions: flood(4, []).slice(0, 1), reply: "ok" }, ctx, "flood lane 4 northbound");
   check("all lanes: a single lane asked for stays a single lane", lanesOf(one) === "NB:4", lanesOf(one));
+}
+
+/* ── the request schema (19 Nov 2026 audit S4/S5) ──
+   The checks above hand the service a context directly, so they could not see that the route's schema stripped
+   runStart and the event stretch before the service ever got them. These go through the schema the route uses. */
+{
+  const body = {
+    command: "crash northbound within Km 12.30 - 12.40 at 12:30",
+    context: {
+      ...sandboxTestContext(),
+      runStart: { hour: 12, minute: 0 },
+      events: [{ id: "NB:ev9", name: "Minor collision", direction: "NB", km: 12.35, fromKm: 12.3, toKm: 12.4, startMin: 0, endMin: 10 }],
+    },
+  };
+  const parsed = SandboxCommandSchema.safeParse(body);
+  const ev = parsed.success ? (parsed.data.context.events ?? [])[0] : undefined;
+  check("schema: runStart survives the route's schema", parsed.success && parsed.data.context.runStart?.hour === 12 && parsed.data.context.runStart?.minute === 0, parsed.success ? JSON.stringify(parsed.data.context.runStart) : parsed.error.issues[0]?.message);
+  check("schema: an event's stretch (fromKm/toKm) survives the route's schema", ev?.fromKm === 12.3 && ev?.toKm === 12.4, JSON.stringify(ev));
+  const point = SandboxCommandSchema.safeParse({ ...body, context: { ...body.context, events: [{ id: "NB:ev1", name: "x", direction: "NB", km: 12, startMin: 0, endMin: 5 }] } });
+  check("schema: an event without a stretch (older client) is still accepted", point.success);
+  const huge = SandboxCommandSchema.safeParse({ ...body, context: { ...body.context, exits: [{ exit_id: 1, exit_name: "x".repeat(50_000) }] } });
+  check("schema: a 50,000-character exit name is refused (it would go into the system prompt)", !huge.success);
+}
+
+/* ── personal details never reach the provider (lib/pii.ts; plates widened 19 Nov 2026, audit S22) ── */
+{
+  const m = (t: string) => maskPersonalDetails(t).text;
+  check("pii: car plates in capitals are masked", m("crash involving ABC 1234 lane 2") === "crash involving [plate] lane 2", m("crash involving ABC 1234 lane 2"));
+  check("pii: a lower-case plate written as one token is masked", m("stalled abc1234 at km 20") === "stalled [plate] at km 20", m("stalled abc1234 at km 20"));
+  check("pii: motorcycle plates, digits first, are masked", m("motorcycle 123 ABC and 1234-AB") === "motorcycle [plate] and [plate]", m("motorcycle 123 ABC and 1234-AB"));
+  check("pii: command words after a number are kept (1500 NB, 2000 VPH, 80 KPH)", m("set 1500 NB and 2000 VPH at 80 KPH") === "set 1500 NB and 2000 VPH at 80 KPH", m("set 1500 NB and 2000 VPH at 80 KPH"));
+  check("pii: ordinary lower-case words before a number are kept (for 2000 vehicles)", m("add for 2000 vehicles") === "add for 2000 vehicles", m("add for 2000 vehicles"));
+  check("pii: email and mobile number are masked", m("tell juan@example.com 0917 123 4567") === "tell [email] [phone]", m("tell juan@example.com 0917 123 4567"));
 }
 
 console.log(`sandbox-command-check: ${checks} checks, ${failures.length} failed`);

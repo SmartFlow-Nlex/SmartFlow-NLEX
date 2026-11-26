@@ -1,5 +1,5 @@
 import { db } from "../config/db.js";
-import { delayCarbon, EMISSIONS_TABLE, recordBounds } from "./emissions-source.js";
+import { delayCarbon, EMISSIONS_TABLE, IDLING_KG_PER_MINUTE, IDLING_SOURCE, recordBounds } from "./emissions-source.js";
 
 // ---------------------------------------------------------------------------
 // Emissions analytics for the descriptive dashboard.
@@ -312,7 +312,7 @@ export async function getClimateResilienceFromDb() {
     // the same >0.3mm wet/dry rule as the incident dashboard.
     const { rows } = await db.query(`
       WITH wx AS (
-        SELECT (timestamp_utc + interval '8 hours')::date AS d,
+        SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS d,
                EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
                AVG(rainfall) > 0.3 AS wet
         FROM hourly_weather
@@ -470,6 +470,11 @@ export async function getFleetProfile() {
       mix: total > 0
         ? { 1: m.c1 / total, 2: m.c2 / total, 3: m.c3 / total }
         : null,
+      /* kg CO2 per vehicle-minute at a standstill, by class: the same Argonne/EPA rates the delay-CO2 estimate uses
+         (emissions-source.ts). The sandbox made up its own idle figure, 1.6-1.8x these, so its queue CO2 and the
+         Emissions dashboard disagreed (19 Nov 2026 audit S6). */
+      idleKgPerMinute: { 1: IDLING_KG_PER_MINUTE[0], 2: IDLING_KG_PER_MINUTE[1], 3: IDLING_KG_PER_MINUTE[2] },
+      idleSource: IDLING_SOURCE,
       source: "nlex_emission_factors + gold.fact_traffic_hourly",
     };
   } catch (error) {

@@ -115,7 +115,7 @@ function explainFailure(e: unknown): string {
   if (status === 503) return "The database did not answer in time. It is shared, so this usually clears within a minute.";
   if (status >= 500) return "The server could not compute the strategies for this Range.";
   if (status >= 400) return `The request was refused (HTTP ${status}).`;
-  if (e instanceof TypeError) return "Could not reach the backend. Check that it is running on port 4000, then try again.";
+  if (e instanceof TypeError) return "Couldn't reach the SmartFlow server. It may be waking up — try again in a minute.";
   return msg || "Request failed.";
 }
 

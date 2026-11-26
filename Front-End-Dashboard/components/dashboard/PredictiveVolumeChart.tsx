@@ -16,6 +16,7 @@ import { useTrafficPalette } from "./trafficPalette";
 import StateNote from "../stage/StateNote";
 import EvidenceModal from "./EvidenceModal";
 import { fetchJsonWithRetry } from "./prescriptiveTraffic.shared";
+import { failureText } from "../../lib/server-status";
 
 type ModelType = "LSTM" | "Prophet" | "HoltWinters" | "SARIMAX" | "HoltsLinear";
 
@@ -245,6 +246,10 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   // deliberate choice.
   const modelChosenByUser = useRef(false);
   const [chartData, setChartData] = useState<ChartData | null>(null);
+  /* Why the forecast did not load, and a counter that "Try again" bumps to refetch (21 Nov 2026, audit T-3). A failed
+     request used to be only logged, so the card sat on "Loading…" for ever. */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   // Raw metric rows, kept unmodified so the narrative can read fields the
   // metrics TABLE does not display (rejected_reason, aic/bic, the _nw twins).
   const [rawMetrics, setRawMetrics] = useState<MetricRow[]>([]);
@@ -387,9 +392,14 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         if (weather && weather !== "all") {
           qs.set("weather", weather);
         }
-        const res = await fetch(`${BACKEND}/api/traffic/forecast?${qs}`);
-        const json = await res.json();
-        if (cancelled || !json.success || !json.data?.volumes) return;
+        // Retried like the card's other requests: a waking server or database can fail the first try.
+        const json = await fetchJsonWithRetry(`${BACKEND}/api/traffic/forecast?${qs}`, "forecast");
+        if (cancelled) return;
+        if (!json?.success || !json.data?.volumes) {
+          setLoadError("The server answered without a forecast for this range. Try again in a minute.");
+          return;
+        }
+        setLoadError(null);
 
         /* The API names the champion from the same metrics table this chart
            renders. Capturing it here means the chart opens on the model the
@@ -457,13 +467,14 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
         });
       } catch (err) {
         console.error("Failed to fetch ML forecast", err);
+        if (!cancelled) setLoadError(failureText(err, "The forecast could not be loaded. Try again in a minute."));
       }
     }
     fetchData();
     return () => {
       cancelled = true;
     };
-  }, [months, from, to, weather]);
+  }, [months, from, to, weather, attempt]);
 
   // Pull the 24-hour breakdown for every selected model whenever a day is open.
   useEffect(() => {
@@ -617,7 +628,18 @@ export default function PredictiveVolumeChart({ months = "all", from, to, weathe
   if (!chartData) {
     return (
       <article className="chart-card wide nct-card">
-        <StateNote kind="loading">Loading ML forecast from AWS…</StateNote>
+        {loadError ? (
+          <StateNote kind="error" role="alert" title="Forecast unavailable">
+            {loadError}
+            <div style={{ marginTop: 10 }}>
+              <button type="button" className="btn-muted" onClick={() => { setLoadError(null); setAttempt((a) => a + 1); }}>
+                Try again
+              </button>
+            </div>
+          </StateNote>
+        ) : (
+          <StateNote kind="loading">Loading ML forecast from AWS…</StateNote>
+        )}
       </article>
     );
   }

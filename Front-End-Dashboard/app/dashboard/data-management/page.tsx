@@ -6,6 +6,7 @@ import PageHeader from "../../../components/dashboard/PageHeader";
 import StateNote from "../../../components/stage/StateNote";
 import InfoTooltip from "../../../components/dashboard/InfoTooltip";
 import { apiFetch, BACKEND } from "../../../lib/api";
+import { SERVER_UNREACHABLE } from "../../../lib/server-status";
 
 
 type PipelineGateLog = {
@@ -192,7 +193,8 @@ async function getData<T>(path: string): Promise<T> {
   }
   if (!body?.success) {
     // A 404 here means a backend started before this endpoint existed.
-    throw new Error(body?.error ?? body?.message ?? `${path} answered ${response.status}${response.status === 404 ? " (restart the backend to pick up this page's endpoints)" : ""}`);
+    // The restart hint is for a developer's own backend, so only a development build shows it (21 Nov 2026).
+    throw new Error(body?.error ?? body?.message ?? `${path} answered ${response.status}${response.status === 404 && process.env.NODE_ENV === "development" ? " (restart the backend to pick up this page's endpoints)" : ""}`);
   }
   return body.data as T;
 }
@@ -551,7 +553,7 @@ export default function DataManagementPage() {
       response = await apiFetch(`${BACKEND}/api/upload/${id}/undo${check ? "?mode=check" : ""}`, { method: "POST" });
     } catch {
       setBackendDown(true);
-      throw new Error(`The backend at ${BACKEND} is not answering.`);
+      throw new Error(SERVER_UNREACHABLE);
     }
     const body = await response.json().catch(() => null);
     if (!body?.data) throw new Error(body?.error ?? `Undo answered ${response.status}`);
@@ -592,7 +594,7 @@ export default function DataManagementPage() {
     }
   }
 
-  const notLoaded = (message: string) => (backendDown ? "Not loaded: the backend is not answering (see above)." : message);
+  const notLoaded = (message: string) => (backendDown ? "Not loaded: the SmartFlow server is not answering (see above)." : message);
 
   useEffect(() => {
     if (!pendingFile) return;
@@ -677,7 +679,7 @@ export default function DataManagementPage() {
       // fetch rejects with a TypeError ("Failed to fetch") only when nothing answered at all.
       if (err instanceof TypeError) {
         setBackendDown(true);
-        setError(`The backend at ${BACKEND} is not answering, so the file was not sent. Start it with npm run dev in the Back-End folder, then try again.`);
+        setError("Couldn't reach the SmartFlow server, so the file was not sent. It may be waking up — try again in a minute.");
       } else {
         setError(err instanceof Error ? err.message : "Unable to process the uploaded file.");
       }
@@ -716,11 +718,11 @@ export default function DataManagementPage() {
 
       {backendDown && (
         <section className="dm-offline">
-          <StateNote kind="offline" role="alert" title="The backend is not answering">
+          <StateNote kind="offline" role="alert" title="The SmartFlow server is not answering">
             <p>
               Nothing replied at <code>{BACKEND}</code>, so the upload layouts, the upload history and the retraining status cannot load,
-              and an upload would not go through. Nothing has been deleted: they are in the database. Start the backend with{" "}
-              <code>npm run dev</code> in the <code>Back-End</code> folder, then try again.
+              and an upload would not go through. Nothing has been deleted: they are in the database. The server may be waking up,
+              which can take up to a minute; try again then.
             </p>
             <button type="button" className="btn-muted" onClick={loadAll}>Try again</button>
           </StateNote>

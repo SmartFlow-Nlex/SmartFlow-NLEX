@@ -27,6 +27,7 @@ import CountUpValue from "../../../components/dashboard/CountUpValue";
 import RampKey from "../../../components/dashboard/RampKey";
 import { POLLUTANT_NAMES, Term, spelled } from "../../../components/dashboard/emissionsTerms";
 import { fmtHeatNumber, heatTip, heatValue } from "../../../lib/heat-tooltip";
+import { SERVER_UNREACHABLE } from "../../../lib/server-status";
 
 /** The heat grid's unit, shared by a cell's tooltip and the colour key's readout. */
 const HEAT_UNIT = "t CO₂ / h";
@@ -847,7 +848,7 @@ export default function SustainabilityPage() {
     if (error)
       return (
         <div className="nc-em-state">
-          <StateNote kind="error" size={44}>Live data unavailable — is the backend running on port 4000?</StateNote>
+          <StateNote kind="error" size={44}>{SERVER_UNREACHABLE}</StateNote>
         </div>
       );
     if (!option)
@@ -1182,7 +1183,7 @@ export default function SustainabilityPage() {
             </article>
             <article className={styles.kpiTile}>
               <span className={styles.kpiIcon} aria-hidden="true"><Timer size={15} /></span>
-              <h3><span>Delay-Induced <Term t="CO₂" /></span><InfoTooltip text="Idling CO₂ from the queues behind accidents that blocked a lane in the Range. Each queue builds for as long as the lane is blocked (not for as long as the site takes to clear) and drains as it reopens (area λ×T²/2, λ being that hour's average vehicles past a point of one carriageway: its vehicle-km over the corridor's length, halved), so long incidents carry most of it. It treats every vehicle arriving during the blockage as stopped until the lane reopens, as if the carriageway were closed; with one lane blocked some traffic still passes, so this is an upper bound. Moving vehicles' CO₂ does not change with speed in this model: this is the part a delay adds. Counted over all vehicles, so it is not shown for a single class." /></h3>
+              <h3><span>Delay-Induced <Term t="CO₂" /></span><InfoTooltip text="Idling CO₂ from the queues behind accidents that blocked a lane in the Range. Each queue builds for as long as the lane is blocked (not for as long as the site takes to clear) and drains as it reopens (area λ×T²/2, λ being that hour's average vehicles past a point of one carriageway: its vehicle-km over the corridor's length, halved), so long incidents carry most of it. It treats every vehicle arriving during the blockage as stopped until the lane reopens, as if the carriageway were closed, so this is an estimate (full-stop queue), not a bound: with one lane blocked some traffic still passes, which would make it lower, but the time the queue takes to discharge after the lane reopens is left out, which would make it higher. Moving vehicles' CO₂ does not change with speed in this model: this is the part a delay adds. Counted over all vehicles, so it is not shown for a single class." /></h3>
               <div className={styles.kpiValue}>{kpiValue(data?.kpis.delayCarbonT != null ? `${fmtInt(data.kpis.delayCarbonT)} t` : data ? "—" : null)}</div>
               <p className={styles.kpiHint}>
                 {data?.kpis.delayCarbonT != null

@@ -86,6 +86,24 @@ Usage:
     python build_event_surge.py --dry-run     # compute, score and print everything; write NOTHING (read-only DB session)
     python build_event_surge.py               # + replace gold.ml_event_surge_forecast / Event Surge metrics / eval
 """
+import sys
+
+# HARD STOP (21 Nov 2026, audit H12 / A8). SUPERSEDED: do not run this to publish.
+# Since 11 Nov 2026 the event surge forecast is published by
+# smartflow_scripts/3_training_testing/events/train_event_effect.py (the weekly batch's "event_surge" group,
+# weekly_retrain.py). This older build reads the unverified scraped arena calendar (mostly false dates), DROPs
+# gold.ml_event_surge_forecast and recreates it WITHOUT the venue_group column that the API joins on
+# (traffic.service.ts, sandbox-event.service.ts), and deletes the 'Event Surge' metrics. One run breaks the
+# Traffic event forecast and the sandbox event day until the next weekly batch.
+# --dry-run (read-only DB session, writes nothing) still runs. Writing needs the flag below.
+if "--dry-run" not in sys.argv and "--i-know-this-overwrites-live" not in sys.argv:
+    sys.exit(
+        "build_event_surge.py is SUPERSEDED and would overwrite live tables:\n"
+        "  it drops and recreates gold.ml_event_surge_forecast without venue_group and deletes the Event Surge metrics.\n"
+        "The live publisher is smartflow_scripts/3_training_testing/events/train_event_effect.py (weekly batch).\n"
+        "Use --dry-run to compute without writing, or pass --i-know-this-overwrites-live if you really mean to overwrite."
+    )
+
 import json
 import sys
 import warnings

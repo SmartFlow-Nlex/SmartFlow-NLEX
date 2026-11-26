@@ -215,7 +215,8 @@ export type CongestionAdvice = {
   hoursAhead: number;
   /** First hour at or above the calibrated cut-off. */
   firstAct: number | null;
-  label: "Act" | "Monitor";
+  /** Unrated: no cut-off applies (too few scored forecasts, or one fitted on other models' forecasts). */
+  label: "Act" | "Monitor" | "Unrated";
   action: string;
   /** Of archived forecasts at or above this probability, the share High followed, and how many. */
   hitRate: number | null;
@@ -239,6 +240,12 @@ export type CongestionCalibration = {
   testFrom: string | null;
   testTo: string | null;
   testRows: number;
+  /** The congestion model serving now; null when it could not be read. Optional: older answers lack it. */
+  servedModel?: string | null;
+  /** Scored forecast-hours the cut-off was fitted on, by the model that made them (null = no run record names one). */
+  fitModels?: { model: string | null; rows: number }[];
+  /** False when the cut-off was fitted on other models' forecasts: the advice is then paused. */
+  calibratedOnServed?: boolean;
 };
 export type TrafficPrescriptive = {
   champion: { model: string | null; wmapePct: number | null; accepted: boolean };

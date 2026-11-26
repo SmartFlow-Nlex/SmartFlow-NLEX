@@ -12,6 +12,7 @@
  * one is renewed. Call sites use apiFetch/authedJson and stay unaware of either.
  */
 import { supabase } from "./supabase";
+import { withReadDeadline } from "./server-status";
 
 export const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -90,12 +91,16 @@ async function refusalCode(res: Response): Promise<AuthCode | undefined> {
  * On 401 the session is refreshed once and the request replayed. 403 is not
  * retried: the token was accepted and the role was refused, so a new token
  * carries the same answer.
+ *
+ * A read (GET/HEAD) without a signal of its own is abandoned after
+ * REQUEST_TIMEOUT_MS, each attempt timed on its own; writes are not, since an
+ * upload can take minutes (lib/server-status.ts, 21 Nov 2026).
  */
 export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const send = async (token: string | null) => {
     const headers = new Headers(init.headers);
     if (token) headers.set("Authorization", `Bearer ${token}`);
-    return fetch(input, { ...init, headers });
+    return fetch(input, withReadDeadline(input, { ...init, headers }));
   };
 
   let res = await send(await currentToken());

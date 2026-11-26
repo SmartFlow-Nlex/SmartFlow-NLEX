@@ -13,6 +13,10 @@ import WazeLiveModal from "../../../components/maps/WazeLiveModal";
 import MapLegend from "../../../components/maps/MapLegend";
 import PageHeader from "../../../components/dashboard/PageHeader";
 import { cachedJson } from "../../../lib/cached-json";
+import { isFeatureCollection } from "../../../lib/live-feed";
+import { startVisiblePoll } from "../../../lib/use-visible-poll";
+import { describeServedModel, type CongestionEvalLite } from "../../../lib/forecast-model-label";
+import { loadForecast } from "../../../components/dashboard/prescriptiveTraffic.shared";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -80,6 +84,11 @@ export default function MapComparisonPage() {
     tempC: number | null; condition: string | null; code: number | null;
     asOf: string; rainingCount: number; total: number; source: string;
   } | null>(null);
+  /* Loading and failure both read "Weather reading unavailable" until 21 Nov 2026 (audit G-9). */
+  const [weatherFailed, setWeatherFailed] = useState(false);
+  /* How the served congestion forecast was scored (gold.ml_congestion_eval), so the model card can name a
+     baseline as one and show the score it was picked on (audit H4). Read once; never polled. */
+  const [congestionEval, setCongestionEval] = useState<CongestionEvalLite | null>(null);
 
   // Exit picker. The whole corridor is loaded once and shown as a dropdown in
   // geographic order (Balintawak in the south through to Sta. Ines in the
@@ -104,9 +113,12 @@ export default function MapComparisonPage() {
      never from the page clock. Recomputed with the clock's tick. */
   const liveAge = (() => {
     const at = liveSnap?.feed?.newestAt;
+    /* The feed's last answer was an error or a refusal (audit P8-02): say so, with the age of what is drawn. */
+    if (liveSnap?.unavailable && !at) return "Feed unavailable";
     if (!at) return null;
     const mins = Math.max(0, Math.round((Date.now() - new Date(at).getTime()) / 60000));
     const ago = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.floor(mins / 60)} h ${mins % 60} min ago`;
+    if (liveSnap?.unavailable) return `Feed unavailable · last reading ${ago}`;
     return `${liveSnap?.feed?.stale ? "Stale" : "Live"} · updated ${ago}`;
   })();
   /* What the corridor dock is showing, said once (13 Nov 2026). */
@@ -119,6 +131,11 @@ export default function MapComparisonPage() {
   const forecastHours = forecastSnap?.hoursAhead ?? horizon;
   const forecastAhead = hoursFromNow(forecastHours);
   const when = dayTimeFor(horizon);
+  /* The model card's words, from the served model and its stored evaluation (lib/forecast-model-label.ts). */
+  const served = useMemo(
+    () => (forecastModel ? describeServedModel(forecastModel, congestionEval) : null),
+    [forecastModel, congestionEval],
+  );
 
   const flyToExit = (x: ExitHit) => {
     setSelectedExit(x.exit_name);
@@ -165,10 +182,11 @@ export default function MapComparisonPage() {
       cachedJson<{ success?: boolean; data?: {
         asOf: string; source: string; rainingCount: number; points: unknown[];
         corridor?: { tempC: number | null; condition: string | null; code: number | null };
-      } }>(`${BACKEND}/api/map-comparison/live-rain`, 4 * 60_000)
+      } }>(`${BACKEND}/api/map-comparison/live-rain`, 4 * 60_000, undefined, { strict: true, maxStaleMs: 4 * 60_000 })
         .then((j) => {
+          if (cancelled) return;
           const d = j?.data;
-          if (cancelled || !d) return;
+          if (!d) throw new Error("Weather unavailable");
           setWeatherNow({
             tempC: d.corridor?.tempC ?? null,
             condition: d.corridor?.condition ?? null,
@@ -178,11 +196,13 @@ export default function MapComparisonPage() {
             total: Array.isArray(d.points) ? d.points.length : 0,
             source: d.source,
           });
+          setWeatherFailed(false);
         })
-        .catch(() => {/* the card says the reading is unavailable */});
-    load();
-    const t = setInterval(load, 5 * 60_000);
-    return () => { cancelled = true; clearInterval(t); };
+        // The last reading stays up with its own time on it; with none, the card says it is unavailable.
+        .catch(() => { if (!cancelled) setWeatherFailed(true); });
+    // Same 5 minutes, paused while the tab is hidden (lib/use-visible-poll.ts). The map's rain wash shares the read.
+    const stop = startVisiblePoll(load, 5 * 60_000, { immediate: true });
+    return () => { cancelled = true; stop(); };
   }, []);
 
   // Live running clock
@@ -212,16 +232,30 @@ export default function MapComparisonPage() {
         setForecastModel(j.model as never);
       })
       .catch(() => {/* the panel simply says nothing about the model */});
-    return () => { cancelled = true; };
+    /* The stored evaluation rides in the Traffic tab's forecast payload, through its shared single-flight loader,
+       so a visit after the Traffic tab costs nothing. Read once, after the maps have had the network first; if it
+       fails the card still names the model and says plainly when it is a baseline. */
+    const t = window.setTimeout(() => {
+      loadForecast()
+        .then((p) => {
+          const ev = (p.extras as { congestionEval?: CongestionEvalLite | null } | undefined)?.congestionEval;
+          if (!cancelled && ev) setCongestionEval(ev);
+        })
+        .catch(() => {/* the card falls back to the model's name and plain accuracy */});
+    }, 2500);
+    return () => { cancelled = true; window.clearTimeout(t); };
   }, []);
 
   // Poll real-time Waze data to update stats
   useEffect(() => {
     async function fetchStats() {
       try {
-        // Shared with the Home corridor panel through the same memo.
-        const geojson = await cachedJson<{ features?: Feature[] }>(`${process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"}/api/map-comparison/real-time`, 25_000);
-        if (geojson && geojson.features) {
+        // Shared with the Home corridor panel through the same memo. strict: an error or 429 body is a
+        // failed read (the tiles keep their last good values), never an empty, all-clear feed.
+        const geojson = await cachedJson<{ features?: Feature[] }>(
+          `${process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"}/api/map-comparison/real-time`,
+          25_000, undefined, { strict: true, maxStaleMs: 25_000 });
+        if (isFeatureCollection(geojson)) {
           const features = geojson.features as Feature[];
 
           /* Only what is actually on NLEX. The feed is polled over a bounding
@@ -267,10 +301,9 @@ export default function MapComparisonPage() {
       }
     }
 
-    fetchStats();
-    // Poll every 15 seconds to match Mapbox layer refresh
-    const interval = setInterval(fetchStats, 15000);
-    return () => clearInterval(interval);
+    // Poll every 15 seconds to match Mapbox layer refresh; paused while the tab is hidden (lib/use-visible-poll.ts).
+    const stop = startVisiblePoll(fetchStats, 15000, { immediate: true });
+    return () => stop();
   }, []);
 
   return (
@@ -360,7 +393,7 @@ export default function MapComparisonPage() {
                "Live · updated" chip and the spaced subtitle, which said the same thing three times. The age is the
                feed's own, from its newest jam. */
             subtitle={
-              <span className={`lm-fresh${liveSnap?.feed?.stale ? " is-stale" : ""}`} title={liveAge ?? undefined}>
+              <span className={`lm-fresh${liveSnap?.feed?.stale || liveSnap?.unavailable ? " is-stale" : ""}`} title={liveAge ?? undefined}>
                 <i className="lm-fresh-dot" aria-hidden="true" />
                 <b>{liveSnap?.feed?.stale ? "Stale" : "Live"}</b>
                 <span>· Waze, {liveAgo ? `updated ${liveAgo}` : "waiting for the feed"}</span>
@@ -553,22 +586,32 @@ export default function MapComparisonPage() {
                 <span className="lm-cell-note">{when.day}</span>
               </span>
             </div>
+            {/* What is served, named plainly (21 Nov 2026, audit H4): a baseline says it is one, and the score shown is
+                the one it was picked on, not plain accuracy. "Beat N others" is gone: it counted the other baselines
+                as models it beat. See lib/forecast-model-label.ts. */}
             <div
               className="lm-cell lm-cell-model"
-              title={forecastModel?.name
-                ? `Learns from Waze jam history at the 20 exits. ${forecastModel.horizonVaries ? `Varies across ${forecastModel.horizons} h ahead.` : "Same outlook for every hour ahead."}`
+              title={served && forecastModel
+                ? [
+                    served.pickedBy,
+                    served.accuracyNote,
+                    forecastModel.trainedAt
+                      ? `Trained ${new Date(forecastModel.trainedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
+                      : "Training date unknown",
+                    forecastModel.horizonVaries ? `Varies across ${forecastModel.horizons} h ahead` : "Same outlook for every hour ahead",
+                  ].filter(Boolean).join(" · ")
                 : undefined}
             >
               <span className="lm-cell-ico"><BrainCircuit size={17} aria-hidden="true" /></span>
               <span className="lm-cell-text">
                 <span className="lm-cell-label">Model</span>
-                {forecastModel?.name ? (
+                {served ? (
                   <>
-                    <b className="lm-cell-value">{forecastModel.name}</b>
+                    <b className="lm-cell-value">{served.name}</b>
                     <span className="lm-cell-note">
-                      {forecastModel.accepted === false
+                      {forecastModel?.accepted === false
                         ? "Fallback: no model passed the test"
-                        : forecastModel.rejectedCount > 0 ? `Beat ${forecastModel.rejectedCount} others in testing` : "Learns from Waze jam history"}
+                        : served.pill ?? "Learns from Waze jam history"}
                     </span>
                   </>
                 ) : (
@@ -584,12 +627,13 @@ export default function MapComparisonPage() {
               <span className="mc-stat-label">NLEX Exits</span>
               <span className="mc-stat-value">20</span>
             </div>
+            {/* The score the forecast was picked on, in the neutral ink of the tiles beside it rather than the
+                success green plain accuracy used to wear (audit H4). Plain accuracy and the always-Clear rate are
+                in its tooltip and in the note above. */}
             <div className="mc-stat-item">
-              <span className="mc-stat-label" title="Share of exit-hours the selected model got right in its latest test (held-out recent days)">Test Accuracy</span>
-              <span className="mc-stat-value">
-                {forecastModel?.accuracy == null
-                  ? "\u2014"
-                  : `${Math.round(forecastModel.accuracy * 100)}%`}
+              <span className="mc-stat-label" title={served?.tile.title}>{served?.tile.label ?? "Balanced score"}</span>
+              <span className="mc-stat-value" title={served?.tile.title}>
+                {served?.tile.value ?? "—"}
               </span>
             </div>
             <div className="mc-stat-item">
@@ -619,7 +663,10 @@ export default function MapComparisonPage() {
         setOpen={setStripOpen}
         ageLabel={
           stripMode === "live"
-            ? `Showing live traffic${liveSnap?.feed?.stale ? " (the feed is stale)" : ""}${liveAgo ? `, updated ${liveAgo}` : ""}`
+            ? liveSnap?.unavailable
+              /* An error or refusal is said as one, never shown as a clear road (audit P8-02). */
+              ? `Live feed unavailable${liveAgo ? `: showing the last reading (${liveAgo})` : ": no reading to show yet"}`
+              : `Showing live traffic${liveSnap?.feed?.stale ? " (the feed is stale)" : ""}${liveAgo ? `, updated ${liveAgo}` : ""}`
             : `Showing the forecast for ${when.time} ${when.day === "Today" ? "today" : when.day === "Tomorrow" ? "tomorrow" : `on ${when.day}`} (${forecastAhead <= 0 ? "this hour" : `+${forecastAhead} h from now`})`
         }
         majorExits={MAJOR_EXITS}

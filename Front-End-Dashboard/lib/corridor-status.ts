@@ -2,6 +2,7 @@
 
 import { corridorGuard, sliceCorridor, type LngLat } from "./corridor-shape";
 import { FALLBACK_EXITS, accessLabel, type NlexExit } from "./nlex-exits";
+import { jamLevel, statusOfLevel, wazeGradeOf, type SegmentStatus } from "./congestion-scale";
 import nlexGeometry from "../components/maps/nlex-geometry.json";
 
 /**
@@ -21,12 +22,15 @@ import nlexGeometry from "../components/maps/nlex-geometry.json";
  * than merely agreeing today.
  */
 
-export type SegmentStatus = "clear" | "slow" | "congested";
+// The state words and the rule behind them live in lib/congestion-scale.ts, shared with the map.
+export type { SegmentStatus };
 
 export type ExitStatus = {
   exit: string;
   direction: "NB" | "SB";
+  /** Worst state of the jams here, by the shared speed rule (lib/congestion-scale.ts). */
   status: SegmentStatus;
+  /** Worst Waze 0-5 grade seen here, for the "Jam level N of 5" wording only; the state does not come from it. */
   level: number | null;
   speedKmh: number | null;
   jamCount: number;
@@ -46,14 +50,9 @@ export type ExitStatus = {
   delaySeconds: number | null;
 };
 
-/* Waze's own bands, unchanged from the server-side version this replaces, so
-   the words on the panel do not shift with the source. */
-function classify(level: number | null, speedKmh: number | null): SegmentStatus {
-  if (level == null && speedKmh == null) return "clear";
-  if (level === 0) return "clear";
-  if ((level != null && level >= 3) || (speedKmh != null && speedKmh < 10)) return "congested";
-  return "slow";
-}
+/* The state of an exit-direction is its worst jam's state, by the speed rule the map, the backend and the
+   mobile app use (lib/congestion-scale.ts). This classified by Waze's grade (3+ congested, 1-2 slow) until
+   21 Nov 2026, so the Overview's counts disagreed with the map's colours for the same jams (audit P8-03). */
 
 const M_PER_DEG_LAT = 110574;
 const M_PER_DEG_LON = 111320 * Math.cos((15 * Math.PI) / 180);
@@ -102,7 +101,7 @@ export function corridorStatusFromFeed(
   const ordered = orderedExits(exits);
   const kept = guard.filter(fc as { features?: unknown[] }) as { features?: Feature[] };
 
-  type Acc = { level: number | null; speed: number | null; count: number; observedAt: string | null;
+  type Acc = { worst: number; level: number | null; speed: number | null; count: number; observedAt: string | null;
                meters: number | null; delay: number | null };
   const byKey = new Map<string, Acc>();
 
@@ -130,9 +129,10 @@ export function corridorStatusFromFeed(
     const key = `${nearest.exit_name}|${snapped.direction}`;
     /* Waze's own 0-5 grade. Since 15 Nov 2026 the feed's `level` is the map colour on the model's speed scale
        (0 / 2 / 4) and Waze's grade travels as `waze_level`; this panel prints "Jam level N of 5" and explains
-       Waze's scale, so it must read the grade (fixed 17 Nov 2026: a grade-3 jam read "level 4 · severe"). */
-    const rawLevel = p.waze_level ?? p.level;
-    const level = rawLevel != null && Number.isFinite(Number(rawLevel)) ? Number(rawLevel) : null;
+       Waze's scale, so it must read the grade (fixed 17 Nov 2026: a grade-3 jam read "level 4 · severe").
+       The grade is wording only: the state comes from jamLevel, the same rule the map paints with. */
+    const level = wazeGradeOf(p);
+    const worst = jamLevel(p);
     const speed = Number.isFinite(Number(p.speed)) ? Number(p.speed) : null;
     const at = typeof p.observed_at === "string" ? p.observed_at : null;
     const meters = Number.isFinite(Number(p.length_m)) ? Number(p.length_m) : null;
@@ -140,9 +140,10 @@ export function corridorStatusFromFeed(
 
     const acc = byKey.get(key);
     if (!acc) {
-      byKey.set(key, { level, speed, count: 1, observedAt: at, meters, delay });
+      byKey.set(key, { worst, level, speed, count: 1, observedAt: at, meters, delay });
     } else {
-      // Worst level and slowest speed seen, matching the SQL this replaces.
+      // Worst state, worst grade and slowest speed seen, matching the SQL this replaces.
+      acc.worst = Math.max(acc.worst, worst);
       acc.level = acc.level == null ? level : level == null ? acc.level : Math.max(acc.level, level);
       acc.speed = acc.speed == null ? speed : speed == null ? acc.speed : Math.min(acc.speed, speed);
       acc.count += 1;
@@ -158,7 +159,7 @@ export function corridorStatusFromFeed(
     return {
       exit,
       direction: direction as "NB" | "SB",
-      status: classify(a.level, a.speed),
+      status: statusOfLevel(a.worst),
       level: a.level,
       speedKmh: a.speed,
       jamCount: a.count,
@@ -208,7 +209,8 @@ export function corridorSegmentLevels(
     if (p?.feature_type !== "jam" || f.geometry?.type !== "LineString") continue;
     const snapped = guard.snap(f.geometry.coordinates as number[][], p.street as string | undefined);
     if (!snapped) continue;
-    const level = Number(p.level ?? 0);
+    // The shared rule, so the ribbon and the per-exit state above cannot read one jam two ways.
+    const level = jamLevel(p);
     for (const b of bounds) {
       if (b.to < snapped.startIndex || b.from > snapped.endIndex) continue;
       const key = `${b.order}:${snapped.direction}`;

@@ -25,6 +25,13 @@ pnpm-debug.log*
 Back-End/.env
 Back-End/.env.*
 !Back-End/.env.example
+# Committed:  Front-End-Dashboard/.env.production (audit H12, 21 Nov 2026). It holds only NEXT_PUBLIC_BACKEND_URL,
+#             the public Render address that every installer bakes in. Without it a clean checkout builds a
+#             desktop app that calls localhost (the .env default). The exception keeps it tracked even if a
+#             broader .env.* rule is added later. Never put a secret in it: it ships in the client bundle.
+!Front-End-Dashboard/.env.production
+# Local working folder (logs with the DB host, build copies, DB probes); never part of the repo.
+/_work/
 
 # Local backups taken before a merge — not part of the project.
 .merge-backup/

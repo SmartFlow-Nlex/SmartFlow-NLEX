@@ -154,8 +154,12 @@ export const SERVICE_PUMPS = 4;
 
 /* ── Rates ──────────────────────────────────────────────────────────────────── */
 
-/** What one payment booth clears in an hour — the operator's figure, the same
- *  one the traffic optimiser staffs booths with (traffic-prescriptive.service.ts). */
+/** What one payment booth clears in an hour — an ASSUMED planning value, not a
+ *  measurement and not the operator's figure (it was once described as both; the
+ *  traffic optimiser dropped the same unmeasured 350 on 2 Nov 2026). NLEX booths
+ *  are RFID and cashless. See ASSUMPTIONS.PAY_BOOTH_VEH_PER_HOUR for what would
+ *  settle it. A copy of that value: this file cannot import assumptions.ts
+ *  without an import cycle through simulation.ts, so verify.ts checks the two agree. */
 export const PAY_BOOTH_VEH_PER_HOUR = 350;
 
 /* Seconds a saturated booth loses between one vehicle leaving and the next
@@ -166,7 +170,7 @@ export const PAY_BOOTH_VEH_PER_HOUR = 350;
  * turns "350 an hour" into a time at the booth — about 4 s, which is an RFID
  * read and the barrier lifting, NLEX having gone cashless — and getting it
  * wrong would make a plaza's capacity a side effect of the car-following model
- * instead of the operator's number. A heavier fleet moves up slower, so the
+ * instead of the assumed booth rate. A heavier fleet moves up slower, so the
  * same plaza clears less in a freight hour, as a real one does. */
 export const BOOTH_MOVE_UP_S = 6.2;
 
@@ -330,6 +334,11 @@ export type Facility = {
   /** Arrivals from the local road waiting to get onto the approach. */
   pending: number;
   acc: number;
+  /* Arrivals off the local road since the start: asked for (fractional, at the configured rate) and actually onto the
+   * approach. The difference is demand that never got on — the MAX_PENDING waiting off the canvas, and every one past
+   * them, which used to be thrown away unseen. The simulation reports it as unmet demand (audit S3). */
+  arrived: number;
+  joined: number;
   /** Recent services: when, and how long that vehicle waited to be served. */
   log: { t: number; wait: number }[];
 };
@@ -697,7 +706,7 @@ function buildFacility(spec: FacilitySpec, laneCount: number): Facility {
   for (const p of B.paths) for (const q of p.pts) { u0 = Math.min(u0, q.u); u1 = Math.max(u1, q.u); }
   return {
     spec, paths: B.paths, stations: B.stations, divergeX, divergePath, spawnPath, laneEntries,
-    u0, u1, wMin, wMax, pitch, agents: [], pending: 0, acc: 0, log: [],
+    u0, u1, wMin, wMax, pitch, agents: [], pending: 0, acc: 0, arrived: 0, joined: 0, log: [],
   };
 }
 
@@ -745,7 +754,7 @@ const LOG_S = 600;
  * behind a car, and wrong at a stop line: nobody holds 1.4 s of headway to a
  * booth. With the driver's own T the approach was so cautious that a car took
  * 6.6 s to roll up one place in the queue, and a booth meant to clear 350 an
- * hour cleared 256 — the car-following model, not the operator's figure, was
+ * hour cleared 256 — the car-following model, not the assumed booth rate, was
  * setting the plaza's capacity. Against a line the driver simply brakes to
  * stop on it, which is what a small T does. */
 const STOP_LINE_T = 0.35;
@@ -1226,6 +1235,7 @@ export class FacilityEngine {
     if (f.spawnPath != null) {
       const rate = Math.max(0, f.spec.arrivalsVehPerHour ?? 0);
       f.acc += (rate / 3600) * dt;
+      f.arrived += (rate / 3600) * dt;
       while (f.acc >= 1) {
         f.acc -= 1;
         if (f.pending < MAX_PENDING) f.pending++;
@@ -1237,6 +1247,7 @@ export class FacilityEngine {
         v.v = Math.min(v.v0, 9);
         this.take(f, v, f.spawnPath, 0);
         f.pending--;
+        f.joined++;
       }
     }
     if (f.agents.length === 0) return;
@@ -1777,6 +1788,17 @@ export class FacilityEngine {
   }
 
   /* ── Reporting ──────────────────────────────────────────────────────────── */
+
+  /** Arrivals off the local roads of every entry plaza since the start: asked for, and onto the approach. */
+  localArrivals(): { demanded: number; admitted: number } {
+    let demanded = 0;
+    let admitted = 0;
+    for (const f of this.list) {
+      demanded += f.arrived;
+      admitted += f.joined;
+    }
+    return { demanded, admitted };
+  }
 
   stats(): FacilityStats[] {
     const now = this.host.now();

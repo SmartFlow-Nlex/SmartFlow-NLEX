@@ -24,7 +24,7 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return res.status(400).json({
       success: false,
       message: "Invalid request parameters",
-      issues: err.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+      issues: err.issues.map((i) => ({ path: i.path.map(String).join("."), message: i.message })),
     });
   }
 

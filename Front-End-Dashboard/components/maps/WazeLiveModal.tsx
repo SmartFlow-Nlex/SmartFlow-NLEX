@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { mapPalette } from "../../lib/map-palette";
 import { useChartTheme } from "../../lib/chart-theme";
+import { useVisiblePoll } from "../../lib/use-visible-poll";
 import { ChevronRight, RefreshCw, TrendingUp, X, Radio } from "lucide-react";
 import TrafficMapPanel from "./TrafficMapPanel";
 import { WAZE_REPORT_TYPES } from "../../lib/waze-reports";
@@ -146,7 +147,7 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
     try {
       const r = await fetch(`${BACKEND}/api/map-comparison/live-overview`, { cache: "no-store" });
       const j = await r.json();
-      if (!j.success) throw new Error();
+      if (!r.ok || !j?.success || !j.data) throw new Error();
       setData(j.data);
       setError(false);
     } catch {
@@ -157,13 +158,9 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
   };
 
   // Only polls while open — a hidden modal refreshing every half minute is load
-  // nobody asked for.
-  useEffect(() => {
-    if (!open) return;
-    load();
-    const id = setInterval(load, 30_000);
-    return () => clearInterval(id);
-  }, [open]);
+  // nobody asked for. Nor does it poll while the tab is hidden; it refreshes once
+  // on return (lib/use-visible-poll.ts).
+  useVisiblePoll(load, 30_000, { enabled: open });
 
   useEffect(() => {
     if (!open) return;
@@ -232,7 +229,7 @@ export default function WazeLiveModal({ open, onClose }: { open: boolean; onClos
             <h3 className="wz-side-title">Corridor Overview</h3>
 
             {error ? (
-              <p className="wz-empty">Live feed unavailable — is the backend running on port 4000?</p>
+              <p className="wz-empty">Couldn&apos;t reach the SmartFlow server. It may be waking up — try again in a minute.</p>
             ) : (
               <>
                 {/* Testers LM-1 (22 Oct 2026): each tile is about 80 px wide, so "Avg speed in jams"

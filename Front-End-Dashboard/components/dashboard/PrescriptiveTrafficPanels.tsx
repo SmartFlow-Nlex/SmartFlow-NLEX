@@ -27,6 +27,11 @@ const fmtInt = (n: number) => Math.round(n).toLocaleString("en-US");
 const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`);
 const shortDay = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+/** With the year, for anything that may not be this year ("Mon, May 25, 2026"). */
+const dayWithYear = (iso: string) =>
+  new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+/** Today in Manila, "YYYY-MM-DD", the corridor's calendar whatever the browser's zone. */
+const manilaToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 
 /* True once a load has taken longer than a few seconds, so the panel can say why it is waiting. */
 function useSlow(waiting: boolean, afterMs = 6000) {
@@ -264,7 +269,13 @@ export function BoothStaffingPanel() {
     .flatMap((d) => d.plazas.map((p) => (p.top ? { ...p.top, date: d.date, dayType: d.dayType, plaza: p.plaza } : null)))
     .filter((x): x is NonNullable<typeof x> => x != null)
     .sort((x, y) => (y.chance ?? -1) - (x.chance ?? -1))[0] ?? null;
-  const past = b.forecastFrom && b.usualTo && b.forecastFrom <= b.usualTo;
+  /* Past against TODAY (system audit 19 Nov 2026, P5-3). This compared the first day with the record's end only, so
+     a plan for 25-31 May 2026 read as the coming week in November. The record end is still checked: a first day
+     inside the record means the models were not retrained after a reload. */
+  const today = manilaToday();
+  const inRecord = !!(b.forecastFrom && b.usualTo && b.forecastFrom <= b.usualTo);
+  const past = !!b.forecastFrom && (b.forecastFrom < today || inRecord);
+  const allPast = !!b.forecastTo && b.forecastTo < today;
   const focusDate = lead?.date ?? null;
   const dayShort = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { weekday: "short" });
   const monthDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -449,10 +460,20 @@ export function BoothStaffingPanel() {
             <b>No volume model passed its acceptance gate:</b> the forecast is last week repeated, and the band is that method&apos;s own measured error.
           </Banner>
         )}
-        {past && (
+        {past && b.forecastFrom && (
           <Banner tone="alert">
-            <b>Its first day, {b.forecastFrom}, is already inside the record, which now runs to {b.usualTo}:</b>{" "}
-            this plan is for days already past. Retrain the volume models to plan the coming week.
+            <b>
+              This plan is for {dayWithYear(b.forecastFrom)} to {dayWithYear(b.forecastTo ?? b.forecastFrom)},{" "}
+              {allPast ? "days already past" : "and its first days are already past"}:
+            </b>{" "}
+            today is {dayWithYear(today)}.{" "}
+            {inRecord ? (
+              <>Its first day is already inside the traffic record, which now runs to {dayWithYear(b.usualTo!)}. Retrain the volume models to plan the coming week.</>
+            ) : b.usualTo ? (
+              <>The forecast starts the day after the traffic record ends ({dayWithYear(b.usualTo)}), so planning the coming week needs newer traffic data and a retrain.</>
+            ) : (
+              <>Planning the coming week needs newer traffic data and a retrain.</>
+            )}
           </Banner>
         )}
 
@@ -758,13 +779,28 @@ export function CongestionResponsePanel() {
   }
 
   const cal = data.congestionCalibration;
-  const calibrated = !!cal?.ok && cal.threshold != null;
+  /* Paused (system audit 19 Nov 2026, H5): a cut-off exists but was fitted on other models' forecasts, so it says
+     nothing about the served model's probabilities -- the "Same hour last week" baseline read Act on all 20 segments by
+     construction. The chances stay; no segment is labelled. An older answer without the field is not paused. */
+  const paused = !!cal?.ok && cal.threshold != null && cal.calibratedOnServed === false;
+  const calibrated = !!cal?.ok && cal.threshold != null && !paused;
   const cut = calibrated ? cal!.threshold : null;
-  const act = rows.filter((r) => r.label === "Act");
+  const act = calibrated ? rows.filter((r) => r.label === "Act") : [];
   const monitor = rows.filter((r) => r.label === "Monitor");
   // The cards: the Act segments most likely to turn High, or with none at Act the three closest to the line.
   const cards = (act.length ? act : rows).slice(0, 3);
   const inline = act.slice(3);
+  // The segments not on a card, with their chance: those at Monitor, or with no line every one left.
+  const rest = calibrated ? (act.length > 0 ? monitor : []) : rows.slice(cards.length);
+  const fitNames = (cal?.fitModels ?? []).filter((m) => m.model).map((m) => m.model as string);
+  const fitUnnamed = (cal?.fitModels ?? []).some((m) => !m.model);
+  const pausedWhy = paused
+    ? `The Act line (${pct(cal!.threshold!)} chance of High) was picked on forecasts made by ` +
+      listOf([...fitNames, ...(fitUnnamed ? ["runs that recorded no model"] : [])]) +
+      `${cal!.fitFrom && cal!.fitTo ? `, ${dayWithYear(cal!.fitFrom)} to ${dayWithYear(cal!.fitTo)}` : ""}; ` +
+      `none of them by ${cal!.servedModel ?? "the model serving now, which could not be identified"}. A probability means something different on each ` +
+      "model's scale, so the line is used only when every forecast it was picked on came from the model serving now."
+    : "";
   const timelineOf = (segment: string) => data.congestionTimeline?.find((t) => t.segment === segment)?.hours ?? [];
   // A segment with no forecast rows is not a quiet segment. It is named, and "corridor clear" is not said while any is missing.
   const missing = data.congestionMissing ?? [];
@@ -815,7 +851,13 @@ export function CongestionResponsePanel() {
           cards as where / when / peak tiles over how sure, and the rest of the Act list beside the next 12 hours. */}
       <div className="sp cr">
         <Banner tone={act.length ? "alert" : "info"}>
-          {!calibrated ? (
+          {paused ? (
+            <>
+              <b>Advice paused: the alert cut-off hasn&apos;t been calibrated for the current forecast model yet.</b>{" "}
+              The forecast now comes from {cal?.servedModel ?? "a model that could not be identified"}; each segment&apos;s chance of High is still shown below.
+              <InfoTooltip text={pausedWhy} />
+            </>
+          ) : !calibrated ? (
             <><b>No Act line yet.</b> {cal?.reason ?? "The forecast archive could not be read."} Segments are listed by their chance of High.</>
           ) : act.length > 0 ? (
             <>
@@ -883,7 +925,7 @@ export function CongestionResponsePanel() {
               <article key={r.segment} className={`cr-card${isAct ? " is-act" : ""}`}>
                 <header className="cr-card-head">
                   <span className="cr-rank" aria-label={`Rank ${i + 1}`}>{i + 1}</span>
-                  <span className={`cr-label${isAct ? " is-act" : ""}`}>{calibrated ? r.label : "Unrated"}</span>
+                  <span className={`cr-label${isAct ? " is-act" : ""}`}>{calibrated ? r.label : paused ? "Advice paused" : "Unrated"}</span>
                 </header>
                 <p className="cr-card-action">{r.action}</p>
                 <dl className="cr-tiles">
@@ -1031,7 +1073,9 @@ export function CongestionResponsePanel() {
             <Foot>
               Every archived forecast is matched with what the road then did (High = the Waze jam speed for that exit-hour). The Act
               line is the cut-off with the best F1 on all but the last 7 days; the precision and recall shown are on those 7 days.
-              There is one line, not two: no higher cut-off in the archive buys a precision worth a second tier. A volume-to-capacity
+              There is one line, not two: no higher cut-off in the archive buys a precision worth a second tier. The line is used only
+              when every forecast it was picked on came from the model serving now (each run&apos;s model is read from its audit
+              entry); otherwise the advice is paused and only each segment&apos;s chance of High is shown. A volume-to-capacity
               ratio is not shown: no capacity or lane-count column exists anywhere in the warehouse.
             </Foot>
           </div>

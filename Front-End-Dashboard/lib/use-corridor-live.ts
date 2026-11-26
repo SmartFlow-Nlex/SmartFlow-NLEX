@@ -10,6 +10,8 @@ import {
   type ExitStatus,
 } from "./corridor-status";
 import { useNlexExits, type NlexExit } from "./nlex-exits";
+import { isFeatureCollection } from "./live-feed";
+import { startVisiblePoll } from "./use-visible-poll";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -27,7 +29,8 @@ export type CorridorLive = {
   stale: boolean;
   /** True until the first feed read has answered. */
   loading: boolean;
-  /** True when the feed could not be read at all (not merely stale). */
+  /** True when the last read failed: unreachable, refused (e.g. 429), an error body, or no `features`.
+   *  Not the same as stale, which is a good answer whose newest jam is old. Never read as a clear road. */
   failed: boolean;
 };
 
@@ -58,31 +61,46 @@ export function useCorridorLive(): CorridorLive {
     let cancelled = false;
     const load = async () => {
       try {
-        const fc = await cachedJson<RealtimeFC>(`${BACKEND}/api/map-comparison/real-time`, 25_000);
+        /* strict: a 429, a 500 or a body without `features` is a failed read, never "no jams". That used to
+           come through as statuses=[] with failed:false, and the Overview said "Flowing" with 0 reports while
+           the road panel beside it said "Feed unavailable" (audit 2026-11-19, P8-02).
+           maxStaleMs = the TTL: each 60 s tick waits for a fresh read rather than being shown the previous
+           tick's answer from the memo (G-8). */
+        const fc = await cachedJson<RealtimeFC>(`${BACKEND}/api/map-comparison/real-time`, 25_000, undefined, {
+          strict: true,
+          maxStaleMs: 25_000,
+        });
         if (cancelled) return;
-        const statuses = fc?.features
-          ? corridorStatusFromFeed(fc as Parameters<typeof corridorStatusFromFeed>[0], exits)
-          : [];
+        if (!isFeatureCollection(fc)) throw new Error("Feed unavailable");
+        const statuses = corridorStatusFromFeed(fc as Parameters<typeof corridorStatusFromFeed>[0], exits);
+        const newestAt = fc.feed?.newestAt ?? null;
+        /* Age from the feed's own newest jam and this clock, as the Map page does, rather than the server's
+           figure, which was fixed when the answer was made and goes on reading "1.7 min" from a cache. */
+        const newestMs = newestAt ? new Date(newestAt).getTime() : NaN;
+        const ageMinutes = Number.isFinite(newestMs)
+          ? Math.max(0, (Date.now() - newestMs) / 60_000)
+          : (fc.feed?.ageMinutes ?? null);
         setState({
           statuses,
           tally: tallyExitStatuses(exits, statuses),
           slowest: slowestReading(statuses),
-          ageMinutes: fc?.feed?.ageMinutes ?? null,
-          windowMinutes: fc?.feed?.windowMinutes ?? null,
-          newestAt: fc?.feed?.newestAt ?? null,
-          stale: Boolean(fc?.feed?.stale),
+          ageMinutes,
+          windowMinutes: fc.feed?.windowMinutes ?? null,
+          newestAt,
+          stale: Boolean(fc.feed?.stale),
           loading: false,
           failed: false,
         });
       } catch {
+        // The last good reading is kept for reference, but `failed` makes every view say the feed is unavailable.
         if (!cancelled) setState((s) => ({ ...s, loading: false, failed: true }));
       }
     };
-    load();
-    const t = setInterval(load, 60_000);
+    // Paused while the tab is hidden, refreshed once on return (lib/use-visible-poll.ts).
+    const stop = startVisiblePoll(load, 60_000, { immediate: true });
     return () => {
       cancelled = true;
-      clearInterval(t);
+      stop();
     };
   }, [exits]);
 

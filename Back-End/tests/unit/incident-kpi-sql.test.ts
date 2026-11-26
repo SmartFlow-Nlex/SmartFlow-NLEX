@@ -71,7 +71,8 @@ test("TC-UT-09: breakdown MTTC applies the same 0..1440 window -> 45.0 min", { t
 test("TC-UT-10: the response-time query reads breakdowns only; the accident query has no response field", () => {
   assert.match(breakdownQuery, /FROM silver\.nlex_breakdown_events_clean b/);
   assert.doesNotMatch(breakdownQuery, /nlex_accident_events_clean/);
-  const accidentQuery = between(service, "MTTC, accident side", "MTTC + time-to-first-responder");
+  // Code only: the comment above that query names the "Clearance Response Protocol", which is not a response field.
+  const accidentQuery = between(service, "MTTC, accident side", "MTTC + time-to-first-responder").replace(/\/\/.*$/gm, "");
   assert.doesNotMatch(accidentQuery, /response/i);
   assert.match(service, /avgTimeToFirstResponder: \{\s*min: bd\.avg_response_min,/);
 });

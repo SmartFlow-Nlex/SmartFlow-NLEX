@@ -69,6 +69,28 @@ test("TC-UT-06d: Act line = the p_high cut-off with the highest F1 (ties to the 
   assert.equal(Math.round(f1Of(best) * 1000) / 1000, 0.8);
 });
 
+test("TC-UT-06f: the Act line counts as calibrated only when every forecast it was fitted on came from the served model", () => {
+  const { fitProvenance } = evaluate<any>([declaration(service, "fitProvenance")], ["fitProvenance"]);
+  const ev = (models: (string | null)[]) => ({
+    bins: [
+      ...models.map((model) => ({ test: false, b: 20, pos: true, n: 10, model })),
+      // Held-out rows do not decide it: the cut-off was not fitted on them.
+      { test: true, b: 20, pos: true, n: 99, model: "Other" },
+    ],
+  });
+  const same = fitProvenance(ev(["XGBoost", "XGBoost"]), "XGBoost");
+  const mixed = fitProvenance(ev(["XGBoost", "LSTM (1 layer)"]), "XGBoost");
+  const unnamed = fitProvenance(ev(["XGBoost", null]), "XGBoost");
+  const unknownServed = fitProvenance(ev(["XGBoost"]), null);
+  console.log(`  same=${same.calibratedOnServed} mixed=${mixed.calibratedOnServed} unnamed=${unnamed.calibratedOnServed} unknownServed=${unknownServed.calibratedOnServed}`);
+  assert.equal(same.calibratedOnServed, true);
+  assert.deepEqual(same.fitModels, [{ model: "XGBoost", rows: 20 }]);
+  assert.equal(mixed.calibratedOnServed, false);
+  assert.equal(unnamed.calibratedOnServed, false);
+  assert.equal(unknownServed.calibratedOnServed, false);
+  assert.equal(fitProvenance(null, "XGBoost").calibratedOnServed, false);
+});
+
 test("TC-UT-06e (API): the prescriptive query takes no throughput or pool; an old ?throughput= is ignored", () => {
   const { PrescriptiveTrafficQuerySchema } = evaluate<any>(
     [declaration(controller, "PrescriptiveTrafficQuerySchema")],

@@ -28,9 +28,11 @@ type Row = {
 const TOLL_LABEL: Record<Toll, string> = { plaza: "Toll plaza", free: "Free", away: "Plaza off NLEX", barrier: "Pays at barrier", unmapped: "Not mapped" };
 
 /**
- * What lies along the chosen route on one carriageway, in separate sections: the exits traffic can leave
+ * What lies along the chosen segment on one carriageway, in separate sections: the exits traffic can leave
  * by, the entries it joins from, toll barriers across the road, and gas stations. Each row is one place,
- * in travel order, with what stands there; clicking it frames the drawn window on it.
+ * in travel order, with what stands there. Since 25 Nov 2026 (user request) every one of them is drawn, so
+ * the rows are a list, not buttons: to see another place, the segment is moved. onJunction / onPlace are
+ * optional and only a caller that still frames on a click passes them.
  *
  * Exits and entries come from the exit list's own access flags (nb_exit, sb_entry ...), not only from the
  * plazas: between Balintawak and the Bocaue Barrier NLEX is an open system, paid on entry, so its exits
@@ -56,8 +58,8 @@ export default function PlacesList<J extends Junction, P extends Place>({
   /** The chosen origin -> destination: all that is listed. */
   route: Span;
   direction: "NB" | "SB";
-  onJunction: (junction: J) => void;
-  onPlace: (place: P) => void;
+  onJunction?: (junction: J) => void;
+  onPlace?: (place: P) => void;
 }) {
   const sections = useMemo(() => {
     const nb = direction === "NB";
@@ -114,6 +116,9 @@ export default function PlacesList<J extends Junction, P extends Place>({
   }, [junctions, places, route.fromKm, route.toKm, direction]);
 
   const within = (km: number, s: Span) => km >= s.fromKm - 1e-6 && km <= s.toKm + 1e-6;
+  const clickable = onJunction != null || onPlace != null;
+  /** The row's hover text without the framing instruction when the rows only list. */
+  const hover = (t: string) => (clickable ? t : t.replace(/\s*Click to frame[^.]*\.?/g, "").replace(/^Frame the window on (.*)$/, "$1"));
   const junctionAt = (r: Row) => junctions.find((j) => `exit:${j.exit_id}` === r.key || `entry:${j.exit_id}` === r.key) ?? null;
 
   // Open on the stretch being looked at, not at the top of a long list.
@@ -133,13 +138,27 @@ export default function PlacesList<J extends Junction, P extends Place>({
             <span className="sb-places-sec-count">{sec.rows.length}</span>
           </h4>
           {sec.rows.length === 0 ? (
-            <p className="sb-places-empty">None on this route.</p>
+            <p className="sb-places-empty">None on this segment.</p>
           ) : (
             <div role="list">
               {sec.rows.map((r) => {
                 const onScreen = r.place ? placesInView.has(r.place.id) : within(r.km, view);
                 // The name is one line, cut with an ellipsis in a narrow rail; hover (and a screen reader) gets all of it.
-                const full = `${r.name} · Km ${fmtKm(r.km, 1)}${r.toll ? ` · ${TOLL_LABEL[r.toll]}` : ""}. ${r.title}`;
+                const full = `${r.name} · Km ${fmtKm(r.km, 1)}${r.toll ? ` · ${TOLL_LABEL[r.toll]}` : ""}. ${hover(r.title)}`;
+                const inner = (
+                  <>
+                    <span className="sb-place-km">{fmtKm(r.km, 1)}</span>
+                    <span className="sb-place-name">{r.name}</span>
+                    {r.toll && <span className={`sb-place-toll t-${r.toll}`}>{TOLL_LABEL[r.toll]}</span>}
+                  </>
+                );
+                if (!clickable) {
+                  return (
+                    <div key={r.key} role="listitem" data-place={r.place?.id} className={`sb-place${onScreen ? " is-on" : ""}`} title={full} aria-label={full}>
+                      {inner}
+                    </div>
+                  );
+                }
                 return (
                   <button
                     key={r.key}
@@ -150,16 +169,14 @@ export default function PlacesList<J extends Junction, P extends Place>({
                     title={full}
                     aria-label={full}
                     onClick={() => {
-                      if (r.place) onPlace(r.place as P);
+                      if (r.place) onPlace?.(r.place as P);
                       else {
                         const j = junctionAt(r);
-                        if (j) onJunction(j as J);
+                        if (j) onJunction?.(j as J);
                       }
                     }}
                   >
-                    <span className="sb-place-km">{fmtKm(r.km, 1)}</span>
-                    <span className="sb-place-name">{r.name}</span>
-                    {r.toll && <span className={`sb-place-toll t-${r.toll}`}>{TOLL_LABEL[r.toll]}</span>}
+                    {inner}
                   </button>
                 );
               })}

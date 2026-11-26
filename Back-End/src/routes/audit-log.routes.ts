@@ -3,6 +3,7 @@ import { rateLimit } from "express-rate-limit";
 import { asyncHandler } from "../middleware/error.middleware.js";
 import { exportAuditLogs, getAuditSummary, listAuditLogs, recordActivity } from "../controllers/audit-log.controller.js";
 import { authenticateToken, authorizeRoles } from "../middleware/auth.middleware.js";
+import { isLocalRequest } from "../middleware/client-ip.js";
 
 const router = Router();
 
@@ -16,7 +17,8 @@ const activityLimiter = rateLimit({
   limit: 30,
   standardHeaders: "draft-7",
   legacyHeaders: false,
-  skip: (req) => req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1",
+  // The real socket, not req.ip: a forged X-Forwarded-For can't claim to be this machine (21 Nov 2026, audit P8-01).
+  skip: (req) => isLocalRequest(req),
   message: { success: false, message: "Too many activity reports; slow down." },
 });
 router.post("/activity", activityLimiter, asyncHandler(recordActivity));

@@ -379,6 +379,9 @@ export type CorridorSnapshot = {
   /** The live feed's own freshness block (/real-time `feed`), or null. */
   feed: { newestAt: string | null; ageMinutes: number | null; stale: boolean } | null;
   receivedAt: number;
+  /** True when the feed's last answer was not a feed (error, 429, no features): what is shown is the last good
+   *  reading, or grey road if there was none. Set by TrafficMapPanel; never to be read as a clear corridor. */
+  unavailable?: boolean;
 };
 
 const lineKm = (coords: number[][]): [number, number] | null => {

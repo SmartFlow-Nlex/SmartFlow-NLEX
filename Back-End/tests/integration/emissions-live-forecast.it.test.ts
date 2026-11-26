@@ -66,8 +66,11 @@ test("TC-IT-12: Congested/Slow/Clear counts match the live Waze rows of the last
              CASE WHEN DEGREES(ST_Azimuth(ST_StartPoint(g), ST_EndPoint(g))) < 90 OR DEGREES(ST_Azimuth(ST_StartPoint(g), ST_EndPoint(g))) > 270 THEN 'NB' ELSE 'SB' END AS dir,
              MAX(level) AS lvl, MIN(speed_kmh) AS spd
       FROM live WHERE GeometryType(g) = 'LINESTRING' AND nlex_exit_id IS NOT NULL GROUP BY 1, 2)
-    SELECT CASE WHEN lvl IS NULL AND spd IS NULL THEN 'clear' WHEN lvl = 0 THEN 'clear'
-                WHEN lvl >= 3 OR spd < 10 THEN 'congested' ELSE 'slow' END AS status, COUNT(*)::int AS n
+    -- The speed rule (corridor-status.service.ts classify(), lib/congestion-scale.ts): under 10 km/h congested,
+    -- 10-20 slow, 20+ clear; a jam with no speed falls back to its grade (4-5 congested, 3 slow). Was the old grade rule
+    -- (3+ or under 10 congested) until the Overview moved to the speed rule (21 Nov 2026, audit P8-03).
+    SELECT CASE WHEN spd IS NOT NULL THEN CASE WHEN spd < 10 THEN 'congested' WHEN spd < 20 THEN 'slow' ELSE 'clear' END
+                WHEN lvl >= 4 THEN 'congested' WHEN lvl = 3 THEN 'slow' ELSE 'clear' END AS status, COUNT(*)::int AS n
     FROM per GROUP BY 1`);
   const [fresh] = await q(`SELECT MAX(last_seen_at) AS newest, COUNT(*) FILTER (WHERE last_seen_at > NOW() - interval '60 minutes')::int AS in_window FROM silver.fact_waze_jams`);
   const db = { congested: 0, slow: 0, ...Object.fromEntries(rows.map((r) => [r.status, r.n])) };

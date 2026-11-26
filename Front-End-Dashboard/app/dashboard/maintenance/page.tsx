@@ -17,6 +17,9 @@ import { useNlexExits, exitNearestKm, displayExitName, CORRIDOR_KM, type NlexExi
 import { LANE_SEGMENTS } from "../../../lib/nlex-lanes";
 import { KM_POST_END, KM_POST_START, fmtKm, kmMeasured } from "../../../lib/km-post";
 import { nearExitsText } from "../../../lib/exit-lookup";
+import { failureText, SERVER_UNREACHABLE } from "../../../lib/server-status";
+import { canWriteOps } from "../../../lib/auth-access";
+import { useServerRole } from "../../../lib/use-server-role";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -419,6 +422,7 @@ function Select({
 function StatusControl({
   schedule,
   disabled,
+  readOnly = false,
   onAdvance,
   onEdit,
   onView,
@@ -427,6 +431,8 @@ function StatusControl({
 }: {
   schedule: Schedule;
   disabled: boolean;
+  /** A role the API refuses writes to: the badge only, no actions menu (the row still opens its details). */
+  readOnly?: boolean;
   onAdvance: (to: Status) => void;
   onEdit: () => void;
   onView: () => void;
@@ -509,12 +515,12 @@ function StatusControl({
           style={{ position: "fixed", left: pos.left, top: pos.top, bottom: pos.bottom, right: "auto" }}
         >
           <p className="nc-ops-menu-head">Actions</p>
-          {actions.map((a) => (
+          {!readOnly && actions.map((a) => (
             <button key={a.to} type="button" role="menuitem" className={`${styles.customSelectOption} nc-ops-select-opt`} onClick={choose(() => onAdvance(a.to))}>
               {a.label}
             </button>
           ))}
-          {live && (
+          {!readOnly && live && (
             <button type="button" role="menuitem" className={`${styles.customSelectOption} nc-ops-select-opt`} onClick={choose(onEdit)}>
               Edit schedule
             </button>
@@ -522,15 +528,19 @@ function StatusControl({
           <button type="button" role="menuitem" className={`${styles.customSelectOption} nc-ops-select-opt`} onClick={choose(onView)}>
             View details
           </button>
-          {live && (
+          {!readOnly && live && (
             <button type="button" role="menuitem" className={`${styles.customSelectOption} nc-ops-select-opt`} onClick={choose(onCancel)}>
               Cancel schedule…
             </button>
           )}
-          <hr className="nc-ops-menu-sep" />
-          <button type="button" role="menuitem" className={`${styles.customSelectOption} nc-ops-select-opt is-danger`} onClick={choose(onDelete)}>
-            Delete…
-          </button>
+          {!readOnly && (
+            <>
+              <hr className="nc-ops-menu-sep" />
+              <button type="button" role="menuitem" className={`${styles.customSelectOption} nc-ops-select-opt is-danger`} onClick={choose(onDelete)}>
+                Delete…
+              </button>
+            </>
+          )}
         </div>
         </div>,
         document.body,
@@ -647,6 +657,9 @@ export default function MaintenancePage() {
   // "Pulilan to San Simon" beside a km range, so a row says where it is without a km lookup.
   const nearOf = (s: Pick<Schedule, "start_km" | "end_km">) => nearExitsText(NLEX_EXITS, Number(s.start_km), Number(s.end_km));
   const toast = useToast();
+  /* Changing a schedule is for the roles the API allows (lib/auth-access OPS_WRITE_ROLES); the others read the page.
+     Until the server has said, the controls stay and the API decides. */
+  const readOnly = !canWriteOps(useServerRole());
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -966,7 +979,7 @@ export default function MaintenancePage() {
     } catch (e) {
       // Re-sync with the database so a stale row never sits next to the error
       await refresh();
-      const msg = e instanceof Error ? e.message : "Update failed";
+      const msg = failureText(e, e instanceof Error ? e.message : "Update failed");
       setActionError(msg);
       setTimeout(() => setActionError(null), 5000);
       toast.error(`Could not update "${s.title}".`, msg);
@@ -996,7 +1009,7 @@ export default function MaintenancePage() {
       toast.success(`"${s.title}" was deleted.`);
     } catch (e) {
       await refresh();
-      const msg = e instanceof Error ? e.message : "Delete failed";
+      const msg = failureText(e, e instanceof Error ? e.message : "Delete failed");
       setActionError(msg);
       setTimeout(() => setActionError(null), 5000);
       toast.error(`Could not delete "${s.title}".`, msg);
@@ -1111,7 +1124,7 @@ export default function MaintenancePage() {
     } catch (e) {
       // Kept inline as well as in the toast: the form stays open on failure, so
       // the message belongs next to the fields that need fixing.
-      const msg = e instanceof Error ? e.message : "Save failed — is the backend running?";
+      const msg = failureText(e, e instanceof Error ? e.message : "Save failed.");
       setFormError(msg);
       toast.error(editId ? "Could not save your changes." : "Could not schedule the work.", msg);
     } finally {
@@ -1371,9 +1384,13 @@ export default function MaintenancePage() {
         title="Maintenance Overview"
         subtitle="Scheduled roadworks, closures, and asset upkeep across NLEX"
         actions={
-          <button className="btn-primary nc-ops-new" onClick={() => { setFormError(null); setEditId(null); setForm(emptyForm); setFormOpen(true); }}>
-            <Plus size={15} aria-hidden="true" /> Schedule Maintenance
-          </button>
+          readOnly ? (
+            <span className="pill blue" title="Scheduling and changing maintenance is for Data Analysts and TCC Operators.">View only for your role</span>
+          ) : (
+            <button className="btn-primary nc-ops-new" onClick={() => { setFormError(null); setEditId(null); setForm(emptyForm); setFormOpen(true); }}>
+              <Plus size={15} aria-hidden="true" /> Schedule Maintenance
+            </button>
+          )
         }
       />
 
@@ -1589,7 +1606,7 @@ export default function MaintenancePage() {
         </div>
 
         {error ? (
-          <StateNote kind="offline">Live data unavailable — is the backend running on port 4000?</StateNote>
+          <StateNote kind="offline">{SERVER_UNREACHABLE}</StateNote>
         ) : !loading && schedules.length === 0 ? (
           <StateNote kind="nodata">No maintenance scheduled yet — create the first one.</StateNote>
         ) : !loading && visible.length === 0 ? (
@@ -1704,6 +1721,7 @@ export default function MaintenancePage() {
                       <StatusControl
                         schedule={s}
                         disabled={mutating}
+                        readOnly={readOnly}
                         onAdvance={(to) => changeStatus(s, to)}
                         onEdit={() => openEdit(s)}
                         onView={() => { setActionError(null); setDetail(s); }}
@@ -1828,7 +1846,11 @@ export default function MaintenancePage() {
             {/* Always rendered, because Delete applies to every status. The
                 live-only actions are gated individually inside: a completed or
                 already-cancelled schedule has nothing to advance or call off,
-                and the API answers 409 if asked, but it can still be removed. */}
+                and the API answers 409 if asked, but it can still be removed.
+                A role the API refuses writes to sees no actions here at all. */}
+            {readOnly ? (
+              <p className="nc-ops-sub">View only: changing a schedule is for Data Analysts and TCC Operators.</p>
+            ) : (
             <div className="nc-ops-actions is-wrap">
               {(detail.status === "scheduled" || detail.status === "in_progress") && (
                 <button className="btn-muted" disabled={mutating} onClick={() => openEdit(detail)}>
@@ -1857,6 +1879,7 @@ export default function MaintenancePage() {
                 <Trash2 size={14} aria-hidden="true" /> Delete
               </button>
             </div>
+            )}
           </div>
         </div>
       )}

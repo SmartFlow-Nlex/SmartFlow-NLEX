@@ -2290,6 +2290,15 @@ body {
   color: #3b4f6b;
 }
 .sandbox-speed-seg button.active { background: #fff; color: var(--brand-primary); box-shadow: var(--shadow-sm); }
+/* The speed actually reached when the computer cannot keep up with the one chosen (page.tsx achievedSpeed). */
+.sandbox-speed-actual {
+  margin-right: 6px;
+  font-size: .75rem;
+  font-weight: 600;
+  color: var(--text-secondary, #5b6b82);
+  vertical-align: middle;
+  white-space: nowrap;
+}
 
 .sandbox-mini-label {
   display: block;

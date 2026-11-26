@@ -1,0 +1,7 @@
+# Gitleaks findings reviewed on 24 Nov 2026 and judged not to be secrets. One fingerprint per line (commit:file:rule:line).
+# All three are the Supabase ANON key (JWT claim role=anon). That key is public by Supabase's design: it ships in every
+# browser bundle, and our own tables are not exposed through it (the REST API lists 0 tables for it). A new finding
+# anywhere else still fails the check.
+4a0e2770741aa226600a9ca06060cb2cba64a964:Front-End-Dashboard/.env:jwt:26
+903ab2dd8371ed48480582099ad3f76229720ec2:Back-End/src/middleware/auth.middleware.ts:jwt:6
+903ab2dd8371ed48480582099ad3f76229720ec2:Front-End-Dashboard/lib/supabase.ts:jwt:4

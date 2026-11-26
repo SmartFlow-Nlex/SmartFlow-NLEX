@@ -6,6 +6,7 @@ import { getCorridorStatusFull } from "./corridor-status.service.js";
 import { getMaintenanceSchedulesFromDb } from "./maintenance.service.js";
 import { fmtKmRange, nearExitsText } from "../lib/km-post.js";
 import { knownFigures, unknownFigures } from "./ai-figure-check.js";
+import { maskPersonalDetails } from "../lib/pii.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════
    AI EXPLAIN — PLAIN-LANGUAGE BRIEFINGS FOR THE NON-PREDICTIVE MODULES
@@ -349,7 +350,9 @@ async function buildMaintenance(): Promise<Built | null> {
     const lo = Math.min(r.start_km, r.end_km);
     const hi = Math.max(r.start_km, r.end_km);
     // The exits either end, named as the page names them (lib/km-post.ts's nearExitsText).
-    return `"${r.title}", ${r.direction} ${fmtKmRange(lo, hi)} (${nearExitsText(lo, hi)}), ${r.lane_closure}, ${pht(r.starts_at)} to ${pht(r.ends_at)} PHT`;
+    // Titles and lane notes are typed by operators and go to the AI provider: masked first (lib/pii.ts, 24 Nov 2026).
+    const typed = (s: string) => maskPersonalDetails(String(s ?? "")).text;
+    return `"${typed(r.title)}", ${r.direction} ${fmtKmRange(lo, hi)} (${nearExitsText(lo, hi)}), ${typed(r.lane_closure)}, ${pht(r.starts_at)} to ${pht(r.ends_at)} PHT`;
   };
 
   const now = Date.now();

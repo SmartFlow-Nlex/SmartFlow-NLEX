@@ -966,15 +966,17 @@ export default function ScenarioPanel(props: Props) {
                 className={intensity === o.id ? "active" : ""}
                 data-scn-intensity={o.id}
                 onClick={() => setIntensity(o.id)}
-                title={`Caps traffic at ${ASSUMPTIONS.RAIN_SPEED_KMH.value[o.id]} km/h`}
+                title={`Slows traffic to about ${ASSUMPTIONS.RAIN_SPEED_KMH.value[o.id]} km/h`}
               >
                 {o.label}
               </button>
             ))}
           </div>
+          {/* Rain is no longer a speed cap (19 Nov 2026 audit S7): every driver's desired speed falls by the NLEx study's
+              free-flow ratio and following gaps lengthen, calibrated to the capacity loss it measured. */}
           <span className="sandbox-scn-cap" data-scn="rain-cap">
-            Caps traffic at {ASSUMPTIONS.RAIN_SPEED_KMH.value[intensity]} km/h
-            <InfoTooltip text="Scaled from free-flow speeds measured on the NLEx in rain (Mejia & Sigua 2018). A cap does not lengthen following headways, so capacity loss is understated." />
+            Slows traffic to about {ASSUMPTIONS.RAIN_SPEED_KMH.value[intensity]} km/h
+            <InfoTooltip text={`Every class slows by the same ratio and drivers leave longer gaps, so the road carries less: about ${intensity === "light" ? "4" : intensity === "moderate" ? "8" : "18"}% less at capacity, calibrated to free-flow speeds and capacities measured on the NLEx in rain (Mejia & Sigua 2018).`} />
           </span>
         </div>
       )}

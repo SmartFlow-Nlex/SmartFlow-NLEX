@@ -1294,9 +1294,14 @@ export function promptFor(ctx: SandboxContext): string {
 export async function parseCommand(command: string, ctx: SandboxContext): Promise<CommandPlan> {
   // Emails, phone numbers and plate codes never reach the AI provider (lib/pii.ts, security audit #15).
   const safeCommand = maskPersonalDetails(command).text;
+  /* Event names are the only other free text in the context the page sends, and they go into the system prompt:
+     masked the same way (24 Nov 2026, security task S6). Events are referred to by id, so nothing resolves by name. */
+  const promptCtx: SandboxContext = ctx.events
+    ? { ...ctx, events: ctx.events.map((e) => ({ ...e, name: maskPersonalDetails(e.name).text })) }
+    : ctx;
   const ask = async () => {
     const content = await chat({
-      system: promptFor(ctx),
+      system: promptFor(promptCtx),
       user: safeCommand,
       json: true,
       // GLM always reasons and the reasoning is billed against this budget; the prompt carries the corridor's

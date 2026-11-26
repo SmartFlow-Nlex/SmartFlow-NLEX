@@ -18,6 +18,21 @@ Usage:
 """
 from __future__ import annotations
 
+import sys
+
+# HARD STOP (21 Nov 2026, audit H12 / A8). SUPERSEDED: do not run.
+# The served incident forecast is published by train_incident_models.py (weekly batch, "incident_counts" group in
+# smartflow_scripts/3_training_testing/weekly_retrain/weekly_retrain.py). This old single-model baseline runs
+# DELETE FROM ml_daily_actuals, ml_predictive_incidents and ml_training_metadata with no WHERE clause and refills
+# them from the legacy crash tables, replacing the served incident forecast until the next weekly batch.
+if "--i-know-this-overwrites-live" not in sys.argv:
+    sys.exit(
+        "run_predictive_pipeline.py is SUPERSEDED and would overwrite live tables:\n"
+        "  it deletes every row of ml_daily_actuals, ml_predictive_incidents and ml_training_metadata.\n"
+        "The live publisher is train_incident_models.py (weekly batch).\n"
+        "Pass --i-know-this-overwrites-live only if you really mean to replace the served incident forecast."
+    )
+
 import json
 import os
 import sys

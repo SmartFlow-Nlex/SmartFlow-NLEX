@@ -35,8 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
           cache: pip
@@ -46,7 +46,7 @@ jobs:
       - name: Settings from secrets
         env: { DB_HOST: "${{ secrets.DB_HOST }}", DB_PORT: "${{ secrets.DB_PORT }}", DB_NAME: "${{ secrets.DB_NAME }}", DB_USER: "${{ secrets.DB_USER }}", DB_PASSWORD: "${{ secrets.DB_PASSWORD }}" }
         run: bash .github/scripts/write_env.sh
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             smartflow_scripts/_work/cache
@@ -56,3 +56,11 @@ jobs:
       - name: Train, test and publish
         working-directory: All_Scripts/Predictive_Modeling
         run: python -u train_congestion_horizon.py --fast --no-qrf --skip-if-batch-running --severe-weight 1.5 --with-history
+      # Keep the raw Waze snapshots to 7 days (21 Nov 2026 audit, H3): ~100 MB a day accumulated with nothing deleting
+      # it, the size that preceded the 23 Oct database outage. The parsed jams (silver.fact_waze_jams) are untouched.
+      # Runs even when training was skipped or failed; a run with nothing to delete is two quick queries.
+      - name: Prune raw Waze snapshots older than 7 days
+        if: ${{ !cancelled() }}
+        working-directory: smartflow_scripts/1_data_loading/waze
+        timeout-minutes: 15
+        run: python -u prune_waze_raw.py --keep-days 7

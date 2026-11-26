@@ -32,6 +32,7 @@ import { useRainEffect, isClear, METHOD_NOTE } from "../../../lib/rain-effect";
 import { CardIcon, CardInsight } from "../../../components/dashboard/CardBits";
 import FilterChips, { rangeText, type FilterChip } from "../../../components/dashboard/FilterChips";
 import { SortHead, useSortedRows, type SortCol } from "../../../components/dashboard/SortableTable";
+import { SERVER_UNREACHABLE } from "../../../lib/server-status";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -92,7 +93,9 @@ type Analytics = {
      This page asked for `causes`, which the API stopped sending, and read
      `.length` off undefined on first render. */
   accidentCauses: { label: string; total: number; injuries: number; fatalities: number }[];
-  breakdownCauses: { label: string; total: number; injuries: number; fatalities: number }[];
+  /* No injuries or fatalities: the breakdown table has neither column, so the API sends label, mainCause and total
+     only, and the tooltip and pop-up printed "NaN injured" (21 Nov 2026, audit P8-14). Optional, shown as n/a. */
+  breakdownCauses: { label: string; total: number; injuries?: number; fatalities?: number }[];
   types: { label: string; total: number; injuries: number; fatalities: number }[];
   weather: {
     wetHours: number;
@@ -126,6 +129,8 @@ type Detail = { title: string; subtitle?: string; rows: [string, string][]; note
 
 // ---------- Formatting ----------
 const fmtInt = (n: number) => Math.round(n).toLocaleString("en-US");
+/** A count that may be absent: "n/a" rather than "NaN"; a real 0 stays 0. */
+const fmtCount = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? "n/a" : fmtInt(n));
 const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const fmtHour = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`);
 const fmtPct = (p: number) => `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
@@ -657,7 +662,7 @@ export default function IncidentPage() {
         ? d?.breakdownCauses
         : d?.types) ?? [];
 
-  const causeChart = useMemo<{ option: EChartsOption; rows: Analytics["types"] } | null>(() => {
+  const causeChart = useMemo<{ option: EChartsOption; rows: Analytics["breakdownCauses"] } | null>(() => {
     if (!data) return null;
     const src = causeRows(data, causeMode);
     if (src.length === 0) return null;
@@ -688,7 +693,12 @@ export default function IncidentPage() {
             const r = display[i];
             if (!r) return "";
             const share = total > 0 ? ` (${((r.total / total) * 100).toFixed(1)}%)` : "";
-            return `<b>${r.label}</b><br/>Incidents: <b>${fmtInt(r.total)}</b>${share}<br/>Injured: <b>${fmtInt(r.injuries)}</b> · Fatal: <b>${fmtInt(r.fatalities)}</b>`;
+            // Breakdowns carry no injury columns (21 Nov 2026, audit P8-14): "n/a", never "NaN".
+            const harm =
+              r.injuries == null && r.fatalities == null
+                ? "Injuries: n/a (not recorded for breakdowns)"
+                : `Injured: <b>${fmtCount(r.injuries)}</b> · Fatal: <b>${fmtCount(r.fatalities)}</b>`;
+            return `<b>${r.label}</b><br/>Incidents: <b>${fmtInt(r.total)}</b>${share}<br/>${harm}`;
           },
         },
         /* No legend: one series named "Incidents" on a chart titled the same,
@@ -793,8 +803,8 @@ export default function IncidentPage() {
     const noun = causeMode === "Accident causes" ? "accident cause" : causeMode === "Breakdown causes" ? "breakdown cause" : "accident type";
     const top3Pct = sorted.length > 3 ? (sorted.slice(0, 3).reduce((s, r) => s + r.total, 0) / total) * 100 : null;
     // Injury rate among the bars drawn (top 9), only where there are enough incidents for a rate to mean something.
-    const rated = sorted.slice(0, 9).filter((r) => r.total >= 10 && r.injuries > 0);
-    const harm = rated.length > 0 ? rated.reduce((a, r) => (r.injuries / r.total > a.injuries / a.total ? r : a)) : null;
+    const rated = sorted.slice(0, 9).filter((r) => r.total >= 10 && (r.injuries ?? 0) > 0);
+    const harm = rated.length > 0 ? rated.reduce((a, r) => ((r.injuries ?? 0) / r.total > (a.injuries ?? 0) / a.total ? r : a)) : null;
     return { top: sorted[0], noun, total, top3Pct, harm };
   }, [data, causeMode]);
   const weatherInsight = useMemo(() => {
@@ -934,8 +944,8 @@ export default function IncidentPage() {
       rows: [
         ["Incidents", fmtInt(r.total)],
         ["Share", total > 0 ? `${((r.total / total) * 100).toFixed(1)}%` : "—"],
-        ["Injuries", fmtInt(r.injuries)],
-        ["Fatalities", fmtInt(r.fatalities)],
+        ["Injuries", r.injuries == null ? "n/a (not recorded for breakdowns)" : fmtCount(r.injuries)],
+        ["Fatalities", r.fatalities == null ? "n/a (not recorded for breakdowns)" : fmtCount(r.fatalities)],
       ],
       note: filtersNote,
     });
@@ -972,7 +982,7 @@ export default function IncidentPage() {
 
   const chartFrame = (option: EChartsOption | null, emptyNote: string, onClick?: (p: never) => void) => {
     if (loading && !data) return <ChartSkeleton />;
-    if (error) return <div className={styles.placeholder}>Live data unavailable — is the backend running on port 4000?</div>;
+    if (error) return <div className={styles.placeholder}>{SERVER_UNREACHABLE}</div>;
     if (!option) return <div className={styles.placeholder}>{emptyNote}</div>;
     return (
       <ReactECharts
@@ -1386,7 +1396,7 @@ export default function IncidentPage() {
                 <span className={styles.kpiIcon} aria-hidden="true"><Timer size={15} /></span>
                 <h3>
                   Avg Time to Clear
-                  {kpiInfo(`Minutes from an incident being reported until the road was cleared: accidents from their recorded clearance time, breakdowns until the last responding unit left. A clearance logged at 0 minutes (cleared at the same minute it was reported) is a recording default, so it counts as not recorded, as in the Clearance Response Protocol; so do times over 24 hours. The headline is the mean of both, weighted by how many of each have times; the line under it gives the median by type, since a few very long clearances pull the mean up.${
+                  {kpiInfo(`Minutes from an incident being reported until it was cleared, given by type because the two record different things: accidents until the scene was recorded cleared, breakdowns until the last responding unit left. The headline is each type's mean (accidents / breakdowns) and the line under it each type's median, since a few very long clearances pull the mean up. A clearance logged at 0 minutes (cleared at the same minute it was reported) is a recording default, so it counts as not recorded, as in the Clearance Response Protocol; so do times over 24 hours.${
                     data?.kpis.mttc
                       ? ` In this Range: ${[
                           data.kpis.mttc.accident?.p90Min != null ? `90% of accidents cleared within ${data.kpis.mttc.accident.p90Min} min` : "",
@@ -1395,8 +1405,15 @@ export default function IncidentPage() {
                         ].filter(Boolean).join("; ")}.`
                       : ""}`)}
                 </h3>
+                {/* By type, not blended (system audit 19 Nov 2026, INC-7): the single mean, weighted by how many of
+                    each had times, mixed accident scene-clear times (about 27 min) with breakdown last-departure times
+                    (about 72 min) into one figure (61 min) that described neither. */}
                 <div className={styles.kpiValue}>
-                  {kpiValue(data?.kpis.mttc?.overallMin != null ? `${data.kpis.mttc.overallMin} min` : null)}
+                  {kpiValue(((acc: number | null, bkd: number | null) =>
+                    acc != null && bkd != null ? `${acc} / ${bkd} min` : acc != null ? `${acc} min` : bkd != null ? `${bkd} min` : null)(
+                    data?.kpis.mttc?.accident?.meanMin ?? null,
+                    data?.kpis.mttc?.breakdown?.meanMin ?? null,
+                  ))}
                 </div>
                 <p className={styles.kpiHint}>
                   {data?.kpis.mttc
@@ -1540,7 +1557,7 @@ export default function IncidentPage() {
                   {causeInsight.top3Pct != null
                     ? `The top three make up ${causeInsight.top3Pct.toFixed(1)}% of the ${fmtInt(causeInsight.total)} incidents logged.`
                     : causeInsight.harm
-                      ? `Highest injury rate among the bars: ${causeInsight.harm.label}, ${fmt1((causeInsight.harm.injuries / causeInsight.harm.total) * 100)} injured per 100 incidents.`
+                      ? `Highest injury rate among the bars: ${causeInsight.harm.label}, ${fmt1(((causeInsight.harm.injuries ?? 0) / causeInsight.harm.total) * 100)} injured per 100 incidents.`
                       : null}
                 </CardInsight>
               )}
@@ -1692,7 +1709,7 @@ export default function IncidentPage() {
               {loading && !data ? (
                 <div className={styles.chartBody}><ChartSkeleton /></div>
               ) : error ? (
-                <div className={styles.placeholder} style={{ height: 200 }}>Live data unavailable — is the backend running on port 4000?</div>
+                <div className={styles.placeholder} style={{ height: 200 }}>{SERVER_UNREACHABLE}</div>
               ) : data && data.heatmap.length > 0 ? (
                 <>
                   <HeatmapWithBreakdown heatmap={data.heatmap} range={data.range} renderMix={renderIncidentMix} />

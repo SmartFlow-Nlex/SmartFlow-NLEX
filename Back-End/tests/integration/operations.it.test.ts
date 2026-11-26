@@ -112,7 +112,7 @@ test("TC-IT-18 (read half): GET /api/mobile-config returns the stored row's mlHo
   if (why) return t.skip(why);
   const r = await get("/api/mobile-config");
   const [row] = await q(`SELECT config, updated_at, updated_by FROM public.nlex_mobile_config WHERE id = 1`);
-  const api = r.body?.data?.config?.sections?.dashboard?.mlHotspots ?? r.body?.config?.sections?.dashboard?.mlHotspots;
+  const api = r.body?.data?.sections?.dashboard?.mlHotspots ?? r.body?.data?.config?.sections?.dashboard?.mlHotspots;  // the route returns the config itself as data
   console.log(`  api status=${r.status} mlHotspots=${api} source=${r.body?.meta?.source ?? r.body?.data?.source}; db mlHotspots=${row?.config?.sections?.dashboard?.mlHotspots} updated ${row?.updated_at?.toISOString?.()} by ${row?.updated_by}`);
   assert.equal(r.status, 200);
   assert.equal(api, row?.config?.sections?.dashboard?.mlHotspots ?? true);

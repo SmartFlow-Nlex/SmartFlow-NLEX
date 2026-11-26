@@ -28,8 +28,9 @@ export type Toast = {
 
 type ToastContextValue = {
   toasts: Toast[];
-  /** Returns the id, so a caller can dismiss it early if it wants. */
-  show: (kind: ToastKind, message: string, detail?: string) => number;
+  /** Returns the id, so a caller can dismiss it early if it wants. `sticky` keeps it up until dismissed,
+   *  for a notice that ends when something else does (the server-waking notice, 21 Nov 2026). */
+  show: (kind: ToastKind, message: string, detail?: string, opts?: { sticky?: boolean }) => number;
   success: (message: string, detail?: string) => number;
   error: (message: string, detail?: string) => number;
   info: (message: string, detail?: string) => number;
@@ -63,10 +64,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const show = useCallback(
-    (kind: ToastKind, message: string, detail?: string) => {
+    (kind: ToastKind, message: string, detail?: string, opts?: { sticky?: boolean }) => {
       const id = nextId.current++;
       setToasts((cur) => [...cur, { id, kind, message, detail }].slice(-MAX_VISIBLE));
-      const ms = AUTO_DISMISS_MS[kind];
+      const ms = opts?.sticky ? null : AUTO_DISMISS_MS[kind];
       if (ms != null) {
         timers.current.set(
           id,

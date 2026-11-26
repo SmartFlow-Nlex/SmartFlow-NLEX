@@ -180,10 +180,10 @@ async function compute(): Promise<RainEffect | null> {
     `WITH pts AS (
        SELECT timestamp_utc, round(latitude::numeric, 3) la, round(longitude::numeric, 3) lo, AVG(rainfall) r
        FROM public.hourly_weather
-       WHERE (timestamp_utc + interval '8 hours')::date <= $1::date
+       WHERE ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date <= $1::date
        GROUP BY 1, 2, 3),
      hr AS (SELECT timestamp_utc, AVG(r) r FROM pts GROUP BY 1),
-     rain AS (SELECT (timestamp_utc + interval '8 hours')::date d, SUM(r) mm, COUNT(*) hours FROM hr GROUP BY 1),
+     rain AS (SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date d, SUM(r) mm, COUNT(*) hours FROM hr GROUP BY 1),
      acc AS (SELECT event_start_date::date d, COUNT(*) n FROM silver.nlex_accident_events_clean GROUP BY 1),
      brk AS (SELECT event_encoded_date::date d, COUNT(*) n FROM silver.nlex_breakdown_events_clean GROUP BY 1)
      SELECT v.date::text d, v.total_volume::float vol, rain.mm::float mm,

@@ -49,6 +49,26 @@ export const FALLBACK_ROUTE = "/dashboard";
 /** Where a user is sent when there is no session at all. */
 export const LOGIN_ROUTE = "/";
 
+/**
+ * Roles the API lets change maintenance schedules and the mobile app's settings: the same list as
+ * authorizeRoles(["data-analyst", "tcc-operator"]) in Back-End/src/routes/maintenance.routes.ts and
+ * mobile-config.routes.ts. Every role may open those pages; an incident operator only reads them.
+ */
+export const OPS_WRITE_ROLES: readonly Role[] = ["data-analyst", "tcc-operator"];
+
+/**
+ * Whether the page should offer its write controls (21 Nov 2026, audit G-4). The pages used to show them to every
+ * role, so an incident operator could fill in a whole schedule and only then be told "Access denied".
+ *
+ * `null` means the server has not said yet (or could not be asked): the controls stay, and the API, which checks
+ * the role on every write regardless, decides. Hiding them until the answer came would lock out the roles that may
+ * write whenever the server is slow to wake.
+ */
+export function canWriteOps(role: Role | "pending" | null): boolean {
+  if (role == null) return true;
+  return role !== "pending" && OPS_WRITE_ROLES.includes(role);
+}
+
 export function isRole(value: unknown): value is Role {
   return value === "data-analyst" || value === "tcc-operator" || value === "incident-operator";
 }

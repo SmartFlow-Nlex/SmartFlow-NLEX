@@ -4,12 +4,16 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import mapboxgl, { GeoJSONSource } from "mapbox-gl";
 import type { Point } from "geojson";
 import { useEffect, useRef, useState } from "react";
-import { CloudLightning, CloudRain } from "lucide-react";
+import { CloudLightning, CloudRain, WifiOff } from "lucide-react";
 import nlexGeometry from "./nlex-geometry.json";
 import {
   corridorGuard, directionFromStreet, directionLabel, sliceCorridor, type LngLat,
 } from "../../lib/corridor-shape";
 import { corridorSegmentLevels } from "../../lib/corridor-status";
+import { jamLevel } from "../../lib/congestion-scale";
+import { fetchFeatureCollection } from "../../lib/live-feed";
+import { cachedJson } from "../../lib/cached-json";
+import { startVisiblePoll } from "../../lib/use-visible-poll";
 import { FALLBACK_EXITS, accessLabel, displayExitName, plazaLabel } from "../../lib/nlex-exits";
 import { makePredictedQueues, shownForecastState } from "../../lib/predicted-queues";
 import { useChartTheme } from "../../lib/chart-theme";
@@ -345,6 +349,10 @@ export default function TrafficMapPanel({
   const floodFinding = useRainEffect(isFloodSubtype(selectedReport?.subtype))?.jams.flood ?? null;
   // Exits with rain falling now (live map only), for the "Raining at" tag over the map.
   const [rainNow, setRainNow] = useState<RainNow | null>(null);
+  /* The feed's last answer was not a feed (an error, a 429, no `features`), so what is drawn is the last good
+     reading, or grey "no data" road if there has been none; never a clear corridor (audit 2026-11-19, P8-02).
+     "kept" says whether a last good reading is still on the map. */
+  const [feedDown, setFeedDown] = useState<null | { kept: boolean }>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -636,9 +644,13 @@ export default function TrafficMapPanel({
        and another 15-second poll behind, all of them writing dash values to the
        same six layers, which is what made the flow stutter and jump. */
     let disposed = false;
-    let pollTimer: ReturnType<typeof setInterval> | null = null;
-    let rainTimer: ReturnType<typeof setInterval> | null = null;
     let removeClouds: (() => void) | null = null;
+    /* Both polls pause while the tab is hidden and refresh once on return (lib/use-visible-poll.ts): one Live
+       Map tab left in the background made about 170 requests per 15 minutes (audit 2026-11-19, P8-05). */
+    let stopPoll: (() => void) | null = null;
+    let stopRain: (() => void) | null = null;
+    /* True while the feed's last answer was not a feed; see `feedDown` above. */
+    let feedDownNow = false;
     /* Set once the Night Corridor graphics exist; tears them down with the map. */
     let cleanupGraphics: (() => void) | null = null;
 
@@ -696,6 +708,10 @@ export default function TrafficMapPanel({
             ...f.properties,
             direction: snapped.direction,
             direction_source: snapped.directionSource,
+            /* A live jam's colour from the one shared rule (lib/congestion-scale.ts), which the Overview's counts
+               and ribbons use too. For today's feed this is the level it already carries; it only changes an
+               older payload whose `level` was Waze's grade. Predicted queues keep their forecast level. */
+            ...(isRealtimeEndpoint ? { level: jamLevel(f.properties as Record<string, unknown> | null) } : {}),
           };
           /* The queue's upstream end -- the back of it, where traffic arrives.
 
@@ -718,7 +734,7 @@ export default function TrafficMapPanel({
             | [number, number]
             | undefined;
           if (head) {
-            const lvl = Number((f.properties as { level?: unknown })?.level ?? 0);
+            const lvl = Number((properties as { level?: unknown }).level ?? 0);
             const where = queueWhere(head, snapped.direction);
             const marked = { ...properties, ...(where ?? {}) };
             /* Level 0 is a Waze jam still moving at 20+ km/h: not congested on the model's scale (the forecast
@@ -838,8 +854,10 @@ export default function TrafficMapPanel({
       Severe: 5,
     };
 
-    /** Colours the corridor from whichever shape of state the endpoint sends. */
-    const corridorWithState = (fc: GeoJSON.FeatureCollection): GeoJSON.FeatureCollection => {
+    /** Colours the corridor from whichever shape of state the endpoint sends.
+     *  `known` is false when there is no reading at all (the feed has not answered with one), and then silence
+     *  is grey "no data" on the live map too, never free flow. */
+    const corridorWithState = (fc: GeoJSON.FeatureCollection, known = true): GeoJSON.FeatureCollection => {
       /* One derivation, shared with the Home tab's corridor panel. It used to
          live here as its own loop over the same guard and the same snap, which
          meant the two views agreed only for as long as nobody edited one of
@@ -892,8 +910,10 @@ export default function TrafficMapPanel({
          jam is a stretch that is moving: free flow, drawn green. The forecast
          is the opposite — it covers seven of nineteen segments, and silence
          there means nobody forecast it, which is not a claim that it will be
-         clear. Those stay grey. */
-      const unreported = isRealtimeEndpoint ? 0 : NO_READING;
+         clear. Those stay grey.
+         Silence is only free flow when the feed actually answered: with no
+         reading there is nothing to say about any stretch (audit P8-02). */
+      const unreported = isRealtimeEndpoint && known ? 0 : NO_READING;
 
       return {
         ...corridorBase,
@@ -906,11 +926,22 @@ export default function TrafficMapPanel({
     };
 
     map.on("load", async () => {
-      const response = await fetch(endpoint, { cache: "no-store" });
-      const data = onlyOnCorridor(withPredictedQueues(await response.json()));
+      /* Only a real feed is drawn. An error or 429 body used to come through here as a collection with no
+         features, which painted every segment free-flowing; a thrown fetch left the map without its sources
+         and with no poll to recover. Now a failed first read draws grey "no data" road and the poll below
+         keeps asking (audit 2026-11-19, P8-02). */
+      let first: GeoJSON.FeatureCollection | null = null;
+      try {
+        first = await fetchFeatureCollection(endpoint, { cache: "no-store" });
+      } catch {
+        first = null;
+      }
       // Rebuilt (new hour, new theme) or unmounted while the feed was loading:
       // this map is gone, so there is nothing left to draw on.
       if (disposed) return;
+      feedDownNow = first == null;
+      setFeedDown(feedDownNow ? { kept: false } : null);
+      const data = onlyOnCorridor(withPredictedQueues(first ?? { type: "FeatureCollection", features: [] }));
 
       const isRealtime = endpoint.includes("real-time");
 
@@ -937,7 +968,8 @@ export default function TrafficMapPanel({
       let lastCorridorSig = "";
       let lastFeedSig = "";
 
-      const corridorAtLoad = corridorWithState(data);
+      // With no first reading the road is grey, not green, until a poll brings one.
+      const corridorAtLoad = corridorWithState(data, !feedDownNow);
       setSegmentState(corridorAtLoad);
       lastCorridorSig = signature(corridorAtLoad);
       lastFeedSig = signature(data);
@@ -1969,7 +2001,7 @@ export default function TrafficMapPanel({
             `<div class="mjp">
                <div class="mjp-head is-${lvl >= 3 ? "congested" : lvl >= 1 ? "slow" : "clear"}">
                  ${lvl === 0 && p.waze_level != null ? "Moving" : LEVEL_WORD[lvl] ?? "Reported"}
-                 <span>${String(p.direction ?? "")}${
+                 <span>${esc(p.direction)}${
                    p.rel_km == null ? "" : ` &middot; km ${fmtKm(Number(p.rel_km), 0)}`
                  }</span>
                </div>
@@ -2874,8 +2906,8 @@ export default function TrafficMapPanel({
           
           el.innerHTML = `
             <div class="pulsing-marker-container">
-              <div class="pulsing-marker-glow ${props.type?.toLowerCase() || 'hazard'}"></div>
-              <div class="pulsing-marker-core ${props.type?.toLowerCase() || 'hazard'}" style="
+              <div class="pulsing-marker-glow ${esc(props.type?.toLowerCase() || 'hazard')}"></div>
+              <div class="pulsing-marker-core ${esc(props.type?.toLowerCase() || 'hazard')}" style="
                 width: 20px !important;
                 height: 20px !important;
                 border-radius: 50% !important;
@@ -2910,9 +2942,9 @@ export default function TrafficMapPanel({
             ? Number.isFinite(Number(props.exit_distance_m))
               ? `${Number(props.exit_distance_m) < 950
                   ? `${Math.round(Number(props.exit_distance_m) / 10) * 10} m`
-                  : `${(Number(props.exit_distance_m) / 1000).toFixed(1)} km`} from ${props.nearest_exit}`
-              : `near ${props.nearest_exit}`
-            : (props.street ?? "On the corridor");
+                  : `${(Number(props.exit_distance_m) / 1000).toFixed(1)} km`} from ${esc(props.nearest_exit)}`
+              : `near ${esc(props.nearest_exit)}`
+            : esc(props.street ?? "On the corridor"); // escaped: Waze free text (24 Nov 2026, ZAP review)
 
           /* The same card as a queue, a closure and an exit (13 Nov 2026): it was its own design, so two
              cards side by side on the map looked like two different products. */
@@ -2920,7 +2952,7 @@ export default function TrafficMapPanel({
             <div class="mjp">
               <div class="mjp-head is-report" style="--mjp-c:${color}">
                 <div class="mjp-mark">${look.svg}</div>
-                <div class="mjp-head-text">${look.label}<span>${dirText ? `${dirText} &middot; ` : ""}${exitText}</span></div>
+                <div class="mjp-head-text">${esc(look.label)}<span>${dirText ? `${dirText} &middot; ` : ""}${exitText}</span></div>
               </div>
               <div class="mjp-foot">Click for the full report</div>
             </div>
@@ -3007,15 +3039,22 @@ export default function TrafficMapPanel({
         };
       };
       let lastFeedAt = "";
+      // What the page was last handed, so a failed poll can re-send it marked unavailable.
+      let lastEmitted: { fc: GeoJSON.FeatureCollection; corridor: GeoJSON.FeatureCollection } | null = null;
       const emitSnapshot = (fc: GeoJSON.FeatureCollection, corridor: GeoJSON.FeatureCollection) => {
         lastFeedAt = String((fc as { feed?: { newestAt?: string } }).feed?.newestAt ?? "");
-        onSnapshotRef.current?.(buildSnapshot({
-          kind: isRealtimeEndpoint ? "live" : "forecast",
-          feed: fc,
-          corridor,
-          exitKmByOrder,
-          alertOf,
-        }));
+        lastEmitted = { fc, corridor };
+        onSnapshotRef.current?.({
+          ...buildSnapshot({
+            kind: isRealtimeEndpoint ? "live" : "forecast",
+            feed: fc,
+            corridor,
+            exitKmByOrder,
+            alertOf,
+          }),
+          // The page says "feed unavailable" rather than reading this as a fresh, clear corridor.
+          unavailable: feedDownNow,
+        });
       };
 
       // Jam callout, part 2: the leader-line labels.
@@ -3308,17 +3347,23 @@ export default function TrafficMapPanel({
         const loadRain = async () => {
           if (disposed) return;
           try {
-            const r = await fetch(rainUrl, { cache: "no-store" });
-            const j = r.ok ? ((await r.json()) as { data?: LiveRainData }) : null;
+            /* The same memoised read as the page's "Weather now" card, so the two share one request instead of
+               two every five minutes. strict: a refused or failed answer is not "no rain" — it used to clear
+               the rain off the map; now the last reading stays up until a good one arrives. */
+            const j = await cachedJson<{ data?: LiveRainData }>(rainUrl, 4 * 60_000, undefined, {
+              strict: true,
+              maxStaleMs: 4 * 60_000,
+            });
+            if (disposed) return;
             const d = j?.data ?? null;
             applyRain(rainPreview ? previewOf(d) : d);
           } catch {
-            /* Offline for a moment: the last reading stays up until the next poll. */
+            /* Offline or refused for a moment: the last reading stays up until the next poll. */
           }
         };
         void loadRain();
-        // Open-Meteo's nowcast moves every 15 minutes; the backend caches it for 10.
-        rainTimer = setInterval(loadRain, 5 * 60_000);
+        // Open-Meteo's nowcast moves every 15 minutes; the backend caches it for 10. Paused while hidden.
+        stopRain = startVisiblePoll(loadRain, 5 * 60_000);
 
         const rainCard = sideCard("mjp-pop");
         map.on("mousemove", "lm-rain-veil", (e: mapboxgl.MapLayerMouseEvent) => {
@@ -3422,12 +3467,30 @@ export default function TrafficMapPanel({
       }
 
       const source = map.getSource("traffic") as GeoJSONSource;
-      pollTimer = setInterval(async () => {
+      // Whether a good reading has ever been drawn, so the notice can say if the map shows one.
+      let haveGood = !feedDownNow;
+      const pollOnce = async () => {
         if (disposed) return;
+        let raw: GeoJSON.FeatureCollection;
         try {
-          const fresh = onlyOnCorridor(withPredictedQueues(
-            await fetch(endpoint, { cache: "no-store" }).then((r) => r.json()),
-          ));
+          // Checked: a refused (429), failed or unparsable answer throws rather than arriving as "no jams".
+          raw = await fetchFeatureCollection(endpoint, { cache: "no-store" });
+        } catch {
+          /* Not a feed. The last good drawing (or the grey road) stays, and the panel and the page say the
+             feed is unavailable. It is never redrawn as a clear corridor. */
+          if (disposed || feedDownNow) return;
+          feedDownNow = true;
+          setFeedDown({ kept: haveGood });
+          if (lastEmitted) emitSnapshot(lastEmitted.fc, lastEmitted.corridor);
+          return;
+        }
+        if (disposed) return;
+        const recovered = feedDownNow;
+        feedDownNow = false;
+        haveGood = true;
+        if (recovered) setFeedDown(null);
+        try {
+          const fresh = onlyOnCorridor(withPredictedQueues(raw));
 
           const feedSig = signature(fresh);
           const feedChanged = feedSig !== lastFeedSig;
@@ -3450,11 +3513,14 @@ export default function TrafficMapPanel({
                tier with no segments costs nothing on its own. */
             (map.getSource("nlex-corridor") as GeoJSONSource | undefined)?.setData(corridorNow);
           }
-          afterPoll(fresh, corridorNow, feedChanged, corridorChanged);
+          // A recovery is always re-sent, so the page drops its "unavailable" notice.
+          afterPoll(fresh, corridorNow, feedChanged, corridorChanged || recovered);
         } catch {
-          // No-op polling fallback
+          // A drawing error on a good feed: the next poll tries again.
         }
-      }, 15000);
+      };
+      // Every 15 s as before, but paused while the tab is hidden and never overlapping itself.
+      stopPoll = startVisiblePoll(pollOnce, 15000);
     });
 
     return () => {
@@ -3463,19 +3529,20 @@ export default function TrafficMapPanel({
       io.disconnect();
       motionQuery.removeEventListener("change", onMotionPref);
       document.removeEventListener("visibilitychange", onVisibility);
-      if (pollTimer != null) {
+      if (stopPoll != null) {
         // Was assigned to an unused local and never cleared, so every rebuild
         // left a live 15-second fetch running against a removed map.
-        clearInterval(pollTimer);
-        pollTimer = null;
+        stopPoll();
+        stopPoll = null;
       }
-      if (rainTimer != null) {
-        clearInterval(rainTimer);
-        rainTimer = null;
+      if (stopRain != null) {
+        stopRain();
+        stopRain = null;
       }
       removeClouds?.();
       removeClouds = null;
       setRainNow(null);
+      setFeedDown(null);
       resizeObserver.disconnect();
       if (flowFrameRef.current != null) {
         cancelAnimationFrame(flowFrameRef.current);
@@ -3527,25 +3594,46 @@ export default function TrafficMapPanel({
               <>
                 <p className="map-fallback-title">Map unavailable</p>
                 <p className="map-fallback-body">
-                  No Mapbox token is set. Put your token (it starts with <code>pk.</code>) in{" "}
-                  <code>NEXT_PUBLIC_MAPBOX_TOKEN</code> inside{" "}
-                  <code>Front-End-Dashboard/.env.local</code>, then restart the dev server. The
-                  committed <code>.env</code> ships a placeholder, which does not count as a token.
+                  This copy of SmartFlow was built without a map key (<code>NEXT_PUBLIC_MAPBOX_TOKEN</code>),
+                  so the map cannot be drawn. The rest of the page still works. Ask the SmartFlow
+                  administrator for a build that includes the key.
                 </p>
               </>
             ) : (
               <>
                 <p className="map-fallback-title">Map token rejected</p>
                 <p className="map-fallback-body">
-                  Mapbox refused the token. It may be revoked, from another account, or restricted
-                  to URLs that do not include this one. Check the browser console for the exact
-                  error.
+                  The map service refused this copy&apos;s map key. It may have been revoked or
+                  restricted to other addresses. The rest of the page still works; tell the
+                  SmartFlow administrator.
                 </p>
               </>
             )}
           </div>
         )}
         {children}
+
+        {/* The feed did not answer with a feed (an error, a 429, no features). Said over the map itself, so the
+            maximised view, which has no header, says it too. The road under it is the last good reading, or grey
+            "no data" road if there has been none: never a clear corridor (audit 2026-11-19, P8-02). Reuses the
+            rain pill's shape; only the colour and the row differ. */}
+        {feedDown && (
+          <div
+            className="lm-rain-pill lm-feed-pill"
+            role="status"
+            style={{
+              background: "var(--color-danger, #b91c1c)",
+              top: rainNow && rainNow.exits.length > 0 ? 50 : 12,
+            }}
+            title="The server did not return a usable reading. The map keeps asking every 15 seconds while this tab is open."
+          >
+            <WifiOff size={15} strokeWidth={2.2} aria-hidden="true" />
+            <span>
+              <b>{endpoint.includes("real-time") ? "Live feed unavailable" : "Forecast unavailable"}</b>{" "}
+              {feedDown.kept ? "· showing the last reading" : "· no reading to show yet"}
+            </span>
+          </div>
+        )}
 
         {/* Live rain: which exits have rain falling now. Only while it rains;
             the stretches themselves are drawn on the map. */}

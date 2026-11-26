@@ -1,17 +1,5 @@
 import { z } from "zod";
 
-export const SimulationRequestSchema = z.object({
-  parameters: z.object({
-    vehicleDensity: z.number().min(0).max(100),
-    weather: z.enum(["clear", "rain", "storm"]),
-  }),
-});
-
-export const ConfigLaneSchema = z.object({
-  laneId: z.string(),
-  status: z.enum(["open", "closed", "restricted"]),
-});
-
 /**
  * POST /api/ai-sandbox/command — natural-language control of the sandbox.
  *
@@ -42,8 +30,10 @@ export const SandboxCommandSchema = z.object({
     closedLanes: z.array(z.number().int()).max(8).default([]),
     speedLimitKmh: z.number().nullable().default(null),
     incidentCount: z.number().int().min(0).default(0),
+    // Every exit name goes into the system prompt: capped like the place and event names (19 Nov 2026 audit S5;
+    // a 50,000-character name was accepted).
     exits: z
-      .array(z.object({ exit_id: z.number().int(), exit_name: z.string(), km: z.number().optional() }))
+      .array(z.object({ exit_id: z.number().int(), exit_name: z.string().max(120), km: z.number().optional() }))
       .max(100)
       .default([]),
     /* Since 2026-10-05: both carriageways, the route and the window, the places and events on the road, the
@@ -67,13 +57,26 @@ export const SandboxCommandSchema = z.object({
       }))
       .max(200)
       .optional(),
+    /* fromKm/toKm: the stretch an event covers. z.object strips keys it does not list, so before 19 Nov 2026
+       (audit S4) the stretch never reached the parser and every event looked like a point. */
     events: z
-      .array(z.object({ id: z.string().max(80), name: z.string().max(120), direction: Dir, km: z.number(), startMin: z.number(), endMin: z.number() }))
+      .array(z.object({
+        id: z.string().max(80),
+        name: z.string().max(120),
+        direction: Dir,
+        km: z.number(),
+        fromKm: z.number().nullable().optional(),
+        toKm: z.number().nullable().optional(),
+        startMin: z.number(),
+        endMin: z.number(),
+      }))
       .max(100)
       .optional(),
     reallocation: z.object({ toward: Dir, fromKm: z.number(), toKm: z.number() }).nullable().optional(),
     clock: z.object({ hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59) }).optional(),
     nowMin: z.number().min(0).optional(),
+    // The clock at the end of warm-up; an event "at 12:30" is measured from it. Stripped before 19 Nov 2026 (S4).
+    runStart: z.object({ hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59) }).optional(),
     forecastDay: z.string().max(10).nullable().optional(),
     forecastDays: z.array(z.string().max(10)).max(400).optional(),
     playback: z.object({ running: z.boolean(), speed: z.number(), fullScreen: z.boolean() }).optional(),

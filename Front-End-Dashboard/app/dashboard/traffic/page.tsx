@@ -22,10 +22,11 @@ import PredictiveCongestionChart from "../../../components/dashboard/PredictiveC
 import PredictiveEventChart from "../../../components/dashboard/PredictiveEventChart";
 import styles from "./traffic.module.css";
 import DateRangePicker from "./components/DateRangePicker";
-import { rangeDays, grainBlockedReason, bestGrainFor, bucketLabelFor, timeAxisLabels } from "../../../lib/granularity";
+import { rangeDays, grainBlockedReason, bestGrainFor, bucketLabelFor, timeAxisLabels, wholeBucketRange } from "../../../lib/granularity";
 import CountUpValue from "../../../components/dashboard/CountUpValue";
 import ModeTabLabel, { modeIndex } from "../../../components/dashboard/ModeTabLabel";
 import StateNote from "../../../components/stage/StateNote";
+import { SERVER_UNREACHABLE } from "../../../lib/server-status";
 import { useRainEffect, isClear, METHOD_NOTE } from "../../../lib/rain-effect";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
@@ -147,14 +148,21 @@ function buildTrend(data: Analytics, grain: Granularity): TrendRow[] {
   }
   const keyOf = grain === "weekly" ? (d: string) => weekStart(d) : (d: string) => d.slice(0, 7);
   const acc = new Map<string, { nb: number; sb: number; bothdir: number }>();
+  let firstDay = "";
+  let lastDay = "";
   for (const r of data.dailyTrend) {
     const k = keyOf(r.d);
     const cur = acc.get(k) ?? { nb: 0, sb: 0, bothdir: 0 };
     acc.set(k, { nb: cur.nb + r.nb, sb: cur.sb + r.sb, bothdir: cur.bothdir + (r.bothdir ?? 0) });
+    if (!firstDay || r.d < firstDay) firstDay = r.d;
+    if (!lastDay || r.d > lastDay) lastDay = r.d;
   }
-  return [...acc.entries()]
+  const rows = [...acc.entries()]
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([label, v]) => ({ label, nb: v.nb, sb: v.sb, bothdir: v.bothdir, total: v.nb + v.sb + v.bothdir }));
+  // A week or month the range cuts at either end is a sum of only some of its days: not drawn (lib/granularity).
+  const { lo, hi } = wholeBucketRange(rows.map((r) => r.label), grain, firstDay, lastDay);
+  return rows.slice(lo, hi);
 }
 
 const ROLLING_WINDOW: Record<Granularity, number> = { hourly: 24, daily: 7, weekly: 0, monthly: 0 };
@@ -944,7 +952,7 @@ export default function TrafficPage() {
     onReady?: (chart: unknown) => void,
   ) => {
     if (loading && !data) return <ChartSkeleton />;
-    if (error) return <div className="nct-state-slot"><StateNote kind="error">Live data unavailable — is the backend running on port 4000?</StateNote></div>;
+    if (error) return <div className="nct-state-slot"><StateNote kind="error">{SERVER_UNREACHABLE}</StateNote></div>;
     if (!option) return <div className="nct-state-slot"><StateNote kind="nodata">{emptyNote}</StateNote></div>;
     return (
       <ReactECharts

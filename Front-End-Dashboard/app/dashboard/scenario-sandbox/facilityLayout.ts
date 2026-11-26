@@ -45,7 +45,7 @@ import {
        plain ramp: that is where its recorded traffic paid.
      - Where OpenStreetMap has no plaza but the record shows tolled
        traffic, the booths are ESTIMATED: enough that the busiest hour on record
-       runs them at 85% of the operator's 350 vehicles an hour per booth.
+       runs them at 85% of the assumed 350 vehicles an hour per booth (ASSUMPTIONS.PAY_BOOTH_VEH_PER_HOUR: a planning value, not measured).
        Labelled as an estimate wherever it is shown.
      - Barrier plazas: only where one is mapped. At Bocaue that is the
        southbound side, which also pays the closed-system fare in the record;

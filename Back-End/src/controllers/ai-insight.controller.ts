@@ -15,6 +15,10 @@ import {
   generateRankingInsight,
 } from "../services/ai-insight.service.js";
 import { explain } from "../services/ai-explain.service.js";
+/* Every string a narrative body carries (labels, reasons, event titles, venues) goes to the AI provider, so each
+   is masked for emails, phones, plates and people's names first (lib/pii.ts; 24 Nov 2026, security task S6).
+   Numbers and the object's shape are untouched, so the figures the checks compare are the ones validated. */
+import { maskStringsDeep } from "../lib/pii.js";
 import { isGlmConfigured, providerInfo, GlmError } from "../lib/glm.client.js";
 import {
   generateIncidentModelsInsight,
@@ -54,7 +58,7 @@ export const modelNarrative = async (req: Request, res: Response) => {
   }
 
   try {
-    const insight = await generateInsight(parsed.data);
+    const insight = await generateInsight(maskStringsDeep(parsed.data));
     return res.json({ success: true, data: insight });
   } catch (err) {
     if (err instanceof GlmError) {
@@ -81,12 +85,12 @@ export const congestionNarrative = async (req: Request, res: Response) => {
     return res.status(400).json({
       success: false,
       code: "bad_request",
-      message: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+      message: parsed.error.issues.map((i) => `${i.path.map(String).join(".")}: ${i.message}`).join("; "),
     });
   }
 
   try {
-    const data = await generateCongestionInsight(parsed.data);
+    const data = await generateCongestionInsight(maskStringsDeep(parsed.data));
     return res.json({ success: true, data });
   } catch (err) {
     if (err instanceof GlmError) {
@@ -112,12 +116,12 @@ export const eventSurgeNarrative = async (req: Request, res: Response) => {
     return res.status(400).json({
       success: false,
       code: "bad_request",
-      message: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+      message: parsed.error.issues.map((i) => `${i.path.map(String).join(".")}: ${i.message}`).join("; "),
     });
   }
 
   try {
-    const data = await generateEventSurgeInsight(parsed.data);
+    const data = await generateEventSurgeInsight(maskStringsDeep(parsed.data));
     return res.json({ success: true, data });
   } catch (err) {
     if (err instanceof GlmError) {
@@ -143,12 +147,12 @@ export const fleetMixNarrative = async (req: Request, res: Response) => {
     return res.status(400).json({
       success: false,
       code: "bad_request",
-      message: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+      message: parsed.error.issues.map((i) => `${i.path.map(String).join(".")}: ${i.message}`).join("; "),
     });
   }
 
   try {
-    const data = await generateFleetMixInsight(parsed.data);
+    const data = await generateFleetMixInsight(maskStringsDeep(parsed.data));
     return res.json({ success: true, data });
   } catch (err) {
     if (err instanceof GlmError) {
@@ -175,12 +179,12 @@ export const rankingNarrative = async (req: Request, res: Response) => {
     return res.status(400).json({
       success: false,
       code: "bad_request",
-      message: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+      message: parsed.error.issues.map((i) => `${i.path.map(String).join(".")}: ${i.message}`).join("; "),
     });
   }
 
   try {
-    const data = await generateRankingInsight(parsed.data);
+    const data = await generateRankingInsight(maskStringsDeep(parsed.data));
     return res.json({ success: true, data });
   } catch (err) {
     if (err instanceof GlmError) {
@@ -234,7 +238,7 @@ export const explainFeature = async (req: Request, res: Response) => {
  * next time the error shaping changes.
  */
 function narrativeHandler<T>(
-  schema: { safeParse: (v: unknown) => { success: boolean; data?: T; error?: { issues: { path: (string | number)[]; message: string }[] } } },
+  schema: { safeParse: (v: unknown) => { success: boolean; data?: T; error?: { issues: { path: PropertyKey[]; message: string }[] } } },
   generate: (input: T) => Promise<unknown>,
   label: string,
 ) {
@@ -245,12 +249,12 @@ function narrativeHandler<T>(
         success: false,
         code: "bad_request",
         message: (parsed.error?.issues ?? [])
-          .map((i) => `${i.path.join(".")}: ${i.message}`)
+          .map((i) => `${i.path.map(String).join(".")}: ${i.message}`)
           .join("; "),
       });
     }
     try {
-      const data = await generate(parsed.data as T);
+      const data = await generate(maskStringsDeep(parsed.data as T));
       return res.json({ success: true, data });
     } catch (err) {
       if (err instanceof GlmError) {

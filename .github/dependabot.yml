@@ -1,0 +1,32 @@
+# Dependabot (24 Nov 2026, adviser's security reminder). It lists every package manifest so GitHub's dependency graph
+# and Dependabot ALERTS cover all of them (Settings > Code security > Dependabot alerts must be on).
+#
+# open-pull-requests-limit: 0 turns OFF the automatic "bump version" pull requests. Each one would be a new bot
+# branch, and the team works on one branch only (Main-Dashboard). Vulnerable packages are still reported: as alerts in
+# the Security tab, and by `npm audit` / `pip-audit` in .github/workflows/security-checks.yml on every push. To let
+# Dependabot open fix pull requests instead, raise the limit (for example to 5) for the ecosystem you want.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /Back-End
+    schedule: { interval: weekly, day: monday }
+    target-branch: Main-Dashboard
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: npm
+    directory: /Front-End-Dashboard
+    schedule: { interval: weekly, day: monday }
+    target-branch: Main-Dashboard
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: pip
+    directory: /smartflow_scripts
+    schedule: { interval: weekly, day: monday }
+    target-branch: Main-Dashboard
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    target-branch: Main-Dashboard
+    open-pull-requests-limit: 0

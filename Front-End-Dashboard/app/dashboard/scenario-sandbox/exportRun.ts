@@ -68,10 +68,14 @@ export type ExportRun = {
   replication: { direction: Direction; result: ReplicationResult } | null;
 };
 
-/** RFC 4180: quote anything with a comma, quote or newline, and double inner quotes. */
+/** RFC 4180: quote anything with a comma, quote or newline, and double inner quotes. Text that a spreadsheet would
+ *  read as a formula (starting with =, +, -, @, tab or carriage return) gets a leading apostrophe, so a name typed
+ *  into the sandbox can never run as a formula when the file is opened (19 Nov 2026 audit S23, OWASP CSV injection).
+ *  Numbers are left as numbers: a negative figure is data, not a formula. */
 function cell(v: unknown): string {
   if (v === null || v === undefined) return "";
-  const s = String(v);
+  let s = String(v);
+  if (typeof v === "string" && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
@@ -106,6 +110,11 @@ export function buildRunCsv(run: ExportRun): string {
     "warmed up", "elapsed s", "active agents", "avg speed km/h", "baseline speed km/h",
     "throughput veh/min", "density veh/km/lane", "stopped", "longest queue m",
     "CO2 kg/min", "avg travel time s", "unmet demand veh/h", "peak unmet veh/h",
+    /* The parts behind three of those (19 Nov 2026 audit S3, S12, S17): trips served split into those that crossed the
+       whole stretch and those that left at a ramp or plaza; unmet demand at the entrance vs on ramps and at plazas;
+       CO2 on the road vs idled by the demand held upstream. */
+    "through veh/min", "exited veh/min", "unmet at entrance veh/h", "unmet on ramps/plazas veh/h",
+    "CO2 on road kg/min", "CO2 idling upstream kg/min",
   ));
   for (const d of run.directions) {
     const m = d.metrics;
@@ -119,6 +128,9 @@ export function buildRunCsv(run: ExportRun): string {
       m ? Math.round(m.longestQueueM) : "", round(m?.co2RatePerMin, 2),
       m ? Math.round(m.avgTravelTimeS) : "", m ? Math.round(m.unmetVehPerHour) : "",
       Math.round(d.peakUnmetVehPerHour),
+      round(m?.throughPerMin), round(m?.exitedPerMin),
+      m ? Math.round(m.unmetMainlineVehPerHour) : "", m ? Math.round(m.unmetFromRampsVehPerHour) : "",
+      round(m?.co2OnRoadPerMin, 2), round(m?.co2UpstreamPerMin, 2),
     ));
   }
 

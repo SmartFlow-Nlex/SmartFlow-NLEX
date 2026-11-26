@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { cachedJson } from "../../../lib/cached-json";
+import { isFeatureCollection } from "../../../lib/live-feed";
+import { startVisiblePoll } from "../../../lib/use-visible-poll";
 
 /* ══════════════════════════════════════════════════════════════════════════════
    OFFICIAL NLEX STATION DEFINITIONS
@@ -367,10 +369,11 @@ function useCorridorStatus() {
            Both now derive from one payload through one function. */
         // 25 s memo: the panel polls anyway, and the Live Map reads the same
         // URL, so the two share one response instead of two round trips.
+        // strict + maxStaleMs: an error body is a failure, and each tick reads this tick's feed (audit P8-02, G-8).
         const fc = await cachedJson<Parameters<typeof corridorStatusFromFeed>[0] & { feed?: { windowMinutes?: number; newestAt?: string | null; ageMinutes?: number | null; stale?: boolean } }>(
-          `${BACKEND}/api/map-comparison/real-time`, 25_000);
+          `${BACKEND}/api/map-comparison/real-time`, 25_000, undefined, { strict: true, maxStaleMs: 25_000 });
         if (cancelled) return;
-        if (!fc?.features) throw new Error("Feed unavailable");
+        if (!isFeatureCollection(fc)) throw new Error("Feed unavailable");
         setData({
           windowMinutes: fc.feed?.windowMinutes ?? 60,
           segments: corridorStatusFromFeed(fc),
@@ -388,9 +391,9 @@ function useCorridorStatus() {
         if (!cancelled) setLoading(false);
       }
     };
-    load();
-    const id = setInterval(load, 60_000);
-    return () => { cancelled = true; clearInterval(id); };
+    // Paused while the tab is hidden, refreshed once on return (lib/use-visible-poll.ts).
+    const stop = startVisiblePoll(load, 60_000, { immediate: true });
+    return () => { cancelled = true; stop(); };
   }, []);
 
   return { data, error, loading };
@@ -506,7 +509,7 @@ export default function InteractiveRoadMap() {
 
   /* ─── Header copy ─── */
   const headerSub = feedError
-    ? "Feed unavailable — is the backend running on port 4000?"
+    ? "Couldn't reach the SmartFlow server. It may be waking up — try again in a minute."
     : feedLoading
       ? "Reading the Waze feed…"
       : corridor?.feed.newestAt

@@ -36,6 +36,9 @@ export type DemandProfile = {
   peakingFactor: number;
   days: number;
   source: string;
+  /** "direction": rows recorded for the direction asked. "both_directions_halved": the exit records no direction
+   *  (closed-system exits store NULL or 'NB/SB'), so its two-way counts are halved — an even split, not a measurement. */
+  basis: "direction" | "both_directions_halved";
 };
 
 /* Kept in memory for six hours. It aggregates all 1.1M hourly rows of a table
@@ -85,7 +88,7 @@ export async function getDemandProfile(
    * has an Entry and an Exit row in every hour), and averaging the ROWS read
    * it at half its hourly volume: 1,428 veh/h at 08:00 against the 2,857 that
    * actually pass. A DB error throws, for the route to answer 503. */
-  const r = await db.query(
+  const profileSql = (where: string) =>
     `SELECT hour,
             AVG(v)::float                 AS veh_h,
             AVG(c1)::float                AS c1,
@@ -95,14 +98,24 @@ export async function getDemandProfile(
      FROM (SELECT date, hour, SUM(total) AS v, SUM(class_1) AS c1, SUM(class_2) AS c2, SUM(class_3) AS c3
              FROM gold.fact_traffic_hourly
             WHERE exit_canonical = $1
-              AND ($2::text IS NULL OR direction IS NOT DISTINCT FROM $2)
+              AND ${where}
               AND total IS NOT NULL
             GROUP BY date, hour) d
      GROUP BY hour
-     ORDER BY hour`,
-    [exit, direction ?? null],
-  );
+     ORDER BY hour`;
+  let r = await db.query(profileSql("($2::text IS NULL OR direction IS NOT DISTINCT FROM $2)"), [exit, direction ?? null]);
+  /* The comment above promised a fallback the query could not give: once a direction is sent, rows stored as NULL
+     or 'NB/SB' never match, so Angeles, Mexico, Balagtas and Sta. Ines (closed-system exits that record trips both
+     ways in one row) answered "no observed demand" for either direction (19 Nov 2026 audit S13). Their two-way
+     rows are used instead, halved: an even split, labelled as such. Balintawak SB, Bocaue Barrier NB and Tabang hold
+     no rows of any kind for that direction and still have no profile. */
+  let basis: DemandProfile["basis"] = "direction";
+  if (r.rows.length === 0 && direction) {
+    r = await db.query(profileSql("(direction IS NULL OR direction = 'NB/SB')"), [exit]);
+    basis = "both_directions_halved";
+  }
   if (r.rows.length === 0) return null;
+  const share = basis === "both_directions_halved" ? 0.5 : 1;
 
   const hours: DemandHour[] = r.rows.map((row: any) => {
     const c1 = Number(row.c1) || 0;
@@ -111,7 +124,7 @@ export async function getDemandProfile(
     const sum = c1 + c2 + c3;
     return {
       hour: Number(row.hour),
-      vehPerHour: Math.round(Number(row.veh_h) || 0),
+      vehPerHour: Math.round((Number(row.veh_h) || 0) * share),
       // Falls back to the corridor default rather than 0/0 when an hour has
       // volume but no class split, which would otherwise hand the simulation
       // an empty fleet.
@@ -134,6 +147,7 @@ export async function getDemandProfile(
     peakingFactor: mean > 0 ? peak / mean : 1,
     days: Number(r.rows[0].days) || 0,
     source: "gold.fact_traffic_hourly",
+    basis,
   };
 }
 

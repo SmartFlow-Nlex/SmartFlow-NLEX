@@ -68,7 +68,7 @@ async function fetchClearance(url: string, signal: AbortSignal): Promise<Clearan
     } catch (e) {
       if (signal.aborted) throw e;
       // fetch's own TypeError ("Failed to fetch") means the backend never answered at all.
-      last = e instanceof TypeError ? new Error("couldn't reach the backend") : e;
+      last = e instanceof TypeError ? new Error("couldn't reach the SmartFlow server. It may be waking up — try again in a minute") : e;
     }
     if (i < RETRY_WAITS_MS.length) await abortableWait(RETRY_WAITS_MS[i], signal);
   }

@@ -49,6 +49,45 @@ export function grainBlockedReason(grain: Grain, days: number | null): string | 
     : null;
 }
 
+/** A YYYY-MM-DD day moved by `n` days, in calendar arithmetic (UTC, so no time zone can shift it). */
+function addDays(iso: string, n: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+/** First and last calendar day of a bucket: a week keyed by its Monday ("2026-01-05") or a month ("2026-01"). */
+export function bucketSpan(key: string, grain: "weekly" | "monthly"): [string, string] {
+  if (grain === "weekly") return [key, addDays(key, 6)];
+  const [y, m] = key.split("-").map(Number);
+  return [`${key}-01`, new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10)];
+}
+
+/**
+ * Which buckets of a summed weekly or monthly trend to draw, as the index range [lo, hi) of `keys` (sorted).
+ *
+ * A bucket at either end is drawn only if the data covers the whole of it (21 Nov 2026, audit T-1). The Traffic
+ * trend summed each week and month, and a range rarely starts on a Monday or a 1st: the 12-month range began on a
+ * Sunday, so its first "week" held one day and its first "month" seven, and both were drawn as a 76-87% collapse
+ * beside whole periods. Only the edges can be cut by the range, so only they are tested; an interior bucket is kept
+ * whatever it holds. A range shorter than one whole bucket keeps everything rather than drawing nothing.
+ */
+export function wholeBucketRange(
+  keys: string[],
+  grain: "weekly" | "monthly",
+  firstDay: string,
+  lastDay: string,
+): { lo: number; hi: number } {
+  let lo = 0;
+  let hi = keys.length;
+  const whole = (key: string) => {
+    const [s, e] = bucketSpan(key, grain);
+    return s >= firstDay && e <= lastDay;
+  };
+  if (hi > lo && !whole(keys[lo])) lo += 1;
+  if (hi > lo && !whole(keys[hi - 1])) hi -= 1;
+  return hi > lo ? { lo, hi } : { lo: 0, hi: keys.length };
+}
+
 /** The finest grain a range supports, used to demote an impossible selection. */
 export function bestGrainFor(days: number | null, allowHourly: boolean): Grain {
   if (days == null) return "daily";

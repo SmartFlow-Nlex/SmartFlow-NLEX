@@ -196,11 +196,11 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
     // the previous period too so the KPI comparison stays weather-filtered.
     const WXALL_CTE = `
       wxall AS (
-        SELECT (timestamp_utc + interval '8 hours')::date AS d,
+        SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS d,
                EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
                AVG(rainfall) > 0.3 AS wet
         FROM hourly_weather
-        WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1::date - ($2::date - $1::date + 1) AND $2
+        WHERE ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date BETWEEN $1::date - ($2::date - $1::date + 1) AND $2
         GROUP BY 1, 2
       )`;
     // events.d/events.h are always non-null (both source columns are real
@@ -214,11 +214,11 @@ export async function getIncidentAnalyticsFromDb(filters: IncidentAnalyticsFilte
     // Local time = UTC+8 for weather join
     const WX_CTE = `
       wx AS (
-        SELECT (timestamp_utc + interval '8 hours')::date AS d,
+        SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS d,
                EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
                AVG(rainfall) AS rain
         FROM hourly_weather
-        WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1 AND $2
+        WHERE ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date BETWEEN $1 AND $2
         GROUP BY 1, 2
       )`;
 
@@ -703,7 +703,7 @@ export async function getIncidentHourlyFromDb(date: string) {
                 -- cast alone); the cast stays as the exact test. Both read the same session time zone.
                 WHERE timestamp_utc >= $1::date - interval '8 hours'
                   AND timestamp_utc < $1::date + interval '16 hours'
-                  AND (timestamp_utc + interval '8 hours')::date = $1::date
+                  AND ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date = $1::date
                 GROUP BY 1
               ),
               hrs AS (SELECT generate_series(0, 23) AS h)
@@ -890,7 +890,7 @@ export async function getIncidentHourlyFromDb(date: string) {
 /** Classifies each incident hour as wet/dry using expressway-average rainfall. */
 const WX_CTE = `
   wx AS (
-    SELECT (timestamp_utc + interval '8 hours')::date AS d,
+    SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS d,
            EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
            AVG(rainfall) > 0.3 AS wet
     FROM hourly_weather
@@ -1092,12 +1092,12 @@ const DAILY_WET_SQL = `
     SELECT timestamp_utc, round(latitude::numeric, 3) AS la, round(longitude::numeric, 3) AS lo,
            AVG(rainfall) AS rainfall
     FROM hourly_weather
-    WHERE (timestamp_utc + interval '8 hours')::date >= $1::date
-      AND (timestamp_utc + interval '8 hours')::date <= $2::date
+    WHERE ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date >= $1::date
+      AND ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date <= $2::date
     GROUP BY 1, 2, 3
   ),
   hourly AS (
-    SELECT (timestamp_utc + interval '8 hours')::date AS d,
+    SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS d,
            EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
            AVG(rainfall) AS avg_rain
     FROM pts

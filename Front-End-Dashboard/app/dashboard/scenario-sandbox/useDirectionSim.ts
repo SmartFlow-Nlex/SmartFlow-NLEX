@@ -75,6 +75,9 @@ export type DemandProfile = {
   meanVehPerHour: number;
   peakingFactor: number;
   days: number;
+  /** "both_directions_halved": the exit records no direction, so its two-way counts were halved (Back-End
+   *  sandbox-demand.service.ts). Absent from older servers: treat as "direction". */
+  basis?: "direction" | "both_directions_halved";
 };
 export type PlazaFlow = {
   exit: string;
@@ -93,6 +96,12 @@ export type Baseline = {
   co2RatePerMin: number;
   avgTravelTimeS: number;
   takenWith: string;
+  /** Vehicles on the stretch when it was taken: the weight the corridor "before" speed uses, the same as "now"
+   *  (bothMetrics trafficWeightedSpeed; 19 Nov 2026 audit S11). Absent on an old snapshot: estimated from flow. */
+  trafficCount?: number;
+  /** Demand that could not get on when it was taken, veh/h: a CO2 comparison against a run turning more away needs a
+   *  caveat (page.tsx co2Caveat). */
+  unmetVehPerHour?: number;
   /** True when the figures are the mean of the last minute (recentAverage); false for a single reading, taken too early in a run to average. */
   averaged?: boolean;
   /** Scenario time (s after warm-up) it was captured at: which events the comparison is about (the ones not over by then). */
@@ -125,7 +134,7 @@ export type SharedRoadInputs = {
   /** The hook calls this once, only if hourOfDay is still null, with its OWN demand profile's peak hour — whichever direction's fetch resolves first wins. See the D2 report for why this is a stated interim behaviour, not a bug. */
   readonly proposeHourOfDay: (hour: number) => void;
   /** Warehouse CO2 factors (not fleet-mix share — that comes from each direction's OWN demand profile at the shared hour, see activeHour below). Direction-independent: a vehicle class's g/m factor is not a property of which carriageway it is on. */
-  readonly classProfile: Partial<Record<1 | 2 | 3, { co2PerM?: number; share?: number }>> | undefined;
+  readonly classProfile: Partial<Record<1 | 2 | 3, { co2PerM?: number; share?: number; idleKgPerMin?: number }>> | undefined;
   /**
    * Zero the shared fixed-step accumulator the rAF loop uses (see page.tsx). Called when a skip
    * finishes on THIS direction — the accumulator is shared across both directions (they advance sim
@@ -429,12 +438,20 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     const mainline = mainlineAtKm(entryKm, hr);
     if (mainline != null && mainline > 0) return { vehPerHour: mainline, floor: 300, kind: "mainline", km: entryKm };
     if (activeHour) return { vehPerHour: activeHour.vehPerHour, floor: 300, kind: "interchange", km: entryKm };
-    if (!plazaVol || !nearestExit) return null;
+    if (!nearestExit) return null;
+    /* Last resorts, used only when neither the mainline flow nor the demand profile could be read. They used to be
+       one figure: the yearly total spread over the year's hours times 1.6, a peaking factor nobody had checked (the
+       backend replaced it with measured profiles in October; this copy survived until the 19 Nov 2026 audit, S14).
+       First the plaza's own recorded volume at this hour; failing that, its average hour, with no factor. */
+    const plaza = plazaFlows?.find((p) => String(p.exit).toLowerCase() === String(nearestExit.exit_name).toLowerCase());
+    const atHour = plaza ? (plaza.entriesByHour[hr] ?? 0) + (plaza.exitsByHour[hr] ?? 0) : 0;
+    if (atHour > 0) return { vehPerHour: Math.round(atHour), floor: 600, kind: "interchange", km: entryKm };
+    if (!plazaVol) return null;
     const key = String(nearestExit.exit_name).toLowerCase();
     const total = plazaVol[key] ?? Object.entries(plazaVol).find(([k]) => k.includes(key) || key.includes(k))?.[1];
     if (!total) return null;
-    return { vehPerHour: Math.round((total / volDays / 24) * 1.6), floor: 600, kind: "interchange", km: entryKm };
-  }, [hourOfDay, demand, direction, fromKm, toKm, mainlineAtKm, activeHour, plazaVol, nearestExit, volDays]);
+    return { vehPerHour: Math.round(total / volDays / 24), floor: 600, kind: "interchange", km: entryKm };
+  }, [hourOfDay, demand, direction, fromKm, toKm, mainlineAtKm, activeHour, plazaFlows, plazaVol, nearestExit, volDays]);
   /* A loaded forecast moves that flow by how busy it says the corridor will be at the hour against how busy it usually
      is then (17 Nov 2026). It used to replace it with one corridor-wide figure, the same on every stretch and both
      carriageways. The forecast is a normal day's (the volume model has no event input); the event, if any, is already
@@ -463,7 +480,11 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     const mainline = mainlineAtKm(entryKm, hr);
     if (mainline == null || mainline <= 0) {
       return activeHour
-        ? `Inflow from the volume recorded at ${String(nearestExit?.exit_name ?? "")} — an interchange figure, not a through-flow.`
+        ? `Inflow from the volume recorded at ${String(nearestExit?.exit_name ?? "")} — an interchange figure, not a through-flow.` +
+            // An exit that records no direction gives its two-way count, halved here (Back-End sandbox-demand.service.ts).
+            (demand?.basis === "both_directions_halved"
+              ? " This exit records trips in both directions together, so half of its count is used: an even split, not a measurement."
+              : "")
         : null;
     }
     const barrier = EXITS.find((e) => e.node_type === "toll-barrier");
@@ -531,11 +552,13 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
   );
   const effectiveClassProfile = useMemo(() => {
     if (!classProfile && !activeHour && !forecastShares) return undefined;
-    const out: Partial<Record<1 | 2 | 3, { co2PerM?: number; share?: number }>> = {};
+    const out: Partial<Record<1 | 2 | 3, { co2PerM?: number; share?: number; idleKgPerMin?: number }>> = {};
     for (const k of [1, 2, 3] as const) {
       const co2PerM = classProfile?.[k]?.co2PerM;
+      // The class's idling CO2 (kg per vehicle-minute), the Emissions module's rate (19 Nov 2026 audit S6).
+      const idleKgPerMin = classProfile?.[k]?.idleKgPerMin;
       const share = forecastShares ? forecastShares[k] : activeHour ? activeHour.mix[k] : classProfile?.[k]?.share;
-      if (co2PerM != null || share != null) out[k] = { co2PerM, share };
+      if (co2PerM != null || share != null || idleKgPerMin != null) out[k] = { co2PerM, share, idleKgPerMin };
     }
     return Object.keys(out).length ? out : undefined;
   }, [classProfile, activeHour, forecastShares]);
@@ -596,6 +619,23 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
   const facilities = plan.facilities;
   // Every plaza and service area on this carriageway, for jumping the window to one.
   const places = useMemo(() => corridorPlaces(direction, EXITS, stations, peakAt, laneCount), [direction, EXITS, stations, peakAt, laneCount]);
+
+  /* The road the live run is built on, without the seed and the inflow (which the caller supplies). The confidence
+     run takes exactly this, so its interval describes the run on screen: it used to assemble its own config with the
+     4-year corridor fleet mix instead of the hour's, no secondary incidents and no lent lanes (19 Nov 2026 audit S10). */
+  const runSetup = useMemo(
+    () => ({
+      length: segLengthM,
+      laneCount,
+      classProfile: effectiveClassProfile,
+      ramps,
+      facilities,
+      warmupS: WARMUP_S,
+      secondaryIncidents: true as const,
+      borrowed: lentLanes > 0 ? { lanes: lentLanes, crossM: crossoverM(segLengthM) } : undefined,
+    }),
+    [segLengthM, laneCount, effectiveClassProfile, ramps, facilities, lentLanes],
+  );
 
   const rebuild = useCallback(() => {
     const sim = new TrafficSim(
@@ -1025,6 +1065,8 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
       longestQueueM: avg ? avg.queueM : metrics.longestQueueM,
       co2RatePerMin: avg ? avg.co2KgPerMin : metrics.co2RatePerMin,
       avgTravelTimeS: metrics.avgTravelTimeS,
+      trafficCount: metrics.trafficCount,
+      unmetVehPerHour: metrics.unmetVehPerHour,
       averaged: avg !== null,
       atS: scenarioTimeS(simRef.current?.time ?? metrics.elapsedS, scenarioFrame),
       eventsRunning: eff.active.map((a) => a.name),
@@ -1071,6 +1113,7 @@ export function useDirectionSim(direction: Direction, shared: SharedRoadInputs) 
     ramps,
     facilities,
     places,
+    runSetup,
     rebuild,
     resetAll,
     publishOwners,

@@ -409,11 +409,11 @@ async function loadClearanceSample(filters: ClearanceProtocolFilters): Promise<C
 
     const { rows } = await db.query(
       `WITH wxall AS (
-         SELECT (timestamp_utc + interval '8 hours')::date AS d,
+         SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS d,
                 EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
                 AVG(rainfall) > 0.3 AS wet
          FROM hourly_weather
-         WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1 AND $2
+         WHERE ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date BETWEEN $1 AND $2
          GROUP BY 1, 2
        )
        -- site_cleared, NOT blockage_cleared -- see this file's "Clearance
@@ -440,11 +440,11 @@ async function loadClearanceSample(filters: ClearanceProtocolFilters): Promise<C
     // see method[] for what that excludes.
     const { rows } = await db.query(
       `WITH wxall AS (
-         SELECT (timestamp_utc + interval '8 hours')::date AS d,
+         SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS d,
                 EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
                 AVG(rainfall) > 0.3 AS wet
          FROM hourly_weather
-         WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1 AND $2
+         WHERE ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date BETWEEN $1 AND $2
          GROUP BY 1, 2
        ),
        scoped AS (

@@ -115,11 +115,11 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
     // Spans the previous period too so the KPI comparison stays weather-filtered
     const TWX_CTE = `
       wx AS (
-        SELECT (timestamp_utc + interval '8 hours')::date AS d,
+        SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS d,
                EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
                AVG(rainfall) > 0.3 AS wet
         FROM hourly_weather
-        WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1::date - ($2::date - $1::date + 1) AND $2
+        WHERE ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date BETWEEN $1::date - ($2::date - $1::date + 1) AND $2
         GROUP BY 1, 2
       )`;
     const HV_CTE = `
@@ -285,7 +285,7 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
         db.query(
           `WITH dayw AS (
              SELECT d, SUM(r) >= 1.0 AS wet FROM (
-               SELECT (timestamp_utc + interval '8 hours')::date AS d, timestamp_utc, AVG(rainfall) AS r
+               SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS d, timestamp_utc, AVG(rainfall) AS r
                FROM hourly_weather GROUP BY 1, 2) x
              GROUP BY d
            ), pv0 AS (
@@ -544,9 +544,9 @@ export async function getTrafficAnalyticsFromDb(filters: AnalyticsFilters) {
             )
           : await db.query(
               `WITH wx AS (
-                 SELECT (timestamp_utc + interval '8 hours')::date AS d,
+                 SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS d,
                         EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h, AVG(rainfall) > 0.3 AS wet
-                 FROM hourly_weather WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1 AND $2 GROUP BY 1, 2)
+                 FROM hourly_weather WHERE ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date BETWEEN $1 AND $2 GROUP BY 1, 2)
                SELECT COALESCE(SUM(o.${col}), 0)::bigint AS v FROM gold.fact_traffic_hourly_origin o
                  JOIN wx ON wx.d = o.date AND wx.h = o.hour AND wx.wet = $4
                 WHERE o.date BETWEEN $1 AND $2 AND o.entry_canonical = $3`,
@@ -798,10 +798,10 @@ async function recordedDailyWeather(from: string, to: string): Promise<Map<strin
        SELECT timestamp_utc, round(latitude::numeric, 3) la, round(longitude::numeric, 3) lo,
               AVG(rainfall) r, AVG(temperature) t
        FROM public.hourly_weather
-       WHERE (timestamp_utc + interval '8 hours')::date BETWEEN $1::date AND $2::date
+       WHERE ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date BETWEEN $1::date AND $2::date
        GROUP BY 1, 2, 3),
      hourly AS (SELECT timestamp_utc, AVG(r) r, AVG(t) t FROM pts GROUP BY 1)
-     SELECT (timestamp_utc + interval '8 hours')::date::text AS d, SUM(r)::float AS rain, AVG(t)::float AS temp
+     SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date::text AS d, SUM(r)::float AS rain, AVG(t)::float AS temp
      FROM hourly GROUP BY 1`,
     [from, to],
   );
@@ -1208,11 +1208,11 @@ export async function getMLPredictiveVolumeHourly(
   // ML models carry no weather dimension, so it never touches the day totals.
   const wetFilter = weather === "all" ? null : weather === "wet";
   const WX_CTE = `wx AS (
-    SELECT (timestamp_utc + interval '8 hours')::date AS d,
+    SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS d,
            EXTRACT(hour FROM timestamp_utc + interval '8 hours')::int AS h,
            AVG(rainfall) > 0.3 AS wet
     FROM hourly_weather
-    WHERE (timestamp_utc + interval '8 hours')::date = $1::date
+    WHERE ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date = $1::date
     GROUP BY 1, 2
   )`;
 
@@ -1280,7 +1280,7 @@ export async function getMLPredictiveVolumeHourly(
                 AVG(rainfall)::float AS rainfall,
                 AVG(temperature)::float AS temperature
          FROM public.hourly_weather
-         WHERE (timestamp_utc + interval '8 hours')::date = $1::date
+         WHERE ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date = $1::date
          GROUP BY 1 ORDER BY 1`,
         [date]
       ),
@@ -1466,7 +1466,7 @@ export async function getWeatherEvidenceFromDb(): Promise<WeatherEvidence | null
   try {
     const CTE = `
       WITH hourly AS (
-        SELECT (timestamp_utc + interval '8 hours')::date AS ds, timestamp_utc AS hr,
+        SELECT ((timestamp_utc AT TIME ZONE 'UTC') + interval '8 hours')::date AS ds, timestamp_utc AS hr,
                AVG(temperature) t, AVG(rainfall) r, AVG(wind_speed) w, AVG(humidity) h
         FROM public.hourly_weather GROUP BY 1, 2
       ), wx AS (

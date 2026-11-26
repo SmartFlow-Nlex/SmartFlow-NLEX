@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BACKEND, authedJson } from "../../lib/api";
+import { startVisiblePoll } from "../../lib/use-visible-poll";
 
 /**
  * Active maintenance closures for the Live Map, read-only.
@@ -34,7 +35,8 @@ type Body = { success?: boolean; data?: Closure[] };
 
 let current: Closure[] | null = null;
 let inflight: Promise<void> | null = null;
-let timer: ReturnType<typeof setInterval> | null = null;
+/* The shared poll: paused while the tab is hidden, refreshed once on return (lib/use-visible-poll.ts). */
+let stopPoll: (() => void) | null = null;
 const listeners = new Set<(c: Closure[] | null) => void>();
 
 const load = (): Promise<void> => {
@@ -63,12 +65,12 @@ export function useActiveClosures(): Closure[] | null {
     listeners.add(setList);
     if (current) setList(current);
     load();
-    if (!timer) timer = setInterval(load, 60_000);
+    if (!stopPoll) stopPoll = startVisiblePoll(load, 60_000);
     return () => {
       listeners.delete(setList);
-      if (listeners.size === 0 && timer) {
-        clearInterval(timer);
-        timer = null;
+      if (listeners.size === 0 && stopPoll) {
+        stopPoll();
+        stopPoll = null;
       }
     };
   }, []);

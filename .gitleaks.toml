@@ -1,0 +1,8 @@
+# Gitleaks settings for the security-checks workflow (24 Nov 2026). Gitleaks' own rules stay on; this only adds
+# allowlists for findings that were reviewed and are not secrets.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "graphify's file-hash cache: 64-character SHA-256 digests of our own files, not keys (reviewed 24 Nov 2026)"
+paths = ['''(^|/)graphify-out/cache/stat-index\.json$''']

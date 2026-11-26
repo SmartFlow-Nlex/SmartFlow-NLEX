@@ -21,12 +21,13 @@ import { drawBorrowedLanes, drawScenes, drawWater, drawWeather, hasSceneArt, typ
 import { drawForecastEvents, expectedOnStretch, ON_CARRIAGEWAY_SHARE } from "./forecastIncidents";
 import { borrowedLanes, crossoverM, defaultStretch, planStretch, planZipper, REALLOCATION_NAME, zipperCounts, zipperHolds, type StretchLimits } from "../zipper";
 import { drawMotorcycle, type BikeCtx } from "../motorcycleArt";
-import { FacilityEngine, type FacilityHost, type FacilitySpec } from "../facilities";
+import { FacilityEngine, PAY_BOOTH_VEH_PER_HOUR, type FacilityHost, type FacilitySpec } from "../facilities";
 import { APRON_ROLES, BARRIER_ROLES, apronOutline, serviceSite, wAtU } from "../facilityArt";
 import { shapeForecastMix, type ClassShares } from "../forecastMix";
 import { ReplayBuffer } from "../replay";
 import { NoEventTwin } from "../eventTwin";
 import { TrendLog } from "../trends";
+import { buildRunCsv, type ExportRun } from "../exportRun";
 import { getRecommendation, CLOSURE_LANE_CAPACITY_VEH_H, type Supply } from "../recommendation";
 import { BUS_PAINTS, CAB_PAINTS, CAR_PAINTS, MOTORCYCLE_PAINTS, PAINT_WHITE, TRAILER_PAINTS, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint } from "../vehiclePaint";
 import {
@@ -41,6 +42,7 @@ import {
   incidentSlotsFor,
   listAssumptions,
   NLEX_RAIN_FREE_FLOW_KMH,
+  NLEX_RAIN_CAPACITY_PCU_H,
   operatorLaneToEngineIndex,
   RAIN_INTENSITIES,
   type RainIntensity,
@@ -1010,26 +1012,38 @@ check("event: phases tile the whole duration, start at 0, ascend, are labelled w
   check("ownership: the key names the closures of their own too (a second collision changes it)", ownershipKey(twoClosures) !== ownershipKey(taken.owners) && twoClosures.extraClosures.length === 1);
 }
 
-// --- rain: the speed zone spans the WHOLE segment regardless of position, at RAIN_SPEED_KMH, blocking no lane
+// --- rain: the zone it owns spans the WHOLE segment regardless of position, labelled RAIN_SPEED_KMH, blocking no lane;
+// since 19 Nov 2026 (audit S7) the engine gets it as weather (RAIN_EFFECT), never as a speed limit
 {
   const near0 = must([], rainSpec(20, 0, manualMinutes(30)), 1).event;
   const nearEnd = must([], rainSpec(580, 0, manualMinutes(30)), 1).event;
   const c0 = composeInterventions({ ...idle, incidents: [] }, [near0], abs(1), road600);
   const c1 = composeInterventions({ ...idle, incidents: [] }, [nearEnd], abs(1), road600);
+  // CHANGED 19 Nov 2026: this checked that the engine was given RAIN_SPEED_KMH as a speed limit, the behaviour audit S7
+  // found wrong (a cap that only the fastest cars met). Now the owned zone carries that figure and the engine gets weather.
   check(
-    "rain: the zone is [0, segment length] no matter where positionKm places the event (RAIN_ZONE = whole_segment), at RAIN_SPEED_KMH (heavy, for the spec these use)",
-    c0.interventions.speedZone[0] === 0 && c0.interventions.speedZone[1] === 600 && c0.interventions.speedLimitKmh === ASSUMPTIONS.RAIN_SPEED_KMH.value.heavy &&
-      c1.interventions.speedZone[0] === 0 && c1.interventions.speedZone[1] === 600 && c1.interventions.speedLimitKmh === ASSUMPTIONS.RAIN_SPEED_KMH.value.heavy,
+    "rain: the zone it owns is [0, segment length] no matter where positionKm places the event (RAIN_ZONE = whole_segment), labelled RAIN_SPEED_KMH (heavy, for the spec these use)",
+    c0.owners.speedZone?.zone[0] === 0 && c0.owners.speedZone?.zone[1] === 600 && c0.owners.speedZone?.limitKmh === ASSUMPTIONS.RAIN_SPEED_KMH.value.heavy && c0.owners.speedZone?.rain === "heavy" &&
+      c1.owners.speedZone?.zone[0] === 0 && c1.owners.speedZone?.zone[1] === 600 && c1.owners.speedZone?.limitKmh === ASSUMPTIONS.RAIN_SPEED_KMH.value.heavy,
   );
+  check(
+    "rain: the engine is given the weather (RAIN_EFFECT for its intensity: every driver's desired speed and headway), not a speed limit — no limit, no extra zone",
+    c0.interventions.weather === ASSUMPTIONS.RAIN_EFFECT.value.heavy && c0.interventions.speedLimitKmh === null && (c0.interventions.speedZones ?? []).length === 0 &&
+      c1.interventions.weather === ASSUMPTIONS.RAIN_EFFECT.value.heavy && c1.interventions.speedLimitKmh === null,
+    JSON.stringify({ weather: c0.interventions.weather, limit: c0.interventions.speedLimitKmh }),
+  );
+  check("rain: with no rain event the road is dry (weather null)", composeInterventions({ ...idle, incidents: [] }, [], abs(1), road600).interventions.weather === null);
   check("rain: no lane is closed", !c0.interventions.closedLanes.some(Boolean) && c0.owners.closure === null);
   check("rain: it owns the speed zone, not a shoulder breakdown's gawk zone (a different speed, so the two are told apart by who owns it)", c0.owners.speedZone !== null && c0.owners.speedZone.eventId === near0.id && ASSUMPTIONS.RAIN_SPEED_KMH.value.heavy !== ASSUMPTIONS.GAWK_SPEED_KMH.value.breakdown_shoulder);
   check("rain: has no lane, whatever lane the spec was given (effectOf routes it to speed_zone, same as a shoulder breakdown)", must([], { ...rainSpec(330, 0, manualMinutes(5)), lane: 2 }, 1).event.lane === null);
 
   const opLimit = composeInterventions({ ...idle, speedLimitKmh: 50, incidents: [] }, [near0], abs(1), road600);
+  // CHANGED 19 Nov 2026 (audit S7): the rain used to be sent as a whole-segment zone at its rain speed; now as weather.
   check(
-    "rain: beside an operator speed limit it runs as a zone of its own (the whole segment at its rain speed); the operator's limit stands, nothing yields",
+    "rain: beside an operator speed limit it holds a zone of its own (the whole segment, labelled with its rain speed) and the engine gets the weather; the operator's limit stands, nothing yields",
     opLimit.interventions.speedLimitKmh === 50 && opLimit.owners.speedZone === null && opLimit.owners.yielded.length === 0 && opLimit.owners.extraSpeedZones.length === 1 &&
-      opLimit.interventions.speedZones?.[0]?.from === 0 && opLimit.interventions.speedZones?.[0]?.to === 600 && opLimit.interventions.speedZones?.[0]?.kmh === ASSUMPTIONS.RAIN_SPEED_KMH.value.heavy,
+      opLimit.owners.extraSpeedZones[0].zone[0] === 0 && opLimit.owners.extraSpeedZones[0].zone[1] === 600 && opLimit.owners.extraSpeedZones[0].limitKmh === ASSUMPTIONS.RAIN_SPEED_KMH.value.heavy &&
+      (opLimit.interventions.speedZones ?? []).length === 0 && opLimit.interventions.weather === ASSUMPTIONS.RAIN_EFFECT.value.heavy,
   );
 
   // Rain and a shoulder breakdown at the same time: one takes the shared zone, the other runs a zone of its own.
@@ -2068,8 +2082,9 @@ check(
     "flood: may close every lane; pooling closes none under heavy rain, rising and draining close the outer half (water on the shoulder side), flooded closes all four",
     atPeak.interventions.closedLanes.every(Boolean) &&
       rising.interventions.closedLanes.map((x) => (x ? 1 : 0)).join("") === "0011" &&
-      pooling.interventions.closedLanes.every((x) => !x) && pooling.interventions.speedLimitKmh === ASSUMPTIONS.RAIN_SPEED_KMH.value.heavy,
-    `peak ${atPeak.interventions.closedLanes} rising ${rising.interventions.closedLanes} pooling ${pooling.interventions.closedLanes} limit ${pooling.interventions.speedLimitKmh}`,
+      // CHANGED 19 Nov 2026 (audit S7): the heavy rain reaches the engine as weather, no longer as a speed limit.
+      pooling.interventions.closedLanes.every((x) => !x) && pooling.interventions.weather === ASSUMPTIONS.RAIN_EFFECT.value.heavy && pooling.interventions.speedLimitKmh === null,
+    `peak ${atPeak.interventions.closedLanes} rising ${rising.interventions.closedLanes} pooling ${pooling.interventions.closedLanes} weather ${JSON.stringify(pooling.interventions.weather)} limit ${pooling.interventions.speedLimitKmh}`,
   );
 
   // A duplicate of the primary lane, or of another extra, is silently deduped rather than treated
@@ -2185,8 +2200,9 @@ check(
   check("page: the console hook is gone now that the panel exists (nothing is exposed on window)", !/sandboxScenarios/.test(pageSource) && !/Object\.defineProperty\(window/.test(pageSource));
   check(
     "page: each direction's recommendation reads that direction's OWN effective state and inflow (NB's from nb, SB's from sb — never one direction's numbers under the other's heading)",
-    /NB: getRecommendation\(nb\.metrics, nb\.baseline, \[\.\.\.nb\.eff\.closedLanes\], nb\.effIncidentCount, nb\.eff\.speedLimitKmh, \{ inflow: nb\.inflow, inflowFrom: nb\.inflowFrom, anchor: nb\.dataAnchor \}\)/.test(pageSource) &&
-      /SB: getRecommendation\(sb\.metrics, sb\.baseline, \[\.\.\.sb\.eff\.closedLanes\], sb\.effIncidentCount, sb\.eff\.speedLimitKmh, \{ inflow: sb\.inflow, inflowFrom: sb\.inflowFrom, anchor: sb\.dataAnchor \}\)/.test(pageSource),
+    // CHANGED 19 Nov 2026: a trailing roadInView(<same direction>) argument is allowed (audit S24 gives the advice the road in view).
+    /NB: getRecommendation\(nb\.metrics, nb\.baseline, \[\.\.\.nb\.eff\.closedLanes\], nb\.effIncidentCount, nb\.eff\.speedLimitKmh, \{ inflow: nb\.inflow, inflowFrom: nb\.inflowFrom, anchor: nb\.dataAnchor \}(?:, roadInView\(nb\))?\)/.test(pageSource) &&
+      /SB: getRecommendation\(sb\.metrics, sb\.baseline, \[\.\.\.sb\.eff\.closedLanes\], sb\.effIncidentCount, sb\.eff\.speedLimitKmh, \{ inflow: sb\.inflow, inflowFrom: sb\.inflowFrom, anchor: sb\.dataAnchor \}(?:, roadInView\(sb\))?\)/.test(pageSource),
   );
   check(
     "hook: anyIntervention and the folded before/after / event-list summaries are built from the effective state, per direction",
@@ -2272,35 +2288,48 @@ check(
 
 // --- Phase D4 -----------------------------------------------------------------------------------
 // Corridor totals for Both mode (bothMetrics.ts) are pure, so every rule is pinned here directly,
-// including the ones that are easy to get quietly wrong: flow-weighting must not degrade to a plain
-// mean, a direction with no flow must not drag the corridor speed toward zero, and two queues must not add.
+// including the ones that are easy to get quietly wrong: the weighting must not degrade to a plain
+// mean, an empty direction must not drag the corridor speed toward zero, and two queues must not add.
+// CHANGED 19 Nov 2026 (audit S11): the corridor speed is traffic-weighted (Σq/Σk, by the vehicles on each
+// carriageway) instead of weighted by throughput; the checks that pinned throughput weighting now pin that.
 {
   const m = (o: Partial<Metrics>): Metrics => ({
-    activeAgents: 0, avgSpeedKmh: 0, throughputPerMin: 0, densityPerKmLane: 0, stoppedCount: 0, longestQueueM: 0,
-    co2RatePerMin: 0, avgTravelTimeS: 0, completed: 0, elapsedS: 100, warm: true, unmetVehPerHour: 0, ...o,
+    activeAgents: 0, trafficCount: 0, avgSpeedKmh: 0, throughputPerMin: 0, throughPerMin: 0, exitedPerMin: 0, densityPerKmLane: 0, stoppedCount: 0, longestQueueM: 0,
+    co2RatePerMin: 0, co2OnRoadPerMin: 0, co2UpstreamPerMin: 0, avgTravelTimeS: 0, completed: 0, elapsedS: 100, warm: true,
+    unmetVehPerHour: 0, unmetMainlineVehPerHour: 0, unmetFromRampsVehPerHour: 0, exitShareConfigured: null, exitShareDelivered: null, exitMissedShare: null, ...o,
   });
-  const nb = m({ activeAgents: 30, avgSpeedKmh: 100, throughputPerMin: 90, longestQueueM: 40, co2RatePerMin: 8, stoppedCount: 2, unmetVehPerHour: 10, densityPerKmLane: 12 });
-  const sb = m({ activeAgents: 20, avgSpeedKmh: 40, throughputPerMin: 10, longestQueueM: 120, co2RatePerMin: 5, stoppedCount: 7, unmetVehPerHour: 0, densityPerKmLane: 30 });
+  const nb = m({ activeAgents: 30, trafficCount: 30, avgSpeedKmh: 100, throughputPerMin: 90, throughPerMin: 80, exitedPerMin: 10, longestQueueM: 40, co2RatePerMin: 8, co2OnRoadPerMin: 7, co2UpstreamPerMin: 1, stoppedCount: 2, unmetVehPerHour: 10, unmetMainlineVehPerHour: 6, unmetFromRampsVehPerHour: 4, densityPerKmLane: 12 });
+  const sb = m({ activeAgents: 20, trafficCount: 20, avgSpeedKmh: 40, throughputPerMin: 10, throughPerMin: 10, longestQueueM: 120, co2RatePerMin: 5, co2OnRoadPerMin: 5, stoppedCount: 7, unmetVehPerHour: 0, densityPerKmLane: 30 });
   const c = combineMetrics(nb, sb);
   check("corridor: counts and rates add (agents, throughput, CO2, stopped, unmet demand)", c.activeAgents === 50 && c.throughputPerMin === 100 && c.co2RatePerMin === 13 && c.stoppedCount === 9 && c.unmetVehPerHour === 10);
+  check("corridor: the parts add too (through / exited, CO2 on the road / upstream, unmet at the entrance / on the ramps)",
+    c.throughPerMin === 90 && c.exitedPerMin === 10 && c.co2OnRoadPerMin === 12 && c.co2UpstreamPerMin === 1 && c.unmetMainlineVehPerHour === 6 && c.unmetFromRampsVehPerHour === 4);
   check("corridor: longest queue is the MAX of the two, never their sum", c.longestQueueM === Math.max(nb.longestQueueM, sb.longestQueueM) && c.longestQueueM !== nb.longestQueueM + sb.longestQueueM);
-  const weighted = (100 * 90 + 40 * 10) / 100;
-  check("corridor: average speed is flow-weighted by throughput", c.flowWeightedAvgSpeedKmh !== null && Math.abs(c.flowWeightedAvgSpeedKmh - weighted) < 1e-9, String(c.flowWeightedAvgSpeedKmh));
-  check("corridor: with unequal flows the flow-weighted speed is NOT the plain mean of the two directions (94 vs 70)", c.flowWeightedAvgSpeedKmh !== null && Math.abs(c.flowWeightedAvgSpeedKmh - (100 + 40) / 2) > 20);
-  const eq = flowWeightedSpeed({ avgSpeedKmh: 100, throughputPerMin: 50 }, { avgSpeedKmh: 40, throughputPerMin: 50 });
-  check("corridor: with EQUAL flows the weighted speed equals the plain mean (the weights cancel — the two only differ when flows do)", eq !== null && Math.abs(eq - 70) < 1e-9);
-  const oneDead = flowWeightedSpeed({ avgSpeedKmh: 100, throughputPerMin: 60 }, { avgSpeedKmh: 0, throughputPerMin: 0 });
-  check("corridor: a direction with no flow carries no weight (its speed cannot drag the total)", oneDead === 100);
-  check("corridor: with no flow in either direction there is no weight, so the speed is null — never a plain-mean fallback", flowWeightedSpeed({ avgSpeedKmh: 100, throughputPerMin: 0 }, { avgSpeedKmh: 40, throughputPerMin: 0 }) === null);
-  check("corridor: a negative flow is not a weight either", flowWeightedSpeed({ avgSpeedKmh: 100, throughputPerMin: -5 }, { avgSpeedKmh: 40, throughputPerMin: 10 }) === 40);
+  const weighted = (100 * 30 + 40 * 20) / 50;
+  check("corridor: average speed is traffic-weighted, by the vehicles on each carriageway (Σq/Σk)", c.flowWeightedAvgSpeedKmh !== null && Math.abs(c.flowWeightedAvgSpeedKmh - weighted) < 1e-9, String(c.flowWeightedAvgSpeedKmh));
+  check("corridor: with unequal traffic the weighted speed is NOT the plain mean of the two directions (76 vs 70)", c.flowWeightedAvgSpeedKmh !== null && Math.abs(c.flowWeightedAvgSpeedKmh - (100 + 40) / 2) > 5);
+  // The audit's example: 100 vehicles at 10 km/h (10 a minute out) and 50 at 100 km/h (50 a minute). Throughput
+  // weighting read 85 km/h; the mean over the 150 vehicles on the road is 40.
+  const audit = flowWeightedSpeed({ avgSpeedKmh: 10, throughputPerMin: 10, trafficCount: 100 }, { avgSpeedKmh: 100, throughputPerMin: 50, trafficCount: 50 });
+  check("corridor: a jammed side counts by its vehicles, not by what it lets out (100 at 10 km/h + 50 at 100 km/h = 40, not 85)", audit !== null && Math.abs(audit - 40) < 1e-9, String(audit));
+  const eq = flowWeightedSpeed({ avgSpeedKmh: 100, throughputPerMin: 50, trafficCount: 25 }, { avgSpeedKmh: 40, throughputPerMin: 20, trafficCount: 25 });
+  check("corridor: with EQUAL traffic the weighted speed equals the plain mean (the weights cancel)", eq !== null && Math.abs(eq - 70) < 1e-9);
+  const oneEmpty = flowWeightedSpeed({ avgSpeedKmh: 100, throughputPerMin: 60, trafficCount: 30 }, { avgSpeedKmh: 0, throughputPerMin: 0, trafficCount: 0 });
+  check("corridor: a direction with no traffic carries no weight (its speed cannot drag the total)", oneEmpty === 100);
+  const stuck = flowWeightedSpeed({ avgSpeedKmh: 100, throughputPerMin: 60, trafficCount: 30 }, { avgSpeedKmh: 2, throughputPerMin: 0, trafficCount: 90 });
+  check("corridor: a carriageway jammed solid, letting nothing out, still counts by its vehicles (under throughput weighting it had no weight at all)", stuck !== null && stuck < 30, String(stuck));
+  check("corridor: with no traffic in either direction there is no weight, so the speed is null — never a plain-mean fallback", flowWeightedSpeed({ avgSpeedKmh: 100, throughputPerMin: 0, trafficCount: 0 }, { avgSpeedKmh: 40, throughputPerMin: 0, trafficCount: 0 }) === null);
+  check("corridor: a negative count is not a weight either", flowWeightedSpeed({ avgSpeedKmh: 100, throughputPerMin: 5, trafficCount: -5 }, { avgSpeedKmh: 40, throughputPerMin: 10, trafficCount: 10 }) === 40);
+  const est = flowWeightedSpeed({ avgSpeedKmh: 10, throughputPerMin: 10 }, { avgSpeedKmh: 100, throughputPerMin: 50 });
+  check("corridor: a reading without counts (an older baseline) is weighted by density estimated from flow, k = q / u — still Σq/Σk, never by throughput", est !== null && Math.abs(est - 60 / (10 / 10 + 50 / 100)) < 1e-9, String(est));
   check("corridor: density and travel time are deliberately absent from the total (not additive across carriageways)", !("densityPerKmLane" in c) && !("avgTravelTimeS" in c));
   const swapped = combineMetrics(sb, nb);
   check("corridor: combining is symmetric (NB/SB order changes nothing)", swapped.flowWeightedAvgSpeedKmh === c.flowWeightedAvgSpeedKmh && swapped.longestQueueM === c.longestQueueM && swapped.throughputPerMin === c.throughputPerMin);
   const bb = combineBaselines(
-    { avgSpeedKmh: 100, throughputPerMin: 90, longestQueueM: 40, co2RatePerMin: 8 },
-    { avgSpeedKmh: 40, throughputPerMin: 10, longestQueueM: 120, co2RatePerMin: 5 },
+    { avgSpeedKmh: 100, throughputPerMin: 90, longestQueueM: 40, co2RatePerMin: 8, trafficCount: 30 },
+    { avgSpeedKmh: 40, throughputPerMin: 10, longestQueueM: 120, co2RatePerMin: 5, trafficCount: 20 },
   );
-  check("corridor baseline: built by the same rules as the corridor now (sum, max, flow-weighted), so a delta compares like with like",
+  check("corridor baseline: built by the same rules as the corridor now (sum, max, traffic-weighted), so a delta compares like with like",
     bb.throughputPerMin === 100 && bb.co2RatePerMin === 13 && bb.longestQueueM === 120 && bb.flowWeightedAvgSpeedKmh !== null && Math.abs(bb.flowWeightedAvgSpeedKmh - weighted) < 1e-9);
 }
 
@@ -2317,12 +2346,32 @@ check(
   );
   const tileTags = [...pageSource.matchAll(/<MetricTileBoth\s+label="([^"]+)"\s+tag="([^"]+)"/g)].map((x) => `${x[1]}=${x[2]}`).join(", ");
   check(
-    "page: Both-mode tiles label what kind of headline each is (avg speed flow-weighted, queue max, density per direction) — the tag is in the tile, not only in a tooltip",
+    // Avg speed is traffic-weighted since 19 Nov 2026 (audit S11; bothMetrics trafficWeightedSpeed), and the tag says so.
+    "page: Both-mode tiles label what kind of headline each is (avg speed traffic-weighted, queue max, density per direction) — the tag is in the tile, not only in a tooltip",
     // Density left the strip on 24 Nov 2026 (user request); it is still measured and exported.
-    tileTags === "Active agents=total, Avg speed=flow-weighted, Throughput=total, Longest queue=max, CO₂ rate=total",
+    tileTags === "Active agents=total, Avg speed=traffic-weighted, Throughput=total, Longest queue=max, CO₂ rate=total",
     tileTags,
   );
   check("page: density is not drawn as a tile (it has no corridor total; removed from the strip 24 Nov 2026)", !/label="Density"/.test(pageSource));
+  // Corridor picker (25 Nov 2026, user request): exits, then a segment inside them, never past MAX_SEG_M; everything on
+  // the segment is drawn, so the places list only lists.
+  check(
+    "page: one corridor flow — no \"Exits | Km range\" choice and no \"Fit whole route\" button",
+    !/entryMode/.test(pageSource) && !/Fit whole route/.test(pageSource) && !/fitRoute/.test(pageSource),
+  );
+  check(
+    "page: the segment window is capped at MAX_SEG_M wherever it is set (derived toKm, showWindow, the km fields, frameKmRange)",
+    /fromKm \+ MAX_SEG_M \/ 1000,\s*\);/.test(pageSource) && /a \+ MAX_SEG_M \/ 1000\)\.toFixed\(3\)/.test(pageSource) &&
+      (pageSource.match(/> MAX_SEG_M \/ 1000\)/g) ?? []).length === 2 && /lo \+ MIN_SEG_M \/ 1000\), lo \+ MAX_SEG_M \/ 1000\)/.test(pageSource),
+  );
+  check(
+    "page: the km fields stay inside the two chosen exits (min routeFromKm, max routeToKm), not the whole corridor",
+    (pageSource.match(/<KmInput value=\{(fromKm|toKm)\} min=\{routeFromKm\} max=\{routeToKm\}/g) ?? []).length === 2,
+  );
+  check(
+    "page: the places list shows the segment and frames nothing (route = the segment, no onJunction / onPlace)",
+    /route=\{\{ fromKm, toKm \}\}/.test(pageSource) && !/onJunction=\{/.test(pageSource) && !/onPlace=\{/.test(pageSource),
+  );
   check(
     "page: the corridor totals come from combineMetrics/combineBaselines (one rule set), never re-derived inline",
     /combineMetrics\(nb\.metrics, sb\.metrics\)/.test(pageSource) && /combineBaselines\(nb\.baseline, sb\.baseline\)/.test(pageSource) && !/nb\.metrics\.avgSpeedKmh \+ sb\.metrics\.avgSpeedKmh/.test(pageSource),
@@ -2424,11 +2473,30 @@ check(
     JSON.stringify(caps),
   );
   const rainAssumption = ASSUMPTIONS.RAIN_SPEED_KMH;
+  // CHANGED 19 Nov 2026 (audit S7): this pinned the text that said the engine "cannot vary headway" and so rain was a
+  // speed-cap PROXY. The engine now varies headway in rain (RAIN_EFFECT); the text must say the cap is history.
   check(
-    "rain intensity: the assumption cites its source (author, year, journal, URL), the site, and says a speed cap is a proxy that understates capacity loss because the engine cannot vary following headways",
+    "rain intensity: the assumption cites its source (author, year, journal, URL), the site, says the figures are no longer a limit on the engine, and that the old cap was a proxy that understated capacity loss",
     /Mejia/.test(rainAssumption.evidence ?? "") && /Sigua/.test(rainAssumption.evidence ?? "") && /2018/.test(rainAssumption.evidence ?? "") && /Philippine Transportation Journal/.test(rainAssumption.evidence ?? "") &&
       /https:\/\/ncts\.upd\.edu\.ph\/tssp\/wp-content\/uploads\/2018\/08\/Mejia18\.pdf/.test(rainAssumption.evidence ?? "") && /Km 11\+150/.test(rainAssumption.evidence ?? "") &&
-      /following headways/.test(rainAssumption.reason) && /cannot vary headway/.test(rainAssumption.reason) && /UNDERSTATES the capacity loss/.test(rainAssumption.reason) && /PROXY/.test(rainAssumption.reason),
+      /NOT applied to the engine as a speed limit/.test(rainAssumption.reason) && /RAIN_EFFECT/.test(rainAssumption.reason) && /UNDERSTATED the capacity loss/.test(rainAssumption.reason) && /PROXY/.test(rainAssumption.reason),
+  );
+  // RAIN_EFFECT (audit S7): the free-flow ratio on every driver's desired speed, and a calibrated headway factor.
+  const eff = ASSUMPTIONS.RAIN_EFFECT;
+  check(
+    "rain effect: each intensity's desired-speed factor is the NLEx study's rain / clear free-flow ratio (102.12, 101.46, 97.658 over 109.79), recomputed from the paper's own figures",
+    RAIN_INTENSITIES.every((i) => Math.abs(eff.value[i].v0Factor - NLEX_RAIN_FREE_FLOW_KMH[i] / 109.79) < 1e-12) && eff.value.heavy.v0Factor < eff.value.moderate.v0Factor && eff.value.moderate.v0Factor < eff.value.light.v0Factor,
+    JSON.stringify(eff.value),
+  );
+  check(
+    "rain effect: the headway factors lengthen every headway, more the harder it rains, within a plausible range (1 to 1.5)",
+    eff.value.light.headwayFactor > 1 && eff.value.light.headwayFactor < eff.value.moderate.headwayFactor && eff.value.moderate.headwayFactor < eff.value.heavy.headwayFactor && eff.value.heavy.headwayFactor < 1.5,
+    JSON.stringify(eff.value),
+  );
+  check(
+    "rain effect: the capacity targets are the paper's (1,554 pcu/h clear; 1,497 / 1,436 / 1,283) and the assumption says the headway factor is calibrated to them, cites the tool, and records what it measured",
+    NLEX_RAIN_CAPACITY_PCU_H.clear === 1554 && NLEX_RAIN_CAPACITY_PCU_H.light === 1497 && NLEX_RAIN_CAPACITY_PCU_H.moderate === 1436 && NLEX_RAIN_CAPACITY_PCU_H.heavy === 1283 &&
+      /CALIBRATED/.test(eff.reason) && /calibrate_rain_headway\.ts/.test(eff.evidence ?? "") && /measure_rain_cap\.ts/.test(eff.evidence ?? "") && !/PENDING/.test(eff.evidence ?? ""),
   );
   check("rain intensity: the template offers exactly light, moderate, heavy, in that order, each with a label", (() => { const tpl = TEMPLATE_BY_FAMILY.rain; return tpl.intensities.map((i) => i.id).join() === "light,moderate,heavy" && tpl.intensities.every((i) => i.label.length > 0) && RAIN_INTENSITIES.join() === "light,moderate,heavy"; })());
   check("rain intensity: the family is named Rain and its default intensity is offered", TEMPLATE_BY_FAMILY.rain.displayName === "Rain" && TEMPLATE_BY_FAMILY.rain.intensities.some((i) => i.id === TEMPLATE_BY_FAMILY.rain.defaultIntensity));
@@ -2440,9 +2508,10 @@ check(
     const ev = must([], rainSpec(330, 0, manualMinutes(30), "NB", intensity), i + 1).event;
     names += `${ev.name};`;
     const c = composeInterventions({ ...idle, incidents: [] }, [ev], abs(1), road600);
-    if (c.interventions.speedLimitKmh !== caps[intensity] || c.interventions.speedZone[0] !== 0 || c.interventions.speedZone[1] !== 600 || c.owners.closure !== null) appliedOk = false;
+    if (c.interventions.weather !== ASSUMPTIONS.RAIN_EFFECT.value[intensity] || c.interventions.speedLimitKmh !== null || c.owners.speedZone?.limitKmh !== caps[intensity] || c.owners.speedZone.zone[0] !== 0 || c.owners.speedZone.zone[1] !== 600 || c.owners.closure !== null) appliedOk = false;
   }
-  check("rain intensity: each intensity is applied as ITS OWN cap over the whole segment and blocks no lane", appliedOk);
+  // CHANGED 19 Nov 2026 (audit S7): "applied as ITS OWN cap" → applied as its own weather, the cap figure only labelling its zone.
+  check("rain intensity: each intensity is applied as ITS OWN weather (RAIN_EFFECT) over the whole segment, its zone labelled with its own speed, and blocks no lane", appliedOk);
   check("rain intensity: the event name says how hard it rains (Light rain #1; Moderate rain #2; Heavy rain #3)", names === "Light rain #1;Moderate rain #2;Heavy rain #3;", names);
   check("rain intensity: the panel's phase says Raining, so a light event is not labelled heavy", TEMPLATE_BY_FAMILY.rain.phases[0].label === "Raining");
 }
@@ -2913,7 +2982,7 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
         /setSegFromKm\(stretch\.fromKm\);\s*setSegToKm\(stretch\.toKm\);\s*nb\.setLaneCount\(plan\.counts\.NB\);/.test(pageSource) &&
         /if \(before !== null && segFromKm === before\.setFrom && segToKm === before\.setTo\) \{\s*setSegFromKm\(before\.from\);\s*setSegToKm\(before\.to\);\s*\}/.test(pageSource),
     );
-    check("stretch: the canvas label and the hint name the stretch (Km from-to) and the control says the road either side is not simulated", /\$\{fmtKmRange\(marks\.fromKm, marks\.toKm, 2\)\}/.test(pageSource) && /The sandbox simulates only this stretch \(100 m to 3 km\)/.test(pageSource) && /The simulated window becomes the stretch \(Off puts it back\)\./.test(pageSource));
+    check("stretch: the canvas label and the hint name the stretch (Km from-to) and the control says the road either side is not simulated", /\$\{fmtKmRange\(marks\.fromKm, marks\.toKm, 2\)\}/.test(pageSource) && /The sandbox simulates only this stretch \(100 m to 5 km\)/.test(pageSource) && /The simulated window becomes the stretch \(Off puts it back\)\./.test(pageSource));
   }
   const operatorText = [pageSource, artSource, panelSource, previewSource, readFileSync(new URL("./assumptions.ts", import.meta.url), "utf8"), readFileSync(new URL("./catalogue.ts", import.meta.url), "utf8"), readFileSync(new URL("../../../globals.css", import.meta.url), "utf8")].join("\n");
   check("lane reallocation: nothing the operator can read still calls it a zipper lane or counterflow (UI strings, canvas labels, assumption text)", !/Zipper lane|ZIPPER LANE|Counterflow|COUNTERFLOW|zipper lane|counterflow/.test(operatorText));
@@ -3059,8 +3128,9 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
 /* ───────────── the prescriptive recommendation: no data, extreme demand, a closed lane ───────────── */
 {
   const reading = (o: Partial<Metrics>): Metrics => ({
-    activeAgents: 40, avgSpeedKmh: 92, throughputPerMin: 50, densityPerKmLane: 10, stoppedCount: 0, longestQueueM: 0,
-    co2RatePerMin: 5, avgTravelTimeS: 25, completed: 300, elapsedS: 300, warm: true, unmetVehPerHour: 0, ...o,
+    activeAgents: 40, trafficCount: 40, avgSpeedKmh: 92, throughputPerMin: 50, throughPerMin: 50, exitedPerMin: 0, densityPerKmLane: 10, stoppedCount: 0, longestQueueM: 0,
+    co2RatePerMin: 5, co2OnRoadPerMin: 5, co2UpstreamPerMin: 0, avgTravelTimeS: 25, completed: 300, elapsedS: 300, warm: true,
+    unmetVehPerHour: 0, unmetMainlineVehPerHour: 0, unmetFromRampsVehPerHour: 0, exitShareConfigured: null, exitShareDelivered: null, exitMissedShare: null, ...o,
   });
   const fromRecord = (inflow: number): Supply => ({ inflow, inflowFrom: "record", anchor: inflow });
   const open4 = [false, false, false, false];
@@ -3337,6 +3407,272 @@ const roadMarks = (evs: readonly ScenarioEvent[], min: number, owners = NO_OWNER
   check("replay: offered whenever the run on screen has a recording (not only while an obstruction's appearance is inside it), and it plays back, pauses and stops at the end",
     /\{\(replayAvailable \|\| replayIndex !== null\) && \(/.test(pageSource) && /replayRef\.current\[d\]\.isOf\(byDirection\[d\]\.simRef\.current\) && replayRef\.current\[d\]\.length >= 2/.test(pageSource) &&
       /setReplayPlaying\(true\);\s*\}\}/.test(pageSource) && /if \(next >= last\) setReplayPlaying\(false\);/.test(pageSource) && /if \(replayIndex === null\) setReplayPlaying\(false\);/.test(pageSource));
+}
+
+/* ───────────── engine fixes from the 19 Nov 2026 audit (part 7: S1, S2, S3, S6, S7, S8, S9, S12, S15, S17, S20) ───────────── */
+{
+  const DT = 0.05;
+  /** Every traffic vehicle's move between steps: the worst move backwards (m), outside a scene being staged. */
+  const backTracker = () => {
+    const last = new Map<number, number>();
+    let worst = 0;
+    return {
+      see(sim: TrafficSim) {
+        for (const v of sim.vehicles) {
+          if (v.role !== "traffic" || v.doom) continue;
+          const was = last.get(v.id);
+          if (was !== undefined) worst = Math.max(worst, was - v.x);
+        }
+        last.clear();
+        for (const v of sim.vehicles) last.set(v.id, v.x);
+      },
+      get worst() {
+        return worst;
+      },
+    };
+  };
+
+  // S1: two lanes closed at the same point, one of them an edge lane. The edge lane used to freeze for the whole closure
+  // (its only neighbour closed where it did, so it counted as blocked): 114 of 115 lane-1 vehicles stood still for more
+  // than two minutes and none got past. 3,000 veh/h on four lanes, 400 s.
+  for (const closed of [[true, true, false, false], [false, false, true, true]]) {
+    const sim = new TrafficSim({ length: 1500, laneCount: 4, inflowVehPerHour: 3000, seed: 7, warmupS: 60 }, { closedLanes: closed, closurePoint: 800, closureEnd: 1000 });
+    const edge = closed[0] ? 0 : 3;
+    const since = new Map<number, number>();
+    const bornIn = new Map<number, number>();
+    const passed = new Set<number>();
+    let longest = 0;
+    let edgePassed = 0;
+    const back = backTracker();
+    for (let i = 0; i < 400 / DT; i++) {
+      sim.step(DT);
+      back.see(sim);
+      for (const v of sim.vehicles) {
+        if (v.role !== "traffic") continue;
+        if (!bornIn.has(v.id)) bornIn.set(v.id, v.lane);
+        if (v.v < 0.1) {
+          const t0 = since.get(v.id) ?? sim.time;
+          since.set(v.id, t0);
+          longest = Math.max(longest, sim.time - t0);
+        } else since.delete(v.id);
+        if (v.x > 1000 && !passed.has(v.id)) {
+          passed.add(v.id);
+          if (bornIn.get(v.id) === edge) edgePassed++;
+        }
+      }
+    }
+    const tag = closed.map((c) => (c ? "T" : "F")).join("");
+    check(
+      `closure ${tag} (two lanes at the same point, one at the edge): no vehicle stands still for more than a minute, and traffic from the edge lane gets past (audit S1)`,
+      longest < 60 && edgePassed >= 20 && passed.size > 200,
+      `longest stand ${longest.toFixed(0)} s, ${edgePassed} from the edge lane past the closure, ${passed.size} in all`,
+    );
+    check(`closure ${tag}: no vehicle is moved backwards by more than a metre in one step (audit S9)`, back.worst <= 1, `worst ${back.worst.toFixed(2)} m`);
+  }
+
+  // S2 + S12: drivers bound for an exit 1 km in, at 1,500 veh/h/lane. 39-41% missed it before (they started in any lane
+  // and had 650 m to cross up to three). Under a tenth now, and the delivered share is the configured one.
+  const exitRun = (cfg: Pick<ConstructorParameters<typeof TrafficSim>[0], "ramps" | "facilities">) => {
+    const sim = new TrafficSim({ length: 2000, laneCount: 4, inflowVehPerHour: 6000, seed: 7, warmupS: 60, ...cfg }, {});
+    let identity = true;
+    for (let i = 0; i < 600 / DT; i++) {
+      sim.step(DT);
+      if (i % 200 === 0) {
+        const m = sim.metrics();
+        if (Math.abs(m.throughputPerMin - (m.throughPerMin + m.exitedPerMin)) > 1e-9) identity = false;
+      }
+    }
+    return { m: sim.metrics(), stats: sim.exitStats(), identity };
+  };
+  const facExit = exitRun({ facilities: [{ id: "ex", kind: "exit_ramp", name: "Test exit", x: 1000, booths: 4, serviceSec: 4.1, turnFraction: 0.15, tollMode: "pay" }] });
+  const rampExit = exitRun({ ramps: [{ x: 1000, onVehPerHour: 0, offFraction: 0.15, name: "off" }] });
+  for (const [name, r] of [["exit-ramp facility", facExit], ["point ramp", rampExit]] as const) {
+    check(
+      `exits: at 1,500 veh/h/lane under a tenth of the drivers bound for a ${name} 1 km in miss it, and it drains about its configured share (audit S2)`,
+      r.m.exitMissedShare !== null && r.m.exitMissedShare < 0.1 && r.m.exitShareDelivered !== null && r.m.exitShareConfigured !== null && Math.abs(r.m.exitShareDelivered - r.m.exitShareConfigured) < 0.03 &&
+        r.stats.length === 1 && r.stats[0].configuredShare === 0.15 && r.stats[0].passed > 300,
+      JSON.stringify({ missed: r.m.exitMissedShare, delivered: r.m.exitShareDelivered, configured: r.m.exitShareConfigured, stats: r.stats }),
+    );
+    check(`exits (${name}): trips served = through + exited at every reading, and some left at the exit (audit S12)`, r.identity && r.m.exitedPerMin > 0 && r.m.throughPerMin > 0);
+  }
+  // S12: travel time is over full crossings only, so a turn share does not move it on an uncongested road.
+  const ttRun = (offFraction: number) => {
+    const sim = new TrafficSim({ length: 1500, laneCount: 3, inflowVehPerHour: 2400, seed: 9, warmupS: 60, ramps: [{ x: 500, onVehPerHour: 600, offFraction, name: "j" }] }, {});
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < 360 / DT; i++) {
+      sim.step(DT);
+      if (sim.time > 150 && i % 100 === 0) {
+        sum += sim.metrics().avgTravelTimeS;
+        n++;
+      }
+    }
+    return sum / n;
+  };
+  const ttNone = ttRun(0);
+  const ttTurn = ttRun(0.3);
+  check("travel time: the mean is over full crossings of the stretch, so a 30% turn share and on-ramp joiners leave it within 5% on a free-flowing road (audit S12)", Math.abs(ttTurn - ttNone) / ttNone < 0.05, `${ttNone.toFixed(1)} s with no turning, ${ttTurn.toFixed(1)} s with 30%`);
+
+  // S3 + S17: an on-ramp that cannot deliver its demand, and an entry plaza whose local road brings more than it can take.
+  const rampSim = new TrafficSim({ length: 1500, laneCount: 3, inflowVehPerHour: 7000, seed: 7, warmupS: 60, ramps: [{ x: 600, onVehPerHour: 2000, offFraction: 0, name: "on" }] }, {});
+  for (let i = 0; i < 300 / DT; i++) rampSim.step(DT);
+  const rm = rampSim.metrics();
+  check(
+    "unmet demand: an on-ramp's arrivals that never get on are counted, apart from the entrance's, and in the total (audit S3)",
+    rm.unmetFromRampsVehPerHour > 1000 && rm.unmetMainlineVehPerHour > 500 && Math.abs(rm.unmetVehPerHour - (rm.unmetMainlineVehPerHour + rm.unmetFromRampsVehPerHour)) < 1e-6,
+    JSON.stringify({ total: rm.unmetVehPerHour, mainline: rm.unmetMainlineVehPerHour, ramps: rm.unmetFromRampsVehPerHour }),
+  );
+  const plazaSim = new TrafficSim(
+    { length: 1500, laneCount: 3, inflowVehPerHour: 4500, seed: 7, warmupS: 60, facilities: [{ id: "en", kind: "entry_ramp", name: "Test entry", x: 400, booths: 2, serviceSec: 6, arrivalsVehPerHour: 2500, tollMode: "pay" }] },
+    {},
+  );
+  for (let i = 0; i < 300 / DT; i++) plazaSim.step(DT);
+  const pm = plazaSim.metrics();
+  check("unmet demand: an entry plaza's local-road arrivals past what its booths can take are counted as unmet too (they were dropped unseen past 25)", pm.unmetFromRampsVehPerHour > 500, JSON.stringify({ ramps: pm.unmetFromRampsVehPerHour, mainline: pm.unmetMainlineVehPerHour }));
+  check(
+    "CO2: the rate is the road's plus the idling of the demand held upstream, which is counted when demand is turned away (audit S17)",
+    Math.abs(rm.co2RatePerMin - (rm.co2OnRoadPerMin + rm.co2UpstreamPerMin)) < 1e-9 && rm.co2UpstreamPerMin > 1,
+    JSON.stringify({ total: rm.co2RatePerMin, road: rm.co2OnRoadPerMin, upstream: rm.co2UpstreamPerMin }),
+  );
+
+  // S6: the Emissions module's model — factor x distance + idle rate x standing time — and its idle rates.
+  const idleKgPerMin = { 1: (0.3 * 8.887) / 60, 2: (0.8 * 10.18) / 60, 3: (1 * 10.18) / 60 } as const;
+  check(
+    "CO2: the engine's default idle rates are the backend's IDLING_KG_PER_MINUTE (Argonne idle gal/h x EPA kg CO2/gal; emissions-source.ts), and CO2_MODEL records the same (audit S6)",
+    ([1, 2, 3] as const).every((k) => Math.abs(CLASS_META[k].idleKgPerMin - idleKgPerMin[k]) < 1e-12 && ASSUMPTIONS.CO2_MODEL.value.idleKgPerMin[k] === CLASS_META[k].idleKgPerMin) &&
+      ASSUMPTIONS.CO2_MODEL.value.speedTerm === "none" && /Argonne/.test(ASSUMPTIONS.CO2_MODEL.evidence ?? "") && /EPA/.test(ASSUMPTIONS.CO2_MODEL.evidence ?? ""),
+  );
+  check(
+    "CO2: the uncited low-speed multiplier and the six-metres-a-second idle are gone from the engine; idle comes from the class's idle rate",
+    !/1 \+ Math\.max\(0, \(30 - vKmh\) \/ 30\) \* 1\.2/.test(engineSource) && !/co2PerM \* 6 \* dt/.test(engineSource) && /idleKgPerMin \* 1000\) \/ 60\) \* dt/.test(engineSource),
+  );
+  {
+    const prof = { 1: { co2PerM: 0.1961, idleKgPerMin: idleKgPerMin[1] }, 2: { co2PerM: 0.6894, idleKgPerMin: idleKgPerMin[2] }, 3: { co2PerM: 0.7982, idleKgPerMin: idleKgPerMin[3] } } as const;
+    const sim = new TrafficSim({ length: 1500, laneCount: 4, inflowVehPerHour: 6500, seed: 7, warmupS: 60, classProfile: prof }, { closedLanes: [false, false, true, false], closurePoint: 800, closureEnd: 1000 });
+    let est = 0;
+    let met = 0;
+    let idle = 0;
+    for (let i = 0; i < 300 / DT; i++) {
+      sim.step(DT);
+      if (sim.time > 120 && i % 100 === 0) {
+        for (const v of sim.vehicles) {
+          est += (prof[v.vClass].co2PerM * v.v * 60) / 1000 + (v.v < 0.5 ? prof[v.vClass].idleKgPerMin : 0);
+          if (v.v < 0.5) idle += prof[v.vClass].idleKgPerMin;
+        }
+        met += sim.metrics().co2OnRoadPerMin;
+      }
+    }
+    check("CO2: the on-road rate is what the vehicles on the road emit under that model, idling included (a queue behind a closure), within 2%", Math.abs(met - est) / est < 0.02 && idle > 0, `metric ${met.toFixed(1)} vs instantaneous ${est.toFixed(1)} (sum of samples)`);
+  }
+
+  // S7: rain on the engine. Every class slows (buses and trucks never met the old cap), and capacity falls.
+  {
+    const freeRun = (weather: Interventions["weather"]) => {
+      const sim = new TrafficSim({ length: 2000, laneCount: 2, inflowVehPerHour: 700, seed: 3, warmupS: 60 }, { weather });
+      const by: Record<number, { s: number; n: number }> = { 1: { s: 0, n: 0 }, 2: { s: 0, n: 0 }, 3: { s: 0, n: 0 } };
+      for (let i = 0; i < 300 / DT; i++) {
+        sim.step(DT);
+        if (sim.time > 120 && i % 20 === 0) for (const v of sim.vehicles) if (v.role === "traffic" && v.x > 400) { by[v.vClass].s += v.v; by[v.vClass].n++; }
+      }
+      return ([1, 2, 3] as const).map((k) => by[k].s / Math.max(1, by[k].n));
+    };
+    const dry = freeRun(null);
+    const wet = freeRun(ASSUMPTIONS.RAIN_EFFECT.value.heavy);
+    check(
+      "rain, engine: heavy rain slows every class on a free road, buses and trucks included, by about the study's free-flow ratio (0.89)",
+      [0, 1, 2].every((k) => wet[k] / dry[k] < 0.94 && wet[k] / dry[k] > 0.84),
+      `wet / dry by class: ${[0, 1, 2].map((k) => (wet[k] / dry[k]).toFixed(3)).join(", ")}`,
+    );
+    const capRun = (weather: Interventions["weather"]) => {
+      const sim = new TrafficSim({ length: 1000, laneCount: 4, inflowVehPerHour: 12000, seed: 11, warmupS: 60 }, { weather });
+      for (let i = 0; i < 600 / DT; i++) sim.step(DT);
+      return 12000 - sim.metrics().unmetVehPerHour;
+    };
+    const capDry = capRun(null);
+    const capHeavy = capRun(ASSUMPTIONS.RAIN_EFFECT.value.heavy);
+    check(
+      "rain, engine: heavy rain takes about the study's 17.4% off capacity (12 to 24% on one seed; the old cap took about 2%)",
+      capHeavy / capDry < 0.88 && capHeavy / capDry > 0.76,
+      `${capDry.toFixed(0)} dry vs ${capHeavy.toFixed(0)} veh/h in heavy rain (${(((capHeavy - capDry) / capDry) * 100).toFixed(1)}%)`,
+    );
+  }
+
+  // S8: entering a lower limit is a gentle slow-down, not an emergency stop at the sign.
+  {
+    const hardInBand = (iv: Partial<Interventions>) => {
+      const sim = new TrafficSim({ length: 1500, laneCount: 4, inflowVehPerHour: 5000, seed: 7, warmupS: 60 }, iv);
+      const vWas = new Map<number, number>();
+      let hard = 0;
+      for (let i = 0; i < 300 / DT; i++) {
+        sim.step(DT);
+        for (const v of sim.vehicles) {
+          if (v.role !== "traffic") continue;
+          const was = vWas.get(v.id);
+          if (was !== undefined && (v.v - was) / DT <= -7.9 && v.x >= 450 && v.x <= 600) hard++;
+          vWas.set(v.id, v.v);
+        }
+      }
+      return hard;
+    };
+    const none = hardInBand({});
+    const z40 = hardInBand({ speedLimitKmh: 40, speedZone: [500, 1000] });
+    check(
+      "speed zone: hard braking (-7.9 m/s² or harder) where a 40 km/h zone begins is close to the no-zone level (it was 791 against 16 over 400 s; audit S8)",
+      z40 <= 3 * none + 20,
+      `${z40} vehicle-steps at the 40 zone's start vs ${none} with no zone`,
+    );
+  }
+
+  // S9: a ramp stretch with weaving, where cars used to be shoved back up to 22 m in one tick.
+  {
+    const sim = new TrafficSim(
+      { length: 1500, laneCount: 4, inflowVehPerHour: 6000, seed: 7, warmupS: 60, ramps: [{ x: 500, onVehPerHour: 600, offFraction: 0, name: "on" }, { x: 1000, onVehPerHour: 0, offFraction: 0.15, name: "off" }] },
+      {},
+    );
+    const back = backTracker();
+    for (let i = 0; i < 300 / DT; i++) {
+      sim.step(DT);
+      back.see(sim);
+    }
+    check("lane changes: with ramps and weaving, no vehicle is moved backwards by more than a metre in one step (straddlers are in both lanes for every gap check; audit S9)", back.worst <= 1, `worst ${back.worst.toFixed(2)} m`);
+  }
+
+  // S15, S20: provenance.
+  const facilitiesSource = readFileSync(new URL("../facilities.ts", import.meta.url), "utf8");
+  check(
+    "booth rate: PAY_BOOTH_VEH_PER_HOUR is an ASSUMPTION with honest provenance (assumed planning value, RFID / cashless, not measured), and facilities.ts's copy agrees with it (audit S15)",
+    ASSUMPTIONS.PAY_BOOTH_VEH_PER_HOUR.value === PAY_BOOTH_VEH_PER_HOUR && /ASSUMED planning value/.test(ASSUMPTIONS.PAY_BOOTH_VEH_PER_HOUR.reason) && /RFID/.test(ASSUMPTIONS.PAY_BOOTH_VEH_PER_HOUR.reason) &&
+      (ASSUMPTIONS.PAY_BOOTH_VEH_PER_HOUR.settledBy ?? "").length > 20 && !/the operator's figure, the same/.test(facilitiesSource),
+  );
+  check(
+    "secondary incidents: the hazard is derived from the current model's base rate, 0.11325 (n = 4,265, trained 15 Nov 2026), and a served rate can be passed in (audit S20)",
+    /const SECONDARY_BASE_RATE = 0\.11325;/.test(engineSource) && /n = 4,265/.test(engineSource) && /15 Nov 2026/.test(engineSource) && /secondaryBaseRate\?: number;/.test(engineSource),
+  );
+}
+
+/* ── The run export (19 Nov 2026 audit S23, S3/S12/S17) ── */
+{
+  const metrics = new TrafficSim({ length: 1000, laneCount: 2, inflowVehPerHour: 1500, seed: 3 }).metrics();
+  const run: ExportRun = {
+    exportedAt: new Date("2026-11-19T10:00:00Z"), simDate: null, simTime: null, forecastDay: null,
+    origin: "=HYPERLINK(\"http://x\")", destination: "Meycauayan", fromKm: 12, toKm: 13, view: "NB", simSpeed: 1,
+    directions: [{
+      direction: "NB", laneCount: 2, inflowVehPerHour: 1500, inflowFrom: "record", dataAnchor: 1500, metrics,
+      peakUnmetVehPerHour: 0, closedLanes: [false, false], speedLimitKmh: null, incidentCount: 0, baselineAvgSpeedKmh: null,
+      events: [{ direction: "NB", name: "+cmd|' /C calc'!A0", family: "minor_collision", phase: null, positionKm: 12.5, stretchKm: null, lane: 1, extraLanes: [], startS: 0, durationS: 600 }],
+    }],
+    replication: null,
+  };
+  const csv = buildRunCsv(run);
+  check(
+    "export: text a spreadsheet would run as a formula (=, +, -, @) is written with a leading apostrophe; nothing in the file starts a formula (audit S23)",
+    csv.includes(`"'=HYPERLINK(""http://x"") -> Meycauayan"`) && csv.includes("'+cmd|' /C calc'!A0") && !/(^|,)"?[=+@]/m.test(csv),
+    csv.split("\n").filter((l) => /HYPERLINK|calc/.test(l)).join(" | "),
+  );
+  check(
+    "export: the parts behind throughput, unmet demand and CO2 are exported (through / exited, entrance / ramps and plazas, on road / idling upstream)",
+    ["through veh/min", "exited veh/min", "unmet at entrance veh/h", "unmet on ramps/plazas veh/h", "CO2 on road kg/min", "CO2 idling upstream kg/min"].every((h) => csv.includes(h)),
+  );
 }
 
 /* ───────────────────────────── report ───────────────────────────── */

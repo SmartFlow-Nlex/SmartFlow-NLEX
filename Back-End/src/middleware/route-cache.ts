@@ -15,9 +15,10 @@ import { bypassScope } from "../utils/ttl-cache.js";
  *   - Single-flight: concurrent misses for one URL share one handler run.
  *   - Stale-while-revalidate: an expired entry is served immediately and a
  *     background self-request refreshes it, so after the first fill no user
- *     waits on a slow query.
+ *     waits on a slow query. Live feeds only up to LIVE_MAX_STALE_MS old.
  *   - Writes invalidate: any non-GET under a prefix clears that prefix, so a
- *     PATCH to /maintenance/:id/status is followed by a fresh list.
+ *     PATCH to /maintenance/:id/status is followed by a fresh list. A
+ *     published upload or undo refreshes everything.
  *   - Only 200 JSON bodies are stored; errors and 401s pass through untouched,
  *     and so does anything a route behind authenticateToken answers.
  *   - x-cache-bypass: 1 skips the cache and refills it (the refresher and the
@@ -37,8 +38,10 @@ const refreshing = new Set<string>();
  * an authorization bypass through the cache rather than around the middleware.
  * The 10-minute default TTL applied to most of these.
  *
- * Only the protected members of each group are listed. /emissions/analytics and
- * /audit-log/list are public by design and keep their caching.
+ * Only the protected members of each group are listed. /emissions/analytics is public by design and keeps its
+ * caching. /audit-log/list and /summary are signed-in only now (data analyst); they are not listed, but
+ * authenticateToken marks their answers and a marked answer is never stored (below), so no one is served
+ * another reader's audit log (checked 24 Nov 2026, ZAP review).
  */
 const PROTECTED_PREFIXES = [
   "/api/emissions/index",
@@ -55,9 +58,32 @@ function isProtected(url: string): boolean {
   return PROTECTED_PREFIXES.some((p) => url.startsWith(p));
 }
 
+/* Never stored, never served from the store (audit P8-24, 21 Nov 2026): a health probe must see the database as it
+   is now. A cached "db: up" was served STALE a minute after it was measured.
+   /api/mobile-config too (26 Nov 2026): it is one row, and a save from another server (the dashboard on a laptop
+   writes the same table) cannot clear this server's copy, so Render kept handing phones the old switches for up to
+   the three-hour record lifetime. The app re-reads it every minute; each read must see the table as it is. */
+const UNCACHED_PREFIXES = ["/api/health", "/api/mobile-config"];
+
 const LIVE_PREFIXES = ["/api/map-comparison/real-time", "/api/map-comparison/live-overview", "/api/map-comparison/live-rain",
   "/api/traffic/realtime", "/api/dashboard/corridor-status"];
-const SHORT_PREFIXES = ["/api/maintenance", "/api/audit-log", "/api/health"];
+const SHORT_PREFIXES = ["/api/maintenance", "/api/audit-log"];
+
+/* How old a live answer may be and still be served while it refreshes (audit P8-06, 21 Nov 2026).
+   Stale-while-revalidate had no cap: the first reader after a quiet spell (the warmer stops two minutes after the
+   last read) was handed an 11-minute-old /real-time snapshot whose own ageMinutes said 1.7, inside a 6-minute live
+   window. Past this age the reader waits for a fresh answer instead. Two TTLs: a watched feed is refreshed every
+   25 s, so it never gets here unless its refresh is slow or nobody was looking. live-rain gets more: its upstream
+   (Open-Meteo, 15-minute data) is fetched at most every 5 minutes anyway. */
+const LIVE_MAX_STALE_MS = 60_000;
+const LIVE_RAIN_MAX_STALE_MS = 10 * 60_000;
+
+/** Infinity (serve stale at any age) except for the live feeds. */
+function maxStaleFor(url: string): number {
+  if (url.startsWith("/api/map-comparison/live-rain")) return LIVE_RAIN_MAX_STALE_MS;
+  if (LIVE_PREFIXES.some((p) => url.startsWith(p))) return LIVE_MAX_STALE_MS;
+  return Infinity;
+}
 /* Rewritten by the congestion pipeline every hour, and each response carries
    the base_ts it was computed from. Ten minutes of that is a forecast map
    captioned with the wrong base hour; the read behind it is one horizon of
@@ -91,6 +117,8 @@ export function lastReadAt(url: string): number {
 /* New data published: every cached answer may be out of date. Each one is refetched in the background, a second
    and a half apart so the database is not hit with all of them at once, and served stale until its turn. */
 function refreshEverything(): void {
+  // A read that started before the publish and ends after it must not write the old record back over a refresh.
+  publishGeneration += 1;
   [...store.keys()].forEach((url, i) => {
     const t = setTimeout(() => refreshInBackground(url), i * 1_500);
     t.unref?.();
@@ -119,9 +147,10 @@ function isEmptyPayload(body: unknown): boolean {
 }
 
 function prefixOf(url: string): string {
-  // "/api/incident/predictive?x=1" -> "/api/incident"
+  // "/api/incident/predictive?x=1" -> "/api/incident". Lower case: Express routes /api/Upload/file to the same
+  // handler as /api/upload/file, so a write's group must not depend on how the caller spelled it.
   const m = /^(\/api\/[^/?]+)/.exec(url);
-  return m ? m[1] : url;
+  return (m ? m[1] : url).toLowerCase();
 }
 
 /* A write also bumps its group's generation (17 Oct 2026, testers' MS-8: "cancel seems to delete it").
@@ -131,11 +160,15 @@ function prefixOf(url: string): string {
    from Cancelled, and Restore acting on stale data. An answer is now stored only if its group's
    generation is the one it started under, so nothing read before a write can outlive it. */
 const generation = new Map<string, number>();
-const generationOf = (url: string) => generation.get(prefixOf(url)) ?? 0;
+/* Bumped by every published upload or undo, which changes every group at once (refreshEverything). Both counters
+   only grow, so their sum changes whenever either does. */
+let publishGeneration = 0;
+const generationOf = (url: string) => publishGeneration + (generation.get(prefixOf(url)) ?? 0);
 
 export function invalidatePrefix(prefix: string): void {
-  generation.set(prefix, (generation.get(prefix) ?? 0) + 1);
-  for (const key of store.keys()) if (key.startsWith(prefix)) store.delete(key);
+  const group = prefix.toLowerCase();
+  generation.set(group, (generation.get(group) ?? 0) + 1);
+  for (const key of store.keys()) if (key.toLowerCase().startsWith(group)) store.delete(key);
 }
 
 let selfBase: string | null = null;
@@ -172,28 +205,37 @@ export function routeCache(req: Request, res: Response, next: NextFunction): voi
    * for everybody -- and anyone may be served from it. A protected endpoint
    * added later and forgotten in the list above is still never stored.
    */
-  if (isProtected(url)) {
-    return next();
-  }
 
   /* A CORS preflight or a HEAD changes nothing. An anonymous OPTIONS used to clear a whole group's cache, so a
      stranger could force the slow queries to rerun at will (security audit #7, 9 Nov 2026). */
   if (req.method === "OPTIONS" || req.method === "HEAD") return next();
 
+  /* Writes are handled BEFORE the protected-route return below (audit P8-04, 21 Nov 2026). /api/upload is a
+     protected prefix, so with the return first, a published upload or undo never reached the refresh hook and every
+     module kept serving the old record for up to the three-hour lifetime. A write only registers what happens when
+     it finishes; it never reads or fills the store, so protected answers stay out of it. */
   if (req.method !== "GET") {
     // A write under a prefix makes every cached read under it suspect. Not the
     // page-view beacon: every page opened posts to /audit-log/activity, so the
     // audit log's entries were cleared on each navigation and never served.
     // Audited actions clear them instead (writeAudit, services/audit.ts).
-    if (!url.startsWith("/api/audit-log/activity")) {
+    if (!url.toLowerCase().startsWith("/api/audit-log/activity")) {
       // Only a write that signed in (authenticateToken marks it) can change shared data; an anonymous POST that
       // happened to succeed does not get to empty the cache.
       res.on("finish", () => { if (res.statusCode < 400 && res.locals.authRequired) invalidatePrefix(prefixOf(url)); });
     }
-    // A published upload or an undo changes the record every module reads (a ?mode=check dry run does not).
-    if (/^\/api\/upload\/(file|[^/]+\/undo)/.test(url) && !/[?&]mode=check/.test(url)) {
-      res.on("finish", () => { if (res.statusCode < 400) refreshEverything(); });
+    /* A published upload or an undo changes the record every module reads. A ?mode=check dry run does not: decided
+       exactly as the upload controller decides it. Successful (2xx) and signed in, like any write allowed to
+       change shared data. */
+    if (prefixOf(url) === "/api/upload" && String(req.query.mode ?? "") !== "check") {
+      res.on("finish", () => {
+        if (res.statusCode >= 200 && res.statusCode < 300 && res.locals.authRequired) refreshEverything();
+      });
     }
+    return next();
+  }
+
+  if (isProtected(url) || UNCACHED_PREFIXES.some((p) => url.startsWith(p))) {
     return next();
   }
 
@@ -208,13 +250,17 @@ export function routeCache(req: Request, res: Response, next: NextFunction): voi
   const ttl = ttlFor(url);
   const hit = store.get(url);
   const fresh = hit != null && Date.now() - hit.at < ttl;
+  /* A live entry past its cap is not served (LIVE_MAX_STALE_MS). The caller waits for a fresh answer, and that run
+     reaches past the controllers' own cache too: it was filled by the same refresh and is just as old. */
+  const maxStale = maxStaleFor(url);
+  const tooOld = (e: Entry | undefined): boolean => e != null && Date.now() - e.at > maxStale;
 
   if (!bypass && hit && fresh) {
     res.setHeader("X-Cache", "HIT");
     res.status(hit.status).json(hit.body);
     return;
   }
-  if (!bypass && hit && !fresh && !isEmptyPayload(hit.body)) {
+  if (!bypass && hit && !fresh && !tooOld(hit) && !isEmptyPayload(hit.body)) {
     // Serve what we have now; bring the next reader a fresh copy.
     res.setHeader("X-Cache", "STALE");
     res.status(hit.status).json(hit.body);
@@ -233,8 +279,9 @@ export function routeCache(req: Request, res: Response, next: NextFunction): voi
   if (running && !bypass) {
     running.then(() => {
       const e = store.get(url);
-      if (e) { res.setHeader("X-Cache", "HIT"); res.status(e.status).json(e.body); }
-      else runHandler(res, next, url, false);
+      // Still the over-age live entry: that run failed, so this caller tries for itself rather than take it.
+      if (e && !tooOld(e)) { res.setHeader("X-Cache", "HIT"); res.status(e.status).json(e.body); }
+      else runHandler(res, next, url, false, tooOld(e));
     });
     return;
   }
@@ -245,11 +292,12 @@ export function routeCache(req: Request, res: Response, next: NextFunction): voi
   const done = () => { if (inflight.get(url) === p) inflight.delete(url); settle(); };
   res.on("finish", done);
   res.on("close", done);
-  runHandler(res, next, url, bypass);
+  runHandler(res, next, url, bypass, bypass || tooOld(hit));
 }
 
-/** Run the route's own handler, keeping its answer when it is the same for everybody. */
-function runHandler(res: Response, next: NextFunction, url: string, bypass: boolean): void {
+/** Run the route's own handler, keeping its answer when it is the same for everybody. `skipInner` makes the
+    controllers' own TTL cache reproduce its entries too (a bypass, or a live entry past its cap). */
+function runHandler(res: Response, next: NextFunction, url: string, bypass: boolean, skipInner = bypass): void {
   const originalJson = res.json.bind(res);
   const startedUnder = generationOf(url);
   res.json = ((body: unknown) => {
@@ -267,6 +315,6 @@ function runHandler(res: Response, next: NextFunction, url: string, bypass: bool
   }) as typeof res.json;
   // A bypass reaches past this layer to the controllers' own TTL cache; see
   // bypassScope in utils/ttl-cache.
-  if (bypass) bypassScope.run({ bypass: true }, () => next());
+  if (skipInner) bypassScope.run({ bypass: true }, () => next());
   else next();
 }

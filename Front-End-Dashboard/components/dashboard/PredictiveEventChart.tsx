@@ -10,6 +10,7 @@ import { loadForecast } from "./prescriptiveTraffic.shared";
 import { REPLAY_ACTUAL, REPLAY_FORECAST, useMeasuredWidth } from "./replayViz";
 import { useTrafficPalette } from "./trafficPalette";
 import StateNote from "../stage/StateNote";
+import { failureText } from "../../lib/server-status";
 import EvidenceModal from "./EvidenceModal";
 import EvBlock from "./EvBlock";
 import { GenerateReportButton } from "./NarrativePanel";
@@ -215,6 +216,12 @@ export default function PredictiveEventChart() {
   const [eventYear, setEventYear] = useState<string>("all");
   const [evidenceOpen, setEvidenceOpen] = useState(false);
 
+  /* A failed load and a load with no event rows both used to leave the card on "Loading…" for ever (21 Nov 2026,
+     audit T-3). Now a failure says so with "Try again" (the loader does not cache a failure, so a retry is a real
+     one), and an answer without event rows says that instead. */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [noEvents, setNoEvents] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
     // Shared, cached fetch -- see prescriptiveTraffic.shared. This card used to
@@ -222,17 +229,26 @@ export default function PredictiveEventChart() {
     // already asked for.
     loadForecast()
       .then((fc) => {
-        if (cancelled || fc.events.length === 0) return;
+        if (cancelled) return;
+        setLoadError(null);
+        if (fc.events.length === 0) {
+          setNoEvents(true);
+          return;
+        }
+        setNoEvents(false);
         setRaw(fc.events as unknown as RawRow[]);
         if (Array.isArray(fc.extras.eventSurgeMetrics)) setVal(fc.extras.eventSurgeMetrics as typeof val);
         setEvalInfo((fc.extras.eventSurgeEval as EventSurgeEval | null | undefined) ?? null);
         setUpcoming(fc.upcomingEvents as unknown as UpcomingEvent[]);
       })
-      .catch((err) => console.error("Failed to fetch ML event surge forecast", err));
+      .catch((err) => {
+        console.error("Failed to fetch ML event surge forecast", err);
+        if (!cancelled) setLoadError(failureText(err, "The event surge forecast could not be loaded. Try again in a minute."));
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [attempt]);
 
   const chosen = selUpcoming != null ? upcoming[selUpcoming] ?? null : null;
   const upcomingYears = useMemo(() => [...new Set(upcoming.map((u) => u.date.slice(0, 4)))].sort(), [upcoming]);
@@ -303,7 +319,31 @@ export default function PredictiveEventChart() {
   if (!model) {
     return (
       <article className="chart-card wide nct-card">
-        <StateNote kind="loading">Loading ML event surge forecast from AWS…</StateNote>
+        {loadError ? (
+          <StateNote kind="error" role="alert" title="Event surge forecast unavailable">
+            {loadError}
+            <div style={{ marginTop: 10 }}>
+              <button type="button" className="btn-muted" onClick={() => { setLoadError(null); setAttempt((a) => a + 1); }}>
+                Try again
+              </button>
+            </div>
+          </StateNote>
+        ) : noEvents || raw ? (
+          <StateNote kind="nodata" title="No event surge to show">
+            {chosen
+              ? "No exit shows a clear surge for this event day."
+              : "The latest model run has no exit with a clear event surge."}
+            {chosen && (
+              <div style={{ marginTop: 10 }}>
+                <button type="button" className="btn-muted" onClick={() => setSelUpcoming(null)}>
+                  Show past events
+                </button>
+              </div>
+            )}
+          </StateNote>
+        ) : (
+          <StateNote kind="loading">Loading ML event surge forecast from AWS…</StateNote>
+        )}
       </article>
     );
   }

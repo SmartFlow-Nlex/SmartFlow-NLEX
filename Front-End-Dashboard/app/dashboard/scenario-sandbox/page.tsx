@@ -54,7 +54,7 @@ import { borrowedLanes, crossoverM, defaultStretch, planStretch, planZipper, REA
 import { PAINT_WHITE, isMotorcycle, motorcyclePaintFor, paintFor, trailerPaintFor, type Paint } from "./vehiclePaint";
 import { drawMotorcycle } from "./motorcycleArt";
 import { forecastInflowFor, inflowSliderRange, useDirectionSim, type DirectionApi, type SharedRoadInputs } from "./useDirectionSim";
-import { getRecommendation } from "./recommendation";
+import { getRecommendation, type RoadInView } from "./recommendation";
 import { REPLAY_HZ, ReplayBuffer } from "./replay";
 import {
   FACILITY_LABEL_PX,
@@ -109,12 +109,27 @@ type EventDayData = {
  */
 const DEFAULT_SEG_M = 600;
 /**
- * Longest stretch worth drawing. A canvas about 1000 px wide showing 3 km gives
- * 0.33 px per metre, so a 4.5 m car is under two pixels — past this the picture
- * stops being a road and becomes a smear. The physics would still run; the
- * display is what breaks, so the cap is on what we show, and it is stated.
+ * Longest segment the sandbox simulates (25 Nov 2026, user request: never the whole corridor; a limit backed by
+ * references). 5 km, because the simulated road must hold the event AND its queue (FHWA Traffic Analysis Toolbox
+ * Vol. III, 2019: the model must "completely encompass" the congestion):
+ *  - a crash's influence area is taken as about 2 miles (3.2 km) upstream (Motagi et al., 2023, PLOS ONE,
+ *    doi:10.1371/journal.pone.0295343), and one measured freeway crash affected about 3 miles, 4.8 km (Yu, 2025,
+ *    Scientific Reports, doi:10.1038/s41598-025-91744-z);
+ *  - a 2026 expressway incident microsimulation used a 4 km section (Nakkliang et al., 2026, Science Progress,
+ *    doi:10.1177/00368504261471045);
+ *  - freeway lane closures run 2-4 miles, 3.2-6.4 km (Caltrans Traffic Operations Manual Ch. 125, 2026, Fig. C-1);
+ *  - NLEX's own heavy or standstill Waze jams (Aug-Nov 2026) were under 3.9 km 95% of the time.
+ * Legibility is not what sets it: past about 1.5 km on a normal screen a car is under 3 px and the road switches
+ * to the density view (MIN_CAR_PX), at 3 km and at 5 km alike; shorter segments still show every vehicle.
  */
-const MAX_SEG_M = 3000;
+const MAX_SEG_M = 5000;
+/** Why the segment stops at MAX_SEG_M, shown behind the Segment "i". Kept beside the constant so they change together. */
+const SEGMENT_LIMIT_INFO =
+  "A segment is at most 5 km: enough for an incident or a lane closure and the queue behind it, never the whole corridor. " +
+  "A crash usually affects about 3.2 km upstream (Motagi et al., 2023) and a measured one reached 4.8 km (Yu, 2025); " +
+  "freeway lane closures run 3.2–6.4 km (Caltrans, 2026); a 2026 expressway incident simulation used 4 km (Nakkliang et al., 2026); " +
+  "and 95% of heavy jams on NLEX (Waze, Aug–Nov 2026) were under 3.9 km. Past about 1.5 km the road is shown as colour by speed instead of single cars. " +
+  "Pick two exits, then the stretch between them; everything on it is drawn.";
 const MIN_SEG_M = 100;
 
 /** Drawn lane height, and the breathing room above and below the carriageway.
@@ -656,6 +671,10 @@ export default function AiSandboxPage() {
   const placingArmedRef = useRef(false);
   const metricAccRef = useRef<number>(0);
   const simAccRef = useRef<number>(0);
+  /* Simulated vs real seconds over the last second of play, and the speed that gives when it falls short of the one
+     chosen (null: on pace, or not playing). See the render loop. */
+  const paceRef = useRef({ sim: 0, real: 0 });
+  const [achievedSpeed, setAchievedSpeed] = useState<number | null>(null);
   /** Steps the loop has taken, both carriageways together: what lines the two replay recordings up (ReplayFrame.seq). */
   const stepSeqRef = useRef<number>(0);
   /** Running cost of one sim.step(), ms, per direction — what a skip's estimated duration is worked out from. Null until the animation loop has stepped that direction. */
@@ -816,10 +835,8 @@ export default function AiSandboxPage() {
    * The count stays visible so nothing is lost by keeping them folded. */
   const [segFromKm, setSegFromKm] = useState<number | null>(null);
   const [segToKm, setSegToKm] = useState<number | null>(null);
-  /* How the stretch is chosen (2026-10-27, user request): by two exits (the route, with the default window inside
-     it), or by a km range anywhere on the corridor, which picks the enclosing exits itself. One at a time, so the
-     panel asks one question instead of showing both sets of fields. */
-  const [entryMode, setEntryMode] = useState<"exits" | "km">("exits");
+  /* One flow since 25 Nov 2026 (user request): two exits set the route, then a km segment is chosen inside it,
+     never longer than MAX_SEG_M. The "Exits | Km range" choice that used to sit here is gone. */
   /** A km window chosen together with a new route: the route change must keep it rather than reset it. */
   const pendingSegRef = useRef<{ from: number; to: number } | null>(null);
 
@@ -834,7 +851,12 @@ export default function AiSandboxPage() {
   const defaultTo = routeFromKm + Math.min(routeLenM || DEFAULT_SEG_M, DEFAULT_SEG_M) / 1000;
 
   const fromKm = Math.min(Math.max(segFromKm ?? defaultFrom, routeFromKm), routeToKm);
-  const toKm = Math.min(Math.max(segToKm ?? defaultTo, fromKm + MIN_SEG_M / 1000), Math.max(routeToKm, fromKm + MIN_SEG_M / 1000));
+  const toKm = Math.min(
+    Math.max(segToKm ?? defaultTo, fromKm + MIN_SEG_M / 1000),
+    Math.max(routeToKm, fromKm + MIN_SEG_M / 1000),
+    // The segment limit (MAX_SEG_M), so no path into the window (typing, a command, Event day) can exceed it.
+    fromKm + MAX_SEG_M / 1000,
+  );
   /* How wide the road on screen is, per carriageway: the narrowest width the drawn stretch passes through, from
      the corridor's lane table (lib/nlex-lanes.ts, OpenStreetMap). The stretch on screen, not the whole route:
      a 600 m view near Balintawak is 4 lanes even when the route runs on into the 3-lane section. Each
@@ -850,24 +872,29 @@ export default function AiSandboxPage() {
      stretch, and the list is for moving around inside it. (Its own page in the controls rail since 24 Nov 2026.) */
   /** Open window w, kept inside the route. */
   const showWindow = (w: { fromKm: number; toKm: number }) => {
-    setSegFromKm(Number(Math.max(routeFromKm, w.fromKm).toFixed(3)));
-    setSegToKm(Number(Math.min(routeToKm, w.toKm).toFixed(3)));
+    const a = Math.max(routeFromKm, w.fromKm);
+    setSegFromKm(Number(a.toFixed(3)));
+    setSegToKm(Number(Math.min(routeToKm, w.toKm, a + MAX_SEG_M / 1000).toFixed(3)));
+  };
+  /** The From / To km fields: kept inside the route, at least MIN_SEG_M long and never past MAX_SEG_M. Moving one
+   *  end past the limit drags the other along, so the typed end is always kept as typed. */
+  const setSegmentFrom = (km: number) => {
+    const a = Math.min(Math.max(km, routeFromKm), routeToKm - MIN_SEG_M / 1000);
+    let b = Math.max(toKm, a + MIN_SEG_M / 1000);
+    if (b - a > MAX_SEG_M / 1000) b = a + MAX_SEG_M / 1000;
+    setSegFromKm(Number(a.toFixed(3)));
+    setSegToKm(Number(Math.min(b, routeToKm).toFixed(3)));
+  };
+  const setSegmentTo = (km: number) => {
+    const b = Math.max(Math.min(km, routeToKm), routeFromKm + MIN_SEG_M / 1000);
+    let a = Math.min(fromKm, b - MIN_SEG_M / 1000);
+    if (b - a > MAX_SEG_M / 1000) a = b - MAX_SEG_M / 1000;
+    setSegFromKm(Number(Math.max(a, routeFromKm).toFixed(3)));
+    setSegToKm(Number(b.toFixed(3)));
   };
   const framePlace = (pl: CorridorPlace, dir: Direction) => {
     showWindow(pl.frame);
     if (view === "Both") setFocusedDirection(dir);
-  };
-  /** Frame the window on one junction. The drawn window defaults to 600 m from
-   *  the origin, so most junctions start off-screen; this puts one in the middle. */
-  const frameJunction = (km: number) => {
-    const win = Math.min(routeLenM || DEFAULT_SEG_M, DEFAULT_SEG_M) / 1000;
-    let a = km - win / 2;
-    let b = km + win / 2;
-    // Shift rather than shrink at the ends, so the origin or destination is
-    // still framed with road beside it instead of being clipped.
-    if (a < routeFromKm) { a = routeFromKm; b = Math.min(routeToKm, a + win); }
-    if (b > routeToKm) { b = routeToKm; a = Math.max(routeFromKm, b - win); }
-    showWindow({ fromKm: a, toKm: b });
   };
 
   /** Choose by km range: the window is what was typed, and the route becomes the nearest exits around it
@@ -876,7 +903,7 @@ export default function AiSandboxPage() {
   const corridorMaxKm = EXITS[EXITS.length - 1]?.km ?? 0;
   const frameKmRange = (from: number, to: number) => {
     const lo = Math.max(corridorMinKm, Math.min(from, to));
-    const hi = Math.min(corridorMaxKm, Math.max(Math.max(from, to), lo + MIN_SEG_M / 1000));
+    const hi = Math.min(corridorMaxKm, Math.max(Math.max(from, to), lo + MIN_SEG_M / 1000), lo + MAX_SEG_M / 1000);
     let a = 0;
     EXITS.forEach((ex, i) => { if (ex.km <= lo) a = i; });
     let b = EXITS.length - 1;
@@ -894,11 +921,6 @@ export default function AiSandboxPage() {
     }
   };
 
-  /** Fit the whole origin -> destination route, as far as it can be drawn. */
-  const fitRoute = () => {
-    setSegFromKm(routeFromKm);
-    setSegToKm(Math.min(routeToKm, routeFromKm + MAX_SEG_M / 1000));
-  };
   /**
    * How wide a Class 1 car actually is on screen. Measured rather than assumed:
    * the canvas went from a third of the page to all of it, and a guess baked in
@@ -1062,10 +1084,12 @@ export default function AiSandboxPage() {
       if (e.key === "Escape") { setExpanded(false); return; }
       if (e.code === "Space") { e.preventDefault(); setRunning((r) => !r); return; }
       if (e.key === "c" || e.key === "C") { setRailOpen((o) => !o); return; }
-      const speed = { "1": 0.5, "2": 1, "3": 2, "4": 4 } as const;
-      if (e.key in speed) {
-        const v = speed[e.key as keyof typeof speed];
-        if ((SPEED_STEPS as readonly number[]).includes(v)) setSimSpeed(v as (typeof SPEED_STEPS)[number]);
+      /* Keys 1-4 pick the four speed buttons in order. They were mapped to 0.5x, 1x, 2x and 4x, and 2x and 4x are
+         not speeds the sandbox has (SPEED_STEPS), so 3 and 4 did nothing and no key reached 5x or 10x (19 Nov 2026
+         audit S16). Taken from SPEED_STEPS so they cannot drift apart again. */
+      const keyIndex = ["1", "2", "3", "4"].indexOf(e.key);
+      if (keyIndex >= 0 && keyIndex < SPEED_STEPS.length) {
+        setSimSpeed(SPEED_STEPS[keyIndex]);
         return;
       }
       if (e.key === "b" || e.key === "B") setView("Both");
@@ -1147,13 +1171,17 @@ export default function AiSandboxPage() {
    * it's on (each direction's own fleet-MIX share still comes from its own
    * demand profile — see useDirectionSim's activeHour). */
   const [classProfile, setClassProfile] =
-    useState<Partial<Record<1 | 2 | 3, { co2PerM?: number; share?: number }>> | undefined>(undefined);
+    useState<Partial<Record<1 | 2 | 3, { co2PerM?: number; share?: number; idleKgPerMin?: number }>> | undefined>(undefined);
+  /* Which CO2 figures the run uses: the warehouse's (EMEP/EEA per km, Argonne/EPA idling — the same as the Emissions
+     page) or, until that fetch resolves or when it fails, the engine's built-in copies of them. Shown on the CO2 tile
+     (19 Nov 2026 audit S6: the fallback used to be silent). */
+  const [co2Source, setCo2Source] = useState<"warehouse" | "built-in">("built-in");
   useEffect(() => {
     fetch(`${BACKEND}/api/emissions/fleet-profile`, { cache: "no-store" })
       .then((r) => r.json())
       .then((j) => {
         if (!j.success || !j.data) return;
-        const out: Partial<Record<1 | 2 | 3, { co2PerM?: number; share?: number }>> = {};
+        const out: Partial<Record<1 | 2 | 3, { co2PerM?: number; share?: number; idleKgPerMin?: number }>> = {};
         for (const f of j.data.factors ?? []) {
           const k = Number(f.vehicle_class) as 1 | 2 | 3;
           if (k !== 1 && k !== 2 && k !== 3) continue;
@@ -1164,10 +1192,22 @@ export default function AiSandboxPage() {
         if (mix) for (const k of [1, 2, 3] as const) {
           if (typeof mix[k] === "number") out[k] = { ...(out[k] ?? {}), share: mix[k] };
         }
-        if (Object.keys(out).length) setClassProfile(out);
+        // kg CO2 per vehicle-minute standing still, by class: the rates the Emissions page's delay CO2 uses.
+        const idle = j.data.idleKgPerMinute;
+        if (idle) for (const k of [1, 2, 3] as const) {
+          if (typeof idle[k] === "number" && idle[k] > 0) out[k] = { ...(out[k] ?? {}), idleKgPerMin: idle[k] };
+        }
+        if (Object.keys(out).length) {
+          setClassProfile(out);
+          setCo2Source("warehouse");
+        }
       })
       .catch(() => {});
   }, []);
+  const co2SourceNote =
+    co2Source === "warehouse"
+      ? "kg of CO₂ per minute from the vehicles on the stretch: distance driven × each class's EMEP/EEA factor, plus time standing still × Argonne/EPA idling rates — the same figures the Emissions page uses."
+      : "kg of CO₂ per minute from the vehicles on the stretch, using the engine's built-in copies of the EMEP/EEA factors and Argonne/EPA idling rates (the warehouse figures could not be read).";
 
   /* ── Observed hourly demand: hour of day stays SHARED (D1 §2 / D2 correction #4) — "what does
    * 09:00 look like" is one question, not one per carriageway. Each direction's own demand PROFILE
@@ -1552,15 +1592,9 @@ export default function AiSandboxPage() {
     setRepFor({ direction: focusDirection, setup: focused.anyIntervention ? focused.interventionSummary : "a clear road" });
     setRepProgress(0);
     const gen = replicate(
-      {
-        length: segLengthM,
-        laneCount: focused.laneCount,
-        inflowVehPerHour: focused.inflow,
-        classProfile: classProfile,
-        ramps: focused.ramps,
-        facilities: focused.facilities,
-        warmupS: WARMUP_S,
-      },
+      // The same road as the run on screen (useDirectionSim runSetup): the hour's fleet mix, secondary incidents and
+      // any lent lanes, at the inflow as it stands (19 Nov 2026 audit S10).
+      { ...focused.runSetup, inflowVehPerHour: focused.inflow },
       // The interventions AS CURRENTLY SET, not a clean road: the operator is
       // asking about the scenario in front of them.
       {
@@ -1570,6 +1604,8 @@ export default function AiSandboxPage() {
         incidents: focused.simRef.current ? [...focused.simRef.current.interventions.incidents] : [],
         speedLimitKmh: focused.speedLimit,
         speedZone: [focused.manualControls.speedZone[0], focused.manualControls.speedZone[1]],
+        // Rain acts through `weather` since 19 Nov 2026 (audit S7), not a speed limit: carried like the rest.
+        weather: focused.simRef.current?.interventions.weather ?? null,
       },
       { runs: repRuns, secondsPerRun: 300 },
     );
@@ -1589,7 +1625,7 @@ export default function AiSandboxPage() {
       setTimeout(pump, 0);
     };
     setTimeout(pump, 0);
-  }, [both, repProgress, repRuns, segLengthM, classProfile, focused, focusDirection]);
+  }, [both, repProgress, repRuns, focused, focusDirection]);
 
   // An event added (or Both chosen) while a run is going: the run was set up without it, so it stops rather than
   // finish and be read as the scenario's. Its Stop button is disabled from that moment, so it could not be stopped by hand.
@@ -1689,6 +1725,19 @@ export default function AiSandboxPage() {
           guard++;
         }
         if (guard >= 60) simAccRef.current = 0; // don't spiral if a frame stalls
+        /* The speed actually reached. A frame that cannot fit its steps drops the backlog (above), so at 10x with both
+           carriageways and their no-event twins the run can quietly go slower than the button says (19 Nov 2026 audit
+           S18: about 1 s of CPU per second at 10x). Measured over a second of real time and shown beside the buttons
+           when it falls short. */
+        const pace = paceRef.current;
+        pace.sim += guard * SIM_DT;
+        pace.real += dtReal;
+        if (pace.real >= 1) {
+          const achieved = pace.sim / pace.real;
+          setAchievedSpeed(achieved < simSpeed * 0.85 ? achieved : null);
+          pace.sim = 0;
+          pace.real = 0;
+        }
         metricAccRef.current += dtReal;
         if (metricAccRef.current >= 0.25) {
           metricAccRef.current = 0;
@@ -2452,7 +2501,10 @@ export default function AiSandboxPage() {
           ? abort.signal.reason === "timeout"
             ? `The model took longer than ${Math.round(COMMAND_TIMEOUT_MS / 60000 * 10) / 10} minutes. Try again; it is usually a few seconds.`
             : "Cancelled."
-          : "Could not reach the backend. Is it running on port 4000?",
+          /* Names the server actually configured (Render for the installed app, localhost in development) instead of
+             asking about port 4000, which meant nothing to a desktop user (19 Nov 2026 audit S21). A sleeping free
+             server takes up to a minute to wake, so that is said too. */
+          : `Could not reach the SmartFlow server (${BACKEND}). Check the internet connection; if the server was asleep it can take up to a minute to wake, so try again.`,
       );
     } finally {
       clearTimeout(limit);
@@ -2914,9 +2966,19 @@ export default function AiSandboxPage() {
     }
   };
 
+  /* What is on each carriageway's stretch, so the advice names only levers that exist there (19 Nov 2026 audit S24). */
+  const roadInView = (d: typeof nb): RoadInView => {
+    const entries = d.facilities.filter((f) => f.kind === "entry_ramp");
+    return {
+      onRamps: d.ramps.filter((r) => r.onVehPerHour > 0).length + entries.length,
+      tollPlazas: d.facilities.filter((f) => f.booths > 0 && f.kind !== "service_area").length,
+      rampInflowVehPerHour:
+        d.ramps.reduce((s, r) => s + Math.max(0, r.onVehPerHour), 0) + entries.reduce((s, f) => s + Math.max(0, f.arrivalsVehPerHour ?? 0), 0),
+    };
+  };
   const recommendations: Record<Direction, ReturnType<typeof getRecommendation>> = {
-    NB: getRecommendation(nb.metrics, nb.baseline, [...nb.eff.closedLanes], nb.effIncidentCount, nb.eff.speedLimitKmh, { inflow: nb.inflow, inflowFrom: nb.inflowFrom, anchor: nb.dataAnchor }),
-    SB: getRecommendation(sb.metrics, sb.baseline, [...sb.eff.closedLanes], sb.effIncidentCount, sb.eff.speedLimitKmh, { inflow: sb.inflow, inflowFrom: sb.inflowFrom, anchor: sb.dataAnchor }),
+    NB: getRecommendation(nb.metrics, nb.baseline, [...nb.eff.closedLanes], nb.effIncidentCount, nb.eff.speedLimitKmh, { inflow: nb.inflow, inflowFrom: nb.inflowFrom, anchor: nb.dataAnchor }, roadInView(nb)),
+    SB: getRecommendation(sb.metrics, sb.baseline, [...sb.eff.closedLanes], sb.effIncidentCount, sb.eff.speedLimitKmh, { inflow: sb.inflow, inflowFrom: sb.inflowFrom, anchor: sb.dataAnchor }, roadInView(sb)),
   };
   const recommendation = recommendations[focusDirection];
 
@@ -3085,7 +3147,7 @@ export default function AiSandboxPage() {
         {both && (
           <p className="sandbox-metric-caption" data-metric-caption>
             Corridor totals with NB and SB beneath.{" "}
-            <InfoTooltip text="Average speed is flow-weighted — each direction's speed weighted by its throughput, not a plain mean of the two. Longest queue is the worse of the two; density has no total." />
+            <InfoTooltip text="Average speed is traffic-weighted — each direction's speed weighted by the vehicles on it, so a jammed carriageway counts for all the cars standing in it. Longest queue is the worse of the two; density has no total." />
           </p>
         )}
       </div>
@@ -3100,8 +3162,8 @@ export default function AiSandboxPage() {
           />
           <MetricTileBoth
             label="Avg speed"
-            tag="flow-weighted"
-            tagTitle="Each direction's average speed weighted by its throughput (vehicles per minute) — not the plain mean of the two."
+            tag="traffic-weighted"
+            tagTitle="Each direction's average speed weighted by the vehicles on it (total flow over total density), the same mean each carriageway's own tile is. Weighting by throughput, as it did until 19 Nov 2026, let the free-flowing side hide a jammed one."
             total={corridor ? (corridor.flowWeightedAvgSpeedKmh === null ? "—" : `${fmt(corridor.flowWeightedAvgSpeedKmh)} km/h`) : "…"}
             totalDelta={
               corridor && corridorBase && corridor.flowWeightedAvgSpeedKmh !== null && corridorBase.flowWeightedAvgSpeedKmh !== null
@@ -3114,7 +3176,7 @@ export default function AiSandboxPage() {
           <MetricTileBoth
             label="Throughput"
             tag="total"
-            tagTitle="Vehicles per minute completing the segment, both carriageways added."
+            tagTitle="Trips served per minute, both carriageways added: vehicles that crossed the whole stretch plus those that left it at a ramp or plaza."
             total={corridor ? `${fmt(corridor.throughputPerMin)}/min` : "…"}
             totalDelta={corridor && corridorBase ? pctDelta(corridor.throughputPerMin, corridorBase.throughputPerMin) : null}
             rows={rowsOf((m) => `${fmt(m.throughputPerMin)}/min`, (m, b) => pctDelta(m.throughputPerMin, b.throughputPerMin))}
@@ -3131,7 +3193,7 @@ export default function AiSandboxPage() {
           <MetricTileBoth
             label="CO₂ rate"
             tag="total"
-            tagTitle="kg of CO₂ per minute, both carriageways added."
+            tagTitle={`Both carriageways added. ${co2SourceNote}`}
             total={corridor ? `${fmt(corridor.co2RatePerMin, 1)} kg/min` : "…"}
             totalDelta={corridor && corridorBase ? pctDelta(corridor.co2RatePerMin, corridorBase.co2RatePerMin) : null}
             rows={rowsOf((m) => `${fmt(m.co2RatePerMin, 1)} kg/min`, (m, b) => pctDelta(m.co2RatePerMin, b.co2RatePerMin))}
@@ -3151,6 +3213,11 @@ export default function AiSandboxPage() {
           value={focused.metrics ? `${fmt(focused.metrics.throughputPerMin)}/min` : "…"}
           delta={focused.baseline && focused.metrics ? pctDelta(focused.metrics.throughputPerMin, focused.baseline.throughputPerMin) : null}
           goodWhenUp
+          title={
+            focused.metrics
+              ? `Trips served per minute: ${fmt(focused.metrics.throughPerMin)} crossed the whole stretch and ${fmt(focused.metrics.exitedPerMin)} left it at a ramp or plaza. Average travel time counts the full crossings only.`
+              : undefined
+          }
         />
         <MetricTile
           label="Longest queue"
@@ -3161,6 +3228,7 @@ export default function AiSandboxPage() {
           label="CO₂ rate"
           value={focused.metrics ? `${fmt(focused.metrics.co2RatePerMin, 1)} kg/min` : "…"}
           delta={focused.baseline && focused.metrics ? pctDelta(focused.metrics.co2RatePerMin, focused.baseline.co2RatePerMin) : null}
+          title={`${co2SourceNote}${co2Caveat(focused.metrics, focused.baseline)}`}
         />
       </div>
       )}
@@ -3403,6 +3471,15 @@ export default function AiSandboxPage() {
                 ))}
               </div>
               <span className="sandbox-tb-gap" aria-hidden="true" />
+              {running && achievedSpeed !== null && (
+                <span
+                  className="sandbox-speed-actual"
+                  role="status"
+                  title={`This computer is running the simulation at about ${achievedSpeed.toFixed(1)}× instead of ${simSpeed}×: each frame has more steps than it can fit, so time runs slower than chosen. The results are the same, only slower to reach.`}
+                >
+                  running at ≈{achievedSpeed < 1 ? achievedSpeed.toFixed(2) : achievedSpeed.toFixed(1)}×
+                </span>
+              )}
               <button
                 className="nc-pill sandbox-play"
                 onClick={() => {
@@ -3818,29 +3895,15 @@ export default function AiSandboxPage() {
           <h4 className="sandbox-rail-group" hidden={railPage !== null}>Road configuration</h4>
           <RailSection
             title="Corridor"
-            rowInfo="The stretch of NLEX being simulated: pick an origin and destination exit, or a km range."
+            rowInfo="The stretch of NLEX being simulated: pick two exits, then the segment between them."
             id="corridor"
             icon={Route}
             openId={railPage}
             onOpen={(x) => setRailPage(x as RailId | null)}
             summary={`${originExit ? displayExitName(originExit.exit_name) : "?"} → ${destExit ? displayExitName(destExit.exit_name) : "?"} · ${fmtKmRange(fromKm, toKm, 2)}`}
           >
-          <div className="sandbox-slider-header" style={{ marginBottom: 6 }}>
-            <span className="sandbox-slider-hint">Choose by</span>
-            <div className="sandbox-mode-seg" role="tablist" aria-label="Choose the stretch by">
-              <button role="tab" aria-selected={entryMode === "exits"} className={entryMode === "exits" ? "active" : ""}
-                onClick={() => setEntryMode("exits")} title="Pick an origin and a destination exit">
-                Exits
-              </button>
-              <button role="tab" aria-selected={entryMode === "km"} className={entryMode === "km" ? "active" : ""}
-                onClick={() => setEntryMode("km")} title="Type a km range anywhere on the corridor; the exits around it are picked for you">
-                Km range
-              </button>
-            </div>
-          </div>
-          {entryMode === "exits" && (
-          /* Side by side: two full-width selects stacked cost a whole row of
-             rail height for no gain, and a route reads better as one line. */
+          {/* Exits first, then the segment between them (25 Nov 2026, user request): one flow, no "Exits | Km range"
+              choice. Side by side: two full-width selects stacked cost a whole row of rail height for no gain. */}
           <div style={{ display: "flex", gap: 8 }}>
             <label style={{ flex: 1, minWidth: 0 }}>
               Origin
@@ -3863,58 +3926,32 @@ export default function AiSandboxPage() {
               </select>
             </label>
           </div>
-          )}
-          {/* The stretch under study, as official km posts. An operator asks about
-              "km 20.5 to km 23"; the simulation is parameterised on length, so it
-              models exactly that rather than a fixed sample. The fields show and
-              take official posts; the state underneath stays measured km. */}
+          {/* The segment under study, as official km posts, inside the two exits. The fields show and take official
+              posts; the state underneath stays measured km. */}
           <div className="sandbox-slider-group">
             <div className="sandbox-slider-header">
-              <InfoLabel
-                info={`Route runs ${fmtKmRange(routeFromKm, routeToKm, 2)}.${nearestExit ? ` Nearest exit: ${displayExitName(nearestExit.exit_name)}.` : ""} Changing the segment resets the run.`}
-              >
-                Segment
-              </InfoLabel>
+              <InfoLabel info={SEGMENT_LIMIT_INFO}>Segment</InfoLabel>
               <span className="sandbox-slider-value" style={{ color: "var(--text-primary)" }}>
                 {(segLengthM / 1000).toFixed(2)} km
               </span>
             </div>
-            {entryMode === "km" ? (
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <label style={{ flex: 1, minWidth: 0 }}>
                 <span className="sandbox-slider-hint" style={{ display: "block", marginBottom: 3 }}>From km</span>
-                <KmInput
-                  value={fromKm}
-                  min={corridorMinKm}
-                  max={corridorMaxKm}
-                  onCommit={(v) => frameKmRange(v, toKm)}
-                  testId="window-from"
-                />
+                <KmInput value={fromKm} min={routeFromKm} max={routeToKm} onCommit={setSegmentFrom} testId="window-from" />
               </label>
               <label style={{ flex: 1, minWidth: 0 }}>
                 <span className="sandbox-slider-hint" style={{ display: "block", marginBottom: 3 }}>To km</span>
-                <KmInput
-                  value={toKm}
-                  min={corridorMinKm}
-                  max={corridorMaxKm}
-                  onCommit={(v) => frameKmRange(fromKm, v)}
-                  testId="window-to"
-                />
+                <KmInput value={toKm} min={routeFromKm} max={routeToKm} onCommit={setSegmentTo} testId="window-to" />
               </label>
             </div>
-            ) : (
-              <span className="sandbox-slider-hint">
-                {fmtKmRange(fromKm, toKm, 2)} of the route.{" "}
-                <button type="button" className="sandbox-link-btn" onClick={() => setEntryMode("km")}
-                  style={{ background: "none", border: "none", padding: 0, color: "var(--page-accent)", cursor: "pointer", font: "inherit" }}>
-                  Set a km range
-                </button>
-              </span>
-            )}
-            {/* Only what is true of THIS view right now stays under the field — where the window opened,
-                and why the road has switched to a density view or been capped. The static explanation
-                (route, nearest exit, that a change resets the run) is behind the "i". */}
-            {(hotspot || tooFineToDraw || spanCapped) && (
+            <span className="sandbox-slider-hint" data-segment-limit>
+              Up to {(MAX_SEG_M / 1000).toFixed(1)} km, inside {originExit ? displayExitName(originExit.exit_name) : "?"} to{" "}
+              {destExit ? displayExitName(destExit.exit_name) : "?"} ({fmtKmRange(routeFromKm, routeToKm, 1)}).
+            </span>
+            {/* Only what is true of THIS view right now stays under the field: where the window opened, and why the
+                road has switched to a density view. */}
+            {(hotspot || tooFineToDraw) && (
               <span className="sandbox-slider-hint">
                 {hotspot
                   ? incidentCovered
@@ -3922,10 +3959,8 @@ export default function AiSandboxPage() {
                     : `Opened at ${hotspot}, chosen on an earlier forecast day — the selected day has no incident forecast yet. `
                   : ""}
                 {tooFineToDraw
-                  ? `At ${(segLengthM / 1000).toFixed(2)} km a car is ${carPx.toFixed(1)} px wide, so the road switches to a density view — colour is mean speed, green running to red stopped. Narrow to roughly ${(maxLegibleM / 1000).toFixed(1)} km or less to see individual vehicles.`
-                  : spanCapped
-                    ? `Drawing is capped at ${(MAX_SEG_M / 1000).toFixed(1)} km. Narrow the range to study a longer route in parts.`
-                    : ""}
+                  ? `At ${(segLengthM / 1000).toFixed(2)} km a car is ${carPx.toFixed(1)} px wide, so the road switches to a density view — colour is mean speed, green running to red stopped.`
+                  : ""}
               </span>
             )}
           </div>
@@ -3933,14 +3968,14 @@ export default function AiSandboxPage() {
           </RailSection>
 
           <RailSection
-            title="Access points"
-            rowInfo="Exits, entries, toll plazas and service areas on the chosen route; click one to jump the road to it."
+            title="On this segment"
+            rowInfo="Exits, entries, toll plazas and service areas inside the chosen segment. All of them are drawn in the simulation."
             id="places"
             icon={MapPin}
             openId={railPage}
             onOpen={(x) => setRailPage(x as RailId | null)}
-            summary={`${focused.places.length} on this route · ${focusDirection}`}
-            info="Exits, entries, toll plazas and service areas between your origin and destination. Click a row to frame it on the road. Between Balintawak and the Bocaue Barrier you pay on entry, so exits there are free. Plazas: OpenStreetMap (© OpenStreetMap contributors), or estimated from the toll record."
+            summary={`${focused.facilities.length} drawn · ${focusDirection}`}
+            info="Everything between From km and To km is drawn automatically: exits, entries, toll plazas, barriers and gas stations. To see a different place, move the segment. Between Balintawak and the Bocaue Barrier you pay on entry, so exits there are free."
           >
           <div className="sandbox-slider-group" data-places>
             {/* Its own NB / SB choice, like Add to and Commands apply to: the plazas differ by carriageway. */}
@@ -3950,19 +3985,11 @@ export default function AiSandboxPage() {
               places={focused.places}
               placesInView={new Set(focused.facilities.map((f) => f.id))}
               view={{ fromKm, toKm }}
-              route={{ fromKm: routeFromKm, toKm: routeToKm }}
+              route={{ fromKm, toKm }}
               direction={focusDirection}
-              onJunction={(j) => frameJunction(j.km)}
-              onPlace={(pl) => framePlace(pl, focusDirection)}
             />
-            <div className="sandbox-btn-row">
-              <button className="btn-muted" style={{ flex: 1 }} onClick={fitRoute}
-                      title="Widen the drawn window to the whole origin-to-destination route, as far as it can still be drawn legibly.">
-                Fit whole route
-              </button>
-            </div>
             <span className="sandbox-slider-hint">
-              Click a row to frame it. Only what lies between your origin and destination is listed. Between Balintawak and the Bocaue Barrier you pay on entry, so exits there are free. Plazas: OpenStreetMap (© OpenStreetMap contributors), or estimated from the toll record.
+              All of these are on the road now. Between Balintawak and the Bocaue Barrier you pay on entry, so exits there are free.
             </span>
           </div>
           </RailSection>
@@ -5247,11 +5274,14 @@ function MetricTile({
   value,
   delta,
   goodWhenUp,
+  title,
 }: {
   label: string;
   value: string;
   delta?: number | null;
   goodWhenUp?: boolean;
+  /** What the figure means and where it comes from, on hover. */
+  title?: string;
 }) {
   let cls = "";
   if (delta != null && Math.abs(delta) >= 1) {
@@ -5275,6 +5305,17 @@ function MetricTile({
       )}
     </article>
   );
+}
+
+/* A closure that turns demand away can make the CO2 rate fall: the vehicles held upstream idle (counted since 19 Nov
+   2026, audit S17), but the CO2 of driving the stretch is only postponed until they get on, not saved. Said on the
+   CO2 tile whenever more demand is held back now than when the baseline was taken. */
+function co2Caveat(m: Metrics | null, b: { unmetVehPerHour?: number } | null): string {
+  if (!m || !b) return "";
+  const held = m.unmetVehPerHour - (b.unmetVehPerHour ?? 0);
+  return held >= 50
+    ? ` ${Math.round(held).toLocaleString("en-US")} veh/h more demand is held upstream than at the baseline: its idling is counted, but the CO₂ of driving it is only postponed, not saved, so a lower rate here is not a saving.`
+    : "";
 }
 
 function pctDelta(cur: number, base: number): number | null {
@@ -5689,7 +5730,7 @@ function InfoLabel({ info, children }: { info: string; children: React.ReactNode
 const REALLOCATION_INFO = [
   "One carriageway borrows the other's inner lane over the stretch you give — usually about a kilometre, not the whole corridor.",
   "Its traffic crosses the median at an opening at each end of the stretch and drives the borrowed lane coned off from the other carriageway's traffic, which keeps its remaining lanes. Drivers get in or out only at those openings (within 150 m of each end), and anyone leaving the expressway before the far opening stays out.",
-  "The sandbox simulates only this stretch (100 m to 3 km) and reallocates the lanes along all of it; the road either side is not simulated.",
+  "The sandbox simulates only this stretch (100 m to 5 km) and reallocates the lanes along all of it; the road either side is not simulated.",
   "Changing it restarts BOTH carriageways: clocks, baselines, and hand-set closures, speed limits and incidents are cleared. Scenario events stay and replay from their start. The simulated window becomes the stretch (Off puts it back).",
 ].join(" ");
 

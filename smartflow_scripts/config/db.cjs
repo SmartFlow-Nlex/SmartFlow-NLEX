@@ -33,6 +33,24 @@ function setting(name, fallback, required = false) {
 }
 
 const sslmode = setting("DB_SSLMODE", "require");
+/* verify-full / verify-ca check the server's certificate against DB_SSLROOTCERT, the same settings config/db.py
+   honours (24 Nov 2026, Semgrep review): "require" encrypts but would accept any server, so a fake one on the same
+   network could collect the password. The RDS bundle is Back-End/certs/rds-ap-southeast-1-bundle.pem. */
+function sslFor(mode) {
+  if (mode === "disable") return false;
+  if (mode === "verify-full" || mode === "verify-ca") {
+    const root = setting("DB_SSLROOTCERT", "");
+    const file = root && (path.isAbsolute(root) ? root : path.join(__dirname, root));
+    if (!file || !fs.existsSync(file)) {
+      console.error(`DB_SSLMODE=${mode} needs DB_SSLROOTCERT to point at the RDS CA bundle (not found: ${root || "unset"}).`);
+      process.exit(1);
+    }
+    // verify-ca checks the chain only; verify-full also checks the host name, which is Node's default.
+    return { ca: fs.readFileSync(file, "utf8"), rejectUnauthorized: true,
+      ...(mode === "verify-ca" ? { checkServerIdentity: () => undefined } : {}) };
+  }
+  return { rejectUnauthorized: false };
+}
 const poolConfig = {
   host: setting("DB_HOST", undefined, true),
   port: Number(setting("DB_PORT", "5432")),
@@ -40,7 +58,7 @@ const poolConfig = {
   user: setting("DB_USER", "postgres"),
   password: setting("DB_PASSWORD", undefined, true),
   // RDS presents an Amazon-issued certificate that Node does not trust by default.
-  ssl: sslmode === "disable" ? false : { rejectUnauthorized: false },
+  ssl: sslFor(sslmode),
   // A cold TLS handshake to RDS has taken ~19 s; the default 0 would wait forever.
   connectionTimeoutMillis: 60000,
 };

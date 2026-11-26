@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { fmtInt } from "./incidentPredictive.shared";
 import { BarChart3, CalendarDays, ChevronDown, ChevronRight, Layers, ListOrdered, MapPin, PieChart, Target, Truck } from "lucide-react";
-import { Shell, Empty, SourceBadge } from "./prescriptiveShell";
+import { Shell, Empty, SourceBadge, Banner } from "./prescriptiveShell";
 // km arrives MEASURED (exits and segment midpoints); shown as the official km post.
 import { fmtKm, kmMeasured, KM_POST_END, KM_POST_START } from "../../lib/km-post";
 
@@ -210,6 +210,14 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
   const scale = win && allFuture > 0 && future.length >= win.hi ? sumDays(win.lo, win.hi) / allFuture : 1;
   const validated = win != null && scale !== 1;
   const winLabel = validated ? `days ${win!.lo}–${win!.hi} ahead` : `the ${predictive?.corridorForecastDays ?? future.length}-day forecast`;
+  /* The calendar days the placement is for, checked against TODAY (system audit 19 Nov 2026, P5-3): "days 1–14 ahead"
+     counts from the incident record's end, so in November it named 25 May to 7 Jun 2026 as if they were coming. */
+  const winFrom = (validated ? future[win!.lo - 1] : future[0])?.date?.slice(0, 10) ?? null;
+  const winTo = (validated ? future[win!.hi - 1] : future[future.length - 1])?.date?.slice(0, 10) ?? null;
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  const dayWithYear = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  const windowPast = winFrom != null && winFrom < today;
 
   const useKmView = view === "km" && predictive?.kmSegmentForecast != null && predictive.kmSegmentForecast.length > 0;
   const exitRows: Row[] = (predictive?.corridorForecast ?? []).map((x) => ({
@@ -310,6 +318,18 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
         <SourceBadge kind="forecast" detail={`The ${modelName}incident forecast for ${winLabel}, split by each ${unitWord}'s share of past incidents`} />
       </div>
 
+      {/* The calendar days, checked against today (system audit 19 Nov 2026, P5-3). */}
+      {windowPast && winFrom && winTo && (
+        <Banner>
+          <b>
+            This placement is for {dayWithYear(winFrom)} to {dayWithYear(winTo)},{" "}
+            {winTo < today ? "days already past" : "and its first days are already past"}:
+          </b>{" "}
+          today is {dayWithYear(today)}. The incident forecast starts the day after the incident record ends, so placing units
+          for the coming days needs newer incident data and a retrain.
+        </Banner>
+      )}
+
       <div className="px-sum is-warm">
         <div className="px-sum-item">
           <span className="px-icon is-warm" aria-hidden="true"><CalendarDays size={20} strokeWidth={2} /></span>
@@ -320,6 +340,7 @@ export default function PrescriptiveDeploymentPanel({ months = "12", from, to }:
               {validated
                 ? <>Where the forecast&apos;s error is lower than {win!.base ? `the ${win!.base}'s` : "the best simple benchmark's"}{win!.mae != null && win!.baseMae != null ? ` (${win!.mae.toFixed(2)} vs ${win!.baseMae.toFixed(2)} incidents a day)` : ""}</>
                 : <>No stretch of it beats the best simple benchmark</>}
+              {winFrom && winTo && <>; {dayWithYear(winFrom)} to {dayWithYear(winTo)}</>}
             </em>
           </span>
         </div>

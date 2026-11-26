@@ -44,14 +44,14 @@ const DashboardSectionsSchema = z
     eventForecasts: z.boolean().default(true),
     mlHotspots: z.boolean().default(true),
   })
-  .default({});
+  .prefault({}); // zod 4: .default() skips the inner defaults, .prefault() keeps them (24 Nov 2026)
 
 const MapSectionsSchema = z
   .object({
     liveStatus: z.boolean().default(true),
     forecastView: z.boolean().default(true),
   })
-  .default({});
+  .prefault({}); // zod 4: .default() skips the inner defaults, .prefault() keeps them (24 Nov 2026)
 
 const CommunitySectionsSchema = z
   .object({
@@ -59,21 +59,21 @@ const CommunitySectionsSchema = z
     reportIncident: z.boolean().default(true),
     filters: z.boolean().default(true),
   })
-  .default({});
+  .prefault({}); // zod 4: .default() skips the inner defaults, .prefault() keeps them (24 Nov 2026)
 
 const AssistantSectionsSchema = z
   .object({
     quickQuestions: z.boolean().default(true),
     capabilities: z.boolean().default(true),
   })
-  .default({});
+  .prefault({}); // zod 4: .default() skips the inner defaults, .prefault() keeps them (24 Nov 2026)
 
 const AlertsSectionsSchema = z
   .object({
     traffic: z.boolean().default(true),
     maintenance: z.boolean().default(true),
   })
-  .default({});
+  .prefault({}); // zod 4: .default() skips the inner defaults, .prefault() keeps them (24 Nov 2026)
 
 const SectionsSchema = z
   .object({
@@ -83,7 +83,7 @@ const SectionsSchema = z
     assistant: AssistantSectionsSchema,
     alerts: AlertsSectionsSchema,
   })
-  .default({});
+  .prefault({}); // zod 4: .default() skips the inner defaults, .prefault() keeps them (24 Nov 2026)
 
 export type MobileSections = z.infer<typeof SectionsSchema>;
 

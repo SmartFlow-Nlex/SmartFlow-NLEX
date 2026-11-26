@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { asyncHandler } from "../middleware/error.middleware.js";
-import { triggerSimulation } from "../controllers/ai-sandbox.controller.js";
 import { parseSandboxCommand, commandStatus, scenarioContext, demandExits, demandProfile, plazaFlows, hotspots, eventDay } from "../controllers/sandbox-command.controller.js";
 import { authenticateToken, authorizeRoles } from "../middleware/auth.middleware.js";
 import { aiLimiter } from "../middleware/ai-limit.js";
@@ -27,12 +26,10 @@ router.get("/hotspots", asyncHandler(hotspots));
 // Upcoming Arena event days and their hourly effect per exit, from the Event Prediction; no per-user content.
 router.get("/event-day", asyncHandler(eventDay));
 
-// Apply auth middleware to the remaining ai-sandbox endpoints
-router.use(authenticateToken);
-router.use(authorizeRoles(["data-analyst", "tcc-operator"]));
-
-router.post("/simulate", asyncHandler(triggerSimulation));
 /* POST /config-lanes and GET /results/:id were removed (17 Nov 2026): mocks nothing called, the first answering
-   "Lanes configured successfully" to anything valid and the second inventing a completed result for any id. */
+   "Lanes configured successfully" to anything valid and the second inventing a completed result for any id.
+   POST /simulate followed (19 Nov 2026 audit S19): it inserted a 'running' row into sandbox_simulations that
+   nothing ever read or completed, and answered source "mock" when the database was down. The simulation runs in
+   the browser (scenario-sandbox/simulation.ts); the empty table is left for a later clean-up. */
 
 export default router;

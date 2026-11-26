@@ -7,6 +7,8 @@ import TrafficMapPanel from "./TrafficMapPanel";
 import MapLegend from "./MapLegend";
 import ForecastHorizonPicker, { clockFor, dayTimeFor, hoursFromNow, type HorizonRangeKey } from "./ForecastHorizonPicker";
 import { FALLBACK_EXITS, displayExitName } from "../../lib/nlex-exits";
+import { servedModelName } from "../../lib/forecast-model-label";
+import { fetchFeatureCollection } from "../../lib/live-feed";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -66,12 +68,11 @@ export default function ForecastExpandModal({
     if (!open) return;
     let cancelled = false;
     setLoading(true);
-    fetch(endpoint, { cache: "no-store" })
-      .then((r) => r.json())
+    // Checked: an error or 429 body is the failure state below, not an empty forecast (lib/live-feed.ts).
+    fetchFeatureCollection(endpoint, { cache: "no-store" })
       .then((body) => {
         if (cancelled) return;
-        const feats = Array.isArray(body?.features) ? body.features : [];
-        setSegments(feats.map((f: { properties: Segment }) => f.properties));
+        setSegments(body.features.map((f) => f.properties as unknown as Segment));
       })
       .catch(() => {
         if (!cancelled) setSegments(null);
@@ -127,8 +128,9 @@ export default function ForecastExpandModal({
                   const day = w.day === "Today" ? "today" : w.day === "Tomorrow" ? "tomorrow" : `on ${w.day}`;
                   return `Forecast for ${w.time} ${day} (${ahead <= 0 ? "this hour" : `+${ahead} h from now`})`;
                 })()}
-                {model?.name ? ` · ${model.name}` : ""}
-                {model?.accuracy != null ? ` · ${Math.round(model.accuracy * 100)}% accurate` : ""}
+                {/* The served model by name, a baseline saying it is one; no "% accurate" headline, which a
+                    forecast that always says Clear would beat (audit H4; the page's model card has the scores). */}
+                {model?.name ? ` · ${servedModelName(model.name)}` : ""}
               </p>
             </div>
           </div>
@@ -182,7 +184,7 @@ export default function ForecastExpandModal({
 
             {segments === null ? (
               <p className="wz-empty">
-                Forecast unavailable — is the backend running on port 4000?
+                Couldn&apos;t reach the SmartFlow server. It may be waking up — try again in a minute.
               </p>
             ) : ranked.length === 0 ? (
               <p className="wz-empty">

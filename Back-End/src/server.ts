@@ -16,8 +16,16 @@ process.on("unhandledRejection", (reason) => {
   console.error("Unhandled promise rejection (server kept running):", reason);
 });
 
-app.listen(env.PORT, async () => {
-  console.log(`smartflow-backend running on http://localhost:${env.PORT}`);
+/* Where it listens (24 Nov 2026, ZAP review). In development the API reads the production database, so it answers
+   this machine only: on 0.0.0.0 anyone on the same Wi-Fi could reach it. Production (Render) must listen on every
+   interface; Render sets RENDER=true on every service, so a host there listens on all of them even without
+   NODE_ENV=production. To test the mobile app on a phone against a laptop backend, set LISTEN_HOST=0.0.0.0 in
+   Back-End/.env. */
+const onHost = env.NODE_ENV === "production" || Boolean(process.env.RENDER);
+const listenHost = process.env.LISTEN_HOST || (onHost ? "0.0.0.0" : "127.0.0.1");
+
+app.listen(env.PORT, listenHost, async () => {
+  console.log(`smartflow-backend running on http://${listenHost === "0.0.0.0" ? "localhost" : listenHost}:${env.PORT}`);
   await verifyDbConnection();
   startCacheWarmer();
 });

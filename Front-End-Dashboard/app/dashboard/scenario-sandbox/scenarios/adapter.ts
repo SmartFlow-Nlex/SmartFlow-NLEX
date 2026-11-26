@@ -470,9 +470,10 @@ function breakdownVehicle(variant: ScenarioVariant): VehicleKind | null {
  * `road`. Null for a family whose effect is not speed_zone (effectOf would not
  * have routed it here; the caller breaks rather than applying anything). A
  * shoulder breakdown's zone is local to its position (GAWK_ZONE_M); rain's is
- * the WHOLE segment regardless of position (RAIN_ZONE) at the cap for its
- * intensity (RAIN_SPEED_KMH) — positionKm still drives the event's canvas marker,
- * just not the zone extent.
+ * the WHOLE segment regardless of position (RAIN_ZONE), labelled with the Class 1
+ * free-flow speed its intensity brings (RAIN_SPEED_KMH) — positionKm still drives
+ * the event's canvas marker, just not the zone extent. Rain's zone is not sent to
+ * the engine as a limit: composeInterventions turns it into Interventions.weather.
  */
 function speedZoneWindow(variant: ScenarioVariant, positionM: number, road: Road): { readonly zone: readonly [number, number]; readonly limitKmh: number } | null {
   switch (variant.family) {
@@ -897,7 +898,11 @@ export type ClosureOwnership = Owner & {
   readonly closurePointM: number;
   readonly closureEndM: number;
 };
-export type SpeedZoneOwnership = Owner & { readonly zone: readonly [number, number]; readonly limitKmh: number };
+/** A speed zone an event holds. `rain`: the zone is weather, not a speed limit — rain, or a flood's rain. Its
+ *  `limitKmh` is then what the weather brings a Class 1 driver's free-flow speed down to (RAIN_SPEED_KMH), for the
+ *  locked control, the sign and the labels; the engine is not given it as a limit but gets the weather itself
+ *  (Interventions.weather, from RAIN_EFFECT). */
+export type SpeedZoneOwnership = Owner & { readonly zone: readonly [number, number]; readonly limitKmh: number; readonly rain?: RainIntensity };
 export type IncidentOwnership = Owner & {
   /** `${eventId}:${slot}`: how the binding tells this incident from the operator's. */
   readonly key: string;
@@ -1021,6 +1026,9 @@ function floodLanesAt(family: FamilyKey, phaseId: string, given: readonly number
   return given;
 }
 
+/** Light < moderate < heavy, for picking the heaviest rain when more than one event is raining. */
+const RAIN_ORDER: Readonly<Record<RainIntensity, number>> = { light: 1, moderate: 2, heavy: 3 };
+
 /** The rain a flood brings in each phase: heavy until the water starts to drain, then light. */
 export function floodRainOf(phaseId: string): RainIntensity | null {
   switch (phaseId) {
@@ -1104,7 +1112,7 @@ export function composeInterventions(
     if (event.variant.family === "flood") {
       const intensity = floodRainOf(phase.id);
       if (intensity !== null) {
-        const held: SpeedZoneOwnership = { ...ownerOf(event, phase), zone: [0, road.segmentLengthM], limitKmh: ASSUMPTIONS.RAIN_SPEED_KMH.value[intensity] };
+        const held: SpeedZoneOwnership = { ...ownerOf(event, phase), zone: [0, road.segmentLengthM], limitKmh: ASSUMPTIONS.RAIN_SPEED_KMH.value[intensity], rain: intensity };
         if (manual.speedLimitKmh === null && speedZone === null) speedZone = held;
         else extraSpeedZones.push(held);
       }
@@ -1143,7 +1151,7 @@ export function composeInterventions(
         // A shoulder breakdown given a stretch slows traffic over exactly that stretch (rain is always the whole road).
         const own = event.variant.family === "rain" ? null : eventStretchM(event, road);
         const window = own ? { zone: [Math.max(0, own.fromM), Math.min(road.segmentLengthM, own.toM)] as const, limitKmh: found.limitKmh } : found;
-        const held: SpeedZoneOwnership = { ...ownerOf(event, phase), zone: window.zone, limitKmh: window.limitKmh };
+        const held: SpeedZoneOwnership = { ...ownerOf(event, phase), zone: window.zone, limitKmh: window.limitKmh, ...(event.variant.family === "rain" ? { rain: event.variant.intensity } : {}) };
         // The shared zone if the operator has no limit of their own and no event has it; otherwise a zone of its own.
         if (manual.speedLimitKmh === null && speedZone === null) speedZone = held;
         else extraSpeedZones.push(held);
@@ -1169,20 +1177,27 @@ export function composeInterventions(
   }
 
   const closedLanes = Array.from({ length: road.laneCount }, (_, i) => Boolean(manual.closedLanes[i]) || (closure !== null && closure.lanes.includes(i)));
+  /* Rain reaches the engine as weather, never as a limit (ASSUMPTIONS.RAIN_EFFECT): the heaviest of whatever is
+   * raining now, rain events and floods' rain alike. A zone it holds stays in `owners` (the lock on the operator's
+   * limit, the labels) but is not sent as a speed limit; sent as one, it was a 100 or 96 km/h cap that only the
+   * fastest cars ever met (audit S7, 19 Nov 2026). */
+  const raining = [speedZone, ...extraSpeedZones].reduce<RainIntensity | null>((worst, z) => (z?.rain === undefined ? worst : worst === null || RAIN_ORDER[z.rain] > RAIN_ORDER[worst] ? z.rain : worst), null);
+  const limitZone = speedZone !== null && speedZone.rain === undefined ? speedZone : null;
   const interventions: Interventions = {
     closedLanes,
     closurePoint: closure === null ? manual.closurePoint : closure.closurePointM,
     closureEnd: closure === null ? manual.closureEnd : closure.closureEndM,
     showClosurePreview: closure === null ? manual.showClosurePreview : false,
     incidents: [...manual.incidents.map((i): Incident => ({ lane: i.lane, x: i.x })), ...incidents.map((i): Incident => ({ lane: i.lane, x: i.x }))],
-    speedLimitKmh: speedZone === null ? manual.speedLimitKmh : speedZone.limitKmh,
-    speedZone: speedZone === null ? [manual.speedZone[0], manual.speedZone[1]] : [speedZone.zone[0], speedZone.zone[1]],
+    speedLimitKmh: limitZone === null ? manual.speedLimitKmh : limitZone.limitKmh,
+    speedZone: limitZone === null ? [manual.speedZone[0], manual.speedZone[1]] : [limitZone.zone[0], limitZone.zone[1]],
     closures: extraClosures.map((c) => ({
       lanes: Array.from({ length: road.laneCount }, (_, i) => c.lanes.includes(i)),
       from: c.closurePointM,
       to: c.closureEndM,
     })),
-    speedZones: extraSpeedZones.map((z) => ({ from: z.zone[0], to: z.zone[1], kmh: z.limitKmh })),
+    speedZones: extraSpeedZones.filter((z) => z.rain === undefined).map((z) => ({ from: z.zone[0], to: z.zone[1], kmh: z.limitKmh })),
+    weather: raining === null ? null : ASSUMPTIONS.RAIN_EFFECT.value[raining],
   };
   return { interventions, owners: { closure, speedZone, extraClosures, extraSpeedZones, incidents, yielded, invalid, suppressed } };
 }
@@ -1341,6 +1356,7 @@ export function createEngineBinding(): EngineBinding {
       sim.interventions.speedZone = next.speedZone;
       sim.interventions.closures = next.closures;
       sim.interventions.speedZones = next.speedZones;
+      sim.interventions.weather = next.weather ?? null;
 
       /* The vehicles of each event's scene — made of the traffic, never put down on the road.
        *
@@ -1656,7 +1672,9 @@ export type SceneMark = CanvasMark & {
   readonly stretch: { readonly fromM: number; readonly toM: number } | null;
   /** Rain only. */
   readonly intensity: RainIntensity | null;
-  /** Rain only: the speed the event caps traffic to (ASSUMPTIONS.RAIN_SPEED_KMH), for the speed-limit sign. */
+  /** Rain only: what the rain brings a Class 1 driver's free-flow speed down to (ASSUMPTIONS.RAIN_SPEED_KMH), for the
+   *  sign. Not a limit the engine applies: since 19 Nov 2026 rain slows every driver by RAIN_EFFECT's factor and
+   *  lengthens every headway (Interventions.weather). */
   readonly capKmh: number | null;
   /** Breakdowns only. */
   readonly vehicle: VehicleKind | null;
@@ -1665,8 +1683,8 @@ export type SceneMark = CanvasMark & {
   readonly water?: { readonly fromM: number; readonly toM: number; readonly outerLane: number } | null;
   /** Rain and flood only: how hard it is raining on the picture right now, 0 (dry) to 3 (heavy) — 1 light, 2 moderate.
    *  It builds up over the first minute or so and eases off at the end rather than switching on and off, and a
-   *  flood's heavy rain eases to light as the water drains (rainLevelOf). Drawing only: the speed cap is the
-   *  engine's, set by `intensity`. */
+   *  flood's heavy rain eases to light as the water drains (rainLevelOf). Drawing only: what the rain does to the
+   *  traffic is the engine's (Interventions.weather), set by `intensity`. */
   readonly rainLevel?: number;
   /** Seconds since the event started and until it ends (0 before it starts and after it ends), for what is set out
    *  and packed away over time: a work zone's cones. */

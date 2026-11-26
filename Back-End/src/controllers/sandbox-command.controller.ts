@@ -1,6 +1,12 @@
 import type { Request, Response } from "express";
 import { SandboxCommandSchema } from "../validators/ai-sandbox.validator.js";
-import { parseCommand, CommandParseError } from "../services/sandbox-command.service.js";
+import { parseCommand, promptFor, CommandParseError } from "../services/sandbox-command.service.js";
+
+/* The system prompt is built from the context the browser sends. A normal one is about 17,000 characters (16
+   places, 20 exits); every list in the schema is capped, so a full corridor stays far below this. Anything larger
+   is not a sandbox state and is refused before a token is spent (19 Nov 2026 audit S5: a 2 MB body could reach
+   the provider). */
+const MAX_PROMPT_CHARS = 150_000;
 import { isGlmConfigured, providerInfo } from "../lib/glm.client.js";
 import { getScenarioContext } from "../services/sandbox-scenario.service.js";
 import { getDemandExits, getDemandProfile, getPlazaFlows } from "../services/sandbox-demand.service.js";
@@ -36,6 +42,13 @@ export const parseSandboxCommand = async (req: Request, res: Response) => {
   }
 
   const { command, context } = parsed.data;
+  if (promptFor(context).length > MAX_PROMPT_CHARS) {
+    return res.status(400).json({
+      success: false,
+      code: "context_too_large",
+      message: "The sandbox state is too large to send to the assistant. Narrow the window and try again.",
+    });
+  }
 
   try {
     const plan = await parseCommand(command, context);
@@ -129,8 +142,12 @@ export const demandProfile = async (req: Request, res: Response) => {
   if (!read.ok) return;
   const data = read.data;
   if (!data) {
-    return res.status(404).json({
-      success: false,
+    /* Not an error: some exits record no trips in a direction (Balintawak SB is an open-system exit with no exit
+       record). Answered as "no profile" rather than 404, which the browser logged as a failed request on every
+       run there (19 Nov 2026 audit S13); the page falls back to the corridor mix either way. */
+    return res.json({
+      success: true,
+      data: null,
       message: `No observed demand for ${exit}${direction ? ` ${direction}` : ""}.`,
     });
   }

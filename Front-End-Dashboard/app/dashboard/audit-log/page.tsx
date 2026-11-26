@@ -15,6 +15,7 @@ import type { EChartsOption } from "echarts";
 import { SortableTh, useTableSort } from "../../../lib/table-sort";
 import { logActivity } from "../../../lib/backend-auth";
 import { fmtKmRange } from "../../../lib/km-post";
+import { SERVER_UNREACHABLE } from "../../../lib/server-status";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
@@ -681,7 +682,7 @@ export default function AuditLogPage() {
                 <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)", padding: 24 }}>Loading…</td></tr>
               )}
               {error && !loading && (
-                <tr><td colSpan={7} className="audit-state-cell"><StateNote kind="error" size={44}>Live data unavailable — is the backend running on port 4000?</StateNote></td></tr>
+                <tr><td colSpan={7} className="audit-state-cell"><StateNote kind="error" size={44}>{SERVER_UNREACHABLE}</StateNote></td></tr>
               )}
               {!loading && !error && visibleLogs.length === 0 && (
                 <tr><td colSpan={7} className="audit-state-cell"><StateNote kind="nodata" size={44}>{auditLogs.length > 0 ? "No entries match these filters." : "No audit events yet."}</StateNote></td></tr>

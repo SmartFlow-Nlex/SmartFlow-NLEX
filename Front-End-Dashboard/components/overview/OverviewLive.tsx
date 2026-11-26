@@ -10,6 +10,8 @@ import { isActiveReport } from "../../lib/waze-reports";
 import { lookOf } from "../../lib/waze-report-look";
 import nlexGeometry from "../maps/nlex-geometry.json";
 import { useCorridorLive } from "../../lib/use-corridor-live";
+import { isFeatureCollection } from "../../lib/live-feed";
+import { startVisiblePoll } from "../../lib/use-visible-poll";
 import type { ExitStatus } from "../../lib/corridor-status";
 import { displayExitName, type NlexExit } from "../../lib/nlex-exits";
 import { KM_POST_END, KM_POST_START, fmtKm } from "../../lib/km-post";
@@ -77,7 +79,11 @@ const CORRIDOR = corridorGuard(
 );
 
 type Closure = { id: string; title: string; start_km: number; end_km: number; direction: string; lane_closure: string; starts_at: string; ends_at: string; status: string };
-type Weather = { tempC: number | null; condition: string | null; code: number | null; rainingCount: number; total: number };
+type Weather = {
+  tempC: number | null; condition: string | null; code: number | null; rainingCount: number; total: number;
+  /** When the reading was taken, and from where: Open-Meteo's current block, or the hourly table it falls back to. */
+  asOf: string | null; source: string | null;
+};
 type Reports = { count: number; top: string | null; topCount: number };
 
 /* The rest of the corridor at a glance (13 Nov 2026, user request): Waze reports, maintenance and the weather, each
@@ -86,13 +92,18 @@ function useCorridorExtras() {
   const [reports, setReports] = useState<Reports | null>(null);
   const [closures, setClosures] = useState<Closure[] | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
+  /* Loading and failed were both "—" with "Reading unavailable", so startup looked like an outage (G-9). */
+  const [weatherFailed, setWeatherFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      cachedJson<{ features?: { type?: string; geometry?: unknown; properties?: Record<string, unknown> }[] }>(`${BACKEND}/api/map-comparison/real-time`, 25_000)
+      /* strict: an error or 429 body has no features, and used to count as "None" reports on the road. */
+      cachedJson<{ features?: { type?: string; geometry?: unknown; properties?: Record<string, unknown> }[] }>(
+        `${BACKEND}/api/map-comparison/real-time`, 25_000, undefined, { strict: true, maxStaleMs: 25_000 })
         .then((fc) => {
           if (cancelled) return;
-          const on = (fc?.features ?? []).filter((f) => CORRIDOR.onCorridor(f as never) && isActiveReport(f as never));
+          if (!isFeatureCollection(fc)) throw new Error("Feed unavailable");
+          const on = fc.features.filter((f) => CORRIDOR.onCorridor(f as never) && isActiveReport(f as never));
           const byType = new Map<string, number>();
           for (const f of on) {
             const label = lookOf(String(f.properties?.type ?? ""), f.properties?.subtype as string | null | undefined).label;
@@ -105,20 +116,38 @@ function useCorridorExtras() {
       cachedJson<{ success?: boolean; data?: Closure[] }>(`${BACKEND}/api/maintenance/list`, 60_000)
         .then((b) => { if (!cancelled && b?.success && Array.isArray(b.data)) setClosures(b.data); })
         .catch(() => {});
-      cachedJson<{ success?: boolean; data?: { rainingCount: number; points: unknown[]; corridor?: { tempC: number | null; condition: string | null; code: number | null } } }>(`${BACKEND}/api/map-comparison/live-rain`, 4 * 60_000)
+      // maxStaleMs = the TTL, so the tile shows this tick's reading rather than the previous one (G-8).
+      cachedJson<{ success?: boolean; data?: { asOf?: string; source?: string; rainingCount: number; points: unknown[]; corridor?: { tempC: number | null; condition: string | null; code: number | null } } }>(
+        `${BACKEND}/api/map-comparison/live-rain`, 4 * 60_000, undefined, { strict: true, maxStaleMs: 4 * 60_000 })
         .then((j) => {
+          if (cancelled) return;
           const d = j?.data;
-          if (cancelled || !d) return;
-          setWeather({ tempC: d.corridor?.tempC ?? null, condition: d.corridor?.condition ?? null, code: d.corridor?.code ?? null, rainingCount: d.rainingCount, total: Array.isArray(d.points) ? d.points.length : 0 });
+          if (!d) throw new Error("Weather unavailable");
+          setWeather({
+            tempC: d.corridor?.tempC ?? null, condition: d.corridor?.condition ?? null, code: d.corridor?.code ?? null,
+            rainingCount: d.rainingCount, total: Array.isArray(d.points) ? d.points.length : 0,
+            asOf: d.asOf ?? null, source: d.source ?? null,
+          });
+          setWeatherFailed(false);
         })
-        .catch(() => {});
+        // The last reading stays up with its own time on it; with none, the tile says the reading is unavailable.
+        .catch(() => { if (!cancelled) setWeatherFailed(true); });
     };
-    load();
-    const t = setInterval(load, 60_000);
-    return () => { cancelled = true; clearInterval(t); };
+    // Paused while the tab is hidden, refreshed once on return (lib/use-visible-poll.ts).
+    const stop = startVisiblePoll(load, 60_000, { immediate: true });
+    return () => { cancelled = true; stop(); };
   }, []);
-  return { reports, closures, weather };
+  return { reports, closures, weather, weatherFailed };
 }
+
+/* "as of 3:15 PM", or "last hourly reading, 11:00 PM" when the backend fell back to the PC-fed hourly table,
+   which can be up to 3 h old (G-9). */
+const weatherWhen = (w: Weather): string | null => {
+  const t = w.asOf ? new Date(w.asOf) : null;
+  if (!t || !Number.isFinite(t.getTime())) return null;
+  const at = t.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return w.source === "weather-table" ? `last hourly reading, ${at}` : `as of ${at}`;
+};
 
 const weatherIcon = (code: number | null, raining: boolean) =>
   code == null ? (raining ? CloudRain : Cloud)
@@ -220,7 +249,7 @@ export default function OverviewLive() {
         {/* Freshness as a quiet line, not a card: it qualifies the numbers below rather than being one. */}
         <p className="ov-fresh-line" role="status">
           {failed ? (
-            <><SignalGlyph state="none" size={16} title="" /><b>Live feed unreachable.</b> The traffic figures are not current.</>
+            <><SignalGlyph state="none" size={16} title="" /><b>Live feed unavailable.</b> The traffic figures are not current.</>
           ) : loading ? (
             <span className="sr-only">Reading the live feed…</span>
           ) : (
@@ -252,7 +281,8 @@ export default function OverviewLive() {
                 )}
             </span>
             <span className="ov-tile-sub">
-              {slowest ? <>Slowest: {displayExitName(slowest.exit)}, {Math.round(slowest.speedKmh)} km/h</> : "Exit-directions with a jam"}
+              {/* No "slowest" from an older reading while the feed is down: it would read as current. */}
+              {failed ? "No current reading from Waze" : slowest ? <>Slowest: {displayExitName(slowest.exit)}, {Math.round(slowest.speedKmh)} km/h</> : "Exit-directions with a jam"}
             </span>
             {hot.length > 0 && <ChevronRight size={17} className="ov-tile-go" aria-hidden="true" />}
           </button>
@@ -305,10 +335,18 @@ export default function OverviewLive() {
                 <span className="ov-tile-icon" aria-hidden="true"><Icon size={18} strokeWidth={2.2} /></span>
                 <span className="ov-tile-k">Weather now</span>
                 <span className="ov-tile-v">
-                  {w == null ? "—" : <>{w.tempC != null ? `${Math.round(w.tempC)}°C` : ""}{w.tempC != null && w.condition ? <i> · </i> : null}{w.condition ?? ""}</>}
+                  {w == null
+                    ? (extras.weatherFailed ? "—" : <span className="ov-skel ov-skel-line" aria-hidden="true" />)
+                    : <>{w.tempC != null ? `${Math.round(w.tempC)}°C` : ""}{w.tempC != null && w.condition ? <i> · </i> : null}{w.condition ?? ""}</>}
                 </span>
                 <span className="ov-tile-sub">
-                  {w == null ? "Reading unavailable" : w.rainingCount > 0 ? `Raining at ${w.rainingCount} of ${w.total} exits` : `Dry at all ${w.total} exits`}
+                  {w == null
+                    ? (extras.weatherFailed ? "Reading unavailable" : "Updating…")
+                    : (() => {
+                        const where = w.rainingCount > 0 ? `Raining at ${w.rainingCount} of ${w.total} exits` : `Dry at all ${w.total} exits`;
+                        const when = weatherWhen(w);
+                        return when ? `${where} · ${when}` : where;
+                      })()}
                 </span>
                 <ArrowUpRight size={16} className="ov-tile-go" aria-hidden="true" />
               </Link>
@@ -329,7 +367,8 @@ export default function OverviewLive() {
           <div key={s} className={`ov-count is-${s}`}>
             <SignalGlyph state={s} size={28} title="" />
             <div>
-              <div className="ov-count-value">{tally ? tally[s] : "–"}</div>
+              {/* "–" while the feed is down: the last counts are not this moment's. */}
+              <div className="ov-count-value">{tally && !failed ? tally[s] : "–"}</div>
               <div className="ov-count-label">{s === "congested" ? "exit-directions congested" : s}</div>
             </div>
           </div>
@@ -341,12 +380,12 @@ export default function OverviewLive() {
         <header className="ov-card-head">
           <h3 id="ov-hot-title">
             Slow and congested now
-            <InfoTooltip text="Exit-directions with a slow or congested Waze jam in the last feed window, worst first: congested before slow, then the slowest speed, then the longest delay. The queue is the longest single report at that exit; reports overlap, so they are never added together." />
+            <InfoTooltip text="Exit-directions with a slow or congested Waze jam in the last feed window, worst first: congested before slow, then the slowest speed, then the longest delay. Congested is under 10 km/h and slow 10-20 km/h, the same cuts as the Live Map, the forecast and the mobile app. The queue is the longest single report at that exit; reports overlap, so they are never added together." />
           </h3>
         </header>
 
         {failed ? (
-          <StateNote kind="error" title="Live feed unreachable.">Counts and the corridor are not current.</StateNote>
+          <StateNote kind="error" title="Live feed unavailable.">Counts and the corridor are not current.</StateNote>
         ) : loading ? (
           <ul className="ov-hot-list is-loading" aria-hidden="true">
             {[0, 1, 2].map((i) => <li key={i} className="ov-hot-skel" />)}
